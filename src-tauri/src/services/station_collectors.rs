@@ -61,6 +61,7 @@ pub(crate) trait StationCollectorTaskPort: Send + Sync + 'static {
 pub(crate) struct StationCollectorTaskContext {
     task_id: TaskId,
     run_id: u64,
+    correlation_id: String,
     cancellation_token: tokio_util::sync::CancellationToken,
 }
 
@@ -69,6 +70,7 @@ impl From<&TaskRunContext> for StationCollectorTaskContext {
         Self {
             task_id: context.task_id.clone(),
             run_id: context.run_id.0,
+            correlation_id: context.correlation_id.clone(),
             cancellation_token: context.cancellation_token.clone(),
         }
     }
@@ -114,7 +116,7 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                 .submit(
                     "station_collector_prepare",
                     operation_id,
-                    None,
+                    Some(context.correlation_id.clone()),
                     None,
                     move |_| {
                         Ok(collectors::prepare_station_task_v2(
@@ -608,6 +610,7 @@ mod tests {
         TaskRunContext {
             task_id: TaskId::from(RUNNER_TASK_ID),
             run_id: TaskRunId(1),
+            correlation_id: "test-correlation".to_string(),
             cancellation_token: CancellationToken::new(),
         }
     }

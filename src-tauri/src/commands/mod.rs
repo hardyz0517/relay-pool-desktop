@@ -3481,6 +3481,7 @@ fn outbound_json_request(
     Ok(OutboundRequest {
         method,
         url,
+        correlation_id: correlation::current_id_string(),
         headers,
         body,
         proxy: ProxyPolicy::Direct,

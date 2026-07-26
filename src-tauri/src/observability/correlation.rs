@@ -27,6 +27,29 @@ pub(crate) fn current() -> Option<CorrelationId> {
     CURRENT_CORRELATION_ID.try_with(Clone::clone).ok()
 }
 
+pub(crate) fn current_id_string() -> Option<String> {
+    current().map(|id| id.as_str().to_string())
+}
+
+pub(crate) fn current_or_new() -> CorrelationId {
+    current().unwrap_or_else(CorrelationId::new)
+}
+
+pub(crate) async fn in_scope<T>(
+    span_name: &'static str,
+    correlation_id: CorrelationId,
+    future: impl Future<Output = T>,
+) -> T {
+    let span = tracing::info_span!(
+        "work.scope",
+        scope = span_name,
+        correlation_id = correlation_id.as_str()
+    );
+    CURRENT_CORRELATION_ID
+        .scope(correlation_id, future.instrument(span))
+        .await
+}
+
 pub(crate) async fn in_command_scope<T>(
     command: &'static str,
     future: impl Future<Output = T>,
@@ -71,5 +94,26 @@ mod tests {
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit()));
         assert!(current().is_none(), "command scope must not leak");
+    }
+
+    #[tokio::test]
+    async fn explicit_work_scope_preserves_parent_correlation_across_spawn() {
+        let (parent_id, child_id) = in_command_scope("fixture_command", async {
+            let parent_id = current().expect("parent correlation");
+            let inherited = current_or_new();
+            let child = tokio::spawn(async move {
+                in_scope("task.run", inherited, async {
+                    current().expect("spawned work correlation")
+                })
+                .await
+            })
+            .await
+            .expect("spawned work joins");
+            (parent_id, child)
+        })
+        .await;
+
+        assert_eq!(parent_id, child_id);
+        assert!(current().is_none(), "work scope must not leak");
     }
 }

@@ -5,6 +5,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    observability::correlation,
     outbound::{
         AsyncOutboundClient, OutboundFailure, OutboundFailureKind, OutboundHeaderPolicy,
         OutboundHeaders, OutboundRequest, ProxyPolicy, RequestBudget, SecretHeaderValue,
@@ -165,6 +166,7 @@ fn build_outbound_probe_request(
     Ok(OutboundRequest {
         method,
         url,
+        correlation_id: correlation::current_id_string(),
         headers,
         body: request.body.clone(),
         proxy: ProxyPolicy::Direct,

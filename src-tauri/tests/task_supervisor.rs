@@ -46,6 +46,40 @@ async fn rejects_duplicate_task_ids() {
 }
 
 #[tokio::test]
+async fn supervised_task_context_carries_bounded_correlation_id() {
+    let supervisor = TaskSupervisor::new();
+    let (correlation_tx, correlation_rx) = tokio::sync::oneshot::channel::<String>();
+    let sender = Arc::new(tokio::sync::Mutex::new(Some(correlation_tx)));
+    supervisor
+        .register(TaskSpec::new("correlated", "runner", move |context| {
+            let sender = Arc::clone(&sender);
+            Box::pin(async move {
+                let sender = sender.lock().await.take().expect("correlation sender");
+                sender
+                    .send(context.correlation_id)
+                    .expect("send correlation id");
+                Ok(())
+            })
+        }))
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("correlated"))
+        .expect("start task");
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("correlated"))
+            .await
+            .unwrap(),
+        TaskState::Succeeded
+    );
+    let correlation_id = correlation_rx.await.expect("correlation id");
+
+    assert_eq!(correlation_id.len(), 32);
+    assert!(correlation_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
+#[tokio::test]
 async fn enforces_concurrency_key_non_reentry() {
     let supervisor = TaskSupervisor::new();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();

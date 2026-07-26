@@ -12,6 +12,7 @@ use http::{header, HeaderMap, Method, StatusCode};
 use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 
+use crate::observability::correlation;
 use crate::outbound::{
     error::{OutboundFailure, OutboundFailureKind},
     policy::{OutboundHeaderPolicy, OutboundHeaders, RequestBudget, TimeoutPolicy},
@@ -551,6 +552,7 @@ pub struct OutboundClientMetrics {
 pub struct OutboundRequest {
     pub method: Method,
     pub url: String,
+    pub correlation_id: Option<String>,
     pub headers: OutboundHeaders,
     pub body: Vec<u8>,
     pub proxy: ProxyPolicy,
@@ -562,6 +564,7 @@ impl OutboundRequest {
         Self {
             method: Method::GET,
             url: url.into(),
+            correlation_id: correlation::current_id_string(),
             headers: OutboundHeaders::new(),
             body: Vec::new(),
             proxy: ProxyPolicy::Direct,

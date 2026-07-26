@@ -14,6 +14,7 @@ use crate::background_tasks::{
     status::{TaskRunId, TaskState, TaskStatusSnapshot},
     task::{RestartClass, TaskFailure, TaskId, TaskRunContext, TaskSpec},
 };
+use crate::observability::correlation;
 
 type TaskJoinResult = Result<Result<(), TaskFailure>, ()>;
 
@@ -212,18 +213,23 @@ impl TaskSupervisor {
             .tasks
             .get_mut(id)
             .ok_or_else(|| TaskSupervisorError::TaskNotFound(id.clone()))?;
+        let correlation_id = correlation::current_or_new();
         let token = CancellationToken::new();
         let context = TaskRunContext {
             task_id: slot.spec.id.clone(),
             run_id,
+            correlation_id: correlation_id.as_str().to_string(),
             cancellation_token: token.clone(),
         };
         let body = Arc::clone(&slot.spec.body);
         let join = self.tracker.spawn(async move {
-            match AssertUnwindSafe((body)(context)).catch_unwind().await {
-                Ok(result) => Ok(result),
-                Err(_) => Err(()),
-            }
+            correlation::in_scope("task.run", correlation_id, async move {
+                match AssertUnwindSafe((body)(context)).catch_unwind().await {
+                    Ok(result) => Ok(result),
+                    Err(_) => Err(()),
+                }
+            })
+            .await
         });
 
         slot.state = TaskState::Running;

@@ -12,6 +12,8 @@ use std::{
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
+use crate::observability::correlation;
+
 pub type BoxOperationFuture = Pin<Box<dyn Future<Output = OperationTerminal> + Send>>;
 
 #[derive(Clone, Debug)]
@@ -129,6 +131,7 @@ impl OperationRegistry {
         if spec.deadline.is_zero() {
             return Err(OperationRegistryError::InvalidSpec);
         }
+        let correlation_id = correlation::current_or_new();
         let token = CancellationToken::new();
         let commit_barrier = Arc::new(AtomicBool::new(false));
         {
@@ -176,15 +179,19 @@ impl OperationRegistry {
             id,
             kind: spec.kind.clone(),
             owner: spec.owner.clone(),
+            correlation_id: correlation_id.as_str().to_string(),
             cancellation_token: token.clone(),
             commit_barrier,
             registry: self.clone(),
         };
         let join = tokio::spawn(async move {
-            let terminal = tokio::time::timeout(spec.deadline, (request.body)(context))
-                .await
-                .unwrap_or(OperationTerminal::TimedOut);
-            registry.finish(id, terminal);
+            correlation::in_scope("operation.run", correlation_id, async move {
+                let terminal = tokio::time::timeout(spec.deadline, (request.body)(context))
+                    .await
+                    .unwrap_or(OperationTerminal::TimedOut);
+                registry.finish(id, terminal);
+            })
+            .await;
         });
         let mut inner = self.inner.lock().expect("operation registry mutex");
         if let Some(slot) = inner.slots.get_mut(&id) {
@@ -454,6 +461,7 @@ pub struct OperationContext {
     pub id: OperationId,
     pub kind: String,
     pub owner: OperationOwner,
+    pub correlation_id: String,
     pub cancellation_token: CancellationToken,
     commit_barrier: Arc<AtomicBool>,
     registry: OperationRegistry,

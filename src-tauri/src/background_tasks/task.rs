@@ -128,6 +128,7 @@ fn deterministic_jitter_ms(seed: u64, attempt: u32) -> u64 {
 pub struct TaskRunContext {
     pub task_id: TaskId,
     pub run_id: TaskRunId,
+    pub correlation_id: String,
     pub cancellation_token: CancellationToken,
 }
 

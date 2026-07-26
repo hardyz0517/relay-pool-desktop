@@ -1039,6 +1039,7 @@ mod tests {
         TaskRunContext {
             task_id: TaskId::from(RUNNER_TASK_ID),
             run_id: TaskRunId(1),
+            correlation_id: "test-correlation".to_string(),
             cancellation_token: CancellationToken::new(),
         }
     }

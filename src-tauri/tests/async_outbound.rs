@@ -193,6 +193,16 @@ fn proxy_policy_keys_cover_direct_system_manual_http_and_socks_without_secrets()
     assert!(ManualProxy::parse("http://user:secret@127.0.0.1:8080").is_err());
 }
 
+#[test]
+fn outbound_request_defaults_to_no_correlation_outside_work_scope() {
+    let request = OutboundRequest::get(
+        "http://127.0.0.1:9/v1/models",
+        RequestBudget::from_now(Duration::from_secs(1)),
+    );
+
+    assert_eq!(request.correlation_id, None);
+}
+
 #[tokio::test]
 async fn rejects_userinfo_control_urls_and_headers_outside_allowlist() {
     let client = test_client(
@@ -285,6 +295,7 @@ async fn cross_origin_redirect_strips_sensitive_headers_and_redacts_history() {
     let request = OutboundRequest {
         method: Method::GET,
         url: format!("{}/start", source.url),
+        correlation_id: Some("redirect-correlation".to_string()),
         headers,
         body: Vec::new(),
         proxy: ProxyPolicy::Direct,

@@ -82,6 +82,35 @@ async fn start_returns_unique_id_and_progress_carries_same_id() {
 }
 
 #[tokio::test]
+async fn operation_context_carries_bounded_correlation_id() {
+    let registry = registry();
+    let (correlation_tx, correlation_rx) = tokio::sync::oneshot::channel::<String>();
+    let id = registry
+        .start(OperationStartRequest::new(
+            "connectivity",
+            owner(),
+            move |context| {
+                Box::pin(async move {
+                    correlation_tx
+                        .send(context.correlation_id)
+                        .expect("send correlation id");
+                    OperationTerminal::Completed
+                })
+            },
+        ))
+        .expect("operation starts");
+
+    assert_eq!(
+        wait_for_terminal(&registry, id).await,
+        OperationTerminal::Completed
+    );
+    let correlation_id = correlation_rx.await.expect("correlation id");
+
+    assert_eq!(correlation_id.len(), 32);
+    assert!(correlation_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
+#[tokio::test]
 async fn admission_is_atomic_for_capacity_and_concurrency_key() {
     let registry = registry();
     let (release_first_tx, release_first_rx) = tokio::sync::oneshot::channel::<()>();
