@@ -16,6 +16,7 @@ pub(crate) mod data_recovery;
 pub(crate) mod error;
 
 use crate::{
+    app_composition::ManagedWorkRuntime,
     application::{
         command_facades::{
             CaptureCommandError, CaptureCommandFacade, ChangeEventsCommandFacade,
@@ -42,6 +43,7 @@ use crate::{
         error::ApplicationError,
         pagination::PageLimit,
     },
+    background_tasks::OperationRegistryError,
     ipc::dto::{
         change_logs::{
             ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
@@ -63,6 +65,10 @@ use crate::{
             CollectorStationIdsInputDto, GroupRateRecordDto, StationGroupBindingDto,
             StationGroupOptionDto, UpsertBalanceSnapshotInputDto,
             UpsertStationGroupBindingInputDto,
+        },
+        operations::{
+            CancelOperationInputDto, CancelOperationOutcomeDto, OperationIdInputDto,
+            OperationSnapshotDto,
         },
         pricing_mutations::{
             PricingRuleIdInputDto, UpsertModelBasePriceInputDto, UpsertPricingRuleInputDto,
@@ -1556,6 +1562,41 @@ fn public_endpoint_ping_error(error: EndpointPingCommandError) -> error::Command
     }
 }
 
+fn public_operation_registry_error(error: OperationRegistryError) -> error::CommandError {
+    match error {
+        OperationRegistryError::Overloaded => {
+            error::CommandError::from_work(error::WorkFailure::Overloaded)
+        }
+        OperationRegistryError::Conflict { .. } => error::CommandError::try_new(
+            error::CommandErrorCode::Conflict,
+            "An operation with the same concurrency key is already running.",
+            false,
+            None,
+            None,
+        )
+        .expect("operation conflict error is a bounded public contract"),
+        OperationRegistryError::NotFound => error::CommandError::try_new(
+            error::CommandErrorCode::NotFound,
+            "The operation was not found.",
+            false,
+            None,
+            None,
+        )
+        .expect("operation not-found error is a bounded public contract"),
+        OperationRegistryError::Expired => error::CommandError::try_new(
+            error::CommandErrorCode::NotFound,
+            "The operation result has expired.",
+            false,
+            None,
+            None,
+        )
+        .expect("operation expired error is a bounded public contract"),
+        OperationRegistryError::InvalidSpec
+        | OperationRegistryError::ProgressTooLarge { .. }
+        | OperationRegistryError::TerminalAlreadyRecorded => error::CommandError::internal(None),
+    }
+}
+
 #[tauri::command]
 pub async fn get_station_key_health(
     facade: State<'_, RoutingCommandFacade>,
@@ -1567,6 +1608,39 @@ pub async fn get_station_key_health(
             .get_station_key_health(input.station_key_id)
             .await
             .map_err(public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_operation_status(
+    runtime: State<'_, ManagedWorkRuntime>,
+    input: Value,
+) -> Result<OperationSnapshotDto, error::CommandError> {
+    correlation::in_command_scope("get_operation_status", async {
+        let input = OperationIdInputDto::parse(input)?;
+        runtime
+            .operation
+            .status(input.operation_id())
+            .map(OperationSnapshotDto::from)
+            .map_err(public_operation_registry_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cancel_operation(
+    runtime: State<'_, ManagedWorkRuntime>,
+    input: Value,
+) -> Result<CancelOperationOutcomeDto, error::CommandError> {
+    correlation::in_command_scope("cancel_operation", async {
+        let input = CancelOperationInputDto::parse(input)?;
+        runtime
+            .operation
+            .cancel(input.operation_id(), input.wait())
+            .await
+            .map(CancelOperationOutcomeDto::from)
+            .map_err(public_operation_registry_error)
     })
     .await
 }

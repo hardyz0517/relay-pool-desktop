@@ -74,6 +74,8 @@ commands.allow = [
   "delete_channel_monitor_template",
   "run_channel_monitor_now",
   "get_station_key_health",
+  "get_operation_status",
+  "cancel_operation",
   "ping_station_endpoint",
   "test_station_key_connectivity",
   "simulate_route",

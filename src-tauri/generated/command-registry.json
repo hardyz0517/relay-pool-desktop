@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "786d63d2dee2a6871d64ef806aae71a4ee8b5595ab97a99739e87b690b6b1c73",
+  "contract_hash": "dddf8ae28cb0fd1c430e94c34397fcabd8f8bb5b8953b7a49c0481ba1b963a86",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -31,6 +31,17 @@
       "transport": "ordinary",
       "input_schema_hash": "b6e45fdaef3b9201bfd6740267f7aa164ccdb88234adee8de4a9b099bce9d60d",
       "output_schema_hash": "e4f547c7c26ada35762eca2883cead6e0086e52ac95a3c1c62cc49783b6f2488",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "cancel_operation",
+      "transport": "ordinary",
+      "input_schema_hash": "85576dba98abcdeb397356b77456d36511fa009b3fb513b3b5bcc9a53f926f4d",
+      "output_schema_hash": "a48f8d72307a14e15f7a19097d7fb6c5dcc1f35d1bf19819b456f086b826eea7",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
       "transport_retry": false,
@@ -405,6 +416,17 @@
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "get_operation_status",
+      "transport": "ordinary",
+      "input_schema_hash": "66f06d3bb1280295c2d4f5b569d7cc25b99a91b4954cefd6364da6e9706d4ed8",
+      "output_schema_hash": "e43b5a2e2392f38799fb2de33d004d165bf03699e2ddd09ac9c27ee16380efeb",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,

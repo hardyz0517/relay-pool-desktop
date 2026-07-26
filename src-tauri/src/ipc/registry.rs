@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "786d63d2dee2a6871d64ef806aae71a4ee8b5595ab97a99739e87b690b6b1c73";
+    "dddf8ae28cb0fd1c430e94c34397fcabd8f8bb5b8953b7a49c0481ba1b963a86";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -123,6 +123,8 @@ macro_rules! ipc_command_registry {
             delete_channel_monitor_template => $crate::commands::delete_channel_monitor_template,
             run_channel_monitor_now => $crate::commands::run_channel_monitor_now,
             get_station_key_health => $crate::commands::get_station_key_health,
+            get_operation_status => $crate::commands::get_operation_status,
+            cancel_operation => $crate::commands::cancel_operation,
             ping_station_endpoint => $crate::commands::ping_station_endpoint,
             test_station_key_connectivity => $crate::commands::test_station_key_connectivity,
             simulate_route => $crate::commands::simulate_route,
@@ -569,6 +571,13 @@ fn command_contract(name: &str) -> CommandContract {
         "get_station_key_health" => {
             migrated_read("RoutingStationKeyIdInputDto", "StationKeyHealthDto")
         }
+        "get_operation_status" => migrated_read("OperationIdInputDto", "OperationSnapshotDto"),
+        "cancel_operation" => migrated_mutation(
+            "CancelOperationInputDto",
+            "CancelOperationOutcomeDto",
+            "idempotent",
+            false,
+        ),
         "ping_station_endpoint" => migrated_mutation(
             "StationIdInputDto",
             "EndpointPingResultDto",
@@ -1132,6 +1141,14 @@ export function listStationEndpointHealth(input: EmptyInputDto = {}): Promise<St
 
 export function getStationKeyHealth(input: RoutingStationKeyIdInputDto): Promise<StationKeyHealthDto> {
   return invokeCommand<StationKeyHealthDto>("get_station_key_health", { input });
+}
+
+export function getOperationStatus(input: OperationIdInputDto): Promise<OperationSnapshotDto> {
+  return invokeCommand<OperationSnapshotDto>("get_operation_status", { input });
+}
+
+export function cancelOperation(input: CancelOperationInputDto): Promise<CancelOperationOutcomeDto> {
+  return invokeCommand<CancelOperationOutcomeDto>("cancel_operation", { input });
 }
 
 export function simulateRoute(input: RouteSimulationInputDto): Promise<RouteSimulationResultDto> {
@@ -1764,6 +1781,25 @@ mod tests {
         assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
         assert!(!contract.transport_retry);
         assert!(contract.result_unknown);
+    }
+
+    #[test]
+    fn operation_commands_have_closed_schemas_and_status_cancel_semantics() {
+        let status = command_contract("get_operation_status");
+        assert_eq!(status.input, "OperationIdInputDto");
+        assert_eq!(status.output, "OperationSnapshotDto");
+        assert_eq!(status.mutation_kind, "read");
+        assert_eq!(status.runtime_validation, "rust_dto_pre_application");
+        assert!(!status.transport_retry);
+        assert!(!status.result_unknown);
+
+        let cancel = command_contract("cancel_operation");
+        assert_eq!(cancel.input, "CancelOperationInputDto");
+        assert_eq!(cancel.output, "CancelOperationOutcomeDto");
+        assert_eq!(cancel.mutation_kind, "idempotent");
+        assert_eq!(cancel.runtime_validation, "rust_dto_pre_application");
+        assert!(!cancel.transport_retry);
+        assert!(!cancel.result_unknown);
     }
 
     #[test]

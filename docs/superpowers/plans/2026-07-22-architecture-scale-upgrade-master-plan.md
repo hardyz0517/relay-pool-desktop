@@ -722,6 +722,8 @@ Task 14 必须按 14.A -> 14.B -> 14.C -> 14.D 四个 shard 提交；三个内�
 
 **当前 checkpoint：** `S4-T15D-operation-dto-contract` 新增 operation id、cancel wait、snapshot/progress/terminal 和 cancel outcome 的稳定 IPC DTO，并通过 `pnpm generate:bindings` 同步 generated TypeScript、contract hash 与 command registry artifact。该片只建立公开 contract 投影；尚未新增 production operation command、frontend controller 或 connectivity AsyncOutboundClient cutover。
 
+**当前 checkpoint：** `S4-T15E-operation-status-cancel-commands` 新增 `get_operation_status` 与 `cancel_operation`，通过 managed `WorkRuntimeBundle.operation` 读取和取消真实 `OperationRegistry` entries，并在 compiled IPC registry/generated bindings 中声明 read/idempotent mutation semantics。该片尚未把 connectivity start/UI 从 legacy streaming command 切到 OperationRegistry。
+
 **文件：**
 
 - Create: `src-tauri/src/background_tasks/operation.rs`
