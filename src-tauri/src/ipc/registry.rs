@@ -1883,6 +1883,38 @@ mod tests {
     }
 
     #[test]
+    fn runtime_status_is_the_only_public_runtime_diagnostics_surface() {
+        let status = command_contract("get_runtime_status");
+        assert_eq!(status.input, "EmptyInputDto");
+        assert_eq!(status.output, "RuntimeStatusDto");
+        assert_eq!(status.mutation_kind, "read");
+        assert_eq!(status.runtime_validation, "rust_dto_pre_application");
+        assert!(!status.transport_retry);
+        assert!(!status.result_unknown);
+
+        for command in COMMANDS {
+            let contract = command_contract(command.name);
+            assert!(
+                !matches!(
+                    contract.output,
+                    "RuntimeDiagnostics"
+                        | "RuntimeDiagnosticsDto"
+                        | "RuntimeDiagnosticsSnapshot"
+                        | "MetricSnapshot"
+                ),
+                "{} exposes full runtime diagnostics as an IPC output",
+                command.name
+            );
+            assert!(
+                !command.name.contains("runtime_diagnostic")
+                    && !command.name.contains("runtime_diagnostics"),
+                "{} exposes a runtime diagnostics IPC command without a developer-mode gate",
+                command.name
+            );
+        }
+    }
+
+    #[test]
     fn generated_bindings_use_the_common_transport_and_dedicated_wrappers() {
         let source = render_typescript("fixture-hash");
         assert!(source.contains("@/lib/bridge/transport"));

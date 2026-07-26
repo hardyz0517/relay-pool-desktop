@@ -89,6 +89,8 @@ pub const RUNTIME_STATUS_TYPE: TypeDescriptor = TypeDescriptor {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::background_tasks::RuntimeTaskStatus;
 
@@ -110,7 +112,40 @@ mod tests {
         assert_eq!(value["tasks"][0]["id"], "station-collector-runner");
         assert_eq!(value["tasks"][0]["status"], "backing_off");
         assert_eq!(value["tasks"][0]["lastFailureCode"], "[REDACTED]");
-        assert!(value["tasks"][0].get("databasePath").is_none());
-        assert!(value["tasks"][0].get("errorChain").is_none());
+
+        let root = value.as_object().expect("runtime status root object");
+        assert_eq!(
+            root.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from(["tasks"])
+        );
+        let task = value["tasks"][0]
+            .as_object()
+            .expect("runtime status task object");
+        assert_eq!(
+            task.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "consecutiveFailures",
+                "id",
+                "kind",
+                "lastFailureCode",
+                "lastStartedAtMs",
+                "lastSucceededAtMs",
+                "nextRetryAtMs",
+                "runId",
+                "status",
+            ])
+        );
+        for forbidden in [
+            "blocking",
+            "databasePath",
+            "errorChain",
+            "metrics",
+            "operations",
+            "outbound",
+            "rawDiagnostics",
+        ] {
+            assert!(task.get(forbidden).is_none(), "{forbidden}");
+            assert!(root.get(forbidden).is_none(), "{forbidden}");
+        }
     }
 }
