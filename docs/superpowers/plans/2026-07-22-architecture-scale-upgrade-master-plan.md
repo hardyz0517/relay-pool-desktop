@@ -859,6 +859,8 @@ Task 17 必须拆成三个互不混合的 production cutover。
 
 ### Task 18：建立 structured observability 并收紧 work/outbound gates
 
+**Checkpoint addendum:** `S4-T18E-frontend-runtime-status-adapter` wires the generated `get_runtime_status` read into `BackendClient.runtime`, `DesktopBackend`, explicit demo unsupported behavior, and a narrow `src/lib/api/runtimeStatus.ts` frontend adapter. It also tightens generated binding coverage so the Rust registry TypeScript renderer must emit the runtime status wrapper. This does not close the full Stage 4 gate; proxy-request correlation and mixed saturation evidence remain open.
+
 **当前 checkpoint：** `S4-T18A-observability-contract-kernel` 新增 `observability::redaction` 与 `observability::metrics` 中立合同内核，以及 `observability_contract` focused tests。redaction contract 会移除 secret canary、URL credential/query/fragment/path 等无界或敏感部分，并限制文本 preview；metrics contract 使用封闭 enum kind/outcome 与 typed labels、有界 label 数量和固定容量 ring buffer，超容量只丢弃最旧诊断事件。`S4-T18B-runtime-diagnostics-read-model` 新增 `observability::diagnostics` 本地 runtime read model，从 `TaskSupervisor`、`BlockingExecutor`、`AsyncOutboundClient` 和 `OperationRegistry` 采样用户可行动状态并写入同一个 bounded low-cardinality metric buffer；task failure code 仍经过 redaction contract，快照不包含 secret、数据库路径或内部 error chain。`S4-T18C-work-correlation-continuity` 将 correlation 显式带入 `TaskRunContext`、`OperationContext` 和 `OutboundRequest`，supervisor/operation spawned work 使用继承或新建的 bounded id 重新进入 observability scope，scheduled collector blocking prepare、channel monitor async outbound 和 key-pool connectivity operation outbound 均不再依赖丢失的 task-local。`S4-T18D-runtime-status-command` 把 `RuntimeTaskSummary` owner 收敛到 `background_tasks/status.rs`，由 supervisor 维护 last started/succeeded/failure/retry 字段，并新增 generated read command `get_runtime_status` 只暴露 task id/kind/run/status/timing/failure-code/consecutive-failure/next-retry 投影；main-window ACL、compiled ACL manifest、generated TS bindings 和 command registry 同步。该片不开放云遥测，也不让日志/指标成为业务状态 owner。
 
 **文件：**
@@ -873,7 +875,7 @@ Task 17 必须拆成三个互不混合的 production cutover。
 - [ ] 结构化 span/event 只使用稳定 code、kind、duration、result、redacted resource id；完整 key/cookie/token/Authorization、prompt/response body、provider payload、URL query 和数据库路径在 Debug/Display/event/metric 中均不可达。
 - [ ] 本地 bounded metrics 至少覆盖 command latency/error、workspace latency/payload/IPC count、task status/backoff/shutdown timeout、operation terminal/cancel latency、blocking saturation/orphan、collector failure class、hidden query start 和 binding drift。
 - [ ] metrics label 必须是封闭低基数 enum/normalized id；禁止 station id、operation id、URL、model 自由文本作为无界 label。诊断 buffer 具有 Task 1 冻结的容量/TTL，并验证 GC。
-- [ ] 通过窄 runtime status facade 和 generated read command 暴露 `RuntimeTaskSummary { id, status, last_started_at, last_succeeded_at, last_failure_code, consecutive_failures, next_retry_at }`；字段来自 supervisor status projection，不从日志反推。
+- [x] 通过窄 runtime status facade 和 generated read command 暴露 `RuntimeTaskSummary { id, status, last_started_at, last_succeeded_at, last_failure_code, consecutive_failures, next_retry_at }`；字段来自 supervisor status projection，不从日志反推。
 - [ ] runtime status/read model 只暴露用户可行动状态；完整本地诊断仅开发者模式可读，仍经过同一 redaction contract。本升级不引入云遥测。
 - [ ] production 永久 runner 中 `thread::spawn + block_on` 为零；fire-and-forget spawn 只有带 owner/理由/删除期限的最小 allowlist。
 - [ ] production network I/O 不允许进入 BlockingExecutor；operation event 必须带 id/version/terminal contract，cancel command 必须有 registry owner。

@@ -108,6 +108,7 @@ function makeBackendClient() {
       collectorRuns,
       collectors: {} as BackendClient["collectors"],
       proxy: {} as BackendClient["proxy"],
+      runtime: {} as BackendClient["runtime"],
       localRouting: {} as BackendClient["localRouting"],
       dataRecovery: {} as BackendClient["dataRecovery"],
       economics: {} as BackendClient["economics"],

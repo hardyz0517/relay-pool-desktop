@@ -898,6 +898,10 @@ r#"export function appStatus(input: EmptyInputDto = {}): Promise<AppStatusDto> {
   return invokeCommand<AppStatusDto>("app_status", { input });
 }
 
+export function getRuntimeStatus(input: EmptyInputDto = {}): Promise<RuntimeStatusDto> {
+  return invokeCommand<RuntimeStatusDto>("get_runtime_status", { input });
+}
+
 export function getSettings(input: EmptyInputDto = {}): Promise<SettingsDto> {
   return invokeCommand<SettingsDto>("get_settings", { input });
 }
@@ -1886,6 +1890,9 @@ mod tests {
         assert!(source.contains(r#"invokeNonIdempotent<StationDto>("create_station""#));
         assert!(source.contains(
             r#"function getRuntimeContractInfo(input: EmptyInputDto = {}): Promise<RuntimeContractInfo>"#
+        ));
+        assert!(source.contains(
+            r#"function getRuntimeStatus(input: EmptyInputDto = {}): Promise<RuntimeStatusDto>"#
         ));
         for wrapper in [
             "updateSettings",

@@ -42,6 +42,7 @@ import {
   getLatestCollectorSnapshot,
   getLocalAccessKey,
   getProxyStatus,
+  getRuntimeStatus,
   getSettings,
   getStationKeyCapabilities,
   getStationCredentials,
@@ -165,6 +166,7 @@ describe("generated settings/stations transport envelopes", () => {
 
   it("sends settings/bootstrap commands through generated envelopes", async () => {
     await appStatus();
+    await getRuntimeStatus();
     await getLocalAccessKey();
     await updateLocalAccessKey({ value: "sk-local-fixture" });
     await importRelayPoolToCcswitch();
@@ -172,6 +174,7 @@ describe("generated settings/stations transport envelopes", () => {
 
     expect(transport.invoke.mock.calls).toEqual([
       ["app_status", { input: {} }],
+      ["get_runtime_status", { input: {} }],
       ["get_local_access_key", { input: {} }],
       ["update_local_access_key", { input: { value: "sk-local-fixture" } }],
     ]);

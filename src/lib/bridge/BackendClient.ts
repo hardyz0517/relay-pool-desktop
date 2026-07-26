@@ -65,6 +65,7 @@ import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { ActivationResult, DataStoreCandidate, DataStoreStartupView } from "@/lib/types/dataRecovery";
 import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
+import type { RuntimeStatus } from "@/lib/types/runtimeStatus";
 import type {
   ModelAlias,
   RouteSimulationInput,
@@ -158,6 +159,10 @@ export type ProxyDomainClient = {
   prepareLocalProxyForUpdate(): Promise<ProxyStatus>;
   listRequestLogs(): Promise<RequestLog[]>;
   clearRequestLogs(): Promise<void>;
+};
+
+export type RuntimeDomainClient = {
+  getRuntimeStatus(): Promise<RuntimeStatus>;
 };
 
 export type LocalRoutingDomainClient = {
@@ -306,6 +311,7 @@ export type BackendClient = {
   readonly channels: ChannelsDomainClient;
   readonly collectors: CollectorsDomainClient;
   readonly updater: UpdaterDomainClient;
+  readonly runtime: RuntimeDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 

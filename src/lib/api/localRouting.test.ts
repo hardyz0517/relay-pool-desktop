@@ -20,6 +20,7 @@ describe("local routing backend cutover", () => {
       collectorRuns: {} as never,
       collectors: {} as never,
       proxy: {} as never,
+      runtime: {} as never,
       localRouting: localRouting as never,
       dataRecovery: {} as never,
       economics: {} as never,

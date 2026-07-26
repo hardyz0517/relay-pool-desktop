@@ -79,6 +79,9 @@ export class DemoBackend implements BackendClient {
     listRequestLogs: () => this.rejectUnsupported("proxy"),
     clearRequestLogs: () => this.rejectUnsupported("proxy"),
   };
+  readonly runtime: BackendClient["runtime"] = {
+    getRuntimeStatus: () => this.rejectUnsupported("runtime_status"),
+  };
   readonly localRouting: BackendClient["localRouting"] = {
     loadLocalRoutingWorkspace: () => this.rejectUnsupported("local_routing"),
     reorderLocalRoutingKeys: (_input: ReorderLocalRoutingKeysInput) => this.rejectUnsupported("local_routing"),

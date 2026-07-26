@@ -40,6 +40,7 @@ import {
   getDataStoreStartupState as getDataStoreStartupStateBinding,
   getLocalAccessKey as getLocalAccessKeyBinding,
   getRuntimeContractInfo,
+  getRuntimeStatus as getRuntimeStatusBinding,
   getSettings as getSettingsBinding,
   getStationCredentials as getStationCredentialsBinding,
   getStationKeyCapabilities as getStationKeyCapabilitiesBinding,
@@ -217,6 +218,9 @@ export class DesktopBackend implements BackendClient {
     prepareLocalProxyForUpdate: () => prepareLocalProxyForUpdateBinding(),
     listRequestLogs: () => listRequestLogsBinding(),
     clearRequestLogs: () => clearRequestLogsBinding(),
+  };
+  readonly runtime = {
+    getRuntimeStatus: () => getRuntimeStatusBinding(),
   };
   readonly localRouting = {
     loadLocalRoutingWorkspace: () => loadLocalRoutingWorkspaceBinding(),
