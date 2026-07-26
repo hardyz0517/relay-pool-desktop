@@ -54,7 +54,7 @@ describe("PageVisibility policy", () => {
     });
   });
 
-  it("keeps current and transition shell pages retained before legacy allowlist pruning", () => {
+  it("retains only current and transition shell pages by default", () => {
     expect(getPageRetentionDecision({
       routeId: "stations",
       activeRouteId: "stations",
@@ -69,7 +69,7 @@ describe("PageVisibility policy", () => {
       routeId: "settings",
       activeRouteId: "stations",
       previousRouteId: null,
-    })).toEqual({ retain: true, reason: "legacy-allowlist" });
-    expect(MAX_RETAINED_SHELL_PAGES).toBe(10);
+    })).toEqual({ retain: false, reason: "default-unmounted" });
+    expect(MAX_RETAINED_SHELL_PAGES).toBe(2);
   });
 });

@@ -17,6 +17,15 @@ assert.ok(
   "shell host should derive page activity from canonical PageVisibility and retention policy",
 );
 
+const retentionPolicySource = await readFile("src/app/navigation/pageRetentionPolicy.ts", "utf8");
+assert.ok(
+  retentionPolicySource.includes("export const MAX_RETAINED_SHELL_PAGES = 2") &&
+    retentionPolicySource.includes('reason: "default-unmounted"') &&
+    !retentionPolicySource.includes("legacy-allowlist") &&
+    !retentionPolicySource.includes("retainedDuringStage3Migration"),
+  "page retention should default to active plus transition pages without the Stage 3 legacy allowlist",
+);
+
 assert.ok(
   activitySource.includes("createPageVisibility") &&
     activitySource.includes("PageVisibilityProvider") &&

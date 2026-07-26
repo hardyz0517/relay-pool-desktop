@@ -545,7 +545,7 @@ Stage 0 必须实际生成固定 seed、稳定排序、脱敏的 10/100/500 stat
 
 ### Task 10：建立 canonical query policy 和唯一 PageVisibility
 
-**当前 checkpoint：** `S3-T10-page-visibility-foundation` 已建立 `PageVisibility` canonical provider、shell/transient visibility mapping 和 `pageRetentionPolicy` migration allowlist；`ShellPageHost`/`TransientPageHost` 只向旧 `PageActivity` adapter 传 visibility，`refreshRouteId` 二级刷新 owner 已删除。`S3-T10-activity-query-visibility` 已让 `useActivityQuery` 自己读取 canonical query visibility，页面不再把 `refreshEnabled` 传给普通 activity query。当前 retention allowlist 暂时保持现有全部 shell 页面保活行为，Task 11-13 逐页迁移 query/read model 后再收窄；Stations per-row `useQueries`、DOM data event、activation callback 和业务 query/local-copy 双 owner 尚未删除。
+**当前 checkpoint：** `S3-T10-page-visibility-foundation` 已建立 `PageVisibility` canonical provider、shell/transient visibility mapping 和 `pageRetentionPolicy` migration allowlist；`ShellPageHost`/`TransientPageHost` 只向旧 `PageActivity` adapter 传 visibility，`refreshRouteId` 二级刷新 owner 已删除。`S3-T10-activity-query-visibility` 已让 `useActivityQuery` 自己读取 canonical query visibility，页面不再把 `refreshEnabled` 传给普通 activity query。`S3-T10-retention-allowlist-pruned` 已移除全部 shell 页面 legacy retention allowlist，默认只保留 active + transition 两个 shell 页面；Stations per-row `useQueries` 和少量 legacy activation callback 尚未删除。
 
 **文件：**
 
