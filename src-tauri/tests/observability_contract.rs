@@ -1,8 +1,11 @@
+#[path = "../src/observability/events.rs"]
+mod events;
 #[path = "../src/observability/metrics.rs"]
 mod metrics;
 #[path = "../src/observability/redaction.rs"]
 mod redaction;
 
+use events::{StructuredEvent, StructuredEventError, StructuredEventKind, StructuredEventResult};
 use metrics::{LocalMetricBuffer, MetricEvent, MetricKind, MetricLabel, MetricOutcome};
 use redaction::{redact_text_preview, redact_url_preview};
 
@@ -96,4 +99,56 @@ fn metrics_contract_rejects_secret_or_url_labels() {
         )],
     )
     .is_err());
+}
+
+#[test]
+fn structured_event_contract_exposes_only_stable_redacted_fields() {
+    let event = StructuredEvent::new(
+        "operation.result_unknown",
+        StructuredEventKind::Operation,
+        250,
+        StructuredEventResult::Error,
+        Some((
+            "operation",
+            "https://user:pass@example.test/v1/chat?token=sk-secret#fragment",
+        )),
+    )
+    .expect("stable structured event");
+
+    assert_eq!(event.code.as_str(), "operation.result_unknown");
+    assert_eq!(event.duration_ms, 250);
+    assert_eq!(event.result, StructuredEventResult::Error);
+    let debug = format!("{event:?}");
+
+    for forbidden in [
+        "example.test",
+        "fragment",
+        "pass",
+        "sk-secret",
+        "token",
+        "/v1/chat",
+    ] {
+        assert!(!debug.contains(forbidden), "{forbidden}");
+    }
+}
+
+#[test]
+fn structured_event_contract_rejects_unstable_or_secret_codes() {
+    for code in [
+        "Authorization",
+        "C:/Users/cpp_s/relay-pool.db",
+        "https://example.test/path?token=secret",
+        "prompt=response",
+    ] {
+        assert_eq!(
+            StructuredEvent::new(
+                code,
+                StructuredEventKind::IpcCommand,
+                1,
+                StructuredEventResult::Error,
+                None,
+            ),
+            Err(StructuredEventError::InvalidStableCode)
+        );
+    }
 }

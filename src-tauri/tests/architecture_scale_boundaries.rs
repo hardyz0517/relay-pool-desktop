@@ -35,6 +35,7 @@ struct Graph {
     blocking_executor_submit_sites: BTreeSet<String>,
     http_client_sites: BTreeSet<String>,
     registry_macros: BTreeSet<String>,
+    tracing_sites: BTreeSet<String>,
     parsed_modules: BTreeSet<String>,
 }
 
@@ -96,6 +97,11 @@ impl<'ast> Visit<'ast> for SourceVisitor<'_> {
 
     fn visit_expr_macro(&mut self, node: &'ast ExprMacro) {
         let macro_path = path_to_string(&node.mac.path);
+        if is_tracing_macro(&macro_path) {
+            self.graph
+                .tracing_sites
+                .insert(format!("{}::{macro_path}", self.owner));
+        }
         if is_registry_macro(&macro_path) {
             self.graph
                 .registry_macros
@@ -106,6 +112,11 @@ impl<'ast> Visit<'ast> for SourceVisitor<'_> {
 
     fn visit_item_macro(&mut self, node: &'ast ItemMacro) {
         let macro_path = path_to_string(&node.mac.path);
+        if is_tracing_macro(&macro_path) {
+            self.graph
+                .tracing_sites
+                .insert(format!("{}::{macro_path}", self.owner));
+        }
         if is_registry_macro(&macro_path) {
             self.graph
                 .registry_macros
@@ -133,6 +144,26 @@ fn is_registry_macro(path: &str) -> bool {
     path.ends_with("generate_handler")
         || path.ends_with("command_registry_fixture")
         || path.ends_with("command_registry")
+}
+
+fn is_tracing_macro(path: &str) -> bool {
+    path.starts_with("tracing::")
+        && matches!(
+            path.rsplit("::").next(),
+            Some(
+                "debug"
+                    | "debug_span"
+                    | "error"
+                    | "error_span"
+                    | "info"
+                    | "info_span"
+                    | "span"
+                    | "trace"
+                    | "trace_span"
+                    | "warn"
+                    | "warn_span"
+            )
+        )
 }
 
 fn quote_path(expression: &syn::Expr) -> String {
@@ -921,4 +952,13 @@ fn production_boundaries_match_manifest() {
             );
         }
     }
+    assert_eq!(
+        graph.tracing_sites,
+        BTreeSet::from([
+            "crate::observability::correlation::in_command_scope::tracing::info_span".to_string(),
+            "crate::observability::correlation::in_scope::tracing::info_span".to_string(),
+            "crate::observability::correlation::with_scope::tracing::info_span".to_string(),
+        ]),
+        "structured tracing must flow through the stable redacted correlation/event contract"
+    );
 }

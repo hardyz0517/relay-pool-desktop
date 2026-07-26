@@ -3,6 +3,8 @@ use std::future::Future;
 use sha2::{Digest, Sha256};
 use tracing::Instrument;
 
+use crate::observability::events::StableEventCode;
+
 pub(crate) const CORRELATION_ID_BYTES: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub(crate) async fn in_scope<T>(
     correlation_id: CorrelationId,
     future: impl Future<Output = T>,
 ) -> T {
+    StableEventCode::new(span_name).expect("work span scope must be a stable public code");
     let span = tracing::info_span!(
         "work.scope",
         scope = span_name,
@@ -68,6 +71,7 @@ pub(crate) fn with_scope<T>(
     correlation_id: CorrelationId,
     operation: impl FnOnce() -> T,
 ) -> T {
+    StableEventCode::new(span_name).expect("work span scope must be a stable public code");
     let span = tracing::info_span!(
         "work.scope",
         scope = span_name,
@@ -81,6 +85,7 @@ pub(crate) async fn in_command_scope<T>(
     command: &'static str,
     future: impl Future<Output = T>,
 ) -> T {
+    StableEventCode::new(command).expect("command span scope must be a stable public code");
     let correlation_id = CorrelationId::new();
     let span = tracing::info_span!(
         "ipc.command",
@@ -170,5 +175,18 @@ mod tests {
 
         assert_eq!(observed, correlation_id);
         assert!(current().is_none(), "synchronous scope must not leak");
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "command span scope must be a stable public code")]
+    async fn command_scope_rejects_secret_or_url_shaped_span_fields() {
+        in_command_scope("https://example.test/v1?token=secret", async {}).await;
+    }
+
+    #[test]
+    #[should_panic(expected = "work span scope must be a stable public code")]
+    fn work_scope_rejects_secret_or_path_shaped_span_fields() {
+        let correlation_id = CorrelationId::for_proxy_request("req_fixture");
+        with_scope("C:\\Users\\cpp_s\\relay-pool.db", correlation_id, || ());
     }
 }
