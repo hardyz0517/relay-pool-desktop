@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import {
   Button,
   ConfirmDialog,
@@ -45,7 +44,6 @@ type LogFilter = "all" | "failed" | "fallback";
 export function LogsPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const refreshEnabled = usePageRefreshEnabled();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
   const logsQuery = useActivityQuery(
     requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),
@@ -84,11 +82,7 @@ export function LogsPage() {
   async function refreshLogs(showSuccess = false) {
     setPage(1);
     try {
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: queryKeys.requestLogs, type: "active" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.keyPool, type: "active" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.settings, type: "active" }),
-      ]);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.requestLogs });
       if (showSuccess) {
         toast.success("使用记录已刷新");
       }

@@ -39,3 +39,11 @@ assert.ok(
   !/Promise\.all\(\[\s*listRequestLogs\(\),\s*listKeyPoolItems\(\),?\s*\]\)/s.test(pageSource),
   "logs page should no longer own raw fact Promise.all orchestration",
 );
+
+assert.ok(
+  /useActivityQuery\(\s*requestLogsQueryOptions\(/.test(pageSource) &&
+    pageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.requestLogs })") &&
+    !pageSource.includes("usePageRefreshEnabled") &&
+    !pageSource.includes("Promise.all("),
+  "logs page refresh should target the canonical request-log query owner without legacy page refresh or page-local fan-out",
+);

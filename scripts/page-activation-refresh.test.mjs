@@ -124,6 +124,15 @@ assert.ok(
   "monitoring should use the channel monitoring query owner instead of an activation loader",
 );
 
+const logsSource = await readFile("src/features/logs/LogsPage.tsx", "utf8");
+assert.ok(
+  /useActivityQuery\(\s*requestLogsQueryOptions\(/.test(logsSource) &&
+    logsSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.requestLogs })") &&
+    !logsSource.includes("usePageRefreshEnabled") &&
+    !logsSource.includes("Promise.all("),
+  "logs page should refresh through the canonical request log query owner without legacy refresh fan-out",
+);
+
 const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage.tsx", "utf8");
 assert.ok(
   changeCenterSource.includes("useActivityQuery") &&
