@@ -412,7 +412,7 @@ pub fn run() {
                     let station_collection_command_facade =
                         app_composition::compose_station_collection_command_facade(
                             &app_services,
-                            blocking_executor,
+                            blocking_executor.clone(),
                             data_key,
                         );
                     let station_key_connectivity_command_facade =
@@ -468,7 +468,11 @@ pub fn run() {
                     let station_collector_runner =
                         services::station_collectors::StationCollectorRunnerState::start_v2(
                             supervisor_handle,
-                            services::station_collectors::v2_runner_port(&app_services, data_key),
+                            services::station_collectors::v2_runner_port(
+                                &app_services,
+                                blocking_executor,
+                                data_key,
+                            ),
                         )
                         .map_err(|error| {
                             format!("failed to start station collector runner: {error}")

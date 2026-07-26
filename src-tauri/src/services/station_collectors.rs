@@ -8,7 +8,10 @@ use futures_util::future::BoxFuture;
 
 use crate::{
     application::{app_services::AppServices, collectors::CollectorService, pagination::PageLimit},
-    background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor},
+    background_tasks::{
+        BlockingExecutor, BlockingExecutorError, TaskFailure, TaskId, TaskRunContext, TaskSpec,
+        TaskSupervisor,
+    },
     services::collectors::{
         self,
         adapters::CollectorTask,
@@ -26,6 +29,7 @@ static ACTIVE_STATION_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 pub(crate) fn v2_runner_port(
     services: &AppServices,
+    blocking: BlockingExecutor,
     data_key: [u8; 32],
 ) -> Arc<dyn StationCollectorRunnerPort> {
     let source: Arc<dyn CollectorSourcePort> = Arc::new(V2CollectorSourceAdapter::new(
@@ -35,8 +39,9 @@ pub(crate) fn v2_runner_port(
     ));
     let apply: Arc<dyn CollectorApplyPort> =
         Arc::new(V2CollectorApplyAdapter::new((*services.collectors).clone()));
-    let tasks: Arc<dyn StationCollectorTaskPort> =
-        Arc::new(V2StationCollectorTaskAdapter::new(source, apply, data_key));
+    let tasks: Arc<dyn StationCollectorTaskPort> = Arc::new(V2StationCollectorTaskAdapter::new(
+        source, apply, blocking, data_key,
+    ));
     Arc::new(V2StationCollectorRunnerAdapter::new(
         services.collectors.clone(),
         tasks,
@@ -48,12 +53,31 @@ pub(crate) trait StationCollectorTaskPort: Send + Sync + 'static {
         &self,
         station_id: String,
         task: CollectorTask,
+        context: StationCollectorTaskContext,
     ) -> BoxFuture<'static, Result<(), String>>;
+}
+
+#[derive(Clone)]
+pub(crate) struct StationCollectorTaskContext {
+    task_id: TaskId,
+    run_id: u64,
+    cancellation_token: tokio_util::sync::CancellationToken,
+}
+
+impl From<&TaskRunContext> for StationCollectorTaskContext {
+    fn from(context: &TaskRunContext) -> Self {
+        Self {
+            task_id: context.task_id.clone(),
+            run_id: context.run_id.0,
+            cancellation_token: context.cancellation_token.clone(),
+        }
+    }
 }
 
 pub(crate) struct V2StationCollectorTaskAdapter {
     source: Arc<dyn CollectorSourcePort>,
     apply: Arc<dyn CollectorApplyPort>,
+    blocking: BlockingExecutor,
     data_key: [u8; 32],
 }
 
@@ -61,11 +85,13 @@ impl V2StationCollectorTaskAdapter {
     pub(crate) fn new(
         source: Arc<dyn CollectorSourcePort>,
         apply: Arc<dyn CollectorApplyPort>,
+        blocking: BlockingExecutor,
         data_key: [u8; 32],
     ) -> Self {
         Self {
             source,
             apply,
+            blocking,
             data_key,
         }
     }
@@ -76,16 +102,40 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
         &self,
         station_id: String,
         task: CollectorTask,
+        context: StationCollectorTaskContext,
     ) -> BoxFuture<'static, Result<(), String>> {
         let source = self.source.clone();
         let apply = self.apply.clone();
+        let blocking = self.blocking.clone();
         let data_key = self.data_key;
         Box::pin(async move {
-            let prepared = tauri::async_runtime::spawn_blocking(move || {
-                collectors::prepare_station_task_v2(source.as_ref(), &data_key, station_id, task)
-            })
-            .await
-            .map_err(|error| format!("collector worker failed to join: {error}"))?
+            let operation_id = Some(format!("{}:{}", context.task_id, context.run_id));
+            let prepare = blocking
+                .submit(
+                    "station_collector_prepare",
+                    operation_id,
+                    None,
+                    None,
+                    move |_| {
+                        Ok(collectors::prepare_station_task_v2(
+                            source.as_ref(),
+                            &data_key,
+                            station_id,
+                            task,
+                        ))
+                    },
+                )
+                .map_err(blocking_executor_error_message)?;
+            let prepare_cancellation_token = prepare.cancellation_token();
+            let prepared = tokio::select! {
+                _ = context.cancellation_token.cancelled() => {
+                    prepare_cancellation_token.cancel();
+                    return Err("Station collector task was cancelled".to_string());
+                }
+                result = prepare.result() => {
+                    result.map_err(blocking_executor_error_message)?
+                }
+            }
             .map_err(|error| error.to_string())?;
             collectors::apply_prepared_station_task_v2(
                 apply.as_ref(),
@@ -107,6 +157,7 @@ pub(crate) trait StationCollectorRunnerPort: Send + Sync + 'static {
         &self,
         station_id: String,
         task: CollectorTask,
+        context: StationCollectorTaskContext,
     ) -> BoxFuture<'static, Result<(), String>>;
 }
 
@@ -141,8 +192,9 @@ impl StationCollectorRunnerPort for V2StationCollectorRunnerAdapter {
         &self,
         station_id: String,
         task: CollectorTask,
+        context: StationCollectorTaskContext,
     ) -> BoxFuture<'static, Result<(), String>> {
-        self.tasks.collect_task(station_id, task)
+        self.tasks.collect_task(station_id, task, context)
     }
 }
 
@@ -210,7 +262,9 @@ async fn run_due_station_collections_once_v2(
                 if context.cancellation_token.is_cancelled() {
                     break;
                 }
-                if let Err(error) = run_station_collection_guarded_v2(port, &station_id).await {
+                if let Err(error) =
+                    run_station_collection_guarded_v2(port, &station_id, context).await
+                {
                     eprintln!("Station collector runner failed for {station_id}: {error}");
                 }
             }
@@ -224,13 +278,19 @@ async fn run_due_station_collections_once_v2(
 async fn run_station_collection_guarded_v2(
     port: &dyn StationCollectorRunnerPort,
     station_id: &str,
+    context: &TaskRunContext,
 ) -> Result<(), String> {
     let _guard = StationCollectorRunGuard::try_start(station_id)?;
+    let task_context = StationCollectorTaskContext::from(context);
     let balance_result = port
-        .collect_task(station_id.to_string(), CollectorTask::Balance)
+        .collect_task(
+            station_id.to_string(),
+            CollectorTask::Balance,
+            task_context.clone(),
+        )
         .await;
     let groups_result = port
-        .collect_task(station_id.to_string(), CollectorTask::Groups)
+        .collect_task(station_id.to_string(), CollectorTask::Groups, task_context)
         .await;
     combine_collection_results(balance_result, groups_result)
 }
@@ -252,6 +312,34 @@ fn combine_collection_results(
         (Err(balance_error), Err(groups_error)) => Err(format!(
             "balance collection failed: {balance_error}; group collection failed: {groups_error}"
         )),
+    }
+}
+
+fn blocking_executor_error_message(error: BlockingExecutorError) -> String {
+    match error {
+        BlockingExecutorError::QueueFull => {
+            "Station collector blocking capacity is full".to_string()
+        }
+        BlockingExecutorError::QueueTimeout => {
+            "Station collector blocking capacity timed out".to_string()
+        }
+        BlockingExecutorError::ExecutionTimeout => {
+            "Station collector blocking task timed out".to_string()
+        }
+        BlockingExecutorError::CancelledBeforeStart
+        | BlockingExecutorError::CancelledLateResultDiscarded => {
+            "Station collector task was cancelled".to_string()
+        }
+        BlockingExecutorError::Closed => {
+            "Station collector blocking executor is closed".to_string()
+        }
+        BlockingExecutorError::Panicked => "Station collector blocking task panicked".to_string(),
+        BlockingExecutorError::JobFailed { code } => {
+            format!("Station collector blocking task failed: {code}")
+        }
+        BlockingExecutorError::ShutdownTimeout { .. } => {
+            "Station collector blocking executor shutdown timed out".to_string()
+        }
     }
 }
 
@@ -287,12 +375,13 @@ impl Drop for StationCollectorRunGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::background_tasks::TaskState;
+    use crate::background_tasks::{TaskRunId, TaskState};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Mutex,
     };
     use tokio::sync::{oneshot, Notify};
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn combines_balance_and_group_collection_errors_without_losing_partial_failure() {
@@ -319,8 +408,9 @@ mod tests {
     #[tokio::test]
     async fn guarded_collection_runs_balance_then_groups_for_due_station() {
         let port = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
+        let context = test_run_context();
 
-        run_station_collection_guarded_v2(&port, "station-1")
+        run_station_collection_guarded_v2(&port, "station-1", &context)
             .await
             .expect("guarded run succeeds");
 
@@ -336,8 +426,9 @@ mod tests {
     #[tokio::test]
     async fn guarded_collection_keeps_group_side_effect_after_balance_failure() {
         let port = RecordingRunnerPort::new(vec![Err("balance failed".to_string()), Ok(())]);
+        let context = test_run_context();
 
-        let result = run_station_collection_guarded_v2(&port, "station-2").await;
+        let result = run_station_collection_guarded_v2(&port, "station-2", &context).await;
 
         assert_eq!(result, Err("balance failed".to_string()));
         assert_eq!(
@@ -358,13 +449,16 @@ mod tests {
             Mutex::new(Some(release_receiver)),
         );
         let running = tokio::spawn(async move {
-            run_station_collection_guarded_v2(&port, "station-guarded").await
+            let context = test_run_context();
+            run_station_collection_guarded_v2(&port, "station-guarded", &context).await
         });
         notify_started.notified().await;
 
         let duplicate = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
+        let duplicate_context = test_run_context();
         let duplicate_result =
-            run_station_collection_guarded_v2(&duplicate, "station-guarded").await;
+            run_station_collection_guarded_v2(&duplicate, "station-guarded", &duplicate_context)
+                .await;
         assert_eq!(
             duplicate_result,
             Err("Station collector is already running".to_string())
@@ -378,9 +472,14 @@ mod tests {
             .expect("first run succeeds");
 
         let after_release = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
-        run_station_collection_guarded_v2(&after_release, "station-guarded")
-            .await
-            .expect("guard is released after first run");
+        let after_release_context = test_run_context();
+        run_station_collection_guarded_v2(
+            &after_release,
+            "station-guarded",
+            &after_release_context,
+        )
+        .await
+        .expect("guard is released after first run");
         assert_eq!(after_release.calls().len(), 2);
     }
 
@@ -411,6 +510,7 @@ mod tests {
             &self,
             station_id: String,
             task: CollectorTask,
+            _context: StationCollectorTaskContext,
         ) -> BoxFuture<'static, Result<(), String>> {
             self.calls.lock().expect("calls").push((station_id, task));
             let result = self.results.lock().expect("results").remove(0);
@@ -446,6 +546,7 @@ mod tests {
             &self,
             _station_id: String,
             _task: CollectorTask,
+            _context: StationCollectorTaskContext,
         ) -> BoxFuture<'static, Result<(), String>> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             if call == 0 {
@@ -485,5 +586,29 @@ mod tests {
             supervisor.status(&task_id).expect("runner status").state,
             TaskState::Stopping
         );
+    }
+
+    #[test]
+    fn station_collector_blocking_errors_are_public_safe_messages() {
+        assert_eq!(
+            blocking_executor_error_message(BlockingExecutorError::QueueFull),
+            "Station collector blocking capacity is full"
+        );
+        assert_eq!(
+            blocking_executor_error_message(BlockingExecutorError::ExecutionTimeout),
+            "Station collector blocking task timed out"
+        );
+        assert_eq!(
+            blocking_executor_error_message(BlockingExecutorError::CancelledBeforeStart),
+            "Station collector task was cancelled"
+        );
+    }
+
+    fn test_run_context() -> TaskRunContext {
+        TaskRunContext {
+            task_id: TaskId::from(RUNNER_TASK_ID),
+            run_id: TaskRunId(1),
+            cancellation_token: CancellationToken::new(),
+        }
     }
 }

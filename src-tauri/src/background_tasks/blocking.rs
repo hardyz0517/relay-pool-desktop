@@ -209,6 +209,10 @@ impl<T> BlockingJobHandle<T> {
         self.token.cancel();
     }
 
+    pub fn cancellation_token(&self) -> CancellationToken {
+        self.token.clone()
+    }
+
     pub async fn result(self) -> Result<T, BlockingExecutorError> {
         self.join
             .await
