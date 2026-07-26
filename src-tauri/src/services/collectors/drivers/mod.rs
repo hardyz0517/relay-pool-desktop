@@ -1,3 +1,4 @@
+pub mod newapi;
 pub mod openai_compatible;
 
 use std::sync::Arc;

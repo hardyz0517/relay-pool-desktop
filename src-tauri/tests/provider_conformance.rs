@@ -228,6 +228,15 @@ mod services {
         }
     }
 
+    pub mod group_categories {
+        pub fn infer_group_category(
+            group_name: &str,
+            _raw_json_redacted: Option<&serde_json::Value>,
+        ) -> String {
+            group_name.trim().to_lowercase()
+        }
+    }
+
     pub mod collectors {
         pub mod facts {
             include!(concat!(
