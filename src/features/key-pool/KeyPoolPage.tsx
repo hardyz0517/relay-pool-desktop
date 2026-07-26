@@ -15,19 +15,18 @@ import { CSS } from "@dnd-kit/utilities";
 import { useQueryClient } from "@tanstack/react-query";
 import { Activity, Bot, Edit3, GripVertical, KeyRound, Loader2, MessageCircle, Plus, RotateCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageActivation } from "@/components/shell/PageActivity";
 import { Button, ConfirmDialog, Dialog, EmptyState, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone, useToast } from "@/components/ui";
-import { createChannelMonitor, listChannelMonitorTemplates, listChannelMonitors, updateChannelMonitor } from "@/lib/api/channelMonitors";
+import { createChannelMonitor, updateChannelMonitor } from "@/lib/api/channelMonitors";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { deleteStationKey, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
-import { keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
+import { channelMonitoringQueryOptions, keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { parseTimestampLikeDate } from "@/lib/time";
-import type { ChannelMonitor, ChannelMonitorRequestTemplate } from "@/lib/types/channelMonitors";
+import type { ChannelMonitor } from "@/lib/types/channelMonitors";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
@@ -87,14 +86,18 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const queryClient = useQueryClient();
   const keyPoolItemsQuery = useActivityQuery(keyPoolQueryOptions());
   const stationsQuery = useActivityQuery(stationsQueryOptions());
+  const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions());
   const stations = stationsQuery.data ?? [];
   const items = keyPoolItemsQuery.data ?? [];
-  const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
-  const [monitorTemplates, setMonitorTemplates] = useState<ChannelMonitorRequestTemplate[]>([]);
+  const monitorSummaries = channelMonitoringQuery.data?.monitorSummaries ?? [];
+  const monitors = useMemo(
+    () => monitorSummaries.map((summary) => summary.monitor),
+    [monitorSummaries],
+  );
+  const monitorTemplates = channelMonitoringQuery.data?.templates ?? [];
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
   const [query, setQuery] = useState("");
-  const [monitorResourcesLoading, setMonitorResourcesLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
@@ -113,17 +116,18 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
   const [monitoringKeyId, setMonitoringKeyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const connectivityRunTokenRef = useRef(0);
-  const loading = keyPoolItemsQuery.isLoading || stationsQuery.isLoading || monitorResourcesLoading;
+  const queryError = keyPoolItemsQuery.error ?? stationsQuery.error ?? channelMonitoringQuery.error;
+  const displayError = error ?? (queryError ? readError(queryError) : null);
+  const loading =
+    keyPoolItemsQuery.isLoading ||
+    stationsQuery.isLoading ||
+    (channelMonitoringQuery.isPending && channelMonitoringQuery.data === undefined);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const activeDragItem = useMemo(
     () => items.find((item) => item.id === activeDragId) ?? null,
     [activeDragId, items],
   );
-
-  usePageActivation(({ isInitial }) => {
-    void refreshMonitorResources(isInitial);
-  });
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
@@ -159,29 +163,6 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
     () => stations.map((station) => ({ id: station.id, label: station.name })),
     [stations],
   );
-
-  async function refreshMonitorResources(showLoading = true) {
-    if (showLoading) {
-      setMonitorResourcesLoading(true);
-    }
-    setError(null);
-    try {
-      const [nextMonitors, nextTemplates] = await Promise.all([
-        listChannelMonitors(),
-        listChannelMonitorTemplates(),
-      ]);
-      setMonitors(nextMonitors);
-      setMonitorTemplates(nextTemplates);
-    } catch (requestError) {
-      const message = readError(requestError);
-      setError(message);
-      toast.error("读取密钥池失败", message);
-    } finally {
-      if (showLoading) {
-        setMonitorResourcesLoading(false);
-      }
-    }
-  }
 
   async function invalidateKeyPoolQueries(includeStations = true) {
     await Promise.all([
@@ -410,7 +391,10 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
           toast.info("即时连通性未通过，已创建定时监控", connectivityResult.message);
         }
       }
-      await refreshMonitorResources(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus }),
+      ]);
       toast.success(nextEnabled ? "监控已开启" : "监控已停用");
     } catch (requestError) {
       toast.error("更新监控开关失败", readError(requestError));
@@ -626,6 +610,11 @@ export function KeyPoolPage({ onAddKey, onEditKey }: KeyPoolPageProps) {
         </div>
       }
     >
+      {displayError && (
+        <div className="mb-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+          {displayError}
+        </div>
+      )}
       {loading ? (
         <div className="rounded-[var(--surface-radius)] border border-info-border bg-surface/85 px-4 py-5 text-sm text-muted-foreground">
           正在读取密钥池...

@@ -116,6 +116,16 @@ assert.ok(
 );
 
 assert.ok(
+  keyPoolPageSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
+    keyPoolPageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") &&
+    keyPoolPageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus })") &&
+    !keyPoolPageSource.includes("listChannelMonitors") &&
+    !keyPoolPageSource.includes("listChannelMonitorTemplates") &&
+    !keyPoolPageSource.includes("refreshMonitorResources"),
+  "key-pool monitor resources should be read and refreshed through canonical channel query owners",
+);
+
+assert.ok(
   keyPoolPageSource.includes("const monitorModel = connectivityResult.ok ? connectivityResult.model : null"),
   "key-pool monitor creation should fall back to configured model selection when the immediate connectivity test fails",
 );

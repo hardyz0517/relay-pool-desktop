@@ -30,9 +30,14 @@ const keyPoolSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "u
 assert.ok(
   keyPoolSource.includes("useActivityQuery(keyPoolQueryOptions())") &&
     keyPoolSource.includes("useActivityQuery(stationsQueryOptions())") &&
+    keyPoolSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
     !keyPoolSource.includes("handleKeyPoolItemsUpdated") &&
-    !keyPoolSource.includes("KEY_POOL_ITEMS_UPDATED_EVENT"),
-  "KeyPool reads should use activity-bound query owners without DOM update events",
+    !keyPoolSource.includes("KEY_POOL_ITEMS_UPDATED_EVENT") &&
+    !keyPoolSource.includes("usePageActivation") &&
+    !keyPoolSource.includes("listChannelMonitors") &&
+    !keyPoolSource.includes("listChannelMonitorTemplates") &&
+    !keyPoolSource.includes("refreshMonitorResources"),
+  "KeyPool reads should use activity-bound query owners without DOM update events or monitor activation loaders",
 );
 
 console.log("hidden page query boundary contract passed");

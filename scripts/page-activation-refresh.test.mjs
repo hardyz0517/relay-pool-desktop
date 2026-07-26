@@ -117,6 +117,17 @@ assert.ok(
   "settings page should use activity-bound query owners instead of a local activation loader",
 );
 
+const keyPoolSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
+assert.ok(
+  keyPoolSource.includes("useActivityQuery(keyPoolQueryOptions())") &&
+    keyPoolSource.includes("useActivityQuery(stationsQueryOptions())") &&
+    keyPoolSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
+    keyPoolSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") &&
+    !keyPoolSource.includes("usePageActivation") &&
+    !keyPoolSource.includes("refreshMonitorResources"),
+  "key pool should read monitor resources through canonical query owners instead of an activation loader",
+);
+
 for (const page of pages) {
   const source = await readFile(page, "utf8");
   assert.ok(
