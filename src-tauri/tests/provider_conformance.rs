@@ -206,6 +206,15 @@ mod models {
             pub collected_at: String,
         }
 
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct CreateRemoteStationKeyInput {
+            pub station_id: String,
+            pub name: String,
+            pub group_binding_id: Option<String>,
+            pub group_id_hash: Option<String>,
+            pub group_name: Option<String>,
+        }
+
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub enum RemoteKeyMatchStatus {
             Matched,
@@ -360,7 +369,12 @@ mod services {
                 use serde_json::Value;
 
                 use crate::{
-                    models::station_keys::StationKey,
+                    models::{
+                        remote_keys::{
+                            CreateRemoteStationKeyInput, RemoteKeyMatchStatus, RemoteStationKey,
+                        },
+                        station_keys::StationKey,
+                    },
                     services::collectors::facts::{
                         CollectedBalanceFact, CollectedGroupFact, CollectorFacts,
                     },
@@ -437,6 +451,154 @@ mod services {
                     _station_id: &str,
                     _stats: DashboardUsageStats,
                 ) {
+                }
+
+                pub fn parse_remote_key_payload(
+                    station_id: &str,
+                    payload: &Value,
+                ) -> Vec<RemoteStationKey> {
+                    remote_key_items(payload)
+                        .into_iter()
+                        .enumerate()
+                        .filter_map(|(index, value)| {
+                            remote_key_from_value(station_id, value, index)
+                        })
+                        .collect()
+                }
+
+                pub fn remote_key_items(payload: &Value) -> Vec<&Value> {
+                    if let Some(items) = payload.as_array() {
+                        return items.iter().collect();
+                    }
+                    for pointer in [
+                        "/data/items",
+                        "/data/list",
+                        "/data/keys",
+                        "/data",
+                        "/items",
+                        "/list",
+                        "/keys",
+                    ] {
+                        if let Some(items) = payload.pointer(pointer).and_then(Value::as_array) {
+                            return items.iter().collect();
+                        }
+                    }
+                    if payload.is_object() {
+                        vec![payload]
+                    } else {
+                        Vec::new()
+                    }
+                }
+
+                pub fn remote_key_from_value(
+                    station_id: &str,
+                    value: &Value,
+                    index: usize,
+                ) -> Option<RemoteStationKey> {
+                    let name = value
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
+                    let full_key = full_key_from_key_value(value);
+                    Some(RemoteStationKey {
+                        id: format!(
+                            "sub2api-remote-key-{}",
+                            name.clone().unwrap_or_else(|| index.to_string())
+                        ),
+                        station_id: station_id.to_string(),
+                        remote_key_id_hash: value
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                        remote_key_name: name,
+                        api_key_masked: full_key
+                            .as_deref()
+                            .map(crate::services::secrets::mask::mask_secret),
+                        api_key_fingerprint: None,
+                        group_id_hash: None,
+                        group_name: value
+                            .get("group")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                        tier_label: None,
+                        rate_multiplier: None,
+                        rate_source: Some("sub2api_keys".to_string()),
+                        created_at: None,
+                        last_used_at: None,
+                        raw_source: "sub2api_keys".to_string(),
+                        match_status: RemoteKeyMatchStatus::Unbound,
+                        matched_station_key_id: None,
+                        match_confidence: 0.0,
+                        collected_at: "1".to_string(),
+                    })
+                }
+
+                pub fn sub2api_group_id_value(group_id: &str) -> Value {
+                    group_id
+                        .parse::<i64>()
+                        .map(Value::from)
+                        .unwrap_or_else(|_| Value::from(group_id.to_string()))
+                }
+
+                pub fn remote_key_from_create_input(
+                    station_id: &str,
+                    input: &CreateRemoteStationKeyInput,
+                    full_key: Option<&str>,
+                ) -> RemoteStationKey {
+                    RemoteStationKey {
+                        id: format!("sub2api-remote-key-{}", input.name),
+                        station_id: station_id.to_string(),
+                        remote_key_id_hash: None,
+                        remote_key_name: Some(input.name.clone()),
+                        api_key_masked: full_key.map(crate::services::secrets::mask::mask_secret),
+                        api_key_fingerprint: None,
+                        group_id_hash: input.group_id_hash.clone(),
+                        group_name: input.group_name.clone(),
+                        tier_label: None,
+                        rate_multiplier: None,
+                        rate_source: Some("sub2api_keys".to_string()),
+                        created_at: None,
+                        last_used_at: None,
+                        raw_source: "sub2api_keys".to_string(),
+                        match_status: RemoteKeyMatchStatus::Unbound,
+                        matched_station_key_id: None,
+                        match_confidence: 0.0,
+                        collected_at: "1".to_string(),
+                    }
+                }
+
+                pub fn full_key_from_key_value(value: &Value) -> Option<String> {
+                    value
+                        .get("key")
+                        .or_else(|| value.get("api_key"))
+                        .or_else(|| value.get("apiKey"))
+                        .or_else(|| value.get("token"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| value.len() >= 12 && !value.contains('*'))
+                        .map(ToString::to_string)
+                }
+
+                pub fn full_key_from_create_payload(payload: &Value) -> Option<String> {
+                    full_key_from_key_value(payload)
+                        .or_else(|| {
+                            payload
+                                .pointer("/data/key")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                        .or_else(|| {
+                            payload
+                                .pointer("/data/api_key")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
+                        .or_else(|| {
+                            payload
+                                .pointer("/data/apiKey")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        })
                 }
 
                 fn balance_fact(

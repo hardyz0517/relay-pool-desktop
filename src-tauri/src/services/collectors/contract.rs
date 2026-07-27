@@ -231,6 +231,7 @@ pub struct CreateRemoteKeyRequest {
     pub endpoints: ProviderEndpoints,
     pub credential: OpaqueCredentialHandle,
     pub name: String,
+    pub provider_group_id: Option<String>,
     pub group_name: Option<String>,
     pub idempotency_key: Option<String>,
 }

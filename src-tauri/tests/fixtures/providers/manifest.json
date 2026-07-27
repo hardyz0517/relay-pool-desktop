@@ -375,32 +375,381 @@
       }
     },
     {
-      "id": "sub2api-remote-key-unsupported",
+      "id": "sub2api-remote-key-success",
       "providerKind": "sub2api",
       "capability": "remote_key",
-      "scenario": "unsupported",
+      "scenario": "success",
       "endpointRole": "remote_keys",
       "requestSchema": {
-        "kind": "none",
-        "reason": "Task 19.A registry entry does not declare a remote-key driver"
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "auth": "Bearer access token"
       },
       "responseSchema": {
-        "kind": "driver_failure",
-        "failureKind": "unsupported"
+        "status": 200,
+        "body": {
+          "data": [
+            {
+              "id": "rk_1",
+              "name": "primary",
+              "key": "sk-sub2api-full-secret-7890",
+              "group": "default"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-full-secret-7890"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key list fixture for Task 21.B production remote-key cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "remoteKeys": [
+            "primary"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sub2api-remote-key-partial",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "partial",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": [
+          "/api/v1/keys",
+          "/api/v1/keys?page=1&page_size=100"
+        ],
+        "commitBarrier": "create response received before reconcile"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {
+            "name": "created",
+            "key": "sk-sub2api-created-secret"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-created-secret"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API create/reconcile fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "result": "created_then_reconciled"
+        }
+      }
+    },
+    {
+      "id": "sub2api-remote-key-auth-failure",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "auth_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "auth": "expired bearer"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "message": "unauthorized"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sub2api-access-token-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key auth rejection fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-rate-limit",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "rate_limit",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "message": "rate limited"
+        }
       },
       "redaction": {
         "status": "not_applicable",
         "secretCanaries": []
       },
       "source": {
-        "kind": "stage19a-registry-descriptor",
-        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
-        "provenance": "Static registry declares Sub2API with no remote-key capability until Task 21 cutover."
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key rate limit fixture for Task 21.B."
       },
       "expected": {
-        "registryStatus": "unsupported",
-        "failureKind": "unsupported",
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
         "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-server-failure",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "server_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 503,
+        "body": {
+          "message": "service unavailable"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key provider unavailable fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-malformed",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "malformed",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key malformed list fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-unknown-shape",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "unknown_shape",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/v1/keys"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {
+            "token": "unexpected"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-unexpected-secret"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key unknown create shape fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-cancel",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "cancel",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "cancellation": "before response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key cancellation fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-budget-exhaustion",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key budget exhaustion fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-stale-endpoint-revision",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/v1/keys",
+        "commitBarrier": "endpoint revision checked before local persistence"
+      },
+      "responseSchema": {
+        "kind": "application_failure",
+        "failureKind": "stale_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-service-fixture",
+        "path": "src-tauri/src/services/remote_keys.rs",
+        "provenance": "Synthetic Sub2API remote-key endpoint revision barrier fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-redaction",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "redaction",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/v1/keys",
+        "auth": "bearer access token"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {
+            "key": "sk-sub2api-redaction-secret"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-redaction-secret",
+          "sub2api-access-token-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key secret redaction fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "secret": "one_time_only"
+        }
       }
     },
     {

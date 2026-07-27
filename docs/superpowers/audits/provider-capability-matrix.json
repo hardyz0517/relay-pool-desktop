@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "stage": "Stage 5 Task 21.A",
-  "status": "sub2api-collector-production-cutover",
+  "stage": "Stage 5 Task 21.B",
+  "status": "sub2api-remote-key-production-cutover",
   "registryOwner": "src-tauri/src/services/collectors/drivers/mod.rs",
   "harness": "src-tauri/tests/provider_conformance.rs",
   "providers": [
@@ -30,10 +30,20 @@
           ]
         },
         "remote_key": {
-          "status": "unsupported",
-          "declaredInRegistry": false,
+          "status": "supported",
+          "declaredInRegistry": true,
           "fixtureIds": [
-            "sub2api-remote-key-unsupported"
+            "sub2api-remote-key-success",
+            "sub2api-remote-key-partial",
+            "sub2api-remote-key-auth-failure",
+            "sub2api-remote-key-rate-limit",
+            "sub2api-remote-key-server-failure",
+            "sub2api-remote-key-malformed",
+            "sub2api-remote-key-unknown-shape",
+            "sub2api-remote-key-cancel",
+            "sub2api-remote-key-budget-exhaustion",
+            "sub2api-remote-key-stale-endpoint-revision",
+            "sub2api-remote-key-redaction"
           ]
         },
         "authorization": {

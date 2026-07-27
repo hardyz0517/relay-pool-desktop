@@ -76,6 +76,32 @@ impl RemoteKeysCommandFacade {
                 .await;
         }
         let source = self.source();
+        let data_key = self.data_key;
+        let station_id_for_probe = station_id.clone();
+        let sub2api_prepared = tokio::task::spawn_blocking(move || {
+            remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                &source,
+                &data_key,
+                station_id_for_probe,
+            )
+        })
+        .await
+        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        if let Some(prepared) = sub2api_prepared {
+            let source = self.source();
+            let prepared = remote_keys::prepare_sub2api_remote_key_scan_v2(
+                &source,
+                self.providers.as_ref(),
+                &self.outbound,
+                prepared,
+                tokio_util::sync::CancellationToken::new(),
+                current_correlation_id(),
+            )
+            .await?;
+            return remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared)
+                .await;
+        }
+        let source = self.source();
         let prepared = tokio::task::spawn_blocking(move || {
             remote_keys::prepare_remote_key_scan_v2(&source, station_id)
         })
@@ -99,6 +125,31 @@ impl RemoteKeysCommandFacade {
         if let Some(prepared) = newapi_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_newapi_remote_key_creation_v2(
+                &source,
+                self.providers.as_ref(),
+                &self.outbound,
+                prepared,
+                input,
+                tokio_util::sync::CancellationToken::new(),
+                current_correlation_id(),
+            )
+            .await?;
+            return remote_keys::finish_remote_key_creation_v2(self.credentials.as_ref(), prepared)
+                .await;
+        }
+        let source = self.source();
+        let data_key = self.data_key;
+        let station_id = input.station_id.clone();
+        let sub2api_prepared = tokio::task::spawn_blocking(move || {
+            remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                &source, &data_key, station_id,
+            )
+        })
+        .await
+        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        if let Some(prepared) = sub2api_prepared {
+            let source = self.source();
+            let prepared = remote_keys::prepare_sub2api_remote_key_creation_v2(
                 &source,
                 self.providers.as_ref(),
                 &self.outbound,
@@ -139,6 +190,36 @@ impl RemoteKeysCommandFacade {
         if let Some(prepared) = newapi_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_newapi_local_key_from_remote_v2(
+                &source,
+                self.providers.as_ref(),
+                &self.outbound,
+                prepared,
+                remote_key_id,
+                tokio_util::sync::CancellationToken::new(),
+                current_correlation_id(),
+            )
+            .await?;
+            return remote_keys::finish_local_key_from_remote_v2(
+                self.credentials.as_ref(),
+                prepared,
+            )
+            .await;
+        }
+        let source = self.source();
+        let data_key = self.data_key;
+        let station_id_for_probe = station_id.clone();
+        let sub2api_prepared = tokio::task::spawn_blocking(move || {
+            remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                &source,
+                &data_key,
+                station_id_for_probe,
+            )
+        })
+        .await
+        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        if let Some(prepared) = sub2api_prepared {
+            let source = self.source();
+            let prepared = remote_keys::prepare_sub2api_local_key_from_remote_v2(
                 &source,
                 self.providers.as_ref(),
                 &self.outbound,

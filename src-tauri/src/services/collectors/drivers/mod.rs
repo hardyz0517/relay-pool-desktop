@@ -20,12 +20,17 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                     collector: Some(CollectorCapabilityDescriptor {
                         supported_tasks: sub2api::SUPPORTED_COLLECTOR_TASKS,
                     }),
-                    remote_key: None,
+                    remote_key: Some(RemoteKeyCapabilityDescriptor {
+                        supports_list: true,
+                        supports_create: true,
+                        supports_reveal: true,
+                        supports_result_unknown_reconciliation: true,
+                    }),
                     authorization: None,
                 },
             },
             collector: Some(Arc::new(sub2api::Sub2ApiCollectorDriver)),
-            remote_key: None,
+            remote_key: Some(Arc::new(sub2api::Sub2ApiRemoteKeyDriver)),
             authorization: None,
         },
         ProviderEntry {

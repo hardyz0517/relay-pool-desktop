@@ -655,7 +655,7 @@ fn effective_station_proxy(
     ))
 }
 
-fn parse_remote_key_payload(station_id: &str, payload: &Value) -> Vec<RemoteStationKey> {
+pub(crate) fn parse_remote_key_payload(station_id: &str, payload: &Value) -> Vec<RemoteStationKey> {
     remote_key_items(payload)
         .into_iter()
         .enumerate()
@@ -663,7 +663,7 @@ fn parse_remote_key_payload(station_id: &str, payload: &Value) -> Vec<RemoteStat
         .collect()
 }
 
-fn remote_key_items(payload: &Value) -> Vec<&Value> {
+pub(crate) fn remote_key_items(payload: &Value) -> Vec<&Value> {
     if let Some(items) = payload.as_array() {
         return items.iter().collect();
     }
@@ -689,7 +689,7 @@ fn remote_key_items(payload: &Value) -> Vec<&Value> {
     }
 }
 
-fn remote_key_from_value(
+pub(crate) fn remote_key_from_value(
     station_id: &str,
     value: &Value,
     index: usize,
@@ -817,7 +817,7 @@ fn remote_group_id_for_create(
         .filter(|value| !value.is_empty()))
 }
 
-fn sub2api_group_id_value(group_id: &str) -> Value {
+pub(crate) fn sub2api_group_id_value(group_id: &str) -> Value {
     let trimmed = group_id.trim();
     if let Ok(numeric_id) = trimmed.parse::<i64>() {
         if numeric_id.to_string() == trimmed {
@@ -827,7 +827,7 @@ fn sub2api_group_id_value(group_id: &str) -> Value {
     json!(trimmed)
 }
 
-fn remote_key_from_create_input(
+pub(crate) fn remote_key_from_create_input(
     station_id: &str,
     input: &CreateRemoteStationKeyInput,
     full_key: Option<&str>,
@@ -858,12 +858,12 @@ fn remote_key_from_create_input(
     }
 }
 
-fn full_key_from_key_value(value: &Value) -> Option<String> {
+pub(crate) fn full_key_from_key_value(value: &Value) -> Option<String> {
     string_field(value, &["key", "api_key", "apiKey", "token"])
         .filter(|value| looks_like_full_api_key(value))
 }
 
-fn full_key_from_create_payload(payload: &Value) -> Option<String> {
+pub(crate) fn full_key_from_create_payload(payload: &Value) -> Option<String> {
     full_key_from_key_value(payload)
         .or_else(|| full_key_at_pointer(payload, "/data/key"))
         .or_else(|| full_key_at_pointer(payload, "/data/api_key"))

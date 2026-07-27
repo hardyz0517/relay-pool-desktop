@@ -5,6 +5,7 @@ use http::{header, HeaderValue, Method};
 use serde_json::{json, Value};
 
 use crate::{
+    models::remote_keys::RemoteStationKey,
     outbound::{
         OutboundFailureKind, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
         OutboundRetryPolicy, SecretHeaderValue,
@@ -13,9 +14,11 @@ use crate::{
         collectors::{
             adapters,
             contract::{
-                CollectorContext, CollectorDriver, CollectorTaskKind, CredentialSecretPurpose,
-                DriverOutput, DriverOutputStatus, ProviderAuthContext, ProviderKind,
-                RedactedDiagnostics, Sub2ApiLoginCredential, Sub2ApiStationKeyCredential,
+                CollectorContext, CollectorDriver, CollectorTaskKind, CreateRemoteKeyRequest,
+                CreatedRemoteKeyOutput, CredentialSecretPurpose, DriverOutput, DriverOutputStatus,
+                ProviderAuthContext, ProviderKind, RedactedDiagnostics, RemoteKeyDriver,
+                RemoteKeyOutput, RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest,
+                RevealedRemoteKeyOutput, Sub2ApiLoginCredential, Sub2ApiStationKeyCredential,
             },
             evidence::{redact_text, EndpointEvidence, EndpointRole, EvidenceSet},
             facts::CollectorFacts,
@@ -40,6 +43,8 @@ pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
 ];
 
 pub struct Sub2ApiCollectorDriver;
+
+pub struct Sub2ApiRemoteKeyDriver;
 
 impl CollectorDriver for Sub2ApiCollectorDriver {
     fn kind(&self) -> ProviderKind {
@@ -66,6 +71,383 @@ impl CollectorDriver for Sub2ApiCollectorDriver {
         }
         .boxed()
     }
+}
+
+impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::Sub2Api
+    }
+
+    fn list_remote_keys<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: RemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<RemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = website_url_from_endpoints(&request.endpoints)?;
+            let auth = sub2api_auth(context)?;
+            let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
+            let execution =
+                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+            if !execution.ok {
+                return Err(failed(
+                    failure_kind_from_endpoint_results(&[execution.redacted.clone()]),
+                    EndpointRole::RemoteKeys,
+                    Some(vec![execution.evidence]),
+                    "Sub2API remote-key list returned no canonical keys",
+                ));
+            }
+            let keys = adapters::sub2api::parse_remote_key_payload(
+                &request.station.station_id,
+                &execution.payload,
+            );
+            Ok(RemoteKeyOutput {
+                keys,
+                evidence: vec![execution.evidence],
+                diagnostics: RedactedDiagnostics {
+                    summary: Some(json!({"endpointResults": [execution.redacted]}).to_string()),
+                    raw_json_redacted: Some(json!({"endpointResults": [execution.redacted]})),
+                },
+            })
+        }
+        .boxed()
+    }
+
+    fn reveal_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: RevealRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<RevealedRemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = website_url_from_endpoints(&request.endpoints)?;
+            let auth = sub2api_auth(context)?;
+            let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
+            let execution =
+                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+            if !execution.ok {
+                return Err(failed(
+                    failure_kind_from_endpoint_results(&[execution.redacted.clone()]),
+                    EndpointRole::RemoteKeys,
+                    Some(vec![execution.evidence]),
+                    "Sub2API remote-key reveal list request failed",
+                ));
+            }
+            let (remote_key, full_key) = remote_key_secret_from_list_payload(
+                &request.station.station_id,
+                &request.remote_key_id,
+                &execution.payload,
+            )?;
+            Ok(RevealedRemoteKeyOutput {
+                remote_key,
+                full_key: RemoteKeySecret::new(full_key),
+                evidence: vec![execution.evidence],
+                diagnostics: RedactedDiagnostics {
+                    summary: Some(json!({"revealed": true}).to_string()),
+                    raw_json_redacted: Some(json!({"endpointResults": [execution.redacted]})),
+                },
+            })
+        }
+        .boxed()
+    }
+
+    fn create_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: CreateRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<CreatedRemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = website_url_from_endpoints(&request.endpoints)?;
+            let auth = sub2api_auth(context)?;
+            let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
+            let create =
+                create_remote_key_once(context, &website_url, &auth, &mut access_token, &request)
+                    .await?;
+            let full_key_once = adapters::sub2api::full_key_from_create_payload(&create.payload);
+            let mut remote_key = adapters::sub2api::parse_remote_key_payload(
+                &request.station.station_id,
+                &create.payload,
+            )
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| {
+                adapters::sub2api::remote_key_from_create_input(
+                    &request.station.station_id,
+                    &crate::models::remote_keys::CreateRemoteStationKeyInput {
+                        station_id: request.station.station_id.clone(),
+                        name: request.name.clone(),
+                        group_binding_id: None,
+                        group_id_hash: request.provider_group_id.clone(),
+                        group_name: request.group_name.clone(),
+                    },
+                    full_key_once.as_deref(),
+                )
+            });
+            if let Some(full_key) = full_key_once {
+                return Ok(CreatedRemoteKeyOutput {
+                    remote_key,
+                    full_key_once: RemoteKeySecret::new(full_key),
+                    evidence: vec![create.evidence],
+                    diagnostics: RedactedDiagnostics {
+                        summary: Some(
+                            json!({"created": true, "reconciledBy": "create_response"}).to_string(),
+                        ),
+                        raw_json_redacted: Some(json!({"endpointResults": [create.redacted]})),
+                    },
+                });
+            }
+
+            let list =
+                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+            if list.ok {
+                if let Some((listed_key, full_key)) = remote_key_secret_by_name_from_list_payload(
+                    &request.station.station_id,
+                    &request.name,
+                    &list.payload,
+                )? {
+                    remote_key = listed_key;
+                    return Ok(CreatedRemoteKeyOutput {
+                        remote_key,
+                        full_key_once: RemoteKeySecret::new(full_key),
+                        evidence: vec![create.evidence, list.evidence],
+                        diagnostics: RedactedDiagnostics {
+                            summary: Some(
+                                json!({"created": true, "reconciledBy": "name"}).to_string(),
+                            ),
+                            raw_json_redacted: Some(
+                                json!({"endpointResults": [create.redacted, list.redacted]}),
+                            ),
+                        },
+                    });
+                }
+            }
+
+            Err(result_unknown(
+                EndpointRole::RemoteKeys,
+                Some(create.evidence),
+                "Sub2API remote-key create completed but the full key could not be reconciled",
+            ))
+        }
+        .boxed()
+    }
+}
+
+fn validate_remote_key_request(
+    context: &CollectorContext<'_>,
+    station: &crate::services::collectors::contract::StationIdentity,
+    endpoints: &crate::services::collectors::contract::ProviderEndpoints,
+) -> Result<(), DriverFailure> {
+    if context.station.provider != ProviderKind::Sub2Api
+        || station.provider != ProviderKind::Sub2Api
+    {
+        return Err(invalid_request(
+            "Sub2API remote-key request has the wrong provider",
+        ));
+    }
+    if context.station.station_id != station.station_id {
+        return Err(invalid_request(
+            "Sub2API remote-key request station mismatch",
+        ));
+    }
+    if context.station.endpoint_revision != station.endpoint_revision
+        || context.credential.credential_revision != station.endpoint_revision
+    {
+        return Err(invalid_request(
+            "Sub2API remote-key request endpoint revision mismatch",
+        ));
+    }
+    website_url_from_endpoints(endpoints).map(|_| ())
+}
+
+fn website_url_from_endpoints(
+    endpoints: &crate::services::collectors::contract::ProviderEndpoints,
+) -> Result<String, DriverFailure> {
+    endpoints
+        .website_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| invalid_request("Sub2API website URL is missing"))
+}
+
+async fn fetch_remote_key_list(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    auth: &Sub2ApiAuth,
+    access_token: &mut String,
+) -> Result<JsonExecution, DriverFailure> {
+    execute_bearer_json_with_recovery(
+        context,
+        EndpointRole::RemoteKeys,
+        website_url,
+        "/api/v1/keys?page=1&page_size=100",
+        access_token,
+        auth.login.as_ref(),
+    )
+    .await
+}
+
+async fn create_remote_key_once(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    auth: &Sub2ApiAuth,
+    access_token: &mut String,
+    request: &CreateRemoteKeyRequest,
+) -> Result<JsonExecution, DriverFailure> {
+    let url = build_management_url(website_url, "/api/v1/keys")
+        .map_err(|error| invalid_request(redact_text(&error)))?;
+    let mut body = json!({ "name": request.name });
+    if let Some(group_name) = request
+        .group_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body["group"] = json!(group_name);
+    }
+    if let Some(group_id) = request
+        .provider_group_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body["group_id"] = adapters::sub2api::sub2api_group_id_value(group_id);
+    }
+
+    let mut result = execute_bearer_json_once(
+        context,
+        EndpointRole::RemoteKeys,
+        &url,
+        access_token,
+        Some(body.clone()),
+        Method::POST,
+    )
+    .await;
+    if matches!(result.status, Some(401 | 403)) {
+        if let Some(login) = auth.login.as_ref() {
+            if let Some(fresh) = login_access_token(context, website_url, login).await? {
+                *access_token = fresh;
+                result = execute_bearer_json_once(
+                    context,
+                    EndpointRole::RemoteKeys,
+                    &url,
+                    access_token,
+                    Some(body),
+                    Method::POST,
+                )
+                .await;
+            }
+        }
+    }
+    if let Some(failure) = fatal_attempt_failure(&result, EndpointRole::RemoteKeys) {
+        return Err(match failure.kind {
+            DriverFailureKind::Timeout
+            | DriverFailureKind::BudgetExhausted
+            | DriverFailureKind::Cancelled
+            | DriverFailureKind::Transport => result_unknown(
+                EndpointRole::RemoteKeys,
+                failure.evidence.entries().first().cloned(),
+                "Sub2API remote-key create outcome is unknown; reconcile before retrying",
+            ),
+            _ => failure,
+        });
+    }
+    let failure = classify_json_result(&result);
+    let redacted = json!({
+        "url": result.url,
+        "status": result.status,
+        "ok": result.ok && failure.is_none(),
+        "durationMs": result.duration_ms,
+        "path": "/api/v1/keys",
+        "attemptCount": 1,
+        "failureKind": failure,
+    });
+    if result.ok && failure.is_none() {
+        return Ok(JsonExecution {
+            payload: result.payload,
+            ok: true,
+            redacted,
+            evidence: result.evidence,
+        });
+    }
+    if matches!(result.status, None) {
+        return Err(result_unknown(
+            EndpointRole::RemoteKeys,
+            Some(result.evidence),
+            "Sub2API remote-key create outcome is unknown; reconcile before retrying",
+        ));
+    }
+    Err(failed(
+        failure_kind_from_endpoint_results(&[redacted]),
+        EndpointRole::RemoteKeys,
+        Some(vec![result.evidence]),
+        result
+            .error_message
+            .unwrap_or_else(|| "Sub2API remote-key create failed".to_string()),
+    ))
+}
+
+fn remote_key_secret_from_list_payload(
+    station_id: &str,
+    remote_key_id: &str,
+    payload: &Value,
+) -> Result<(RemoteStationKey, String), DriverFailure> {
+    for (index, value) in adapters::sub2api::remote_key_items(payload)
+        .into_iter()
+        .enumerate()
+    {
+        let Some(remote_key) = adapters::sub2api::remote_key_from_value(station_id, value, index)
+        else {
+            continue;
+        };
+        if remote_key.id != remote_key_id {
+            continue;
+        }
+        let full_key = adapters::sub2api::full_key_from_key_value(value).ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                None,
+                "Sub2API remote-key list did not return a full key",
+            )
+        })?;
+        return Ok((remote_key, full_key));
+    }
+    Err(invalid_request(
+        "Sub2API remote key no longer exists; reconcile before creating a local key",
+    ))
+}
+
+fn remote_key_secret_by_name_from_list_payload(
+    station_id: &str,
+    expected_name: &str,
+    payload: &Value,
+) -> Result<Option<(RemoteStationKey, String)>, DriverFailure> {
+    let expected_name = expected_name.trim();
+    for (index, value) in adapters::sub2api::remote_key_items(payload)
+        .into_iter()
+        .enumerate()
+    {
+        let Some(remote_key) = adapters::sub2api::remote_key_from_value(station_id, value, index)
+        else {
+            continue;
+        };
+        if !remote_key
+            .remote_key_name
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|name| !expected_name.is_empty() && name == expected_name)
+        {
+            continue;
+        }
+        let Some(full_key) = adapters::sub2api::full_key_from_key_value(value) else {
+            continue;
+        };
+        return Ok(Some((remote_key, full_key)));
+    }
+    Ok(None)
 }
 
 fn detect_output() -> DriverOutput {
@@ -1097,6 +1479,24 @@ fn failed(
         evidence: evidence
             .map(EvidenceSet::new)
             .unwrap_or_else(EvidenceSet::empty),
+        sanitized_detail: Some(redact_text(&detail.into())),
+    }
+}
+
+fn result_unknown(
+    role: EndpointRole,
+    endpoint: Option<EndpointEvidence>,
+    detail: impl Into<String>,
+) -> DriverFailure {
+    DriverFailure {
+        kind: DriverFailureKind::ResultUnknown,
+        retry: RetryDisposition::Never,
+        auth_effect: AuthEffect::None,
+        endpoint: Some(FailedEndpoint {
+            role,
+            status_code: endpoint.as_ref().and_then(|entry| entry.status_code),
+        }),
+        evidence: EvidenceSet::new(endpoint),
         sanitized_detail: Some(redact_text(&detail.into())),
     }
 }
