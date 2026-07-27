@@ -14,6 +14,7 @@ use tauri::{ipc::Channel, Manager, State};
 
 pub(crate) mod data_recovery;
 pub(crate) mod error;
+pub(crate) mod runtime;
 pub(crate) mod updater;
 
 use crate::{
@@ -91,9 +92,8 @@ use crate::{
             DeleteModelAliasInputDto, EndpointPingResultDto, ReorderLocalRoutingKeysInputDto,
             UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
         },
-        runtime_status::RuntimeStatusDto,
         settings::{
-            AppStatusDto, CcswitchImportResultDto, OpenExternalUrlInputDto, SettingsDto,
+            CcswitchImportResultDto, OpenExternalUrlInputDto, SettingsDto,
             UpdateLocalAccessKeyInputDto, UpdateSettingsInputDto,
         },
         station_collector_operations::{
@@ -122,11 +122,9 @@ use crate::{
         },
         EmptyInputDto, StationDto,
     },
-    ipc::runtime_contract::{current_runtime_contract, RuntimeContractInfo},
     models::{
         proxy::{ProxyStatus, UpstreamApiFormat},
         routing::StationKeyCapabilities,
-        AppStatus,
     },
     observability::correlation,
     outbound::{
@@ -270,46 +268,6 @@ mod located_candidate_tests {
             )))
         );
     }
-}
-
-#[tauri::command]
-pub async fn app_status(input: Value) -> Result<AppStatusDto, error::CommandError> {
-    correlation::in_command_scope("app_status", async {
-        EmptyInputDto::parse(input)?;
-        Ok(AppStatus::default())
-    })
-    .await
-}
-
-/// Returns only the immutable build/IPC identity needed before normal app queries.
-#[tauri::command]
-pub async fn get_runtime_contract_info(
-    input: Value,
-) -> Result<RuntimeContractInfo, error::CommandError> {
-    correlation::in_command_scope("get_runtime_contract_info", async {
-        EmptyInputDto::parse(input)?;
-        Ok(current_runtime_contract())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_runtime_status(
-    runtime: State<'_, ManagedWorkRuntime>,
-    input: Value,
-) -> Result<RuntimeStatusDto, error::CommandError> {
-    correlation::in_command_scope("get_runtime_status", async {
-        EmptyInputDto::parse(input)?;
-        Ok(RuntimeStatusDto::from(
-            runtime
-                .supervisor
-                .statuses()
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<_>>(),
-        ))
-    })
-    .await
 }
 
 #[tauri::command]

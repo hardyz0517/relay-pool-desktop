@@ -50,9 +50,9 @@ pub const STREAMING_SURFACES: &[StreamingSurface] = &[StreamingSurface {
 macro_rules! ipc_command_registry {
     ($consumer:ident) => {
         $consumer! {
-            app_status => $crate::commands::app_status,
-            get_runtime_contract_info => $crate::commands::get_runtime_contract_info,
-            get_runtime_status => $crate::commands::get_runtime_status,
+            app_status => $crate::commands::runtime::app_status,
+            get_runtime_contract_info => $crate::commands::runtime::get_runtime_contract_info,
+            get_runtime_status => $crate::commands::runtime::get_runtime_status,
             get_data_store_startup_state => $crate::commands::get_data_store_startup_state,
             refresh_data_store_candidates => $crate::commands::refresh_data_store_candidates,
             locate_data_store_candidate => $crate::commands::locate_data_store_candidate,
