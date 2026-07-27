@@ -7,6 +7,7 @@ import { createDefaultProviderForm } from "./formModel";
 import {
   ProviderConnectionSection,
   ProviderGroupsSection,
+  ProviderKeysSection,
   ProviderOptionsSection,
   ProviderPresetSection,
 } from "./AddProviderSections";
@@ -130,6 +131,64 @@ describe("AddProviderSections", () => {
 
     expect(onSyncRemoteGroups).toHaveBeenCalledOnce();
     expect(onAddGroup).toHaveBeenCalledOnce();
+
+    await act(async () => root.unmount());
+  });
+
+  it("delegates key toolbar actions to page handlers", async () => {
+    const onAddLocalKey = vi.fn();
+    const onOpenCreateRemoteKey = vi.fn();
+    const onScanRemoteKeys = vi.fn();
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () =>
+      root.render(
+        <ProviderKeysSection
+          activeStationId={null}
+          createRemoteDisabled={false}
+          currentCreditPerCny={1}
+          disabled={false}
+          groupOptions={[]}
+          localKeyIdsCreatedByRemote={{}}
+          localKeys={[]}
+          remoteCapability={null}
+          remoteCapabilityError={null}
+          remoteCapabilityUnavailableReason={null}
+          remoteDiscoveryReason={null}
+          remoteKeys={[]}
+          remoteListError={null}
+          remoteLoading={false}
+          remoteUnsupportedReason={null}
+          rows={[]}
+          scanRemoteDisabled={false}
+          onAddLocalKey={onAddLocalKey}
+          onBindRemoteKey={vi.fn()}
+          onLocalKeyToggle={vi.fn()}
+          onOpenCreateRemoteKey={onOpenCreateRemoteKey}
+          onRowsChange={vi.fn()}
+          onScanRemoteKeys={onScanRemoteKeys}
+        />,
+      ),
+    );
+
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>("button")];
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("获取所有 Key"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("新建远端 Key"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("添加密钥"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+
+    expect(onScanRemoteKeys).toHaveBeenCalledOnce();
+    expect(onOpenCreateRemoteKey).toHaveBeenCalledOnce();
+    expect(onAddLocalKey).toHaveBeenCalledOnce();
 
     await act(async () => root.unmount());
   });

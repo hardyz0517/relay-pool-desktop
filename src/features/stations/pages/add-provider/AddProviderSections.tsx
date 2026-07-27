@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Check, LogIn, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { Check, KeyRound, LogIn, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { Button, SectionCard, SelectControl } from "@/components/ui";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
@@ -11,6 +11,13 @@ import {
 import { cn } from "@/lib/utils";
 import { providerPresets, type ProviderPresetId } from "../../providerPresets";
 import { StationGroupRowsEditor, type StationGroupDraft } from "../../components/StationGroupRowsEditor";
+import {
+  StationKeyRowsEditor,
+  type StationKeyDraft,
+  type StationKeyGroupOption,
+} from "../../components/StationKeyRowsEditor";
+import { RemoteKeyDiscoveryList } from "../../components/RemoteKeyDiscoveryList";
+import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import { inputClassName, type AddProviderFormState, type ConnectionTestState } from "./formModel";
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -274,6 +281,134 @@ export function ProviderGroupsSection({
         rows={rows}
         onRowsChange={onRowsChange}
       />
+    </SectionCard>
+  );
+}
+
+type ProviderKeysSectionProps = {
+  activeStationId: string | null;
+  createRemoteDisabled: boolean;
+  currentCreditPerCny: number;
+  disabled: boolean;
+  groupOptions: StationKeyGroupOption[];
+  localKeyIdsCreatedByRemote: Record<string, string>;
+  localKeys: StationKey[];
+  remoteCapability: RemoteKeyCapability | null;
+  remoteCapabilityError: string | null;
+  remoteCapabilityUnavailableReason: string | null;
+  remoteDiscoveryReason: string | null;
+  remoteKeys: RemoteStationKey[];
+  remoteListError: string | null;
+  remoteLoading: boolean;
+  remoteUnsupportedReason: string | null;
+  rows: StationKeyDraft[];
+  scanRemoteDisabled: boolean;
+  onAddLocalKey: () => void;
+  onBindRemoteKey: (remoteKeyId: string, stationKeyId: string) => void;
+  onLocalKeyToggle: (remoteKey: RemoteStationKey, checked: boolean) => void;
+  onOpenCreateRemoteKey: () => void;
+  onRowsChange: (rows: StationKeyDraft[]) => void;
+  onScanRemoteKeys: () => void;
+};
+
+export function ProviderKeysSection({
+  activeStationId,
+  createRemoteDisabled,
+  currentCreditPerCny,
+  disabled,
+  groupOptions,
+  localKeyIdsCreatedByRemote,
+  localKeys,
+  remoteCapability,
+  remoteCapabilityError,
+  remoteCapabilityUnavailableReason,
+  remoteDiscoveryReason,
+  remoteKeys,
+  remoteListError,
+  remoteLoading,
+  remoteUnsupportedReason,
+  rows,
+  scanRemoteDisabled,
+  onAddLocalKey,
+  onBindRemoteKey,
+  onLocalKeyToggle,
+  onOpenCreateRemoteKey,
+  onRowsChange,
+  onScanRemoteKeys,
+}: ProviderKeysSectionProps) {
+  return (
+    <SectionCard
+      title="密钥"
+      action={
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            disabled={scanRemoteDisabled}
+            size="sm"
+            title={remoteCapabilityUnavailableReason ?? undefined}
+            variant="outline"
+            onClick={onScanRemoteKeys}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", remoteLoading && "animate-spin")} />
+            获取所有 Key
+          </Button>
+          <Button
+            disabled={createRemoteDisabled}
+            size="sm"
+            title={remoteCapabilityUnavailableReason ?? undefined}
+            variant="secondary"
+            onClick={onOpenCreateRemoteKey}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            新建远端 Key
+          </Button>
+          <Button
+            disabled={disabled}
+            size="sm"
+            variant="outline"
+            onClick={onAddLocalKey}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            添加密钥
+          </Button>
+        </div>
+      }
+    >
+      <StationKeyRowsEditor
+        disabled={disabled}
+        groupOptions={groupOptions}
+        rows={rows}
+        onRowsChange={onRowsChange}
+      />
+      {activeStationId && (
+        <div className="mt-3 grid gap-2 border-t border-border pt-3">
+          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <KeyRound className="h-3.5 w-3.5" />
+            远端发现
+          </div>
+          {remoteCapabilityError || (remoteUnsupportedReason && remoteCapability?.canListRemoteKeys !== true) ? (
+            <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
+              {remoteDiscoveryReason}
+            </div>
+          ) : (
+            <>
+              <RemoteKeyDiscoveryList
+                creditPerCny={currentCreditPerCny}
+                keys={remoteKeys}
+                loading={remoteLoading}
+                localKeyIdsCreatedByRemote={localKeyIdsCreatedByRemote}
+                localKeys={localKeys}
+                onBind={onBindRemoteKey}
+                onLocalKeyToggle={onLocalKeyToggle}
+              />
+              {remoteListError && (
+                <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
+                  {remoteDiscoveryReason}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </SectionCard>
   );
 }

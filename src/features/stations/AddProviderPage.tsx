@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, KeyRound, Plus, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, IconButton, PageForm, useToast } from "@/components/ui";
 import { collectStationTask, startManualAuthorization, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import {
@@ -26,10 +26,8 @@ import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import type { StationType } from "@/lib/types/stations";
-import { cn } from "@/lib/utils";
 import {
   createEmptyStationKeyDraft,
-  StationKeyRowsEditor,
   type StationKeyDraft,
   type StationKeyGroupOption,
 } from "./components/StationKeyRowsEditor";
@@ -38,12 +36,12 @@ import {
   type StationGroupDraft,
 } from "./components/StationGroupRowsEditor";
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
-import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
 import { normalizeStationGroupOptions } from "./groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 import {
   ProviderConnectionSection,
   ProviderGroupsSection,
+  ProviderKeysSection,
   ProviderOptionsSection,
   ProviderPresetSection,
 } from "./pages/add-provider/AddProviderSections";
@@ -869,83 +867,35 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
               onSyncRemoteGroups={() => void handleSyncRemoteGroups()}
             />
 
-            <SectionCard
-              title="密钥"
-              action={
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    disabled={scanRemoteDisabled}
-                    size="sm"
-                    title={remoteCapabilityUnavailableReason ?? undefined}
-                    variant="outline"
-                    onClick={() => void handleScanRemoteKeys()}
-                  >
-                    <RefreshCw className={cn("h-3.5 w-3.5", remoteLoading && "animate-spin")} />
-                    获取所有 Key
-                  </Button>
-                  <Button
-                    disabled={createRemoteDisabled}
-                    size="sm"
-                    title={remoteCapabilityUnavailableReason ?? undefined}
-                    variant="secondary"
-                    onClick={() => void handleOpenCreateRemoteKey()}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    新建远端 Key
-                  </Button>
-                  <Button
-                    disabled={saving || loading}
-                    size="sm"
-                    variant="outline"
-                    onClick={handleAddLocalKey}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    添加密钥
-                  </Button>
-                </div>
+            <ProviderKeysSection
+              activeStationId={activeStationId}
+              createRemoteDisabled={createRemoteDisabled}
+              currentCreditPerCny={currentCreditPerCny}
+              disabled={saving || loading}
+              groupOptions={editableGroupOptions}
+              localKeyIdsCreatedByRemote={remoteCreatedLocalKeyIds}
+              localKeys={localStationKeys}
+              remoteCapability={remoteCapability}
+              remoteCapabilityError={remoteCapabilityError}
+              remoteCapabilityUnavailableReason={remoteCapabilityUnavailableReason}
+              remoteDiscoveryReason={remoteDiscoveryReason}
+              remoteKeys={remoteKeys}
+              remoteListError={remoteListError}
+              remoteLoading={remoteLoading}
+              remoteUnsupportedReason={remoteUnsupportedReason}
+              rows={keyRows}
+              scanRemoteDisabled={scanRemoteDisabled}
+              onAddLocalKey={handleAddLocalKey}
+              onBindRemoteKey={(remoteKeyId, stationKeyId) =>
+                void handleBindRemoteKey(remoteKeyId, stationKeyId)
               }
-            >
-              <StationKeyRowsEditor
-                disabled={saving || loading}
-                groupOptions={editableGroupOptions}
-                rows={keyRows}
-                onRowsChange={setKeyRows}
-              />
-              {activeStationId && (
-                <div className="mt-3 grid gap-2 border-t border-border pt-3">
-                  <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                    <KeyRound className="h-3.5 w-3.5" />
-                    远端发现
-                  </div>
-                  {remoteCapabilityError || (remoteUnsupportedReason && remoteCapability?.canListRemoteKeys !== true) ? (
-                    <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
-                      {remoteDiscoveryReason}
-                    </div>
-                  ) : (
-                    <>
-                      <RemoteKeyDiscoveryList
-                        creditPerCny={currentCreditPerCny}
-                        keys={remoteKeys}
-                        loading={remoteLoading}
-                        localKeyIdsCreatedByRemote={remoteCreatedLocalKeyIds}
-                        localKeys={localStationKeys}
-                        onBind={(remoteKeyId, stationKeyId) =>
-                          void handleBindRemoteKey(remoteKeyId, stationKeyId)
-                        }
-                        onLocalKeyToggle={(remoteKey, checked) =>
-                          void handleRemoteLocalKeyToggle(remoteKey, checked)
-                        }
-                      />
-                      {remoteListError && (
-                        <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
-                          {remoteDiscoveryReason}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </SectionCard>
+              onLocalKeyToggle={(remoteKey, checked) =>
+                void handleRemoteLocalKeyToggle(remoteKey, checked)
+              }
+              onOpenCreateRemoteKey={() => void handleOpenCreateRemoteKey()}
+              onRowsChange={setKeyRows}
+              onScanRemoteKeys={() => void handleScanRemoteKeys()}
+            />
           </div>
 
           <aside className="grid content-start gap-[var(--shell-page-gap)]">
