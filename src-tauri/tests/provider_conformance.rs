@@ -1,4 +1,4 @@
-﻿#![allow(
+#![allow(
     dead_code,
     reason = "Provider conformance harness compiles contract source without production drivers"
 )]
@@ -12,6 +12,8 @@ use std::{
 use serde::Deserialize;
 
 mod outbound {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
     use std::time::{Duration, Instant};
 
     use bytes::Bytes;
@@ -39,10 +41,11 @@ mod outbound {
     impl AsyncOutboundClient {
         pub async fn execute(
             &self,
-            _request: OutboundRequest,
+            request: OutboundRequest,
             _cancellation_token: CancellationToken,
         ) -> Result<OutboundResponse, OutboundFailure> {
-            Err(OutboundFailure::new(OutboundFailureKind::RequestFailed))
+            execute_local_http(request)
+                .map_err(|_| OutboundFailure::new(OutboundFailureKind::RequestFailed))
         }
     }
 
@@ -146,29 +149,56 @@ mod outbound {
         }
     }
 
-    #[derive(Debug)]
-    pub struct OutboundHeaders;
+    pub struct OutboundHeaders {
+        entries: Vec<(String, String, bool)>,
+    }
+
+    impl std::fmt::Debug for OutboundHeaders {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let entries = self
+                .entries
+                .iter()
+                .map(|(name, value, sensitive)| {
+                    if *sensitive {
+                        (name.as_str(), "<redacted>")
+                    } else {
+                        (name.as_str(), value.as_str())
+                    }
+                })
+                .collect::<Vec<_>>();
+            formatter.debug_list().entries(entries).finish()
+        }
+    }
 
     impl OutboundHeaders {
         pub fn new() -> Self {
-            Self
+            Self {
+                entries: Vec::new(),
+            }
         }
 
         pub fn insert_sensitive(
             &mut self,
-            _name: HeaderName,
-            _value: SecretHeaderValue,
+            name: HeaderName,
+            value: SecretHeaderValue,
             _policy: &OutboundHeaderPolicy,
         ) -> Result<(), OutboundFailure> {
+            self.entries
+                .push((name.as_str().to_string(), value.expose().to_string(), true));
             Ok(())
         }
 
         pub fn insert_public(
             &mut self,
-            _name: HeaderName,
-            _value: HeaderValue,
+            name: HeaderName,
+            value: HeaderValue,
             _policy: &OutboundHeaderPolicy,
         ) -> Result<(), OutboundFailure> {
+            let value = value
+                .to_str()
+                .map_err(|_| OutboundFailure::new(OutboundFailureKind::InvalidHeader))?;
+            self.entries
+                .push((name.as_str().to_string(), value.to_string(), false));
             Ok(())
         }
     }
@@ -179,6 +209,92 @@ mod outbound {
         pub fn new(value: impl Into<String>) -> Self {
             Self(value.into())
         }
+
+        fn expose(&self) -> &str {
+            self.0.as_str()
+        }
+    }
+
+    fn execute_local_http(request: OutboundRequest) -> Result<OutboundResponse, String> {
+        let (host, port, path) = parse_http_url(&request.url)?;
+        let mut stream =
+            TcpStream::connect((host.as_str(), port)).map_err(|error| error.to_string())?;
+        if let Some(timeout) = request.budget.remaining() {
+            stream
+                .set_read_timeout(Some(timeout))
+                .map_err(|error| error.to_string())?;
+            stream
+                .set_write_timeout(Some(timeout))
+                .map_err(|error| error.to_string())?;
+        }
+        let mut bytes = Vec::new();
+        write!(
+            bytes,
+            "{} {} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n",
+            request.method.as_str(),
+            path
+        )
+        .map_err(|error| error.to_string())?;
+        let has_content_length = request
+            .headers
+            .entries
+            .iter()
+            .any(|(name, _, _)| name.eq_ignore_ascii_case("content-length"));
+        for (name, value, _) in &request.headers.entries {
+            write!(bytes, "{name}: {value}\r\n").map_err(|error| error.to_string())?;
+        }
+        if !request.body.is_empty() && !has_content_length {
+            write!(bytes, "Content-Length: {}\r\n", request.body.len())
+                .map_err(|error| error.to_string())?;
+        }
+        bytes.extend_from_slice(b"\r\n");
+        bytes.extend_from_slice(&request.body);
+        stream
+            .write_all(&bytes)
+            .map_err(|error| error.to_string())?;
+
+        let mut response = Vec::new();
+        stream
+            .read_to_end(&mut response)
+            .map_err(|error| error.to_string())?;
+        let header_end = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .ok_or_else(|| "missing response header end".to_string())?;
+        let headers =
+            std::str::from_utf8(&response[..header_end]).map_err(|error| error.to_string())?;
+        let status = headers
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|status| status.parse::<u16>().ok())
+            .ok_or_else(|| "missing response status".to_string())?;
+        Ok(OutboundResponse {
+            status: StatusCode::from_u16(status).map_err(|error| error.to_string())?,
+            headers: HeaderMap::new(),
+            body: Bytes::copy_from_slice(&response[(header_end + 4)..]),
+            evidence: OutboundEvidence {
+                final_url: request.url,
+                retry_after: None,
+            },
+        })
+    }
+
+    fn parse_http_url(url: &str) -> Result<(String, u16, String), String> {
+        let rest = url
+            .strip_prefix("http://")
+            .ok_or_else(|| "only http fixture URLs are supported".to_string())?;
+        let (authority, path) = rest
+            .split_once('/')
+            .map(|(authority, path)| (authority, format!("/{path}")))
+            .unwrap_or((rest, "/".to_string()));
+        let (host, port) = authority
+            .rsplit_once(':')
+            .ok_or_else(|| "fixture URL is missing port".to_string())?;
+        let port = port
+            .parse::<u16>()
+            .map_err(|error| format!("invalid fixture port: {error}"))?;
+        Ok((host.to_string(), port, path))
     }
 }
 

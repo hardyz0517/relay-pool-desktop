@@ -1818,7 +1818,12 @@ mod tests {
     use super::*;
     use crate::{
         outbound::{AsyncOutboundClient, AsyncOutboundClientConfig, ProxyPolicy, RequestBudget},
-        services::collectors::contract::{CredentialScope, ProviderEndpoints, StationIdentity},
+        services::collectors::{
+            contract::{
+                CredentialScope, OpaqueCredentialHandle, ProviderEndpoints, StationIdentity,
+            },
+            drivers::newapi::test_support::{json_response, TestHttpServer},
+        },
     };
     use futures_util::FutureExt;
     use serde_json::json;
@@ -1838,6 +1843,71 @@ mod tests {
         > {
             async move { Ok(crate::services::collectors::contract::CredentialSecret::new(self.0)) }
                 .boxed()
+        }
+    }
+
+    fn test_station_identity() -> StationIdentity {
+        StationIdentity {
+            station_id: "station-1".to_string(),
+            endpoint_revision: 7,
+            provider: ProviderKind::NewApi,
+        }
+    }
+
+    fn test_credential() -> OpaqueCredentialHandle {
+        OpaqueCredentialHandle {
+            station_id: "station-1".to_string(),
+            credential_revision: 7,
+            scope: CredentialScope::LoginSession,
+        }
+    }
+
+    fn test_endpoints(base_url: &str) -> ProviderEndpoints {
+        ProviderEndpoints {
+            api_base_url: None,
+            website_url: Some(base_url.to_string()),
+        }
+    }
+
+    fn test_context<'a>(
+        base_url: &str,
+        secrets: &'a TestSecretAccessor,
+        outbound: &'a AsyncOutboundClient,
+    ) -> CollectorContext<'a> {
+        CollectorContext {
+            station: test_station_identity(),
+            endpoints: test_endpoints(base_url),
+            credential: test_credential(),
+            auth: Some(ProviderAuthContext::NewApi {
+                user_id: "42".to_string(),
+                secret_purpose: CredentialSecretPurpose::AuthorizationHeader,
+            }),
+            secrets,
+            outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        }
+    }
+
+    fn remote_key_request(base_url: &str) -> RemoteKeyRequest {
+        RemoteKeyRequest {
+            station: test_station_identity(),
+            endpoints: test_endpoints(base_url),
+            credential: test_credential(),
+        }
+    }
+
+    fn create_remote_key_request(base_url: &str, name: &str) -> CreateRemoteKeyRequest {
+        CreateRemoteKeyRequest {
+            station: test_station_identity(),
+            endpoints: test_endpoints(base_url),
+            credential: test_credential(),
+            name: name.to_string(),
+            provider_group_id: None,
+            group_name: Some("vip".to_string()),
+            idempotency_key: None,
         }
     }
 
@@ -1905,6 +1975,213 @@ mod tests {
         assert_eq!(key.api_key_fingerprint, None);
         assert_eq!(key.group_name.as_deref(), Some("vip"));
         assert_eq!(key.raw_source, "newapi_tokens");
+    }
+
+    #[tokio::test]
+    async fn list_remote_keys_paginates_newapi_tokens_without_full_secret() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 2,
+                        "total": 3,
+                        "items": [
+                            {
+                                "id": 101,
+                                "name": "primary",
+                                "key": "sk-abc**********7890",
+                                "group": "default",
+                                "created_time": 1760000000,
+                                "accessed_time": 1760000100
+                            },
+                            {
+                                "id": 102,
+                                "name": "secondary",
+                                "key": "sk-def**********4567",
+                                "group": "vip"
+                            }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 2,
+                        "page_size": 2,
+                        "total": 3,
+                        "items": [
+                            {
+                                "id": 103,
+                                "name": "third",
+                                "key": "sk-ghi**********1234",
+                                "group": "vip"
+                            }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = NewApiRemoteKeyDriver
+            .list_remote_keys(&context, remote_key_request(&server.base_url))
+            .await
+            .expect("scan keys");
+        let requests = server.finish();
+
+        assert_eq!(output.keys.len(), 3);
+        assert_eq!(output.keys[0].remote_key_name.as_deref(), Some("primary"));
+        assert_eq!(
+            output.keys[0].api_key_masked.as_deref(),
+            Some("sk-abc**********7890")
+        );
+        assert_eq!(output.keys[0].api_key_fingerprint, None);
+        assert_eq!(output.keys[0].group_name.as_deref(), Some("default"));
+        assert_eq!(output.keys[0].raw_source, "newapi_tokens");
+        assert_eq!(output.evidence.len(), 2);
+        assert!(requests[0].starts_with("GET /api/token/?p=1&page_size=100 "));
+        assert!(requests[1].starts_with("GET /api/token/?p=2&page_size=100 "));
+        assert!(requests[0]
+            .to_ascii_lowercase()
+            .contains("new-api-user: 42"));
+    }
+
+    #[tokio::test]
+    async fn token_scan_rejects_missing_pagination_metadata() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "items": [
+                        { "id": 101, "name": "primary", "key": "sk-abc**********7890" }
+                    ]
+                }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = NewApiRemoteKeyDriver
+            .list_remote_keys(&context, remote_key_request(&server.base_url))
+            .await
+            .unwrap_err();
+        server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::MalformedPayload);
+        assert!(error
+            .sanitized_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("pagination"));
+    }
+
+    #[tokio::test]
+    async fn list_remote_keys_errors_before_returning_partial_pages() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 2,
+                        "total": 3,
+                        "items": [
+                            { "id": 101, "name": "primary", "key": "sk-abc**********7890" },
+                            { "id": 102, "name": "secondary", "key": "sk-def**********4567" }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                502,
+                json!({"success": false, "message": "bad gateway"}),
+            )),
+            Some(json_response(
+                502,
+                json!({"success": false, "message": "bad gateway"}),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = NewApiRemoteKeyDriver
+            .list_remote_keys(&context, remote_key_request(&server.base_url))
+            .await
+            .unwrap_err();
+        let requests = server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::ProviderUnavailable);
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].starts_with("GET /api/token/?p=2&page_size=100 "));
+    }
+
+    #[tokio::test]
+    async fn create_remote_key_posts_token_then_reconciles_and_reveals_secret() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(200, json!({"success": true, "message": ""}))),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 1,
+                        "items": [{
+                            "id": 301,
+                            "name": "relay-created",
+                            "key": "sk-crt**********f260",
+                            "group": "vip"
+                        }]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "key": "sk-created-secret-f260" }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let created = NewApiRemoteKeyDriver
+            .create_remote_key(
+                &context,
+                create_remote_key_request(&server.base_url, "relay-created"),
+            )
+            .await
+            .expect("created remote key");
+        let requests = server.finish();
+
+        assert_eq!(
+            created.remote_key.remote_key_name.as_deref(),
+            Some("relay-created")
+        );
+        assert_eq!(created.remote_key.group_name.as_deref(), Some("vip"));
+        assert_eq!(created.full_key_once.expose(), "sk-created-secret-f260");
+        assert!(requests[0].starts_with("POST /api/token/ "));
+        assert!(requests[0].contains("\"name\":\"relay-created\""));
+        assert!(requests[0].contains("\"group\":\"vip\""));
+        assert!(requests[1].starts_with("GET /api/token/?p=1&page_size=100 "));
+        assert!(requests[2].starts_with("POST /api/token/301/key "));
     }
 
     #[test]
