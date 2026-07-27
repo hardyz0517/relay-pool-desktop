@@ -319,14 +319,22 @@ fn is_supported_database_file(path: &std::path::Path) -> bool {
 
 fn open_path_with_system(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    let result = Command::new("explorer.exe").arg(path).spawn();
+    let result = Command::new("explorer.exe").arg(path).status();
     #[cfg(target_os = "macos")]
-    let result = Command::new("open").arg(path).spawn();
+    let result = Command::new("open").arg(path).status();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let result = Command::new("xdg-open").arg(path).spawn();
+    let result = Command::new("xdg-open").arg(path).status();
 
     result
-        .map(|_| ())
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!(
+                    "launcher exited with status {status}"
+                )))
+            }
+        })
         .map_err(|error| format!("failed to open {}: {error}", path.display()))
 }
 

@@ -1,4 +1,6 @@
-use crate::{models::remote_keys::RemoteStationKey, services::collectors::facts::CollectorFacts};
+#[cfg(test)]
+use crate::models::remote_keys::RemoteStationKey;
+use crate::services::collectors::facts::CollectorFacts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectorTask {
@@ -34,6 +36,7 @@ pub struct AdapterOutput {
     pub error_message: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct CreatedRemoteKey {
     pub remote_key: RemoteStationKey,

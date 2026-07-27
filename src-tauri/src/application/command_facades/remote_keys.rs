@@ -4,6 +4,7 @@ use crate::{
     application::{
         collectors::CollectorService, credentials::CredentialService, settings::SettingsService,
     },
+    background_tasks::{BlockingExecutor, BlockingExecutorError},
     models::remote_keys::{
         CreateLocalStationKeyFromRemoteResult, CreateRemoteStationKeyInput,
         CreateRemoteStationKeyResult, RemoteKeyScanResult,
@@ -12,7 +13,7 @@ use crate::{
     outbound::AsyncOutboundClient,
     services::{
         collectors::{orchestration::ProviderRegistry, V2CollectorSourceAdapter},
-        remote_keys::{self, PreparedRemoteKeySave, RemoteKeyOperationError},
+        remote_keys::{self, RemoteKeyOperationError},
     },
 };
 
@@ -21,6 +22,7 @@ pub(crate) struct RemoteKeysCommandFacade {
     collectors: Arc<CollectorService>,
     credentials: Arc<CredentialService>,
     settings: Arc<SettingsService>,
+    blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
     data_key: [u8; 32],
@@ -31,6 +33,7 @@ impl RemoteKeysCommandFacade {
         collectors: Arc<CollectorService>,
         credentials: Arc<CredentialService>,
         settings: Arc<SettingsService>,
+        blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<ProviderRegistry>,
         data_key: [u8; 32],
@@ -39,6 +42,7 @@ impl RemoteKeysCommandFacade {
             collectors,
             credentials,
             settings,
+            blocking,
             outbound,
             providers,
             data_key,
@@ -49,18 +53,17 @@ impl RemoteKeysCommandFacade {
         &self,
         station_id: String,
     ) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
-        let source = self.source();
         let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
-        let newapi_prepared = tokio::task::spawn_blocking(move || {
-            remote_keys::prepare_newapi_remote_key_driver_context_v2(
-                &source,
-                &data_key,
-                station_id_for_probe,
-            )
-        })
-        .await
-        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        let newapi_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_newapi_scan", move |source| {
+                remote_keys::prepare_newapi_remote_key_driver_context_v2(
+                    &source,
+                    &data_key,
+                    station_id_for_probe,
+                )
+            })
+            .await?;
         if let Some(prepared) = newapi_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_newapi_remote_key_scan_v2(
@@ -75,18 +78,17 @@ impl RemoteKeysCommandFacade {
             return remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared)
                 .await;
         }
-        let source = self.source();
         let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
-        let sub2api_prepared = tokio::task::spawn_blocking(move || {
-            remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                &source,
-                &data_key,
-                station_id_for_probe,
-            )
-        })
-        .await
-        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        let sub2api_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_sub2api_scan", move |source| {
+                remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                    &source,
+                    &data_key,
+                    station_id_for_probe,
+                )
+            })
+            .await?;
         if let Some(prepared) = sub2api_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_sub2api_remote_key_scan_v2(
@@ -101,12 +103,11 @@ impl RemoteKeysCommandFacade {
             return remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared)
                 .await;
         }
-        let source = self.source();
-        let prepared = tokio::task::spawn_blocking(move || {
-            remote_keys::prepare_remote_key_scan_v2(&source, station_id)
-        })
-        .await
-        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        let prepared = self
+            .prepare_remote_key_context("remote_key_prepare_unsupported_scan", move |source| {
+                remote_keys::prepare_unsupported_remote_key_scan_v2(&source, station_id)
+            })
+            .await?;
         remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared).await
     }
 
@@ -114,14 +115,15 @@ impl RemoteKeysCommandFacade {
         &self,
         input: CreateRemoteStationKeyInput,
     ) -> Result<CreateRemoteStationKeyResult, RemoteKeyOperationError> {
-        let source = self.source();
         let data_key = self.data_key;
         let station_id = input.station_id.clone();
-        let newapi_prepared = tokio::task::spawn_blocking(move || {
-            remote_keys::prepare_newapi_remote_key_driver_context_v2(&source, &data_key, station_id)
-        })
-        .await
-        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        let newapi_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_newapi_create", move |source| {
+                remote_keys::prepare_newapi_remote_key_driver_context_v2(
+                    &source, &data_key, station_id,
+                )
+            })
+            .await?;
         if let Some(prepared) = newapi_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_newapi_remote_key_creation_v2(
@@ -137,16 +139,15 @@ impl RemoteKeysCommandFacade {
             return remote_keys::finish_remote_key_creation_v2(self.credentials.as_ref(), prepared)
                 .await;
         }
-        let source = self.source();
         let data_key = self.data_key;
         let station_id = input.station_id.clone();
-        let sub2api_prepared = tokio::task::spawn_blocking(move || {
-            remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                &source, &data_key, station_id,
-            )
-        })
-        .await
-        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        let sub2api_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_sub2api_create", move |source| {
+                remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                    &source, &data_key, station_id,
+                )
+            })
+            .await?;
         if let Some(prepared) = sub2api_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_sub2api_remote_key_creation_v2(
@@ -162,12 +163,8 @@ impl RemoteKeysCommandFacade {
             return remote_keys::finish_remote_key_creation_v2(self.credentials.as_ref(), prepared)
                 .await;
         }
-        let prepared = self
-            .prepare_remote_key_save(move |source| {
-                remote_keys::prepare_remote_key_creation_v2(&source, input)
-            })
-            .await?;
-        remote_keys::finish_remote_key_creation_v2(self.credentials.as_ref(), prepared).await
+        let _ = input;
+        Err(RemoteKeyOperationError::Unsupported)
     }
 
     pub(crate) async fn create_local_station_key_from_remote(
@@ -175,18 +172,17 @@ impl RemoteKeysCommandFacade {
         station_id: String,
         remote_key_id: String,
     ) -> Result<CreateLocalStationKeyFromRemoteResult, RemoteKeyOperationError> {
-        let source = self.source();
         let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
-        let newapi_prepared = tokio::task::spawn_blocking(move || {
-            remote_keys::prepare_newapi_remote_key_driver_context_v2(
-                &source,
-                &data_key,
-                station_id_for_probe,
-            )
-        })
-        .await
-        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        let newapi_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_newapi_reveal", move |source| {
+                remote_keys::prepare_newapi_remote_key_driver_context_v2(
+                    &source,
+                    &data_key,
+                    station_id_for_probe,
+                )
+            })
+            .await?;
         if let Some(prepared) = newapi_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_newapi_local_key_from_remote_v2(
@@ -205,18 +201,17 @@ impl RemoteKeysCommandFacade {
             )
             .await;
         }
-        let source = self.source();
         let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
-        let sub2api_prepared = tokio::task::spawn_blocking(move || {
-            remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                &source,
-                &data_key,
-                station_id_for_probe,
-            )
-        })
-        .await
-        .map_err(|_| RemoteKeyOperationError::Internal)??;
+        let sub2api_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_sub2api_reveal", move |source| {
+                remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                    &source,
+                    &data_key,
+                    station_id_for_probe,
+                )
+            })
+            .await?;
         if let Some(prepared) = sub2api_prepared {
             let source = self.source();
             let prepared = remote_keys::prepare_sub2api_local_key_from_remote_v2(
@@ -235,12 +230,8 @@ impl RemoteKeysCommandFacade {
             )
             .await;
         }
-        let prepared = self
-            .prepare_remote_key_save(move |source| {
-                remote_keys::prepare_local_key_from_remote_v2(&source, station_id, remote_key_id)
-            })
-            .await?;
-        remote_keys::finish_local_key_from_remote_v2(self.credentials.as_ref(), prepared).await
+        let _ = (station_id, remote_key_id);
+        Err(RemoteKeyOperationError::Unsupported)
     }
 
     fn source(&self) -> V2CollectorSourceAdapter {
@@ -251,24 +242,31 @@ impl RemoteKeysCommandFacade {
         )
     }
 
-    async fn prepare_remote_key_save<F>(
+    async fn prepare_remote_key_context<T, F>(
         &self,
+        kind: &'static str,
         prepare: F,
-    ) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError>
+    ) -> Result<T, RemoteKeyOperationError>
     where
-        F: FnOnce(
-                V2CollectorSourceAdapter,
-            ) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError>
-            + Send
-            + 'static,
+        T: Send + 'static,
+        F: FnOnce(V2CollectorSourceAdapter) -> Result<T, RemoteKeyOperationError> + Send + 'static,
     {
         let source = self.source();
-        tokio::task::spawn_blocking(move || prepare(source))
+        self.blocking
+            .submit(kind, None, current_correlation_id(), None, move |_| {
+                Ok(prepare(source))
+            })
+            .map_err(remote_key_blocking_error)?
+            .result()
             .await
-            .map_err(|_| RemoteKeyOperationError::Internal)?
+            .map_err(remote_key_blocking_error)?
     }
 }
 
 fn current_correlation_id() -> Option<String> {
     correlation::current().map(|id| id.as_str().to_string())
+}
+
+fn remote_key_blocking_error(_error: BlockingExecutorError) -> RemoteKeyOperationError {
+    RemoteKeyOperationError::Internal
 }

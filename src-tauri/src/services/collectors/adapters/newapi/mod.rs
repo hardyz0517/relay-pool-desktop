@@ -2809,6 +2809,7 @@ mod tests {
             created.full_key_once.as_deref(),
             Some("sk-created-secret-f260")
         );
+        assert_eq!(created.message, "NewAPI 远端 Key 已创建。");
         assert!(requests[0].starts_with("POST /api/token/ "));
         assert!(requests[0].contains("\"name\":\"relay-created\""));
         assert!(requests[0].contains("\"group\":\"vip\""));

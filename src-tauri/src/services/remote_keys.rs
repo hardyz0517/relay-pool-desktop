@@ -26,7 +26,7 @@ use crate::{
         },
         failure::{DriverFailure, DriverFailureKind},
         orchestration::ProviderRegistry,
-        output, CollectorSourcePort,
+        CollectorSourcePort,
     },
 };
 
@@ -634,30 +634,19 @@ fn remote_key_error_from_driver(error: DriverFailure) -> RemoteKeyOperationError
     }
 }
 
-pub(crate) fn prepare_remote_key_scan_v2(
+pub(crate) fn prepare_unsupported_remote_key_scan_v2(
     source: &dyn CollectorSourcePort,
     station_id: String,
 ) -> Result<PreparedRemoteKeyScan, RemoteKeyOperationError> {
     let (capability, expected_endpoint_revision) =
         remote_key_capability_from_source(source, station_id.clone())?;
-    if !capability.can_list_remote_keys {
-        return Ok(PreparedRemoteKeyScan::Unsupported {
-            station_id,
-            capability,
-        });
+    if capability.can_list_remote_keys {
+        return Err(RemoteKeyOperationError::Unsupported);
     }
-    let discovered = scan_remote_keys_with_source(source, &station_id, &capability.station_type)
-        .map_err(|_| RemoteKeyOperationError::ExternalUnavailable)?;
-    let (keys, station_key_updates) =
-        enrich_remote_key_discoveries_from_source(source, &station_id, discovered)
-            .map_err(|_| RemoteKeyOperationError::Internal)?;
     ensure_source_endpoint_revision(source, &station_id, expected_endpoint_revision)?;
-    Ok(PreparedRemoteKeyScan::Discovered {
+    Ok(PreparedRemoteKeyScan::Unsupported {
         station_id,
-        expected_endpoint_revision,
         capability,
-        keys,
-        station_key_updates,
     })
 }
 
@@ -714,61 +703,6 @@ pub(crate) async fn finish_remote_key_scan_v2(
             })
         }
     }
-}
-
-pub(crate) fn prepare_remote_key_creation_v2(
-    source: &dyn CollectorSourcePort,
-    input: CreateRemoteStationKeyInput,
-) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
-    let (capability, expected_endpoint_revision) =
-        remote_key_capability_from_source(source, input.station_id.clone())?;
-    if !capability.can_create_remote_key {
-        return Err(RemoteKeyOperationError::Unsupported);
-    }
-    let output::CreatedRemoteKey {
-        remote_key,
-        full_key_once,
-        message,
-    } = create_remote_key_with_source(source, input, &capability.station_type)
-        .map_err(|_| RemoteKeyOperationError::ExternalUnavailable)?;
-    let full_key = full_key_once
-        .filter(|value| !value.trim().is_empty())
-        .ok_or(RemoteKeyOperationError::ExternalUnavailable)?;
-    prepare_remote_key_save_from_source(
-        source,
-        remote_key,
-        full_key,
-        message,
-        capability.station_type != "newapi",
-        expected_endpoint_revision,
-    )
-}
-
-pub(crate) fn prepare_local_key_from_remote_v2(
-    source: &dyn CollectorSourcePort,
-    station_id: String,
-    remote_key_id: String,
-) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
-    let (capability, expected_endpoint_revision) =
-        remote_key_capability_from_source(source, station_id.clone())?;
-    if !capability.can_list_remote_keys {
-        return Err(RemoteKeyOperationError::Unsupported);
-    }
-    let (remote_key, full_key) = remote_key_full_secret_with_source(
-        source,
-        &station_id,
-        &remote_key_id,
-        &capability.station_type,
-    )
-    .map_err(|_| RemoteKeyOperationError::ExternalUnavailable)?;
-    prepare_remote_key_save_from_source(
-        source,
-        remote_key,
-        full_key,
-        "远端 Key 已同步为本地 Station Key。".to_string(),
-        false,
-        expected_endpoint_revision,
-    )
 }
 
 pub(crate) async fn finish_remote_key_creation_v2(
@@ -881,62 +815,6 @@ fn proxy_policy_from_remote_key_config(
                 .map_err(|error| crate::services::secrets::mask::redact_text(&error.to_string()))
         }
         _ => Err("unsupported collector proxy mode".to_string()),
-    }
-}
-
-fn scan_remote_keys_with_source(
-    _source: &dyn CollectorSourcePort,
-    _station_id: &str,
-    station_type: &str,
-) -> Result<Vec<RemoteStationKey>, String> {
-    match station_type {
-        "sub2api" => {
-            Err("Sub2API remote-key scan must use the async capability driver".to_string())
-        }
-        "newapi" => Err("NewAPI remote-key scan must use the async capability driver".to_string()),
-        _ => Err(format!(
-            "暂不支持 {station_type} 类型中转站的远端 Key 扫描。"
-        )),
-    }
-}
-
-fn create_remote_key_with_source(
-    _source: &dyn CollectorSourcePort,
-    input: CreateRemoteStationKeyInput,
-    station_type: &str,
-) -> Result<output::CreatedRemoteKey, String> {
-    match station_type {
-        "sub2api" => {
-            let _ = input;
-            Err("Sub2API remote-key create must use the async capability driver".to_string())
-        }
-        "newapi" => {
-            let _ = input;
-            Err("NewAPI remote-key create must use the async capability driver".to_string())
-        }
-        _ => Err(format!(
-            "暂不支持 {station_type} 类型中转站的远端 Key 创建。"
-        )),
-    }
-}
-
-fn remote_key_full_secret_with_source(
-    _source: &dyn CollectorSourcePort,
-    station_id: &str,
-    remote_key_id: &str,
-    station_type: &str,
-) -> Result<(RemoteStationKey, String), String> {
-    match station_type {
-        "sub2api" => {
-            let _ = (station_id, remote_key_id);
-            Err("Sub2API remote-key reveal must use the async capability driver".to_string())
-        }
-        "newapi" => {
-            Err("NewAPI remote-key reveal must use the async capability driver".to_string())
-        }
-        _ => Err(format!(
-            "暂不支持 {station_type} 类型中转站从远端发现同步本地 Key。"
-        )),
     }
 }
 

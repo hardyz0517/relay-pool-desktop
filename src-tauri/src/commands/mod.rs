@@ -160,10 +160,18 @@ fn system_url_launcher(url: &str) -> SystemUrlLauncher {
 
 fn open_url_with_system(url: &str) -> Result<(), String> {
     let launcher = system_url_launcher(url);
-    let result = Command::new(launcher.program).args(launcher.args).spawn();
+    let result = Command::new(launcher.program).args(launcher.args).status();
 
     result
-        .map(|_| ())
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!(
+                    "launcher exited with status {status}"
+                )))
+            }
+        })
         .map_err(|error| format!("无法打开外部链接: {error}"))
 }
 

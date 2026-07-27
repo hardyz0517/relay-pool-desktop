@@ -425,6 +425,7 @@ pub fn run() {
                     let remote_keys_command_facade =
                         app_composition::compose_remote_keys_command_facade(
                             &app_services,
+                            blocking_executor.clone(),
                             outbound_client.clone(),
                             Arc::clone(&provider_registry),
                             data_key,

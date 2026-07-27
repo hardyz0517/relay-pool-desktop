@@ -25,7 +25,7 @@ use crate::{
                 EndpointJsonResult as RecoverableEndpointJsonResult, RequestPolicy,
             },
             facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
-            output::{AdapterOutput, CollectorTask, CreatedRemoteKey},
+            output::{AdapterOutput, CollectorTask},
             CollectorSourcePort,
         },
         group_categories::infer_group_category,
@@ -33,6 +33,9 @@ use crate::{
         station_endpoints::{build_api_url, build_management_url},
     },
 };
+
+#[cfg(test)]
+use crate::services::collectors::output::CreatedRemoteKey;
 
 const COLLECTOR_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const COLLECTOR_TASK_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
@@ -571,6 +574,7 @@ pub fn scan_remote_key_full_secret(
     Err("远端 Key 已不存在，无法创建本地 Key。".to_string())
 }
 
+#[cfg(test)]
 #[cfg(test)]
 pub fn create_remote_key(
     database: &dyn CollectorSourcePort,
@@ -3243,6 +3247,7 @@ mod tests {
             result.full_key_once.as_deref(),
             Some("sk-created-secret-pro")
         );
+        assert_eq!(result.message, "Sub2API 远端 Key 已创建。");
         assert_eq!(request["name"], "Grouped remote key");
         assert_eq!(request["group"], "Pro");
         assert_eq!(request["group_id"], "pro");
