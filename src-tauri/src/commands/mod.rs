@@ -13,6 +13,7 @@ use std::{
 use tauri::{ipc::Channel, Manager, State};
 
 pub(crate) mod change_events;
+pub(crate) mod channel_status;
 pub(crate) mod credentials;
 pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
@@ -32,10 +33,10 @@ use crate::{
     application::{
         command_facades::{
             CaptureCommandError, CaptureCommandFacade, ChannelMonitoringCommandFacade,
-            ChannelStatusCommandFacade, CollectorMetadataCommandFacade, DataDirectoryCommandError,
-            EndpointPingCommandError, KeyPoolCommandFacade, LocalProxyCommandError,
-            LocalProxyCommandFacade, PricingCommandFacade, RemoteKeysCommandFacade,
-            RoutingCommandFacade, StationCollectionCommandError, StationCollectionCommandFacade,
+            CollectorMetadataCommandFacade, DataDirectoryCommandError, EndpointPingCommandError,
+            KeyPoolCommandFacade, LocalProxyCommandError, LocalProxyCommandFacade,
+            PricingCommandFacade, RemoteKeysCommandFacade, RoutingCommandFacade,
+            StationCollectionCommandError, StationCollectionCommandFacade,
             StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
             StationKeyConnectivityProbeTarget,
         },
@@ -63,11 +64,9 @@ use crate::{
             CreateChannelMonitorTemplateInputDto, UpdateChannelMonitorInputDto,
             UpdateChannelMonitorTemplateInputDto,
         },
-        channel_monitor_operations::ChannelStatusWorkspaceDto,
         channel_monitor_reads::{
             ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
             ChannelMonitorRunDto, ChannelMonitorSummaryDto, ChannelMonitorSummaryInputDto,
-            ChannelStatusSummaryDto,
         },
         collector_facts::{
             BalanceSnapshotDto, CollectorRunDto, CollectorSnapshotDto, CollectorStationIdInputDto,
@@ -1015,37 +1014,6 @@ pub async fn list_channel_monitor_summaries(
         facade
             .list_channel_monitor_summaries(input.run_since.as_deref(), input.run_limit)
             .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_channel_status_summaries(
-    facade: State<'_, ChannelStatusCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelStatusSummaryDto>, error::CommandError> {
-    correlation::in_command_scope("list_channel_status_summaries", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_channel_status_summaries(PageLimit::new(200).expect("bounded limit"))
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn load_channel_status_workspace(
-    facade: State<'_, ChannelStatusCommandFacade>,
-    input: Value,
-) -> Result<ChannelStatusWorkspaceDto, error::CommandError> {
-    correlation::in_command_scope("load_channel_status_workspace", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .load_channel_status_workspace(PageLimit::new(200).expect("bounded limit"))
-            .await
-            .map(ChannelStatusWorkspaceDto::from)
             .map_err(public_command_application_error)
     })
     .await
