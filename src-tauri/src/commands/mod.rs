@@ -30,6 +30,7 @@ pub(crate) mod request_logs;
 pub(crate) mod routing_health;
 pub(crate) mod runtime;
 pub(crate) mod settings;
+pub(crate) mod station_collection;
 pub(crate) mod stations;
 pub(crate) mod updater;
 
@@ -39,7 +40,6 @@ use crate::{
         command_facades::{
             CaptureCommandError, CaptureCommandFacade, DataDirectoryCommandError,
             EndpointPingCommandError, LocalProxyCommandError, LocalProxyCommandFacade,
-            StationCollectionCommandError, StationCollectionCommandFacade,
             StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
             StationKeyConnectivityProbeTarget,
         },
@@ -61,15 +61,13 @@ use crate::{
         OperationRegistryError, OperationStartRequest, OperationTerminal,
     },
     ipc::dto::{
-        collector_facts::CollectorStationIdInputDto,
         operations::OperationStartedDto,
         proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
         routing_mutations::ReorderLocalRoutingKeysInputDto,
         settings::CcswitchImportResultDto,
         station_collector_operations::{
             CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
-            CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
-            StationLoginTestInputDto, StationLoginTestResultDto,
+            CollectorRunResultDto,
         },
         station_keys::StationKeyConnectivityInputDto,
         updater_data_recovery::{
@@ -88,7 +86,7 @@ use crate::{
         OutboundHeaders, OutboundRequest, ProxyPolicy, RequestBudget, SecretHeaderValue,
     },
     services::{
-        capture, collectors,
+        capture,
         data_store::{
             backup::backup_selected_database,
             config::{
@@ -885,143 +883,6 @@ pub async fn test_station_key_connectivity(
         Ok(result)
     })
     .await
-}
-
-#[tauri::command]
-pub async fn detect_sub2api_station(
-    facade: State<'_, StationCollectionCommandFacade>,
-    input: Value,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("detect_sub2api_station", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(
-                input.station_id,
-                collectors::adapters::CollectorTask::Detect,
-            )
-            .await
-            .map_err(public_station_collection_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn collect_sub2api_station(
-    facade: State<'_, StationCollectionCommandFacade>,
-    input: Value,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("collect_sub2api_station", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(input.station_id, collectors::adapters::CollectorTask::Full)
-            .await
-            .map_err(public_station_collection_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn detect_station_info(
-    facade: State<'_, StationCollectionCommandFacade>,
-    input: Value,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("detect_station_info", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(
-                input.station_id,
-                collectors::adapters::CollectorTask::Detect,
-            )
-            .await
-            .map_err(public_station_collection_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn collect_station_info(
-    facade: State<'_, StationCollectionCommandFacade>,
-    input: Value,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("collect_station_info", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(input.station_id, collectors::adapters::CollectorTask::Full)
-            .await
-            .map_err(public_station_collection_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn collect_station_task(
-    facade: State<'_, StationCollectionCommandFacade>,
-    input: Value,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("collect_station_task", async {
-        let input = StationCollectorTaskInputDto::parse(input)?;
-        let task = match input.task_type {
-            StationCollectorTaskTypeDto::Detect => collectors::adapters::CollectorTask::Detect,
-            StationCollectorTaskTypeDto::Balance => collectors::adapters::CollectorTask::Balance,
-            StationCollectorTaskTypeDto::Groups => collectors::adapters::CollectorTask::Groups,
-            StationCollectorTaskTypeDto::Models => collectors::adapters::CollectorTask::Models,
-            StationCollectorTaskTypeDto::Full => collectors::adapters::CollectorTask::Full,
-        };
-        facade
-            .run_station_collection(input.station_id, task)
-            .await
-            .map_err(public_station_collection_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn test_station_login(
-    facade: State<'_, StationCollectionCommandFacade>,
-    input: Value,
-) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("test_station_login", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .test_station_login(input.station_id)
-            .await
-            .map_err(public_station_collection_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn test_station_login_input(
-    runtime: State<'_, ManagedWorkRuntime>,
-    input: Value,
-) -> Result<StationLoginTestResultDto, error::CommandError> {
-    correlation::in_command_scope("test_station_login_input", async {
-        let input = StationLoginTestInputDto::parse(input)?.into_domain();
-        collectors::test_station_login_input_async(
-            &runtime.outbound,
-            input,
-            tokio_util::sync::CancellationToken::new(),
-            current_correlation_id(),
-        )
-        .await
-        .map_err(public_station_login_probe_error)
-    })
-    .await
-}
-
-fn public_station_login_probe_error(_: String) -> error::CommandError {
-    error::CommandError::from_driver(error::DriverFailure::ExternalUnavailable {
-        provider: None,
-        upstream_status: None,
-    })
-}
-
-fn public_station_collection_error(error: StationCollectionCommandError) -> error::CommandError {
-    match error {
-        StationCollectionCommandError::Prepare(error) => public_command_application_error(error),
-        StationCollectionCommandError::Apply(error) => command_application_error(error),
-        StationCollectionCommandError::Blocking(error) => public_blocking_executor_error(error),
-    }
 }
 
 fn public_data_directory_error(error: DataDirectoryCommandError) -> error::CommandError {
