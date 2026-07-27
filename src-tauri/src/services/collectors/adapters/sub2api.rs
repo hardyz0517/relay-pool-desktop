@@ -20,7 +20,7 @@ use crate::{
     },
     services::{
         collectors::{
-            adapters::request_recovery::{
+            drivers::sub2api::request_recovery::{
                 execute_json_request, CollectionAttemptBudget,
                 EndpointJsonResult as RecoverableEndpointJsonResult, RequestPolicy,
             },

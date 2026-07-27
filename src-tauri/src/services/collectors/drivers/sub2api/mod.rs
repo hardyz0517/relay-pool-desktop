@@ -1,3 +1,5 @@
+pub mod request_recovery;
+
 use std::time::{Duration, Instant};
 
 use futures_util::future::{BoxFuture, FutureExt};
