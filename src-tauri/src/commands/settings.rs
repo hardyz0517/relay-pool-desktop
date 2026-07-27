@@ -5,7 +5,10 @@ use crate::{
     application::command_facades::SettingsStationsCommandFacade,
     commands::error,
     ipc::dto::{
-        settings::{SettingsDto, UpdateLocalAccessKeyInputDto, UpdateSettingsInputDto},
+        settings::{
+            OpenExternalUrlInputDto, SettingsDto, UpdateLocalAccessKeyInputDto,
+            UpdateSettingsInputDto,
+        },
         EmptyInputDto,
     },
     observability::correlation,
@@ -70,6 +73,16 @@ pub async fn update_settings(
             .await
             .map_err(super::public_command_application_error)?;
         Ok(SettingsDto::from(settings))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn open_external_url(input: Value) -> Result<(), error::CommandError> {
+    correlation::in_command_scope("open_external_url", async {
+        let input = OpenExternalUrlInputDto::parse(input)?;
+        let url = super::validate_external_http_url(&input.url)?;
+        Ok(super::open_url_with_system(url)?)
     })
     .await
 }

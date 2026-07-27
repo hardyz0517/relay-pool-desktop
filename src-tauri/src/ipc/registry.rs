@@ -69,7 +69,7 @@ macro_rules! ipc_command_registry {
             get_local_access_key => $crate::commands::settings::get_local_access_key,
             update_local_access_key => $crate::commands::settings::update_local_access_key,
             import_relay_pool_to_ccswitch => $crate::commands::import_relay_pool_to_ccswitch,
-            open_external_url => $crate::commands::open_external_url,
+            open_external_url => $crate::commands::settings::open_external_url,
             updater_network_config => $crate::commands::updater::updater_network_config,
             inspect_latest_update_manifest => $crate::commands::updater::inspect_latest_update_manifest,
             update_settings => $crate::commands::settings::update_settings,

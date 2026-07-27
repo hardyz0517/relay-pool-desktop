@@ -87,7 +87,7 @@ use crate::{
         routing_mutations::{
             ReorderLocalRoutingKeysInputDto, UpdateStationKeyCapabilitiesInputDto,
         },
-        settings::{CcswitchImportResultDto, OpenExternalUrlInputDto},
+        settings::CcswitchImportResultDto,
         station_collector_operations::{
             CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
@@ -534,16 +534,6 @@ fn prepare_ccswitch_import(
         },
         deeplink,
     )
-}
-
-#[tauri::command]
-pub async fn open_external_url(input: Value) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("open_external_url", async {
-        let input = OpenExternalUrlInputDto::parse(input)?;
-        let url = validate_external_http_url(&input.url)?;
-        Ok(open_url_with_system(url)?)
-    })
-    .await
 }
 
 fn command_application_error(error: ApplicationError) -> error::CommandError {
