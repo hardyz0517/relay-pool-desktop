@@ -4,10 +4,7 @@ use serde_json::{json, Value};
 
 use crate::models::{credentials::StationSessionCredentialKind, stations::Station};
 use crate::services::{
-    collectors::{
-        adapters::newapi::{auth, parsers},
-        CollectorSourcePort,
-    },
+    collectors::{adapters::newapi::auth, drivers::newapi::parsers, CollectorSourcePort},
     outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     secrets::mask::redact_text,
     station_endpoints::build_management_url,

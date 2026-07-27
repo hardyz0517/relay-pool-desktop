@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use crate::models::{credentials::PersistStationSessionInput, stations::Station};
 #[cfg(test)]
 use crate::services::{
-    collectors::{adapters::newapi::parsers, CollectorSourcePort},
+    collectors::{drivers::newapi::parsers, CollectorSourcePort},
     secrets::mask::redact_text,
     station_endpoints::build_management_url,
 };

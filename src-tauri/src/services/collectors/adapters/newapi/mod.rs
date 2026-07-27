@@ -7,7 +7,6 @@
 mod auth;
 #[cfg(test)]
 mod client;
-mod parsers;
 
 use serde_json::{json, Value};
 
@@ -15,6 +14,7 @@ use crate::models::{
     remote_keys::{CreateRemoteStationKeyInput, RemoteKeyMatchStatus, RemoteStationKey},
     stations::Station,
 };
+use crate::services::collectors::drivers::newapi::parsers;
 use crate::services::collectors::{facts::CollectorFacts, CollectorSourcePort};
 
 #[cfg(test)]
