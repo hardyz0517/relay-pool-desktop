@@ -16,6 +16,7 @@ pub(crate) mod data_recovery;
 pub(crate) mod error;
 pub(crate) mod runtime;
 pub(crate) mod settings;
+pub(crate) mod stations;
 pub(crate) mod updater;
 
 use crate::{
@@ -28,9 +29,9 @@ use crate::{
             DataDirectoryCommandFacade, EndpointPingCommandError, KeyPoolCommandFacade,
             LocalProxyCommandError, LocalProxyCommandFacade, PricingCommandFacade,
             RemoteKeysCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            SettingsStationsCommandFacade, StationCollectionCommandError,
-            StationCollectionCommandFacade, StationKeyConnectivityCommandError,
-            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
+            StationCollectionCommandError, StationCollectionCommandFacade,
+            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
+            StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -110,15 +111,11 @@ use crate::{
             UpdateStationCredentialsInputDto, UpdateStationKeyGroupBindingInputDto,
             UpdateStationKeyInputDto, UpdateStationSessionInputDto,
         },
-        stations::{
-            CreateStationInputDto, DeleteStationInputDto, ReorderStationsInputDto,
-            UpdateStationInputDto,
-        },
         updater_data_recovery::{
             ActivateDataStoreCandidateInputDto, ActivationResultDto, CreateNewDataStoreInputDto,
             DataStoreCandidateViewDto, DataStoreStartupViewDto,
         },
-        EmptyInputDto, StationDto,
+        EmptyInputDto,
     },
     models::{
         proxy::{ProxyStatus, UpstreamApiFormat},
@@ -496,89 +493,10 @@ fn data_store_updated_at() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
-#[tauri::command]
-pub async fn list_stations(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationDto>, error::CommandError> {
-    correlation::in_command_scope("list_stations", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_stations()
-            .await
-            .map(|stations| stations.into_iter().map(StationDto::from).collect())
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
 fn is_supported_database_file(path: &std::path::Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == DATABASE_FILE || name == DATABASE_FILE_V2)
-}
-
-#[tauri::command]
-pub async fn create_station(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<StationDto, error::CommandError> {
-    correlation::in_command_scope("create_station", async {
-        let input = CreateStationInputDto::parse(input)?.into_domain()?;
-        facade
-            .create_station(input)
-            .await
-            .map(StationDto::from)
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_station(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<StationDto, error::CommandError> {
-    correlation::in_command_scope("update_station", async {
-        let input = UpdateStationInputDto::parse(input)?.into_domain()?;
-        facade
-            .update_station(input)
-            .await
-            .map(StationDto::from)
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_station(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("delete_station", async {
-        let input = DeleteStationInputDto::parse(input)?;
-        facade
-            .delete_station(input.id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reorder_stations(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationDto>, error::CommandError> {
-    correlation::in_command_scope("reorder_stations", async {
-        let input = ReorderStationsInputDto::parse(input)?;
-        facade
-            .reorder_stations(input.station_ids)
-            .await
-            .map(|stations| stations.into_iter().map(StationDto::from).collect())
-            .map_err(public_command_application_error)
-    })
-    .await
 }
 
 #[tauri::command]
