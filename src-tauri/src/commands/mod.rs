@@ -20,6 +20,7 @@ pub(crate) mod endpoint_ping;
 pub(crate) mod error;
 pub(crate) mod model_aliases;
 pub(crate) mod request_logs;
+pub(crate) mod routing_health;
 pub(crate) mod runtime;
 pub(crate) mod settings;
 pub(crate) mod stations;
@@ -85,10 +86,7 @@ use crate::{
             PricingRuleDto, ResolvedPricingContextDto,
         },
         proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
-        routing_health_reads::{
-            RouteSimulationInputDto, RouteSimulationResultDto, RoutingStationKeyIdInputDto,
-            StationEndpointHealthDto, StationKeyCapabilitiesDto, StationKeyHealthDto,
-        },
+        routing_health_reads::{RoutingStationKeyIdInputDto, StationKeyCapabilitiesDto},
         routing_mutations::{
             ReorderLocalRoutingKeysInputDto, UpdateStationKeyCapabilitiesInputDto,
         },
@@ -995,36 +993,6 @@ pub async fn update_station_key_capabilities(
 }
 
 #[tauri::command]
-pub async fn list_station_key_health(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationKeyHealthDto>, error::CommandError> {
-    correlation::in_command_scope("list_station_key_health", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_station_key_health()
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_station_endpoint_health(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationEndpointHealthDto>, error::CommandError> {
-    correlation::in_command_scope("list_station_endpoint_health", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_station_endpoint_health()
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn list_channel_monitors(
     facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
@@ -1303,21 +1271,6 @@ fn public_operation_registry_error(error: OperationRegistryError) -> error::Comm
 }
 
 #[tauri::command]
-pub async fn get_station_key_health(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<StationKeyHealthDto, error::CommandError> {
-    correlation::in_command_scope("get_station_key_health", async {
-        let input = RoutingStationKeyIdInputDto::parse(input)?;
-        facade
-            .get_station_key_health(input.station_key_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn get_operation_status(
     runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
@@ -1536,21 +1489,6 @@ pub async fn test_station_key_connectivity(
             .await
             .map_err(command_application_error)?;
         Ok(result)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn simulate_route(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<RouteSimulationResultDto, error::CommandError> {
-    correlation::in_command_scope("simulate_route", async {
-        let input = RouteSimulationInputDto::parse(input)?.into_domain();
-        facade
-            .simulate_route(input)
-            .await
-            .map_err(public_command_application_error)
     })
     .await
 }
