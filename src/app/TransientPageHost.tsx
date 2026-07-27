@@ -4,8 +4,10 @@ import {
   completeTransientPageExit,
   type TransientPageExitSnapshot,
 } from "@/app/transientPageExitPolicy";
-import { transientPageVisibility } from "@/app/navigation/PageVisibility";
-import { PageActivityProvider } from "@/components/shell/PageActivity";
+import {
+  PageVisibilityProvider,
+  transientPageVisibility,
+} from "@/app/navigation/PageVisibility";
 import type { TransientPageId } from "@/lib/types/navigation";
 
 declare module "react" {
@@ -64,7 +66,7 @@ function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
       data-page-transition-page-id={page.pageId}
       data-page-transition-state={isPresent ? "active" : "exiting"}
     >
-      <PageActivityProvider visibility={visibility}>
+      <PageVisibilityProvider visibility={visibility}>
         <motion.div
           aria-hidden={!isPresent}
           className="app-page-transition-content"
@@ -76,7 +78,7 @@ function TransientPageLayer({ page }: { page: TransientPageDescriptor }) {
         >
           {page.node}
         </motion.div>
-      </PageActivityProvider>
+      </PageVisibilityProvider>
     </div>
   );
 }

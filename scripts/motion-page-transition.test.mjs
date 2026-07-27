@@ -261,8 +261,8 @@ const interactionActivitySource = await readFile(
   "src/components/ui/InteractionActivity.tsx",
   "utf8",
 );
-const pageActivitySource = await readFile(
-  "src/components/shell/PageActivity.tsx",
+const pageVisibilitySource = await readFile(
+  "src/app/navigation/PageVisibility.tsx",
   "utf8",
 );
 const selectControlSource = await readFile(
@@ -312,13 +312,12 @@ assert.ok(
   "interaction activity should expose a default-active shared context",
 );
 assert.ok(
-  pageActivitySource.includes("<InteractionActivityProvider active={active}>") &&
-    pageActivitySource.includes("{children}") &&
-    pageActivitySource.includes("</InteractionActivityProvider>") &&
-    pageActivitySource.includes("const interactive = useInteractionActivity();") &&
-    pageActivitySource.includes("refreshEnabled: boolean") &&
-    pageActivitySource.includes("export function usePageActivity()"),
-  "page activity should share one interaction-active state without changing activation semantics",
+  pageVisibilitySource.includes("<InteractionActivityProvider active={value.interactive}>") &&
+    pageVisibilitySource.includes("{children}") &&
+    pageVisibilitySource.includes("</InteractionActivityProvider>") &&
+    pageVisibilitySource.includes("export function usePageVisibility()") &&
+    pageVisibilitySource.includes("export function usePageQueryEnabled()"),
+  "page visibility should share one interaction-active state and expose query visibility",
 );
 assert.ok(
   selectControlSource.includes(
@@ -547,7 +546,8 @@ assert.ok(
 );
 assert.ok(
   hostSource.includes("useIsPresent()") &&
-    hostSource.includes("active={isPresent}") &&
+    hostSource.includes("const visibility = transientPageVisibility(isPresent);") &&
+    hostSource.includes("<PageVisibilityProvider visibility={visibility}>") &&
     hostSource.includes('inert={isPresent ? undefined : ""}') &&
     hostSource.includes("aria-hidden={!isPresent}"),
   "exiting page content should become inactive, inert, and hidden from assistive technology",

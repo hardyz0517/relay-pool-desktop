@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const hostSource = await readFile("src/app/ShellPageHost.tsx", "utf8");
-const activitySource = await readFile("src/components/shell/PageActivity.tsx", "utf8").catch(() => "");
 const activityQuerySource = await readFile("src/lib/query/useActivityQuery.ts", "utf8").catch(() => "");
 const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
 const stationsSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
+const stationsControllerSource = await readFile("src/features/stations/useStationsPageController.ts", "utf8");
+const keyPoolControllerSource = await readFile("src/features/key-pool/useKeyPoolPageController.ts", "utf8");
 
 assert.ok(
-  hostSource.includes("PageActivityProvider") &&
+  hostSource.includes("PageVisibilityProvider") &&
     hostSource.includes("shellPageVisibilityForState(state)") &&
-    hostSource.includes("<PageActivityProvider visibility={visibility}>") &&
+    hostSource.includes("<PageVisibilityProvider visibility={visibility}>") &&
     hostSource.includes("getPageRetentionDecision({") &&
     hostSource.includes('return "background";') &&
     hostSource.includes('return "active";'),
@@ -27,18 +28,9 @@ assert.ok(
 );
 
 assert.ok(
-  activitySource.includes("createPageVisibility") &&
-    activitySource.includes("PageVisibilityProvider") &&
-    activitySource.includes("refreshEnabled: visibility.queryEnabled") &&
-    activitySource.includes("interactive: visibility.interactive"),
-  "page activity should adapt canonical visibility into legacy interaction and refresh axes",
-);
-
-assert.ok(
-  activitySource.includes("export function usePageRefreshEnabled()") &&
-    dashboardSource.includes("useActivityQuery") &&
-    stationsSource.includes("useActivityQuery") &&
-    stationsSource.includes("stationAssetsQueryOptions(stationIds)") &&
+  dashboardSource.includes("useActivityQuery") &&
+    stationsControllerSource.includes("useActivityQuery") &&
+    stationsControllerSource.includes("stationAssetsQueryOptions(stationIds)") &&
     !stationsSource.includes("useQueries({") &&
     !dashboardSource.includes("usePageActivity") &&
     !stationsSource.includes("usePageActivity"),
@@ -46,17 +38,11 @@ assert.ok(
 );
 
 assert.ok(
-  !activitySource.includes("export function usePageActivation") &&
-    !activitySource.includes("wasActiveRef") &&
-    !activitySource.includes("useInteractionActivity"),
-  "page activity should delete the legacy activation callback adapter once page reads move to query owners",
-);
-
-assert.ok(
-  activitySource.includes("interactive: boolean") &&
-    activitySource.includes("refreshEnabled: boolean") &&
-    activitySource.includes("export function usePageActivity"),
-  "page activity should expose separate interaction and refresh axes",
+  !(await readFile("src/components/shell/PageActivity.tsx", "utf8").then(
+    () => true,
+    () => false,
+  )),
+  "page activity compatibility module should be deleted once page reads move to query owners",
 );
 
 assert.ok(
@@ -67,8 +53,8 @@ assert.ok(
 
 const pages = [
   "src/features/dashboard/DashboardPage.tsx",
-  "src/features/stations/StationsPage.tsx",
-  "src/features/key-pool/KeyPoolPage.tsx",
+  "src/features/stations/useStationsPageController.ts",
+  "src/features/key-pool/useKeyPoolPageController.ts",
   "src/features/routing/RoutingPage.tsx",
   "src/features/pricing/PricingPage.tsx",
   "src/features/channels/ChannelStatusTab.tsx",
@@ -81,8 +67,8 @@ const pages = [
 
 const refreshOnlyPages = [
   "src/features/dashboard/DashboardPage.tsx",
-  "src/features/stations/StationsPage.tsx",
-  "src/features/key-pool/KeyPoolPage.tsx",
+  "src/features/stations/useStationsPageController.ts",
+  "src/features/key-pool/useKeyPoolPageController.ts",
   "src/features/routing/RoutingPage.tsx",
   "src/features/pricing/PricingPage.tsx",
   "src/features/channels/ChannelStatusTab.tsx",
@@ -93,11 +79,9 @@ const refreshOnlyPages = [
 for (const page of refreshOnlyPages) {
   const source = await readFile(page, "utf8");
   assert.ok(
-    (source.includes("useActivityQuery") ||
-      source.includes("usePageRefreshEnabled") ||
-      source.includes("usePageActivation")) &&
+    source.includes("useActivityQuery") &&
       !source.includes("usePageActivity"),
-    `${page} should have an explicit query/refresh/activation owner without the combined activity object`,
+    `${page} should have an explicit activity-bound query owner without the combined activity object`,
   );
 }
 
@@ -117,14 +101,13 @@ assert.ok(
   "settings page should use activity-bound query owners instead of a local activation loader",
 );
 
-const keyPoolSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 assert.ok(
-  keyPoolSource.includes("useActivityQuery(keyPoolQueryOptions())") &&
-    keyPoolSource.includes("useActivityQuery(stationsQueryOptions())") &&
-    keyPoolSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
-    keyPoolSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") &&
-    !keyPoolSource.includes("usePageActivation") &&
-    !keyPoolSource.includes("refreshMonitorResources"),
+  keyPoolControllerSource.includes("useActivityQuery(keyPoolQueryOptions())") &&
+    keyPoolControllerSource.includes("useActivityQuery(stationsQueryOptions())") &&
+    keyPoolControllerSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
+    keyPoolControllerSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })") &&
+    !keyPoolControllerSource.includes("usePageActivation") &&
+    !keyPoolControllerSource.includes("refreshMonitorResources"),
   "key pool should read monitor resources through canonical query owners instead of an activation loader",
 );
 

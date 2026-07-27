@@ -6,9 +6,11 @@ import {
   navigationMarks,
 } from "@/app/navigationPerformance";
 import { isLatestShellNavigationCompletion } from "@/app/navigationPolicy";
-import { shellPageVisibilityForState } from "@/app/navigation/PageVisibility";
+import {
+  PageVisibilityProvider,
+  shellPageVisibilityForState,
+} from "@/app/navigation/PageVisibility";
 import { getPageRetentionDecision } from "@/app/navigation/pageRetentionPolicy";
-import { PageActivityProvider } from "@/components/shell/PageActivity";
 import {
   TransientPageHost,
   type TransientPageDescriptor,
@@ -58,7 +60,7 @@ const ShellPageSlot = memo(function ShellPageSlot({
   const inert = !visibility.interactive;
 
   return (
-    <PageActivityProvider visibility={visibility}>
+    <PageVisibilityProvider visibility={visibility}>
       <div
         aria-hidden={inert}
         className="app-page-transition-layer"
@@ -83,7 +85,7 @@ const ShellPageSlot = memo(function ShellPageSlot({
           </ShellPageErrorBoundary>
         </motion.div>
       </div>
-    </PageActivityProvider>
+    </PageVisibilityProvider>
   );
 });
 
