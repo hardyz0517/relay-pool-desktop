@@ -19,6 +19,7 @@ pub(crate) mod data_recovery;
 pub(crate) mod endpoint_ping;
 pub(crate) mod error;
 pub(crate) mod model_aliases;
+pub(crate) mod operations;
 pub(crate) mod request_logs;
 pub(crate) mod routing_health;
 pub(crate) mod runtime;
@@ -74,10 +75,7 @@ use crate::{
             StationGroupOptionDto, UpsertBalanceSnapshotInputDto,
             UpsertStationGroupBindingInputDto,
         },
-        operations::{
-            CancelOperationInputDto, CancelOperationOutcomeDto, OperationIdInputDto,
-            OperationSnapshotDto, OperationStartedDto,
-        },
+        operations::OperationStartedDto,
         pricing_mutations::{
             PricingRuleIdInputDto, UpsertModelBasePriceInputDto, UpsertPricingRuleInputDto,
         },
@@ -1268,39 +1266,6 @@ fn public_operation_registry_error(error: OperationRegistryError) -> error::Comm
         | OperationRegistryError::ProgressTooLarge { .. }
         | OperationRegistryError::TerminalAlreadyRecorded => error::CommandError::internal(None),
     }
-}
-
-#[tauri::command]
-pub async fn get_operation_status(
-    runtime: State<'_, ManagedWorkRuntime>,
-    input: Value,
-) -> Result<OperationSnapshotDto, error::CommandError> {
-    correlation::in_command_scope("get_operation_status", async {
-        let input = OperationIdInputDto::parse(input)?;
-        runtime
-            .operation
-            .status(input.operation_id())
-            .map(OperationSnapshotDto::from)
-            .map_err(public_operation_registry_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn cancel_operation(
-    runtime: State<'_, ManagedWorkRuntime>,
-    input: Value,
-) -> Result<CancelOperationOutcomeDto, error::CommandError> {
-    correlation::in_command_scope("cancel_operation", async {
-        let input = CancelOperationInputDto::parse(input)?;
-        runtime
-            .operation
-            .cancel(input.operation_id(), input.wait())
-            .await
-            .map(CancelOperationOutcomeDto::from)
-            .map_err(public_operation_registry_error)
-    })
-    .await
 }
 
 #[tauri::command]
