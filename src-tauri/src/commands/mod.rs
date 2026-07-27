@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{ipc::Channel, Manager, State};
@@ -22,6 +22,7 @@ pub(crate) mod data_recovery;
 pub(crate) mod endpoint_ping;
 pub(crate) mod error;
 pub(crate) mod key_pool;
+pub(crate) mod local_proxy;
 pub(crate) mod model_aliases;
 pub(crate) mod operations;
 pub(crate) mod pricing;
@@ -62,8 +63,6 @@ use crate::{
     },
     ipc::dto::{
         operations::OperationStartedDto,
-        proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
-        routing_mutations::ReorderLocalRoutingKeysInputDto,
         settings::CcswitchImportResultDto,
         station_collector_operations::{
             CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
@@ -100,7 +99,7 @@ use crate::{
                 DataStoreStartupState,
             },
         },
-        proxy::{redact_error_message, runtime::ProxyRuntimeState},
+        proxy::redact_error_message,
         secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::build_api_url,
     },
@@ -532,123 +531,6 @@ fn capture_command_error(error: CaptureCommandError) -> error::CommandError {
         CaptureCommandError::Blocking(error) => public_blocking_executor_error(error),
         CaptureCommandError::Message(message) => message.into(),
     }
-}
-
-#[tauri::command]
-pub async fn get_proxy_status(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("get_proxy_status", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .get_proxy_status()
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn load_local_routing_workspace(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
-    correlation::in_command_scope("load_local_routing_workspace", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .load_local_routing_workspace()
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reorder_local_routing_keys(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
-    correlation::in_command_scope("reorder_local_routing_keys", async {
-        let input = ReorderLocalRoutingKeysInputDto::parse(input)?;
-        facade
-            .reorder_local_routing_keys(input.station_key_ids)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn start_local_proxy(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("start_local_proxy", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .start_local_proxy()
-            .await
-            .map_err(public_local_proxy_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn stop_local_proxy(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("stop_local_proxy", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .stop_local_proxy()
-            .await
-            .map_err(public_local_proxy_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn cleanup_before_update(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("cleanup_before_update", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .cleanup_before_update()
-            .await
-            .map_err(public_local_proxy_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn prepare_local_proxy_for_update(
-    proxy: State<'_, Arc<ProxyRuntimeState>>,
-    input: Value,
-) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("prepare_local_proxy_for_update", async {
-        EmptyInputDto::parse(input)?;
-        Ok(proxy.prepare_for_update(Duration::from_secs(30)).await?)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn restart_local_proxy(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("restart_local_proxy", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .restart_local_proxy()
-            .await
-            .map_err(public_local_proxy_error)
-    })
-    .await
 }
 
 fn public_endpoint_ping_error(error: EndpointPingCommandError) -> error::CommandError {
