@@ -1911,6 +1911,17 @@ mod tests {
         }
     }
 
+    async fn collect_balance_from_test_server(server: &TestHttpServer) -> DriverOutput {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        NewApiCollectorDriver
+            .collect(&context, CollectorTaskKind::Balance)
+            .await
+            .expect("balance collect")
+    }
+
     #[test]
     fn newapi_detect_is_immediate_success_without_network_facts() {
         let output = detect_output();
@@ -2231,6 +2242,620 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["gpt-4.1-mini", "claude-sonnet"]
         );
+    }
+
+    #[tokio::test]
+    async fn newapi_balance_collects_usage_logs_for_request_count_cost_and_total_tokens() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 9250000,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 375000, "token_used": 49567 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 1200, "quota": 9250000, "token_used": 422890 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 375000, "rpm": 2, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 2,
+                        "items": [
+                            { "prompt_tokens": 30000, "completion_tokens": 4567 },
+                            { "prompt_tokens": 10000, "completion_tokens": 5000 }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 9250000, "rpm": 3, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 3,
+                        "items": [
+                            { "prompt_tokens": 30000, "completion_tokens": 4567 },
+                            { "prompt_tokens": 10000, "completion_tokens": 5000 },
+                            { "prompt_tokens": 250000, "completion_tokens": 123323 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+
+        let output = collect_balance_from_test_server(&server).await;
+        let requests = server.finish();
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(balance.today_request_count, Some(2));
+        assert_eq!(balance.total_request_count, Some(1200));
+        assert_eq!(balance.today_consumption, Some(0.75));
+        assert_eq!(balance.total_consumption, Some(18.5));
+        assert_eq!(balance.today_token_count, Some(49567));
+        assert_eq!(balance.today_input_token_count, None);
+        assert_eq!(balance.today_output_token_count, None);
+        assert_eq!(balance.total_token_count, Some(422890));
+        assert_eq!(balance.total_input_token_count, None);
+        assert_eq!(balance.total_output_token_count, None);
+        assert!(requests
+            .iter()
+            .any(|request| request.starts_with("GET /api/log/self/stat?type=2&")));
+        assert!(requests
+            .iter()
+            .any(|request| request.starts_with("GET /api/log/self?p=1&page_size=100&type=2&")));
+    }
+
+    #[tokio::test]
+    async fn newapi_balance_does_not_treat_used_quota_as_tokens_in_token_display_mode() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota_per_unit": 500000,
+                        "quota_display_type": "TOKENS"
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 9250000,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 375000, "token_used": 175200000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 1200, "quota": 9250000, "token_used": 470000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 375000, "rpm": 2, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 2,
+                        "items": [
+                            { "prompt_tokens": 100000000, "completion_tokens": 50000000 },
+                            { "prompt_tokens": 20000000, "completion_tokens": 5200000 }
+                        ]
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 9250000, "rpm": 3, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 10000,
+                        "items": [
+                            { "prompt_tokens": 100000000, "completion_tokens": 50000000 },
+                            { "prompt_tokens": 20000000, "completion_tokens": 5200000 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+
+        let output = collect_balance_from_test_server(&server).await;
+        let requests = server.finish();
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(balance.today_token_count, Some(175200000));
+        assert_eq!(balance.total_token_count, Some(470000000));
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("GET /api/data/self?"))
+                .count(),
+            2
+        );
+        assert!(requests
+            .iter()
+            .any(|request| request.starts_with("GET /api/data/self?")));
+    }
+
+    #[tokio::test]
+    async fn newapi_balance_does_not_treat_recent_dashboard_window_as_total() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 1000000,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": false,
+                    "message": "鏃堕棿璺ㄥ害涓嶈兘瓒呰繃 1 涓湀"
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 3, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 7, "quota": 700000, "token_used": 359000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 300000, "rpm": 2, "tpm": 999999 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 1000000, "rpm": 2, "tpm": 888888 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 10000,
+                        "items": [
+                            { "prompt_tokens": 111000000, "completion_tokens": 0 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+
+        let output = collect_balance_from_test_server(&server).await;
+        let requests = server.finish();
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(balance.today_token_count, Some(111000000));
+        assert_eq!(balance.total_token_count, None);
+        assert_eq!(balance.total_consumption, Some(2.0));
+        let dashboard_requests = requests
+            .iter()
+            .filter(|request| request.starts_with("GET /api/data/self?"))
+            .count();
+        assert!(dashboard_requests >= 2);
+    }
+
+    #[tokio::test]
+    async fn newapi_balance_rejects_partial_dashboard_total_token_data() {
+        let created_at = unix_now_seconds().saturating_sub(3600);
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 1000000,
+                        "created_at": created_at,
+                        "request_count": 1200
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 2, "quota": 300000, "token_used": 111000000 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 300000, "rpm": 2, "tpm": 999999 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 300000, "rpm": 2, "tpm": 888888 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 10000,
+                        "items": [
+                            { "prompt_tokens": 111000000, "completion_tokens": 0 }
+                        ]
+                    }
+                }),
+            )),
+        ]);
+
+        let output = collect_balance_from_test_server(&server).await;
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(balance.today_token_count, Some(111000000));
+        assert_eq!(balance.total_request_count, Some(1200));
+        assert_eq!(balance.total_consumption, Some(2.0));
+        assert_eq!(balance.total_token_count, None);
+    }
+
+    #[tokio::test]
+    async fn newapi_balance_rejects_dashboard_total_when_self_used_quota_is_zero() {
+        let created_at = unix_now_seconds().saturating_sub(3600);
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 0,
+                        "created_at": created_at,
+                        "request_count": 0
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 4, "quota": 500000, "token_used": 123456789 }
+                    ]
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 0 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+        ]);
+
+        let output = collect_balance_from_test_server(&server).await;
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(balance.total_consumption, Some(0.0));
+        assert_eq!(balance.total_request_count, Some(0));
+        assert_eq!(balance.total_token_count, None);
+    }
+
+    #[tokio::test]
+    async fn newapi_balance_leaves_tokens_unknown_when_logs_have_no_token_counts() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota_per_unit": 500000 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "quota": 1000000,
+                        "used_quota": 0,
+                        "request_count": 0
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": []
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 54321 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "quota": 0, "rpm": 0, "tpm": 987654 }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 0,
+                        "items": []
+                    }
+                }),
+            )),
+        ]);
+
+        let output = collect_balance_from_test_server(&server).await;
+        let balance = output.facts.balances.first().expect("balance fact");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(balance.today_request_count, Some(0));
+        assert_eq!(balance.today_consumption, Some(0.0));
+        assert_eq!(balance.today_input_token_count, None);
+        assert_eq!(balance.today_output_token_count, None);
+        assert_eq!(balance.today_token_count, None);
+        assert_eq!(balance.total_request_count, Some(0));
+        assert_eq!(balance.total_consumption, Some(0.0));
+        assert_eq!(balance.total_input_token_count, None);
+        assert_eq!(balance.total_output_token_count, None);
+        assert_eq!(balance.total_token_count, None);
     }
 
     #[tokio::test]
