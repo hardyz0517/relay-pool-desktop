@@ -235,6 +235,24 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
     }
 }
 
+impl drivers::newapi::auth::NewApiAuthSessionSource for dyn CollectorSourcePort + '_ {
+    fn resolve_newapi_session(
+        &self,
+        station_id: &str,
+        data_key: &[u8; 32],
+        now_ms: i64,
+    ) -> Result<drivers::newapi::auth::NewApiResolvedSession, String> {
+        let session =
+            self.resolve_station_session_with_data_key(station_id.to_string(), data_key, now_ms)?;
+        Ok(drivers::newapi::auth::NewApiResolvedSession {
+            access_token: session.access_token,
+            cookie: session.cookie,
+            newapi_user_id: session.newapi_user_id,
+            message: session.message,
+        })
+    }
+}
+
 fn application_error(error: ApplicationError) -> String {
     error.to_string()
 }
@@ -719,13 +737,18 @@ fn prepare_newapi_collection_v2(
         .iter()
         .any(|task| *task != adapters::CollectorTask::Detect);
     let (auth_context, secret_purpose, secret) = if needs_auth {
-        match adapters::newapi::prepare_collector_auth_context(source, data_key, &station) {
+        match drivers::newapi::auth::prepare_collector_auth_context(
+            source,
+            data_key,
+            &station.id,
+            crate::services::time::now_millis_for_services() as i64,
+        ) {
             Ok(auth) => {
                 let secret_purpose = match auth.kind {
-                    adapters::newapi::PreparedNewApiAuthKind::AccessToken => {
+                    drivers::newapi::auth::PreparedNewApiAuthKind::AccessToken => {
                         contract::CredentialSecretPurpose::AuthorizationHeader
                     }
-                    adapters::newapi::PreparedNewApiAuthKind::Cookie => {
+                    drivers::newapi::auth::PreparedNewApiAuthKind::Cookie => {
                         contract::CredentialSecretPurpose::SessionCookie
                     }
                 };

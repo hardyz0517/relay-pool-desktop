@@ -14,9 +14,7 @@ mod test_support;
 use serde_json::{json, Value};
 
 use crate::models::{
-    remote_keys::{
-        CreateRemoteStationKeyInput, RemoteKeyCapability, RemoteKeyMatchStatus, RemoteStationKey,
-    },
+    remote_keys::{CreateRemoteStationKeyInput, RemoteKeyMatchStatus, RemoteStationKey},
     stations::Station,
 };
 use crate::services::collectors::{facts::CollectorFacts, CollectorSourcePort};
@@ -60,61 +58,6 @@ pub(crate) fn test_login_credentials(
     auth::test_login_credentials(base_url, login_username, login_password)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PreparedNewApiAuthKind {
-    AccessToken,
-    Cookie,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PreparedNewApiAuthContext {
-    pub kind: PreparedNewApiAuthKind,
-    pub secret: String,
-    pub user_id: String,
-}
-
-pub(crate) fn prepare_collector_auth_context(
-    database: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
-    station: &Station,
-) -> Result<PreparedNewApiAuthContext, String> {
-    let session = database.resolve_station_session_with_data_key(
-        station.id.clone(),
-        data_key,
-        crate::services::time::now_millis_for_services() as i64,
-    )?;
-    let user_id = session
-        .newapi_user_id
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "NewAPI session is missing user id".to_string())?;
-    if let Some(access_token) = session
-        .access_token
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-    {
-        return Ok(PreparedNewApiAuthContext {
-            kind: PreparedNewApiAuthKind::AccessToken,
-            secret: access_token,
-            user_id,
-        });
-    }
-    if let Some(cookie) = session
-        .cookie
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-    {
-        return Ok(PreparedNewApiAuthContext {
-            kind: PreparedNewApiAuthKind::Cookie,
-            secret: cookie,
-            user_id,
-        });
-    }
-    Err(session
-        .message
-        .unwrap_or_else(|| "NewAPI session credentials are missing".to_string()))
-}
-
 #[cfg(test)]
 fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFact {
     parsers::parse_balance_fact(station_id, payload, Some(500000.0))
@@ -123,18 +66,6 @@ fn parse_newapi_balance(station_id: &str, payload: &Value) -> CollectedBalanceFa
 #[cfg(test)]
 fn parse_newapi_group_facts(station_id: &str, payload: &Value) -> CollectorFacts {
     parsers::parse_group_facts(station_id, payload)
-}
-
-pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, String> {
-    Ok(RemoteKeyCapability {
-        station_id: station.id.clone(),
-        station_type: station.station_type.trim().to_string(),
-        can_list_remote_keys: true,
-        can_create_remote_key: true,
-        can_read_groups: true,
-        requires_manual_session: true,
-        unsupported_reason: None,
-    })
 }
 
 #[cfg(test)]

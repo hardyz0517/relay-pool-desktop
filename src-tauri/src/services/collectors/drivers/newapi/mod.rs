@@ -1,3 +1,4 @@
+pub(crate) mod auth;
 pub(crate) mod parsers;
 
 use futures_util::future::{BoxFuture, FutureExt};
