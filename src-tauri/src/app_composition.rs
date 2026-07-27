@@ -306,10 +306,12 @@ mod tests {
 
 pub(crate) fn compose_station_key_connectivity_command_facade(
     services: &AppServices,
+    outbound: AsyncOutboundClient,
 ) -> StationKeyConnectivityCommandFacade {
     StationKeyConnectivityCommandFacade::new(
         Arc::clone(&services.credentials),
         Arc::clone(&services.routing),
+        outbound,
     )
 }
 

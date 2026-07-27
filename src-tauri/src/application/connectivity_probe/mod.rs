@@ -378,6 +378,7 @@ fn normalize_connectivity_model(model: &str) -> String {
     model.trim().to_ascii_lowercase()
 }
 
+#[cfg(test)]
 pub(crate) fn run_station_key_connectivity_model_attempts<F>(
     candidates: &[String],
     mut probe: F,
@@ -412,6 +413,7 @@ where
     })
 }
 
+#[cfg(test)]
 pub(crate) fn run_station_key_connectivity_stream_first_probe<F, E>(
     model: &str,
     kind: StationKeyConnectivityProbeKind,
@@ -463,6 +465,7 @@ where
     .with_stream_fallback_reason(Some(fallback_reason))
 }
 
+#[cfg(test)]
 pub(crate) fn run_station_key_connectivity_single_model_probe<F>(
     upstream_api_format: &UpstreamApiFormat,
     capabilities: Option<&StationKeyCapabilities>,

@@ -459,6 +459,7 @@ pub fn run() {
                     let station_key_connectivity_command_facade =
                         app_composition::compose_station_key_connectivity_command_facade(
                             &app_services,
+                            outbound_client.clone(),
                         );
                     let capture_command_facade = app_composition::compose_capture_command_facade(
                         &app_services,

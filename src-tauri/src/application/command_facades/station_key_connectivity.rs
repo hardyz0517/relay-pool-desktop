@@ -7,6 +7,7 @@ use crate::{
         credentials::CredentialService, error::ApplicationError, routing::RoutingService,
     },
     models::{routing::StationKeyCapabilities, station_keys::KeyPoolItem},
+    outbound::AsyncOutboundClient,
 };
 
 #[derive(Debug)]
@@ -31,14 +32,24 @@ pub(crate) struct StationKeyConnectivityProbeTarget {
 pub(crate) struct StationKeyConnectivityCommandFacade {
     credentials: Arc<CredentialService>,
     routing: Arc<RoutingService>,
+    outbound: AsyncOutboundClient,
 }
 
 impl StationKeyConnectivityCommandFacade {
-    pub(crate) fn new(credentials: Arc<CredentialService>, routing: Arc<RoutingService>) -> Self {
+    pub(crate) fn new(
+        credentials: Arc<CredentialService>,
+        routing: Arc<RoutingService>,
+        outbound: AsyncOutboundClient,
+    ) -> Self {
         Self {
             credentials,
             routing,
+            outbound,
         }
+    }
+
+    pub(crate) fn outbound_client(&self) -> AsyncOutboundClient {
+        self.outbound.clone()
     }
 
     pub(crate) async fn prepare_probe_target(
