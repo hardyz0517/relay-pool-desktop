@@ -2233,6 +2233,235 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn truncated_log_window_does_not_report_exact_request_count() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "total": 10000,
+                    "items": [
+                        { "prompt_tokens": 10, "completion_tokens": 5 }
+                    ]
+                }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let (window, _) = collect_log_window(&context, &server.base_url, 0, 1)
+            .await
+            .expect("log window");
+        server.finish();
+
+        assert_eq!(window.request_count, None);
+        assert_eq!(window.input_token_count, None);
+        assert_eq!(window.output_token_count, None);
+    }
+
+    #[tokio::test]
+    async fn log_window_with_missing_token_field_keeps_token_totals_unknown() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "total": 1,
+                    "items": [
+                        { "prompt_tokens": 10 }
+                    ]
+                }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let (window, _) = collect_log_window(&context, &server.base_url, 0, 1)
+            .await
+            .expect("log window");
+        server.finish();
+
+        assert_eq!(window.request_count, Some(1));
+        assert_eq!(window.input_token_count, None);
+        assert_eq!(window.output_token_count, None);
+    }
+
+    #[tokio::test]
+    async fn log_window_rejects_missing_standard_total() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "items": [
+                        { "prompt_tokens": 10, "completion_tokens": 5 }
+                    ]
+                }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = collect_log_window(&context, &server.base_url, 0, 1)
+            .await
+            .unwrap_err();
+        server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::MalformedPayload);
+        assert!(error
+            .sanitized_detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("pagination"));
+    }
+
+    #[tokio::test]
+    async fn log_stat_without_quota_keeps_consumption_unknown() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": { "rpm": 1, "tpm": 25 }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let (window, _) = collect_log_stat_window(&context, &server.base_url, 0, 1, Some(500000.0))
+            .await
+            .expect("log stat window");
+        server.finish();
+
+        assert_eq!(window.consumption, None);
+    }
+
+    #[tokio::test]
+    async fn log_stat_does_not_guess_nonstandard_base_consumption() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": { "quota": 500000, "base_cost": 9.5 }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let (window, _) = collect_log_stat_window(&context, &server.base_url, 0, 1, Some(500000.0))
+            .await
+            .expect("log stat window");
+        server.finish();
+
+        assert_eq!(window.consumption, Some(1.0));
+        assert_eq!(window.base_consumption, None);
+    }
+
+    #[tokio::test]
+    async fn dashboard_window_does_not_sum_partial_rows() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": [
+                    { "count": 2, "quota": 300000, "token_used": 100 },
+                    { "count": 3, "quota": 400000 }
+                ]
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let (window, _) =
+            collect_dashboard_usage_window(&context, &server.base_url, 0, 1, Some(500000.0))
+                .await
+                .expect("dashboard window");
+        server.finish();
+
+        assert_eq!(window.request_count, Some(5));
+        assert_eq!(window.quota, Some(700000));
+        assert_eq!(window.consumption, Some(1.4));
+        assert_eq!(window.token_count, None);
+    }
+
+    #[tokio::test]
+    async fn log_window_rejects_negative_token_values() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": {
+                    "page": 1,
+                    "page_size": 100,
+                    "total": 1,
+                    "items": [
+                        { "prompt_tokens": -1, "completion_tokens": 5 }
+                    ]
+                }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let (window, _) = collect_log_window(&context, &server.base_url, 0, 1)
+            .await
+            .expect("log window");
+        server.finish();
+
+        assert_eq!(window.input_token_count, None);
+        assert_eq!(window.output_token_count, None);
+    }
+
+    #[tokio::test]
+    async fn dashboard_total_searches_past_empty_recent_windows() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(200, json!({ "success": true, "data": [] }))),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": [
+                        { "count": 12, "quota": 900000, "token_used": 456789 }
+                    ]
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let (total, _) = collect_dashboard_usage_total_backwards(
+            &context,
+            &server.base_url,
+            unix_now_seconds(),
+            Some(500000.0),
+            Some(NewApiDashboardTotalTarget {
+                request_count: 12,
+                quota: 900000,
+            }),
+        )
+        .await
+        .expect("dashboard total");
+        server.finish();
+
+        assert_eq!(total.request_count, Some(12));
+        assert_eq!(total.quota, Some(900000));
+        assert_eq!(total.token_count, Some(456789));
+    }
+
     #[test]
     fn reveal_payload_requires_top_level_full_key() {
         assert_eq!(
