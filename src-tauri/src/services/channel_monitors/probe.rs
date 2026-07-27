@@ -171,6 +171,7 @@ fn build_outbound_probe_request(
         body: request.body.clone(),
         proxy: ProxyPolicy::Direct,
         budget: RequestBudget::from_now(timeout),
+        retry_policy: Default::default(),
     })
 }
 

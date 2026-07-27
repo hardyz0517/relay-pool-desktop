@@ -21,6 +21,21 @@ mod outbound {
     #[derive(Clone)]
     pub struct AsyncOutboundClient;
 
+    #[derive(Clone, Debug)]
+    pub struct AsyncOutboundClientConfig;
+
+    impl AsyncOutboundClientConfig {
+        pub fn architecture_budget() -> Self {
+            Self
+        }
+    }
+
+    impl AsyncOutboundClient {
+        pub fn new(_config: AsyncOutboundClientConfig) -> Self {
+            Self
+        }
+    }
+
     impl AsyncOutboundClient {
         pub async fn execute(
             &self,
@@ -32,7 +47,10 @@ mod outbound {
     }
 
     #[derive(Clone)]
-    pub struct ProxyPolicy;
+    pub enum ProxyPolicy {
+        Direct,
+        System,
+    }
 
     #[derive(Clone, Copy, Debug)]
     pub struct RequestBudget {
@@ -60,6 +78,14 @@ mod outbound {
         pub body: Vec<u8>,
         pub proxy: ProxyPolicy,
         pub budget: RequestBudget,
+        pub retry_policy: OutboundRetryPolicy,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub enum OutboundRetryPolicy {
+        #[default]
+        StatusRetry,
+        Never,
     }
 
     pub struct OutboundResponse {
@@ -119,6 +145,7 @@ mod outbound {
         }
     }
 
+    #[derive(Debug)]
     pub struct OutboundHeaders;
 
     impl OutboundHeaders {
@@ -150,6 +177,39 @@ mod outbound {
     impl SecretHeaderValue {
         pub fn new(value: impl Into<String>) -> Self {
             Self(value.into())
+        }
+    }
+}
+
+mod models {
+    pub mod remote_keys {
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct RemoteStationKey {
+            pub id: String,
+            pub station_id: String,
+            pub remote_key_id_hash: Option<String>,
+            pub remote_key_name: Option<String>,
+            pub api_key_masked: Option<String>,
+            pub api_key_fingerprint: Option<String>,
+            pub group_id_hash: Option<String>,
+            pub group_name: Option<String>,
+            pub tier_label: Option<String>,
+            pub rate_multiplier: Option<f64>,
+            pub rate_source: Option<String>,
+            pub created_at: Option<String>,
+            pub last_used_at: Option<String>,
+            pub raw_source: String,
+            pub match_status: RemoteKeyMatchStatus,
+            pub matched_station_key_id: Option<String>,
+            pub match_confidence: f64,
+            pub collected_at: String,
+        }
+
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub enum RemoteKeyMatchStatus {
+            Matched,
+            Possible,
+            Unbound,
         }
     }
 }
@@ -215,6 +275,26 @@ mod services {
                     _ => value.clone(),
                 }
             }
+
+            pub fn mask_secret(secret: &str) -> String {
+                let trimmed = secret.trim();
+                if trimmed.len() <= 8 {
+                    return "[REDACTED]".to_string();
+                }
+                format!("{}********{}", &trimmed[..4], &trimmed[trimmed.len() - 4..])
+            }
+        }
+    }
+
+    pub mod remote_keys {
+        pub fn api_key_fingerprint(secret: &str) -> Option<String> {
+            (!secret.trim().is_empty()).then(|| format!("fingerprint:{}", secret.len()))
+        }
+    }
+
+    pub mod time {
+        pub fn now_millis_for_services() -> u64 {
+            1
         }
     }
 

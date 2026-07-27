@@ -129,11 +129,17 @@ pub(crate) fn compose_key_pool_command_facade(services: &AppServices) -> KeyPool
 
 pub(crate) fn compose_remote_keys_command_facade(
     services: &AppServices,
+    outbound: AsyncOutboundClient,
+    providers: Arc<ProviderRegistry>,
+    data_key: [u8; 32],
 ) -> RemoteKeysCommandFacade {
     RemoteKeysCommandFacade::new(
         Arc::clone(&services.collectors),
         Arc::clone(&services.credentials),
         Arc::clone(&services.settings),
+        outbound,
+        providers,
+        data_key,
     )
 }
 

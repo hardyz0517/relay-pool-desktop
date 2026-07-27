@@ -1517,6 +1517,7 @@ fn driver_failure_code(kind: failure::DriverFailureKind) -> &'static str {
         failure::DriverFailureKind::Timeout => "network_timeout",
         failure::DriverFailureKind::BudgetExhausted => "budget_exhausted",
         failure::DriverFailureKind::Cancelled => "cancelled",
+        failure::DriverFailureKind::ResultUnknown => "result_unknown",
         failure::DriverFailureKind::Transport => "network_error",
         failure::DriverFailureKind::MalformedPayload => "malformed_payload",
         failure::DriverFailureKind::ProviderUnavailable => "provider_unavailable",

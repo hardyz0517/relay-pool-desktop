@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "stage": "Stage 5 Task 19.B",
-  "status": "contract-foundation-no-production-provider-cutover",
+  "stage": "Stage 5 Task 20.C",
+  "status": "newapi-remote-key-production-cutover",
   "registryOwner": "src-tauri/src/services/collectors/drivers/mod.rs",
   "harness": "src-tauri/tests/provider_conformance.rs",
   "providers": [
@@ -60,10 +60,20 @@
           ]
         },
         "remote_key": {
-          "status": "unsupported",
-          "declaredInRegistry": false,
+          "status": "supported",
+          "declaredInRegistry": true,
           "fixtureIds": [
-            "newapi-remote-key-unsupported"
+            "newapi-remote-key-success",
+            "newapi-remote-key-partial",
+            "newapi-remote-key-auth-failure",
+            "newapi-remote-key-rate-limit",
+            "newapi-remote-key-server-failure",
+            "newapi-remote-key-malformed",
+            "newapi-remote-key-unknown-shape",
+            "newapi-remote-key-cancel",
+            "newapi-remote-key-budget-exhaustion",
+            "newapi-remote-key-stale-endpoint-revision",
+            "newapi-remote-key-redaction"
           ]
         },
         "authorization": {

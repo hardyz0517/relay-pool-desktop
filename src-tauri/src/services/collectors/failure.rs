@@ -21,6 +21,7 @@ pub enum DriverFailureKind {
     Timeout,
     BudgetExhausted,
     Cancelled,
+    ResultUnknown,
     Transport,
     MalformedPayload,
     ProviderUnavailable,

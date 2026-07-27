@@ -423,7 +423,12 @@ pub fn run() {
                     let key_pool_command_facade =
                         app_composition::compose_key_pool_command_facade(&app_services);
                     let remote_keys_command_facade =
-                        app_composition::compose_remote_keys_command_facade(&app_services);
+                        app_composition::compose_remote_keys_command_facade(
+                            &app_services,
+                            outbound_client.clone(),
+                            Arc::clone(&provider_registry),
+                            data_key,
+                        );
                     let routing_command_facade =
                         app_composition::compose_routing_command_facade(&app_services);
                     let request_logs_command_facade =

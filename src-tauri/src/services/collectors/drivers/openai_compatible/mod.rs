@@ -153,6 +153,7 @@ fn build_models_request(
         body: Vec::new(),
         proxy,
         budget,
+        retry_policy: Default::default(),
     })
 }
 

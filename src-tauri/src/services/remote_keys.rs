@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     application::{credentials::CredentialService, error::ApplicationError},
@@ -13,8 +14,18 @@ use crate::{
         },
         station_keys::{StationKey, UpdateStationKeyInput},
     },
+    observability::correlation,
+    outbound::{AsyncOutboundClient, ManualProxy, ProxyPolicy, RequestBudget},
     services::collectors::{
         adapters::{self, CreatedRemoteKey},
+        contract::{
+            CollectorContext, CreateRemoteKeyRequest, CredentialScope, CredentialSecret,
+            CredentialSecretPurpose, DriverSecretAccessor, OpaqueCredentialHandle,
+            ProviderAuthContext, ProviderEndpoints, ProviderKind, RemoteKeyRequest,
+            RevealRemoteKeyRequest, StationIdentity,
+        },
+        failure::{DriverFailure, DriverFailureKind},
+        orchestration::ProviderRegistry,
         CollectorSourcePort,
     },
 };
@@ -28,6 +39,7 @@ pub(crate) enum RemoteKeyOperationError {
     Application(ApplicationError),
     Unsupported,
     ExternalUnavailable,
+    ResultUnknown,
     Conflict,
     Internal,
 }
@@ -60,6 +72,284 @@ pub(crate) struct PreparedRemoteKeySave {
     adapter_message: String,
     expose_full_key_once: bool,
     matched_existing: bool,
+}
+
+pub(crate) struct PreparedNewApiRemoteKeyDriverContext {
+    station_id: String,
+    expected_endpoint_revision: i64,
+    capability: RemoteKeyCapability,
+    station: StationIdentity,
+    endpoints: ProviderEndpoints,
+    credential_handle: OpaqueCredentialHandle,
+    auth_context: ProviderAuthContext,
+    secret_accessor: RemoteKeySecretAccessor,
+    proxy: ProxyPolicy,
+}
+
+struct RemoteKeySecretAccessor {
+    expected: OpaqueCredentialHandle,
+    purpose: CredentialSecretPurpose,
+    secret: String,
+}
+
+impl DriverSecretAccessor for RemoteKeySecretAccessor {
+    fn resolve_secret<'a>(
+        &'a self,
+        handle: &'a OpaqueCredentialHandle,
+        purpose: CredentialSecretPurpose,
+    ) -> futures_util::future::BoxFuture<'a, Result<CredentialSecret, DriverFailure>> {
+        Box::pin(async move {
+            if purpose != self.purpose || handle != &self.expected {
+                return Err(DriverFailure::unsupported(
+                    "credential handle is not available to this remote-key driver context",
+                ));
+            }
+            Ok(CredentialSecret::new(self.secret.clone()))
+        })
+    }
+}
+
+pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
+    source: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    station_id: String,
+) -> Result<Option<PreparedNewApiRemoteKeyDriverContext>, RemoteKeyOperationError> {
+    let station = source
+        .station_for_collector(&station_id)
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
+    if station.station_type.trim() != "newapi" {
+        return Ok(None);
+    }
+    let capability = RemoteKeyCapability {
+        station_id: station.id.clone(),
+        station_type: "newapi".to_string(),
+        can_list_remote_keys: true,
+        can_create_remote_key: true,
+        can_read_groups: true,
+        requires_manual_session: true,
+        unsupported_reason: None,
+    };
+    let session = source
+        .resolve_station_session_with_data_key(
+            station.id.clone(),
+            data_key,
+            crate::services::time::now_millis_for_services() as i64,
+        )
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
+    let user_id = session
+        .newapi_user_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(RemoteKeyOperationError::ExternalUnavailable)?;
+    let (secret_purpose, secret) = if let Some(access_token) = session
+        .access_token
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+    {
+        (CredentialSecretPurpose::AuthorizationHeader, access_token)
+    } else if let Some(cookie) = session
+        .cookie
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+    {
+        (CredentialSecretPurpose::SessionCookie, cookie)
+    } else {
+        return Err(RemoteKeyOperationError::ExternalUnavailable);
+    };
+    let settings = source
+        .get_settings()
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
+    let proxy = crate::services::outbound::resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    );
+    let proxy = proxy_policy_from_remote_key_config(proxy)
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
+    let credential_handle = OpaqueCredentialHandle {
+        station_id: station.id.clone(),
+        credential_revision: station.endpoint_revision,
+        scope: CredentialScope::LoginSession,
+    };
+    Ok(Some(PreparedNewApiRemoteKeyDriverContext {
+        station_id: station.id.clone(),
+        expected_endpoint_revision: station.endpoint_revision,
+        capability,
+        station: StationIdentity {
+            station_id: station.id.clone(),
+            endpoint_revision: station.endpoint_revision,
+            provider: ProviderKind::NewApi,
+        },
+        endpoints: ProviderEndpoints {
+            api_base_url: (!station.api_base_url.trim().is_empty())
+                .then_some(station.api_base_url.clone()),
+            website_url: Some(station.website_url.clone()),
+        },
+        credential_handle: credential_handle.clone(),
+        auth_context: ProviderAuthContext::NewApi {
+            user_id,
+            secret_purpose,
+        },
+        secret_accessor: RemoteKeySecretAccessor {
+            expected: credential_handle,
+            purpose: secret_purpose,
+            secret,
+        },
+        proxy,
+    }))
+}
+
+pub(crate) async fn prepare_newapi_remote_key_scan_v2(
+    source: &dyn CollectorSourcePort,
+    registry: &ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedNewApiRemoteKeyDriverContext,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedRemoteKeyScan, RemoteKeyOperationError> {
+    let driver = registry
+        .remote_key(ProviderKind::NewApi)
+        .map_err(remote_key_error_from_driver)?;
+    let context = newapi_remote_key_context(&prepared, outbound, cancellation, correlation_id);
+    let output = driver
+        .list_remote_keys(
+            &context,
+            RemoteKeyRequest {
+                station: prepared.station.clone(),
+                endpoints: prepared.endpoints.clone(),
+                credential: prepared.credential_handle.clone(),
+            },
+        )
+        .await
+        .map_err(remote_key_error_from_driver)?;
+    let (keys, station_key_updates) =
+        enrich_remote_key_discoveries_from_source(source, &prepared.station_id, output.keys)
+            .map_err(|_| RemoteKeyOperationError::Internal)?;
+    ensure_source_endpoint_revision(
+        source,
+        &prepared.station_id,
+        prepared.expected_endpoint_revision,
+    )?;
+    Ok(PreparedRemoteKeyScan::Discovered {
+        station_id: prepared.station_id,
+        expected_endpoint_revision: prepared.expected_endpoint_revision,
+        capability: prepared.capability,
+        keys,
+        station_key_updates,
+    })
+}
+
+pub(crate) async fn prepare_newapi_remote_key_creation_v2(
+    source: &dyn CollectorSourcePort,
+    registry: &ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedNewApiRemoteKeyDriverContext,
+    input: CreateRemoteStationKeyInput,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
+    let driver = registry
+        .remote_key(ProviderKind::NewApi)
+        .map_err(remote_key_error_from_driver)?;
+    let context = newapi_remote_key_context(&prepared, outbound, cancellation, correlation_id);
+    let output = driver
+        .create_remote_key(
+            &context,
+            CreateRemoteKeyRequest {
+                station: prepared.station.clone(),
+                endpoints: prepared.endpoints.clone(),
+                credential: prepared.credential_handle.clone(),
+                name: input.name,
+                group_name: input.group_name,
+                idempotency_key: None,
+            },
+        )
+        .await
+        .map_err(remote_key_error_from_driver)?;
+    prepare_remote_key_save_from_source(
+        source,
+        output.remote_key,
+        output.full_key_once.into_plaintext(),
+        "NewAPI remote key created.".to_string(),
+        false,
+        prepared.expected_endpoint_revision,
+    )
+}
+
+pub(crate) async fn prepare_newapi_local_key_from_remote_v2(
+    source: &dyn CollectorSourcePort,
+    registry: &ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedNewApiRemoteKeyDriverContext,
+    remote_key_id: String,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
+    let driver = registry
+        .remote_key(ProviderKind::NewApi)
+        .map_err(remote_key_error_from_driver)?;
+    let context = newapi_remote_key_context(&prepared, outbound, cancellation, correlation_id);
+    let output = driver
+        .reveal_remote_key(
+            &context,
+            RevealRemoteKeyRequest {
+                station: prepared.station.clone(),
+                endpoints: prepared.endpoints.clone(),
+                credential: prepared.credential_handle.clone(),
+                remote_key_id,
+            },
+        )
+        .await
+        .map_err(remote_key_error_from_driver)?;
+    prepare_remote_key_save_from_source(
+        source,
+        output.remote_key,
+        output.full_key.into_plaintext(),
+        "NewAPI remote key synchronized locally.".to_string(),
+        false,
+        prepared.expected_endpoint_revision,
+    )
+}
+
+fn newapi_remote_key_context<'a>(
+    prepared: &'a PreparedNewApiRemoteKeyDriverContext,
+    outbound: &'a AsyncOutboundClient,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> CollectorContext<'a> {
+    CollectorContext {
+        station: prepared.station.clone(),
+        endpoints: prepared.endpoints.clone(),
+        credential: prepared.credential_handle.clone(),
+        auth: Some(prepared.auth_context.clone()),
+        secrets: &prepared.secret_accessor,
+        outbound,
+        proxy: prepared.proxy.clone(),
+        budget: RequestBudget::from_now(std::time::Duration::from_secs(30)),
+        cancellation,
+        correlation_id: correlation_id
+            .or_else(|| correlation::current().map(|id| id.as_str().to_string()))
+            .unwrap_or_else(|| "remote-key:newapi".to_string()),
+    }
+}
+
+fn remote_key_error_from_driver(error: DriverFailure) -> RemoteKeyOperationError {
+    match error.kind {
+        DriverFailureKind::Unsupported | DriverFailureKind::InvalidRequest => {
+            RemoteKeyOperationError::Unsupported
+        }
+        DriverFailureKind::ResultUnknown => RemoteKeyOperationError::ResultUnknown,
+        DriverFailureKind::AuthRejected
+        | DriverFailureKind::RateLimited
+        | DriverFailureKind::Timeout
+        | DriverFailureKind::BudgetExhausted
+        | DriverFailureKind::Cancelled
+        | DriverFailureKind::Transport
+        | DriverFailureKind::MalformedPayload
+        | DriverFailureKind::ProviderUnavailable => RemoteKeyOperationError::ExternalUnavailable,
+        DriverFailureKind::Internal => RemoteKeyOperationError::Internal,
+    }
 }
 
 pub(crate) fn prepare_remote_key_scan_v2(
@@ -255,7 +545,15 @@ fn remote_key_capability_from_source(
     let station_type = station.station_type.trim().to_string();
     let capability = match station_type.as_str() {
         "sub2api" => adapters::sub2api::remote_key_capability(&station),
-        "newapi" => adapters::newapi::remote_key_capability(&station),
+        "newapi" => Ok(RemoteKeyCapability {
+            station_id,
+            station_type: station_type.clone(),
+            can_list_remote_keys: true,
+            can_create_remote_key: true,
+            can_read_groups: true,
+            requires_manual_session: true,
+            unsupported_reason: None,
+        }),
         _ => Ok(RemoteKeyCapability {
             station_id,
             station_type: station_type.clone(),
@@ -286,6 +584,24 @@ fn ensure_source_endpoint_revision(
     Ok(())
 }
 
+fn proxy_policy_from_remote_key_config(
+    proxy: crate::services::outbound::ProxyConfig,
+) -> Result<ProxyPolicy, String> {
+    match proxy.mode.as_str() {
+        "direct" => Ok(ProxyPolicy::Direct),
+        "system" => Ok(ProxyPolicy::System),
+        "manual" => {
+            let Some(url) = proxy.url.as_deref() else {
+                return Err("manual collector proxy URL is required".to_string());
+            };
+            ManualProxy::parse(url)
+                .map(ProxyPolicy::Manual)
+                .map_err(|error| crate::services::secrets::mask::redact_text(&error.to_string()))
+        }
+        _ => Err("unsupported collector proxy mode".to_string()),
+    }
+}
+
 fn scan_remote_keys_with_source(
     source: &dyn CollectorSourcePort,
     station_id: &str,
@@ -293,7 +609,7 @@ fn scan_remote_keys_with_source(
 ) -> Result<Vec<RemoteStationKey>, String> {
     match station_type {
         "sub2api" => adapters::sub2api::scan_remote_keys(source, &V2_UNUSED_DATA_KEY, station_id),
-        "newapi" => adapters::newapi::scan_remote_keys(source, &V2_UNUSED_DATA_KEY, station_id),
+        "newapi" => Err("NewAPI remote-key scan must use the async capability driver".to_string()),
         _ => Err(format!(
             "暂不支持 {station_type} 类型中转站的远端 Key 扫描。"
         )),
@@ -307,7 +623,10 @@ fn create_remote_key_with_source(
 ) -> Result<CreatedRemoteKey, String> {
     match station_type {
         "sub2api" => adapters::sub2api::create_remote_key(source, &V2_UNUSED_DATA_KEY, input),
-        "newapi" => adapters::newapi::create_remote_key(source, &V2_UNUSED_DATA_KEY, input),
+        "newapi" => {
+            let _ = input;
+            Err("NewAPI remote-key create must use the async capability driver".to_string())
+        }
         _ => Err(format!(
             "暂不支持 {station_type} 类型中转站的远端 Key 创建。"
         )),
@@ -327,12 +646,9 @@ fn remote_key_full_secret_with_source(
             station_id,
             remote_key_id,
         ),
-        "newapi" => adapters::newapi::scan_remote_key_full_secret(
-            source,
-            &V2_UNUSED_DATA_KEY,
-            station_id,
-            remote_key_id,
-        ),
+        "newapi" => {
+            Err("NewAPI remote-key reveal must use the async capability driver".to_string())
+        }
         _ => Err(format!(
             "暂不支持 {station_type} 类型中转站从远端发现同步本地 Key。"
         )),

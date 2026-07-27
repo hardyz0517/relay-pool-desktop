@@ -115,6 +115,7 @@ pub(crate) enum DriverFailure {
         provider: Option<String>,
         upstream_status: Option<u16>,
     },
+    ResultUnknown,
     Internal,
 }
 
@@ -261,6 +262,12 @@ impl CommandError {
                     provider,
                     upstream_status,
                 }),
+            ),
+            DriverFailure::ResultUnknown => (
+                CommandErrorCode::Conflict,
+                "The operation outcome could not be confirmed.",
+                false,
+                None,
             ),
             DriverFailure::Internal => return Self::internal(None),
         };

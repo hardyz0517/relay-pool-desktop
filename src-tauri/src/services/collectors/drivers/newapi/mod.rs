@@ -5,16 +5,19 @@ use http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use serde_json::{json, Value};
 
 use crate::{
+    models::remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
     outbound::{
         OutboundFailureKind, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
-        SecretHeaderValue,
+        OutboundRetryPolicy, SecretHeaderValue,
     },
     services::{
         collectors::{
             contract::{
-                CollectorContext, CollectorDriver, CollectorTaskKind, CredentialSecretPurpose,
-                DriverOutput, DriverOutputStatus, ProviderAuthContext, ProviderKind,
-                RedactedDiagnostics,
+                CollectorContext, CollectorDriver, CollectorTaskKind, CreateRemoteKeyRequest,
+                CreatedRemoteKeyOutput, CredentialSecretPurpose, DriverOutput, DriverOutputStatus,
+                ProviderAuthContext, ProviderKind, RedactedDiagnostics, RemoteKeyDriver,
+                RemoteKeyOutput, RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest,
+                RevealedRemoteKeyOutput,
             },
             evidence::{redact_text, redact_value, EndpointEvidence, EndpointRole, EvidenceSet},
             facts::CollectorFacts,
@@ -28,6 +31,7 @@ use crate::{
 
 const NEW_API_USER_HEADER: HeaderName = HeaderName::from_static("new-api-user");
 const NEWAPI_LOG_PAGE_SIZE: usize = 100;
+const NEWAPI_REMOTE_KEY_PAGE_SIZE: usize = 100;
 const NEWAPI_LOG_MAX_PAGES: usize = 100;
 const NEWAPI_LOG_TYPE_CONSUME: i64 = 2;
 const NEWAPI_DASHBOARD_MAX_WINDOW_SECONDS: i64 = 30 * 24 * 60 * 60;
@@ -42,6 +46,8 @@ pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
 ];
 
 pub struct NewApiCollectorDriver;
+
+pub struct NewApiRemoteKeyDriver;
 
 impl CollectorDriver for NewApiCollectorDriver {
     fn kind(&self) -> ProviderKind {
@@ -63,6 +69,115 @@ impl CollectorDriver for NewApiCollectorDriver {
                     "NewAPI full collection is split by the collector parent task",
                 )),
             }
+        }
+        .boxed()
+    }
+}
+
+impl RemoteKeyDriver for NewApiRemoteKeyDriver {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::NewApi
+    }
+
+    fn list_remote_keys<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: RemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<RemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = request_website_url(&request.endpoints)?;
+            let (items, evidence) = fetch_newapi_token_items(context, &website_url).await?;
+            Ok(RemoteKeyOutput {
+                keys: parse_remote_key_items(&request.station.station_id, &items),
+                evidence,
+                diagnostics: RedactedDiagnostics {
+                    summary: Some(json!({"tokenCount": items.len()}).to_string()),
+                    raw_json_redacted: None,
+                },
+            })
+        }
+        .boxed()
+    }
+
+    fn reveal_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: RevealRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<RevealedRemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = request_website_url(&request.endpoints)?;
+            let (items, mut evidence) = fetch_newapi_token_items(context, &website_url).await?;
+            for (index, value) in items.iter().enumerate() {
+                let Some(remote_key) =
+                    remote_key_from_value(&request.station.station_id, value, index)
+                else {
+                    continue;
+                };
+                if remote_key.id != request.remote_key_id {
+                    continue;
+                }
+                let (remote_key, full_key, endpoint) =
+                    reveal_full_key_for_token_value(context, &website_url, value, index).await?;
+                evidence.push(endpoint);
+                return Ok(RevealedRemoteKeyOutput {
+                    remote_key,
+                    full_key: RemoteKeySecret::new(full_key),
+                    evidence,
+                    diagnostics: RedactedDiagnostics {
+                        summary: Some(json!({"revealed": true}).to_string()),
+                        raw_json_redacted: None,
+                    },
+                });
+            }
+
+            Err(invalid_request(
+                "NewAPI remote key no longer exists; reconcile before creating a local key",
+            ))
+        }
+        .boxed()
+    }
+
+    fn create_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: CreateRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<CreatedRemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = request_website_url(&request.endpoints)?;
+            create_remote_key_once(context, &website_url, &request).await?;
+            let (items, mut evidence) = fetch_newapi_token_items(context, &website_url).await?;
+            for (index, value) in items.iter().enumerate() {
+                if !created_token_matches(value, &request.name) {
+                    continue;
+                }
+                let (remote_key, full_key, endpoint) =
+                    reveal_full_key_for_token_value(context, &website_url, value, index).await?;
+                evidence.push(endpoint);
+                return Ok(CreatedRemoteKeyOutput {
+                    remote_key,
+                    full_key_once: RemoteKeySecret::new(full_key),
+                    evidence,
+                    diagnostics: RedactedDiagnostics {
+                        summary: Some(
+                            json!({
+                                "reconciledBy": "name",
+                                "idempotencyKey": request.idempotency_key.as_deref().unwrap_or("unsupported")
+                            })
+                            .to_string(),
+                        ),
+                        raw_json_redacted: None,
+                    },
+                });
+            }
+
+            Err(result_unknown(
+                EndpointRole::RemoteKeys,
+                None,
+                "NewAPI token create succeeded but reconciliation did not find the created token",
+            ))
         }
         .boxed()
     }
@@ -215,6 +330,407 @@ async fn collect_models(context: &CollectorContext<'_>) -> Result<DriverOutput, 
             raw_json_redacted: Some(redact_value(&payload)),
         },
     })
+}
+
+fn validate_remote_key_request(
+    context: &CollectorContext<'_>,
+    station: &crate::services::collectors::contract::StationIdentity,
+    endpoints: &crate::services::collectors::contract::ProviderEndpoints,
+) -> Result<(), DriverFailure> {
+    if station.provider != ProviderKind::NewApi || context.station.provider != ProviderKind::NewApi
+    {
+        return Err(invalid_request("remote-key request provider mismatch"));
+    }
+    if station.station_id != context.station.station_id
+        || station.endpoint_revision != context.station.endpoint_revision
+    {
+        return Err(invalid_request(
+            "remote-key request station revision mismatch",
+        ));
+    }
+    if request_website_url(endpoints)? != website_url(context)? {
+        return Err(invalid_request("remote-key request endpoint mismatch"));
+    }
+    Ok(())
+}
+
+async fn fetch_newapi_token_items(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+) -> Result<(Vec<Value>, Vec<EndpointEvidence>), DriverFailure> {
+    let mut page = 1_usize;
+    let mut items = Vec::new();
+    let mut evidence = Vec::new();
+    let mut expected_total = None;
+    loop {
+        let path = format!("/api/token/?p={page}&page_size={NEWAPI_REMOTE_KEY_PAGE_SIZE}");
+        let (data, endpoint) =
+            execute_newapi_data(context, EndpointRole::RemoteKeys, website_url, &path).await?;
+        let response_page = numeric_usize_field(&data, &["page"])
+            .filter(|value| *value == page)
+            .ok_or_else(|| {
+                malformed(
+                    EndpointRole::RemoteKeys,
+                    Some(endpoint.clone()),
+                    "NewAPI token pagination is missing a valid page number",
+                )
+            })?;
+        let page_size = page_size_from_payload(&data).ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint.clone()),
+                "NewAPI token pagination is missing page_size",
+            )
+        })?;
+        let total = total_from_payload(&data).ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint.clone()),
+                "NewAPI token pagination is missing total",
+            )
+        })?;
+        if expected_total.is_some_and(|expected| expected != total) {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint),
+                "NewAPI token pagination total changed between pages",
+            ));
+        }
+        expected_total = Some(total);
+        let page_items = remote_key_items(&data)
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let page_item_count = page_items.len();
+        if page_item_count > page_size {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint),
+                "NewAPI token pagination returned more items than page_size",
+            ));
+        }
+        items.extend(page_items);
+        evidence.push(endpoint.clone());
+        if items.len() > total {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint),
+                "NewAPI token pagination returned more items than total",
+            ));
+        }
+        if items.len() == total {
+            break;
+        }
+        if page_item_count == 0 || page_item_count < page_size {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint),
+                "NewAPI token pagination ended before reaching total",
+            ));
+        }
+        page = response_page.saturating_add(1);
+        if page > 1000 {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                None,
+                "NewAPI token pagination exceeded the safety limit",
+            ));
+        }
+    }
+    Ok((items, evidence))
+}
+
+async fn create_remote_key_once(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    request: &CreateRemoteKeyRequest,
+) -> Result<EndpointEvidence, DriverFailure> {
+    let mut body = json!({ "name": request.name });
+    if let Some(group_name) = request
+        .group_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        body["group"] = json!(group_name);
+    }
+    let (_, endpoint) = execute_json_with_method(
+        context,
+        EndpointRole::RemoteKeys,
+        website_url,
+        "/api/token/",
+        Method::POST,
+        Some(body),
+        OutboundRetryPolicy::Never,
+        true,
+    )
+    .await
+    .map_err(|failure| match failure.kind {
+        DriverFailureKind::Timeout
+        | DriverFailureKind::BudgetExhausted
+        | DriverFailureKind::Cancelled
+        | DriverFailureKind::Transport => result_unknown(
+            EndpointRole::RemoteKeys,
+            failure.endpoint.as_ref().and_then(|endpoint| {
+                endpoint.status_code.map(|status| {
+                    EndpointEvidence::new(
+                        EndpointRole::RemoteKeys,
+                        "POST",
+                        None,
+                        Some(status),
+                        None,
+                    )
+                })
+            }),
+            "NewAPI token create outcome is unknown; reconcile before retrying",
+        ),
+        _ => failure,
+    })?;
+    Ok(endpoint)
+}
+
+async fn reveal_full_key_for_token_value(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    value: &Value,
+    index: usize,
+) -> Result<(RemoteStationKey, String, EndpointEvidence), DriverFailure> {
+    let mut remote_key = remote_key_from_value(&context.station.station_id, value, index)
+        .ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                None,
+                "NewAPI remote-key response is missing a stable identity",
+            )
+        })?;
+    let token_id = numeric_i64_field(value, &["id"])
+        .filter(|value| *value > 0)
+        .map(|value| value.to_string())
+        .ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                None,
+                "NewAPI remote-key response is missing token id",
+            )
+        })?;
+    let path = format!("/api/token/{token_id}/key");
+    let (payload, endpoint) = execute_json_with_method(
+        context,
+        EndpointRole::RemoteKeys,
+        website_url,
+        &path,
+        Method::POST,
+        Some(json!({})),
+        OutboundRetryPolicy::default(),
+        true,
+    )
+    .await?;
+    let data = parsers::envelope_data(&payload).map_err(|error| {
+        malformed(
+            EndpointRole::RemoteKeys,
+            Some(endpoint.clone()),
+            error.message,
+        )
+    })?;
+    let full_key = full_key_from_reveal_payload(data).ok_or_else(|| {
+        malformed(
+            EndpointRole::RemoteKeys,
+            Some(endpoint.clone()),
+            "NewAPI reveal response did not return a full key",
+        )
+    })?;
+    remote_key.api_key_masked = Some(crate::services::secrets::mask::mask_secret(&full_key));
+    remote_key.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint(&full_key);
+    Ok((remote_key, full_key, endpoint))
+}
+
+fn parse_remote_key_items(station_id: &str, items: &[Value]) -> Vec<RemoteStationKey> {
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| remote_key_from_value(station_id, value, index))
+        .collect()
+}
+
+fn remote_key_items(payload: &Value) -> Vec<&Value> {
+    payload
+        .get("items")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
+}
+
+fn created_token_matches(value: &Value, expected_name: &str) -> bool {
+    let expected_name = expected_name.trim();
+    string_field(value, "name")
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|name| !expected_name.is_empty() && name == expected_name)
+}
+
+fn remote_key_from_value(
+    station_id: &str,
+    value: &Value,
+    index: usize,
+) -> Option<RemoteStationKey> {
+    let remote_key_id = numeric_i64_field(value, &["id"])
+        .filter(|value| *value > 0)
+        .map(|value| value.to_string());
+    let name = string_field(value, "name");
+    let key_value = string_field(value, "key");
+    let full_key = key_value
+        .as_deref()
+        .filter(|value| looks_like_full_api_key(value))
+        .map(ToString::to_string);
+    let masked = full_key
+        .as_deref()
+        .map(crate::services::secrets::mask::mask_secret)
+        .or_else(|| {
+            key_value
+                .clone()
+                .filter(|value| !looks_like_full_api_key(value))
+        });
+    let (identity_kind, identity, include_index) = remote_key_identity(
+        remote_key_id.as_deref(),
+        full_key.as_deref(),
+        masked.as_deref(),
+        name.as_deref(),
+    )?;
+    let group_name = string_field(value, "group");
+    let group_id_hash = group_name
+        .as_deref()
+        .map(|group| stable_group_key_hash(station_id, "newapi", None, group));
+    let identity_seed = if include_index {
+        format!("{station_id}:{identity_kind}:{identity}:{index}")
+    } else {
+        format!("{station_id}:{identity_kind}:{identity}")
+    };
+
+    Some(RemoteStationKey {
+        id: format!(
+            "newapi-remote-key-{}",
+            &sha256_hex(identity_seed.as_bytes())[..16]
+        ),
+        station_id: station_id.to_string(),
+        remote_key_id_hash: remote_key_id
+            .as_deref()
+            .map(|value| sha256_hex(value.as_bytes())),
+        remote_key_name: name,
+        api_key_masked: masked,
+        api_key_fingerprint: full_key
+            .as_deref()
+            .and_then(crate::services::remote_keys::api_key_fingerprint),
+        group_id_hash,
+        group_name,
+        tier_label: None,
+        rate_multiplier: None,
+        rate_source: Some("newapi_tokens".to_string()),
+        created_at: numeric_i64_field(value, &["created_time"]).map(|value| value.to_string()),
+        last_used_at: numeric_i64_field(value, &["accessed_time"]).map(|value| value.to_string()),
+        raw_source: "newapi_tokens".to_string(),
+        match_status: RemoteKeyMatchStatus::Unbound,
+        matched_station_key_id: None,
+        match_confidence: 0.0,
+        collected_at: crate::services::time::now_millis_for_services().to_string(),
+    })
+}
+
+fn remote_key_identity<'a>(
+    remote_key_id: Option<&'a str>,
+    full_key: Option<&'a str>,
+    masked: Option<&'a str>,
+    name: Option<&'a str>,
+) -> Option<(&'static str, &'a str, bool)> {
+    remote_key_id
+        .map(|value| ("remote_id", value, false))
+        .or_else(|| full_key.map(|value| ("full_key", value, false)))
+        .or_else(|| masked.map(|value| ("masked_key", value, false)))
+        .or_else(|| name.map(|value| ("name", value, true)))
+}
+
+fn full_key_from_reveal_payload(payload: &Value) -> Option<String> {
+    string_field(payload, "key").filter(|value| looks_like_full_api_key(value))
+}
+
+fn page_size_from_payload(payload: &Value) -> Option<usize> {
+    payload
+        .get("page_size")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
+fn total_from_payload(payload: &Value) -> Option<usize> {
+    payload
+        .get("total")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)?
+        .as_str()
+        .map(ToString::to_string)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn looks_like_full_api_key(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.len() < 12 {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    if lower == "[redacted]"
+        || lower == "<redacted>"
+        || lower == "redacted"
+        || lower == "masked"
+        || lower.contains("redacted")
+        || lower.contains("masked")
+        || trimmed.contains('*')
+        || trimmed.contains("...")
+    {
+        return false;
+    }
+    !(lower.starts_with("sk-") && lower.contains("xxx"))
+}
+
+fn stable_group_key_hash(
+    station_id: &str,
+    adapter: &str,
+    group_id: Option<&str>,
+    group_name: &str,
+) -> String {
+    let adapter = adapter.trim().to_lowercase();
+    let source = if let Some(group_id) = group_id.filter(|value| !value.trim().is_empty()) {
+        format!("id:{adapter}:{}", group_id.trim())
+    } else {
+        format!(
+            "name:{}:{}:{}",
+            station_id,
+            adapter,
+            group_name.trim().to_lowercase()
+        )
+    };
+    sha256_hex(source.as_bytes())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn request_website_url(
+    endpoints: &crate::services::collectors::contract::ProviderEndpoints,
+) -> Result<String, DriverFailure> {
+    endpoints
+        .website_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| invalid_request("NewAPI website URL is missing"))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -888,11 +1404,37 @@ async fn execute_json(
     path: &str,
     authenticated: bool,
 ) -> Result<(Value, EndpointEvidence), DriverFailure> {
+    execute_json_with_method(
+        context,
+        role,
+        website_url,
+        path,
+        Method::GET,
+        None,
+        OutboundRetryPolicy::default(),
+        authenticated,
+    )
+    .await
+}
+
+async fn execute_json_with_method(
+    context: &CollectorContext<'_>,
+    role: EndpointRole,
+    website_url: &str,
+    path: &str,
+    method: Method,
+    body: Option<Value>,
+    retry_policy: OutboundRetryPolicy,
+    authenticated: bool,
+) -> Result<(Value, EndpointEvidence), DriverFailure> {
     let url = build_management_url(website_url, path).map_err(|error| invalid_request(error))?;
     let request = build_json_request(
         context,
         role,
         &url,
+        method.clone(),
+        body,
+        retry_policy,
         authenticated,
         Some(context.correlation_id.clone()),
     )
@@ -904,7 +1446,7 @@ async fn execute_json(
         .map_err(|failure| driver_failure_from_outbound(role, failure))?;
     let endpoint = EndpointEvidence::new(
         role,
-        "GET",
+        method.as_str(),
         Some(response.evidence.final_url.clone()),
         Some(response.status.as_u16()),
         None,
@@ -921,6 +1463,9 @@ async fn build_json_request(
     context: &CollectorContext<'_>,
     role: EndpointRole,
     url: &str,
+    method: Method,
+    body: Option<Value>,
+    retry_policy: OutboundRetryPolicy,
     authenticated: bool,
     correlation_id: Option<String>,
 ) -> Result<OutboundRequest, DriverFailure> {
@@ -933,6 +1478,19 @@ async fn build_json_request(
             &policy,
         )
         .map_err(|failure| driver_failure_from_outbound(role, failure))?;
+    let body = match body {
+        Some(body) => {
+            headers
+                .insert_public(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/json"),
+                    &policy,
+                )
+                .map_err(|failure| driver_failure_from_outbound(role, failure))?;
+            serde_json::to_vec(&body).map_err(|error| malformed(role, None, error.to_string()))?
+        }
+        None => Vec::new(),
+    };
     if authenticated {
         let ProviderAuthContext::NewApi {
             user_id,
@@ -973,13 +1531,14 @@ async fn build_json_request(
         }
     }
     Ok(OutboundRequest {
-        method: Method::GET,
+        method,
         url: url.to_string(),
         correlation_id,
         headers,
-        body: Vec::new(),
+        body,
         proxy: context.proxy.clone(),
         budget: context.budget,
+        retry_policy,
     })
 }
 
@@ -1019,6 +1578,26 @@ fn malformed(
 ) -> DriverFailure {
     DriverFailure {
         kind: DriverFailureKind::MalformedPayload,
+        retry: RetryDisposition::Never,
+        auth_effect: AuthEffect::None,
+        endpoint: Some(FailedEndpoint {
+            role,
+            status_code: endpoint.as_ref().and_then(|entry| entry.status_code),
+        }),
+        evidence: endpoint
+            .map(|entry| EvidenceSet::new([entry]))
+            .unwrap_or_else(EvidenceSet::empty),
+        sanitized_detail: Some(redact_text(&detail.into())),
+    }
+}
+
+fn result_unknown(
+    role: EndpointRole,
+    endpoint: Option<EndpointEvidence>,
+    detail: impl Into<String>,
+) -> DriverFailure {
+    DriverFailure {
+        kind: DriverFailureKind::ResultUnknown,
         retry: RetryDisposition::Never,
         auth_effect: AuthEffect::None,
         endpoint: Some(FailedEndpoint {
@@ -1107,7 +1686,36 @@ fn driver_failure_from_outbound(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        outbound::{AsyncOutboundClient, AsyncOutboundClientConfig, ProxyPolicy, RequestBudget},
+        services::collectors::contract::{CredentialScope, ProviderEndpoints, StationIdentity},
+    };
+    use futures_util::FutureExt;
     use serde_json::json;
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    struct TestSecretAccessor;
+
+    impl crate::services::collectors::contract::DriverSecretAccessor for TestSecretAccessor {
+        fn resolve_secret<'a>(
+            &'a self,
+            _handle: &'a crate::services::collectors::contract::OpaqueCredentialHandle,
+            _purpose: CredentialSecretPurpose,
+        ) -> BoxFuture<
+            'a,
+            Result<crate::services::collectors::contract::CredentialSecret, DriverFailure>,
+        > {
+            async {
+                Ok(
+                    crate::services::collectors::contract::CredentialSecret::new(
+                        "newapi-access-token",
+                    ),
+                )
+            }
+            .boxed()
+        }
+    }
 
     #[test]
     fn newapi_detect_is_immediate_success_without_network_facts() {
@@ -1150,5 +1758,97 @@ mod tests {
             EndpointEvidence::new(EndpointRole::Models, "GET", None, Some(502), None),
         );
         assert_eq!(server.kind, DriverFailureKind::ProviderUnavailable);
+    }
+
+    #[test]
+    fn remote_key_parser_keeps_masked_keys_without_fingerprinting() {
+        let key = remote_key_from_value(
+            "station-1",
+            &json!({
+                "id": 101,
+                "name": "primary",
+                "key": "sk-abc**********7890",
+                "group": "vip",
+                "created_time": 1760000000,
+                "accessed_time": 1760000100
+            }),
+            0,
+        )
+        .expect("remote key");
+
+        assert_eq!(key.remote_key_name.as_deref(), Some("primary"));
+        assert_eq!(key.api_key_masked.as_deref(), Some("sk-abc**********7890"));
+        assert_eq!(key.api_key_fingerprint, None);
+        assert_eq!(key.group_name.as_deref(), Some("vip"));
+        assert_eq!(key.raw_source, "newapi_tokens");
+    }
+
+    #[test]
+    fn reveal_payload_requires_top_level_full_key() {
+        assert_eq!(
+            full_key_from_reveal_payload(&json!({"key": "sk-created-secret-f260"})),
+            Some("sk-created-secret-f260".to_string())
+        );
+        assert_eq!(
+            full_key_from_reveal_payload(&json!({"data": {"key": "sk-nested-secret-f260"}})),
+            None
+        );
+        assert_eq!(
+            full_key_from_reveal_payload(&json!({"key": "sk-created**********f260"})),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn create_token_request_disables_status_retry() {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let credential = crate::services::collectors::contract::OpaqueCredentialHandle {
+            station_id: "station-1".to_string(),
+            credential_revision: 7,
+            scope: CredentialScope::LoginSession,
+        };
+        let context = CollectorContext {
+            station: StationIdentity {
+                station_id: "station-1".to_string(),
+                endpoint_revision: 7,
+                provider: ProviderKind::NewApi,
+            },
+            endpoints: ProviderEndpoints {
+                api_base_url: None,
+                website_url: Some("https://newapi.example".to_string()),
+            },
+            credential,
+            auth: Some(ProviderAuthContext::NewApi {
+                user_id: "42".to_string(),
+                secret_purpose: CredentialSecretPurpose::AuthorizationHeader,
+            }),
+            secrets: &secrets,
+            outbound: &outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        };
+
+        let request = build_json_request(
+            &context,
+            EndpointRole::RemoteKeys,
+            "https://newapi.example/api/token/",
+            Method::POST,
+            Some(json!({"name": "relay-created"})),
+            OutboundRetryPolicy::Never,
+            true,
+            Some("test-correlation".to_string()),
+        )
+        .await
+        .expect("request");
+
+        assert_eq!(request.method, Method::POST);
+        assert_eq!(request.retry_policy, OutboundRetryPolicy::Never);
+        assert!(std::str::from_utf8(&request.body)
+            .expect("json body")
+            .contains("relay-created"));
+        assert!(!format!("{:?}", request.headers).contains("newapi-access-token"));
     }
 }

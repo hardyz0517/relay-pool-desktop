@@ -300,6 +300,7 @@ async fn cross_origin_redirect_strips_sensitive_headers_and_redacts_history() {
         body: Vec::new(),
         proxy: ProxyPolicy::Direct,
         budget: RequestBudget::from_now(Duration::from_secs(2)),
+        retry_policy: Default::default(),
     };
 
     let result = client

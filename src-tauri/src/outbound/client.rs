@@ -97,7 +97,9 @@ impl AsyncOutboundClient {
             };
             match result {
                 Ok(response)
-                    if should_retry(response.status) && attempts + 1 < self.config.max_attempts =>
+                    if request.retry_policy.allows_status_retry()
+                        && should_retry(response.status)
+                        && attempts + 1 < self.config.max_attempts =>
                 {
                     attempts += 1;
                     let Some(retry_after) = response.evidence.retry_after else {
@@ -557,6 +559,7 @@ pub struct OutboundRequest {
     pub body: Vec<u8>,
     pub proxy: ProxyPolicy,
     pub budget: RequestBudget,
+    pub retry_policy: OutboundRetryPolicy,
 }
 
 impl OutboundRequest {
@@ -569,7 +572,26 @@ impl OutboundRequest {
             body: Vec::new(),
             proxy: ProxyPolicy::Direct,
             budget,
+            retry_policy: OutboundRetryPolicy::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboundRetryPolicy {
+    StatusRetry,
+    Never,
+}
+
+impl OutboundRetryPolicy {
+    fn allows_status_retry(self) -> bool {
+        matches!(self, Self::StatusRetry)
+    }
+}
+
+impl Default for OutboundRetryPolicy {
+    fn default() -> Self {
+        Self::StatusRetry
     }
 }
 

@@ -798,6 +798,9 @@ fn public_remote_key_error(error: remote_keys::RemoteKeyOperationError) -> error
                 upstream_status: None,
             })
         }
+        remote_keys::RemoteKeyOperationError::ResultUnknown => {
+            error::CommandError::from_driver(error::DriverFailure::ResultUnknown)
+        }
         remote_keys::RemoteKeyOperationError::Conflict => {
             public_command_application_error(ApplicationError::StaleRevision)
         }
@@ -3506,6 +3509,7 @@ fn outbound_json_request(
         body,
         proxy: ProxyPolicy::Direct,
         budget: RequestBudget::from_now(timeout),
+        retry_policy: Default::default(),
     })
 }
 

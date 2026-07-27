@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use crate::{
+    models::remote_keys::RemoteStationKey,
     outbound::{AsyncOutboundClient, ProxyPolicy, RequestBudget},
     services::collectors::{
         evidence::{EndpointEvidence, EndpointRole},
@@ -79,7 +80,9 @@ pub struct CollectorCapabilityDescriptor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteKeyCapabilityDescriptor {
     pub supports_list: bool,
-    pub supports_connectivity_probe: bool,
+    pub supports_create: bool,
+    pub supports_reveal: bool,
+    pub supports_result_unknown_reconciliation: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,10 +208,62 @@ pub struct RemoteKeyRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct CreateRemoteKeyRequest {
+    pub station: StationIdentity,
+    pub endpoints: ProviderEndpoints,
+    pub credential: OpaqueCredentialHandle,
+    pub name: String,
+    pub group_name: Option<String>,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RevealRemoteKeyRequest {
+    pub station: StationIdentity,
+    pub endpoints: ProviderEndpoints,
+    pub credential: OpaqueCredentialHandle,
+    pub remote_key_id: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct RemoteKeyOutput {
-    pub key_ids: Vec<String>,
+    pub keys: Vec<RemoteStationKey>,
     pub evidence: Vec<EndpointEvidence>,
     pub diagnostics: RedactedDiagnostics,
+}
+
+pub struct RevealedRemoteKeyOutput {
+    pub remote_key: RemoteStationKey,
+    pub full_key: RemoteKeySecret,
+    pub evidence: Vec<EndpointEvidence>,
+    pub diagnostics: RedactedDiagnostics,
+}
+
+pub struct CreatedRemoteKeyOutput {
+    pub remote_key: RemoteStationKey,
+    pub full_key_once: RemoteKeySecret,
+    pub evidence: Vec<EndpointEvidence>,
+    pub diagnostics: RedactedDiagnostics,
+}
+
+pub struct RemoteKeySecret {
+    value: Zeroizing<String>,
+}
+
+impl RemoteKeySecret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: Zeroizing::new(value.into()),
+        }
+    }
+
+    pub fn expose(&self) -> &str {
+        self.value.as_str()
+    }
+
+    pub fn into_plaintext(self) -> String {
+        self.value.to_string()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +306,18 @@ pub trait RemoteKeyDriver: Send + Sync {
         context: &'a CollectorContext<'a>,
         request: RemoteKeyRequest,
     ) -> BoxFuture<'a, Result<RemoteKeyOutput, DriverFailure>>;
+
+    fn reveal_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: RevealRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<RevealedRemoteKeyOutput, DriverFailure>>;
+
+    fn create_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: CreateRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<CreatedRemoteKeyOutput, DriverFailure>>;
 }
 
 pub trait AuthorizationDriver: Send + Sync {

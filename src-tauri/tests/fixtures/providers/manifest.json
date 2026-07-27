@@ -487,32 +487,396 @@
       }
     },
     {
-      "id": "newapi-remote-key-unsupported",
+      "id": "newapi-remote-key-success",
       "providerKind": "newapi",
       "capability": "remote_key",
-      "scenario": "unsupported",
+      "scenario": "success",
       "endpointRole": "remote_keys",
       "requestSchema": {
-        "kind": "none",
-        "reason": "Task 19.A registry entry does not declare a remote-key driver"
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "auth": "new-api-user plus session secret"
       },
       "responseSchema": {
-        "kind": "driver_failure",
-        "failureKind": "unsupported"
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "page": 1,
+            "page_size": 100,
+            "total": 1,
+            "items": [
+              {
+                "id": 101,
+                "name": "primary",
+                "key": "sk-abc**********7890",
+                "group": "default"
+              }
+            ]
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key list fixture for Task 20.C production remote-key cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "remoteKeys": [
+            "primary"
+          ]
+        }
+      }
+    },
+    {
+      "id": "newapi-remote-key-partial",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "partial",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": [
+          "/api/token/",
+          "/api/token/?p=1&page_size=100",
+          "/api/token/301/key"
+        ],
+        "commitBarrier": "create response received before reconcile/reveal"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "key": "sk-created-secret-f260"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-created-secret-f260"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI create/reconcile/reveal fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "result": "created_then_reconciled"
+        }
+      }
+    },
+    {
+      "id": "newapi-remote-key-auth-failure",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "auth_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "auth": "expired session"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "not logged in"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key auth rejection fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-rate-limit",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "rate_limit",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "success": false,
+          "message": "rate limited"
+        }
       },
       "redaction": {
         "status": "not_applicable",
         "secretCanaries": []
       },
       "source": {
-        "kind": "stage19a-registry-descriptor",
-        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
-        "provenance": "Static registry declares NewAPI with no remote-key capability until Task 20 cutover."
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key rate limit fixture for Task 20.C."
       },
       "expected": {
-        "registryStatus": "unsupported",
-        "failureKind": "unsupported",
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
         "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-server-failure",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "server_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 503,
+        "body": {
+          "success": false,
+          "message": "service unavailable"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key provider unavailable fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-malformed",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "malformed",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "items": []
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key missing pagination fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-unknown-shape",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "unknown_shape",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/token/301/key"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "token": "unexpected"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-unexpected-secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key reveal unknown shape fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-cancel",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "cancel",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "cancellation": "before response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key cancellation fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-budget-exhaustion",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key budget exhaustion fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-stale-endpoint-revision",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/token/",
+        "commitBarrier": "endpoint revision checked before local persistence"
+      },
+      "responseSchema": {
+        "kind": "application_failure",
+        "failureKind": "stale_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-service-fixture",
+        "path": "src-tauri/src/services/remote_keys.rs",
+        "provenance": "Synthetic NewAPI remote-key endpoint revision barrier fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-redaction",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "redaction",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/token/301/key",
+        "auth": "cookie plus new-api-user"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "key": "sk-p8-secret-plaintext-canary"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary",
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key secret redaction fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "secret": "one_time_only"
+        }
       }
     },
     {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::services::collectors::contract::{
     CollectorCapabilityDescriptor, DriverCapabilities, ProviderDescriptor, ProviderEntry,
-    ProviderKind,
+    ProviderKind, RemoteKeyCapabilityDescriptor,
 };
 
 pub fn static_provider_entries() -> Vec<ProviderEntry> {
@@ -25,12 +25,17 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                     collector: Some(CollectorCapabilityDescriptor {
                         supported_tasks: newapi::SUPPORTED_COLLECTOR_TASKS,
                     }),
-                    remote_key: None,
+                    remote_key: Some(RemoteKeyCapabilityDescriptor {
+                        supports_list: true,
+                        supports_create: true,
+                        supports_reveal: true,
+                        supports_result_unknown_reconciliation: true,
+                    }),
                     authorization: None,
                 },
             },
             collector: Some(Arc::new(newapi::NewApiCollectorDriver)),
-            remote_key: None,
+            remote_key: Some(Arc::new(newapi::NewApiRemoteKeyDriver)),
             authorization: None,
         },
         ProviderEntry {
