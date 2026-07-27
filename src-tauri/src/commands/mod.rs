@@ -15,6 +15,7 @@ use tauri::{ipc::Channel, Manager, State};
 pub(crate) mod change_events;
 pub(crate) mod channel_monitoring;
 pub(crate) mod channel_status;
+pub(crate) mod collector_metadata;
 pub(crate) mod credentials;
 pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
@@ -36,9 +37,9 @@ use crate::{
     app_composition::ManagedWorkRuntime,
     application::{
         command_facades::{
-            CaptureCommandError, CaptureCommandFacade, CollectorMetadataCommandFacade,
-            DataDirectoryCommandError, EndpointPingCommandError, LocalProxyCommandError,
-            LocalProxyCommandFacade, StationCollectionCommandError, StationCollectionCommandFacade,
+            CaptureCommandError, CaptureCommandFacade, DataDirectoryCommandError,
+            EndpointPingCommandError, LocalProxyCommandError, LocalProxyCommandFacade,
+            StationCollectionCommandError, StationCollectionCommandFacade,
             StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
             StationKeyConnectivityProbeTarget,
         },
@@ -54,18 +55,13 @@ use crate::{
             DEFAULT_STATION_KEY_CONNECTIVITY_MODEL,
         },
         error::ApplicationError,
-        pagination::PageLimit,
     },
     background_tasks::{
         BlockingExecutorError, OperationContext, OperationFailureCode, OperationOwner,
         OperationRegistryError, OperationStartRequest, OperationTerminal,
     },
     ipc::dto::{
-        collector_facts::{
-            CollectorRunDto, CollectorSnapshotDto, CollectorStationIdInputDto,
-            CollectorStationIdsInputDto, GroupRateRecordDto, StationGroupBindingDto,
-            StationGroupOptionDto, UpsertStationGroupBindingInputDto,
-        },
+        collector_facts::CollectorStationIdInputDto,
         operations::OperationStartedDto,
         proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
         routing_mutations::ReorderLocalRoutingKeysInputDto,
@@ -892,90 +888,6 @@ pub async fn test_station_key_connectivity(
 }
 
 #[tauri::command]
-pub async fn list_station_group_bindings(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationGroupBindingDto>, error::CommandError> {
-    correlation::in_command_scope("list_station_group_bindings", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_station_group_bindings(&input.station_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_station_group_options(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationGroupOptionDto>, error::CommandError> {
-    correlation::in_command_scope("list_station_group_options", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_station_group_options(
-                &input.station_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn upsert_station_group_binding(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<StationGroupBindingDto, error::CommandError> {
-    correlation::in_command_scope("upsert_station_group_binding", async {
-        let input = UpsertStationGroupBindingInputDto::parse(input)?.into_domain();
-        facade
-            .upsert_station_group_binding(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_group_rate_records(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<Vec<GroupRateRecordDto>, error::CommandError> {
-    correlation::in_command_scope("list_group_rate_records", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_group_rate_records(
-                &input.station_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_collector_runs(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<Vec<CollectorRunDto>, error::CommandError> {
-    correlation::in_command_scope("list_collector_runs", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_collector_runs(
-                &input.station_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn detect_sub2api_station(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
@@ -1142,52 +1054,6 @@ fn public_blocking_executor_error(error: BlockingExecutorError) -> error::Comman
 
 fn current_correlation_id() -> Option<String> {
     correlation::current().map(|id| id.as_str().to_string())
-}
-
-#[tauri::command]
-pub async fn list_collector_snapshots(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<Vec<CollectorSnapshotDto>, error::CommandError> {
-    correlation::in_command_scope("list_collector_snapshots", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        let limit = PageLimit::new(100).map_err(public_command_application_error)?;
-        facade
-            .list_collector_snapshots(&input.station_id, limit)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_latest_collector_snapshot(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<Option<CollectorSnapshotDto>, error::CommandError> {
-    correlation::in_command_scope("get_latest_collector_snapshot", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .get_latest_collector_snapshot(&input.station_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_latest_collector_snapshots(
-    facade: State<'_, CollectorMetadataCommandFacade>,
-    input: Value,
-) -> Result<Vec<CollectorSnapshotDto>, error::CommandError> {
-    correlation::in_command_scope("list_latest_collector_snapshots", async {
-        let input = CollectorStationIdsInputDto::parse(input)?;
-        facade
-            .list_latest_collector_snapshots(input.station_ids)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
 }
 
 #[tauri::command]
