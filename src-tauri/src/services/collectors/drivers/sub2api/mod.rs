@@ -1,3 +1,4 @@
+mod mapping;
 pub mod request_recovery;
 
 use std::time::{Duration, Instant};
@@ -14,7 +15,6 @@ use crate::{
     },
     services::{
         collectors::{
-            adapters,
             contract::{
                 CollectorContext, CollectorDriver, CollectorTaskKind, CreateRemoteKeyRequest,
                 CreatedRemoteKeyOutput, CredentialSecretPurpose, DriverOutput, DriverOutputStatus,
@@ -100,10 +100,8 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                     "Sub2API remote-key list returned no canonical keys",
                 ));
             }
-            let keys = adapters::sub2api::parse_remote_key_payload(
-                &request.station.station_id,
-                &execution.payload,
-            );
+            let keys =
+                mapping::parse_remote_key_payload(&request.station.station_id, &execution.payload);
             Ok(RemoteKeyOutput {
                 keys,
                 evidence: vec![execution.evidence],
@@ -167,26 +165,24 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             let create =
                 create_remote_key_once(context, &website_url, &auth, &mut access_token, &request)
                     .await?;
-            let full_key_once = adapters::sub2api::full_key_from_create_payload(&create.payload);
-            let mut remote_key = adapters::sub2api::parse_remote_key_payload(
-                &request.station.station_id,
-                &create.payload,
-            )
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| {
-                adapters::sub2api::remote_key_from_create_input(
-                    &request.station.station_id,
-                    &crate::models::remote_keys::CreateRemoteStationKeyInput {
-                        station_id: request.station.station_id.clone(),
-                        name: request.name.clone(),
-                        group_binding_id: None,
-                        group_id_hash: request.provider_group_id.clone(),
-                        group_name: request.group_name.clone(),
-                    },
-                    full_key_once.as_deref(),
-                )
-            });
+            let full_key_once = mapping::full_key_from_create_payload(&create.payload);
+            let mut remote_key =
+                mapping::parse_remote_key_payload(&request.station.station_id, &create.payload)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| {
+                        mapping::remote_key_from_create_input(
+                            &request.station.station_id,
+                            &crate::models::remote_keys::CreateRemoteStationKeyInput {
+                                station_id: request.station.station_id.clone(),
+                                name: request.name.clone(),
+                                group_binding_id: None,
+                                group_id_hash: request.provider_group_id.clone(),
+                                group_name: request.group_name.clone(),
+                            },
+                            full_key_once.as_deref(),
+                        )
+                    });
             if let Some(full_key) = full_key_once {
                 return Ok(CreatedRemoteKeyOutput {
                     remote_key,
@@ -316,7 +312,7 @@ async fn create_remote_key_once(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        body["group_id"] = adapters::sub2api::sub2api_group_id_value(group_id);
+        body["group_id"] = mapping::sub2api_group_id_value(group_id);
     }
 
     let mut result = execute_bearer_json_once(
@@ -397,18 +393,14 @@ fn remote_key_secret_from_list_payload(
     remote_key_id: &str,
     payload: &Value,
 ) -> Result<(RemoteStationKey, String), DriverFailure> {
-    for (index, value) in adapters::sub2api::remote_key_items(payload)
-        .into_iter()
-        .enumerate()
-    {
-        let Some(remote_key) = adapters::sub2api::remote_key_from_value(station_id, value, index)
-        else {
+    for (index, value) in mapping::remote_key_items(payload).into_iter().enumerate() {
+        let Some(remote_key) = mapping::remote_key_from_value(station_id, value, index) else {
             continue;
         };
         if remote_key.id != remote_key_id {
             continue;
         }
-        let full_key = adapters::sub2api::full_key_from_key_value(value).ok_or_else(|| {
+        let full_key = mapping::full_key_from_key_value(value).ok_or_else(|| {
             malformed(
                 EndpointRole::RemoteKeys,
                 None,
@@ -428,12 +420,8 @@ fn remote_key_secret_by_name_from_list_payload(
     payload: &Value,
 ) -> Result<Option<(RemoteStationKey, String)>, DriverFailure> {
     let expected_name = expected_name.trim();
-    for (index, value) in adapters::sub2api::remote_key_items(payload)
-        .into_iter()
-        .enumerate()
-    {
-        let Some(remote_key) = adapters::sub2api::remote_key_from_value(station_id, value, index)
-        else {
+    for (index, value) in mapping::remote_key_items(payload).into_iter().enumerate() {
+        let Some(remote_key) = mapping::remote_key_from_value(station_id, value, index) else {
             continue;
         };
         if !remote_key
@@ -444,7 +432,7 @@ fn remote_key_secret_by_name_from_list_payload(
         {
             continue;
         }
-        let Some(full_key) = adapters::sub2api::full_key_from_key_value(value) else {
+        let Some(full_key) = mapping::full_key_from_key_value(value) else {
             continue;
         };
         return Ok(Some((remote_key, full_key)));
@@ -495,7 +483,7 @@ async fn collect_groups(context: &CollectorContext<'_>) -> Result<DriverOutput, 
     evidence.push(rates.evidence.clone());
     endpoint_results.push(rates.redacted.clone());
 
-    let mut facts = adapters::sub2api::parse_group_rate_facts(
+    let mut facts = mapping::parse_group_rate_facts(
         &context.station.station_id,
         &available.payload,
         &rates.payload,
@@ -533,7 +521,7 @@ async fn collect_groups(context: &CollectorContext<'_>) -> Result<DriverOutput, 
             updated_at: String::new(),
         })
         .collect::<Vec<_>>();
-    adapters::sub2api::add_single_group_key_bindings(&mut facts, &station_keys);
+    mapping::add_single_group_key_bindings(&mut facts, &station_keys);
 
     let success_count = [available.ok, rates.ok]
         .into_iter()
@@ -613,7 +601,7 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
         endpoint_results.push(redacted);
         let endpoint_index = endpoint_results.len() - 1;
         if result.ok {
-            facts.balances.push(adapters::sub2api::parse_usage_balance(
+            facts.balances.push(mapping::parse_usage_balance(
                 &context.station.station_id,
                 Some(key.station_key_id.clone()),
                 &result.payload,
@@ -647,7 +635,7 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
                 append_balance_endpoint_attempt(endpoint, &result);
             }
             if result.ok {
-                facts.balances.push(adapters::sub2api::parse_usage_balance(
+                facts.balances.push(mapping::parse_usage_balance(
                     &context.station.station_id,
                     Some(key.station_key_id.clone()),
                     &result.payload,
@@ -676,10 +664,7 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
             if facts.balances.is_empty() {
                 facts.balances.push(profile_balance);
             } else {
-                adapters::sub2api::merge_account_profile_balance(
-                    &mut facts.balances,
-                    profile_balance,
-                );
+                mapping::merge_account_profile_balance(&mut facts.balances, profile_balance);
             }
         }
         if !facts.balances.is_empty() {
@@ -693,7 +678,7 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
             )
             .await?
             {
-                adapters::sub2api::merge_dashboard_usage_stats(
+                mapping::merge_dashboard_usage_stats(
                     &mut facts.balances,
                     &context.station.station_id,
                     stats,
@@ -751,7 +736,7 @@ async fn collect_account_profile_balance(
         if !execution.ok {
             continue;
         }
-        if let Some(balance) = adapters::sub2api::parse_account_balance(
+        if let Some(balance) = mapping::parse_account_balance(
             &context.station.station_id,
             &execution.payload,
             auth.credit_per_cny,
@@ -769,7 +754,7 @@ async fn collect_dashboard_usage_stats(
     access_token: &mut Option<String>,
     evidence: &mut Vec<EndpointEvidence>,
     endpoint_results: &mut Vec<Value>,
-) -> Result<Option<adapters::sub2api::DashboardUsageStats>, DriverFailure> {
+) -> Result<Option<mapping::DashboardUsageStats>, DriverFailure> {
     let Some(token) = ensure_access_token(context, website_url, auth, access_token).await? else {
         return Ok(None);
     };
@@ -789,9 +774,7 @@ async fn collect_dashboard_usage_stats(
     if !execution.ok {
         return Ok(None);
     }
-    Ok(adapters::sub2api::parse_dashboard_usage_stats(
-        &execution.payload,
-    ))
+    Ok(mapping::parse_dashboard_usage_stats(&execution.payload))
 }
 
 async fn ensure_access_token(

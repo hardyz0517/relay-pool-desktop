@@ -17,7 +17,6 @@ use crate::{
     observability::correlation,
     outbound::{AsyncOutboundClient, ManualProxy, ProxyPolicy, RequestBudget},
     services::collectors::{
-        adapters,
         contract::{
             CollectorContext, CreateRemoteKeyRequest, CredentialScope, CredentialSecret,
             CredentialSecretPurpose, DriverSecretAccessor, OpaqueCredentialHandle,
@@ -760,7 +759,15 @@ fn remote_key_capability_from_source(
     let endpoint_revision = station.endpoint_revision;
     let station_type = station.station_type.trim().to_string();
     let capability = match station_type.as_str() {
-        "sub2api" => adapters::sub2api::remote_key_capability(&station),
+        "sub2api" => Ok::<RemoteKeyCapability, String>(RemoteKeyCapability {
+            station_id: station.id.clone(),
+            station_type: station.station_type.trim().to_string(),
+            can_list_remote_keys: true,
+            can_create_remote_key: true,
+            can_read_groups: true,
+            requires_manual_session: true,
+            unsupported_reason: None,
+        }),
         "newapi" => Ok(RemoteKeyCapability {
             station_id,
             station_type: station_type.clone(),
