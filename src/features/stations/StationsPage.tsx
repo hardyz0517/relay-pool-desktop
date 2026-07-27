@@ -51,7 +51,7 @@ import {
 } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
-import { stationKeyStatusLabels, type CreateStationKeyInput, type StationCredentials, type StationKey, type StationKeyStatus, type UpdateStationKeyInput } from "@/lib/types/stationKeys";
+import { stationKeyStatusLabels, type StationCredentials, type StationKey, type StationKeyStatus } from "@/lib/types/stationKeys";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
@@ -61,8 +61,6 @@ import {
   stationTypeLabels,
   stationTypeOptions,
   type Station,
-  type StationInput,
-  type StationType,
 } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
@@ -74,65 +72,20 @@ import {
   type StationIssueFilterValue,
   type StationIssueTag,
 } from "./stationAssetViewModels";
-
-type StationFormState = {
-  name: string;
-  stationType: StationType;
-  websiteUrl: string;
-  apiBaseUrl: string;
-  apiKey: string;
-  enabled: boolean;
-  creditPerCny: string;
-  lowBalanceThresholdCny: string;
-  collectionIntervalMinutes: string;
-  note: string;
-  loginUsername: string;
-  loginPassword: string;
-  rememberPassword: boolean;
-};
-
-type StationKeyFormState = {
-  id: string | null;
-  name: string;
-  apiKey: string;
-  enabled: boolean;
-  priority: string;
-  groupName: string;
-  tierLabel: string;
-  status: StationKeyStatus;
-  note: string;
-};
+import {
+  emptyForm,
+  emptyKeyForm,
+  formToInput,
+  keyToForm,
+  stationEndpointOriginWarnings,
+  toCreateKeyInput,
+  toUpdateKeyInput,
+  type StationFormState,
+  type StationKeyFormState,
+} from "./pages/stations/formModel";
 
 type DialogMode = "create" | "edit" | "detail" | null;
 type StationAction = "collect" | "balance" | "authorize";
-
-const emptyForm: StationFormState = {
-  name: "",
-  stationType: "sub2api",
-  websiteUrl: "",
-  apiBaseUrl: "",
-  apiKey: "",
-  enabled: true,
-  creditPerCny: "1",
-  lowBalanceThresholdCny: "",
-  collectionIntervalMinutes: "5",
-  note: "",
-  loginUsername: "",
-  loginPassword: "",
-  rememberPassword: false,
-};
-
-const emptyKeyForm: StationKeyFormState = {
-  id: null,
-  name: "",
-  apiKey: "",
-  enabled: true,
-  priority: "0",
-  groupName: "",
-  tierLabel: "",
-  status: "unchecked",
-  note: "",
-};
 
 const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "disabled" | "info"> = {
   healthy: "healthy",
@@ -1632,71 +1585,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function formToInput(form: StationFormState): StationInput {
-  return {
-    name: form.name.trim(),
-    stationType: form.stationType,
-    websiteUrl: form.websiteUrl.trim(),
-    apiBaseUrl: form.apiBaseUrl.trim(),
-    apiKey: form.apiKey.trim(),
-    collectorProxyMode: "inherit",
-    collectorProxyUrl: null,
-    enabled: form.enabled,
-    creditPerCny: Number(form.creditPerCny),
-    lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim() ? Number(form.lowBalanceThresholdCny) : null,
-    collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
-    note: form.note.trim() ? form.note.trim() : null,
-  };
-}
-
-function normalizeCollectionIntervalMinutes(value: string) {
-  const interval = Number(value.trim() || "5");
-  return Number.isInteger(interval) && interval > 0 ? interval : 5;
-}
-
-function toCreateKeyInput(form: StationKeyFormState, stationId: string): CreateStationKeyInput {
-  return {
-    stationId,
-    name: form.name.trim(),
-    apiKey: form.apiKey.trim(),
-    enabled: form.enabled,
-    priority: Number(form.priority),
-    groupName: form.groupName.trim() ? form.groupName.trim() : null,
-    tierLabel: form.tierLabel.trim() ? form.tierLabel.trim() : null,
-    note: form.note.trim() ? form.note.trim() : null,
-  };
-}
-
-function toUpdateKeyInput(form: StationKeyFormState, stationId: string): UpdateStationKeyInput {
-  return {
-    id: form.id ?? "",
-    stationId,
-    name: form.name.trim(),
-    apiKey: form.apiKey.trim() ? form.apiKey.trim() : null,
-    enabled: form.enabled,
-    priority: Number(form.priority),
-    groupName: form.groupName.trim() ? form.groupName.trim() : null,
-    tierLabel: form.tierLabel.trim() ? form.tierLabel.trim() : null,
-    status: form.status,
-    note: form.note.trim() ? form.note.trim() : null,
-  };
-}
-
-function keyToForm(key: StationKey): StationKeyFormState {
-  return {
-    id: key.id,
-    name: key.name,
-    apiKey: "",
-    enabled: key.enabled,
-    priority: String(key.priority),
-    groupName: key.groupName ?? "",
-    tierLabel: key.tierLabel ?? "",
-    status: key.status,
-    note: key.note ?? "",
-  };
-}
-
-
 function stationAvatarLabel(name: string) {
   const trimmed = name.trim();
   return trimmed ? Array.from(trimmed)[0] : "?";
@@ -1708,26 +1596,6 @@ function formatStationDisplayUrl(baseUrl: string) {
     return `${url.protocol}//${url.host}`;
   } catch {
     return baseUrl.replace(/\/+$/, "");
-  }
-}
-
-function stationEndpointOriginWarnings(station: Station, form: StationFormState) {
-  const warnings: string[] = [];
-  if (endpointOriginKey(station.websiteUrl) !== endpointOriginKey(form.websiteUrl)) {
-    warnings.push("前端网址 origin 变化后，保存的登录状态会被清除。");
-  }
-  if (endpointOriginKey(station.apiBaseUrl) !== endpointOriginKey(form.apiBaseUrl)) {
-    warnings.push("API origin 变化后，站点会被禁用，现有 Key 将不会路由，直到重新验证并启用。");
-  }
-  return warnings;
-}
-
-function endpointOriginKey(value: string) {
-  try {
-    const url = new URL(value.trim());
-    return `${url.protocol}//${url.host}`;
-  } catch {
-    return value.trim().replace(/\/+$/, "");
   }
 }
 
