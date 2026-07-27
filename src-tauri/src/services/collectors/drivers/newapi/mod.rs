@@ -1921,6 +1921,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn token_parsers_reject_nonstandard_wrappers_and_aliases() {
+        assert!(remote_key_items(&json!({
+            "tokens": [{ "id": 1, "name": "wrong-wrapper" }]
+        }))
+        .is_empty());
+        assert!(remote_key_from_value(
+            "station-1",
+            &json!({
+                "tokenId": 1,
+                "keyName": "wrong-alias",
+                "apiKey": "sk-abc**********7890"
+            }),
+            0,
+        )
+        .is_none());
+        assert_eq!(
+            full_key_from_reveal_payload(&json!({
+                "data": { "key": "sk-nested-secret-value" }
+            })),
+            None,
+        );
+    }
+
+    #[test]
+    fn status_payload_rejects_failed_envelope() {
+        let error = parsers::envelope_data(&json!({
+            "success": false,
+            "message": "status unavailable",
+            "quota_per_unit": 500000
+        }))
+        .unwrap_err();
+
+        assert_eq!(error.message, "status unavailable");
+    }
+
     #[tokio::test]
     async fn create_token_request_disables_status_retry() {
         let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());

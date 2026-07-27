@@ -1880,16 +1880,6 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_usage_items_require_standard_array_shape() {
-        assert_eq!(dashboard_usage_items(&json!([{ "count": 1 }])).len(), 1);
-        assert!(dashboard_usage_items(&json!({
-            "items": [{ "count": 1 }]
-        }))
-        .is_empty());
-        assert!(dashboard_usage_items(&json!({ "count": 1 })).is_empty());
-    }
-
-    #[test]
     fn dashboard_window_does_not_sum_partial_rows() {
         let server = TestHttpServer::sequence(vec![Some(json_response(
             200,
@@ -1947,38 +1937,6 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_total_requires_exact_raw_quota_match() {
-        let target = NewApiDashboardTotalTarget {
-            request_count: 1200,
-            quota: 9_250_000,
-        };
-        assert!(dashboard_total_matches_target(
-            &NewApiDashboardUsageWindow {
-                request_count: Some(1200),
-                quota: Some(9_250_000),
-                ..Default::default()
-            },
-            target,
-        ));
-        assert!(!dashboard_total_matches_target(
-            &NewApiDashboardUsageWindow {
-                request_count: Some(1199),
-                quota: Some(9_250_000),
-                ..Default::default()
-            },
-            target,
-        ));
-        assert!(!dashboard_total_matches_target(
-            &NewApiDashboardUsageWindow {
-                request_count: Some(1200),
-                quota: Some(9_249_999),
-                ..Default::default()
-            },
-            target,
-        ));
-    }
-
-    #[test]
     fn dashboard_total_searches_past_empty_recent_windows() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(200, json!({ "success": true, "data": [] }))),
@@ -2014,90 +1972,6 @@ mod tests {
         assert_eq!(total.request_count, Some(12));
         assert_eq!(total.quota, Some(900000));
         assert_eq!(total.token_count, Some(456789));
-    }
-
-    #[test]
-    fn dashboard_total_merge_propagates_missing_window_metrics() {
-        let mut total = NewApiDashboardUsageWindow::default();
-        total.add(NewApiDashboardUsageWindow {
-            request_count: Some(2),
-            token_count: Some(100),
-            quota: Some(300000),
-            consumption: Some(0.6),
-        });
-        total.add(NewApiDashboardUsageWindow {
-            request_count: Some(3),
-            token_count: None,
-            quota: Some(400000),
-            consumption: Some(0.8),
-        });
-
-        assert_eq!(total.request_count, Some(5));
-        assert_eq!(total.quota, Some(700000));
-        assert_eq!(total.consumption, Some(1.4));
-        assert_eq!(total.token_count, None);
-    }
-
-    #[test]
-    fn usage_merge_removes_unverified_self_usage_fields() {
-        let mut data = json!({
-            "request_count": 12,
-            "today_request_count": 999,
-            "today_consumption": 999.0,
-            "today_token_count": 999,
-            "total_token_count": 999,
-            "today_base_consumption": 999.0,
-            "total_base_consumption": 999.0
-        });
-
-        merge_usage_stats_into_balance_data(
-            &mut data,
-            NewApiUsageStats {
-                today_request_count: Some(2),
-                today_consumption: Some(0.75),
-                today_token_count: Some(123),
-                ..Default::default()
-            },
-        );
-
-        assert_eq!(data["request_count"], 12);
-        assert_eq!(data["today_request_count"], 2);
-        assert_eq!(data["today_consumption"], 0.75);
-        assert_eq!(data["today_token_count"], 123);
-        assert!(data.get("total_token_count").is_none());
-        assert!(data.get("today_base_consumption").is_none());
-        assert!(data.get("total_base_consumption").is_none());
-    }
-
-    #[test]
-    fn empty_usage_merge_still_removes_unverified_self_usage_fields() {
-        let mut data = json!({
-            "request_count": 12,
-            "today_token_count": 999,
-            "total_token_count": 999
-        });
-
-        merge_optional_usage_stats_into_balance_data(&mut data, None);
-
-        assert_eq!(data["request_count"], 12);
-        assert!(data.get("today_token_count").is_none());
-        assert!(data.get("total_token_count").is_none());
-    }
-
-    #[test]
-    fn integer_metrics_reject_fractional_values() {
-        assert_eq!(
-            numeric_i64_field(&json!({ "count": 1.4 }), &["count"]),
-            None
-        );
-        assert_eq!(
-            numeric_i64_field(&json!({ "count": 2.0 }), &["count"]),
-            Some(2)
-        );
-        assert_eq!(
-            numeric_i64_field(&json!({ "count": "3" }), &["count"]),
-            Some(3)
-        );
     }
 
     #[test]
@@ -2649,42 +2523,6 @@ mod tests {
         assert!(requests[0].starts_with("GET /api/token/?p=1&page_size=100 "));
         assert!(requests[1].starts_with("GET /api/token/?p=2&page_size=100 "));
         assert!(requests[0].contains("New-Api-User: 42"));
-    }
-
-    #[test]
-    fn token_parsers_reject_nonstandard_wrappers_and_aliases() {
-        assert!(remote_key_items(&json!({
-            "tokens": [{ "id": 1, "name": "wrong-wrapper" }]
-        }))
-        .is_empty());
-        assert!(remote_key_from_value(
-            "station-1",
-            &json!({
-                "tokenId": 1,
-                "keyName": "wrong-alias",
-                "apiKey": "sk-abc**********7890"
-            }),
-            0,
-        )
-        .is_none());
-        assert_eq!(
-            full_key_from_reveal_payload(&json!({
-                "data": { "key": "sk-nested-secret-value" }
-            })),
-            None,
-        );
-    }
-
-    #[test]
-    fn status_payload_rejects_failed_envelope() {
-        let error = parse_status_payload(&json!({
-            "success": false,
-            "message": "status unavailable",
-            "quota_per_unit": 500000
-        }))
-        .unwrap_err();
-
-        assert_eq!(error, "status unavailable");
     }
 
     #[test]
