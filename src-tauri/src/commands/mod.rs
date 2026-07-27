@@ -21,6 +21,7 @@ pub(crate) mod endpoint_ping;
 pub(crate) mod error;
 pub(crate) mod model_aliases;
 pub(crate) mod operations;
+pub(crate) mod pricing_workspace;
 pub(crate) mod request_logs;
 pub(crate) mod routing_health;
 pub(crate) mod runtime;
@@ -79,8 +80,7 @@ use crate::{
             PricingRuleIdInputDto, UpsertModelBasePriceInputDto, UpsertPricingRuleInputDto,
         },
         pricing_reads::{
-            ModelBasePriceDto, PricingComparisonWorkspaceDto, PricingContextInputDto,
-            PricingRuleDto, ResolvedPricingContextDto,
+            ModelBasePriceDto, PricingContextInputDto, PricingRuleDto, ResolvedPricingContextDto,
         },
         proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
         routing_health_reads::{RoutingStationKeyIdInputDto, StationKeyCapabilitiesDto},
@@ -1014,22 +1014,6 @@ pub async fn list_channel_monitor_summaries(
         facade
             .list_channel_monitor_summaries(input.run_since.as_deref(), input.run_limit)
             .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn load_pricing_comparison_workspace(
-    facade: State<'_, PricingCommandFacade>,
-    input: Value,
-) -> Result<PricingComparisonWorkspaceDto, error::CommandError> {
-    correlation::in_command_scope("load_pricing_comparison_workspace", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .load_pricing_comparison_workspace(PageLimit::new(500).expect("bounded limit"))
-            .await
-            .map(PricingComparisonWorkspaceDto::from)
             .map_err(public_command_application_error)
     })
     .await

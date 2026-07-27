@@ -112,7 +112,7 @@ macro_rules! ipc_command_registry {
             list_channel_monitor_summaries => $crate::commands::list_channel_monitor_summaries,
             list_channel_status_summaries => $crate::commands::channel_status::list_channel_status_summaries,
             load_channel_status_workspace => $crate::commands::channel_status::load_channel_status_workspace,
-            load_pricing_comparison_workspace => $crate::commands::load_pricing_comparison_workspace,
+            load_pricing_comparison_workspace => $crate::commands::pricing_workspace::load_pricing_comparison_workspace,
             create_channel_monitor => $crate::commands::create_channel_monitor,
             update_channel_monitor => $crate::commands::update_channel_monitor,
             delete_channel_monitor => $crate::commands::delete_channel_monitor,
