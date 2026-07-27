@@ -271,14 +271,12 @@ struct LoginTestAttempt {
 }
 
 pub(crate) enum PreparedStationCollectionRoute {
-    Legacy(PreparedStationCollection),
     Sub2Api(PreparedSub2ApiCollection),
     OpenAiCompatible(PreparedOpenAiCompatibleCollection),
     NewApi(PreparedNewApiCollection),
 }
 
 pub(crate) enum PreparedStationTaskRoute {
-    Legacy((String, i64, AdapterOutput)),
     Sub2Api(PreparedSub2ApiCollection),
     OpenAiCompatible(PreparedOpenAiCompatibleCollection),
     NewApi(PreparedNewApiCollection),
@@ -404,23 +402,22 @@ pub(crate) fn prepare_station_collection_route_v2(
     let station = source
         .station_for_collector(&station_id)
         .map_err(|_| ApplicationError::Internal)?;
-    let adapter = adapter_name_for_station_type(&station.station_type)
-        .map_err(|_| ApplicationError::ConstraintViolation)?
-        .to_string();
-    if adapter == "sub2api" {
-        return prepare_sub2api_collection_v2(source, data_key, station, task)
-            .map(PreparedStationCollectionRoute::Sub2Api);
+    let provider = provider_kind_for_station_type(&station.station_type)
+        .map_err(|_| ApplicationError::ConstraintViolation)?;
+    match provider {
+        contract::ProviderKind::Sub2Api => {
+            prepare_sub2api_collection_v2(source, data_key, station, task)
+                .map(PreparedStationCollectionRoute::Sub2Api)
+        }
+        contract::ProviderKind::NewApi => {
+            prepare_newapi_collection_v2(source, data_key, station, task)
+                .map(PreparedStationCollectionRoute::NewApi)
+        }
+        contract::ProviderKind::OpenAiCompatible => {
+            prepare_openai_compatible_collection_v2(source, data_key, station, task)
+                .map(PreparedStationCollectionRoute::OpenAiCompatible)
+        }
     }
-    if adapter == "newapi" {
-        return prepare_newapi_collection_v2(source, data_key, station, task)
-            .map(PreparedStationCollectionRoute::NewApi);
-    }
-    if adapter == "openai-compatible" {
-        return prepare_openai_compatible_collection_v2(source, data_key, station, task)
-            .map(PreparedStationCollectionRoute::OpenAiCompatible);
-    }
-    prepare_station_collection_v2(source, data_key, station_id, task)
-        .map(PreparedStationCollectionRoute::Legacy)
 }
 
 pub(crate) fn prepare_station_task_route_v2(
@@ -432,23 +429,22 @@ pub(crate) fn prepare_station_task_route_v2(
     let station = source
         .station_for_collector(&station_id)
         .map_err(|_| ApplicationError::Internal)?;
-    let adapter = adapter_name_for_station_type(&station.station_type)
-        .map_err(|_| ApplicationError::ConstraintViolation)?
-        .to_string();
-    if adapter == "sub2api" {
-        return prepare_sub2api_collection_v2(source, data_key, station, task)
-            .map(PreparedStationTaskRoute::Sub2Api);
+    let provider = provider_kind_for_station_type(&station.station_type)
+        .map_err(|_| ApplicationError::ConstraintViolation)?;
+    match provider {
+        contract::ProviderKind::Sub2Api => {
+            prepare_sub2api_collection_v2(source, data_key, station, task)
+                .map(PreparedStationTaskRoute::Sub2Api)
+        }
+        contract::ProviderKind::NewApi => {
+            prepare_newapi_collection_v2(source, data_key, station, task)
+                .map(PreparedStationTaskRoute::NewApi)
+        }
+        contract::ProviderKind::OpenAiCompatible => {
+            prepare_openai_compatible_collection_v2(source, data_key, station, task)
+                .map(PreparedStationTaskRoute::OpenAiCompatible)
+        }
     }
-    if adapter == "newapi" {
-        return prepare_newapi_collection_v2(source, data_key, station, task)
-            .map(PreparedStationTaskRoute::NewApi);
-    }
-    if adapter == "openai-compatible" {
-        return prepare_openai_compatible_collection_v2(source, data_key, station, task)
-            .map(PreparedStationTaskRoute::OpenAiCompatible);
-    }
-    prepare_station_task_v2(source, data_key, station_id, task)
-        .map(PreparedStationTaskRoute::Legacy)
 }
 
 fn prepare_openai_compatible_collection_v2(
@@ -575,7 +571,7 @@ fn prepare_sub2api_collection_v2(
 ) -> Result<PreparedSub2ApiCollection, ApplicationError> {
     let station_id = station.id.clone();
     let driver_tasks = if task == CollectorTask::Full {
-        full_child_tasks("sub2api")
+        full_child_tasks(contract::ProviderKind::Sub2Api)
     } else {
         vec![task]
     };
@@ -719,7 +715,7 @@ fn prepare_newapi_collection_v2(
 ) -> Result<PreparedNewApiCollection, ApplicationError> {
     let station_id = station.id.clone();
     let driver_tasks = if task == CollectorTask::Full {
-        full_child_tasks("newapi")
+        full_child_tasks(contract::ProviderKind::NewApi)
     } else {
         vec![task]
     };
@@ -1087,24 +1083,6 @@ pub(crate) async fn finish_newapi_task_v2(
     Ok((prepared.station_id, prepared.endpoint_revision, output))
 }
 
-pub(crate) fn prepare_station_task_v2(
-    source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
-    station_id: String,
-    task: CollectorTask,
-) -> Result<(String, i64, AdapterOutput), ApplicationError> {
-    if task == CollectorTask::Full {
-        return Err(ApplicationError::ConstraintViolation);
-    }
-    let station = source
-        .station_for_collector(&station_id)
-        .map_err(|_| ApplicationError::Internal)?;
-    let adapter = adapter_name_for_station_type(&station.station_type)
-        .map_err(|_| ApplicationError::ConstraintViolation)?;
-    let output = dispatch_adapter_output(source, data_key, &station_id, adapter, task);
-    Ok((station_id, station.endpoint_revision, output))
-}
-
 pub(crate) async fn apply_prepared_station_task_v2(
     port: &dyn CollectorApplyPort,
     station_id: String,
@@ -1123,53 +1101,6 @@ pub(crate) struct PreparedStationCollection {
     task: CollectorTask,
     outputs: Vec<AdapterOutput>,
     enabled_key_count: usize,
-}
-
-/// Performs all source reads and provider HTTP calls before the async apply phase.
-pub(crate) fn prepare_station_collection_v2(
-    source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
-    station_id: String,
-    task: CollectorTask,
-) -> Result<PreparedStationCollection, ApplicationError> {
-    let station = source
-        .station_for_collector(&station_id)
-        .map_err(|_| ApplicationError::Internal)?;
-    let adapter = adapter_name_for_station_type(&station.station_type)
-        .map_err(|_| ApplicationError::ConstraintViolation)?
-        .to_string();
-    let tasks = if task == CollectorTask::Full {
-        full_child_tasks(&adapter)
-    } else {
-        vec![task]
-    };
-    if tasks.is_empty() || tasks.len() > 3 {
-        return Err(ApplicationError::ConstraintViolation);
-    }
-    let outputs = tasks
-        .into_iter()
-        .map(|child_task| {
-            dispatch_adapter_output(source, data_key, &station_id, &adapter, child_task)
-        })
-        .collect();
-    let enabled_key_count = if task == CollectorTask::Full {
-        source
-            .list_station_keys(station_id.clone())
-            .map_err(|_| ApplicationError::Internal)?
-            .into_iter()
-            .filter(|key| key.enabled)
-            .count()
-    } else {
-        0
-    };
-    Ok(PreparedStationCollection {
-        station_id,
-        endpoint_revision: station.endpoint_revision,
-        adapter,
-        task,
-        outputs,
-        enabled_key_count,
-    })
 }
 
 /// Applies a prepared task through V2 and returns a complete, bounded read model.
@@ -1782,57 +1713,6 @@ fn format_balance_label(value: f64, currency: &str) -> String {
     }
 }
 
-fn dispatch_adapter_output(
-    _source: &dyn CollectorSourcePort,
-    _data_key: &[u8; 32],
-    _station_id: &str,
-    adapter: &str,
-    task: CollectorTask,
-) -> AdapterOutput {
-    let result = match adapter {
-        "sub2api" => Ok(manual_required_output_for_adapter(
-            "sub2api",
-            task,
-            "async_driver_required",
-            "Sub2API 采集必须通过 capability driver 执行。",
-        )),
-        "newapi" => Ok(manual_required_output_for_adapter(
-            "newapi",
-            task,
-            "async_driver_required",
-            "NewAPI 采集必须通过 capability driver 执行。",
-        )),
-        "openai-compatible" => Ok(manual_required_output(
-            task,
-            "async_driver_required",
-            "OpenAI-compatible 采集必须通过 capability driver 执行。",
-        )),
-        _ => unreachable!("adapter is validated before dispatch"),
-    };
-
-    result.unwrap_or_else(|error| failed_adapter_output(adapter, task, error))
-}
-
-fn failed_adapter_output(adapter: &str, task: CollectorTask, error: String) -> AdapterOutput {
-    let message = crate::services::secrets::mask::redact_text(&error);
-    AdapterOutput {
-        adapter: adapter.to_string(),
-        task,
-        status: "failed".to_string(),
-        facts: facts::CollectorFacts::default(),
-        summary_json: json!({
-            "adapter": adapter,
-            "task": task.as_str(),
-            "message": message,
-            "endpointResults": [],
-        }),
-        normalized_json: json!({ "models": [] }),
-        raw_json_redacted: None,
-        error_code: Some("adapter_error".to_string()),
-        error_message: Some(message),
-    }
-}
-
 fn prepared_openai_immediate_collection(
     station_id: String,
     endpoint_revision: i64,
@@ -2056,25 +1936,26 @@ fn proxy_policy_from_collector_config(
     }
 }
 
-fn adapter_name_for_station_type(station_type: &str) -> Result<&'static str, String> {
+fn provider_kind_for_station_type(station_type: &str) -> Result<contract::ProviderKind, String> {
     match station_type.trim() {
-        "sub2api" => Ok("sub2api"),
-        "newapi" => Ok("newapi"),
-        "openai-compatible" | "openai_compatible" | "custom" => Ok("openai-compatible"),
+        "sub2api" => Ok(contract::ProviderKind::Sub2Api),
+        "newapi" => Ok(contract::ProviderKind::NewApi),
+        "openai-compatible" | "openai_compatible" | "custom" => {
+            Ok(contract::ProviderKind::OpenAiCompatible)
+        }
         other => Err(format!("不支持的站点类型: {other}")),
     }
 }
 
-fn full_child_tasks(adapter: &str) -> Vec<CollectorTask> {
-    match adapter {
-        "newapi" => vec![
+fn full_child_tasks(provider: contract::ProviderKind) -> Vec<CollectorTask> {
+    match provider {
+        contract::ProviderKind::NewApi => vec![
             CollectorTask::Balance,
             CollectorTask::Groups,
             CollectorTask::Models,
         ],
-        "sub2api" => vec![CollectorTask::Balance, CollectorTask::Groups],
-        "openai-compatible" => vec![CollectorTask::Models],
-        _ => Vec::new(),
+        contract::ProviderKind::Sub2Api => vec![CollectorTask::Balance, CollectorTask::Groups],
+        contract::ProviderKind::OpenAiCompatible => vec![CollectorTask::Models],
     }
 }
 
@@ -2247,7 +2128,7 @@ mod tests {
     #[test]
     fn full_tasks_are_bounded_by_provider_capability() {
         assert_eq!(
-            full_child_tasks("newapi"),
+            full_child_tasks(contract::ProviderKind::NewApi),
             vec![
                 CollectorTask::Balance,
                 CollectorTask::Groups,
@@ -2255,7 +2136,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            full_child_tasks("openai-compatible"),
+            full_child_tasks(contract::ProviderKind::OpenAiCompatible),
             vec![CollectorTask::Models],
         );
     }

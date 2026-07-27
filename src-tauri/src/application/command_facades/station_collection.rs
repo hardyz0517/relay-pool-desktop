@@ -77,7 +77,6 @@ impl StationCollectionCommandFacade {
             .map_err(StationCollectionCommandError::Blocking)?
             .map_err(StationCollectionCommandError::Prepare)?;
         let prepared = match prepared {
-            collectors::PreparedStationCollectionRoute::Legacy(prepared) => prepared,
             collectors::PreparedStationCollectionRoute::Sub2Api(prepared) => {
                 collectors::finish_sub2api_collection_v2(
                     self.providers.as_ref(),

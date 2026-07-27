@@ -151,7 +151,6 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
             }
             .map_err(|error| error.to_string())?;
             let prepared = match prepared {
-                collectors::PreparedStationTaskRoute::Legacy(prepared) => prepared,
                 collectors::PreparedStationTaskRoute::Sub2Api(prepared) => {
                     collectors::finish_sub2api_task_v2(
                         providers.as_ref(),
