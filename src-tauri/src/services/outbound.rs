@@ -39,31 +39,6 @@ pub(crate) fn current_system_proxy_url() -> Option<String> {
     current_windows_system_proxy_url()
 }
 
-#[cfg(test)]
-pub fn credential_agent_builder_for_proxy(
-    proxy: &ProxyConfig,
-) -> Result<ureq::AgentBuilder, String> {
-    let builder = ureq::AgentBuilder::new().redirects(0);
-    match proxy.mode.as_str() {
-        "direct" => Ok(builder.try_proxy_from_env(false)),
-        "system" => Ok(builder.try_proxy_from_env(true)),
-        "manual" => {
-            let Some(url) = proxy
-                .url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
-                return Err("manual collector proxy URL is required".to_string());
-            };
-            let proxy = ureq::Proxy::new(url)
-                .map_err(|error| crate::services::secrets::mask::redact_text(&error.to_string()))?;
-            Ok(builder.proxy(proxy))
-        }
-        _ => Ok(builder.try_proxy_from_env(false)),
-    }
-}
-
 #[cfg(windows)]
 fn current_windows_system_proxy_url() -> Option<String> {
     use winreg::{enums::HKEY_CURRENT_USER, RegKey};

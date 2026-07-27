@@ -23,7 +23,6 @@ mod login_probe;
 )]
 pub mod orchestration;
 pub mod output;
-pub mod sub2api;
 
 // Preserve the crate-local composition path while the V2 apply boundary is
 // owned by the collector consumer rather than a legacy persistence module.
@@ -256,17 +255,6 @@ impl drivers::newapi::auth::NewApiAuthSessionSource for dyn CollectorSourcePort 
 
 fn application_error(error: ApplicationError) -> String {
     error.to_string()
-}
-
-#[cfg(test)]
-#[allow(
-    dead_code,
-    reason = "legacy sync login fixture retained for parser coverage"
-)]
-struct LoginTestAttempt {
-    token_present: bool,
-    login_message: Option<String>,
-    manual_required: Option<String>,
 }
 
 pub(crate) enum PreparedStationCollectionRoute {
@@ -1133,144 +1121,6 @@ pub(crate) async fn apply_prepared_station_collection_v2(
     apply_prepared_full_collection_v2(service, port, prepared).await
 }
 
-#[cfg(test)]
-#[allow(
-    dead_code,
-    reason = "legacy sync login fixture retained for parser coverage"
-)]
-pub(crate) fn prepare_station_login_test_v2(
-    source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
-    station_id: String,
-) -> Result<PreparedStationCollection, ApplicationError> {
-    let station = source
-        .station_for_collector(&station_id)
-        .map_err(|_| ApplicationError::Internal)?;
-    let credentials = source
-        .get_station_credentials(station_id.clone())
-        .map_err(|_| ApplicationError::Internal)?;
-    let username = credentials.login_username.clone().unwrap_or_default();
-    let password = source
-        .get_station_login_password_with_data_key(station_id.clone(), data_key)
-        .map_err(|_| ApplicationError::Internal)?;
-
-    let (status, message, diagnosis, token_present) =
-        if !has_login_credentials(&credentials.login_username, credentials.password_present)
-            || password
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty())
-        {
-            (
-                "manual_required".to_string(),
-                "Saved login credentials are incomplete.".to_string(),
-                "Save both the login username and password before testing login.".to_string(),
-                false,
-            )
-        } else {
-            let password_value = password.as_deref().unwrap_or_default();
-            let attempt = if station.station_type.trim() == "newapi" {
-                let outcome = drivers::newapi::auth::login_with_password(
-                    source,
-                    data_key,
-                    &station,
-                    &username,
-                    password_value,
-                )
-                .map_err(|_| ApplicationError::Internal)?;
-                LoginTestAttempt {
-                    token_present: outcome.cookie_present,
-                    login_message: outcome.login_message,
-                    manual_required: outcome.manual_required,
-                }
-            } else {
-                let outcome = sub2api::test_login_credentials(
-                    &station.website_url,
-                    &username,
-                    password_value,
-                )
-                .map_err(|_| ApplicationError::Internal)?;
-                LoginTestAttempt {
-                    token_present: outcome.token_present,
-                    login_message: outcome.login_message,
-                    manual_required: outcome.manual_required,
-                }
-            };
-            let status = if attempt.token_present {
-                "success"
-            } else {
-                "manual_required"
-            };
-            (
-                status.to_string(),
-                attempt
-                    .login_message
-                    .unwrap_or_else(|| "Login test completed.".to_string()),
-                attempt.manual_required.unwrap_or_else(|| {
-                    "The login endpoint returned a usable session credential.".to_string()
-                }),
-                attempt.token_present,
-            )
-        };
-    let output = AdapterOutput {
-        adapter: "login-state".to_string(),
-        task: CollectorTask::Detect,
-        status: status.clone(),
-        facts: facts::CollectorFacts::default(),
-        summary_json: json!({
-            "mode": "login-state",
-            "adapter": "Login State Adapter",
-            "detectedType": "Login State",
-            "conclusion": if token_present { "Login succeeded" } else { "Action required" },
-            "message": message,
-            "login": {
-                "usernamePresent": !username.trim().is_empty(),
-                "passwordPresent": password.as_deref().is_some_and(|value| !value.trim().is_empty()),
-                "status": credentials.login_status,
-            },
-            "loginRequired": !token_present,
-            "diagnosis": diagnosis,
-            "endpointResults": [],
-            "recognized": {
-                "balanceLabel": Value::Null,
-                "groupCount": 0,
-                "rateCount": 0,
-                "keyCount": 0,
-                "matchedFieldCount": 0,
-            },
-            "stationName": station.name,
-        }),
-        normalized_json: json!({
-            "stationId": station_id,
-            "adapter": "login-state",
-            "status": status,
-            "balance": Value::Null,
-            "groups": [],
-            "rateMultipliers": [],
-            "keys": [],
-            "models": [],
-            "matchedFields": [],
-            "detectedEndpoints": [],
-            "pendingConfirmations": [],
-            "confidenceSummary": { "recognizedFieldCount": 0 },
-        }),
-        raw_json_redacted: Some(json!({
-            "stationName": station.name,
-            "loginUsernamePresent": !username.trim().is_empty(),
-            "loginPasswordPresent": password.as_deref().is_some_and(|value| !value.trim().is_empty()),
-        })),
-        error_code: (!token_present).then(|| "login_action_required".to_string()),
-        error_message: (!token_present).then_some(diagnosis),
-    };
-    Ok(PreparedStationCollection {
-        station_id,
-        endpoint_revision: station.endpoint_revision,
-        adapter: "login-state".to_string(),
-        task: CollectorTask::Detect,
-        outputs: vec![output],
-        enabled_key_count: 0,
-    })
-}
-
 pub(crate) struct PreparedStationLoginProbe {
     station: Station,
     credentials: StationCredentials,
@@ -1965,81 +1815,6 @@ pub(crate) async fn test_station_login_input_async(
     correlation_id: Option<String>,
 ) -> Result<StationLoginTestResult, String> {
     login_probe::test_station_login_input(outbound, input, cancellation_token, correlation_id).await
-}
-
-#[cfg(test)]
-#[allow(
-    dead_code,
-    reason = "legacy sync login fixture retained for parser coverage"
-)]
-pub fn test_station_login_input(
-    input: StationLoginTestInput,
-) -> Result<StationLoginTestResult, String> {
-    let website_url = input.website_url.trim();
-    let login_username = input.login_username.trim();
-    let login_password = input.login_password.trim();
-
-    if website_url.is_empty() {
-        return Ok(StationLoginTestResult {
-            status: "missing_base_url".to_string(),
-            message: "请先填写基础地址。".to_string(),
-            diagnosis: None,
-            token_present: false,
-        });
-    }
-    if login_username.is_empty() || login_password.is_empty() {
-        return Ok(StationLoginTestResult {
-            status: "missing_credentials".to_string(),
-            message: "请先填写登录用户名和密码。".to_string(),
-            diagnosis: None,
-            token_present: false,
-        });
-    }
-
-    let station_type = input.station_type.as_deref().unwrap_or("sub2api").trim();
-    let login_attempt = match station_type {
-        "newapi" => {
-            let attempt = drivers::newapi::auth::test_login_credentials(
-                website_url,
-                login_username,
-                login_password,
-            )?;
-            LoginTestAttempt {
-                token_present: attempt.cookie_present,
-                login_message: attempt.login_message,
-                manual_required: attempt.manual_required,
-            }
-        }
-        _ => {
-            let attempt =
-                sub2api::test_login_credentials(website_url, login_username, login_password)?;
-            LoginTestAttempt {
-                token_present: attempt.token_present,
-                login_message: attempt.login_message,
-                manual_required: attempt.manual_required,
-            }
-        }
-    };
-    let token_present = login_attempt.token_present;
-    Ok(StationLoginTestResult {
-        status: if token_present {
-            "success"
-        } else {
-            "manual_required"
-        }
-        .to_string(),
-        message: login_attempt
-            .login_message
-            .unwrap_or_else(|| "连通性测试已完成。".to_string()),
-        diagnosis: login_attempt.manual_required.or_else(|| {
-            if token_present {
-                Some("登录接口返回可用 token。".to_string())
-            } else {
-                None
-            }
-        }),
-        token_present,
-    })
 }
 
 fn has_login_credentials(username: &Option<String>, password_present: bool) -> bool {
