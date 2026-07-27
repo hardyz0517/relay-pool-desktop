@@ -20,6 +20,7 @@ pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
 pub(crate) mod endpoint_ping;
 pub(crate) mod error;
+pub(crate) mod key_pool;
 pub(crate) mod model_aliases;
 pub(crate) mod operations;
 pub(crate) mod pricing_workspace;
@@ -35,11 +36,11 @@ use crate::{
     application::{
         command_facades::{
             CaptureCommandError, CaptureCommandFacade, CollectorMetadataCommandFacade,
-            DataDirectoryCommandError, EndpointPingCommandError, KeyPoolCommandFacade,
-            LocalProxyCommandError, LocalProxyCommandFacade, PricingCommandFacade,
-            RemoteKeysCommandFacade, RoutingCommandFacade, StationCollectionCommandError,
-            StationCollectionCommandFacade, StationKeyConnectivityCommandError,
-            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
+            DataDirectoryCommandError, EndpointPingCommandError, LocalProxyCommandError,
+            LocalProxyCommandFacade, PricingCommandFacade, RoutingCommandFacade,
+            StationCollectionCommandError, StationCollectionCommandFacade,
+            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
+            StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -74,26 +75,14 @@ use crate::{
             ModelBasePriceDto, PricingContextInputDto, PricingRuleDto, ResolvedPricingContextDto,
         },
         proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
-        routing_health_reads::{RoutingStationKeyIdInputDto, StationKeyCapabilitiesDto},
-        routing_mutations::{
-            ReorderLocalRoutingKeysInputDto, UpdateStationKeyCapabilitiesInputDto,
-        },
+        routing_mutations::ReorderLocalRoutingKeysInputDto,
         settings::CcswitchImportResultDto,
         station_collector_operations::{
             CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
             StationLoginTestInputDto, StationLoginTestResultDto,
         },
-        station_keys::{
-            BindRemoteStationKeyInputDto, CreateLocalStationKeyFromRemoteResultDto,
-            CreateRemoteStationKeyInputDto, CreateRemoteStationKeyResultDto,
-            CreateStationKeyInputDto, KeyPoolItemDto, RemoteKeyCapabilityDto,
-            RemoteKeyScanResultDto, RemoteStationKeyDto, RemoteStationKeyInputDto,
-            ReorderKeyPoolInputDto, ReorderStationKeysInputDto, SaveStationKeyWithDefaultsInputDto,
-            SaveStationKeyWithDefaultsResultDto, StationIdInputDto, StationKeyConnectivityInputDto,
-            StationKeyDto, StationKeyIdInputDto, UpdateStationKeyGroupBindingInputDto,
-            UpdateStationKeyInputDto,
-        },
+        station_keys::StationKeyConnectivityInputDto,
         updater_data_recovery::{
             ActivateDataStoreCandidateInputDto, ActivationResultDto, CreateNewDataStoreInputDto,
             DataStoreCandidateViewDto, DataStoreStartupViewDto,
@@ -125,7 +114,6 @@ use crate::{
             },
         },
         proxy::{redact_error_message, runtime::ProxyRuntimeState},
-        remote_keys,
         secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::build_api_url,
     },
@@ -542,30 +530,6 @@ fn public_local_proxy_error(error: LocalProxyCommandError) -> error::CommandErro
     }
 }
 
-fn public_remote_key_error(error: remote_keys::RemoteKeyOperationError) -> error::CommandError {
-    match error {
-        remote_keys::RemoteKeyOperationError::Application(error) => {
-            public_command_application_error(error)
-        }
-        remote_keys::RemoteKeyOperationError::Unsupported => {
-            error::CommandError::from_driver(error::DriverFailure::Unsupported)
-        }
-        remote_keys::RemoteKeyOperationError::ExternalUnavailable => {
-            error::CommandError::from_driver(error::DriverFailure::ExternalUnavailable {
-                provider: None,
-                upstream_status: None,
-            })
-        }
-        remote_keys::RemoteKeyOperationError::ResultUnknown => {
-            error::CommandError::from_driver(error::DriverFailure::ResultUnknown)
-        }
-        remote_keys::RemoteKeyOperationError::Conflict => {
-            public_command_application_error(ApplicationError::StaleRevision)
-        }
-        remote_keys::RemoteKeyOperationError::Internal => error::CommandError::internal(None),
-    }
-}
-
 fn station_key_connectivity_command_error(
     error: StationKeyConnectivityCommandError,
 ) -> error::CommandError {
@@ -696,276 +660,6 @@ pub async fn restart_local_proxy(
             .restart_local_proxy()
             .await
             .map_err(public_local_proxy_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_station_keys(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationKeyDto>, error::CommandError> {
-    correlation::in_command_scope("list_station_keys", async {
-        let input = StationIdInputDto::parse(input)?;
-        facade
-            .list_station_keys(input.station_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn create_station_key(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<StationKeyDto, error::CommandError> {
-    correlation::in_command_scope("create_station_key", async {
-        let input = CreateStationKeyInputDto::parse(input)?;
-        facade
-            .create_station_key(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_station_key(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<StationKeyDto, error::CommandError> {
-    correlation::in_command_scope("update_station_key", async {
-        let input = UpdateStationKeyInputDto::parse(input)?;
-        facade
-            .update_station_key(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn save_station_key_with_defaults(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<SaveStationKeyWithDefaultsResultDto, error::CommandError> {
-    correlation::in_command_scope("save_station_key_with_defaults", async {
-        let input = SaveStationKeyWithDefaultsInputDto::parse(input)?;
-        facade
-            .save_station_key_with_defaults(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_station_key_group_binding(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<StationKeyDto, error::CommandError> {
-    correlation::in_command_scope("update_station_key_group_binding", async {
-        let input = UpdateStationKeyGroupBindingInputDto::parse(input)?;
-        facade
-            .update_station_key_group_binding(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_station_key(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("delete_station_key", async {
-        let input = StationKeyIdInputDto::parse(input)?;
-        facade
-            .delete_station_key(input.id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reorder_station_keys(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<Vec<StationKeyDto>, error::CommandError> {
-    correlation::in_command_scope("reorder_station_keys", async {
-        let input = ReorderStationKeysInputDto::parse(input)?;
-        facade
-            .reorder_station_keys(input.station_id, input.key_ids)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_remote_key_capability(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<RemoteKeyCapabilityDto, error::CommandError> {
-    correlation::in_command_scope("get_remote_key_capability", async {
-        let input = StationIdInputDto::parse(input)?;
-        facade
-            .get_remote_key_capability(input.station_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_remote_station_keys(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
-    correlation::in_command_scope("list_remote_station_keys", async {
-        let input = StationIdInputDto::parse(input)?;
-        facade
-            .list_remote_station_keys(input.station_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn scan_remote_station_keys(
-    facade: State<'_, RemoteKeysCommandFacade>,
-    input: Value,
-) -> Result<RemoteKeyScanResultDto, error::CommandError> {
-    correlation::in_command_scope("scan_remote_station_keys", async {
-        let input = StationIdInputDto::parse(input)?;
-        facade
-            .scan_remote_station_keys(input.station_id)
-            .await
-            .map_err(public_remote_key_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn create_remote_station_key(
-    facade: State<'_, RemoteKeysCommandFacade>,
-    input: Value,
-) -> Result<CreateRemoteStationKeyResultDto, error::CommandError> {
-    correlation::in_command_scope("create_remote_station_key", async {
-        let input = CreateRemoteStationKeyInputDto::parse(input)?;
-        facade
-            .create_remote_station_key(input)
-            .await
-            .map_err(public_remote_key_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn create_local_station_key_from_remote(
-    facade: State<'_, RemoteKeysCommandFacade>,
-    input: Value,
-) -> Result<CreateLocalStationKeyFromRemoteResultDto, error::CommandError> {
-    correlation::in_command_scope("create_local_station_key_from_remote", async {
-        let input = RemoteStationKeyInputDto::parse(input)?;
-        facade
-            .create_local_station_key_from_remote(input.station_id, input.remote_key_id)
-            .await
-            .map_err(public_remote_key_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn bind_remote_station_key(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
-    correlation::in_command_scope("bind_remote_station_key", async {
-        let input = BindRemoteStationKeyInputDto::parse(input)?;
-        facade
-            .bind_remote_station_key(input.remote_key_id, input.station_key_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn unbind_remote_station_key(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<Vec<RemoteStationKeyDto>, error::CommandError> {
-    correlation::in_command_scope("unbind_remote_station_key", async {
-        let input = RemoteStationKeyInputDto::parse(input)?;
-        facade
-            .unbind_remote_station_key(input.remote_key_id, input.station_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_key_pool_items(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<Vec<KeyPoolItemDto>, error::CommandError> {
-    correlation::in_command_scope("list_key_pool_items", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_key_pool_items()
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reorder_key_pool(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<Vec<KeyPoolItemDto>, error::CommandError> {
-    correlation::in_command_scope("reorder_key_pool", async {
-        let input = ReorderKeyPoolInputDto::parse(input)?;
-        facade
-            .reorder_key_pool(input.key_ids)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_station_key_capabilities(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<StationKeyCapabilitiesDto, error::CommandError> {
-    correlation::in_command_scope("get_station_key_capabilities", async {
-        let input = RoutingStationKeyIdInputDto::parse(input)?;
-        facade
-            .get_station_key_capabilities(input.station_key_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_station_key_capabilities(
-    facade: State<'_, KeyPoolCommandFacade>,
-    input: Value,
-) -> Result<StationKeyCapabilitiesDto, error::CommandError> {
-    correlation::in_command_scope("update_station_key_capabilities", async {
-        let input = UpdateStationKeyCapabilitiesInputDto::parse(input)?.into_domain();
-        facade
-            .update_station_key_capabilities(input)
-            .await
-            .map_err(public_command_application_error)
     })
     .await
 }
@@ -3110,23 +2804,29 @@ mod tests {
 
     #[test]
     fn remote_key_failures_keep_public_machine_classification() {
-        let unsupported =
-            public_remote_key_error(remote_keys::RemoteKeyOperationError::Unsupported);
+        let unsupported = key_pool::public_remote_key_error(
+            crate::services::remote_keys::RemoteKeyOperationError::Unsupported,
+        );
         assert_eq!(unsupported.code, error::CommandErrorCode::Unsupported);
         assert!(!unsupported.retryable);
 
-        let external =
-            public_remote_key_error(remote_keys::RemoteKeyOperationError::ExternalUnavailable);
+        let external = key_pool::public_remote_key_error(
+            crate::services::remote_keys::RemoteKeyOperationError::ExternalUnavailable,
+        );
         assert_eq!(external.code, error::CommandErrorCode::ExternalUnavailable);
         assert!(external.retryable);
 
-        let conflict = public_remote_key_error(remote_keys::RemoteKeyOperationError::Conflict);
+        let conflict = key_pool::public_remote_key_error(
+            crate::services::remote_keys::RemoteKeyOperationError::Conflict,
+        );
         assert_eq!(conflict.code, error::CommandErrorCode::Conflict);
         assert!(!conflict.retryable);
 
-        let not_found = public_remote_key_error(remote_keys::RemoteKeyOperationError::Application(
-            ApplicationError::NotFound,
-        ));
+        let not_found = key_pool::public_remote_key_error(
+            crate::services::remote_keys::RemoteKeyOperationError::Application(
+                ApplicationError::NotFound,
+            ),
+        );
         assert_eq!(not_found.code, error::CommandErrorCode::NotFound);
     }
 
