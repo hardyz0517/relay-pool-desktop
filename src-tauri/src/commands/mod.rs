@@ -13,6 +13,7 @@ use std::{
 use tauri::{ipc::Channel, Manager, State};
 
 pub(crate) mod change_events;
+pub(crate) mod channel_monitoring;
 pub(crate) mod channel_status;
 pub(crate) mod credentials;
 pub(crate) mod data_directory;
@@ -33,13 +34,12 @@ use crate::{
     app_composition::ManagedWorkRuntime,
     application::{
         command_facades::{
-            CaptureCommandError, CaptureCommandFacade, ChannelMonitoringCommandFacade,
-            CollectorMetadataCommandFacade, DataDirectoryCommandError, EndpointPingCommandError,
-            KeyPoolCommandFacade, LocalProxyCommandError, LocalProxyCommandFacade,
-            PricingCommandFacade, RemoteKeysCommandFacade, RoutingCommandFacade,
-            StationCollectionCommandError, StationCollectionCommandFacade,
-            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
-            StationKeyConnectivityProbeTarget,
+            CaptureCommandError, CaptureCommandFacade, CollectorMetadataCommandFacade,
+            DataDirectoryCommandError, EndpointPingCommandError, KeyPoolCommandFacade,
+            LocalProxyCommandError, LocalProxyCommandFacade, PricingCommandFacade,
+            RemoteKeysCommandFacade, RoutingCommandFacade, StationCollectionCommandError,
+            StationCollectionCommandFacade, StationKeyConnectivityCommandError,
+            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -60,15 +60,6 @@ use crate::{
         OperationRegistryError, OperationStartRequest, OperationTerminal,
     },
     ipc::dto::{
-        channel_monitor_mutations::{
-            ChannelMonitorMutationIdInputDto, CreateChannelMonitorInputDto,
-            CreateChannelMonitorTemplateInputDto, UpdateChannelMonitorInputDto,
-            UpdateChannelMonitorTemplateInputDto,
-        },
-        channel_monitor_reads::{
-            ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
-            ChannelMonitorRunDto, ChannelMonitorSummaryDto, ChannelMonitorSummaryInputDto,
-        },
         collector_facts::{
             BalanceSnapshotDto, CollectorRunDto, CollectorSnapshotDto, CollectorStationIdInputDto,
             CollectorStationIdsInputDto, GroupRateRecordDto, StationGroupBindingDto,
@@ -977,193 +968,6 @@ pub async fn update_station_key_capabilities(
             .map_err(public_command_application_error)
     })
     .await
-}
-
-#[tauri::command]
-pub async fn list_channel_monitors(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelMonitorDto>, error::CommandError> {
-    correlation::in_command_scope("list_channel_monitors", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_channel_monitors(PageLimit::new(200).expect("bounded limit"))
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_channel_monitor_summaries(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelMonitorSummaryDto>, error::CommandError> {
-    correlation::in_command_scope("list_channel_monitor_summaries", async {
-        let input = ChannelMonitorSummaryInputDto::parse(input)?;
-        facade
-            .list_channel_monitor_summaries(input.run_since.as_deref(), input.run_limit)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn create_channel_monitor(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<ChannelMonitorDto, error::CommandError> {
-    correlation::in_command_scope("create_channel_monitor", async {
-        let input = CreateChannelMonitorInputDto::parse(input)?.into_domain();
-        facade
-            .create_channel_monitor(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_channel_monitor(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<ChannelMonitorDto, error::CommandError> {
-    correlation::in_command_scope("update_channel_monitor", async {
-        let input = UpdateChannelMonitorInputDto::parse(input)?.into_domain();
-        facade
-            .update_channel_monitor(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_channel_monitor(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("delete_channel_monitor", async {
-        let input = ChannelMonitorMutationIdInputDto::parse(input)?;
-        facade
-            .delete_channel_monitor(input.id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_channel_monitor_runs(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
-    correlation::in_command_scope("list_channel_monitor_runs", async {
-        let input = ChannelMonitorIdInputDto::parse(input)?;
-        facade
-            .list_channel_monitor_runs(
-                &input.monitor_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_channel_monitor_templates(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelMonitorRequestTemplateDto>, error::CommandError> {
-    correlation::in_command_scope("list_channel_monitor_templates", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_channel_monitor_templates(PageLimit::new(200).expect("bounded limit"))
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn create_channel_monitor_template(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
-    correlation::in_command_scope("create_channel_monitor_template", async {
-        let input = CreateChannelMonitorTemplateInputDto::parse(input)?.into_domain();
-        facade
-            .create_channel_monitor_template(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_channel_monitor_template(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
-    correlation::in_command_scope("update_channel_monitor_template", async {
-        let input = UpdateChannelMonitorTemplateInputDto::parse(input)?.into_domain();
-        facade
-            .update_channel_monitor_template(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn duplicate_channel_monitor_template(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<ChannelMonitorRequestTemplateDto, error::CommandError> {
-    correlation::in_command_scope("duplicate_channel_monitor_template", async {
-        let input = ChannelMonitorMutationIdInputDto::parse(input)?;
-        facade
-            .duplicate_channel_monitor_template(input.id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_channel_monitor_template(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("delete_channel_monitor_template", async {
-        let input = ChannelMonitorMutationIdInputDto::parse(input)?;
-        facade
-            .delete_channel_monitor_template(input.id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn run_channel_monitor_now(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
-    correlation::in_command_scope("run_channel_monitor_now", async {
-        let input = ChannelMonitorIdInputDto::parse(input)?;
-        facade
-            .run_channel_monitor_now(input.monitor_id)
-            .await
-            .map_err(public_channel_monitor_run_error)
-    })
-    .await
-}
-
-fn public_channel_monitor_run_error(_: String) -> error::CommandError {
-    error::CommandError::from_work(error::WorkFailure::ResultUnknown)
 }
 
 fn public_endpoint_ping_error(error: EndpointPingCommandError) -> error::CommandError {
@@ -3270,7 +3074,7 @@ mod tests {
 
     #[test]
     fn channel_monitor_runner_errors_are_result_unknown_and_redacted() {
-        let error = public_channel_monitor_run_error(
+        let error = channel_monitoring::public_channel_monitor_run_error(
             "provider failed with api_key=sk-secret at C:/private/data.db".into(),
         );
 
