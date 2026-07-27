@@ -16,6 +16,7 @@ pub(crate) mod change_events;
 pub(crate) mod credentials;
 pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
+pub(crate) mod endpoint_ping;
 pub(crate) mod error;
 pub(crate) mod request_logs;
 pub(crate) mod runtime;
@@ -89,7 +90,7 @@ use crate::{
             StationKeyHealthDto,
         },
         routing_mutations::{
-            DeleteModelAliasInputDto, EndpointPingResultDto, ReorderLocalRoutingKeysInputDto,
+            DeleteModelAliasInputDto, ReorderLocalRoutingKeysInputDto,
             UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
         },
         settings::{CcswitchImportResultDto, OpenExternalUrlInputDto},
@@ -1442,23 +1443,6 @@ pub async fn start_station_key_connectivity_operation(
             )
             .map_err(public_operation_registry_error)?;
         Ok(OperationStartedDto::from(operation_id))
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn ping_station_endpoint(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<EndpointPingResultDto, error::CommandError> {
-    correlation::in_command_scope("ping_station_endpoint", async {
-        let input = StationIdInputDto::parse(input)?;
-        let result = facade
-            .ping_station_endpoint(input.station_id)
-            .await
-            .map_err(public_endpoint_ping_error)?;
-        EndpointPingResultDto::try_from(result)
-            .map_err(|_| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
     })
     .await
 }

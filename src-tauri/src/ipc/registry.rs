@@ -127,7 +127,7 @@ macro_rules! ipc_command_registry {
             get_operation_status => $crate::commands::get_operation_status,
             cancel_operation => $crate::commands::cancel_operation,
             start_station_key_connectivity_operation => $crate::commands::start_station_key_connectivity_operation,
-            ping_station_endpoint => $crate::commands::ping_station_endpoint,
+            ping_station_endpoint => $crate::commands::endpoint_ping::ping_station_endpoint,
             test_station_key_connectivity => $crate::commands::test_station_key_connectivity,
             simulate_route => $crate::commands::simulate_route,
             list_pricing_rules => $crate::commands::list_pricing_rules,
