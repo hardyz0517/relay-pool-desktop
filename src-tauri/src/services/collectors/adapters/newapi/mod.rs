@@ -1503,24 +1503,6 @@ mod tests {
     }
 
     #[test]
-    fn newapi_quota_converts_to_usd_units() {
-        let fact = parse_newapi_balance(
-            "station-1",
-            &json!({
-                "quota": 1000000.0,
-                "used_quota": 500000.0,
-                "group": "default"
-            }),
-        );
-
-        assert_eq!(fact.value, Some(2.0));
-        assert_eq!(fact.used_value, Some(1.0));
-        assert_eq!(fact.total_value, Some(3.0));
-        assert_eq!(fact.currency, "USD");
-        assert_eq!(fact.source, "newapi_user_self");
-    }
-
-    #[test]
     fn newapi_balance_collects_usage_logs_for_request_count_cost_and_total_tokens() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(
@@ -2388,53 +2370,6 @@ mod tests {
         assert_eq!(balance.total_input_token_count, None);
         assert_eq!(balance.total_output_token_count, None);
         assert_eq!(balance.total_token_count, None);
-    }
-
-    #[test]
-    fn newapi_groups_parse_list_and_rate_fields() {
-        let facts = parse_newapi_group_facts(
-            "station-1",
-            &json!({
-                "default": { "desc": "Default", "ratio": 1.0 },
-                "vip": { "desc": "VIP", "ratio": 0.8 }
-            }),
-        );
-
-        assert!(facts
-            .groups
-            .iter()
-            .any(|group| group.group_name == "default"));
-        assert!(facts.rates.iter().any(|rate| {
-            rate.group_name == "vip" && rate.effective_rate_multiplier == Some(0.8)
-        }));
-    }
-
-    #[test]
-    fn models_snapshot_keeps_top_level_models_contract() {
-        let output = build_models_output(
-            "station-1",
-            parsers::envelope_data(
-                &json!({"success": true, "data": ["gpt-4.1-mini", "claude-sonnet"]}),
-            )
-            .expect("model data"),
-            json!({"path": "/api/user/models", "status": 200, "ok": true}),
-        );
-        assert_eq!(
-            output.normalized_json["models"],
-            json!(["gpt-4.1-mini", "claude-sonnet"])
-        );
-        assert_eq!(output.facts.models.len(), 2);
-    }
-
-    #[test]
-    fn empty_successful_group_payload_is_partial() {
-        let output = build_groups_output(
-            "station-1",
-            parsers::envelope_data(&json!({"success": true, "data": {}})).expect("group data"),
-            json!({"path": "/api/user/self/groups", "status": 200, "ok": true}),
-        );
-        assert_eq!(output.status, "partial");
-        assert_eq!(output.error_code.as_deref(), Some("empty_group_facts"));
     }
 
     fn test_station(database: &TestCollectorSource, base_url: &str) -> Station {

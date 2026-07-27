@@ -2184,6 +2184,55 @@ mod tests {
         assert!(requests[2].starts_with("POST /api/token/301/key "));
     }
 
+    #[tokio::test]
+    async fn collect_groups_marks_empty_successful_payload_partial() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({"success": true, "data": {}}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = NewApiCollectorDriver
+            .collect(&context, CollectorTaskKind::Groups)
+            .await
+            .expect("groups collect");
+        server.finish();
+
+        assert_eq!(output.status, DriverOutputStatus::Partial);
+        assert!(output.facts.groups.is_empty());
+        assert!(output.facts.rates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn collect_models_keeps_top_level_models_contract() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({"success": true, "data": ["gpt-4.1-mini", "claude-sonnet"]}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = NewApiCollectorDriver
+            .collect(&context, CollectorTaskKind::Models)
+            .await
+            .expect("models collect");
+        server.finish();
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(
+            output
+                .facts
+                .models
+                .iter()
+                .map(|model| model.model.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gpt-4.1-mini", "claude-sonnet"]
+        );
+    }
+
     #[test]
     fn reveal_payload_requires_top_level_full_key() {
         assert_eq!(

@@ -246,6 +246,25 @@ mod tests {
     }
 
     #[test]
+    fn balance_quota_converts_to_usd_units() {
+        let fact = parse_balance_fact(
+            "station-1",
+            &json!({
+                "quota": 1000000.0,
+                "used_quota": 500000.0,
+                "group": "default"
+            }),
+            Some(500000.0),
+        );
+
+        assert_eq!(fact.value, Some(2.0));
+        assert_eq!(fact.used_value, Some(1.0));
+        assert_eq!(fact.total_value, Some(3.0));
+        assert_eq!(fact.currency, "USD");
+        assert_eq!(fact.source, "newapi_user_self");
+    }
+
+    #[test]
     fn missing_quota_per_unit_does_not_guess_converted_balance() {
         let status = parse_status(&json!({}));
         assert_eq!(status.quota_per_unit, None);
@@ -339,6 +358,25 @@ mod tests {
         assert_eq!(default_rate.default_rate_multiplier, None);
         assert_eq!(default_rate.user_rate_multiplier, None);
         assert_eq!(default_rate.effective_rate_multiplier, Some(1.0));
+    }
+
+    #[test]
+    fn group_map_parses_list_and_rate_fields() {
+        let facts = parse_group_facts(
+            "station-1",
+            &json!({
+                "default": { "desc": "Default", "ratio": 1.0 },
+                "vip": { "desc": "VIP", "ratio": 0.8 }
+            }),
+        );
+
+        assert!(facts
+            .groups
+            .iter()
+            .any(|group| group.group_name == "default"));
+        assert!(facts.rates.iter().any(|rate| {
+            rate.group_name == "vip" && rate.effective_rate_multiplier == Some(0.8)
+        }));
     }
 
     #[test]
