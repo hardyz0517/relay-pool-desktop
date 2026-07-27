@@ -15,6 +15,7 @@ use tauri::{ipc::Channel, Manager, State};
 pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
 pub(crate) mod error;
+pub(crate) mod request_logs;
 pub(crate) mod runtime;
 pub(crate) mod settings;
 pub(crate) mod stations;
@@ -29,9 +30,9 @@ use crate::{
             CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandError,
             EndpointPingCommandError, KeyPoolCommandFacade, LocalProxyCommandError,
             LocalProxyCommandFacade, PricingCommandFacade, RemoteKeysCommandFacade,
-            RequestLogsCommandFacade, RoutingCommandFacade, StationCollectionCommandError,
-            StationCollectionCommandFacade, StationKeyConnectivityCommandError,
-            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
+            RoutingCommandFacade, StationCollectionCommandError, StationCollectionCommandFacade,
+            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
+            StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -53,7 +54,7 @@ use crate::{
     },
     ipc::dto::{
         change_logs::{
-            ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto, RequestLogDto,
+            ChangeEventDto, ChangeEventIdInputDto, ChangeEventIdsInputDto,
             StationIdInputDto as ChangeLogStationIdInputDto, UpsertChangeEventInputDto,
         },
         channel_monitor_mutations::{
@@ -723,36 +724,6 @@ pub async fn restart_local_proxy(
             .restart_local_proxy()
             .await
             .map_err(public_local_proxy_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_request_logs(
-    facade: State<'_, RequestLogsCommandFacade>,
-    input: Value,
-) -> Result<Vec<RequestLogDto>, error::CommandError> {
-    correlation::in_command_scope("list_request_logs", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_request_logs(PageLimit::new(500).expect("bounded limit"))
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn clear_request_logs(
-    facade: State<'_, RequestLogsCommandFacade>,
-    input: Value,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("clear_request_logs", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .clear_request_logs()
-            .await
-            .map_err(public_command_application_error)
     })
     .await
 }
