@@ -576,7 +576,7 @@ pub fn run() {
                 }
             };
             app.manage(runtime_owner);
-            app.manage(commands::LocatedDataStoreCandidates::default());
+            app.manage(commands::data_store_startup::LocatedDataStoreCandidates::default());
             app.manage(capture_session_store);
             app.manage(proxy_runtime);
             services::proxy::startup_auto_start::schedule(app.handle().clone());
