@@ -1,4 +1,3 @@
-pub mod adapters;
 pub(crate) mod collector_apply;
 #[allow(
     dead_code,
@@ -61,7 +60,7 @@ use crate::{
 use collector_apply::CollectorApplyPort;
 use output::{AdapterOutput, CollectorTask};
 
-/// Consumer-owned read/write boundary required by provider HTTP adapters.
+/// Consumer-owned read/write boundary required by provider collection drivers.
 ///
 /// Production composition supplies this port from catalog, settings, and
 /// credential application services.
