@@ -387,9 +387,9 @@ fn permanent_error(message: impl Into<String>) -> NewApiRequestError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::collectors::adapters::newapi::{
-        auth::NewApiAuthContext,
-        test_support::{json_response, TestHttpServer},
+    use crate::services::collectors::{
+        adapters::newapi::auth::NewApiAuthContext,
+        drivers::newapi::test_support::{json_response, TestHttpServer},
     };
     use serde_json::json;
     use std::time::Duration;

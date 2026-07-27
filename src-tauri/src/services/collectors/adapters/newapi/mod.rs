@@ -8,8 +8,6 @@ mod auth;
 #[cfg(test)]
 mod client;
 mod parsers;
-#[cfg(test)]
-mod test_support;
 
 use serde_json::{json, Value};
 
@@ -1460,7 +1458,7 @@ mod tests {
             station_keys::StationKey,
         },
         services::{
-            collectors::adapters::newapi::test_support::{json_response, TestHttpServer},
+            collectors::drivers::newapi::test_support::{json_response, TestHttpServer},
             collectors::CollectorSourcePort,
             secrets::crypto::generate_data_key,
         },

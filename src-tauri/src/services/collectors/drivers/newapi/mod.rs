@@ -1,5 +1,7 @@
 pub(crate) mod auth;
 pub(crate) mod parsers;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use futures_util::future::{BoxFuture, FutureExt};
 use http::{header, HeaderName, HeaderValue, Method, StatusCode};

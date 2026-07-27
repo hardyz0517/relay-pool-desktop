@@ -102,7 +102,7 @@ fn read_fixture_request_with_timeout_and_observer(
     }
 }
 
-pub(super) struct TestHttpServer {
+pub(crate) struct TestHttpServer {
     pub base_url: String,
     pub requests: std::sync::mpsc::Receiver<String>,
     handle: Option<std::thread::JoinHandle<()>>,
@@ -164,7 +164,7 @@ impl TestHttpServer {
     }
 }
 
-pub(super) fn json_response(status: u16, body: serde_json::Value) -> String {
+pub(crate) fn json_response(status: u16, body: serde_json::Value) -> String {
     let body = body.to_string();
     let reason = if status == 200 { "OK" } else { "ERROR" };
     format!(
