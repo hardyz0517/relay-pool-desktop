@@ -13,6 +13,7 @@ use std::{
 use tauri::{ipc::Channel, Manager, State};
 
 pub(crate) mod change_events;
+pub(crate) mod credentials;
 pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
 pub(crate) mod error;
@@ -27,12 +28,12 @@ use crate::{
     application::{
         command_facades::{
             CaptureCommandError, CaptureCommandFacade, ChannelMonitoringCommandFacade,
-            ChannelStatusCommandFacade, CollectorMetadataCommandFacade, CredentialsCommandFacade,
-            DataDirectoryCommandError, EndpointPingCommandError, KeyPoolCommandFacade,
-            LocalProxyCommandError, LocalProxyCommandFacade, PricingCommandFacade,
-            RemoteKeysCommandFacade, RoutingCommandFacade, StationCollectionCommandError,
-            StationCollectionCommandFacade, StationKeyConnectivityCommandError,
-            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
+            ChannelStatusCommandFacade, CollectorMetadataCommandFacade, DataDirectoryCommandError,
+            EndpointPingCommandError, KeyPoolCommandFacade, LocalProxyCommandError,
+            LocalProxyCommandFacade, PricingCommandFacade, RemoteKeysCommandFacade,
+            RoutingCommandFacade, StationCollectionCommandError, StationCollectionCommandFacade,
+            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
+            StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -103,10 +104,9 @@ use crate::{
             CreateStationKeyInputDto, KeyPoolItemDto, RemoteKeyCapabilityDto,
             RemoteKeyScanResultDto, RemoteStationKeyDto, RemoteStationKeyInputDto,
             ReorderKeyPoolInputDto, ReorderStationKeysInputDto, SaveStationKeyWithDefaultsInputDto,
-            SaveStationKeyWithDefaultsResultDto, StationCredentialsDto, StationIdInputDto,
-            StationKeyConnectivityInputDto, StationKeyDto, StationKeyIdInputDto,
-            UpdateStationCredentialsInputDto, UpdateStationKeyGroupBindingInputDto,
-            UpdateStationKeyInputDto, UpdateStationSessionInputDto,
+            SaveStationKeyWithDefaultsResultDto, StationIdInputDto, StationKeyConnectivityInputDto,
+            StationKeyDto, StationKeyIdInputDto, UpdateStationKeyGroupBindingInputDto,
+            UpdateStationKeyInputDto,
         },
         updater_data_recovery::{
             ActivateDataStoreCandidateInputDto, ActivationResultDto, CreateNewDataStoreInputDto,
@@ -1861,66 +1861,6 @@ pub async fn list_collector_runs(
                 &input.station_id,
                 PageLimit::new(500).expect("bounded limit"),
             )
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_station_credentials(
-    facade: State<'_, CredentialsCommandFacade>,
-    input: Value,
-) -> Result<StationCredentialsDto, error::CommandError> {
-    correlation::in_command_scope("get_station_credentials", async {
-        let input = StationIdInputDto::parse(input)?;
-        facade
-            .get_station_credentials(input.station_id)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_station_credentials(
-    facade: State<'_, CredentialsCommandFacade>,
-    input: Value,
-) -> Result<StationCredentialsDto, error::CommandError> {
-    correlation::in_command_scope("update_station_credentials", async {
-        let input = UpdateStationCredentialsInputDto::parse(input)?;
-        facade
-            .update_station_credentials(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_station_session(
-    facade: State<'_, CredentialsCommandFacade>,
-    input: Value,
-) -> Result<StationCredentialsDto, error::CommandError> {
-    correlation::in_command_scope("update_station_session", async {
-        let input = UpdateStationSessionInputDto::parse(input)?;
-        facade
-            .update_station_session(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn clear_station_credentials(
-    facade: State<'_, CredentialsCommandFacade>,
-    input: Value,
-) -> Result<StationCredentialsDto, error::CommandError> {
-    correlation::in_command_scope("clear_station_credentials", async {
-        let input = StationIdInputDto::parse(input)?;
-        facade
-            .clear_station_credentials(input.station_id)
             .await
             .map_err(public_command_application_error)
     })
