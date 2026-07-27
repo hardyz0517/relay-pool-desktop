@@ -24,7 +24,7 @@ import type {
   StationDetailDiagnosticItem,
   StationDetailViewModel,
 } from "../stationDetailViewModels";
-import { StationGroupNameBadge, StationGroupRateBadge } from "./StationGroupChip";
+import { StationGroupNameBadge, StationGroupRateBadge } from "@/components/group/StationGroupChip";
 
 export type StationDetailRefreshAction = "balance" | "groups" | "full";
 export type StationDetailLoadingAction = StationDetailRefreshAction | "authorize";

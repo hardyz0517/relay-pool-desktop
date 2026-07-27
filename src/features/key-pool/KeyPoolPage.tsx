@@ -27,17 +27,17 @@ import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { KeyPoolItem, StationKeyConnectivityTestEvent, StationKeyConnectivityTestResult } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
-import { StationGroupOptionLabel } from "@/features/stations/components/StationGroupChip";
+import { StationGroupOptionLabel } from "@/components/group/StationGroupChip";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
-} from "@/features/stations/groupOptionViewModels";
+} from "@/lib/groupOptionViewModels";
 import {
   createStationKeyMonitorInput,
   findStationKeyMonitor,
   preferredStationKeyMonitorTemplate,
   updateStationKeyMonitorEnabledInput,
-} from "@/features/channels/channelMonitorViewModel";
+} from "@/lib/channelMonitorViewModel";
 import { ConnectivityOperationCancelledError } from "./connectivityOperationController";
 import { DEFAULT_KEY_CONNECTIVITY_TEST_MODEL, KeyConnectivityTestDialog } from "./KeyConnectivityTestDialog";
 import { KeyEditDialog } from "./KeyEditDialog";

@@ -13,7 +13,7 @@ const compiledTime = ts.transpileModule(timeSource, {
 }).outputText;
 const timeModuleUrl = `data:text/javascript;base64,${Buffer.from(compiledTime).toString("base64")}`;
 
-const source = await readFile(new URL("../../src/features/channels/channelMonitorViewModel.ts", import.meta.url), "utf8");
+const source = await readFile(new URL("../../src/lib/channelMonitorViewModel.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
     jsx: ts.JsxEmit.ReactJSX,

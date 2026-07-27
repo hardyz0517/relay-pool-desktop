@@ -6,7 +6,7 @@ import {
   noGroupOptionValue,
   normalizeStationGroupOptions,
   stationGroupSelectValue,
-} from "../groupOptionViewModels";
+} from "@/lib/groupOptionViewModels";
 
 type CreateRemoteKeyDialogProps = {
   open: boolean;

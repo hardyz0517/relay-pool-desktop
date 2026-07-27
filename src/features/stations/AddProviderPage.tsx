@@ -36,7 +36,7 @@ import {
   type StationGroupDraft,
 } from "./components/StationGroupRowsEditor";
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
-import { normalizeStationGroupOptions } from "./groupOptionViewModels";
+import { normalizeStationGroupOptions } from "@/lib/groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 import {
   ProviderConnectionSection,

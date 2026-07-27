@@ -12,7 +12,7 @@ import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
-import { formatStationGroupOptionLabel } from "@/features/stations/groupOptionViewModels";
+import { formatStationGroupOptionLabel } from "@/lib/groupOptionViewModels";
 
 type AddKeyPageProps = {
   initialStationId?: string | null;

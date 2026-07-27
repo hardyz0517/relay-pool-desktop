@@ -15,7 +15,7 @@ import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
   formatMultiplier,
-} from "../../groupOptionViewModels";
+} from "@/lib/groupOptionViewModels";
 import { remoteLocalKeyNotePrefix } from "./formModel";
 
 export function keyToDraft(key: StationKey): StationKeyDraft {

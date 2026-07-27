@@ -8,7 +8,7 @@ import {
   noGroupOptionValue,
   normalizeStationGroupOptions,
   stationGroupSelectValue,
-} from "../groupOptionViewModels";
+} from "@/lib/groupOptionViewModels";
 
 export type StationKeyDraft = {
   clientId: string;

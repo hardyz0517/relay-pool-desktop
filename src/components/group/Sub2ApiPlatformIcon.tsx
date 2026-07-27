@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { StationGroupVisualPlatform } from "../groupVisualMeta";
+import type { StationGroupVisualPlatform } from "@/lib/groupVisualMeta";
 
 type Sub2ApiPlatformIconProps = {
   platform: StationGroupVisualPlatform;

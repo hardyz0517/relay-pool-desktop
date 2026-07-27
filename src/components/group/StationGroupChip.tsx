@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import type { StationGroupCategory } from "@/lib/groupCategories";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import { cn } from "@/lib/utils";
-import { formatMultiplier } from "../groupOptionViewModels";
-import { groupVisualMetaFor } from "../groupVisualMeta";
-import { groupVisualClassNames } from "../groupVisualStyles";
+import { formatMultiplier } from "@/lib/groupOptionViewModels";
+import { groupVisualMetaFor } from "@/lib/groupVisualMeta";
+import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { Sub2ApiPlatformIcon } from "./Sub2ApiPlatformIcon";
 
 type StationGroupVisualInput = {

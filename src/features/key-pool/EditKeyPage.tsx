@@ -14,11 +14,11 @@ import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
-import { StationGroupOptionLabel } from "@/features/stations/components/StationGroupChip";
+import { StationGroupOptionLabel } from "@/components/group/StationGroupChip";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
-} from "@/features/stations/groupOptionViewModels";
+} from "@/lib/groupOptionViewModels";
 import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "./stationKeyCapabilityDefaults";
 
 type EditKeyPageProps = {

@@ -6,52 +6,6 @@
   "allowed_edges": [],
   "forbidden_edges": [],
   "temporary_edges": [
-    {
-      "id": "legacy-composition-imports-feature-descendants",
-      "ecosystem": "typescript",
-      "identities": [
-        "src/app/App.tsx -> src/features/key-pool/AddKeyPage.tsx [static]",
-        "src/app/App.tsx -> src/features/key-pool/EditKeyPage.tsx [static]",
-        "src/app/App.tsx -> src/features/pricing/ModelBasePricesPage.tsx [static]",
-        "src/app/shellPageRegistry.tsx -> src/features/key-pool/KeyPoolPage.tsx [static]",
-        "src/app/shellPageRegistry.tsx -> src/features/pricing/PricingPage.tsx [static]"
-      ],
-      "owner": "Task 24",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "Task 24",
-      "expiry_stage": 6,
-      "reason": "The composition root legitimately registers key-pool and pricing pages but these pages still carry legacy cross-feature private helper edges. Task 24 deletes this remainder after the shared visual/helper ownership cleanup."
-    },
-    {
-      "id": "legacy-cross-feature-visual-and-view-model-edges",
-      "ecosystem": "typescript",
-      "identities": [
-        "src/features/key-pool/AddKeyPage.tsx -> src/features/stations/groupOptionViewModels.ts [static]",
-        "src/features/key-pool/EditKeyPage.tsx -> src/features/stations/components/StationGroupChip.tsx [static]",
-        "src/features/key-pool/EditKeyPage.tsx -> src/features/stations/groupOptionViewModels.ts [static]",
-        "src/features/key-pool/KeyPoolPage.tsx -> src/features/channels/channelMonitorViewModel.ts [static]",
-        "src/features/key-pool/KeyPoolPage.tsx -> src/features/stations/components/StationGroupChip.tsx [static]",
-        "src/features/key-pool/KeyPoolPage.tsx -> src/features/stations/groupOptionViewModels.ts [static]",
-        "src/features/pricing/PricingPage.tsx -> src/features/stations/components/Sub2ApiPlatformIcon.tsx [static]",
-        "src/features/pricing/PricingPage.tsx -> src/features/stations/groupVisualMeta.ts [static]",
-        "src/features/pricing/PricingPage.tsx -> src/features/stations/groupVisualStyles.ts [static]",
-        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/components/Sub2ApiPlatformIcon.tsx [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/groupOptionViewModels.ts [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/key-pool/EditKeyPage.tsx => src/features/stations/groupVisualStyles.ts [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/components/Sub2ApiPlatformIcon.tsx [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/groupOptionViewModels.ts [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/key-pool/KeyPoolPage.tsx => src/features/stations/groupVisualStyles.ts [via src/features/stations/components/StationGroupChip.tsx]",
-        "transitive:src/features/pricing/PricingPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/components/Sub2ApiPlatformIcon.tsx]",
-        "transitive:src/features/pricing/PricingPage.tsx => src/features/stations/groupVisualMeta.ts [via src/features/stations/groupVisualStyles.ts]"
-      ],
-      "owner": "Task 24",
-      "introduced_shard": "legacy-baseline",
-      "delete_shard": "Task 24",
-      "expiry_stage": 6,
-      "reason": "Feature-private components and view models are reused across domains. Task 24 moves true shared visuals/contracts to shared ownership and exposes remaining feature APIs only through public entries."
-    }
   ],
   "command_state_allowlist": [],
   "spawn_allowlist": [

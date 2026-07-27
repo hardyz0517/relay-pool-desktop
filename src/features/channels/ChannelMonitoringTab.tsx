@@ -25,7 +25,7 @@ import {
   monitorToDraft,
   monitorToCreateInput,
   validateMonitorDraft,
-} from "./channelMonitorViewModel";
+} from "@/lib/channelMonitorViewModel";
 
 type ChannelMonitoringTabProps = {
   headerActions?: ReactNode;

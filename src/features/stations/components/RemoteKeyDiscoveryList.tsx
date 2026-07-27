@@ -4,7 +4,7 @@ import { Button, SelectControl, StatusBadge, SwitchControl, type StatusTone } fr
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import type { RemoteKeyMatchStatus, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
-import { formatMultiplier } from "../groupOptionViewModels";
+import { formatMultiplier } from "@/lib/groupOptionViewModels";
 
 type RemoteKeyDiscoveryListProps = {
   keys: RemoteStationKey[];
