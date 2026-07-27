@@ -14,6 +14,7 @@ use tauri::{ipc::Channel, Manager, State};
 
 pub(crate) mod data_recovery;
 pub(crate) mod error;
+pub(crate) mod updater;
 
 use crate::{
     app_composition::ManagedWorkRuntime,
@@ -117,8 +118,7 @@ use crate::{
         },
         updater_data_recovery::{
             ActivateDataStoreCandidateInputDto, ActivationResultDto, CreateNewDataStoreInputDto,
-            DataStoreCandidateViewDto, DataStoreStartupViewDto, PublishedUpdateInspectionDto,
-            PublishedUpdateInspectionInputDto, UpdaterNetworkConfigDto,
+            DataStoreCandidateViewDto, DataStoreStartupViewDto,
         },
         EmptyInputDto, StationDto,
     },
@@ -152,7 +152,6 @@ use crate::{
         remote_keys,
         secrets::{validation::validate_database_secrets, SecretManager},
         station_endpoints::build_api_url,
-        updater,
     },
 };
 
@@ -724,32 +723,6 @@ pub async fn open_external_url(input: Value) -> Result<(), error::CommandError> 
         let input = OpenExternalUrlInputDto::parse(input)?;
         let url = validate_external_http_url(&input.url)?;
         Ok(open_url_with_system(url)?)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn updater_network_config(
-    input: Value,
-) -> Result<UpdaterNetworkConfigDto, error::CommandError> {
-    correlation::in_command_scope("updater_network_config", async {
-        EmptyInputDto::parse(input)?;
-        Ok(updater::network_config())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn inspect_latest_update_manifest(
-    runtime: State<'_, ManagedWorkRuntime>,
-    input: Value,
-) -> Result<PublishedUpdateInspectionDto, error::CommandError> {
-    correlation::in_command_scope("inspect_latest_update_manifest", async {
-        let input = PublishedUpdateInspectionInputDto::parse(input)?;
-        Ok(
-            updater::inspect_latest_update_manifest(&runtime.outbound, &input.current_version)
-                .await?,
-        )
     })
     .await
 }
