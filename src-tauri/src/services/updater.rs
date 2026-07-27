@@ -1,8 +1,14 @@
 use semver::Version;
 use serde::Serialize;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
-use super::outbound::{agent_builder_for_proxy, current_system_proxy_url, ProxyConfig};
+use super::outbound::current_system_proxy_url;
+use crate::outbound::{
+    AsyncOutboundClient, OutboundFailure, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
+    OutboundRetryPolicy, ProxyPolicy, RequestBudget,
+};
+use http::{header, HeaderValue, Method};
 
 const UPDATE_MANIFEST_URL: &str =
     "https://github.com/hardyz0517/relay-pool-desktop/releases/latest/download/latest.json";
@@ -34,33 +40,52 @@ pub fn network_config() -> UpdaterNetworkConfig {
     }
 }
 
-pub fn inspect_latest_update_manifest(
+pub async fn inspect_latest_update_manifest(
+    outbound: &AsyncOutboundClient,
     current_version: &str,
 ) -> Result<PublishedUpdateInspection, String> {
-    let proxy = ProxyConfig {
-        mode: "system".to_string(),
-        url: None,
-    };
-    let agent = agent_builder_for_proxy(&proxy)?
-        .timeout(Duration::from_secs(10))
-        .build();
-    let response = match agent
-        .get(UPDATE_MANIFEST_URL)
-        .set("Accept", "application/json")
-        .call()
+    let response = match outbound
+        .execute(
+            updater_manifest_request(Duration::from_secs(10))
+                .map_err(|error| format!("Failed to build updater manifest request: {error}"))?,
+            CancellationToken::new(),
+        )
+        .await
     {
         Ok(response) => response,
-        Err(ureq::Error::Status(status, _)) => {
-            return Err(format!("Failed to read updater latest.json: HTTP {status}"));
-        }
         Err(error) => {
             return Err(format!("Failed to read updater latest.json: {error}"));
         }
     };
-    let body = response
-        .into_string()
+    if !response.status.is_success() {
+        return Err(format!(
+            "Failed to read updater latest.json: HTTP {}",
+            response.status.as_u16()
+        ));
+    }
+    let body = String::from_utf8(response.body.to_vec())
         .map_err(|error| format!("Failed to read updater latest.json body: {error}"))?;
     inspect_manifest_body(&body, current_version)
+}
+
+fn updater_manifest_request(timeout: Duration) -> Result<OutboundRequest, OutboundFailure> {
+    let policy = OutboundHeaderPolicy::provider_default();
+    let mut headers = OutboundHeaders::new();
+    headers.insert_public(
+        header::ACCEPT,
+        HeaderValue::from_static("application/json"),
+        &policy,
+    )?;
+    Ok(OutboundRequest {
+        method: Method::GET,
+        url: UPDATE_MANIFEST_URL.to_string(),
+        correlation_id: None,
+        headers,
+        body: Vec::new(),
+        proxy: ProxyPolicy::System,
+        budget: RequestBudget::from_now(timeout),
+        retry_policy: OutboundRetryPolicy::Never,
+    })
 }
 
 fn inspect_manifest_body(
@@ -104,7 +129,31 @@ fn normalize_version(value: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{inspect_manifest_body, PublishedVersionRelation};
+    use super::{
+        inspect_manifest_body, updater_manifest_request, PublishedVersionRelation,
+        UPDATE_MANIFEST_URL,
+    };
+    use crate::outbound::{OutboundRetryPolicy, ProxyPolicy};
+    use http::Method;
+    use std::time::Duration;
+
+    #[test]
+    fn updater_manifest_request_uses_shared_outbound_policy() {
+        let request = updater_manifest_request(Duration::from_secs(10)).unwrap();
+
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.url, UPDATE_MANIFEST_URL);
+        assert_eq!(request.proxy, ProxyPolicy::System);
+        assert_eq!(request.retry_policy, OutboundRetryPolicy::Never);
+        assert!(request.body.is_empty());
+        assert!(request
+            .headers
+            .redaction()
+            .public
+            .iter()
+            .any(|header| header == "accept"));
+        assert!(request.budget.remaining().is_some());
+    }
 
     #[test]
     fn classifies_equal_and_older_manifests_as_current_or_older() {

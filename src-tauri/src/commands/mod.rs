@@ -741,15 +741,15 @@ pub async fn updater_network_config(
 
 #[tauri::command]
 pub async fn inspect_latest_update_manifest(
+    runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
 ) -> Result<PublishedUpdateInspectionDto, error::CommandError> {
     correlation::in_command_scope("inspect_latest_update_manifest", async {
         let input = PublishedUpdateInspectionInputDto::parse(input)?;
-        Ok(tauri::async_runtime::spawn_blocking(move || {
-            updater::inspect_latest_update_manifest(&input.current_version)
-        })
-        .await
-        .map_err(|error| format!("Updater manifest task failed: {error}"))??)
+        Ok(
+            updater::inspect_latest_update_manifest(&runtime.outbound, &input.current_version)
+                .await?,
+        )
     })
     .await
 }
