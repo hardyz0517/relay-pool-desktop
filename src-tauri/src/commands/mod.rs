@@ -18,6 +18,7 @@ pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
 pub(crate) mod endpoint_ping;
 pub(crate) mod error;
+pub(crate) mod model_aliases;
 pub(crate) mod request_logs;
 pub(crate) mod runtime;
 pub(crate) mod settings;
@@ -85,13 +86,11 @@ use crate::{
         },
         proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
         routing_health_reads::{
-            ModelAliasDto, RouteSimulationInputDto, RouteSimulationResultDto,
-            RoutingStationKeyIdInputDto, StationEndpointHealthDto, StationKeyCapabilitiesDto,
-            StationKeyHealthDto,
+            RouteSimulationInputDto, RouteSimulationResultDto, RoutingStationKeyIdInputDto,
+            StationEndpointHealthDto, StationKeyCapabilitiesDto, StationKeyHealthDto,
         },
         routing_mutations::{
-            DeleteModelAliasInputDto, ReorderLocalRoutingKeysInputDto,
-            UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
+            ReorderLocalRoutingKeysInputDto, UpdateStationKeyCapabilitiesInputDto,
         },
         settings::{CcswitchImportResultDto, OpenExternalUrlInputDto},
         station_collector_operations::{
@@ -989,51 +988,6 @@ pub async fn update_station_key_capabilities(
         let input = UpdateStationKeyCapabilitiesInputDto::parse(input)?.into_domain();
         facade
             .update_station_key_capabilities(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_model_aliases(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<Vec<ModelAliasDto>, error::CommandError> {
-    correlation::in_command_scope("list_model_aliases", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_model_aliases()
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn upsert_model_alias(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<ModelAliasDto, error::CommandError> {
-    correlation::in_command_scope("upsert_model_alias", async {
-        let input = UpsertModelAliasInputDto::parse(input)?.into_domain();
-        facade
-            .upsert_model_alias(input)
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn delete_model_alias(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("delete_model_alias", async {
-        let input = DeleteModelAliasInputDto::parse(input)?;
-        facade
-            .delete_model_alias(input.id)
             .await
             .map_err(public_command_application_error)
     })
