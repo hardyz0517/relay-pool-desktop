@@ -2,8 +2,6 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::background_tasks::status::TaskRunId;
-
 pub type BoxTaskFuture = Pin<Box<dyn Future<Output = Result<(), TaskFailure>> + Send + 'static>>;
 pub type TaskBody = Arc<dyn Fn(TaskRunContext) -> BoxTaskFuture + Send + Sync + 'static>;
 
@@ -31,6 +29,9 @@ impl std::fmt::Display for TaskId {
         formatter.write_str(&self.0)
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TaskRunId(pub u64);
 
 #[derive(Clone)]
 pub struct TaskSpec {

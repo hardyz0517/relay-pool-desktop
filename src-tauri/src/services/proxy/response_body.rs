@@ -130,7 +130,6 @@ impl FinalizationTarget {
     }
 }
 
-#[cfg(test)]
 pub(crate) fn buffered_lifecycle_finalizing_stream(
     body: Bytes,
     record: PendingFinalRequestRecord,
@@ -145,6 +144,7 @@ pub(crate) fn buffered_lifecycle_finalizing_stream(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn correlated_buffered_lifecycle_finalizing_stream(
     body: Bytes,
     record: PendingFinalRequestRecord,
@@ -162,7 +162,6 @@ pub(crate) fn correlated_buffered_lifecycle_finalizing_stream(
     )
 }
 
-#[cfg(test)]
 pub(crate) fn lifecycle_finalizing_stream(
     stream: ByteStream,
     record: PendingFinalRequestRecord,
@@ -178,7 +177,6 @@ pub(crate) fn lifecycle_finalizing_stream(
     )
 }
 
-#[cfg(test)]
 pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout(
     stream: ByteStream,
     record: PendingFinalRequestRecord,
@@ -192,10 +190,11 @@ pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout(
         FinalizationTarget::Lifecycle(lease),
         Some(request_lease),
         idle_timeout,
-        None,
+        correlation::current(),
     )
 }
 
+#[cfg(test)]
 pub(crate) fn correlated_lifecycle_finalizing_stream_with_idle_timeout(
     stream: ByteStream,
     record: PendingFinalRequestRecord,

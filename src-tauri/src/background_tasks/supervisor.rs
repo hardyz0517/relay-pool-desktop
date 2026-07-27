@@ -11,8 +11,8 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::background_tasks::{
     shutdown::{ShutdownError, ShutdownReport},
-    status::{TaskRunId, TaskState, TaskStatusSnapshot},
-    task::{RestartClass, TaskFailure, TaskId, TaskRunContext, TaskSpec},
+    status::{TaskState, TaskStatusSnapshot},
+    task::{RestartClass, TaskFailure, TaskId, TaskRunContext, TaskRunId, TaskSpec},
 };
 use crate::observability::correlation;
 

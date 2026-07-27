@@ -6,7 +6,6 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sqlx::Row;
 
 use crate::{
     application::{
@@ -393,42 +392,18 @@ impl CollectorService {
         }
 
         let mut read = self.runtime.begin_read().await?;
-        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-            r#"
-            WITH ranked AS (
-                SELECT id, station_id, endpoint_revision, source, status, fetched_at,
-                       summary_json, normalized_json, raw_json_redacted, error_message, created_at,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY station_id
-                           ORDER BY created_at DESC, id DESC
-                       ) AS station_snapshot_rank
-                FROM collector_snapshots
-                WHERE station_id IN (
-            "#,
-        );
-        {
-            let mut separated = query.separated(", ");
-            for station_id in &station_ids {
-                separated.push_bind(station_id);
+        let mut snapshots = Vec::new();
+        for station_id in station_ids {
+            if let Some(snapshot) = self
+                .collectors
+                .latest_station_snapshot(&mut read, &station_id)
+                .await?
+            {
+                snapshots.push(snapshot);
             }
         }
-        query.push(
-            r#"
-                )
-            )
-            SELECT id, station_id, endpoint_revision, source, status, fetched_at,
-                   summary_json, normalized_json, raw_json_redacted, error_message, created_at
-            FROM ranked
-            WHERE station_snapshot_rank = 1
-            ORDER BY station_id ASC
-            "#,
-        );
-        let rows = query
-            .build()
-            .fetch_all(read.connection())
-            .await
-            .map_err(|_| ApplicationError::Internal)?;
-        rows.into_iter().map(row_to_collector_snapshot).collect()
+        snapshots.sort_by(|left, right| left.station_id.cmp(&right.station_id));
+        Ok(snapshots)
     }
 
     pub(crate) async fn record_capture_snapshot(
@@ -934,31 +909,6 @@ fn validate_station_id(station_id: &str) -> Result<(), ApplicationError> {
     Ok(())
 }
 
-fn row_to_collector_snapshot(
-    row: sqlx::sqlite::SqliteRow,
-) -> Result<CollectorSnapshot, ApplicationError> {
-    let parse_json = |column: &str| -> Result<Value, ApplicationError> {
-        serde_json::from_str(&row.get::<String, _>(column)).map_err(|_| ApplicationError::Internal)
-    };
-    let raw_json_redacted = row
-        .get::<Option<String>, _>("raw_json_redacted")
-        .map(|value| serde_json::from_str(&value).map_err(|_| ApplicationError::Internal))
-        .transpose()?;
-    Ok(CollectorSnapshot {
-        id: row.get("id"),
-        station_id: row.get("station_id"),
-        endpoint_revision: row.get("endpoint_revision"),
-        source: row.get("source"),
-        status: row.get("status"),
-        fetched_at: row.get("fetched_at"),
-        summary_json: parse_json("summary_json")?,
-        normalized_json: parse_json("normalized_json")?,
-        raw_json_redacted,
-        error_message: row.get("error_message"),
-        created_at: row.get("created_at"),
-    })
-}
-
 fn normalize_station_group_binding(
     input: UpsertStationGroupBindingInput,
     id: String,
@@ -1399,6 +1349,7 @@ mod tests {
 
     use chrono::{TimeZone, Utc};
     use serde_json::json;
+    use sqlx::Row;
 
     use super::*;
     use crate::{

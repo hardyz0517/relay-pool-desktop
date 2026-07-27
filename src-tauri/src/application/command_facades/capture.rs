@@ -2,10 +2,13 @@ use std::{sync::Arc, time::Duration};
 
 use futures_util::{future::BoxFuture, FutureExt};
 use serde_json::Value;
+#[cfg(test)]
 use tauri::Manager;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+#[cfg(test)]
+use crate::background_tasks::BlockingExecutor;
 use crate::{
     application::{
         collectors::{CaptureSnapshotRequest, CollectorService},
@@ -13,7 +16,7 @@ use crate::{
         error::ApplicationError,
         stations::StationService,
     },
-    background_tasks::{BlockingExecutor, BlockingExecutorError},
+    background_tasks::BlockingExecutorError,
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         collector::CollectorRunResult,
@@ -74,13 +77,20 @@ pub(crate) struct CaptureSessionStartTarget {
     pub(crate) login_password: Option<Zeroizing<String>>,
 }
 
+pub(crate) struct CaptureSessionStartPlan {
+    pub(crate) station_id: String,
+    pub(crate) label: String,
+    pub(crate) endpoint_revision: i64,
+    pub(crate) script: String,
+    pub(crate) target: CaptureSessionStartTarget,
+}
+
 #[derive(Clone)]
 pub(crate) struct CaptureCommandFacade {
     stations: Arc<StationService>,
     credentials: Arc<CredentialService>,
     collectors: Arc<CollectorService>,
     sessions: CaptureSessionStore,
-    blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
 }
@@ -91,7 +101,6 @@ impl CaptureCommandFacade {
         credentials: Arc<CredentialService>,
         collectors: Arc<CollectorService>,
         sessions: CaptureSessionStore,
-        blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<ProviderRegistry>,
     ) -> Self {
@@ -100,17 +109,15 @@ impl CaptureCommandFacade {
             credentials,
             collectors,
             sessions,
-            blocking,
             outbound,
             providers,
         }
     }
 
-    pub(crate) async fn start_capture_session(
+    pub(crate) async fn prepare_capture_session_start(
         &self,
-        app: tauri::AppHandle,
         station_id: String,
-    ) -> Result<CaptureSessionStatus, CaptureCommandError> {
+    ) -> Result<CaptureSessionStartPlan, CaptureCommandError> {
         let station = self.stations.station_for_capture(&station_id).await?;
         let credentials = self
             .credentials
@@ -144,9 +151,13 @@ impl CaptureCommandFacade {
             target.login_username.as_deref(),
             target.login_password.as_ref().map(|value| value.as_str()),
         );
-        self.open_capture_window(app, target, label.clone(), script)
-            .await?;
-        Ok(self.start_prepared_session(station_id, label, endpoint_revision)?)
+        Ok(CaptureSessionStartPlan {
+            station_id,
+            label,
+            endpoint_revision,
+            script,
+            target,
+        })
     }
 
     pub(crate) async fn record_capture_event(
@@ -203,8 +214,8 @@ impl CaptureCommandFacade {
 
     pub(crate) async fn finish_web_authorization_session(
         &self,
-        app: tauri::AppHandle,
         station_id: String,
+        cookie_header: String,
     ) -> Result<CollectorRunResult, CaptureCommandError> {
         let station = self.stations.station_for_capture(&station_id).await?;
         let candidate = self
@@ -215,13 +226,6 @@ impl CaptureCommandFacade {
                     "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string(),
                 )
             })?;
-        let cookie_header = read_capture_window_cookie_header(
-            app,
-            &self.blocking,
-            &station_id,
-            &station.website_url,
-        )
-        .await?;
         let verified = self
             .verify_newapi_web_authorization_session(&station, cookie_header, &candidate.user_id)
             .await?;
@@ -271,6 +275,14 @@ impl CaptureCommandFacade {
         }
     }
 
+    pub(crate) async fn web_authorization_cookie_url(
+        &self,
+        station_id: &str,
+    ) -> Result<String, CaptureCommandError> {
+        let station = self.stations.station_for_capture(station_id).await?;
+        Ok(station.website_url)
+    }
+
     pub(crate) fn start_prepared_session(
         &self,
         station_id: String,
@@ -278,34 +290,6 @@ impl CaptureCommandFacade {
         endpoint_revision: i64,
     ) -> Result<CaptureSessionStatus, String> {
         self.sessions.start(station_id, label, endpoint_revision)
-    }
-
-    async fn open_capture_window(
-        &self,
-        app: tauri::AppHandle,
-        target: CaptureSessionStartTarget,
-        label: String,
-        script: String,
-    ) -> Result<(), CaptureCommandError> {
-        let label_for_start = label.clone();
-        self.blocking
-            .submit(
-                "capture_window_open",
-                None,
-                current_correlation_id(),
-                None,
-                move |_| {
-                    Ok(open_capture_window_blocking(
-                        app,
-                        target,
-                        label_for_start,
-                        script,
-                    ))
-                },
-            )?
-            .result()
-            .await?
-            .map_err(CaptureCommandError::Message)
     }
 
     async fn verify_newapi_web_authorization_session(
@@ -528,6 +512,7 @@ fn current_correlation_id() -> Option<String> {
     correlation::current().map(|id| id.as_str().to_string())
 }
 
+#[cfg(test)]
 fn open_capture_window_blocking(
     app: tauri::AppHandle,
     target: CaptureSessionStartTarget,
@@ -762,6 +747,7 @@ fn capture_script(
     )
 }
 
+#[cfg(test)]
 async fn read_capture_window_cookie_header(
     app: tauri::AppHandle,
     blocking: &BlockingExecutor,

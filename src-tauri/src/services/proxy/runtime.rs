@@ -22,8 +22,8 @@ use crate::{
             limits::ProxyServerLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
-                correlated_buffered_lifecycle_finalizing_stream,
-                correlated_lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
+                buffered_lifecycle_finalizing_stream,
+                lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
                 LifecycleFinalizationLease, SelectedAttemptFinalization,
             },
             routing_repository::RoutingRepository,
@@ -426,7 +426,6 @@ impl IngressExecutor for V2ProxyExecutor {
                 },
             ));
         };
-        let body_correlation = proxy_correlation.clone();
         let request_context = admission.context;
         let request_model = request.model.clone();
         let request_stream = request.stream;
@@ -528,27 +527,21 @@ impl IngressExecutor for V2ProxyExecutor {
                 );
                 let payload = match response.body {
                     super::execution::ProxyExecutionBody::Buffered(body) => {
-                        ProxyResponsePayload::Stream(
-                            correlated_buffered_lifecycle_finalizing_stream(
-                                body,
-                                pending_record,
-                                finalization_lease,
-                                request_lease,
-                                body_correlation,
-                            ),
-                        )
+                        ProxyResponsePayload::Stream(buffered_lifecycle_finalizing_stream(
+                            body,
+                            pending_record,
+                            finalization_lease,
+                            request_lease,
+                        ))
                     }
                     super::execution::ProxyExecutionBody::Stream(chunks) => {
-                        ProxyResponsePayload::Stream(
-                            correlated_lifecycle_finalizing_stream_with_idle_timeout(
-                                chunks,
-                                pending_record,
-                                finalization_lease,
-                                request_lease,
-                                stream_idle_timeout,
-                                body_correlation,
-                            ),
-                        )
+                        ProxyResponsePayload::Stream(lifecycle_finalizing_stream_with_idle_timeout(
+                            chunks,
+                            pending_record,
+                            finalization_lease,
+                            request_lease,
+                            stream_idle_timeout,
+                        ))
                     }
                 };
                 Ok(ProxyHttpResponse {

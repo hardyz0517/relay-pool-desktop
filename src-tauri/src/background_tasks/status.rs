@@ -1,12 +1,9 @@
 use std::time::Duration;
 
-use crate::background_tasks::task::TaskId;
+use crate::background_tasks::task::{TaskId, TaskRunId};
 use crate::observability::redaction::redact_text_preview_with_limit;
 
 const MAX_RUNTIME_FAILURE_CODE_BYTES: usize = 96;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TaskRunId(pub u64);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskState {

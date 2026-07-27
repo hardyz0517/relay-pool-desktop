@@ -15,7 +15,7 @@ mod settings_stations;
 mod station_collection;
 mod station_key_connectivity;
 
-pub(crate) use capture::{CaptureCommandError, CaptureCommandFacade};
+pub(crate) use capture::{CaptureCommandError, CaptureCommandFacade, CaptureSessionStartTarget};
 pub(crate) use change_events::ChangeEventsCommandFacade;
 pub(crate) use channel_monitoring::ChannelMonitoringCommandFacade;
 pub(crate) use channel_status::ChannelStatusCommandFacade;

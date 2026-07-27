@@ -18,8 +18,9 @@ pub use operation::{
     OperationSnapshot, OperationStartRequest, OperationState, OperationTerminal,
 };
 pub use shutdown::{ShutdownError, ShutdownReport};
-pub use status::{RuntimeTaskStatus, RuntimeTaskSummary, TaskRunId, TaskState, TaskStatusSnapshot};
+pub use status::{RuntimeTaskStatus, RuntimeTaskSummary, TaskState, TaskStatusSnapshot};
 pub use supervisor::{TaskSupervisor, TaskSupervisorError};
 pub use task::{
-    BoxTaskFuture, RestartClass, RestartPolicy, TaskFailure, TaskId, TaskRunContext, TaskSpec,
+    BoxTaskFuture, RestartClass, RestartPolicy, TaskFailure, TaskId, TaskRunContext, TaskRunId,
+    TaskSpec,
 };
