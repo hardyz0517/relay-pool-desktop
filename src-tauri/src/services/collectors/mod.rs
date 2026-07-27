@@ -1170,7 +1170,7 @@ pub(crate) fn prepare_station_login_test_v2(
         } else {
             let password_value = password.as_deref().unwrap_or_default();
             let attempt = if station.station_type.trim() == "newapi" {
-                let outcome = adapters::newapi::login_with_password(
+                let outcome = drivers::newapi::auth::login_with_password(
                     source,
                     data_key,
                     &station,
@@ -2000,7 +2000,7 @@ pub fn test_station_login_input(
     let station_type = input.station_type.as_deref().unwrap_or("sub2api").trim();
     let login_attempt = match station_type {
         "newapi" => {
-            let attempt = adapters::newapi::test_login_credentials(
+            let attempt = drivers::newapi::auth::test_login_credentials(
                 website_url,
                 login_username,
                 login_password,

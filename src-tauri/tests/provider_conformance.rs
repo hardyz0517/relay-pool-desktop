@@ -183,6 +183,20 @@ mod outbound {
 }
 
 mod models {
+    pub mod credentials {
+        #[derive(Debug, Clone)]
+        pub struct PersistStationSessionInput {
+            pub station_id: String,
+            pub access_token: Option<String>,
+            pub refresh_token: Option<String>,
+            pub cookie: Option<String>,
+            pub newapi_user_id: Option<String>,
+            pub token_expires_at: Option<i64>,
+            pub session_expires_at: Option<i64>,
+            pub session_source: String,
+        }
+    }
+
     pub mod remote_keys {
         #[derive(Debug, Clone, PartialEq)]
         pub struct RemoteStationKey {
@@ -252,6 +266,15 @@ mod models {
             pub note: Option<String>,
             pub created_at: String,
             pub updated_at: String,
+        }
+    }
+
+    pub mod stations {
+        #[derive(Debug, Clone)]
+        pub struct Station {
+            pub id: String,
+            pub website_url: String,
+            pub endpoint_revision: i64,
         }
     }
 }
@@ -364,6 +387,14 @@ mod services {
     }
 
     pub mod collectors {
+        pub trait CollectorSourcePort {
+            fn persist_station_session_with_data_key(
+                &self,
+                input: crate::models::credentials::PersistStationSessionInput,
+                data_key: &[u8; 32],
+                expected_endpoint_revision: i64,
+            ) -> Result<(), String>;
+        }
 
         pub mod facts {
             include!(concat!(
