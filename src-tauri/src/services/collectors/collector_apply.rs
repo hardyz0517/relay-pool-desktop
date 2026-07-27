@@ -8,7 +8,7 @@ use crate::{
         },
         error::ApplicationError,
     },
-    services::collectors::{adapters::AdapterOutput, facts::CollectedBalanceFact},
+    services::collectors::{facts::CollectedBalanceFact, output::AdapterOutput},
 };
 
 pub(crate) trait CollectorApplyPort: Send + Sync {
@@ -398,7 +398,7 @@ fn stable_run_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::collectors::{adapters::CollectorTask, facts::CollectorFacts};
+    use crate::services::collectors::{facts::CollectorFacts, output::CollectorTask};
 
     fn output(task: CollectorTask) -> AdapterOutput {
         AdapterOutput {

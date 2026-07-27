@@ -15,8 +15,8 @@ use crate::{
     outbound::AsyncOutboundClient,
     services::collectors::{
         self,
-        adapters::CollectorTask,
         apply::{CollectorApplyPort, V2CollectorApplyAdapter},
+        output::CollectorTask,
         CollectorSourcePort, V2CollectorSourceAdapter,
     },
 };

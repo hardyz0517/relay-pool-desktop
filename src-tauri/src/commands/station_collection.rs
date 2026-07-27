@@ -24,10 +24,7 @@ pub async fn detect_sub2api_station(
     correlation::in_command_scope("detect_sub2api_station", async {
         let input = CollectorStationIdInputDto::parse(input)?;
         facade
-            .run_station_collection(
-                input.station_id,
-                collectors::adapters::CollectorTask::Detect,
-            )
+            .run_station_collection(input.station_id, collectors::output::CollectorTask::Detect)
             .await
             .map_err(public_station_collection_error)
     })
@@ -42,7 +39,7 @@ pub async fn collect_sub2api_station(
     correlation::in_command_scope("collect_sub2api_station", async {
         let input = CollectorStationIdInputDto::parse(input)?;
         facade
-            .run_station_collection(input.station_id, collectors::adapters::CollectorTask::Full)
+            .run_station_collection(input.station_id, collectors::output::CollectorTask::Full)
             .await
             .map_err(public_station_collection_error)
     })
@@ -57,10 +54,7 @@ pub async fn detect_station_info(
     correlation::in_command_scope("detect_station_info", async {
         let input = CollectorStationIdInputDto::parse(input)?;
         facade
-            .run_station_collection(
-                input.station_id,
-                collectors::adapters::CollectorTask::Detect,
-            )
+            .run_station_collection(input.station_id, collectors::output::CollectorTask::Detect)
             .await
             .map_err(public_station_collection_error)
     })
@@ -75,7 +69,7 @@ pub async fn collect_station_info(
     correlation::in_command_scope("collect_station_info", async {
         let input = CollectorStationIdInputDto::parse(input)?;
         facade
-            .run_station_collection(input.station_id, collectors::adapters::CollectorTask::Full)
+            .run_station_collection(input.station_id, collectors::output::CollectorTask::Full)
             .await
             .map_err(public_station_collection_error)
     })
@@ -90,11 +84,11 @@ pub async fn collect_station_task(
     correlation::in_command_scope("collect_station_task", async {
         let input = StationCollectorTaskInputDto::parse(input)?;
         let task = match input.task_type {
-            StationCollectorTaskTypeDto::Detect => collectors::adapters::CollectorTask::Detect,
-            StationCollectorTaskTypeDto::Balance => collectors::adapters::CollectorTask::Balance,
-            StationCollectorTaskTypeDto::Groups => collectors::adapters::CollectorTask::Groups,
-            StationCollectorTaskTypeDto::Models => collectors::adapters::CollectorTask::Models,
-            StationCollectorTaskTypeDto::Full => collectors::adapters::CollectorTask::Full,
+            StationCollectorTaskTypeDto::Detect => collectors::output::CollectorTask::Detect,
+            StationCollectorTaskTypeDto::Balance => collectors::output::CollectorTask::Balance,
+            StationCollectorTaskTypeDto::Groups => collectors::output::CollectorTask::Groups,
+            StationCollectorTaskTypeDto::Models => collectors::output::CollectorTask::Models,
+            StationCollectorTaskTypeDto::Full => collectors::output::CollectorTask::Full,
         };
         facade
             .run_station_collection(input.station_id, task)

@@ -21,7 +21,7 @@ use crate::services::collectors::{facts::CollectorFacts, CollectorSourcePort};
 
 #[cfg(test)]
 use crate::services::{
-    collectors::adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
+    collectors::output::{AdapterOutput, CollectorTask, CreatedRemoteKey},
     outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     station_endpoints::build_management_url,
 };

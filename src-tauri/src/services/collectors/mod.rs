@@ -23,6 +23,7 @@ mod login_probe;
     reason = "Stage 19.A freezes provider registry contracts before production driver cutover"
 )]
 pub mod orchestration;
+pub mod output;
 pub mod sub2api;
 
 // Preserve the crate-local composition path while the V2 apply boundary is
@@ -58,6 +59,7 @@ use crate::{
 };
 
 use collector_apply::CollectorApplyPort;
+use output::{AdapterOutput, CollectorTask};
 
 /// Consumer-owned read/write boundary required by provider HTTP adapters.
 ///
@@ -276,7 +278,7 @@ pub(crate) enum PreparedStationCollectionRoute {
 }
 
 pub(crate) enum PreparedStationTaskRoute {
-    Legacy((String, i64, adapters::AdapterOutput)),
+    Legacy((String, i64, AdapterOutput)),
     Sub2Api(PreparedSub2ApiCollection),
     OpenAiCompatible(PreparedOpenAiCompatibleCollection),
     NewApi(PreparedNewApiCollection),
@@ -290,8 +292,8 @@ pub(crate) enum PreparedOpenAiCompatibleCollection {
 pub(crate) struct PreparedOpenAiCompatibleDriverCollection {
     station_id: String,
     endpoint_revision: i64,
-    task: adapters::CollectorTask,
-    output_task: adapters::CollectorTask,
+    task: CollectorTask,
+    output_task: CollectorTask,
     driver_task: contract::CollectorTaskKind,
     enabled_key_count: usize,
     api_base_url: String,
@@ -309,8 +311,8 @@ pub(crate) enum PreparedNewApiCollection {
 pub(crate) struct PreparedNewApiDriverCollection {
     station_id: String,
     endpoint_revision: i64,
-    task: adapters::CollectorTask,
-    driver_tasks: Vec<adapters::CollectorTask>,
+    task: CollectorTask,
+    driver_tasks: Vec<CollectorTask>,
     enabled_key_count: usize,
     website_url: String,
     proxy: ProxyPolicy,
@@ -326,8 +328,8 @@ pub(crate) enum PreparedSub2ApiCollection {
 pub(crate) struct PreparedSub2ApiDriverCollection {
     station_id: String,
     endpoint_revision: i64,
-    task: adapters::CollectorTask,
-    driver_tasks: Vec<adapters::CollectorTask>,
+    task: CollectorTask,
+    driver_tasks: Vec<CollectorTask>,
     enabled_key_count: usize,
     api_base_url: String,
     website_url: String,
@@ -397,7 +399,7 @@ pub(crate) fn prepare_station_collection_route_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: String,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
 ) -> Result<PreparedStationCollectionRoute, ApplicationError> {
     let station = source
         .station_for_collector(&station_id)
@@ -425,7 +427,7 @@ pub(crate) fn prepare_station_task_route_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: String,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
 ) -> Result<PreparedStationTaskRoute, ApplicationError> {
     let station = source
         .station_for_collector(&station_id)
@@ -453,11 +455,11 @@ fn prepare_openai_compatible_collection_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: Station,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
 ) -> Result<PreparedOpenAiCompatibleCollection, ApplicationError> {
     let station_id = station.id.clone();
-    let tasks = if task == adapters::CollectorTask::Full {
-        vec![adapters::CollectorTask::Models]
+    let tasks = if task == CollectorTask::Full {
+        vec![CollectorTask::Models]
     } else {
         vec![task]
     };
@@ -465,10 +467,7 @@ fn prepare_openai_compatible_collection_v2(
         return Err(ApplicationError::ConstraintViolation);
     }
     let child_task = tasks[0];
-    if !matches!(
-        child_task,
-        adapters::CollectorTask::Detect | adapters::CollectorTask::Models
-    ) {
+    if !matches!(child_task, CollectorTask::Detect | CollectorTask::Models) {
         return Ok(PreparedOpenAiCompatibleCollection::Immediate(
             prepared_openai_immediate_collection(
                 station_id,
@@ -572,10 +571,10 @@ fn prepare_sub2api_collection_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: Station,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
 ) -> Result<PreparedSub2ApiCollection, ApplicationError> {
     let station_id = station.id.clone();
-    let driver_tasks = if task == adapters::CollectorTask::Full {
+    let driver_tasks = if task == CollectorTask::Full {
         full_child_tasks("sub2api")
     } else {
         vec![task]
@@ -716,10 +715,10 @@ fn prepare_newapi_collection_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station: Station,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
 ) -> Result<PreparedNewApiCollection, ApplicationError> {
     let station_id = station.id.clone();
-    let driver_tasks = if task == adapters::CollectorTask::Full {
+    let driver_tasks = if task == CollectorTask::Full {
         full_child_tasks("newapi")
     } else {
         vec![task]
@@ -735,7 +734,7 @@ fn prepare_newapi_collection_v2(
         .count();
     let needs_auth = driver_tasks
         .iter()
-        .any(|task| *task != adapters::CollectorTask::Detect);
+        .any(|task| *task != CollectorTask::Detect);
     let (auth_context, secret_purpose, secret) = if needs_auth {
         match drivers::newapi::auth::prepare_collector_auth_context(
             source,
@@ -960,7 +959,7 @@ pub(crate) async fn finish_sub2api_task_v2(
     prepared: PreparedSub2ApiCollection,
     cancellation_token: CancellationToken,
     correlation_id: Option<String>,
-) -> Result<(String, i64, adapters::AdapterOutput), ApplicationError> {
+) -> Result<(String, i64, AdapterOutput), ApplicationError> {
     let prepared = finish_sub2api_collection_v2(
         registry,
         outbound,
@@ -983,7 +982,7 @@ pub(crate) async fn finish_openai_compatible_task_v2(
     prepared: PreparedOpenAiCompatibleCollection,
     cancellation_token: CancellationToken,
     correlation_id: Option<String>,
-) -> Result<(String, i64, adapters::AdapterOutput), ApplicationError> {
+) -> Result<(String, i64, AdapterOutput), ApplicationError> {
     let prepared = finish_openai_compatible_collection_v2(
         registry,
         outbound,
@@ -1071,7 +1070,7 @@ pub(crate) async fn finish_newapi_task_v2(
     prepared: PreparedNewApiCollection,
     cancellation_token: CancellationToken,
     correlation_id: Option<String>,
-) -> Result<(String, i64, adapters::AdapterOutput), ApplicationError> {
+) -> Result<(String, i64, AdapterOutput), ApplicationError> {
     let prepared = finish_newapi_collection_v2(
         registry,
         outbound,
@@ -1092,9 +1091,9 @@ pub(crate) fn prepare_station_task_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: String,
-    task: adapters::CollectorTask,
-) -> Result<(String, i64, adapters::AdapterOutput), ApplicationError> {
-    if task == adapters::CollectorTask::Full {
+    task: CollectorTask,
+) -> Result<(String, i64, AdapterOutput), ApplicationError> {
+    if task == CollectorTask::Full {
         return Err(ApplicationError::ConstraintViolation);
     }
     let station = source
@@ -1110,7 +1109,7 @@ pub(crate) async fn apply_prepared_station_task_v2(
     port: &dyn CollectorApplyPort,
     station_id: String,
     endpoint_revision: i64,
-    output: adapters::AdapterOutput,
+    output: AdapterOutput,
 ) -> Result<CollectorApplyOutcome, ApplicationError> {
     collector_apply::apply_station_output_v2(port, station_id, endpoint_revision, None, output)
         .await
@@ -1121,8 +1120,8 @@ pub(crate) struct PreparedStationCollection {
     station_id: String,
     endpoint_revision: i64,
     adapter: String,
-    task: adapters::CollectorTask,
-    outputs: Vec<adapters::AdapterOutput>,
+    task: CollectorTask,
+    outputs: Vec<AdapterOutput>,
     enabled_key_count: usize,
 }
 
@@ -1131,7 +1130,7 @@ pub(crate) fn prepare_station_collection_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
     station_id: String,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
 ) -> Result<PreparedStationCollection, ApplicationError> {
     let station = source
         .station_for_collector(&station_id)
@@ -1139,7 +1138,7 @@ pub(crate) fn prepare_station_collection_v2(
     let adapter = adapter_name_for_station_type(&station.station_type)
         .map_err(|_| ApplicationError::ConstraintViolation)?
         .to_string();
-    let tasks = if task == adapters::CollectorTask::Full {
+    let tasks = if task == CollectorTask::Full {
         full_child_tasks(&adapter)
     } else {
         vec![task]
@@ -1153,7 +1152,7 @@ pub(crate) fn prepare_station_collection_v2(
             dispatch_adapter_output(source, data_key, &station_id, &adapter, child_task)
         })
         .collect();
-    let enabled_key_count = if task == adapters::CollectorTask::Full {
+    let enabled_key_count = if task == CollectorTask::Full {
         source
             .list_station_keys(station_id.clone())
             .map_err(|_| ApplicationError::Internal)?
@@ -1179,7 +1178,7 @@ pub(crate) async fn apply_prepared_station_collection_v2(
     port: &dyn CollectorApplyPort,
     prepared: PreparedStationCollection,
 ) -> Result<CollectorRunResult, ApplicationError> {
-    if prepared.task != adapters::CollectorTask::Full {
+    if prepared.task != CollectorTask::Full {
         let output = prepared
             .outputs
             .into_iter()
@@ -1282,9 +1281,9 @@ pub(crate) fn prepare_station_login_test_v2(
                 attempt.token_present,
             )
         };
-    let output = adapters::AdapterOutput {
+    let output = AdapterOutput {
         adapter: "login-state".to_string(),
-        task: adapters::CollectorTask::Detect,
+        task: CollectorTask::Detect,
         status: status.clone(),
         facts: facts::CollectorFacts::default(),
         summary_json: json!({
@@ -1336,7 +1335,7 @@ pub(crate) fn prepare_station_login_test_v2(
         station_id,
         endpoint_revision: station.endpoint_revision,
         adapter: "login-state".to_string(),
-        task: adapters::CollectorTask::Detect,
+        task: CollectorTask::Detect,
         outputs: vec![output],
         enabled_key_count: 0,
     })
@@ -1464,9 +1463,9 @@ fn station_login_probe_collection(
         .login_message
         .unwrap_or_else(|| "Login test completed.".to_string());
     let station_id = prepared.station.id.clone();
-    let output = adapters::AdapterOutput {
+    let output = AdapterOutput {
         adapter: "login-state".to_string(),
-        task: adapters::CollectorTask::Detect,
+        task: CollectorTask::Detect,
         status: status.clone(),
         facts: facts::CollectorFacts::default(),
         summary_json: json!({
@@ -1518,7 +1517,7 @@ fn station_login_probe_collection(
         station_id,
         endpoint_revision: prepared.station.endpoint_revision,
         adapter: "login-state".to_string(),
-        task: adapters::CollectorTask::Detect,
+        task: CollectorTask::Detect,
         outputs: vec![output],
         enabled_key_count: 0,
     }
@@ -1561,7 +1560,7 @@ async fn apply_prepared_full_collection_v2(
     })
 }
 
-fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> adapters::AdapterOutput {
+fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutput {
     let status = aggregate_full_output_status(&prepared.outputs);
     let endpoint_results = prepared
         .outputs
@@ -1595,9 +1594,9 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> adapters::A
     let error_message =
         (status == "failed").then(|| "all full collector child tasks failed".to_string());
 
-    adapters::AdapterOutput {
+    AdapterOutput {
         adapter: prepared.adapter.clone(),
-        task: adapters::CollectorTask::Full,
+        task: CollectorTask::Full,
         status: status.clone(),
         facts: facts::CollectorFacts {
             models,
@@ -1632,7 +1631,7 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> adapters::A
     }
 }
 
-fn aggregate_full_output_status(outputs: &[adapters::AdapterOutput]) -> String {
+fn aggregate_full_output_status(outputs: &[AdapterOutput]) -> String {
     let success = outputs
         .iter()
         .filter(|output| output.status == "success")
@@ -1657,7 +1656,7 @@ fn aggregate_full_output_status(outputs: &[adapters::AdapterOutput]) -> String {
 }
 
 fn full_business_summary_from_outputs(
-    outputs: &[adapters::AdapterOutput],
+    outputs: &[AdapterOutput],
     key_count: usize,
 ) -> FullBusinessSummary {
     let balances = outputs.iter().flat_map(|output| &output.facts.balances);
@@ -1788,8 +1787,8 @@ fn dispatch_adapter_output(
     _data_key: &[u8; 32],
     _station_id: &str,
     adapter: &str,
-    task: adapters::CollectorTask,
-) -> adapters::AdapterOutput {
+    task: CollectorTask,
+) -> AdapterOutput {
     let result = match adapter {
         "sub2api" => Ok(manual_required_output_for_adapter(
             "sub2api",
@@ -1814,13 +1813,9 @@ fn dispatch_adapter_output(
     result.unwrap_or_else(|error| failed_adapter_output(adapter, task, error))
 }
 
-fn failed_adapter_output(
-    adapter: &str,
-    task: adapters::CollectorTask,
-    error: String,
-) -> adapters::AdapterOutput {
+fn failed_adapter_output(adapter: &str, task: CollectorTask, error: String) -> AdapterOutput {
     let message = crate::services::secrets::mask::redact_text(&error);
-    adapters::AdapterOutput {
+    AdapterOutput {
         adapter: adapter.to_string(),
         task,
         status: "failed".to_string(),
@@ -1841,9 +1836,9 @@ fn failed_adapter_output(
 fn prepared_openai_immediate_collection(
     station_id: String,
     endpoint_revision: i64,
-    task: adapters::CollectorTask,
-    child_task: adapters::CollectorTask,
-    output: adapters::AdapterOutput,
+    task: CollectorTask,
+    child_task: CollectorTask,
+    output: AdapterOutput,
     enabled_key_count: usize,
 ) -> PreparedStationCollection {
     PreparedStationCollection {
@@ -1851,7 +1846,7 @@ fn prepared_openai_immediate_collection(
         endpoint_revision,
         adapter: "openai-compatible".to_string(),
         task,
-        outputs: vec![adapters::AdapterOutput {
+        outputs: vec![AdapterOutput {
             task: child_task,
             ..output
         }],
@@ -1859,21 +1854,17 @@ fn prepared_openai_immediate_collection(
     }
 }
 
-fn manual_required_output(
-    task: adapters::CollectorTask,
-    code: &str,
-    message: &str,
-) -> adapters::AdapterOutput {
+fn manual_required_output(task: CollectorTask, code: &str, message: &str) -> AdapterOutput {
     manual_required_output_for_adapter("openai-compatible", task, code, message)
 }
 
 fn manual_required_output_for_adapter(
     adapter: &str,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
     code: &str,
     message: &str,
-) -> adapters::AdapterOutput {
-    adapters::AdapterOutput {
+) -> AdapterOutput {
+    AdapterOutput {
         adapter: adapter.to_string(),
         task,
         status: "manual_required".to_string(),
@@ -1892,9 +1883,9 @@ fn manual_required_output_for_adapter(
 
 fn driver_output_to_adapter_output(
     adapter: &str,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
     output: contract::DriverOutput,
-) -> adapters::AdapterOutput {
+) -> AdapterOutput {
     let model_names = output
         .facts
         .models
@@ -1939,7 +1930,7 @@ fn driver_output_to_adapter_output(
             })
         })
         .collect::<Vec<_>>();
-    adapters::AdapterOutput {
+    AdapterOutput {
         adapter: adapter.to_string(),
         task,
         status: match output.status {
@@ -1974,9 +1965,9 @@ fn driver_output_to_adapter_output(
 
 fn driver_failure_to_adapter_output(
     adapter: &str,
-    task: adapters::CollectorTask,
+    task: CollectorTask,
     failure: failure::DriverFailure,
-) -> adapters::AdapterOutput {
+) -> AdapterOutput {
     let message = failure
         .sanitized_detail
         .clone()
@@ -1987,7 +1978,7 @@ fn driver_failure_to_adapter_output(
         .iter()
         .map(endpoint_evidence_json)
         .collect::<Vec<_>>();
-    adapters::AdapterOutput {
+    AdapterOutput {
         adapter: adapter.to_string(),
         task,
         status: match failure.kind {
@@ -2037,13 +2028,13 @@ fn driver_failure_code(kind: failure::DriverFailureKind) -> &'static str {
     }
 }
 
-fn collector_task_kind(task: adapters::CollectorTask) -> Option<contract::CollectorTaskKind> {
+fn collector_task_kind(task: CollectorTask) -> Option<contract::CollectorTaskKind> {
     match task {
-        adapters::CollectorTask::Balance => Some(contract::CollectorTaskKind::Balance),
-        adapters::CollectorTask::Groups => Some(contract::CollectorTaskKind::Groups),
-        adapters::CollectorTask::Models => Some(contract::CollectorTaskKind::Models),
-        adapters::CollectorTask::Full => Some(contract::CollectorTaskKind::Full),
-        adapters::CollectorTask::Detect => Some(contract::CollectorTaskKind::Detect),
+        CollectorTask::Balance => Some(contract::CollectorTaskKind::Balance),
+        CollectorTask::Groups => Some(contract::CollectorTaskKind::Groups),
+        CollectorTask::Models => Some(contract::CollectorTaskKind::Models),
+        CollectorTask::Full => Some(contract::CollectorTaskKind::Full),
+        CollectorTask::Detect => Some(contract::CollectorTaskKind::Detect),
     }
 }
 
@@ -2074,18 +2065,15 @@ fn adapter_name_for_station_type(station_type: &str) -> Result<&'static str, Str
     }
 }
 
-fn full_child_tasks(adapter: &str) -> Vec<adapters::CollectorTask> {
+fn full_child_tasks(adapter: &str) -> Vec<CollectorTask> {
     match adapter {
         "newapi" => vec![
-            adapters::CollectorTask::Balance,
-            adapters::CollectorTask::Groups,
-            adapters::CollectorTask::Models,
+            CollectorTask::Balance,
+            CollectorTask::Groups,
+            CollectorTask::Models,
         ],
-        "sub2api" => vec![
-            adapters::CollectorTask::Balance,
-            adapters::CollectorTask::Groups,
-        ],
-        "openai-compatible" => vec![adapters::CollectorTask::Models],
+        "sub2api" => vec![CollectorTask::Balance, CollectorTask::Groups],
+        "openai-compatible" => vec![CollectorTask::Models],
         _ => Vec::new(),
     }
 }
@@ -2190,7 +2178,7 @@ mod tests {
     fn openai_driver_output_keeps_child_task_for_full_parent() {
         let output = driver_output_to_adapter_output(
             "openai-compatible",
-            adapters::CollectorTask::Models,
+            CollectorTask::Models,
             contract::DriverOutput {
                 facts: facts::CollectorFacts {
                     models: vec![facts::CollectedModelFact {
@@ -2215,17 +2203,17 @@ mod tests {
             station_id: "station-1".to_string(),
             endpoint_revision: 7,
             adapter: "openai-compatible".to_string(),
-            task: adapters::CollectorTask::Full,
+            task: CollectorTask::Full,
             outputs: vec![output],
             enabled_key_count: 1,
         };
         let full = aggregate_full_output_v2(&prepared);
 
-        assert_eq!(prepared.outputs[0].task, adapters::CollectorTask::Models);
-        assert_eq!(full.task, adapters::CollectorTask::Full);
+        assert_eq!(prepared.outputs[0].task, CollectorTask::Models);
+        assert_eq!(full.task, CollectorTask::Full);
         assert_eq!(
             full.normalized_json["childRuns"][0]["task"],
-            adapters::CollectorTask::Models.as_str()
+            CollectorTask::Models.as_str()
         );
         assert_eq!(full.normalized_json["models"][0], "gpt-4o-mini");
     }
@@ -2233,11 +2221,11 @@ mod tests {
     #[test]
     fn collector_task_kind_preserves_detect_and_models_for_openai_driver() {
         assert_eq!(
-            collector_task_kind(adapters::CollectorTask::Detect),
+            collector_task_kind(CollectorTask::Detect),
             Some(contract::CollectorTaskKind::Detect)
         );
         assert_eq!(
-            collector_task_kind(adapters::CollectorTask::Models),
+            collector_task_kind(CollectorTask::Models),
             Some(contract::CollectorTaskKind::Models)
         );
     }
@@ -2261,14 +2249,14 @@ mod tests {
         assert_eq!(
             full_child_tasks("newapi"),
             vec![
-                adapters::CollectorTask::Balance,
-                adapters::CollectorTask::Groups,
-                adapters::CollectorTask::Models,
+                CollectorTask::Balance,
+                CollectorTask::Groups,
+                CollectorTask::Models,
             ],
         );
         assert_eq!(
             full_child_tasks("openai-compatible"),
-            vec![adapters::CollectorTask::Models],
+            vec![CollectorTask::Models],
         );
     }
 }

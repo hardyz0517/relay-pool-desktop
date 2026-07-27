@@ -20,14 +20,12 @@ use crate::{
     },
     services::{
         collectors::{
-            adapters::{
-                request_recovery::{
-                    execute_json_request, CollectionAttemptBudget,
-                    EndpointJsonResult as RecoverableEndpointJsonResult, RequestPolicy,
-                },
-                AdapterOutput, CollectorTask, CreatedRemoteKey,
+            adapters::request_recovery::{
+                execute_json_request, CollectionAttemptBudget,
+                EndpointJsonResult as RecoverableEndpointJsonResult, RequestPolicy,
             },
             facts::{CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts},
+            output::{AdapterOutput, CollectorTask, CreatedRemoteKey},
             CollectorSourcePort,
         },
         group_categories::infer_group_category,

@@ -26,7 +26,7 @@ use crate::{
         },
         failure::{DriverFailure, DriverFailureKind},
         orchestration::ProviderRegistry,
-        CollectorSourcePort,
+        output, CollectorSourcePort,
     },
 };
 
@@ -725,7 +725,7 @@ pub(crate) fn prepare_remote_key_creation_v2(
     if !capability.can_create_remote_key {
         return Err(RemoteKeyOperationError::Unsupported);
     }
-    let adapters::CreatedRemoteKey {
+    let output::CreatedRemoteKey {
         remote_key,
         full_key_once,
         message,
@@ -904,7 +904,7 @@ fn create_remote_key_with_source(
     _source: &dyn CollectorSourcePort,
     input: CreateRemoteStationKeyInput,
     station_type: &str,
-) -> Result<adapters::CreatedRemoteKey, String> {
+) -> Result<output::CreatedRemoteKey, String> {
     match station_type {
         "sub2api" => {
             let _ = input;

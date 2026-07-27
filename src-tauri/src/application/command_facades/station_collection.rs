@@ -9,7 +9,7 @@ use crate::{
     models::collector::CollectorRunResult,
     observability::correlation,
     outbound::AsyncOutboundClient,
-    services::collectors::{self, adapters::CollectorTask, V2CollectorSourceAdapter},
+    services::collectors::{self, output::CollectorTask, V2CollectorSourceAdapter},
 };
 
 #[derive(Debug)]
