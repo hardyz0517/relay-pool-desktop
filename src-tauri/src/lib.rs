@@ -462,6 +462,8 @@ pub fn run() {
                         &app_services,
                         capture_session_store.clone(),
                         blocking_executor.clone(),
+                        outbound_client.clone(),
+                        Arc::clone(&provider_registry),
                     );
                     let pricing_command_facade =
                         app_composition::compose_pricing_command_facade(&app_services);

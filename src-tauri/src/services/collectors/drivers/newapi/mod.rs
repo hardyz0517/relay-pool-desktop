@@ -13,11 +13,12 @@ use crate::{
     services::{
         collectors::{
             contract::{
-                CollectorContext, CollectorDriver, CollectorTaskKind, CreateRemoteKeyRequest,
-                CreatedRemoteKeyOutput, CredentialSecretPurpose, DriverOutput, DriverOutputStatus,
-                ProviderAuthContext, ProviderKind, RedactedDiagnostics, RemoteKeyDriver,
-                RemoteKeyOutput, RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest,
-                RevealedRemoteKeyOutput,
+                AuthorizationDriver, AuthorizationOutput, AuthorizationRequest,
+                AuthorizationStatus, CollectorContext, CollectorDriver, CollectorTaskKind,
+                CreateRemoteKeyRequest, CreatedRemoteKeyOutput, CredentialSecretPurpose,
+                DriverOutput, DriverOutputStatus, ProviderAuthContext, ProviderKind,
+                RedactedDiagnostics, RemoteKeyDriver, RemoteKeyOutput, RemoteKeyRequest,
+                RemoteKeySecret, RevealRemoteKeyRequest, RevealedRemoteKeyOutput,
             },
             evidence::{redact_text, redact_value, EndpointEvidence, EndpointRole, EvidenceSet},
             facts::CollectorFacts,
@@ -48,6 +49,8 @@ pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
 pub struct NewApiCollectorDriver;
 
 pub struct NewApiRemoteKeyDriver;
+
+pub struct NewApiAuthorizationDriver;
 
 impl CollectorDriver for NewApiCollectorDriver {
     fn kind(&self) -> ProviderKind {
@@ -178,6 +181,61 @@ impl RemoteKeyDriver for NewApiRemoteKeyDriver {
                 None,
                 "NewAPI token create succeeded but reconciliation did not find the created token",
             ))
+        }
+        .boxed()
+    }
+}
+
+impl AuthorizationDriver for NewApiAuthorizationDriver {
+    fn kind(&self) -> ProviderKind {
+        ProviderKind::NewApi
+    }
+
+    fn validate_authorization<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: AuthorizationRequest,
+    ) -> BoxFuture<'a, Result<AuthorizationOutput, DriverFailure>> {
+        async move {
+            validate_authorization_request(context, &request)?;
+            let website_url = request_website_url(&request.endpoints)?;
+            let (payload, endpoint) = execute_json(
+                context,
+                request.endpoint_role,
+                &website_url,
+                "/api/user/self",
+                true,
+            )
+            .await?;
+            let data = parsers::envelope_data(&payload).map_err(|error| {
+                malformed(request.endpoint_role, Some(endpoint.clone()), error.message)
+            })?;
+            let expected_user_id = newapi_expected_user_id(context)?;
+            let observed_user_id = user_id_from_self_data(data).ok_or_else(|| {
+                malformed(
+                    request.endpoint_role,
+                    Some(endpoint.clone()),
+                    "NewAPI authorization self probe did not return a user id",
+                )
+            })?;
+            if observed_user_id != expected_user_id {
+                return Err(DriverFailure::auth_rejected(
+                    FailedEndpoint {
+                        role: request.endpoint_role,
+                        status_code: endpoint.status_code,
+                    },
+                    "NewAPI authorization self probe returned a different user id",
+                )
+                .with_evidence(EvidenceSet::new([endpoint])));
+            }
+            Ok(AuthorizationOutput {
+                status: AuthorizationStatus::Authorized,
+                evidence: vec![endpoint],
+                diagnostics: RedactedDiagnostics {
+                    summary: Some(json!({"validated": true}).to_string()),
+                    raw_json_redacted: None,
+                },
+            })
         }
         .boxed()
     }
@@ -350,6 +408,31 @@ fn validate_remote_key_request(
     }
     if request_website_url(endpoints)? != website_url(context)? {
         return Err(invalid_request("remote-key request endpoint mismatch"));
+    }
+    Ok(())
+}
+
+fn validate_authorization_request(
+    context: &CollectorContext<'_>,
+    request: &AuthorizationRequest,
+) -> Result<(), DriverFailure> {
+    if request.station.provider != ProviderKind::NewApi
+        || context.station.provider != ProviderKind::NewApi
+    {
+        return Err(invalid_request("authorization request provider mismatch"));
+    }
+    if request.station.station_id != context.station.station_id
+        || request.station.endpoint_revision != context.station.endpoint_revision
+    {
+        return Err(invalid_request(
+            "authorization request station revision mismatch",
+        ));
+    }
+    if request.credential != context.credential {
+        return Err(invalid_request("authorization request credential mismatch"));
+    }
+    if request_website_url(&request.endpoints)? != website_url(context)? {
+        return Err(invalid_request("authorization request endpoint mismatch"));
     }
     Ok(())
 }
@@ -1386,6 +1469,27 @@ fn numeric_usize_field(value: &Value, keys: &[&str]) -> Option<usize> {
     numeric_i64_field(value, keys).and_then(|value| usize::try_from(value).ok())
 }
 
+fn user_id_from_self_data(value: &Value) -> Option<String> {
+    plain_id_value(value).or_else(|| value.get("user").and_then(plain_id_value))
+}
+
+fn plain_id_value(value: &Value) -> Option<String> {
+    value
+        .as_object()
+        .and_then(|map| map.get("id"))
+        .and_then(string_or_i64_value)
+}
+
+fn string_or_i64_value(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    value.as_i64().map(|number| number.to_string())
+}
+
 fn checked_sum_i64(left: Option<i64>, right: Option<i64>) -> Option<i64> {
     left.zip(right)
         .and_then(|(left, right)| left.checked_add(right))
@@ -1560,6 +1664,15 @@ fn newapi_auth(context: &CollectorContext<'_>) -> Result<ProviderAuthContext, Dr
         .ok_or_else(|| invalid_request("NewAPI auth context is missing"))
 }
 
+fn newapi_expected_user_id(context: &CollectorContext<'_>) -> Result<String, DriverFailure> {
+    let ProviderAuthContext::NewApi { user_id, .. } = newapi_auth(context)?;
+    let trimmed = user_id.trim();
+    if trimmed.is_empty() {
+        return Err(invalid_request("NewAPI user id is missing"));
+    }
+    Ok(trimmed.to_string())
+}
+
 fn invalid_request(detail: impl Into<String>) -> DriverFailure {
     DriverFailure {
         kind: DriverFailureKind::InvalidRequest,
@@ -1695,7 +1808,7 @@ mod tests {
     use std::time::Duration;
     use tokio_util::sync::CancellationToken;
 
-    struct TestSecretAccessor;
+    struct TestSecretAccessor(&'static str);
 
     impl crate::services::collectors::contract::DriverSecretAccessor for TestSecretAccessor {
         fn resolve_secret<'a>(
@@ -1706,14 +1819,8 @@ mod tests {
             'a,
             Result<crate::services::collectors::contract::CredentialSecret, DriverFailure>,
         > {
-            async {
-                Ok(
-                    crate::services::collectors::contract::CredentialSecret::new(
-                        "newapi-access-token",
-                    ),
-                )
-            }
-            .boxed()
+            async move { Ok(crate::services::collectors::contract::CredentialSecret::new(self.0)) }
+                .boxed()
         }
     }
 
@@ -1802,7 +1909,7 @@ mod tests {
     #[tokio::test]
     async fn create_token_request_disables_status_retry() {
         let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
-        let secrets = TestSecretAccessor;
+        let secrets = TestSecretAccessor("newapi-access-token");
         let credential = crate::services::collectors::contract::OpaqueCredentialHandle {
             station_id: "station-1".to_string(),
             credential_revision: 7,
@@ -1850,5 +1957,73 @@ mod tests {
             .expect("json body")
             .contains("relay-created"));
         assert!(!format!("{:?}", request.headers).contains("newapi-access-token"));
+    }
+
+    #[tokio::test]
+    async fn authorization_request_uses_cookie_session_headers() {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("session=secret-canary");
+        let credential = crate::services::collectors::contract::OpaqueCredentialHandle {
+            station_id: "station-1".to_string(),
+            credential_revision: 7,
+            scope: CredentialScope::LoginSession,
+        };
+        let context = CollectorContext {
+            station: StationIdentity {
+                station_id: "station-1".to_string(),
+                endpoint_revision: 7,
+                provider: ProviderKind::NewApi,
+            },
+            endpoints: ProviderEndpoints {
+                api_base_url: None,
+                website_url: Some("https://newapi.example".to_string()),
+            },
+            credential: credential.clone(),
+            auth: Some(ProviderAuthContext::NewApi {
+                user_id: "42".to_string(),
+                secret_purpose: CredentialSecretPurpose::SessionCookie,
+            }),
+            secrets: &secrets,
+            outbound: &outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        };
+
+        let request = build_json_request(
+            &context,
+            EndpointRole::Authorization,
+            "https://newapi.example/api/user/self",
+            Method::GET,
+            None,
+            OutboundRetryPolicy::default(),
+            true,
+            Some("test-correlation".to_string()),
+        )
+        .await
+        .expect("request");
+
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(request.url, "https://newapi.example/api/user/self");
+        assert_eq!(request.retry_policy, OutboundRetryPolicy::StatusRetry);
+        assert!(request.body.is_empty());
+        assert!(!format!("{:?}", request.headers).contains("session=secret-canary"));
+    }
+
+    #[test]
+    fn authorization_self_data_accepts_data_id_or_user_id_only() {
+        assert_eq!(
+            user_id_from_self_data(&json!({"id": 42, "quota": 1})).as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            user_id_from_self_data(&json!({"user": {"id": "newapi-user-99"}})).as_deref(),
+            Some("newapi-user-99")
+        );
+        assert_eq!(
+            user_id_from_self_data(&json!({"profile": {"id": "not-trusted"}})),
+            None
+        );
     }
 }

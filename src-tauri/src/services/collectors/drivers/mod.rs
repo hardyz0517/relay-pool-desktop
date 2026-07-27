@@ -4,8 +4,8 @@ pub mod openai_compatible;
 use std::sync::Arc;
 
 use crate::services::collectors::contract::{
-    CollectorCapabilityDescriptor, DriverCapabilities, ProviderDescriptor, ProviderEntry,
-    ProviderKind, RemoteKeyCapabilityDescriptor,
+    AuthorizationCapabilityDescriptor, CollectorCapabilityDescriptor, DriverCapabilities,
+    ProviderDescriptor, ProviderEntry, ProviderKind, RemoteKeyCapabilityDescriptor,
 };
 
 pub fn static_provider_entries() -> Vec<ProviderEntry> {
@@ -31,12 +31,15 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                         supports_reveal: true,
                         supports_result_unknown_reconciliation: true,
                     }),
-                    authorization: None,
+                    authorization: Some(AuthorizationCapabilityDescriptor {
+                        supports_header_validation: true,
+                        supports_session_validation: true,
+                    }),
                 },
             },
             collector: Some(Arc::new(newapi::NewApiCollectorDriver)),
             remote_key: Some(Arc::new(newapi::NewApiRemoteKeyDriver)),
-            authorization: None,
+            authorization: Some(Arc::new(newapi::NewApiAuthorizationDriver)),
         },
         ProviderEntry {
             descriptor: ProviderDescriptor {

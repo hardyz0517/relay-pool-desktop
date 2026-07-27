@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "stage": "Stage 5 Task 20.C",
-  "status": "newapi-remote-key-production-cutover",
+  "stage": "Stage 5 Task 20.D",
+  "status": "newapi-authorization-production-cutover",
   "registryOwner": "src-tauri/src/services/collectors/drivers/mod.rs",
   "harness": "src-tauri/tests/provider_conformance.rs",
   "providers": [
@@ -77,10 +77,20 @@
           ]
         },
         "authorization": {
-          "status": "unsupported",
-          "declaredInRegistry": false,
+          "status": "supported",
+          "declaredInRegistry": true,
           "fixtureIds": [
-            "newapi-authorization-unsupported"
+            "newapi-authorization-success",
+            "newapi-authorization-partial",
+            "newapi-authorization-auth-failure",
+            "newapi-authorization-rate-limit",
+            "newapi-authorization-server-failure",
+            "newapi-authorization-malformed",
+            "newapi-authorization-unknown-shape",
+            "newapi-authorization-cancel",
+            "newapi-authorization-budget-exhaustion",
+            "newapi-authorization-stale-endpoint-revision",
+            "newapi-authorization-redaction"
           ]
         }
       }

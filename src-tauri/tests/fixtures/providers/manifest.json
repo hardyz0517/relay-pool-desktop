@@ -880,31 +880,377 @@
       }
     },
     {
-      "id": "newapi-authorization-unsupported",
+      "id": "newapi-authorization-success",
       "providerKind": "newapi",
       "capability": "authorization",
-      "scenario": "unsupported",
+      "scenario": "success",
       "endpointRole": "authorization",
       "requestSchema": {
-        "kind": "none",
-        "reason": "Task 19.A registry entry does not declare an authorization driver"
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "new-api-user plus short-lived session cookie"
       },
       "responseSchema": {
-        "kind": "driver_failure",
-        "failureKind": "unsupported"
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "id": 42,
+            "quota": 1
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization self-probe fixture for Task 20.D production authorization cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "status": "authorized"
+        }
+      }
+    },
+    {
+      "id": "newapi-authorization-partial",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "partial",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "ownerBoundary": "capture owns window/cookie read and persistence; driver only validates the provider session"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "user": {
+              "id": "42"
+            }
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/application/command_facades/capture.rs",
+        "provenance": "Synthetic Task 20.D fixture proving capture remains the WebView/cookie/persistence owner while the driver validates session identity."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "status": "authorized_with_capture_owned_commit"
+        }
+      }
+    },
+    {
+      "id": "newapi-authorization-auth-failure",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "auth_failure",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "expired session cookie"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "unauthorized"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization auth rejection fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-rate-limit",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "rate_limit",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "success": false,
+          "message": "rate limited"
+        }
       },
       "redaction": {
         "status": "not_applicable",
         "secretCanaries": []
       },
       "source": {
-        "kind": "stage19a-registry-descriptor",
-        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
-        "provenance": "Static registry declares NewAPI with no authorization capability until Task 20 cutover."
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization rate limit fixture for Task 20.D."
       },
       "expected": {
-        "registryStatus": "unsupported",
-        "failureKind": "unsupported",
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-server-failure",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "server_failure",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 503,
+        "body": {
+          "success": false,
+          "message": "service unavailable"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization provider unavailable fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-malformed",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "malformed",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "quota": 1
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization missing identity fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-unknown-shape",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "unknown_shape",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "profile": {
+              "id": "not-trusted"
+            }
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization unknown identity shape fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-cancel",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "cancel",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "cancellation": "before response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization cancellation fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-budget-exhaustion",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization budget exhaustion fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-stale-endpoint-revision",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "commitBarrier": "capture session commit still checks the captured endpoint revision before persistence"
+      },
+      "responseSchema": {
+        "kind": "application_failure",
+        "failureKind": "stale_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-capture-facade-fixture",
+        "path": "src-tauri/src/application/command_facades/capture.rs",
+        "provenance": "Synthetic Task 20.D fixture proving authorization driver validation does not own capture commit or session persistence barriers."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-redaction",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "redaction",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "cookie plus new-api-user"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "bad session=secret-canary"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization secret redaction fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
         "canonicalFacts": null
       }
     },

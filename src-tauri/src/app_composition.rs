@@ -314,6 +314,8 @@ pub(crate) fn compose_capture_command_facade(
     services: &AppServices,
     sessions: crate::services::capture::session::CaptureSessionStore,
     blocking: crate::background_tasks::BlockingExecutor,
+    outbound: AsyncOutboundClient,
+    providers: Arc<ProviderRegistry>,
 ) -> CaptureCommandFacade {
     CaptureCommandFacade::new(
         Arc::clone(&services.stations),
@@ -321,6 +323,8 @@ pub(crate) fn compose_capture_command_facade(
         Arc::clone(&services.collectors),
         sessions,
         blocking,
+        outbound,
+        providers,
     )
 }
 

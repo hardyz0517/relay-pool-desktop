@@ -1,7 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
+use futures_util::{future::BoxFuture, FutureExt};
 use serde_json::Value;
 use tauri::Manager;
+use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use crate::{
@@ -19,11 +21,23 @@ use crate::{
         stations::Station,
     },
     observability::correlation,
+    outbound::{AsyncOutboundClient, ProxyPolicy, RequestBudget},
     services::{
         capture::{
             self,
             session::{CaptureCommit, CaptureSessionStore},
             web_authorization::VerifiedWebAuthorizationSession,
+        },
+        collectors::{
+            contract::{
+                AuthorizationRequest, AuthorizationStatus, CollectorContext, CredentialScope,
+                CredentialSecret, CredentialSecretPurpose, DriverSecretAccessor,
+                OpaqueCredentialHandle, ProviderAuthContext, ProviderEndpoints, ProviderKind,
+                StationIdentity,
+            },
+            evidence::EndpointRole,
+            failure::{DriverFailure, DriverFailureKind},
+            orchestration::ProviderRegistry,
         },
         station_endpoints::url_belongs_to_base,
     },
@@ -67,6 +81,8 @@ pub(crate) struct CaptureCommandFacade {
     collectors: Arc<CollectorService>,
     sessions: CaptureSessionStore,
     blocking: BlockingExecutor,
+    outbound: AsyncOutboundClient,
+    providers: Arc<ProviderRegistry>,
 }
 
 impl CaptureCommandFacade {
@@ -76,6 +92,8 @@ impl CaptureCommandFacade {
         collectors: Arc<CollectorService>,
         sessions: CaptureSessionStore,
         blocking: BlockingExecutor,
+        outbound: AsyncOutboundClient,
+        providers: Arc<ProviderRegistry>,
     ) -> Self {
         Self {
             stations,
@@ -83,6 +101,8 @@ impl CaptureCommandFacade {
             collectors,
             sessions,
             blocking,
+            outbound,
+            providers,
         }
     }
 
@@ -202,12 +222,9 @@ impl CaptureCommandFacade {
             &station.website_url,
         )
         .await?;
-        let verified = capture::web_authorization::verify_newapi_cookie_session(
-            &station.website_url,
-            &cookie_header,
-            &candidate.user_id,
-            Duration::from_secs(20),
-        )?;
+        let verified = self
+            .verify_newapi_web_authorization_session(&station, cookie_header, &candidate.user_id)
+            .await?;
         let commit = self
             .sessions
             .begin_web_authorization_commit(&station_id, &candidate)?;
@@ -291,6 +308,89 @@ impl CaptureCommandFacade {
             .map_err(CaptureCommandError::Message)
     }
 
+    async fn verify_newapi_web_authorization_session(
+        &self,
+        station: &Station,
+        cookie_header: String,
+        expected_user_id: &str,
+    ) -> Result<VerifiedWebAuthorizationSession, CaptureCommandError> {
+        let cookie_header = cookie_header.trim().to_string();
+        if cookie_header.is_empty() {
+            return Err(CaptureCommandError::Message(
+                "Web authorization did not capture a usable Cookie header.".to_string(),
+            ));
+        }
+        let expected_user_id = expected_user_id.trim().to_string();
+        if expected_user_id.is_empty() {
+            return Err(CaptureCommandError::Message(
+                "Web authorization did not capture a usable user id.".to_string(),
+            ));
+        }
+
+        let credential = OpaqueCredentialHandle {
+            station_id: station.id.clone(),
+            credential_revision: station.endpoint_revision,
+            scope: CredentialScope::LoginSession,
+        };
+        let secret_accessor = WebAuthorizationSecretAccessor {
+            expected: credential.clone(),
+            cookie_header: cookie_header.clone(),
+        };
+        let context = CollectorContext {
+            station: StationIdentity {
+                station_id: station.id.clone(),
+                endpoint_revision: station.endpoint_revision,
+                provider: ProviderKind::NewApi,
+            },
+            endpoints: ProviderEndpoints {
+                api_base_url: (!station.api_base_url.trim().is_empty())
+                    .then_some(station.api_base_url.clone()),
+                website_url: Some(station.website_url.clone()),
+            },
+            credential: credential.clone(),
+            auth: Some(ProviderAuthContext::NewApi {
+                user_id: expected_user_id.clone(),
+                secret_purpose: CredentialSecretPurpose::SessionCookie,
+            }),
+            secrets: &secret_accessor,
+            outbound: &self.outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(20)),
+            cancellation: CancellationToken::new(),
+            correlation_id: current_correlation_id()
+                .unwrap_or_else(|| "capture:web-authorization:newapi".to_string()),
+        };
+        let driver = self
+            .providers
+            .authorization(ProviderKind::NewApi)
+            .map_err(capture_authorization_error)?;
+        let output = driver
+            .validate_authorization(
+                &context,
+                AuthorizationRequest {
+                    station: context.station.clone(),
+                    endpoints: context.endpoints.clone(),
+                    credential,
+                    endpoint_role: EndpointRole::Authorization,
+                },
+            )
+            .await
+            .map_err(capture_authorization_error)?;
+        match output.status {
+            AuthorizationStatus::Authorized => Ok(VerifiedWebAuthorizationSession::new(
+                cookie_header,
+                expected_user_id,
+            )),
+            AuthorizationStatus::ReauthorizationRequired => Err(CaptureCommandError::Message(
+                "Web authorization session expired; please re-authorize in the login window."
+                    .to_string(),
+            )),
+            AuthorizationStatus::Unsupported => Err(CaptureCommandError::Message(
+                "NewAPI web authorization validation is not supported by this build.".to_string(),
+            )),
+        }
+    }
+
     async fn persist_web_authorization_session_inner(
         &self,
         station_id: String,
@@ -350,6 +450,58 @@ impl CaptureCommandFacade {
                 event_count: events.len() as i64,
             })
             .await
+    }
+}
+
+struct WebAuthorizationSecretAccessor {
+    expected: OpaqueCredentialHandle,
+    cookie_header: String,
+}
+
+impl DriverSecretAccessor for WebAuthorizationSecretAccessor {
+    fn resolve_secret<'a>(
+        &'a self,
+        handle: &'a OpaqueCredentialHandle,
+        purpose: CredentialSecretPurpose,
+    ) -> BoxFuture<'a, Result<CredentialSecret, DriverFailure>> {
+        async move {
+            if purpose != CredentialSecretPurpose::SessionCookie || handle != &self.expected {
+                return Err(DriverFailure::unsupported(
+                    "web authorization cookie is not available to this driver context",
+                ));
+            }
+            Ok(CredentialSecret::new(self.cookie_header.clone()))
+        }
+        .boxed()
+    }
+}
+
+fn capture_authorization_error(error: DriverFailure) -> CaptureCommandError {
+    let detail = error.sanitized_detail.as_deref().unwrap_or_default();
+    match error.kind {
+        DriverFailureKind::AuthRejected => CaptureCommandError::Message(
+            "Web authorization session expired; please re-authorize in the login window."
+                .to_string(),
+        ),
+        DriverFailureKind::MalformedPayload => CaptureCommandError::Message(
+            "Web authorization self probe returned an invalid NewAPI user payload.".to_string(),
+        ),
+        DriverFailureKind::Unsupported | DriverFailureKind::InvalidRequest => {
+            CaptureCommandError::Message(format!(
+                "Web authorization validation is not available: {detail}"
+            ))
+        }
+        DriverFailureKind::RateLimited
+        | DriverFailureKind::Timeout
+        | DriverFailureKind::BudgetExhausted
+        | DriverFailureKind::Cancelled
+        | DriverFailureKind::Transport
+        | DriverFailureKind::ProviderUnavailable => {
+            CaptureCommandError::Message(format!("Web authorization self probe failed: {detail}"))
+        }
+        DriverFailureKind::ResultUnknown | DriverFailureKind::Internal => {
+            CaptureCommandError::Application(ApplicationError::Internal)
+        }
     }
 }
 
