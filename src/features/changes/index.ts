@@ -1,0 +1,1 @@
+export { ChangeCenterPage } from "./ChangeCenterPage";

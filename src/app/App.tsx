@@ -11,11 +11,10 @@ import {
   isShellPage,
   resolveActiveShellRouteId,
 } from "@/app/pageTransitionPolicy";
-import { ModelBasePricesPage } from "@/features/pricing/ModelBasePricesPage";
 import { AddKeyPage } from "@/features/key-pool/AddKeyPage";
 import { EditKeyPage } from "@/features/key-pool/EditKeyPage";
-import { AddProviderPage } from "@/features/stations/AddProviderPage";
-import { StationDetailPage } from "@/features/stations/StationDetailPage";
+import { ModelBasePricesPage } from "@/features/pricing/ModelBasePricesPage";
+import { AddProviderPage, StationDetailPage } from "@/features/stations";
 import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
 
