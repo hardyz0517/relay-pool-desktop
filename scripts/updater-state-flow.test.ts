@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
 
-const modulePath = new URL("../src/features/updater/updateState.ts", import.meta.url);
+const modulePath = new URL("../src/lib/updater/updateState.ts", import.meta.url);
 
 test("updater state module exists", () => {
   assert.ok(existsSync(modulePath), "updateState.ts must exist");

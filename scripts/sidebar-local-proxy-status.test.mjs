@@ -6,7 +6,7 @@ const proxyApiSource = await readFile("src/lib/api/proxy.ts", "utf8");
 const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
 const routingSource = await readFile("src/features/routing/RoutingPage.tsx", "utf8");
 const settingsSource = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
-const updaterSource = await readFile("src/features/updater/UpdaterProvider.tsx", "utf8");
+const updaterSource = await readFile("src/lib/updater/UpdaterProvider.tsx", "utf8");
 
 assert.match(
   appShellSource,

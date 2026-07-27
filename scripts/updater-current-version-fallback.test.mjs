@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 
 const updaterApiSource = await readFile("src/lib/api/updater.ts", "utf8");
 const desktopBackendSource = await readFile("src/lib/bridge/DesktopBackend.ts", "utf8");
-const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
-const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
+const tauriUpdaterCommandsSource = await readFile("src-tauri/src/commands/updater.rs", "utf8");
+const tauriRegistrySource = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const mainWindowPermissions = await readFile("src-tauri/permissions/main-window.toml", "utf8");
 
 assert.ok(
@@ -39,11 +39,14 @@ assert.ok(
 );
 
 assert.ok(
-  tauriCommandsSource.includes("pub async fn updater_network_config") &&
-    tauriCommandsSource.includes("input: Value") &&
-    tauriCommandsSource.includes("pub async fn inspect_latest_update_manifest") &&
-    tauriLibSource.includes("commands::updater_network_config") &&
-    tauriLibSource.includes("commands::inspect_latest_update_manifest"),
+  tauriUpdaterCommandsSource.includes("pub async fn updater_network_config") &&
+    tauriUpdaterCommandsSource.includes("EmptyInputDto::parse(input)?") &&
+    tauriUpdaterCommandsSource.includes("pub async fn inspect_latest_update_manifest") &&
+    tauriUpdaterCommandsSource.includes("PublishedUpdateInspectionInputDto::parse(input)?") &&
+    tauriRegistrySource.includes("updater_network_config => $crate::commands::updater::updater_network_config") &&
+    tauriRegistrySource.includes(
+      "inspect_latest_update_manifest => $crate::commands::updater::inspect_latest_update_manifest",
+    ),
   "desktop backend should expose shared updater network and manifest inspection commands",
 );
 

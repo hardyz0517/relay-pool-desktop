@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-const commands = await readFile("src-tauri/src/commands/mod.rs", "utf8");
+const localProxyCommands = await readFile("src-tauri/src/commands/local_proxy.rs", "utf8");
 const registry = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const updaterApi = await readFile("src/lib/api/updater.ts", "utf8").catch(() => "");
 const proxyApi = await readFile("src/lib/api/proxy.ts", "utf8").catch(() => "");
 const desktopBackend = await readFile("src/lib/bridge/DesktopBackend.ts", "utf8").catch(() => "");
-const provider = await readFile("src/features/updater/UpdaterProvider.tsx", "utf8").catch(() => "");
+const provider = await readFile("src/lib/updater/UpdaterProvider.tsx", "utf8").catch(() => "");
 
-assert.ok(commands.includes("pub async fn prepare_local_proxy_for_update"));
-assert.ok(commands.includes("proxy.prepare_for_update"));
-assert.ok(registry.includes("prepare_local_proxy_for_update => $crate::commands::prepare_local_proxy_for_update"));
+assert.ok(localProxyCommands.includes("pub async fn prepare_local_proxy_for_update"));
+assert.ok(localProxyCommands.includes("proxy.prepare_for_update"));
+assert.ok(registry.includes("prepare_local_proxy_for_update => $crate::commands::local_proxy::prepare_local_proxy_for_update"));
 assert.ok(proxyApi.includes("getActiveBackendClient().proxy.prepareLocalProxyForUpdate()"));
 assert.ok(desktopBackend.includes("prepareLocalProxyForUpdate: () => prepareLocalProxyForUpdateBinding()"));
 assert.ok(!proxyApi.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update")'));

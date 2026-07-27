@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
-const updaterProviderSource = await readFile("src/features/updater/UpdaterProvider.tsx", "utf8");
+const updaterProviderSource = await readFile("src/lib/updater/UpdaterProvider.tsx", "utf8");
 
 assert.ok(
   updaterProviderSource.includes("installNow: () => Promise<void>") &&
@@ -14,7 +14,7 @@ assert.ok(
 );
 
 assert.ok(
-  dashboardSource.includes('import { useUpdater } from "@/features/updater/UpdaterProvider";') &&
+  dashboardSource.includes('import { useUpdater } from "@/lib/updater/UpdaterProvider";') &&
     dashboardSource.includes("const { state: updaterState, showUpdateDialog } = useUpdater();"),
   "dashboard should consume the shared updater state and confirmation-dialog action",
 );

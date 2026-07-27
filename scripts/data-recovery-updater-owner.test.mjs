@@ -5,8 +5,8 @@ const mainSource = await readFile("src/main.tsx", "utf8");
 const backendBootstrapSource = await readFile("src/app/bootstrap/BackendBootstrap.tsx", "utf8");
 const dataStoreBootstrapSource = await readFile("src/features/data-recovery/DataStoreBootstrap.tsx", "utf8");
 const dataRecoveryScreenSource = await readFile("src/features/data-recovery/DataRecoveryScreen.tsx", "utf8");
-const updaterProviderSource = await readFile("src/features/updater/UpdaterProvider.tsx", "utf8");
-const updateDialogSource = await readFile("src/features/updater/UpdateDialog.tsx", "utf8");
+const updaterProviderSource = await readFile("src/lib/updater/UpdaterProvider.tsx", "utf8");
+const updateDialogSource = await readFile("src/lib/updater/UpdateDialog.tsx", "utf8");
 
 assert.ok(
   mainSource.includes("<QueryClientProvider client={queryClient}>") &&
