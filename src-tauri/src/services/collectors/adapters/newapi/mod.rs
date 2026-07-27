@@ -1,4 +1,11 @@
+#![allow(
+    dead_code,
+    unused_imports,
+    reason = "Legacy NewAPI adapter code is retained for parser/test fixtures after the async driver production cutover"
+)]
+
 mod auth;
+#[cfg(test)]
 mod client;
 mod parsers;
 #[cfg(test)]
@@ -12,12 +19,11 @@ use crate::models::{
     },
     stations::Station,
 };
+use crate::services::collectors::{facts::CollectorFacts, CollectorSourcePort};
+
+#[cfg(test)]
 use crate::services::{
-    collectors::{
-        adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
-        facts::CollectorFacts,
-        CollectorSourcePort,
-    },
+    collectors::adapters::{AdapterOutput, CollectorTask, CreatedRemoteKey},
     outbound::{credential_agent_builder_for_proxy, resolve_proxy_config, ProxyConfig},
     station_endpoints::build_management_url,
 };
@@ -34,6 +40,7 @@ const NEWAPI_DASHBOARD_MAX_WINDOW_SECONDS: i64 = 30 * 24 * 60 * 60;
 const NEWAPI_DASHBOARD_TOTAL_START_TIMESTAMP: i64 = 0;
 const NEWAPI_DASHBOARD_TOTAL_MAX_WINDOWS: usize = 240;
 
+#[cfg(test)]
 pub(crate) fn login_with_password(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -44,6 +51,7 @@ pub(crate) fn login_with_password(
     auth::login_with_password(database, data_key, station, login_username, login_password)
 }
 
+#[cfg(test)]
 pub(crate) fn test_login_credentials(
     base_url: &str,
     login_username: &str,
@@ -70,17 +78,41 @@ pub(crate) fn prepare_collector_auth_context(
     data_key: &[u8; 32],
     station: &Station,
 ) -> Result<PreparedNewApiAuthContext, String> {
-    let auth = client::resolve_auth_context(database, data_key, station)
-        .map_err(newapi_request_error_message)?;
-    let kind = match auth.kind {
-        auth::NewApiAuthKind::AccessToken => PreparedNewApiAuthKind::AccessToken,
-        auth::NewApiAuthKind::Cookie => PreparedNewApiAuthKind::Cookie,
-    };
-    Ok(PreparedNewApiAuthContext {
-        kind,
-        secret: auth.secret,
-        user_id: auth.user_id,
-    })
+    let session = database.resolve_station_session_with_data_key(
+        station.id.clone(),
+        data_key,
+        crate::services::time::now_millis_for_services() as i64,
+    )?;
+    let user_id = session
+        .newapi_user_id
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "NewAPI session is missing user id".to_string())?;
+    if let Some(access_token) = session
+        .access_token
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(PreparedNewApiAuthContext {
+            kind: PreparedNewApiAuthKind::AccessToken,
+            secret: access_token,
+            user_id,
+        });
+    }
+    if let Some(cookie) = session
+        .cookie
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(PreparedNewApiAuthContext {
+            kind: PreparedNewApiAuthKind::Cookie,
+            secret: cookie,
+            user_id,
+        });
+    }
+    Err(session
+        .message
+        .unwrap_or_else(|| "NewAPI session credentials are missing".to_string()))
 }
 
 #[cfg(test)]
@@ -105,6 +137,7 @@ pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, S
     })
 }
 
+#[cfg(test)]
 pub fn scan_remote_keys(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -115,6 +148,7 @@ pub fn scan_remote_keys(
     Ok(parse_remote_key_items(&station.id, &tokens))
 }
 
+#[cfg(test)]
 pub fn scan_remote_key_full_secret(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -136,6 +170,7 @@ pub fn scan_remote_key_full_secret(
     Err("远端 Key 已不存在，无法创建本地 Key。".to_string())
 }
 
+#[cfg(test)]
 pub fn create_remote_key(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -183,6 +218,7 @@ pub fn create_remote_key(
     )
 }
 
+#[cfg(test)]
 fn fetch_newapi_token_items(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -253,6 +289,7 @@ fn created_token_matches(value: &Value, expected_name: &str) -> bool {
         .is_some_and(|name| !expected_name.is_empty() && name == expected_name)
 }
 
+#[cfg(test)]
 fn reveal_full_key_for_token_value(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -426,6 +463,7 @@ fn looks_like_full_api_key(value: &str) -> bool {
     true
 }
 
+#[cfg(test)]
 pub fn collect(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -461,6 +499,7 @@ pub fn collect(
     }
 }
 
+#[cfg(test)]
 fn unsupported_output(
     task: CollectorTask,
     code: &str,
@@ -484,6 +523,7 @@ fn unsupported_output(
     })
 }
 
+#[cfg(test)]
 fn build_balance_output(
     station_id: &str,
     data: &Value,
@@ -525,6 +565,7 @@ fn build_balance_output(
     }
 }
 
+#[cfg(test)]
 fn build_groups_output(station_id: &str, data: &Value, endpoint_result: Value) -> AdapterOutput {
     let facts = parsers::parse_group_facts(station_id, data);
     let group_count = facts.groups.len();
@@ -567,6 +608,7 @@ fn build_groups_output(station_id: &str, data: &Value, endpoint_result: Value) -
     }
 }
 
+#[cfg(test)]
 fn build_models_output(station_id: &str, data: &Value, endpoint_result: Value) -> AdapterOutput {
     let facts = CollectorFacts {
         models: parsers::parse_models(station_id, data),
@@ -607,6 +649,7 @@ fn build_models_output(station_id: &str, data: &Value, endpoint_result: Value) -
     }
 }
 
+#[cfg(test)]
 pub fn collect_balance_and_groups(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -616,6 +659,7 @@ pub fn collect_balance_and_groups(
     collect_authenticated_task(database, data_key, station_id, task)
 }
 
+#[cfg(test)]
 fn collect_authenticated_task(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -771,6 +815,7 @@ impl NewApiUsageStats {
     }
 }
 
+#[cfg(test)]
 fn collect_usage_stats(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -854,11 +899,13 @@ fn collect_usage_stats(
     (stats.has_any().then_some(stats), endpoint_results)
 }
 
+#[cfg(test)]
 trait UsageCollectionResultExt<T> {
     fn map_endpoint_result(self, endpoint_results: &mut Vec<Value>) -> Option<T>;
     fn map_endpoint_results(self, endpoint_results: &mut Vec<Value>) -> Option<T>;
 }
 
+#[cfg(test)]
 impl<T> UsageCollectionResultExt<T> for Result<(T, Vec<Value>), String> {
     fn map_endpoint_result(self, endpoint_results: &mut Vec<Value>) -> Option<T> {
         self.map_endpoint_results(endpoint_results)
@@ -875,6 +922,7 @@ impl<T> UsageCollectionResultExt<T> for Result<(T, Vec<Value>), String> {
     }
 }
 
+#[cfg(test)]
 fn collect_log_stat_window(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -904,6 +952,7 @@ fn collect_log_stat_window(
     ))
 }
 
+#[cfg(test)]
 fn collect_log_window(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1016,6 +1065,7 @@ fn collect_log_window(
     ))
 }
 
+#[cfg(test)]
 fn collect_dashboard_usage_window(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1093,6 +1143,7 @@ fn collect_dashboard_usage_window(
     ))
 }
 
+#[cfg(test)]
 fn collect_dashboard_usage_total(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1112,6 +1163,7 @@ fn collect_dashboard_usage_total(
     )
 }
 
+#[cfg(test)]
 fn collect_dashboard_usage_total_backwards(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1337,6 +1389,7 @@ fn checked_sum_f64(left: Option<f64>, right: Option<f64>) -> Option<f64> {
         .filter(|value| value.is_finite())
 }
 
+#[cfg(test)]
 fn fetch_status(
     database: &dyn CollectorSourcePort,
     station: &Station,
@@ -1368,6 +1421,7 @@ fn parse_status_payload(payload: &Value) -> Result<parsers::NewApiStatus, String
         .map_err(|error| error.message)
 }
 
+#[cfg(test)]
 fn newapi_request_error_message(error: client::NewApiRequestError) -> String {
     match error {
         client::NewApiRequestError::AuthRequired { message, .. }
@@ -1378,6 +1432,7 @@ fn newapi_request_error_message(error: client::NewApiRequestError) -> String {
     }
 }
 
+#[cfg(test)]
 fn get_newapi_public_json(
     url: &str,
     proxy: &ProxyConfig,

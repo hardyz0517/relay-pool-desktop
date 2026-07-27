@@ -81,7 +81,6 @@
     {"identity":"crate::services::proxy::startup_auto_start::schedule::tauri::async_runtime::spawn","owner":"Task 17","introduced_shard":"S4-T17-proxy-runtime-coordination","delete_shard":"permanent-proxy-startup-scheduler","expiry_stage":8,"reason":"Startup auto-start schedules one owned proxy runtime start after setup without taking over request lifecycle."}
   ],
   "http_client_construction_allowlist": [
-    {"identity":"crate::services::outbound::agent_builder_for_proxy::ureq::AgentBuilder::new","owner":"Task 22","introduced_shard":"legacy-baseline","delete_shard":"S5-T22-production-ureq-removal","expiry_stage":6,"reason":"Legacy services::outbound is retained only for provider paths scheduled for Task 22 deletion after capability drivers own transport."},
     {"identity":"crate::outbound::client::<impl>::client_for_policy::reqwest::Client::builder","owner":"Task 14","introduced_shard":"S4-T14C-async-outbound-client-kernel","delete_shard":"permanent-async-outbound-client","expiry_stage":8,"reason":"AsyncOutboundClient owns shared reqwest client construction and policy-keyed pooling for provider and management migrations."},
     {"identity":"crate::services::proxy::upstream::build_client::reqwest::Client::builder","owner":"Task 17","introduced_shard":"S4-T17-proxy-runtime-coordination","delete_shard":"permanent-proxy-upstream-pool","expiry_stage":8,"reason":"Proxy request forwarding keeps its verified upstream client pool and lifecycle owner; Stage 4 only coordinates it through the runtime facade."}
   ],

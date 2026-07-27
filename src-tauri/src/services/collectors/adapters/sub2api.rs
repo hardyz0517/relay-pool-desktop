@@ -1,3 +1,9 @@
+#![allow(
+    dead_code,
+    unused_imports,
+    reason = "Legacy Sub2API adapter code is retained for parser/test fixtures after the async driver production cutover"
+)]
+
 use std::collections::HashMap;
 
 use serde_json::{json, Value};
@@ -510,6 +516,7 @@ pub fn remote_key_capability(station: &Station) -> Result<RemoteKeyCapability, S
     })
 }
 
+#[cfg(test)]
 pub fn scan_remote_keys(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -530,6 +537,7 @@ pub fn scan_remote_keys(
     Ok(parse_remote_key_payload(&station.id, &payload))
 }
 
+#[cfg(test)]
 pub fn scan_remote_key_full_secret(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -565,6 +573,7 @@ pub fn scan_remote_key_full_secret(
     Err("远端 Key 已不存在，无法创建本地 Key。".to_string())
 }
 
+#[cfg(test)]
 pub fn create_remote_key(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -617,6 +626,7 @@ pub fn create_remote_key(
     })
 }
 
+#[cfg(test)]
 fn resolve_sub2api_access_token(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -642,6 +652,7 @@ fn resolve_sub2api_access_token(
     }))
 }
 
+#[cfg(test)]
 fn effective_station_proxy(
     database: &dyn CollectorSourcePort,
     station: &Station,
@@ -791,6 +802,7 @@ fn remote_key_identity<'a>(
         .or_else(|| name.map(|value| ("name", value, true)))
 }
 
+#[cfg(test)]
 fn remote_group_id_for_create(
     database: &dyn CollectorSourcePort,
     input: &CreateRemoteStationKeyInput,
@@ -905,6 +917,7 @@ fn looks_like_full_api_key(value: &str) -> bool {
     true
 }
 
+#[cfg(test)]
 fn routeable_keys_for_station(
     database: &dyn CollectorSourcePort,
     station_id: &str,
@@ -918,6 +931,7 @@ fn routeable_keys_for_station(
         })
 }
 
+#[cfg(test)]
 pub fn collect(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -957,6 +971,7 @@ pub fn collect(
     }
 }
 
+#[cfg(test)]
 fn unsupported_output(
     task: CollectorTask,
     code: &str,
@@ -980,6 +995,7 @@ fn unsupported_output(
     })
 }
 
+#[cfg(test)]
 pub fn collect_groups(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1112,6 +1128,7 @@ pub fn collect_groups(
     })
 }
 
+#[cfg(test)]
 fn manual_session_required_output(message: Option<String>) -> AdapterOutput {
     AdapterOutput {
         adapter: "sub2api".to_string(),
@@ -1130,6 +1147,7 @@ fn manual_session_required_output(message: Option<String>) -> AdapterOutput {
     }
 }
 
+#[cfg(test)]
 fn login_and_store_access_token(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1179,6 +1197,7 @@ fn login_and_store_access_token(
     Ok(Some(access_token))
 }
 
+#[cfg(test)]
 fn login_and_store_access_token_with_budget(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1230,6 +1249,7 @@ fn login_and_store_access_token_with_budget(
     Ok(Some(access_token))
 }
 
+#[cfg(test)]
 fn collector_request_policy() -> RequestPolicy {
     RequestPolicy {
         max_attempts: 3,
@@ -1243,6 +1263,7 @@ fn collector_request_policy() -> RequestPolicy {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(test)]
 struct EndpointJsonResult {
     status: Option<u16>,
     ok: bool,
@@ -1250,6 +1271,7 @@ struct EndpointJsonResult {
     error_message: Option<String>,
 }
 
+#[cfg(test)]
 fn fetch_json_with_bearer(
     url: &str,
     access_token: &str,
@@ -1297,6 +1319,7 @@ fn fetch_json_with_bearer(
     }
 }
 
+#[cfg(test)]
 fn fetch_recoverable_json_with_bearer(
     url: &str,
     access_token: &str,
@@ -1419,6 +1442,7 @@ fn balance_request_timeout(budget: &CollectionAttemptBudget) -> std::time::Durat
         .max(std::time::Duration::from_millis(1))
 }
 
+#[cfg(test)]
 fn post_json_with_bearer(
     url: &str,
     access_token: &str,
@@ -1512,6 +1536,7 @@ pub(crate) fn add_single_group_key_bindings(facts: &mut CollectorFacts, keys: &[
     }
 }
 
+#[cfg(test)]
 pub fn collect_balance(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1655,6 +1680,7 @@ pub fn collect_balance(
     })
 }
 
+#[cfg(test)]
 fn collect_account_profile_balance(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1799,6 +1825,7 @@ impl DashboardUsageStats {
     }
 }
 
+#[cfg(test)]
 fn collect_dashboard_usage_stats(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],

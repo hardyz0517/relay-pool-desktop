@@ -129,7 +129,7 @@ impl StationCollectionCommandFacade {
                 current_correlation_id(),
                 None,
                 move |_| {
-                    Ok(collectors::prepare_station_login_test_v2(
+                    Ok(collectors::prepare_station_login_probe_v2(
                         &source, &data_key, station_id,
                     ))
                 },
@@ -139,6 +139,17 @@ impl StationCollectionCommandFacade {
             .await
             .map_err(StationCollectionCommandError::Blocking)?
             .map_err(StationCollectionCommandError::Prepare)?;
+        let source = self.source();
+        let prepared = collectors::finish_station_login_probe_v2(
+            &source,
+            &self.data_key,
+            &self.outbound,
+            prepared,
+            tokio_util::sync::CancellationToken::new(),
+            current_correlation_id(),
+        )
+        .await
+        .map_err(StationCollectionCommandError::Prepare)?;
         self.apply_prepared_collection(prepared).await
     }
 

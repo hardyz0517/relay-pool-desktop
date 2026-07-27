@@ -17,6 +17,7 @@ pub mod facts;
     reason = "Stage 19.A freezes provider failure contracts before production driver cutover"
 )]
 pub mod failure;
+mod login_probe;
 #[allow(
     dead_code,
     reason = "Stage 19.A freezes provider registry contracts before production driver cutover"
@@ -238,6 +239,11 @@ fn application_error(error: ApplicationError) -> String {
     error.to_string()
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "legacy sync login fixture retained for parser coverage"
+)]
 struct LoginTestAttempt {
     token_present: bool,
     login_message: Option<String>,
@@ -1175,6 +1181,11 @@ pub(crate) async fn apply_prepared_station_collection_v2(
     apply_prepared_full_collection_v2(service, port, prepared).await
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "legacy sync login fixture retained for parser coverage"
+)]
 pub(crate) fn prepare_station_login_test_v2(
     source: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -1306,6 +1317,188 @@ pub(crate) fn prepare_station_login_test_v2(
         outputs: vec![output],
         enabled_key_count: 0,
     })
+}
+
+pub(crate) struct PreparedStationLoginProbe {
+    station: Station,
+    credentials: StationCredentials,
+    username: String,
+    password: Option<String>,
+    proxy: ProxyPolicy,
+}
+
+pub(crate) fn prepare_station_login_probe_v2(
+    source: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    station_id: String,
+) -> Result<PreparedStationLoginProbe, ApplicationError> {
+    let station = source
+        .station_for_collector(&station_id)
+        .map_err(|_| ApplicationError::Internal)?;
+    let credentials = source
+        .get_station_credentials(station_id.clone())
+        .map_err(|_| ApplicationError::Internal)?;
+    let username = credentials.login_username.clone().unwrap_or_default();
+    let password = source
+        .get_station_login_password_with_data_key(station_id, data_key)
+        .map_err(|_| ApplicationError::Internal)?;
+    let settings = source
+        .get_settings()
+        .map_err(|_| ApplicationError::Internal)?;
+    let proxy = crate::services::outbound::resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    );
+    let proxy =
+        proxy_policy_from_collector_config(proxy).map_err(|_| ApplicationError::Internal)?;
+    Ok(PreparedStationLoginProbe {
+        station,
+        credentials,
+        username,
+        password,
+        proxy,
+    })
+}
+
+pub(crate) async fn finish_station_login_probe_v2(
+    source: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedStationLoginProbe,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedStationCollection, ApplicationError> {
+    let password_present = prepared
+        .password
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let attempt = if !has_login_credentials(
+        &prepared.credentials.login_username,
+        prepared.credentials.password_present,
+    ) || !password_present
+    {
+        login_probe::LoginProbeAttempt {
+            credential_present: false,
+            login_message: Some("Saved login credentials are incomplete.".to_string()),
+            manual_required: Some(
+                "Save both the login username and password before testing login.".to_string(),
+            ),
+            newapi_session: None,
+        }
+    } else {
+        login_probe::probe_login(
+            outbound,
+            &prepared.station.station_type,
+            &prepared.station.website_url,
+            &prepared.username,
+            prepared.password.as_deref().unwrap_or_default(),
+            prepared.proxy.clone(),
+            cancellation_token,
+            correlation_id,
+        )
+        .await
+        .map_err(|_| ApplicationError::Internal)?
+    };
+
+    if let Some(session) = attempt.newapi_session.clone() {
+        source
+            .persist_station_session_with_data_key(
+                PersistStationSessionInput {
+                    station_id: prepared.station.id.clone(),
+                    access_token: None,
+                    refresh_token: None,
+                    cookie: Some(session.cookie),
+                    newapi_user_id: Some(session.user_id),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "password_login".to_string(),
+                },
+                data_key,
+                prepared.station.endpoint_revision,
+            )
+            .map_err(|_| ApplicationError::Internal)?;
+    }
+
+    Ok(station_login_probe_collection(prepared, attempt))
+}
+
+fn station_login_probe_collection(
+    prepared: PreparedStationLoginProbe,
+    attempt: login_probe::LoginProbeAttempt,
+) -> PreparedStationCollection {
+    let token_present = attempt.credential_present;
+    let status = if token_present {
+        "success".to_string()
+    } else {
+        "manual_required".to_string()
+    };
+    let diagnosis = attempt
+        .manual_required
+        .unwrap_or_else(|| "The login endpoint returned a usable session credential.".to_string());
+    let message = attempt
+        .login_message
+        .unwrap_or_else(|| "Login test completed.".to_string());
+    let station_id = prepared.station.id.clone();
+    let output = adapters::AdapterOutput {
+        adapter: "login-state".to_string(),
+        task: adapters::CollectorTask::Detect,
+        status: status.clone(),
+        facts: facts::CollectorFacts::default(),
+        summary_json: json!({
+            "mode": "login-state",
+            "adapter": "Login State Adapter",
+            "detectedType": "Login State",
+            "conclusion": if token_present { "Login succeeded" } else { "Action required" },
+            "message": message,
+            "login": {
+                "usernamePresent": !prepared.username.trim().is_empty(),
+                "passwordPresent": prepared.password.as_deref().is_some_and(|value| !value.trim().is_empty()),
+                "status": prepared.credentials.login_status,
+            },
+            "loginRequired": !token_present,
+            "diagnosis": diagnosis,
+            "endpointResults": [],
+            "recognized": {
+                "balanceLabel": Value::Null,
+                "groupCount": 0,
+                "rateCount": 0,
+                "keyCount": 0,
+                "matchedFieldCount": 0,
+            },
+            "stationName": prepared.station.name,
+        }),
+        normalized_json: json!({
+            "stationId": station_id,
+            "adapter": "login-state",
+            "status": status,
+            "balance": Value::Null,
+            "groups": [],
+            "rateMultipliers": [],
+            "keys": [],
+            "models": [],
+            "matchedFields": [],
+            "detectedEndpoints": [],
+            "pendingConfirmations": [],
+            "confidenceSummary": { "recognizedFieldCount": 0 },
+        }),
+        raw_json_redacted: Some(json!({
+            "stationName": prepared.station.name,
+            "loginUsernamePresent": !prepared.username.trim().is_empty(),
+            "loginPasswordPresent": prepared.password.as_deref().is_some_and(|value| !value.trim().is_empty()),
+        })),
+        error_code: (!token_present).then(|| "login_action_required".to_string()),
+        error_message: (!token_present).then_some(diagnosis),
+    };
+    PreparedStationCollection {
+        station_id,
+        endpoint_revision: prepared.station.endpoint_revision,
+        adapter: "login-state".to_string(),
+        task: adapters::CollectorTask::Detect,
+        outputs: vec![output],
+        enabled_key_count: 0,
+    }
 }
 
 async fn apply_prepared_full_collection_v2(
@@ -1874,6 +2067,20 @@ fn full_child_tasks(adapter: &str) -> Vec<adapters::CollectorTask> {
     }
 }
 
+pub(crate) async fn test_station_login_input_async(
+    outbound: &AsyncOutboundClient,
+    input: StationLoginTestInput,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<StationLoginTestResult, String> {
+    login_probe::test_station_login_input(outbound, input, cancellation_token, correlation_id).await
+}
+
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "legacy sync login fixture retained for parser coverage"
+)]
 pub fn test_station_login_input(
     input: StationLoginTestInput,
 ) -> Result<StationLoginTestResult, String> {

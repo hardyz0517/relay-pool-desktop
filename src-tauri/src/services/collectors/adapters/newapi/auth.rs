@@ -1,12 +1,16 @@
+#[cfg(test)]
 use serde_json::{json, Value};
 
+#[cfg(test)]
 use crate::models::{credentials::PersistStationSessionInput, stations::Station};
+#[cfg(test)]
 use crate::services::{
     collectors::{adapters::newapi::parsers, CollectorSourcePort},
     secrets::mask::redact_text,
     station_endpoints::build_management_url,
 };
 
+#[cfg(test)]
 const LOGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +72,7 @@ pub(crate) struct NewApiLoginProbeOutcome {
     pub manual_required: Option<String>,
 }
 
+#[cfg(test)]
 struct NewApiPasswordLogin {
     user_id: String,
     cookie: Option<String>,
@@ -85,6 +90,7 @@ pub(super) fn normalize_set_cookie_headers(headers: &[String]) -> Option<String>
     (!cookies.is_empty()).then(|| cookies.join("; "))
 }
 
+#[cfg(test)]
 pub(crate) fn login_with_password(
     database: &dyn CollectorSourcePort,
     data_key: &[u8; 32],
@@ -113,6 +119,7 @@ pub(crate) fn login_with_password(
     Ok(login.outcome)
 }
 
+#[cfg(test)]
 pub(crate) fn test_login_credentials(
     website_url: &str,
     login_username: &str,
@@ -121,6 +128,7 @@ pub(crate) fn test_login_credentials(
     request_password_login(website_url, login_username, login_password).map(|login| login.outcome)
 }
 
+#[cfg(test)]
 fn request_password_login(
     website_url: &str,
     login_username: &str,
@@ -191,6 +199,7 @@ fn request_password_login(
     })
 }
 
+#[cfg(test)]
 impl NewApiLoginProbeOutcome {
     fn into_password_login(self, user_id: String, cookie: Option<String>) -> NewApiPasswordLogin {
         NewApiPasswordLogin {

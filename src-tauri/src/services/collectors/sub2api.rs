@@ -1,21 +1,28 @@
+#[cfg(test)]
 use std::{
     thread,
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
 use serde_json::{json, Value};
+#[cfg(test)]
 use ureq::Agent;
 
+#[cfg(test)]
 use crate::services::outbound::{credential_agent_builder_for_proxy, ProxyConfig};
 
+#[cfg(test)]
 const LOGIN_PATHS: [&str; 3] = ["/api/v1/auth/login", "/auth/login", "/api/login"];
 
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct LoginConfig {
     connect_timeout: Duration,
     read_timeout: Duration,
 }
 
+#[cfg(test)]
 impl Default for LoginConfig {
     fn default() -> Self {
         Self {
@@ -25,22 +32,38 @@ impl Default for LoginConfig {
     }
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "legacy sync login fixture retained for parser coverage"
+)]
 struct LoginAttempt {
     token: Option<String>,
     login_message: Option<String>,
     manual_required: Option<String>,
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "legacy sync login fixture retained for parser coverage"
+)]
 pub(crate) struct LoginProbeOutcome {
     pub token_present: bool,
     pub login_message: Option<String>,
     pub manual_required: Option<String>,
 }
 
+#[cfg(test)]
 pub(crate) struct LoginTokenOutcome {
     pub access_token: Option<String>,
 }
 
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "legacy sync login fixture retained for parser coverage"
+)]
 pub(crate) fn test_login_credentials(
     base_url: &str,
     username: &str,
@@ -60,6 +83,7 @@ pub(crate) fn test_login_credentials(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn login_access_token_with_proxy(
     base_url: &str,
     username: &str,
@@ -78,6 +102,7 @@ pub(crate) fn login_access_token_with_proxy(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn login_access_token_with_budget_and_proxy(
     base_url: &str,
     username: &str,
@@ -99,6 +124,7 @@ pub(crate) fn login_access_token_with_budget_and_proxy(
     })
 }
 
+#[cfg(test)]
 fn attempt_login(
     agent: &Agent,
     base_url: &str,
@@ -134,11 +160,13 @@ fn attempt_login(
     Ok(rejected_login_attempt())
 }
 
+#[cfg(test)]
 struct LoginAttemptDeadline {
     started_at: Instant,
     budget: Duration,
 }
 
+#[cfg(test)]
 impl LoginAttemptDeadline {
     fn new(budget: Duration) -> Self {
         Self {
@@ -155,6 +183,7 @@ impl LoginAttemptDeadline {
     }
 }
 
+#[cfg(test)]
 fn attempt_login_with_budget(
     base_url: &str,
     username: &str,
@@ -221,11 +250,13 @@ fn attempt_login_with_budget(
     Ok(rejected_login_attempt())
 }
 
+#[cfg(test)]
 enum LoginCandidateResponse {
     Response(Box<ureq::Response>),
     Transient(String),
 }
 
+#[cfg(test)]
 fn login_candidate_request(
     url: &str,
     payload: Value,
@@ -260,6 +291,7 @@ fn login_candidate_request(
     }
 }
 
+#[cfg(test)]
 fn login_attempt_from_response(path: &str, status: u16, parsed: &Value) -> LoginAttempt {
     if let Some(token) = extract_token(parsed) {
         return LoginAttempt {
@@ -293,6 +325,7 @@ fn login_attempt_from_response(path: &str, status: u16, parsed: &Value) -> Login
     }
 }
 
+#[cfg(test)]
 fn missing_token_attempt() -> LoginAttempt {
     LoginAttempt {
         token: None,
@@ -301,6 +334,7 @@ fn missing_token_attempt() -> LoginAttempt {
     }
 }
 
+#[cfg(test)]
 fn rejected_login_attempt() -> LoginAttempt {
     LoginAttempt {
         token: None,
@@ -311,6 +345,7 @@ fn rejected_login_attempt() -> LoginAttempt {
     }
 }
 
+#[cfg(test)]
 fn transient_login_attempt(kind: &str) -> LoginAttempt {
     LoginAttempt {
         token: None,
@@ -319,6 +354,7 @@ fn transient_login_attempt(kind: &str) -> LoginAttempt {
     }
 }
 
+#[cfg(test)]
 fn is_region_restricted_login(value: &Value, status: u16) -> bool {
     if status != 403 {
         return false;
@@ -327,6 +363,7 @@ fn is_region_restricted_login(value: &Value, status: u16) -> bool {
     text.contains("region_restricted") || text.contains("region")
 }
 
+#[cfg(test)]
 fn retry_after_duration(response: &ureq::Response) -> Option<Duration> {
     response
         .header("retry-after")
@@ -334,6 +371,7 @@ fn retry_after_duration(response: &ureq::Response) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
+#[cfg(test)]
 fn extract_token(value: &Value) -> Option<String> {
     value
         .get("access_token")
@@ -343,6 +381,7 @@ fn extract_token(value: &Value) -> Option<String> {
         .or_else(|| value.get("data").and_then(extract_token))
 }
 
+#[cfg(test)]
 fn needs_manual_login(value: &Value, status: u16) -> bool {
     if matches!(status, 401 | 403) {
         return true;
@@ -366,10 +405,12 @@ fn needs_manual_login(value: &Value, status: u16) -> bool {
             .unwrap_or(false)
 }
 
+#[cfg(test)]
 fn shorten_error(message: &str) -> String {
     message.chars().take(240).collect()
 }
 
+#[cfg(test)]
 fn join_url(base_url: &str, path: &str) -> String {
     format!(
         "{}/{}",

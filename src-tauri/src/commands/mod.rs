@@ -2441,20 +2441,14 @@ pub async fn test_station_login_input(
 ) -> Result<StationLoginTestResultDto, error::CommandError> {
     correlation::in_command_scope("test_station_login_input", async {
         let input = StationLoginTestInputDto::parse(input)?.into_domain();
-        runtime
-            .blocking
-            .submit(
-                "station_login_probe_input",
-                None,
-                current_correlation_id(),
-                None,
-                move |_| Ok(collectors::test_station_login_input(input)),
-            )
-            .map_err(public_blocking_executor_error)?
-            .result()
-            .await
-            .map_err(public_blocking_executor_error)?
-            .map_err(public_station_login_probe_error)
+        collectors::test_station_login_input_async(
+            &runtime.outbound,
+            input,
+            tokio_util::sync::CancellationToken::new(),
+            current_correlation_id(),
+        )
+        .await
+        .map_err(public_station_login_probe_error)
     })
     .await
 }
