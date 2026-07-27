@@ -4,11 +4,10 @@ import { ArrowLeft, Check, KeyRound, LogIn, Plus, RefreshCw, ShieldCheck } from 
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { collectStationTask, startManualAuthorization, testStationLoginInput } from "@/lib/api/collector";
-import { listGroupRateRecords, listStationGroupBindings, upsertStationGroupBinding } from "@/lib/api/groupFacts";
+import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import {
   bindRemoteStationKey,
   createLocalStationKeyFromRemote,
-  createStationKey,
   createRemoteStationKey,
   deleteStationKey,
   getStationCredentials,
@@ -26,11 +25,6 @@ import { readError } from "@/lib/errors";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import { queryKeys } from "@/lib/query/queryKeys";
-import {
-  isCollectedStationGroupBinding,
-  type StationGroupBinding,
-  type UpsertStationGroupBindingInput,
-} from "@/lib/types/groupFacts";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import {
   stationProxyModeLabels,
@@ -67,14 +61,12 @@ import {
   type RemoteCreateInput,
 } from "./pages/add-provider/formModel";
 import {
-  buildSavedGroupOptionForSelect,
   collectRemoteGroupOptions,
   dedupeGroupRows,
   findReusableDefaultKey,
   groupBindingsToCurrentOptions,
   groupBindingsToDrafts,
   groupDraftToOption,
-  groupRowHasMeaningfulContent,
   groupsMatch,
   keyToDraft,
   mergeGroupRowsWithSavedOptions,
@@ -82,7 +74,6 @@ import {
   mergeRemoteGroupOptions,
   normalizeCollectionIntervalMinutes,
   parseCreditPerCny,
-  parseOptionalRateMultiplier,
   remoteKeyDisplayName,
   remoteLocalKeyNote,
   resolveRemoteCreatedLocalKeyIds,
@@ -90,6 +81,7 @@ import {
   validateGroupRows,
   validateKeyRows,
 } from "./pages/add-provider/keyGroupModel";
+import { saveGroupRows, saveKeyRows } from "./pages/add-provider/saveController";
 
 type AddProviderPageProps = {
   stationId?: string | null;
@@ -97,162 +89,6 @@ type AddProviderPageProps = {
   onCreated?: () => void;
   onUpdated?: () => void;
 };
-
-async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
-  validateKeyRows(rows);
-
-  await Promise.all(
-    rows
-      .filter((row) => row.id && row.deleteRequested)
-      .map((row) => deleteStationKey(row.id ?? "")),
-  );
-
-  const visibleRows = rows
-    .filter((row) => !row.deleteRequested)
-    .filter((row) => row.id || row.apiKey.trim());
-
-  for (const [priority, row] of visibleRows.entries()) {
-    const rateMultiplier = parseOptionalRateMultiplier(row.rateMultiplier);
-    const rateFields = row.rateMultiplier.trim()
-      ? { rateMultiplier, rateSource: "manual" as const }
-      : {};
-    const input = {
-      stationId: targetStationId,
-      name: row.name.trim(),
-      enabled: row.enabled,
-      priority,
-      groupBindingId: row.groupBindingId,
-      groupIdHash: row.groupIdHash,
-      groupName: row.groupName.trim() ? row.groupName.trim() : null,
-      tierLabel: null,
-      balanceScope: "station_key",
-      note: row.note.trim() ? row.note.trim() : null,
-      ...rateFields,
-    };
-
-    if (row.id) {
-      await updateStationKey({
-        ...input,
-        id: row.id,
-        apiKey: row.apiKey.trim() ? row.apiKey.trim() : null,
-        status: "unchecked",
-      });
-      continue;
-    }
-
-    if (!row.apiKey.trim()) {
-      continue;
-    }
-
-    await createStationKey({
-      ...input,
-      apiKey: row.apiKey.trim(),
-    });
-  }
-}
-
-async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[], creditPerCny = 1) {
-  validateGroupRows(rows);
-  const savedOptions: StationKeyGroupOption[] = [];
-  const existingBindings = await listStationGroupBindings(targetStationId);
-
-  for (const row of rows) {
-    if (!groupRowHasMeaningfulContent(row)) {
-      continue;
-    }
-
-    if (row.deleteRequested) {
-      await disableMatchingGroupBindings(targetStationId, row, existingBindings);
-      continue;
-    }
-
-    const groupName = row.groupName.trim();
-    const groupKeyHash = resolveGroupKeyHash(row);
-    const rateMultiplier = parseOptionalRateMultiplier(row.rateMultiplier);
-    if (!groupName && !row.groupBindingId) {
-      continue;
-    }
-
-    const input: UpsertStationGroupBindingInput = {
-      stationId: targetStationId,
-      stationKeyId: null,
-      bindingKind: "station_group",
-      parentGroupBindingId: null,
-      groupKeyHash,
-      groupIdHash: row.groupIdHash,
-      groupName: groupName || row.groupName,
-      bindingStatus: "available",
-      defaultRateMultiplier: row.source === "remote" ? rateMultiplier : null,
-      userRateMultiplier: row.source === "manual" ? rateMultiplier : null,
-      effectiveRateMultiplier: rateMultiplier,
-      inferredGroupCategory: row.inferredGroupCategory,
-      groupCategoryOverride: row.groupCategoryOverride,
-      rateSource: row.source === "remote" ? "remote_scan" : "manual",
-      confidence: row.source === "remote" ? 0.95 : 1,
-      lastSeenAt: row.source === "remote" ? new Date().toISOString() : null,
-      rawJsonRedacted: null,
-    };
-    const saved = await upsertStationGroupBinding(input);
-    savedOptions.push(buildSavedGroupOptionForSelect(saved, creditPerCny));
-  }
-
-  return savedOptions;
-}
-
-async function disableMatchingGroupBindings(
-  targetStationId: string,
-  row: StationGroupDraft,
-  existingBindings: StationGroupBinding[],
-) {
-  const bindingsToDisable = existingBindings
-    .filter(isCollectedStationGroupBinding)
-    .filter((binding) => groupBindingMatchesDraft(binding, row));
-  for (const binding of bindingsToDisable) {
-    await upsertStationGroupBinding({
-      stationId: targetStationId,
-      stationKeyId: null,
-      bindingKind: "station_group",
-      parentGroupBindingId: binding.parentGroupBindingId,
-      groupKeyHash: binding.groupKeyHash,
-      groupIdHash: binding.groupIdHash,
-      groupName: binding.groupName,
-      bindingStatus: "disabled",
-      defaultRateMultiplier: null,
-      userRateMultiplier: null,
-      effectiveRateMultiplier: null,
-      inferredGroupCategory: binding.inferredGroupCategory,
-      groupCategoryOverride: binding.groupCategoryOverride,
-      rateSource: binding.rateSource,
-      confidence: binding.confidence,
-      lastSeenAt: binding.lastSeenAt,
-      rawJsonRedacted: binding.rawJsonRedacted,
-    });
-  }
-}
-
-function groupBindingMatchesDraft(binding: StationGroupBinding, row: StationGroupDraft) {
-  const rowName = row.groupName.trim();
-  return Boolean(
-    (row.groupBindingId && binding.id === row.groupBindingId) ||
-      (row.groupIdHash && binding.groupIdHash === row.groupIdHash) ||
-      (rowName && binding.groupName.trim() === rowName),
-  );
-}
-
-function resolveGroupKeyHash(row: StationGroupDraft) {
-  if (row.groupKeyHash.trim()) {
-    return row.groupKeyHash.trim();
-  }
-  if (row.groupIdHash) {
-    return `remote:${row.groupIdHash}`;
-  }
-  return buildManualGroupKeyHash(row.groupName);
-}
-
-function buildManualGroupKeyHash(groupName: string) {
-  const normalizedName = groupName.trim().toLowerCase();
-  return `manual:${encodeURIComponent(normalizedName || "unnamed")}`;
-}
 
 export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: AddProviderPageProps) {
   const toast = useToast();
