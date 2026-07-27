@@ -1,4 +1,3 @@
-use base64::{engine::general_purpose, Engine as _};
 use http::{header, HeaderValue, Method};
 use serde::Serialize;
 use serde_json::Value;
@@ -12,6 +11,7 @@ use std::{
 };
 use tauri::{ipc::Channel, Manager, State};
 
+pub(crate) mod ccswitch_import;
 pub(crate) mod change_events;
 pub(crate) mod channel_monitoring;
 pub(crate) mod channel_status;
@@ -40,9 +40,8 @@ use crate::{
     application::{
         command_facades::{
             CaptureCommandError, CaptureCommandFacade, DataDirectoryCommandError,
-            EndpointPingCommandError, LocalProxyCommandError, LocalProxyCommandFacade,
-            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
-            StationKeyConnectivityProbeTarget,
+            EndpointPingCommandError, LocalProxyCommandError, StationKeyConnectivityCommandError,
+            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -63,7 +62,6 @@ use crate::{
     },
     ipc::dto::{
         operations::OperationStartedDto,
-        settings::CcswitchImportResultDto,
         station_collector_operations::{
             CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
             CollectorRunResultDto,
@@ -75,10 +73,7 @@ use crate::{
         },
         EmptyInputDto,
     },
-    models::{
-        proxy::{ProxyStatus, UpstreamApiFormat},
-        routing::StationKeyCapabilities,
-    },
+    models::{proxy::UpstreamApiFormat, routing::StationKeyCapabilities},
     observability::correlation,
     outbound::{
         AsyncOutboundClient, OutboundFailure, OutboundFailureKind, OutboundHeaderPolicy,
@@ -454,51 +449,6 @@ fn is_supported_database_file(path: &std::path::Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == DATABASE_FILE || name == DATABASE_FILE_V2)
-}
-
-#[tauri::command]
-pub async fn import_relay_pool_to_ccswitch(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<CcswitchImportResultDto, error::CommandError> {
-    correlation::in_command_scope("import_relay_pool_to_ccswitch", async {
-        EmptyInputDto::parse(input)?;
-        let target = facade
-            .import_relay_pool_to_ccswitch()
-            .await
-            .map_err(public_local_proxy_error)?;
-        let (result, deeplink) =
-            prepare_ccswitch_import(&target.local_access_key, &target.proxy_status);
-
-        open_url_with_system(&deeplink)?;
-
-        Ok(result)
-    })
-    .await
-}
-
-fn prepare_ccswitch_import(
-    local_access_key: &str,
-    status: &ProxyStatus,
-) -> (CcswitchImportResultDto, String) {
-    let endpoint = format!("http://{}:{}/v1", status.bind_addr, status.port);
-    let homepage = format!("http://{}:{}", status.bind_addr, status.port);
-    let provider_name = "Relay Pool Desktop".to_string();
-    let deeplink = build_ccswitch_provider_deeplink(
-        "codex",
-        &provider_name,
-        &homepage,
-        &endpoint,
-        local_access_key,
-    );
-    (
-        CcswitchImportResultDto {
-            app: "codex".to_string(),
-            provider_name,
-            endpoint,
-        },
-        deeplink,
-    )
 }
 
 fn command_application_error(error: ApplicationError) -> error::CommandError {
@@ -1149,73 +1099,6 @@ fn capture_script(
 }})();
 "#
     )
-}
-
-fn build_ccswitch_provider_deeplink(
-    app: &str,
-    provider_name: &str,
-    homepage: &str,
-    endpoint: &str,
-    api_key: &str,
-) -> String {
-    let usage_script = general_purpose::STANDARD.encode(build_ccswitch_usage_script());
-    let mut entries = vec![
-        ("resource", "provider".to_string()),
-        ("app", app.to_string()),
-        ("name", provider_name.to_string()),
-        ("homepage", homepage.to_string()),
-        ("endpoint", endpoint.to_string()),
-        ("apiKey", api_key.to_string()),
-        ("configFormat", "json".to_string()),
-        ("usageEnabled", "true".to_string()),
-        ("usageScript", usage_script),
-        ("usageAutoInterval", "30".to_string()),
-        ("enabled", "true".to_string()),
-    ];
-    if app == "codex" {
-        entries.insert(2, ("model", "gpt-5.4".to_string()));
-    }
-
-    let query = entries
-        .into_iter()
-        .map(|(key, value)| format!("{}={}", encode_query_param(key), encode_query_param(&value)))
-        .collect::<Vec<_>>()
-        .join("&");
-
-    format!("ccswitch://v1/import?{query}")
-}
-
-fn build_ccswitch_usage_script() -> &'static str {
-    r#"({
-    request: {
-      url: "{{baseUrl}}/usage",
-      method: "GET",
-      headers: { "Authorization": "Bearer {{apiKey}}" }
-    },
-    extractor: function(response) {
-      const remaining = response?.remaining ?? response?.quota?.remaining ?? response?.balance;
-      const unit = response?.unit ?? response?.quota?.unit ?? "USD";
-      return {
-        isValid: response?.is_active ?? response?.isValid ?? true,
-        remaining,
-        unit
-      };
-    }
-  })"#
-}
-
-fn encode_query_param(value: &str) -> String {
-    let mut output = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                output.push(byte as char);
-            }
-            b' ' => output.push('+'),
-            _ => output.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    output
 }
 
 struct SystemUrlLauncher {
@@ -2356,7 +2239,7 @@ mod tests {
 
     #[test]
     fn ccswitch_deeplink_matches_sub2api_codex_import_shape() {
-        let deeplink = build_ccswitch_provider_deeplink(
+        let deeplink = ccswitch_import::build_ccswitch_provider_deeplink(
             "codex",
             "Relay Pool Desktop",
             "http://127.0.0.1:8787",
@@ -2380,7 +2263,7 @@ mod tests {
 
     #[test]
     fn ccswitch_import_uses_v2_local_access_key_before_building_deeplink() {
-        let status = ProxyStatus {
+        let status = crate::models::proxy::ProxyStatus {
             running: true,
             lifecycle: crate::models::proxy::ProxyLifecycle::Running,
             bind_addr: "127.0.0.1".to_string(),
@@ -2392,9 +2275,12 @@ mod tests {
         };
 
         let local_access_key = "sk-v2-test";
-        let (_, deeplink) = prepare_ccswitch_import(local_access_key, &status);
+        let (_, deeplink) = ccswitch_import::prepare_ccswitch_import(local_access_key, &status);
 
-        assert!(deeplink.contains(&format!("apiKey={}", encode_query_param(local_access_key))));
+        assert!(deeplink.contains(&format!(
+            "apiKey={}",
+            ccswitch_import::encode_query_param(local_access_key)
+        )));
     }
 
     #[test]
