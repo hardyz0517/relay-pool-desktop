@@ -6,6 +6,7 @@ import { providerPresets } from "../../providerPresets";
 import { createDefaultProviderForm } from "./formModel";
 import {
   ProviderConnectionSection,
+  ProviderGroupsSection,
   ProviderOptionsSection,
   ProviderPresetSection,
 } from "./AddProviderSections";
@@ -91,6 +92,44 @@ describe("AddProviderSections", () => {
     await act(async () => copyButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
     expect(onCopyWebsiteUrl).toHaveBeenCalledOnce();
+
+    await act(async () => root.unmount());
+  });
+
+  it("delegates group toolbar actions to page handlers", async () => {
+    const onAddGroup = vi.fn();
+    const onSyncRemoteGroups = vi.fn();
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () =>
+      root.render(
+        <ProviderGroupsSection
+          developerModeEnabled={false}
+          disabled={false}
+          remoteCapabilityUnavailableReason={null}
+          remoteLoading={false}
+          rows={[]}
+          scanRemoteDisabled={false}
+          onAddGroup={onAddGroup}
+          onRowsChange={vi.fn()}
+          onSyncRemoteGroups={onSyncRemoteGroups}
+        />,
+      ),
+    );
+
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>("button")];
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("同步远端分组"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    await act(async () =>
+      buttons.find((button) => button.textContent?.includes("添加分组"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+
+    expect(onSyncRemoteGroups).toHaveBeenCalledOnce();
+    expect(onAddGroup).toHaveBeenCalledOnce();
 
     await act(async () => root.unmount());
   });

@@ -35,7 +35,6 @@ import {
 } from "./components/StationKeyRowsEditor";
 import {
   createEmptyStationGroupDraft,
-  StationGroupRowsEditor,
   type StationGroupDraft,
 } from "./components/StationGroupRowsEditor";
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
@@ -44,6 +43,7 @@ import { normalizeStationGroupOptions } from "./groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 import {
   ProviderConnectionSection,
+  ProviderGroupsSection,
   ProviderOptionsSection,
   ProviderPresetSection,
 } from "./pages/add-provider/AddProviderSections";
@@ -850,46 +850,24 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
               onTestConnection={handleTestConnection}
             />
 
-            <SectionCard
-              title="分组"
-              action={
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    disabled={scanRemoteDisabled}
-                    size="sm"
-                    title={remoteCapabilityUnavailableReason ?? undefined}
-                    variant="outline"
-                    onClick={() => void handleSyncRemoteGroups()}
-                  >
-                    <RefreshCw className={cn("h-3.5 w-3.5", remoteLoading && "animate-spin")} />
-                    同步远端分组
-                  </Button>
-                  <Button
-                    disabled={saving || loading}
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setGroupRows((currentRows) =>
-                        dedupeGroupRows([
-                          ...currentRows,
-                          createEmptyStationGroupDraft(currentRows.length),
-                        ]),
-                      )
-                    }
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    添加分组
-                  </Button>
-                </div>
+            <ProviderGroupsSection
+              developerModeEnabled={developerModeEnabled}
+              disabled={saving || loading}
+              remoteCapabilityUnavailableReason={remoteCapabilityUnavailableReason}
+              remoteLoading={remoteLoading}
+              rows={groupRows}
+              scanRemoteDisabled={scanRemoteDisabled}
+              onAddGroup={() =>
+                setGroupRows((currentRows) =>
+                  dedupeGroupRows([
+                    ...currentRows,
+                    createEmptyStationGroupDraft(currentRows.length),
+                  ]),
+                )
               }
-            >
-              <StationGroupRowsEditor
-                developerModeEnabled={developerModeEnabled}
-                disabled={saving || loading}
-                rows={groupRows}
-                onRowsChange={(rows) => setGroupRows(dedupeGroupRows(rows))}
-              />
-            </SectionCard>
+              onRowsChange={(rows) => setGroupRows(dedupeGroupRows(rows))}
+              onSyncRemoteGroups={() => void handleSyncRemoteGroups()}
+            />
 
             <SectionCard
               title="密钥"

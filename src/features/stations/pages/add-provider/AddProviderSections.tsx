@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Check, LogIn, ShieldCheck } from "lucide-react";
+import { Check, LogIn, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { Button, SectionCard, SelectControl } from "@/components/ui";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
@@ -10,6 +10,7 @@ import {
 } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import { providerPresets, type ProviderPresetId } from "../../providerPresets";
+import { StationGroupRowsEditor, type StationGroupDraft } from "../../components/StationGroupRowsEditor";
 import { inputClassName, type AddProviderFormState, type ConnectionTestState } from "./formModel";
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -213,6 +214,66 @@ export function ProviderConnectionSection({
           {error}
         </div>
       )}
+    </SectionCard>
+  );
+}
+
+type ProviderGroupsSectionProps = {
+  developerModeEnabled: boolean;
+  disabled: boolean;
+  remoteCapabilityUnavailableReason: string | null;
+  remoteLoading: boolean;
+  rows: StationGroupDraft[];
+  scanRemoteDisabled: boolean;
+  onAddGroup: () => void;
+  onRowsChange: (rows: StationGroupDraft[]) => void;
+  onSyncRemoteGroups: () => void;
+};
+
+export function ProviderGroupsSection({
+  developerModeEnabled,
+  disabled,
+  remoteCapabilityUnavailableReason,
+  remoteLoading,
+  rows,
+  scanRemoteDisabled,
+  onAddGroup,
+  onRowsChange,
+  onSyncRemoteGroups,
+}: ProviderGroupsSectionProps) {
+  return (
+    <SectionCard
+      title="分组"
+      action={
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            disabled={scanRemoteDisabled}
+            size="sm"
+            title={remoteCapabilityUnavailableReason ?? undefined}
+            variant="outline"
+            onClick={onSyncRemoteGroups}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", remoteLoading && "animate-spin")} />
+            同步远端分组
+          </Button>
+          <Button
+            disabled={disabled}
+            size="sm"
+            variant="outline"
+            onClick={onAddGroup}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            添加分组
+          </Button>
+        </div>
+      }
+    >
+      <StationGroupRowsEditor
+        developerModeEnabled={developerModeEnabled}
+        disabled={disabled}
+        rows={rows}
+        onRowsChange={onRowsChange}
+      />
     </SectionCard>
   );
 }
