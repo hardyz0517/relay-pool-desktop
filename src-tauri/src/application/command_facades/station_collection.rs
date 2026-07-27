@@ -78,6 +78,17 @@ impl StationCollectionCommandFacade {
             .map_err(StationCollectionCommandError::Prepare)?;
         let prepared = match prepared {
             collectors::PreparedStationCollectionRoute::Legacy(prepared) => prepared,
+            collectors::PreparedStationCollectionRoute::Sub2Api(prepared) => {
+                collectors::finish_sub2api_collection_v2(
+                    self.providers.as_ref(),
+                    &self.outbound,
+                    prepared,
+                    tokio_util::sync::CancellationToken::new(),
+                    current_correlation_id(),
+                )
+                .await
+                .map_err(StationCollectionCommandError::Prepare)?
+            }
             collectors::PreparedStationCollectionRoute::OpenAiCompatible(prepared) => {
                 collectors::finish_openai_compatible_collection_v2(
                     self.providers.as_ref(),

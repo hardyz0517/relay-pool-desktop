@@ -1596,10 +1596,17 @@ async fn build_json_request(
         None => Vec::new(),
     };
     if authenticated {
-        let ProviderAuthContext::NewApi {
-            user_id,
-            secret_purpose,
-        } = newapi_auth(context)?;
+        let (user_id, secret_purpose) = match newapi_auth(context)? {
+            ProviderAuthContext::NewApi {
+                user_id,
+                secret_purpose,
+            } => (user_id, secret_purpose),
+            ProviderAuthContext::Sub2Api { .. } => {
+                return Err(invalid_request(
+                    "NewAPI auth context has the wrong provider",
+                ));
+            }
+        };
         headers
             .insert_public(
                 NEW_API_USER_HEADER,
@@ -1665,7 +1672,14 @@ fn newapi_auth(context: &CollectorContext<'_>) -> Result<ProviderAuthContext, Dr
 }
 
 fn newapi_expected_user_id(context: &CollectorContext<'_>) -> Result<String, DriverFailure> {
-    let ProviderAuthContext::NewApi { user_id, .. } = newapi_auth(context)?;
+    let user_id = match newapi_auth(context)? {
+        ProviderAuthContext::NewApi { user_id, .. } => user_id,
+        ProviderAuthContext::Sub2Api { .. } => {
+            return Err(invalid_request(
+                "NewAPI auth context has the wrong provider",
+            ));
+        }
+    };
     let trimmed = user_id.trim();
     if trimmed.is_empty() {
         return Err(invalid_request("NewAPI user id is missing"));

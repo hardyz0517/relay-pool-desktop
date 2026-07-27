@@ -1,5 +1,6 @@
 pub mod newapi;
 pub mod openai_compatible;
+pub mod sub2api;
 
 use std::sync::Arc;
 
@@ -10,12 +11,23 @@ use crate::services::collectors::contract::{
 
 pub fn static_provider_entries() -> Vec<ProviderEntry> {
     vec![
-        ProviderEntry::unsupported(ProviderDescriptor {
-            kind: ProviderKind::Sub2Api,
-            display_name: "Sub2API",
-            station_types: &["sub2api"],
-            capabilities: DriverCapabilities::none(),
-        }),
+        ProviderEntry {
+            descriptor: ProviderDescriptor {
+                kind: ProviderKind::Sub2Api,
+                display_name: "Sub2API",
+                station_types: &["sub2api"],
+                capabilities: DriverCapabilities {
+                    collector: Some(CollectorCapabilityDescriptor {
+                        supported_tasks: sub2api::SUPPORTED_COLLECTOR_TASKS,
+                    }),
+                    remote_key: None,
+                    authorization: None,
+                },
+            },
+            collector: Some(Arc::new(sub2api::Sub2ApiCollectorDriver)),
+            remote_key: None,
+            authorization: None,
+        },
         ProviderEntry {
             descriptor: ProviderDescriptor {
                 kind: ProviderKind::NewApi,

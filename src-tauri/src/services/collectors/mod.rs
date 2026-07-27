@@ -246,12 +246,14 @@ struct LoginTestAttempt {
 
 pub(crate) enum PreparedStationCollectionRoute {
     Legacy(PreparedStationCollection),
+    Sub2Api(PreparedSub2ApiCollection),
     OpenAiCompatible(PreparedOpenAiCompatibleCollection),
     NewApi(PreparedNewApiCollection),
 }
 
 pub(crate) enum PreparedStationTaskRoute {
     Legacy((String, i64, adapters::AdapterOutput)),
+    Sub2Api(PreparedSub2ApiCollection),
     OpenAiCompatible(PreparedOpenAiCompatibleCollection),
     NewApi(PreparedNewApiCollection),
 }
@@ -293,6 +295,56 @@ pub(crate) struct PreparedNewApiDriverCollection {
     secret_accessor: StaticSecretAccessor,
 }
 
+pub(crate) enum PreparedSub2ApiCollection {
+    Driver(PreparedSub2ApiDriverCollection),
+}
+
+pub(crate) struct PreparedSub2ApiDriverCollection {
+    station_id: String,
+    endpoint_revision: i64,
+    task: adapters::CollectorTask,
+    driver_tasks: Vec<adapters::CollectorTask>,
+    enabled_key_count: usize,
+    api_base_url: String,
+    website_url: String,
+    proxy: ProxyPolicy,
+    credential_handle: contract::OpaqueCredentialHandle,
+    auth_context: contract::ProviderAuthContext,
+    secret_accessor: MultiSecretAccessor,
+}
+
+struct SecretRecord {
+    handle: contract::OpaqueCredentialHandle,
+    purpose: contract::CredentialSecretPurpose,
+    secret: String,
+}
+
+struct MultiSecretAccessor {
+    records: Vec<SecretRecord>,
+}
+
+impl contract::DriverSecretAccessor for MultiSecretAccessor {
+    fn resolve_secret<'a>(
+        &'a self,
+        handle: &'a contract::OpaqueCredentialHandle,
+        purpose: contract::CredentialSecretPurpose,
+    ) -> BoxFuture<'a, Result<contract::CredentialSecret, failure::DriverFailure>> {
+        async move {
+            let Some(record) = self
+                .records
+                .iter()
+                .find(|record| record.purpose == purpose && &record.handle == handle)
+            else {
+                return Err(failure::DriverFailure::unsupported(
+                    "credential handle is not available to this driver context",
+                ));
+            };
+            Ok(contract::CredentialSecret::new(record.secret.clone()))
+        }
+        .boxed()
+    }
+}
+
 struct StaticSecretAccessor {
     expected: contract::OpaqueCredentialHandle,
     purpose: contract::CredentialSecretPurpose,
@@ -329,6 +381,10 @@ pub(crate) fn prepare_station_collection_route_v2(
     let adapter = adapter_name_for_station_type(&station.station_type)
         .map_err(|_| ApplicationError::ConstraintViolation)?
         .to_string();
+    if adapter == "sub2api" {
+        return prepare_sub2api_collection_v2(source, data_key, station, task)
+            .map(PreparedStationCollectionRoute::Sub2Api);
+    }
     if adapter == "newapi" {
         return prepare_newapi_collection_v2(source, data_key, station, task)
             .map(PreparedStationCollectionRoute::NewApi);
@@ -353,6 +409,10 @@ pub(crate) fn prepare_station_task_route_v2(
     let adapter = adapter_name_for_station_type(&station.station_type)
         .map_err(|_| ApplicationError::ConstraintViolation)?
         .to_string();
+    if adapter == "sub2api" {
+        return prepare_sub2api_collection_v2(source, data_key, station, task)
+            .map(PreparedStationTaskRoute::Sub2Api);
+    }
     if adapter == "newapi" {
         return prepare_newapi_collection_v2(source, data_key, station, task)
             .map(PreparedStationTaskRoute::NewApi);
@@ -480,6 +540,150 @@ fn prepare_openai_compatible_collection_v2(
                 purpose: contract::CredentialSecretPurpose::AuthorizationHeader,
                 secret: api_key,
             },
+        },
+    ))
+}
+
+fn prepare_sub2api_collection_v2(
+    source: &dyn CollectorSourcePort,
+    data_key: &[u8; 32],
+    station: Station,
+    task: adapters::CollectorTask,
+) -> Result<PreparedSub2ApiCollection, ApplicationError> {
+    let station_id = station.id.clone();
+    let driver_tasks = if task == adapters::CollectorTask::Full {
+        full_child_tasks("sub2api")
+    } else {
+        vec![task]
+    };
+    if driver_tasks.is_empty() || driver_tasks.len() > 3 {
+        return Err(ApplicationError::ConstraintViolation);
+    }
+
+    let keys = source
+        .list_station_keys(station_id.clone())
+        .map_err(|_| ApplicationError::Internal)?;
+    let enabled_key_count = keys.iter().filter(|key| key.enabled).count();
+    let mut records = Vec::new();
+    let mut station_key_credentials = Vec::new();
+    for key in keys
+        .into_iter()
+        .filter(|key| key.enabled && key.api_key_present)
+    {
+        let handle = contract::OpaqueCredentialHandle {
+            station_id: key.id.clone(),
+            credential_revision: station.endpoint_revision,
+            scope: contract::CredentialScope::StationKey,
+        };
+        if let Ok(secret) = source.resolve_station_key_secret_with_data_key(data_key, &key.id) {
+            records.push(SecretRecord {
+                handle: handle.clone(),
+                purpose: contract::CredentialSecretPurpose::AuthorizationHeader,
+                secret,
+            });
+        }
+        station_key_credentials.push(contract::Sub2ApiStationKeyCredential {
+            station_key_id: key.id,
+            credential: handle,
+        });
+    }
+
+    let session = source
+        .resolve_station_session_with_data_key(
+            station_id.clone(),
+            data_key,
+            crate::services::time::now_millis_for_services() as i64,
+        )
+        .map_err(|_| ApplicationError::Internal)?;
+    let access_token_handle = session
+        .access_token
+        .filter(|token| !token.trim().is_empty())
+        .map(|token| {
+            let handle = contract::OpaqueCredentialHandle {
+                station_id: station_id.clone(),
+                credential_revision: station.endpoint_revision,
+                scope: contract::CredentialScope::LoginSession,
+            };
+            records.push(SecretRecord {
+                handle: handle.clone(),
+                purpose: contract::CredentialSecretPurpose::SessionCookie,
+                secret: token,
+            });
+            handle
+        });
+
+    let credentials = source
+        .get_station_credentials(station_id.clone())
+        .map_err(|_| ApplicationError::Internal)?;
+    let login = credentials
+        .login_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|username| !username.is_empty())
+        .and_then(|username| {
+            if !credentials.password_present {
+                return None;
+            }
+            let password = source
+                .get_station_login_password_with_data_key(station_id.clone(), data_key)
+                .ok()
+                .flatten()?;
+            if password.trim().is_empty() {
+                return None;
+            }
+            let handle = contract::OpaqueCredentialHandle {
+                station_id: station_id.clone(),
+                credential_revision: station.endpoint_revision,
+                scope: contract::CredentialScope::LoginPassword,
+            };
+            records.push(SecretRecord {
+                handle: handle.clone(),
+                purpose: contract::CredentialSecretPurpose::LoginPassword,
+                secret: password,
+            });
+            Some(contract::Sub2ApiLoginCredential {
+                username: username.to_string(),
+                password: handle,
+            })
+        });
+
+    let settings = source
+        .get_settings()
+        .map_err(|_| ApplicationError::Internal)?;
+    let proxy = crate::services::outbound::resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    );
+    let proxy =
+        proxy_policy_from_collector_config(proxy).map_err(|_| ApplicationError::Internal)?;
+    let credential_handle =
+        access_token_handle
+            .clone()
+            .unwrap_or_else(|| contract::OpaqueCredentialHandle {
+                station_id: station_id.clone(),
+                credential_revision: station.endpoint_revision,
+                scope: contract::CredentialScope::LoginSession,
+            });
+    Ok(PreparedSub2ApiCollection::Driver(
+        PreparedSub2ApiDriverCollection {
+            station_id,
+            endpoint_revision: station.endpoint_revision,
+            task,
+            driver_tasks,
+            enabled_key_count,
+            api_base_url: station.api_base_url,
+            website_url: station.website_url,
+            proxy,
+            credential_handle,
+            auth_context: contract::ProviderAuthContext::Sub2Api {
+                station_keys: station_key_credentials,
+                access_token: access_token_handle,
+                login,
+                credit_per_cny: station.credit_per_cny,
+            },
+            secret_accessor: MultiSecretAccessor { records },
         },
     ))
 }
@@ -655,6 +859,93 @@ pub(crate) async fn finish_openai_compatible_collection_v2(
             })
         }
     }
+}
+
+pub(crate) async fn finish_sub2api_collection_v2(
+    registry: &orchestration::ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedSub2ApiCollection,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedStationCollection, ApplicationError> {
+    match prepared {
+        PreparedSub2ApiCollection::Driver(prepared) => {
+            let driver = registry
+                .collector(contract::ProviderKind::Sub2Api)
+                .map_err(|_| ApplicationError::ConstraintViolation)?;
+            let context = contract::CollectorContext {
+                station: contract::StationIdentity {
+                    station_id: prepared.station_id.clone(),
+                    endpoint_revision: prepared.endpoint_revision,
+                    provider: contract::ProviderKind::Sub2Api,
+                },
+                endpoints: contract::ProviderEndpoints {
+                    api_base_url: Some(prepared.api_base_url),
+                    website_url: Some(prepared.website_url),
+                },
+                credential: prepared.credential_handle,
+                auth: Some(prepared.auth_context),
+                secrets: &prepared.secret_accessor,
+                outbound,
+                proxy: prepared.proxy,
+                budget: RequestBudget::from_now(Duration::from_secs(30)),
+                cancellation: cancellation_token,
+                correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
+            };
+            let outputs = prepared
+                .driver_tasks
+                .iter()
+                .copied()
+                .map(|child_task| {
+                    let driver_task = collector_task_kind(child_task)
+                        .ok_or(ApplicationError::ConstraintViolation)?;
+                    Ok((child_task, driver_task))
+                })
+                .collect::<Result<Vec<_>, ApplicationError>>()?;
+            let mut adapter_outputs = Vec::with_capacity(outputs.len());
+            for (child_task, driver_task) in outputs {
+                let output = driver
+                    .collect(&context, driver_task)
+                    .await
+                    .map(|output| driver_output_to_adapter_output("sub2api", child_task, output))
+                    .unwrap_or_else(|failure| {
+                        driver_failure_to_adapter_output("sub2api", child_task, failure)
+                    });
+                adapter_outputs.push(output);
+            }
+            Ok(PreparedStationCollection {
+                station_id: prepared.station_id,
+                endpoint_revision: prepared.endpoint_revision,
+                adapter: "sub2api".to_string(),
+                task: prepared.task,
+                outputs: adapter_outputs,
+                enabled_key_count: prepared.enabled_key_count,
+            })
+        }
+    }
+}
+
+pub(crate) async fn finish_sub2api_task_v2(
+    registry: &orchestration::ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedSub2ApiCollection,
+    cancellation_token: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<(String, i64, adapters::AdapterOutput), ApplicationError> {
+    let prepared = finish_sub2api_collection_v2(
+        registry,
+        outbound,
+        prepared,
+        cancellation_token,
+        correlation_id,
+    )
+    .await?;
+    let output = prepared
+        .outputs
+        .into_iter()
+        .next()
+        .ok_or(ApplicationError::ConstraintViolation)?;
+    Ok((prepared.station_id, prepared.endpoint_revision, output))
 }
 
 pub(crate) async fn finish_openai_compatible_task_v2(
@@ -1277,14 +1568,19 @@ fn format_balance_label(value: f64, currency: &str) -> String {
 }
 
 fn dispatch_adapter_output(
-    source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
-    station_id: &str,
+    _source: &dyn CollectorSourcePort,
+    _data_key: &[u8; 32],
+    _station_id: &str,
     adapter: &str,
     task: adapters::CollectorTask,
 ) -> adapters::AdapterOutput {
     let result = match adapter {
-        "sub2api" => adapters::sub2api::collect(source, data_key, station_id, task),
+        "sub2api" => Ok(manual_required_output_for_adapter(
+            "sub2api",
+            task,
+            "async_driver_required",
+            "Sub2API 采集必须通过 capability driver 执行。",
+        )),
         "newapi" => Ok(manual_required_output_for_adapter(
             "newapi",
             task,

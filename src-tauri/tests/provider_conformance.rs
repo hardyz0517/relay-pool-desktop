@@ -97,6 +97,7 @@ mod outbound {
 
     pub struct OutboundEvidence {
         pub final_url: String,
+        pub retry_after: Option<Duration>,
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -212,6 +213,38 @@ mod models {
             Unbound,
         }
     }
+
+    pub mod station_keys {
+        #[derive(Debug, Clone)]
+        pub struct StationKey {
+            pub id: String,
+            pub station_id: String,
+            pub name: String,
+            pub api_key_masked: String,
+            pub api_key_present: bool,
+            pub enabled: bool,
+            pub priority: i64,
+            pub max_concurrency: i64,
+            pub load_factor: Option<i64>,
+            pub schedulable: bool,
+            pub group_name: Option<String>,
+            pub tier_label: Option<String>,
+            pub group_binding_id: Option<String>,
+            pub group_id_hash: Option<String>,
+            pub rate_multiplier: Option<f64>,
+            pub manual_rate_multiplier: Option<f64>,
+            pub manual_rate_updated_at: Option<String>,
+            pub rate_source: Option<String>,
+            pub rate_collected_at: Option<String>,
+            pub balance_scope: Option<String>,
+            pub status: String,
+            pub last_checked_at: Option<String>,
+            pub last_used_at: Option<String>,
+            pub note: Option<String>,
+            pub created_at: String,
+            pub updated_at: String,
+        }
+    }
 }
 
 mod services {
@@ -322,6 +355,126 @@ mod services {
     }
 
     pub mod collectors {
+        pub mod adapters {
+            pub mod sub2api {
+                use serde_json::Value;
+
+                use crate::{
+                    models::station_keys::StationKey,
+                    services::collectors::facts::{
+                        CollectedBalanceFact, CollectedGroupFact, CollectorFacts,
+                    },
+                };
+
+                #[derive(Debug, Clone, Copy)]
+                pub struct DashboardUsageStats;
+
+                pub fn parse_group_rate_facts(
+                    station_id: &str,
+                    available: &Value,
+                    _rates: &Value,
+                    _credit_per_cny: f64,
+                ) -> CollectorFacts {
+                    let mut facts = CollectorFacts::default();
+                    if let Some(group_name) = available
+                        .pointer("/groups/0")
+                        .and_then(Value::as_str)
+                        .or_else(|| available.pointer("/data/0/name").and_then(Value::as_str))
+                    {
+                        facts.groups.push(CollectedGroupFact {
+                            station_id: station_id.to_string(),
+                            group_id: Some(group_name.to_string()),
+                            group_key_hash: format!("group:{group_name}"),
+                            group_name: group_name.to_string(),
+                            visibility: "available".to_string(),
+                            inferred_group_category: None,
+                            source: "sub2api_groups_available".to_string(),
+                            confidence: 0.9,
+                            raw_json_redacted: None,
+                        });
+                    }
+                    facts
+                }
+
+                pub fn add_single_group_key_bindings(
+                    _facts: &mut CollectorFacts,
+                    _keys: &[StationKey],
+                ) {
+                }
+
+                pub fn parse_usage_balance(
+                    station_id: &str,
+                    station_key_id: Option<String>,
+                    _payload: &Value,
+                    _credit_per_cny: f64,
+                ) -> CollectedBalanceFact {
+                    balance_fact(station_id, station_key_id, "station_key")
+                }
+
+                pub fn parse_account_balance(
+                    station_id: &str,
+                    _payload: &Value,
+                    _credit_per_cny: f64,
+                ) -> Option<CollectedBalanceFact> {
+                    Some(balance_fact(station_id, None, "station"))
+                }
+
+                pub fn merge_account_profile_balance(
+                    balances: &mut Vec<CollectedBalanceFact>,
+                    profile_balance: CollectedBalanceFact,
+                ) {
+                    balances.push(profile_balance);
+                }
+
+                pub fn parse_dashboard_usage_stats(
+                    _payload: &Value,
+                ) -> Option<DashboardUsageStats> {
+                    Some(DashboardUsageStats)
+                }
+
+                pub fn merge_dashboard_usage_stats(
+                    _balances: &mut Vec<CollectedBalanceFact>,
+                    _station_id: &str,
+                    _stats: DashboardUsageStats,
+                ) {
+                }
+
+                fn balance_fact(
+                    station_id: &str,
+                    station_key_id: Option<String>,
+                    scope: &str,
+                ) -> CollectedBalanceFact {
+                    CollectedBalanceFact {
+                        station_id: station_id.to_string(),
+                        station_key_id,
+                        scope: scope.to_string(),
+                        value: Some(1.0),
+                        used_value: None,
+                        total_value: None,
+                        today_request_count: None,
+                        total_request_count: None,
+                        today_consumption: None,
+                        total_consumption: None,
+                        today_base_consumption: None,
+                        total_base_consumption: None,
+                        today_token_count: None,
+                        total_token_count: None,
+                        today_input_token_count: None,
+                        today_output_token_count: None,
+                        total_input_token_count: None,
+                        total_output_token_count: None,
+                        account_concurrency_limit: None,
+                        currency: "CNY".to_string(),
+                        credit_unit: None,
+                        status: "normal".to_string(),
+                        source: "sub2api_usage".to_string(),
+                        confidence: 0.9,
+                        collected_at: None,
+                    }
+                }
+            }
+        }
+
         pub mod facts {
             include!(concat!(
                 env!("CARGO_MANIFEST_DIR"),

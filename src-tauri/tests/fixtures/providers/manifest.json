@@ -2,32 +2,376 @@
   "schemaVersion": 1,
   "cases": [
     {
-      "id": "sub2api-collector-unsupported",
+      "id": "sub2api-collector-success",
       "providerKind": "sub2api",
       "capability": "collector",
-      "scenario": "unsupported",
-      "endpointRole": "unknown",
+      "scenario": "success",
+      "endpointRole": "balance",
       "requestSchema": {
-        "kind": "none",
-        "reason": "Task 19.A registry entry does not declare a collector driver"
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "auth": "station-key bearer via Sub2API collector driver"
       },
       "responseSchema": {
-        "kind": "driver_failure",
-        "failureKind": "unsupported"
+        "status": 200,
+        "body": {
+          "quota": {
+            "remaining": 100,
+            "used": 20,
+            "total": 120
+          }
+        }
       },
       "redaction": {
         "status": "not_applicable",
         "secretCanaries": []
       },
       "source": {
-        "kind": "stage19a-registry-descriptor",
-        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
-        "provenance": "Static registry declares Sub2API with no collector capability until Task 20 cutover."
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API usage fixture for Task 21.A collector cutover."
       },
       "expected": {
-        "registryStatus": "unsupported",
-        "failureKind": "unsupported",
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "balances": [
+            "station_key"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sub2api-collector-partial",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "partial",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/v1/groups/available",
+          "/api/v1/groups/rates"
+        ],
+        "auth": "prepared access token"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "groups": [
+            "default"
+          ],
+          "rates": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic partial groups/rates fixture for Task 21.A collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "groups": [
+            "default"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sub2api-collector-auth-failure",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "auth_failure",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/available",
+        "auth": "stale access token without usable login refresh"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "message": "unauthorized"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic auth rejection fixture covering Sub2API collector session failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
         "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-rate-limit",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "rate_limit",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "auth": "station-key bearer"
+      },
+      "responseSchema": {
+        "status": 429,
+        "headers": {
+          "retry-after": "1"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic rate-limit fixture covering transient retry evidence."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-server-failure",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "server_failure",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/rates",
+        "auth": "prepared access token"
+      },
+      "responseSchema": {
+        "status": 502,
+        "body": {
+          "message": "bad gateway"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic upstream failure fixture covering Sub2API retry classification."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-malformed",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "malformed",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "auth": "station-key bearer"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": "not-json"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic malformed payload fixture covering invalid JSON retry cap."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-unknown-shape",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "unknown_shape",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/available",
+        "auth": "prepared access token"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic unknown-shape fixture covering no canonical group/rate facts."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-cancel",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "cancel",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "cancellation": "before upstream response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic cancellation fixture covering Sub2API collector cancellation propagation."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-budget-exhaustion",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/rates",
+        "budget": "expired before retry"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic budget fixture covering Sub2API request budget failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-stale-endpoint-revision",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "applyGuard": "prepared endpoint revision must match current station revision"
+      },
+      "responseSchema": {
+        "kind": "apply_rejected",
+        "failureKind": "stale_endpoint_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/mod.rs",
+        "provenance": "Synthetic stale revision fixture covering prepared revision apply guard."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-redaction",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "redaction",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/available",
+        "auth": "Bearer sk-p8-sub2api-secret-canary"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": [
+            {
+              "name": "default",
+              "token": "sk-p8-sub2api-secret-canary"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-sub2api-secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic redaction fixture covering bearer and payload secret canaries."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "groups": [
+            "default"
+          ]
+        }
       }
     },
     {

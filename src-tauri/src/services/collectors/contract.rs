@@ -134,12 +134,30 @@ pub enum CredentialSecretPurpose {
     LoginPassword,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ProviderAuthContext {
     NewApi {
         user_id: String,
         secret_purpose: CredentialSecretPurpose,
     },
+    Sub2Api {
+        station_keys: Vec<Sub2ApiStationKeyCredential>,
+        access_token: Option<OpaqueCredentialHandle>,
+        login: Option<Sub2ApiLoginCredential>,
+        credit_per_cny: f64,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sub2ApiStationKeyCredential {
+    pub station_key_id: String,
+    pub credential: OpaqueCredentialHandle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sub2ApiLoginCredential {
+    pub username: String,
+    pub password: OpaqueCredentialHandle,
 }
 
 pub struct CredentialSecret {

@@ -1473,7 +1473,7 @@ fn post_json_with_bearer(
     }
 }
 
-fn add_single_group_key_bindings(facts: &mut CollectorFacts, keys: &[StationKey]) {
+pub(crate) fn add_single_group_key_bindings(facts: &mut CollectorFacts, keys: &[StationKey]) {
     if facts.groups.len() != 1 {
         return;
     }
@@ -1724,7 +1724,7 @@ fn collect_account_profile_balance(
     Ok(None)
 }
 
-fn merge_account_profile_balance(
+pub(crate) fn merge_account_profile_balance(
     balances: &mut Vec<CollectedBalanceFact>,
     profile_balance: CollectedBalanceFact,
 ) {
@@ -1752,7 +1752,7 @@ fn merge_account_profile_balance(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct DashboardUsageStats {
+pub(crate) struct DashboardUsageStats {
     today_request_count: Option<i64>,
     total_request_count: Option<i64>,
     today_consumption: Option<f64>,
@@ -1768,7 +1768,7 @@ struct DashboardUsageStats {
 }
 
 impl DashboardUsageStats {
-    fn has_any(self) -> bool {
+    pub(crate) fn has_any(self) -> bool {
         self.today_request_count.is_some()
             || self.total_request_count.is_some()
             || self.today_consumption.is_some()
@@ -1783,7 +1783,7 @@ impl DashboardUsageStats {
             || self.total_output_token_count.is_some()
     }
 
-    fn apply_to(self, balance: &mut CollectedBalanceFact) {
+    pub(crate) fn apply_to(self, balance: &mut CollectedBalanceFact) {
         balance.today_request_count = self.today_request_count;
         balance.total_request_count = self.total_request_count;
         balance.today_consumption = self.today_consumption;
@@ -1859,7 +1859,7 @@ fn collect_dashboard_usage_stats(
     Ok(parse_dashboard_usage_stats(&payload))
 }
 
-fn parse_dashboard_usage_stats(payload: &Value) -> Option<DashboardUsageStats> {
+pub(crate) fn parse_dashboard_usage_stats(payload: &Value) -> Option<DashboardUsageStats> {
     let mut candidates = vec![payload];
     for pointer in ["/data", "/stats", "/data/stats"] {
         if let Some(candidate) = payload.pointer(pointer) {
@@ -1968,7 +1968,7 @@ fn parse_dashboard_usage_stats(payload: &Value) -> Option<DashboardUsageStats> {
     stats.has_any().then_some(stats)
 }
 
-fn merge_dashboard_usage_stats(
+pub(crate) fn merge_dashboard_usage_stats(
     balances: &mut Vec<CollectedBalanceFact>,
     station_id: &str,
     stats: DashboardUsageStats,
@@ -2071,7 +2071,7 @@ fn shared_balance_text_value<'a>(
         .then_some(first)
 }
 
-fn parse_account_balance(
+pub(crate) fn parse_account_balance(
     station_id: &str,
     payload: &Value,
     credit_per_cny: f64,
