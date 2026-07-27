@@ -12,6 +12,7 @@ use std::{
 };
 use tauri::{ipc::Channel, Manager, State};
 
+pub(crate) mod data_directory;
 pub(crate) mod data_recovery;
 pub(crate) mod error;
 pub(crate) mod runtime;
@@ -26,12 +27,11 @@ use crate::{
             CaptureCommandError, CaptureCommandFacade, ChangeEventsCommandFacade,
             ChannelMonitoringCommandFacade, ChannelStatusCommandFacade,
             CollectorMetadataCommandFacade, CredentialsCommandFacade, DataDirectoryCommandError,
-            DataDirectoryCommandFacade, EndpointPingCommandError, KeyPoolCommandFacade,
-            LocalProxyCommandError, LocalProxyCommandFacade, PricingCommandFacade,
-            RemoteKeysCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
-            StationCollectionCommandError, StationCollectionCommandFacade,
-            StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
-            StationKeyConnectivityProbeTarget,
+            EndpointPingCommandError, KeyPoolCommandFacade, LocalProxyCommandError,
+            LocalProxyCommandFacade, PricingCommandFacade, RemoteKeysCommandFacade,
+            RequestLogsCommandFacade, RoutingCommandFacade, StationCollectionCommandError,
+            StationCollectionCommandFacade, StationKeyConnectivityCommandError,
+            StationKeyConnectivityCommandFacade, StationKeyConnectivityProbeTarget,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -94,7 +94,7 @@ use crate::{
             DeleteModelAliasInputDto, EndpointPingResultDto, ReorderLocalRoutingKeysInputDto,
             UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
         },
-        settings::{CcswitchImportResultDto, OpenExternalUrlInputDto, SettingsDto},
+        settings::{CcswitchImportResultDto, OpenExternalUrlInputDto},
         station_collector_operations::{
             CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
@@ -608,38 +608,6 @@ fn capture_command_error(error: CaptureCommandError) -> error::CommandError {
         CaptureCommandError::Blocking(error) => public_blocking_executor_error(error),
         CaptureCommandError::Message(message) => message.into(),
     }
-}
-
-#[tauri::command]
-pub async fn choose_data_dir(
-    facade: State<'_, DataDirectoryCommandFacade>,
-    input: Value,
-) -> Result<SettingsDto, error::CommandError> {
-    correlation::in_command_scope("choose_data_dir", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .choose_data_dir()
-            .await
-            .map(SettingsDto::from)
-            .map_err(public_data_directory_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reset_data_dir(
-    facade: State<'_, DataDirectoryCommandFacade>,
-    input: Value,
-) -> Result<SettingsDto, error::CommandError> {
-    correlation::in_command_scope("reset_data_dir", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .reset_data_dir()
-            .await
-            .map(SettingsDto::from)
-            .map_err(public_command_application_error)
-    })
-    .await
 }
 
 #[tauri::command]
