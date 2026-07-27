@@ -168,13 +168,13 @@ macro_rules! ipc_command_registry {
             list_collector_snapshots => $crate::commands::collector_metadata::list_collector_snapshots,
             get_latest_collector_snapshot => $crate::commands::collector_metadata::get_latest_collector_snapshot,
             list_latest_collector_snapshots => $crate::commands::collector_metadata::list_latest_collector_snapshots,
-            start_capture_session => $crate::commands::start_capture_session,
-            get_capture_session_status => $crate::commands::get_capture_session_status,
-            record_capture_event => $crate::commands::record_capture_event,
-            finish_capture_session => $crate::commands::finish_capture_session,
-            finish_web_authorization_session => $crate::commands::finish_web_authorization_session,
-            clear_capture_session => $crate::commands::clear_capture_session,
-            close_capture_session => $crate::commands::close_capture_session,
+            start_capture_session => $crate::commands::capture::start_capture_session,
+            get_capture_session_status => $crate::commands::capture::get_capture_session_status,
+            record_capture_event => $crate::commands::capture::record_capture_event,
+            finish_capture_session => $crate::commands::capture::finish_capture_session,
+            finish_web_authorization_session => $crate::commands::capture::finish_web_authorization_session,
+            clear_capture_session => $crate::commands::capture::clear_capture_session,
+            close_capture_session => $crate::commands::capture::close_capture_session,
         }
     };
 }
