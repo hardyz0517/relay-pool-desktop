@@ -238,50 +238,7 @@
         "evidence_command": "git check-ignore -v dist src-tauri/target output; git ls-files src-tauri/gen/schemas"
       }
     ],
-    "artifacts": [
-      {
-        "path": "output/relay-pool-icon-size-preview.png",
-        "owner": "Task 25",
-        "migration_task": 25,
-        "delete_task": 25,
-        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
-      },
-      {
-        "path": "output/taskbar-current-enlarged.png",
-        "owner": "Task 25",
-        "migration_task": 25,
-        "delete_task": 25,
-        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
-      },
-      {
-        "path": "output/taskbar-icon-bounds-th32.png",
-        "owner": "Task 25",
-        "migration_task": 25,
-        "delete_task": 25,
-        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
-      },
-      {
-        "path": "output/taskbar-qq-vs-relay-enlarged.png",
-        "owner": "Task 25",
-        "migration_task": 25,
-        "delete_task": 25,
-        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
-      },
-      {
-        "path": "output/taskbar-relay-current-plus-new.png",
-        "owner": "Task 25",
-        "migration_task": 25,
-        "delete_task": 25,
-        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
-      },
-      {
-        "path": "output/taskbar-relay-size-after-core-boost.png",
-        "owner": "Task 25",
-        "migration_task": 25,
-        "delete_task": 25,
-        "exception_reason": "Legacy tracked UI comparison image predates the unified artifact policy; exact-file registration prevents broad output allowlisting."
-      }
-    ]
+    "artifacts": []
   },
   "execution_shards": [
     {"id":"S0-T1-adrs-capacity","stage":0,"paths":["docs/superpowers/adrs/architecture-scale/0001-ipc-contract-and-error.md","docs/superpowers/adrs/architecture-scale/0002-application-composition.md","docs/superpowers/adrs/architecture-scale/0003-backend-mode.md","docs/superpowers/adrs/architecture-scale/0004-query-and-page-visibility.md","docs/superpowers/adrs/architecture-scale/0005-work-lifecycle.md","docs/superpowers/adrs/architecture-scale/0006-provider-registry-and-outbound.md","docs/superpowers/adrs/architecture-scale/0007-ci-and-artifacts.md","docs/superpowers/audits/architecture-scale-capacity-budgets.json"],"owner":"Task 1","depends_on":["Task 0"],"cutover":"ADRs accepted and budgets machine-readable","delete_paths":[],"focused_gates":["ADR review","capacity schema"],"rollback_revision":"6a204908e2b3697e4c80951771950e29872942d9"},

@@ -11,10 +11,46 @@ import {
 } from "./lib.mjs";
 
 const FORBIDDEN_SOURCE_DIR = /(?:^|\/)(?:src|src-tauri\/src)(?:\/.*)?\/(?:target|output|dist)(?:\/|$)/;
+const UNRESOLVED_PATH_TOKEN = /(^~(?:$|[\\/]))|%[^%]+%|\$[A-Za-z_][A-Za-z0-9_]*/;
+
+function inventoryArtifactEntries(inventory) {
+  const raw = inventory.inventories?.artifacts ?? inventory.inventories?.artifact_directories ?? [];
+  return Array.isArray(raw) ? raw : Object.values(raw);
+}
+
+function validateArtifactPath(rawPath, label) {
+  assert(typeof rawPath === "string" && rawPath.trim(), `${label} path must be a non-empty string`);
+  assert(!UNRESOLVED_PATH_TOKEN.test(rawPath), `${label} path must not contain unresolved home or environment tokens: ${rawPath}`);
+  assert(!path.isAbsolute(rawPath), `${label} path must be repository-relative: ${rawPath}`);
+
+  const normalized = normalizePath(rawPath);
+  assert(normalized !== "." && normalized !== "", `${label} path must not resolve to the workspace root`);
+  assert(normalized !== ".." && !normalized.startsWith("../") && !normalized.includes("/../"), `${label} path must not traverse outside the workspace: ${rawPath}`);
+
+  const absolute = path.resolve(repoRoot, normalized);
+  const relative = normalizePath(path.relative(repoRoot, absolute));
+  assert(relative !== "." && relative !== "", `${label} path must not resolve to the workspace root`);
+  assert(relative !== ".." && !relative.startsWith("../") && !path.isAbsolute(relative), `${label} path must resolve inside the workspace: ${rawPath}`);
+  assert(relative === normalized, `${label} path must be normalized: ${rawPath}`);
+  return normalized;
+}
+
+function assertRejectsArtifactPath(rawPath, reason) {
+  let rejected = false;
+  try {
+    validateArtifactPath(rawPath, "fixture");
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, reason);
+}
 
 function inventoryArtifactPaths(inventory) {
-  const raw = inventory.inventories?.artifacts ?? inventory.inventories?.artifact_directories ?? [];
-  return new Set((Array.isArray(raw) ? raw : Object.values(raw)).map((entry) => normalizePath(typeof entry === "string" ? entry : entry.path)));
+  return new Set(
+    inventoryArtifactEntries(inventory).map((entry, index) =>
+      validateArtifactPath(typeof entry === "string" ? entry : entry.path, `inventories.artifacts[${index}]`),
+    ),
+  );
 }
 
 runMain(() => {
@@ -22,6 +58,16 @@ runMain(() => {
     assert(FORBIDDEN_SOURCE_DIR.test("src/features/example/output/result.json"), "source output bypass fixture must be detected");
     assert(FORBIDDEN_SOURCE_DIR.test("src-tauri/src/services/target/result.bin"), "Rust source target bypass fixture must be detected");
     assert(!FORBIDDEN_SOURCE_DIR.test("output/architecture-scale/result.json"), "approved root output must remain allowed");
+    assert(
+      validateArtifactPath("output/architecture-scale/result.json", "fixture") === "output/architecture-scale/result.json",
+      "approved output artifact path should normalize unchanged",
+    );
+    assertRejectsArtifactPath("D:/tmp/result.json", "absolute Windows paths must be rejected");
+    assertRejectsArtifactPath("../outside/result.json", "parent traversal must be rejected");
+    assertRejectsArtifactPath("~/.cache/result.json", "home-relative paths must be rejected");
+    assertRejectsArtifactPath("%TEMP%/result.json", "unresolved Windows environment paths must be rejected");
+    assertRejectsArtifactPath("$TMPDIR/result.json", "unresolved shell environment paths must be rejected");
+    assertRejectsArtifactPath(".", "workspace root must be rejected");
     console.log("Artifact policy fixtures passed");
     return;
   }
