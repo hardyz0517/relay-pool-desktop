@@ -4,7 +4,11 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { providerPresets } from "../../providerPresets";
 import { createDefaultProviderForm } from "./formModel";
-import { ProviderOptionsSection, ProviderPresetSection } from "./AddProviderSections";
+import {
+  ProviderConnectionSection,
+  ProviderOptionsSection,
+  ProviderPresetSection,
+} from "./AddProviderSections";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,6 +54,43 @@ describe("AddProviderSections", () => {
       ...form,
       lowBalanceThresholdCny: "20",
     });
+
+    await act(async () => root.unmount());
+  });
+
+  it("delegates connection actions to page handlers", async () => {
+    const onCopyWebsiteUrl = vi.fn();
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const form = createDefaultProviderForm();
+
+    await act(async () =>
+      root.render(
+        <ProviderConnectionSection
+          connectionTest={{ status: "idle", message: null }}
+          editing={false}
+          error={null}
+          form={form}
+          loading={false}
+          saving={false}
+          startingAuthorization={false}
+          testingConnection={false}
+          onConnectionTestReset={vi.fn()}
+          onCopyWebsiteUrl={onCopyWebsiteUrl}
+          onFormChange={vi.fn()}
+          onStartManualAuthorization={vi.fn()}
+          onStationTypeChange={vi.fn()}
+          onTestConnection={vi.fn()}
+        />,
+      ),
+    );
+
+    const copyButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("复制前端网址"),
+    )!;
+    await act(async () => copyButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(onCopyWebsiteUrl).toHaveBeenCalledOnce();
 
     await act(async () => root.unmount());
   });

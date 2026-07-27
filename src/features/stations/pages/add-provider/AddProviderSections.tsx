@@ -1,11 +1,16 @@
 import type { ReactNode } from "react";
-import { Check } from "lucide-react";
-import { SectionCard, SelectControl } from "@/components/ui";
+import { Check, LogIn, ShieldCheck } from "lucide-react";
+import { Button, SectionCard, SelectControl } from "@/components/ui";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
-import { stationProxyModeLabels, type StationProxyMode } from "@/lib/types/stations";
+import {
+  stationProxyModeLabels,
+  stationTypeOptions,
+  type StationProxyMode,
+  type StationType,
+} from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import { providerPresets, type ProviderPresetId } from "../../providerPresets";
-import { inputClassName, type AddProviderFormState } from "./formModel";
+import { inputClassName, type AddProviderFormState, type ConnectionTestState } from "./formModel";
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -54,6 +59,160 @@ export function ProviderPresetSection({ presetId, onApplyPreset }: ProviderPrese
           );
         })}
       </div>
+    </SectionCard>
+  );
+}
+
+type ProviderConnectionSectionProps = {
+  connectionTest: ConnectionTestState;
+  editing: boolean;
+  error: string | null;
+  form: AddProviderFormState;
+  loading: boolean;
+  saving: boolean;
+  startingAuthorization: boolean;
+  testingConnection: boolean;
+  onConnectionTestReset: () => void;
+  onCopyWebsiteUrl: () => void;
+  onFormChange: (form: AddProviderFormState) => void;
+  onStartManualAuthorization: () => void;
+  onStationTypeChange: (stationType: StationType) => void;
+  onTestConnection: () => void;
+};
+
+export function ProviderConnectionSection({
+  connectionTest,
+  editing,
+  error,
+  form,
+  loading,
+  saving,
+  startingAuthorization,
+  testingConnection,
+  onConnectionTestReset,
+  onCopyWebsiteUrl,
+  onFormChange,
+  onStartManualAuthorization,
+  onStationTypeChange,
+  onTestConnection,
+}: ProviderConnectionSectionProps) {
+  return (
+    <SectionCard title="连接信息">
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="供应商名称">
+          <input
+            className={inputClassName}
+            value={form.name}
+            onChange={(event) => onFormChange({ ...form, name: event.target.value })}
+            placeholder="例如 我的供应商"
+          />
+        </Field>
+        <Field label="站点类型">
+          <SelectControl
+            ariaLabel="站点类型"
+            className={inputClassName}
+            value={form.stationType}
+            options={stationTypeOptions}
+            onChange={onStationTypeChange}
+          />
+        </Field>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+        <Field label="前端网址">
+          <input
+            className={inputClassName}
+            value={form.websiteUrl}
+            onChange={(event) => {
+              onFormChange({ ...form, websiteUrl: event.target.value });
+              onConnectionTestReset();
+            }}
+            placeholder="https://example.com"
+          />
+        </Field>
+        <Field label="API Base URL">
+          <input
+            className={inputClassName}
+            value={form.apiBaseUrl}
+            onChange={(event) => {
+              onFormChange({ ...form, apiBaseUrl: event.target.value });
+              onConnectionTestReset();
+            }}
+            placeholder="https://api.example.com/v1"
+          />
+        </Field>
+        <Button
+          variant="outline"
+          className="whitespace-nowrap px-2.5"
+          onClick={onCopyWebsiteUrl}
+        >
+          复制前端网址
+        </Button>
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:items-end">
+        <Field label="登录用户名 / 邮箱">
+          <input
+            className={inputClassName}
+            value={form.loginUsername}
+            onChange={(event) => {
+              onFormChange({ ...form, loginUsername: event.target.value });
+              onConnectionTestReset();
+            }}
+            placeholder="user@example.com"
+          />
+        </Field>
+        <Field label="登录密码">
+          <input
+            className={inputClassName}
+            type="password"
+            value={form.loginPassword}
+            onChange={(event) => {
+              onFormChange({
+                ...form,
+                loginPassword: event.target.value,
+                rememberPassword: Boolean(event.target.value.trim()),
+              });
+              onConnectionTestReset();
+            }}
+            placeholder={editing ? "留空保留旧密码" : "用于采集登录"}
+          />
+        </Field>
+        <Button
+          variant="outline"
+          onClick={onTestConnection}
+          disabled={saving || testingConnection}
+        >
+          <ShieldCheck className="h-4 w-4" />
+          {testingConnection ? "测试中" : "测试连通性"}
+        </Button>
+        {editing && (
+          <Button
+            variant="outline"
+            onClick={onStartManualAuthorization}
+            disabled={saving || loading || startingAuthorization}
+          >
+            <LogIn className="h-4 w-4" />
+            {startingAuthorization ? "打开中" : "网页登录授权"}
+          </Button>
+        )}
+      </div>
+      {connectionTest.message && (
+        <div
+          className={cn(
+            "mt-2 min-w-0 truncate text-xs",
+            connectionTest.status === "success" && "text-success-foreground",
+            connectionTest.status === "warning" && "text-warning-foreground",
+            connectionTest.status === "error" && "text-danger-foreground",
+            connectionTest.status === "testing" && "text-muted-foreground",
+          )}
+        >
+          {connectionTest.message}
+        </div>
+      )}
+      {error && (
+        <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+          {error}
+        </div>
+      )}
     </SectionCard>
   );
 }

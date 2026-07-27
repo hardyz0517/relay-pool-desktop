@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, KeyRound, LogIn, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Check, KeyRound, Plus, RefreshCw } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, IconButton, PageForm, SectionCard, useToast } from "@/components/ui";
 import { collectStationTask, startManualAuthorization, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import {
@@ -25,10 +25,7 @@ import { readError } from "@/lib/errors";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
-import {
-  stationTypeOptions,
-  type StationType,
-} from "@/lib/types/stations";
+import type { StationType } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
   createEmptyStationKeyDraft,
@@ -45,14 +42,17 @@ import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
 import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
 import { normalizeStationGroupOptions } from "./groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
-import { Field, ProviderOptionsSection, ProviderPresetSection } from "./pages/add-provider/AddProviderSections";
+import {
+  ProviderConnectionSection,
+  ProviderOptionsSection,
+  ProviderPresetSection,
+} from "./pages/add-provider/AddProviderSections";
 import {
   createDefaultProviderForm,
   defaultPreset,
   draftRemoteCapability,
   formFromStation,
   getPresetDefaultStationName,
-  inputClassName,
   serializeProviderDraft,
   type AddProviderFormState,
   type ConnectionTestState,
@@ -821,135 +821,34 @@ export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: Add
           <div className="grid gap-[var(--shell-page-gap)]">
             {!editing && <ProviderPresetSection presetId={form.presetId} onApplyPreset={applyPreset} />}
 
-            <SectionCard title="连接信息">
-              <div className="grid gap-3 md:grid-cols-2">
-                <Field label="供应商名称">
-                  <input
-                    className={inputClassName}
-                    value={form.name}
-                    onChange={(event) => setForm({ ...form, name: event.target.value })}
-                    placeholder="例如 我的供应商"
-                  />
-                </Field>
-                <Field label="站点类型">
-                  <SelectControl
-                    ariaLabel="站点类型"
-                    className={inputClassName}
-                    value={form.stationType}
-                    options={stationTypeOptions}
-                    onChange={(stationType) => {
-                      setForm({ ...form, stationType });
-                      if (!activeStationId) {
-                        setRemoteCapability(draftRemoteCapability(stationType));
-                        setRemoteCapabilityError(null);
-                        setRemoteListError(null);
-                      }
-                    }}
-                  />
-                </Field>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
-                <Field label="前端网址">
-                  <input
-                    className={inputClassName}
-                    value={form.websiteUrl}
-                    onChange={(event) => {
-                      setForm({ ...form, websiteUrl: event.target.value });
-                      setConnectionTest({ status: "idle", message: null });
-                    }}
-                    placeholder="https://example.com"
-                  />
-                </Field>
-                <Field label="API Base URL">
-                  <input
-                    className={inputClassName}
-                    value={form.apiBaseUrl}
-                    onChange={(event) => {
-                      setForm({ ...form, apiBaseUrl: event.target.value });
-                      setConnectionTest({ status: "idle", message: null });
-                    }}
-                    placeholder="https://api.example.com/v1"
-                  />
-                </Field>
-                <Button
-                  variant="outline"
-                  className="whitespace-nowrap px-2.5"
-                  onClick={() =>
-                    setForm((current) => ({
-                      ...current,
-                      apiBaseUrl: current.websiteUrl,
-                    }))
-                  }
-                >
-                  复制前端网址
-                </Button>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:items-end">
-                <Field label="登录用户名 / 邮箱">
-                  <input
-                    className={inputClassName}
-                    value={form.loginUsername}
-                    onChange={(event) => {
-                      setForm({ ...form, loginUsername: event.target.value });
-                      setConnectionTest({ status: "idle", message: null });
-                    }}
-                    placeholder="user@example.com"
-                  />
-                </Field>
-                <Field label="登录密码">
-                  <input
-                    className={inputClassName}
-                    type="password"
-                    value={form.loginPassword}
-                    onChange={(event) => {
-                      setForm({
-                        ...form,
-                        loginPassword: event.target.value,
-                        rememberPassword: Boolean(event.target.value.trim()),
-                      });
-                      setConnectionTest({ status: "idle", message: null });
-                    }}
-                    placeholder={editing ? "留空保留旧密码" : "用于采集登录"}
-                  />
-                </Field>
-                <Button
-                  variant="outline"
-                  onClick={handleTestConnection}
-                  disabled={saving || testingConnection}
-                >
-                  <ShieldCheck className="h-4 w-4" />
-                  {testingConnection ? "测试中" : "测试连通性"}
-                </Button>
-                {editing && (
-                  <Button
-                    variant="outline"
-                    onClick={handleStartManualAuthorization}
-                    disabled={saving || loading || startingAuthorization}
-                  >
-                    <LogIn className="h-4 w-4" />
-                    {startingAuthorization ? "打开中" : "网页登录授权"}
-                  </Button>
-                )}
-              </div>
-              {connectionTest.message && (
-                <div
-                  className={cn(
-                    "mt-2 min-w-0 truncate text-xs",
-                    connectionTest.status === "success" && "text-success-foreground",
-                    connectionTest.status === "warning" && "text-warning-foreground",
-                    connectionTest.status === "error" && "text-danger-foreground",
-                    connectionTest.status === "testing" && "text-muted-foreground",
-                  )}
-                >
-                  {connectionTest.message}
-                </div>
-              )}
-              {error && (
-                <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
-                  {error}
-                </div>
-              )}
-            </SectionCard>
+            <ProviderConnectionSection
+              connectionTest={connectionTest}
+              editing={editing}
+              error={error}
+              form={form}
+              loading={loading}
+              saving={saving}
+              startingAuthorization={startingAuthorization}
+              testingConnection={testingConnection}
+              onConnectionTestReset={() => setConnectionTest({ status: "idle", message: null })}
+              onCopyWebsiteUrl={() =>
+                setForm((current) => ({
+                  ...current,
+                  apiBaseUrl: current.websiteUrl,
+                }))
+              }
+              onFormChange={setForm}
+              onStartManualAuthorization={handleStartManualAuthorization}
+              onStationTypeChange={(stationType) => {
+                setForm({ ...form, stationType });
+                if (!activeStationId) {
+                  setRemoteCapability(draftRemoteCapability(stationType));
+                  setRemoteCapabilityError(null);
+                  setRemoteListError(null);
+                }
+              }}
+              onTestConnection={handleTestConnection}
+            />
 
             <SectionCard
               title="分组"
