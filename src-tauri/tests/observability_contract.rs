@@ -136,7 +136,7 @@ fn structured_event_contract_exposes_only_stable_redacted_fields() {
 fn structured_event_contract_rejects_unstable_or_secret_codes() {
     for code in [
         "Authorization",
-        "C:/Users/cpp_s/relay-pool.db",
+        "C:/local-fixture/relay-pool.db",
         "https://example.test/path?token=secret",
         "prompt=response",
     ] {
