@@ -8,6 +8,7 @@ import {
 } from "./lib.mjs";
 
 const COMMANDS_PATH = "src-tauri/src/commands/mod.rs";
+const REGISTRY_PATH = "src-tauri/src/ipc/registry.rs";
 const MATRIX_PATH = "docs/superpowers/audits/architecture-scale-command-facade-matrix.json";
 
 function source(relativePath) {
@@ -16,10 +17,31 @@ function source(relativePath) {
   return fs.readFileSync(absolutePath, "utf8");
 }
 
-function commandBlock(commandsSource, commandName) {
+function commandHandlerPaths() {
+  const registrySource = source(REGISTRY_PATH);
+  const handlers = new Map();
+  const pattern = /([a-z][a-z0-9_]*)\s*=>\s*\$crate::commands::([a-zA-Z0-9_:]+)/g;
+  for (const match of registrySource.matchAll(pattern)) {
+    const commandName = match[1];
+    const handlerPath = match[2].split("::");
+    const functionName = handlerPath.at(-1);
+    assert(
+      functionName === commandName,
+      `registry handler function ${match[2]} must preserve command id ${commandName}`,
+    );
+    const modulePath = handlerPath.slice(0, -1);
+    const sourcePath = modulePath.length > 0
+      ? `src-tauri/src/commands/${modulePath.join("/")}.rs`
+      : COMMANDS_PATH;
+    handlers.set(commandName, sourcePath);
+  }
+  return handlers;
+}
+
+function commandBlock(commandsSource, commandName, sourcePath) {
   const pattern = new RegExp(`pub\\s+async\\s+fn\\s+${commandName}\\s*\\(`);
   const match = pattern.exec(commandsSource);
-  assert(match, `missing migrated command function: ${commandName}`);
+  assert(match, `missing migrated command function: ${commandName} in ${sourcePath}`);
   const start = match.index;
   const next = commandsSource.indexOf("\n#[tauri::command]", start + 1);
   return commandsSource.slice(start, next === -1 ? commandsSource.length : next);
@@ -42,7 +64,8 @@ runMain(() => {
   assert(matrix.schema_version === 1, "command facade matrix schema_version must be 1");
   assert(Array.isArray(matrix.facades) && matrix.facades.length > 0, "command facade matrix must declare facades");
 
-  const commandsSource = source(COMMANDS_PATH);
+  const handlerPaths = commandHandlerPaths();
+  const sourceCache = new Map();
   const seenCommands = new Set();
 
   for (const facade of matrix.facades) {
@@ -70,7 +93,11 @@ runMain(() => {
       assert(!seenCommands.has(entry.command), `duplicate command facade matrix entry: ${entry.command}`);
       seenCommands.add(entry.command);
 
-      const block = commandBlock(commandsSource, entry.command);
+      const sourcePath = handlerPaths.get(entry.command) ?? COMMANDS_PATH;
+      if (!sourceCache.has(sourcePath)) {
+        sourceCache.set(sourcePath, source(sourcePath));
+      }
+      const block = commandBlock(sourceCache.get(sourcePath), entry.command, sourcePath);
       const signature = commandSignature(block, entry.command);
       const stateMatches = [...signature.matchAll(/State\s*<\s*'_\s*,\s*([^>]+?)\s*>/g)].map((match) => match[1].trim());
       assert(stateMatches.length === 1, `${entry.command} must inject exactly one Tauri State`);

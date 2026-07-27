@@ -15,6 +15,7 @@ use tauri::{ipc::Channel, Manager, State};
 pub(crate) mod data_recovery;
 pub(crate) mod error;
 pub(crate) mod runtime;
+pub(crate) mod settings;
 pub(crate) mod updater;
 
 use crate::{
@@ -92,10 +93,7 @@ use crate::{
             DeleteModelAliasInputDto, EndpointPingResultDto, ReorderLocalRoutingKeysInputDto,
             UpdateStationKeyCapabilitiesInputDto, UpsertModelAliasInputDto,
         },
-        settings::{
-            CcswitchImportResultDto, OpenExternalUrlInputDto, SettingsDto,
-            UpdateLocalAccessKeyInputDto, UpdateSettingsInputDto,
-        },
+        settings::{CcswitchImportResultDto, OpenExternalUrlInputDto, SettingsDto},
         station_collector_operations::{
             CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
             CollectorRunResultDto, StationCollectorTaskInputDto, StationCollectorTaskTypeDto,
@@ -584,53 +582,6 @@ pub async fn reorder_stations(
 }
 
 #[tauri::command]
-pub async fn get_settings(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<SettingsDto, error::CommandError> {
-    correlation::in_command_scope("get_settings", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .get_settings()
-            .await
-            .map(SettingsDto::from)
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_local_access_key(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<String, error::CommandError> {
-    correlation::in_command_scope("get_local_access_key", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .get_local_access_key()
-            .await
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_local_access_key(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<SettingsDto, error::CommandError> {
-    correlation::in_command_scope("update_local_access_key", async {
-        let input = UpdateLocalAccessKeyInputDto::parse(input)?;
-        facade
-            .update_local_access_key(input.value)
-            .await
-            .map(SettingsDto::from)
-            .map_err(public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn import_relay_pool_to_ccswitch(
     facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
@@ -681,22 +632,6 @@ pub async fn open_external_url(input: Value) -> Result<(), error::CommandError> 
         let input = OpenExternalUrlInputDto::parse(input)?;
         let url = validate_external_http_url(&input.url)?;
         Ok(open_url_with_system(url)?)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_settings(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<SettingsDto, error::CommandError> {
-    correlation::in_command_scope("update_settings", async {
-        let input = UpdateSettingsInputDto::parse(input)?.into_domain()?;
-        let settings = facade
-            .update_settings(input)
-            .await
-            .map_err(public_command_application_error)?;
-        Ok(SettingsDto::from(settings))
     })
     .await
 }
