@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
+use tokio_util::sync::CancellationToken;
+
 use crate::{
     application::{error::ApplicationError, routing::RoutingService},
     models::{
@@ -10,6 +12,7 @@ use crate::{
         },
         stations::{EndpointPingResult, StationEndpointHealth},
     },
+    outbound::AsyncOutboundClient,
     services::{
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         time::now_millis_for_services,
@@ -31,11 +34,12 @@ impl From<ApplicationError> for EndpointPingCommandError {
 #[derive(Clone)]
 pub(crate) struct RoutingCommandFacade {
     routing: Arc<RoutingService>,
+    outbound: AsyncOutboundClient,
 }
 
 impl RoutingCommandFacade {
-    pub(crate) fn new(routing: Arc<RoutingService>) -> Self {
-        Self { routing }
+    pub(crate) fn new(routing: Arc<RoutingService>, outbound: AsyncOutboundClient) -> Self {
+        Self { routing, outbound }
     }
 
     pub(crate) async fn list_model_aliases(&self) -> Result<Vec<ModelAlias>, ApplicationError> {
@@ -98,11 +102,13 @@ impl RoutingCommandFacade {
             .await?;
         let checked_at = now_millis_for_services().to_string();
         let api_base_url = target.api_base_url.clone();
-        let probe = tokio::task::spawn_blocking(move || {
-            probe_station_endpoint(&api_base_url, Duration::from_secs(5))
-        })
-        .await
-        .map_err(|_| EndpointPingCommandError::ResultUnknown)?;
+        let probe = probe_station_endpoint(
+            &self.outbound,
+            &api_base_url,
+            Duration::from_secs(5),
+            CancellationToken::new(),
+        )
+        .await;
         let health = self
             .routing
             .record_station_endpoint_health(

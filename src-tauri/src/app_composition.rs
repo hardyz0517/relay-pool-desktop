@@ -143,8 +143,11 @@ pub(crate) fn compose_remote_keys_command_facade(
     )
 }
 
-pub(crate) fn compose_routing_command_facade(services: &AppServices) -> RoutingCommandFacade {
-    RoutingCommandFacade::new(Arc::clone(&services.routing))
+pub(crate) fn compose_routing_command_facade(
+    services: &AppServices,
+    outbound: AsyncOutboundClient,
+) -> RoutingCommandFacade {
+    RoutingCommandFacade::new(Arc::clone(&services.routing), outbound)
 }
 
 pub(crate) fn compose_request_logs_command_facade(

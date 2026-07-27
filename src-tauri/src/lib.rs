@@ -429,8 +429,10 @@ pub fn run() {
                             Arc::clone(&provider_registry),
                             data_key,
                         );
-                    let routing_command_facade =
-                        app_composition::compose_routing_command_facade(&app_services);
+                    let routing_command_facade = app_composition::compose_routing_command_facade(
+                        &app_services,
+                        outbound_client.clone(),
+                    );
                     let request_logs_command_facade =
                         app_composition::compose_request_logs_command_facade(&app_services);
                     let channel_monitor_runner_port = services::channel_monitors::v2_runner_port(
