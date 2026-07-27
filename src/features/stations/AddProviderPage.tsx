@@ -23,16 +23,12 @@ import {
 import { createStation, listStations, updateStation } from "@/lib/api/stations";
 import { getSettings } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
-import { inferGroupCategoryFromEvidence, normalizeGroupCategory } from "@/lib/groupCategories";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
-import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
 import {
   isCollectedStationGroupBinding,
-  type GroupRateRecord,
   type StationGroupBinding,
-  type StationGroupOption,
   type UpsertStationGroupBindingInput,
 } from "@/lib/types/groupFacts";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
@@ -56,13 +52,7 @@ import {
 } from "./components/StationGroupRowsEditor";
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
 import { RemoteKeyDiscoveryList } from "./components/RemoteKeyDiscoveryList";
-import {
-  buildStationGroupOptionFromRawMultiplierForSelect,
-  buildStationGroupOptionsFromCurrentFactsForSelect,
-  findMatchingGroupOption,
-  formatMultiplier,
-  normalizeStationGroupOptions,
-} from "./groupOptionViewModels";
+import { normalizeStationGroupOptions } from "./groupOptionViewModels";
 import { providerPresets, type ProviderPresetId } from "./providerPresets";
 import {
   createDefaultProviderForm,
@@ -71,12 +61,35 @@ import {
   formFromStation,
   getPresetDefaultStationName,
   inputClassName,
-  remoteLocalKeyNotePrefix,
   serializeProviderDraft,
   type AddProviderFormState,
   type ConnectionTestState,
   type RemoteCreateInput,
 } from "./pages/add-provider/formModel";
+import {
+  buildSavedGroupOptionForSelect,
+  collectRemoteGroupOptions,
+  dedupeGroupRows,
+  findReusableDefaultKey,
+  groupBindingsToCurrentOptions,
+  groupBindingsToDrafts,
+  groupDraftToOption,
+  groupRowHasMeaningfulContent,
+  groupsMatch,
+  keyToDraft,
+  mergeGroupRowsWithSavedOptions,
+  mergeKeyRowsWithSavedGroupOptions,
+  mergeRemoteGroupOptions,
+  normalizeCollectionIntervalMinutes,
+  parseCreditPerCny,
+  parseOptionalRateMultiplier,
+  remoteKeyDisplayName,
+  remoteLocalKeyNote,
+  resolveRemoteCreatedLocalKeyIds,
+  syncRowsWithGroupRateOptions,
+  validateGroupRows,
+  validateKeyRows,
+} from "./pages/add-provider/keyGroupModel";
 
 type AddProviderPageProps = {
   stationId?: string | null;
@@ -84,298 +97,6 @@ type AddProviderPageProps = {
   onCreated?: () => void;
   onUpdated?: () => void;
 };
-
-function keyToDraft(key: StationKey): StationKeyDraft {
-  return {
-    clientId: key.id,
-    id: key.id,
-    name: key.name,
-    apiKey: "",
-    groupBindingId: key.groupBindingId,
-    groupIdHash: key.groupIdHash,
-    groupName: key.groupName ?? "",
-    rateMultiplier: key.rateMultiplier === null ? "" : String(key.rateMultiplier),
-    enabled: key.enabled,
-    note: key.note ?? "",
-    deleteRequested: false,
-  };
-}
-
-function groupBindingsToDrafts(
-  bindings: StationGroupBinding[],
-  rates: GroupRateRecord[],
-): StationGroupDraft[] {
-  const latestRates = latestStationGroupRatesByBindingId(rates);
-  return bindings
-    .filter(isCollectedStationGroupBinding)
-    .map((binding) => groupBindingToDraft(binding, latestRates.get(binding.id) ?? null));
-}
-
-function latestStationGroupRatesByBindingId(rates: GroupRateRecord[]) {
-  const latestRates = new Map<string, GroupRateRecord>();
-  rates.forEach((rate) => {
-    if (rate.bindingKind !== "station_group" || !rate.groupBindingId) {
-      return;
-    }
-    const current = latestRates.get(rate.groupBindingId);
-    if (!current || Date.parse(rate.checkedAt) > Date.parse(current.checkedAt)) {
-      latestRates.set(rate.groupBindingId, rate);
-    }
-  });
-  return latestRates;
-}
-
-function groupBindingToDraft(
-  binding: StationGroupBinding,
-  latestRate: GroupRateRecord | null = null,
-): StationGroupDraft {
-  const rateMultiplier =
-    binding.userRateMultiplier ??
-    binding.effectiveRateMultiplier ??
-    binding.defaultRateMultiplier ??
-    latestRate?.userRateMultiplier ??
-    latestRate?.effectiveRateMultiplier ??
-    latestRate?.defaultRateMultiplier;
-  const inferredGroupCategory =
-    normalizeGroupCategory(binding.inferredGroupCategory) ??
-    normalizeGroupCategory(latestRate?.inferredGroupCategory) ??
-    inferGroupCategoryFromEvidence({
-      groupName: binding.groupName || latestRate?.groupName || "",
-      rawJsonRedacted: latestRate?.rawJsonRedacted ?? binding.rawJsonRedacted,
-    });
-  return {
-    clientId: binding.id,
-    groupBindingId: binding.id,
-    groupKeyHash: binding.groupKeyHash,
-    groupIdHash: binding.groupIdHash,
-    groupName: binding.groupName || latestRate?.groupName || "",
-    rateMultiplier: rateMultiplier == null ? "" : String(rateMultiplier),
-    inferredGroupCategory,
-    groupCategoryOverride: normalizeGroupCategory(binding.groupCategoryOverride),
-    source: isRemoteGroupSource(binding.rateSource ?? latestRate?.source ?? null) ? "remote" : "manual",
-    deleteRequested: false,
-  };
-}
-
-function isRemoteGroupSource(source: string | null) {
-  if (!source) {
-    return false;
-  }
-  return source !== "manual" && source !== "manual_legacy" && source !== "legacy_key_group";
-}
-
-function rowHasMeaningfulContent(row: StationKeyDraft) {
-  return Boolean(
-      row.id ||
-      row.name.trim() ||
-      row.apiKey.trim() ||
-      row.groupBindingId ||
-      row.groupIdHash ||
-      row.groupName.trim() ||
-      row.rateMultiplier.trim() ||
-      row.note.trim(),
-  );
-}
-
-function groupRowHasMeaningfulContent(row: StationGroupDraft) {
-  return Boolean(
-    row.groupBindingId ||
-      row.groupKeyHash.trim() ||
-      row.groupIdHash ||
-      row.groupName.trim() ||
-      row.rateMultiplier.trim(),
-  );
-}
-
-function groupDraftToOption(row: StationGroupDraft, creditPerCny = 1): StationKeyGroupOption | null {
-  if (row.deleteRequested || !row.groupName.trim()) {
-    return null;
-  }
-  return {
-    value: row.groupBindingId
-      ? `binding:${row.groupBindingId}`
-      : row.groupIdHash
-        ? `remote:${row.groupIdHash}`
-        : `name:${row.groupName.trim()}`,
-    groupBindingId: row.groupBindingId,
-    groupIdHash: row.groupIdHash,
-    groupName: row.groupName.trim(),
-    rateMultiplier: effectiveRateMultiplierForCredit(parseDraftRateMultiplier(row.rateMultiplier), creditPerCny),
-    inferredGroupCategory: row.inferredGroupCategory,
-    groupCategoryOverride: row.groupCategoryOverride,
-    effectiveGroupCategory: row.groupCategoryOverride ?? row.inferredGroupCategory,
-    rateSource: null,
-    selectableForRemoteKey: Boolean(row.groupBindingId || row.groupIdHash),
-  };
-}
-
-function mergeKeyRowsWithSavedGroupOptions(
-  rows: StationKeyDraft[],
-  groups: StationKeyGroupOption[],
-): StationKeyDraft[] {
-  return rows.map((row) => {
-    if (row.deleteRequested || (!row.groupBindingId && !row.groupIdHash && !row.groupName.trim())) {
-      return row;
-    }
-    const group = findMatchingGroupOption(row, groups);
-    if (!group) {
-      return row;
-    }
-    return {
-      ...row,
-      groupBindingId: group.groupBindingId,
-      groupIdHash: group.groupIdHash,
-      groupName: group.groupName,
-      rateMultiplier:
-        group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
-      inferredGroupCategory: group.inferredGroupCategory,
-      groupCategoryOverride: group.groupCategoryOverride,
-    };
-  });
-}
-
-function mergeGroupRowsWithSavedOptions(
-  rows: StationGroupDraft[],
-  groups: StationKeyGroupOption[],
-): StationGroupDraft[] {
-  return dedupeGroupRows(
-    rows.map((row) => {
-      if (row.deleteRequested) {
-        return row;
-      }
-      const group = groups.find((item) => groupsMatch(row, item));
-      if (!group) {
-        return row;
-      }
-      return {
-        ...row,
-        groupBindingId: group.groupBindingId,
-        groupIdHash: group.groupIdHash,
-        groupName: group.groupName,
-        rateMultiplier: row.rateMultiplier,
-        inferredGroupCategory: normalizeGroupCategory(group.inferredGroupCategory) ?? "unknown",
-        groupCategoryOverride: group.groupCategoryOverride,
-      };
-    }),
-  );
-}
-
-function groupBindingsToCurrentOptions(
-  bindings: StationGroupBinding[],
-  rates: GroupRateRecord[],
-  creditPerCny = 1,
-) {
-  return buildStationGroupOptionsFromCurrentFactsForSelect(
-    buildCurrentStationGroupFacts({ bindings, rates }),
-    creditPerCny,
-  );
-}
-
-function dedupeGroupRows(rows: StationGroupDraft[]): StationGroupDraft[] {
-  const mergedRows: StationGroupDraft[] = [];
-  rows.forEach((row) => {
-    const matchIndex = mergedRows.findIndex((item) => groupRowsRepresentSameGroup(item, row));
-    if (matchIndex < 0) {
-      mergedRows.push(row);
-      return;
-    }
-    mergedRows[matchIndex] = mergeDuplicateGroupRow(mergedRows[matchIndex], row);
-  });
-  return mergedRows;
-}
-
-function groupRowsRepresentSameGroup(left: StationGroupDraft, right: StationGroupDraft) {
-  return Boolean(
-    (left.groupBindingId && right.groupBindingId && left.groupBindingId === right.groupBindingId) ||
-      (left.groupIdHash && right.groupIdHash && left.groupIdHash === right.groupIdHash) ||
-      (left.groupName.trim() &&
-        right.groupName.trim() &&
-        left.groupName.trim() === right.groupName.trim()),
-  );
-}
-
-function mergeDuplicateGroupRow(existing: StationGroupDraft, incoming: StationGroupDraft): StationGroupDraft {
-  const preferred = preferGroupRow(existing, incoming);
-  const fallback = preferred === existing ? incoming : existing;
-  return {
-    ...preferred,
-    clientId: existing.clientId,
-    groupBindingId: existing.groupBindingId ?? incoming.groupBindingId,
-    groupKeyHash: existing.groupKeyHash || incoming.groupKeyHash,
-    groupIdHash: incoming.groupIdHash ?? existing.groupIdHash,
-    groupName: incoming.groupName.trim() || existing.groupName,
-    rateMultiplier: incoming.rateMultiplier.trim() || existing.rateMultiplier || fallback.rateMultiplier,
-    inferredGroupCategory:
-      incoming.inferredGroupCategory === "unknown" ? existing.inferredGroupCategory : incoming.inferredGroupCategory,
-    groupCategoryOverride: incoming.groupCategoryOverride ?? existing.groupCategoryOverride,
-    source: incoming.source === "remote" ? "remote" : existing.source,
-    deleteRequested: existing.deleteRequested && incoming.deleteRequested,
-  };
-}
-
-function preferGroupRow(existing: StationGroupDraft, incoming: StationGroupDraft) {
-  if (existing.groupBindingId && !incoming.groupBindingId) {
-    return existing;
-  }
-  if (incoming.groupBindingId && !existing.groupBindingId) {
-    return incoming;
-  }
-  if (incoming.source === "remote" && existing.source !== "remote") {
-    return incoming;
-  }
-  return existing;
-}
-
-function rowHasMeaningfulNonSecretContent(row: StationKeyDraft) {
-  return Boolean(
-    row.name.trim() || row.groupName.trim() || row.rateMultiplier.trim() || row.note.trim(),
-  );
-}
-
-function parseOptionalRateMultiplier(value: string) {
-  if (!value.trim()) {
-    return null;
-  }
-  const rate = Number(value);
-  if (!Number.isFinite(rate)) {
-    throw new Error("倍率必须是大于等于 0 的有效数字");
-  }
-  if (rate < 0) {
-    throw new Error("倍率不能小于 0");
-  }
-  return rate;
-}
-
-function parseDraftRateMultiplier(value: string) {
-  if (!value.trim()) {
-    return null;
-  }
-  const rate = Number(value);
-  return Number.isFinite(rate) && rate >= 0 ? rate : null;
-}
-
-function validateKeyRows(rows: StationKeyDraft[]) {
-  rows
-    .filter((row) => !row.deleteRequested)
-    .forEach((row) => {
-      const hasContent = rowHasMeaningfulContent(row);
-      if (!row.id && rowHasMeaningfulNonSecretContent(row) && !row.apiKey.trim()) {
-        throw new Error("新增密钥请填写密钥内容，或删除该行。");
-      }
-      if (hasContent && !row.name.trim()) {
-        throw new Error("请填写密钥名称");
-      }
-      parseOptionalRateMultiplier(row.rateMultiplier);
-    });
-}
-
-function findReusableDefaultKey(keys: StationKey[]) {
-  if (keys.length === 1) {
-    return keys[0];
-  }
-  const defaultKeys = keys.filter((key) => key.priority === 0 && key.name === "Default Key");
-  return defaultKeys.length === 1 ? defaultKeys[0] : null;
-}
 
 async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
   validateKeyRows(rows);
@@ -430,18 +151,6 @@ async function saveKeyRows(targetStationId: string, rows: StationKeyDraft[]) {
   }
 }
 
-function validateGroupRows(rows: StationGroupDraft[]) {
-  rows
-    .filter((row) => !row.deleteRequested)
-    .filter(groupRowHasMeaningfulContent)
-    .forEach((row) => {
-      if (!row.groupName.trim()) {
-        throw new Error("请填写分组名称");
-      }
-      parseOptionalRateMultiplier(row.rateMultiplier);
-    });
-}
-
 async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[], creditPerCny = 1) {
   validateGroupRows(rows);
   const savedOptions: StationKeyGroupOption[] = [];
@@ -484,7 +193,7 @@ async function saveGroupRows(targetStationId: string, rows: StationGroupDraft[],
       rawJsonRedacted: null,
     };
     const saved = await upsertStationGroupBinding(input);
-    savedOptions.push(buildStationGroupOptionFromRawMultiplierForSelect(saved, creditPerCny));
+    savedOptions.push(buildSavedGroupOptionForSelect(saved, creditPerCny));
   }
 
   return savedOptions;
@@ -543,122 +252,6 @@ function resolveGroupKeyHash(row: StationGroupDraft) {
 function buildManualGroupKeyHash(groupName: string) {
   const normalizedName = groupName.trim().toLowerCase();
   return `manual:${encodeURIComponent(normalizedName || "unnamed")}`;
-}
-
-function collectRemoteGroupOptions(remoteKeys: RemoteStationKey[], creditPerCny = 1) {
-  const seen = new Set<string>();
-  const groups: StationGroupOption[] = [];
-  remoteKeys.forEach((key) => {
-    if (!key.groupIdHash && !key.groupName) {
-      return;
-    }
-    const groupName = key.groupName?.trim() || "未命名分组";
-    const groupKey = `${key.groupIdHash ?? ""}|${groupName}`;
-    if (seen.has(groupKey)) {
-      return;
-    }
-    seen.add(groupKey);
-    groups.push({
-      value: key.groupIdHash ? `remote:${key.groupIdHash}` : `name:${groupName.trim()}`,
-      groupBindingId: null,
-      groupIdHash: key.groupIdHash,
-      groupName,
-      rateMultiplier: effectiveRateMultiplierForCredit(key.rateMultiplier, creditPerCny),
-      inferredGroupCategory: inferGroupCategoryFromEvidence({ groupName, rawJsonRedacted: null }),
-      groupCategoryOverride: null,
-      effectiveGroupCategory: inferGroupCategoryFromEvidence({ groupName, rawJsonRedacted: null }),
-      rateSource: null,
-      selectableForRemoteKey: Boolean(key.groupIdHash),
-    });
-  });
-  return groups;
-}
-
-function mergeRemoteGroupOptions(
-  editableGroups: StationKeyGroupOption[],
-  remoteGroups: ReturnType<typeof collectRemoteGroupOptions>,
-) {
-  const seen = new Set<string>();
-  const groups: ReturnType<typeof collectRemoteGroupOptions> = [];
-
-  function appendGroup(group: StationGroupOption) {
-    if (!group.groupIdHash && !group.groupBindingId && !group.groupName.trim()) {
-      return;
-    }
-    const groupName = group.groupName.trim() || "未命名分组";
-    const groupKey = groupOptionMergeKey(group, groupName);
-    if (seen.has(groupKey)) {
-      return;
-    }
-    seen.add(groupKey);
-    groups.push({
-      value: group.value || groupKey,
-      groupBindingId: group.groupBindingId,
-      groupIdHash: group.groupIdHash,
-      groupName,
-      rateMultiplier: group.rateMultiplier,
-      inferredGroupCategory: group.inferredGroupCategory,
-      groupCategoryOverride: group.groupCategoryOverride,
-      effectiveGroupCategory: group.effectiveGroupCategory,
-      rateSource: group.rateSource,
-      selectableForRemoteKey: group.selectableForRemoteKey,
-    });
-  }
-
-  editableGroups.forEach(appendGroup);
-  remoteGroups.forEach(appendGroup);
-  return groups;
-}
-
-function groupOptionMergeKey(
-  group: Pick<StationGroupOption, "groupBindingId" | "groupIdHash">,
-  groupName: string,
-) {
-  const groupIdHash = group.groupIdHash?.trim() ?? "";
-  if (groupIdHash) {
-    return `remote:${groupIdHash}:${groupName}`;
-  }
-
-  const groupBindingId = group.groupBindingId?.trim() ?? "";
-  if (groupBindingId) {
-    return `binding:${groupBindingId}`;
-  }
-
-  return `name:${groupName}`;
-}
-
-function remoteLocalKeyNote(remoteKey: RemoteStationKey) {
-  return `${remoteLocalKeyNotePrefix}：${remoteKey.id}`;
-}
-
-function resolveRemoteCreatedLocalKeyIds(
-  remoteKeys: RemoteStationKey[],
-  localKeys: StationKey[],
-) {
-  const localKeysByNote = new Map(
-    localKeys
-      .filter((key) => key.note?.startsWith(remoteLocalKeyNotePrefix))
-      .map((key) => [key.note, key.id] as const),
-  );
-
-  return Object.fromEntries(
-    remoteKeys.flatMap((remoteKey) => {
-      const localKeyId = localKeysByNote.get(remoteLocalKeyNote(remoteKey));
-      return localKeyId ? [[remoteKey.id, localKeyId] as const] : [];
-    }),
-  );
-}
-
-function remoteKeyDisplayName(remoteKey: RemoteStationKey) {
-  return remoteKey.remoteKeyName?.trim() || remoteKey.apiKeyMasked || remoteKey.remoteKeyIdHash || "远端 Key";
-}
-
-function groupsMatch(row: StationGroupDraft, group: StationKeyGroupOption) {
-  return Boolean(
-    (row.groupBindingId && group.groupBindingId === row.groupBindingId) ||
-      (row.groupIdHash && group.groupIdHash === row.groupIdHash) ||
-      (row.groupName.trim() && group.groupName.trim() === row.groupName.trim()),
-  );
 }
 
 export function AddProviderPage({ stationId, onBack, onCreated, onUpdated }: AddProviderPageProps) {
@@ -1789,43 +1382,4 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </label>
   );
-}
-
-function normalizeCollectionIntervalMinutes(value: string) {
-  const interval = Number(value.trim() || "5");
-  return Number.isInteger(interval) && interval > 0 ? interval : 5;
-}
-
-function parseCreditPerCny(value: string) {
-  const parsed = Number(value.trim());
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-}
-
-function syncRowsWithGroupRateOptions(
-  rows: StationKeyDraft[],
-  groups: StationKeyGroupOption[],
-): StationKeyDraft[] {
-  let changed = false;
-  const nextRows = rows.map((row) => {
-    if (row.deleteRequested || (!row.groupBindingId && !row.groupIdHash && !row.groupName.trim())) {
-      return row;
-    }
-    const group = findMatchingGroupOption(row, groups);
-    if (!group || group.rateMultiplier === null) {
-      return row;
-    }
-    const nextRateMultiplier = formatMultiplier(group.rateMultiplier);
-    if (row.rateMultiplier === nextRateMultiplier && row.groupName === group.groupName) {
-      return row;
-    }
-    changed = true;
-    return {
-      ...row,
-      groupBindingId: group.groupBindingId,
-      groupIdHash: group.groupIdHash,
-      groupName: group.groupName,
-      rateMultiplier: nextRateMultiplier,
-    };
-  });
-  return changed ? nextRows : rows;
 }
