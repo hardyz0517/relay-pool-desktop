@@ -102,7 +102,7 @@ try {
     }
 
     if ($Profile -eq "release") {
-        Invoke-Checked "Release version contract" $pnpm @("verify:release-version", "--", "--require-tag")
+        Invoke-Checked "Release version contract" $pnpm @("verify:release-version", "--require-tag")
         Invoke-Checked "Locked Rust release build" cargo @("build", "--release", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--target", "x86_64-pc-windows-msvc")
         if ($ReleasePhase -eq "all") {
             foreach ($name in @("TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD")) {
