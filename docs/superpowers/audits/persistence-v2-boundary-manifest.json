@@ -34,305 +34,2486 @@
     "scope": "Rust module dependency edges, public exports, legacy implementation absence, and compatibility import consumers"
   },
   "allowed_edges": [
-    {"from": "app_composition", "to": "application::app_services", "temporary": false},
-    {"from": "app_composition", "to": "application::data_directory", "temporary": false},
-    {"from": "app_composition", "to": "persistence::runtime", "temporary": false},
-    {"from": "app_composition", "to": "services::pricing_catalog", "temporary": false},
-    {"from": "app_composition", "to": "services::secrets::vault", "temporary": false},
-    {"from": "application", "to": "application::clock", "temporary": false},
-    {"from": "application", "to": "application::collectors", "temporary": false},
-    {"from": "application", "to": "application::credentials", "temporary": false},
-    {"from": "application", "to": "application::data_directory", "temporary": false},
-    {"from": "application", "to": "application::error", "temporary": false},
-    {"from": "application", "to": "application::ids", "temporary": false},
-    {"from": "application", "to": "application::monitoring", "temporary": false},
-    {"from": "application", "to": "application::pagination", "temporary": false},
-    {"from": "application", "to": "application::pricing", "temporary": false},
-    {"from": "application", "to": "application::queries::channel_status", "temporary": false},
-    {"from": "application", "to": "application::queries::pricing_comparison", "temporary": false},
-    {"from": "application", "to": "application::request_finalization", "temporary": false},
-    {"from": "application", "to": "application::routing", "temporary": false},
-    {"from": "application", "to": "application::settings", "temporary": false},
-    {"from": "application", "to": "application::stations", "temporary": false},
-    {"from": "application", "to": "models", "temporary": false},
-    {"from": "application", "to": "models::change_events", "temporary": false},
-    {"from": "application", "to": "models::channel_monitors", "temporary": false},
-    {"from": "application", "to": "models::collector", "temporary": false},
-    {"from": "application", "to": "models::collector_runs", "temporary": false},
-    {"from": "application", "to": "models::credentials", "temporary": false},
-    {"from": "application", "to": "models::group_facts", "temporary": false},
-    {"from": "application", "to": "models::pricing", "temporary": false},
-    {"from": "application", "to": "models::proxy", "temporary": false},
-    {"from": "application", "to": "models::remote_keys", "temporary": false},
-    {"from": "application", "to": "models::routing", "temporary": false},
-    {"from": "application", "to": "models::settings", "temporary": false},
-    {"from": "application", "to": "models::shared_capabilities", "temporary": false},
-    {"from": "application", "to": "models::station_keys", "temporary": false},
-    {"from": "application", "to": "models::stations", "temporary": false},
-    {"from": "application", "to": "persistence", "temporary": false},
-    {"from": "application", "to": "persistence::error", "temporary": false},
-    {"from": "application", "to": "persistence::runtime", "temporary": false},
-    {"from": "application", "to": "persistence::stores::change_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::collector_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::credential_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::monitoring_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::pricing_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::request_log_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::request_log_write", "temporary": false},
-    {"from": "application", "to": "persistence::stores::routing_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::settings_store", "temporary": false},
-    {"from": "application", "to": "persistence::stores::station_catalog", "temporary": false},
-    {"from": "application", "to": "services::group_categories", "temporary": false},
-    {"from": "application", "to": "services::pricing", "temporary": false},
-    {"from": "application", "to": "services::shared_capabilities", "temporary": false},
-    {"from": "application::request_finalization", "to": "application::request_lifecycle::attempt", "temporary": false},
-    {"from": "application::request_finalization", "to": "application::request_lifecycle::ports", "temporary": false},
-    {"from": "application::request_finalization", "to": "application::request_lifecycle::request", "temporary": false},
-    {"from": "application::request_lifecycle::attempt", "to": "application::request_lifecycle::request", "temporary": false},
-    {"from": "application::request_lifecycle::ports", "to": "application::request_lifecycle::attempt", "temporary": false},
-    {"from": "application::request_lifecycle::ports", "to": "application::request_lifecycle::request", "temporary": false},
-    {"from": "application::request_lifecycle::request", "to": "application::request_lifecycle::delivery", "temporary": false},
-    {"from": "application::routing", "to": "application::routing_engine::router", "temporary": false},
-    {"from": "application::routing", "to": "application::routing_engine::routing_snapshot", "temporary": false},
-    {"from": "application::routing", "to": "application::routing_engine::routing_types", "temporary": false},
-    {"from": "application::routing", "to": "application::routing_engine::scheduler", "temporary": false},
-    {"from": "application::routing_engine::router", "to": "application::routing_engine::routing_health", "temporary": false},
-    {"from": "application::routing_engine::router", "to": "application::routing_engine::routing_policy", "temporary": false},
-    {"from": "application::routing_engine::router", "to": "application::routing_engine::routing_types", "temporary": false},
-    {"from": "application::routing_engine::router", "to": "application::routing_engine::scheduler", "temporary": false},
-    {"from": "application::routing_engine::routing_policy", "to": "application::routing_engine::routing_health", "temporary": false},
-    {"from": "application::routing_engine::routing_policy", "to": "application::routing_engine::routing_types", "temporary": false},
-    {"from": "application::routing_engine::routing_snapshot", "to": "application::routing_engine::routing_health", "temporary": false},
-    {"from": "application::routing_engine::routing_snapshot", "to": "application::routing_engine::routing_types", "temporary": false},
-    {"from": "commands", "to": "application::app_services", "temporary": false},
-    {"from": "commands", "to": "application::collectors", "temporary": false},
-    {"from": "commands", "to": "application::error", "temporary": false},
-    {"from": "commands", "to": "application::pagination", "temporary": false},
-    {"from": "commands", "to": "ipc::dto", "temporary": false},
-    {"from": "commands", "to": "ipc::dto::settings", "temporary": false},
-    {"from": "commands", "to": "ipc::dto::station_keys", "temporary": false},
-    {"from": "commands", "to": "ipc::dto::stations", "temporary": false},
-    {"from": "commands", "to": "ipc::runtime_contract", "temporary": false},
-    {"from": "commands", "to": "models", "temporary": false},
-    {"from": "commands", "to": "models::capture", "temporary": false},
-    {"from": "commands", "to": "models::change_events", "temporary": false},
-    {"from": "commands", "to": "models::channel_monitors", "temporary": false},
-    {"from": "commands", "to": "models::collector", "temporary": false},
-    {"from": "commands", "to": "models::collector_runs", "temporary": false},
-    {"from": "commands", "to": "models::credentials", "temporary": false},
-    {"from": "commands", "to": "models::group_facts", "temporary": false},
-    {"from": "commands", "to": "models::pricing", "temporary": false},
-    {"from": "commands", "to": "models::proxy", "temporary": false},
-    {"from": "commands", "to": "models::routing", "temporary": false},
-    {"from": "commands", "to": "models::settings", "temporary": false},
-    {"from": "commands", "to": "models::shared_capabilities", "temporary": false},
-    {"from": "commands", "to": "models::station_keys", "temporary": false},
-    {"from": "commands", "to": "models::stations", "temporary": false},
-    {"from": "commands", "to": "observability::correlation", "temporary": false},
-    {"from": "commands", "to": "services", "temporary": false},
-    {"from": "commands", "to": "services::capture", "temporary": false},
-    {"from": "commands", "to": "services::channel_monitors", "temporary": false},
-    {"from": "commands", "to": "services::collectors", "temporary": false},
-    {"from": "commands", "to": "services::data_store", "temporary": false},
-    {"from": "commands", "to": "services::data_store::backup", "temporary": false},
-    {"from": "commands", "to": "services::data_store::config", "temporary": false},
-    {"from": "commands", "to": "services::data_store::diagnostic", "temporary": false},
-    {"from": "commands", "to": "services::data_store::generation_upgrade", "temporary": false},
-    {"from": "commands", "to": "services::data_store::inspect", "temporary": false},
-    {"from": "commands", "to": "services::data_store::types", "temporary": false},
-    {"from": "commands", "to": "services::endpoint_ping", "temporary": false},
-    {"from": "commands", "to": "services::proxy", "temporary": false},
-    {"from": "commands", "to": "services::proxy::runtime", "temporary": false},
-    {"from": "commands", "to": "services::proxy::startup", "temporary": false},
-    {"from": "commands", "to": "services::remote_keys", "temporary": false},
-    {"from": "commands", "to": "services::secrets", "temporary": false},
-    {"from": "commands", "to": "services::secrets::validation", "temporary": false},
-    {"from": "commands", "to": "services::station_endpoints", "temporary": false},
-    {"from": "commands", "to": "services::time", "temporary": false},
-    {"from": "commands", "to": "services::updater", "temporary": false},
-    {"from": "commands::error", "to": "observability::correlation", "temporary": false},
-    {"from": "ipc::dto", "to": "commands::error", "temporary": false},
-    {"from": "ipc::dto", "to": "ipc::runtime_contract", "temporary": false},
-    {"from": "ipc::dto::settings", "to": "commands::error", "temporary": false},
-    {"from": "ipc::dto::settings", "to": "models::routing", "temporary": false},
-    {"from": "ipc::dto::settings", "to": "models::settings", "temporary": false},
-    {"from": "ipc::dto::station_keys", "to": "commands::error", "temporary": false},
-    {"from": "ipc::dto::station_keys", "to": "models::credentials", "temporary": false},
-    {"from": "ipc::dto::station_keys", "to": "models::group_facts", "temporary": false},
-    {"from": "ipc::dto::station_keys", "to": "models::remote_keys", "temporary": false},
-    {"from": "ipc::dto::station_keys", "to": "models::routing", "temporary": false},
-    {"from": "ipc::dto::station_keys", "to": "models::shared_capabilities", "temporary": false},
-    {"from": "ipc::dto::station_keys", "to": "models::station_keys", "temporary": false},
-    {"from": "ipc::dto::stations", "to": "commands::error", "temporary": false},
-    {"from": "ipc::dto::stations", "to": "models::stations", "temporary": false},
-    {"from": "lib", "to": "app_composition", "temporary": false},
-    {"from": "lib", "to": "commands", "temporary": false},
-    {"from": "lib", "to": "persistence", "temporary": false},
-    {"from": "lib", "to": "persistence::runtime", "temporary": false},
-    {"from": "lib", "to": "persistence::upgrade_fault", "temporary": false},
-    {"from": "lib", "to": "runtime_composition", "temporary": false},
-    {"from": "lib", "to": "services::capture::session", "temporary": false},
-    {"from": "lib", "to": "services::channel_monitors", "temporary": false},
-    {"from": "lib", "to": "services::data_store", "temporary": false},
-    {"from": "lib", "to": "services::data_store::data_directory_port", "temporary": false},
-    {"from": "lib", "to": "services::data_store::generation_upgrade", "temporary": false},
-    {"from": "lib", "to": "services::data_store::installation_lease", "temporary": false},
-    {"from": "lib", "to": "services::data_store::relocation", "temporary": false},
-    {"from": "lib", "to": "services::data_store::types", "temporary": false},
-    {"from": "lib", "to": "services::proxy::runtime", "temporary": false},
-    {"from": "lib", "to": "services::proxy::startup_auto_start", "temporary": false},
-    {"from": "lib", "to": "services::secrets", "temporary": false},
-    {"from": "lib", "to": "services::station_collectors", "temporary": false},
-    {"from": "models", "to": "models::channel_monitors", "temporary": false},
-    {"from": "models", "to": "models::group_facts", "temporary": false},
-    {"from": "models", "to": "models::pricing", "temporary": false},
-    {"from": "models", "to": "models::proxy", "temporary": false},
-    {"from": "models", "to": "models::routing", "temporary": false},
-    {"from": "models", "to": "models::station_keys", "temporary": false},
-    {"from": "models", "to": "models::stations", "temporary": false},
-    {"from": "persistence", "to": "models", "temporary": false},
-    {"from": "persistence", "to": "models::change_events", "temporary": false},
-    {"from": "persistence", "to": "models::channel_monitors", "temporary": false},
-    {"from": "persistence", "to": "models::collector", "temporary": false},
-    {"from": "persistence", "to": "models::collector_runs", "temporary": false},
-    {"from": "persistence", "to": "models::credentials", "temporary": false},
-    {"from": "persistence", "to": "models::group_facts", "temporary": false},
-    {"from": "persistence", "to": "models::pricing", "temporary": false},
-    {"from": "persistence", "to": "models::proxy", "temporary": false},
-    {"from": "persistence", "to": "models::remote_keys", "temporary": false},
-    {"from": "persistence", "to": "models::routing", "temporary": false},
-    {"from": "persistence", "to": "models::settings", "temporary": false},
-    {"from": "persistence", "to": "models::station_keys", "temporary": false},
-    {"from": "persistence", "to": "models::stations", "temporary": false},
-    {"from": "persistence", "to": "persistence::error", "temporary": false},
-    {"from": "persistence", "to": "persistence::runtime", "temporary": false},
-    {"from": "persistence", "to": "persistence::stores::request_log_write", "temporary": false},
-    {"from": "persistence", "to": "persistence::upgrade_fault", "temporary": false},
-    {"from": "persistence", "to": "persistence::upgrade_journal", "temporary": false},
-    {"from": "persistence", "to": "persistence::upgrade_recovery_plan", "temporary": false},
-    {"from": "persistence::stores::credential_store", "to": "models::secrets", "temporary": false},
-    {"from": "persistence::stores::monitoring_store", "to": "models::secrets", "temporary": false},
-    {"from": "persistence::stores::pricing_store", "to": "models::secrets", "temporary": false},
-    {"from": "persistence::stores::settings_store", "to": "models::secrets", "temporary": false},
-    {"from": "persistence::stores::station_catalog", "to": "models::secrets", "temporary": false},
-    {"from": "persistence::stores::station_catalog", "to": "models::station_endpoints", "temporary": false},
-    {"from": "runtime_composition", "to": "application", "temporary": false},
-    {"from": "runtime_composition", "to": "persistence", "temporary": false},
-    {"from": "runtime_composition", "to": "persistence::upgrade_fault", "temporary": false},
-    {"from": "runtime_composition", "to": "services", "temporary": false},
-    {"from": "services::capture", "to": "models::capture", "temporary": false},
-    {"from": "services::capture", "to": "models::credentials", "temporary": false},
-    {"from": "services::capture", "to": "services::secrets::mask", "temporary": false},
-    {"from": "services::capture", "to": "services::station_endpoints", "temporary": false},
-    {"from": "services::channel_monitors", "to": "application::app_services", "temporary": false},
-    {"from": "services::channel_monitors", "to": "application::credentials", "temporary": false},
-    {"from": "services::channel_monitors", "to": "application::error", "temporary": false},
-    {"from": "services::channel_monitors", "to": "application::monitoring", "temporary": false},
-    {"from": "services::channel_monitors", "to": "application::pagination", "temporary": false},
-    {"from": "services::channel_monitors", "to": "application::pricing", "temporary": false},
-    {"from": "services::channel_monitors", "to": "application::routing", "temporary": false},
-    {"from": "services::channel_monitors", "to": "models::channel_monitors", "temporary": false},
-    {"from": "services::channel_monitors", "to": "models::pricing", "temporary": false},
-    {"from": "services::channel_monitors", "to": "models::routing", "temporary": false},
-    {"from": "services::channel_monitors", "to": "persistence", "temporary": false},
-    {"from": "services::channel_monitors", "to": "services::proxy::observability", "temporary": false},
-    {"from": "services::channel_monitors", "to": "services::pricing", "temporary": false},
-    {"from": "services::channel_monitors", "to": "services::station_endpoints", "temporary": false},
-    {"from": "services::channel_monitors", "to": "services::time", "temporary": false},
-    {"from": "services::collectors", "to": "application::collectors", "temporary": false},
-    {"from": "services::collectors", "to": "application::credentials", "temporary": false},
-    {"from": "services::collectors", "to": "application::error", "temporary": false},
-    {"from": "services::collectors", "to": "application::settings", "temporary": false},
-    {"from": "services::collectors", "to": "models", "temporary": false},
-    {"from": "services::collectors", "to": "models::collector", "temporary": false},
-    {"from": "services::collectors", "to": "models::credentials", "temporary": false},
-    {"from": "services::collectors", "to": "models::group_facts", "temporary": false},
-    {"from": "services::collectors", "to": "models::remote_keys", "temporary": false},
-    {"from": "services::collectors", "to": "models::settings", "temporary": false},
-    {"from": "services::collectors", "to": "models::station_keys", "temporary": false},
-    {"from": "services::collectors", "to": "models::stations", "temporary": false},
-    {"from": "services::collectors", "to": "services::collectors::adapters", "temporary": false},
-    {"from": "services::collectors", "to": "services::group_categories", "temporary": false},
-    {"from": "services::collectors", "to": "services::outbound", "temporary": false},
-    {"from": "services::collectors", "to": "services::remote_keys", "temporary": false},
-    {"from": "services::collectors", "to": "services::secrets::mask", "temporary": false},
-    {"from": "services::collectors", "to": "services::station_endpoints", "temporary": false},
-    {"from": "services::collectors", "to": "services::time", "temporary": false},
-    {"from": "services::data_store", "to": "application::data_directory", "temporary": false},
-    {"from": "services::data_store", "to": "persistence", "temporary": false},
-    {"from": "services::data_store", "to": "persistence::legacy_import", "temporary": false},
-    {"from": "services::data_store", "to": "persistence::runtime", "temporary": false},
-    {"from": "services::data_store", "to": "persistence::upgrade_fault", "temporary": false},
-    {"from": "services::data_store", "to": "persistence::upgrade_journal", "temporary": false},
-    {"from": "services::data_store", "to": "persistence::upgrade_recovery_executor", "temporary": false},
-    {"from": "services::data_store", "to": "persistence::upgrade_recovery_plan", "temporary": false},
-    {"from": "services::data_store", "to": "services::data_store::config", "temporary": false},
-    {"from": "services::data_store", "to": "services::data_store::inspect", "temporary": false},
-    {"from": "services::data_store", "to": "services::data_store::relocation", "temporary": false},
-    {"from": "services::data_store", "to": "services::data_store::types", "temporary": false},
-    {"from": "services::data_store", "to": "services::secrets::crypto", "temporary": false},
-    {"from": "services::data_store", "to": "services::secrets::mask", "temporary": false},
-    {"from": "services::data_store", "to": "services::secrets::validation", "temporary": false},
-    {"from": "services::pricing", "to": "models::pricing", "temporary": false},
-    {"from": "services::pricing_catalog", "to": "application::pricing", "temporary": false},
-    {"from": "services::pricing_catalog", "to": "models::pricing", "temporary": false},
-    {"from": "services::outbound", "to": "models::proxy", "temporary": false},
-    {"from": "services::proxy", "to": "application::app_services", "temporary": false},
-    {"from": "services::proxy", "to": "application::routing", "temporary": false},
-    {"from": "services::proxy", "to": "application::routing_engine::router", "temporary": false},
-    {"from": "services::proxy", "to": "application::routing_engine::routing_failure", "temporary": false},
-    {"from": "services::proxy", "to": "application::routing_engine::routing_types", "temporary": false},
-    {"from": "services::proxy", "to": "application::routing_engine::scheduler", "temporary": false},
-    {"from": "services::proxy", "to": "models", "temporary": false},
-    {"from": "services::proxy", "to": "models::pricing", "temporary": false},
-    {"from": "services::proxy", "to": "models::proxy", "temporary": false},
-    {"from": "services::proxy", "to": "models::routing", "temporary": false},
-    {"from": "services::proxy", "to": "services::outbound", "temporary": false},
-    {"from": "services::proxy", "to": "services::proxy::observability", "temporary": false},
-    {"from": "services::proxy", "to": "services::proxy::response_body", "temporary": false},
-    {"from": "services::proxy", "to": "services::proxy::runtime", "temporary": false},
-    {"from": "services::proxy", "to": "services::proxy::startup", "temporary": false},
-    {"from": "services::proxy", "to": "services::secrets", "temporary": false},
-    {"from": "services::proxy", "to": "services::secrets::crypto", "temporary": false},
-    {"from": "services::proxy", "to": "services::secrets::mask", "temporary": false},
-    {"from": "services::proxy", "to": "services::station_endpoints", "temporary": false},
-    {"from": "services::proxy", "to": "services::time", "temporary": false},
-    {"from": "services::proxy::lifecycle", "to": "application::request_lifecycle::attempt", "temporary": false},
-    {"from": "services::proxy::lifecycle", "to": "application::request_lifecycle::delivery", "temporary": false},
-    {"from": "services::proxy::lifecycle", "to": "application::request_lifecycle::ports", "temporary": false},
-    {"from": "services::proxy::lifecycle", "to": "application::request_lifecycle::request", "temporary": false},
-    {"from": "services::remote_keys", "to": "application::credentials", "temporary": false},
-    {"from": "services::remote_keys", "to": "application::error", "temporary": false},
-    {"from": "services::remote_keys", "to": "models::group_facts", "temporary": false},
-    {"from": "services::remote_keys", "to": "models::remote_keys", "temporary": false},
-    {"from": "services::remote_keys", "to": "models::station_keys", "temporary": false},
-    {"from": "services::remote_keys", "to": "services::collectors", "temporary": false},
-    {"from": "services::remote_keys", "to": "services::collectors::adapters", "temporary": false},
-    {"from": "services::secrets", "to": "models::secrets", "temporary": false},
-    {"from": "services::secrets", "to": "persistence", "temporary": false},
-    {"from": "services::secrets", "to": "services::secrets::crypto", "temporary": false},
-    {"from": "services::secrets::vault", "to": "application::credentials", "temporary": false},
-    {"from": "services::secrets::vault", "to": "services::secrets::mask", "temporary": false},
-    {"from": "services::shared_capabilities", "to": "models::group_facts", "temporary": false},
-    {"from": "services::shared_capabilities", "to": "models::shared_capabilities", "temporary": false},
-    {"from": "services::shared_capabilities", "to": "services::group_categories", "temporary": false},
-    {"from": "services::station_collectors", "to": "application::app_services", "temporary": false},
-    {"from": "services::station_collectors", "to": "application::collectors", "temporary": false},
-    {"from": "services::station_collectors", "to": "application::pagination", "temporary": false},
-    {"from": "services::station_collectors", "to": "services::collectors", "temporary": false},
-    {"from": "services::station_collectors", "to": "services::collectors::adapters", "temporary": false},
-    {"from": "services::station_collectors", "to": "services::collectors::apply", "temporary": false},
-    {"from": "services::station_endpoints", "to": "models::station_endpoints", "temporary": false},
-    {"from": "services::updater", "to": "services::outbound", "temporary": false}
+    {
+      "from": "app_composition",
+      "to": "application::app_services",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "application::data_directory",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "runtime_composition",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::capture::session",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::collectors::drivers",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::collectors::orchestration",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::pricing_catalog",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::secrets::vault",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::clock",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::collectors",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::credentials",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::data_directory",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::error",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::ids",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::pagination",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::pricing",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::queries::channel_status",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::queries::pricing_comparison",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::request_finalization",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::routing",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::settings",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "application::stations",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::change_events",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::collector",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::collector_runs",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::credentials",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::settings",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::error",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::change_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::collector_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::credential_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::monitoring_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::pricing_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::request_log_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::request_log_write",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::routing_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::settings_store",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "persistence::stores::station_catalog",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "services::group_categories",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "services::pricing",
+      "temporary": false
+    },
+    {
+      "from": "application",
+      "to": "services::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "application::app_services",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "models::capture",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::capture",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::capture::session",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::capture::web_authorization",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::collectors::contract",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::collectors::evidence",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::collectors::failure",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::collectors::orchestration",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "services::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::channel_monitoring",
+      "to": "services::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::data_directory",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::data_directory",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::local_proxy",
+      "to": "services::proxy",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::local_proxy",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::local_proxy",
+      "to": "services::proxy::routing_repository",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::local_proxy",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::remote_keys",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::remote_keys",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::remote_keys",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::remote_keys",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::remote_keys",
+      "to": "services::collectors::orchestration",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::remote_keys",
+      "to": "services::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::routing",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::routing",
+      "to": "services::endpoint_ping",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::routing",
+      "to": "services::time",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_collection",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_collection",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_collection",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_collection",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_collection",
+      "to": "services::collectors::output",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_key_connectivity",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "application::connectivity_probe",
+      "to": "services::proxy",
+      "temporary": false
+    },
+    {
+      "from": "application::connectivity_probe",
+      "to": "services::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "application::data_directory",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::data_directory",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization",
+      "to": "application::request_lifecycle::attempt",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization",
+      "to": "application::request_lifecycle::ports",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization",
+      "to": "application::request_lifecycle::request",
+      "temporary": false
+    },
+    {
+      "from": "application::request_lifecycle::attempt",
+      "to": "application::request_lifecycle::request",
+      "temporary": false
+    },
+    {
+      "from": "application::request_lifecycle::ports",
+      "to": "application::request_lifecycle::attempt",
+      "temporary": false
+    },
+    {
+      "from": "application::request_lifecycle::ports",
+      "to": "application::request_lifecycle::request",
+      "temporary": false
+    },
+    {
+      "from": "application::request_lifecycle::request",
+      "to": "application::request_lifecycle::delivery",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::routing_engine::router",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::routing_engine::routing_snapshot",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::routing_engine::routing_types",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::routing_engine::scheduler",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::router",
+      "to": "application::routing_engine::routing_health",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::router",
+      "to": "application::routing_engine::routing_policy",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::router",
+      "to": "application::routing_engine::routing_types",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::router",
+      "to": "application::routing_engine::scheduler",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::routing_policy",
+      "to": "application::routing_engine::routing_health",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::routing_policy",
+      "to": "application::routing_engine::routing_types",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::routing_snapshot",
+      "to": "application::routing_engine::routing_health",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::routing_snapshot",
+      "to": "application::routing_engine::routing_types",
+      "temporary": false
+    },
+    {
+      "from": "background_tasks::operation",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "background_tasks::status",
+      "to": "observability::redaction",
+      "temporary": false
+    },
+    {
+      "from": "background_tasks::supervisor",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "application::error",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "application::pagination",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "ipc::dto",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "ipc::dto::settings",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "ipc::dto::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "ipc::dto::stations",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "ipc::runtime_contract",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "models",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::capture",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::data_store",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::data_store::backup",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::data_store::config",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::data_store::diagnostic",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::data_store::generation_upgrade",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::data_store::inspect",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::data_store::types",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::proxy",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::secrets::validation",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "commands",
+      "to": "services::updater",
+      "temporary": false
+    },
+    {
+      "from": "commands::capture",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::capture",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::capture",
+      "to": "ipc::dto::station_collector_operations",
+      "temporary": false
+    },
+    {
+      "from": "commands::ccswitch_import",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::ccswitch_import",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::change_events",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::change_events",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::change_events",
+      "to": "ipc::dto::change_logs",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_monitoring",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_monitoring",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_monitoring",
+      "to": "ipc::dto::channel_monitor_mutations",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_monitoring",
+      "to": "ipc::dto::channel_monitor_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_status",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_status",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_status",
+      "to": "ipc::dto::channel_monitor_operations",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_status",
+      "to": "ipc::dto::channel_monitor_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::collector_metadata",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::collector_metadata",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::collector_metadata",
+      "to": "ipc::dto::collector_facts",
+      "temporary": false
+    },
+    {
+      "from": "commands::credentials",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::credentials",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_directory",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_directory",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_store_startup",
+      "to": "commands::data_recovery",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_store_startup",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_store_startup",
+      "to": "ipc::dto::updater_data_recovery",
+      "temporary": false
+    },
+    {
+      "from": "commands::endpoint_ping",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::endpoint_ping",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::endpoint_ping",
+      "to": "ipc::dto::routing_mutations",
+      "temporary": false
+    },
+    {
+      "from": "commands::error",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "commands::key_pool",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::key_pool",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::key_pool",
+      "to": "ipc::dto::routing_health_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::key_pool",
+      "to": "ipc::dto::routing_mutations",
+      "temporary": false
+    },
+    {
+      "from": "commands::local_proxy",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::local_proxy",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::local_proxy",
+      "to": "ipc::dto::proxy_workspace_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::local_proxy",
+      "to": "ipc::dto::routing_mutations",
+      "temporary": false
+    },
+    {
+      "from": "commands::model_aliases",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::model_aliases",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::model_aliases",
+      "to": "ipc::dto::routing_health_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::model_aliases",
+      "to": "ipc::dto::routing_mutations",
+      "temporary": false
+    },
+    {
+      "from": "commands::operations",
+      "to": "app_composition",
+      "temporary": false
+    },
+    {
+      "from": "commands::operations",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::operations",
+      "to": "ipc::dto::operations",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing",
+      "to": "ipc::dto::collector_facts",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing",
+      "to": "ipc::dto::pricing_mutations",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing",
+      "to": "ipc::dto::pricing_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing_workspace",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing_workspace",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::pricing_workspace",
+      "to": "ipc::dto::pricing_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::request_logs",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::request_logs",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::request_logs",
+      "to": "ipc::dto::change_logs",
+      "temporary": false
+    },
+    {
+      "from": "commands::routing_health",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::routing_health",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::routing_health",
+      "to": "ipc::dto::routing_health_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::runtime",
+      "to": "app_composition",
+      "temporary": false
+    },
+    {
+      "from": "commands::runtime",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::runtime",
+      "to": "ipc::dto::runtime_status",
+      "temporary": false
+    },
+    {
+      "from": "commands::settings",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::settings",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_collection",
+      "to": "app_composition",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_collection",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_collection",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_collection",
+      "to": "ipc::dto::collector_facts",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_collection",
+      "to": "ipc::dto::station_collector_operations",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "app_composition",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "application::connectivity_probe",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "ipc::dto::operations",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "commands::stations",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "commands::stations",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::updater",
+      "to": "app_composition",
+      "temporary": false
+    },
+    {
+      "from": "commands::updater",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::updater",
+      "to": "ipc::dto::updater_data_recovery",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto",
+      "to": "ipc::runtime_contract",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::change_logs",
+      "to": "models::change_events",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::change_logs",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_mutations",
+      "to": "models",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_mutations",
+      "to": "models::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_operations",
+      "to": "ipc::dto::change_logs",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_operations",
+      "to": "ipc::dto::channel_monitor_reads",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_operations",
+      "to": "ipc::dto::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_operations",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_operations",
+      "to": "models::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_reads",
+      "to": "models::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::channel_monitor_reads",
+      "to": "models::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::collector_facts",
+      "to": "models::collector",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::collector_facts",
+      "to": "models::collector_runs",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::collector_facts",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::collector_facts",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::collector_facts",
+      "to": "models::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::operations",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::pricing_mutations",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::pricing_reads",
+      "to": "ipc::dto::collector_facts",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::pricing_reads",
+      "to": "ipc::dto::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::pricing_reads",
+      "to": "ipc::dto::stations",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::pricing_reads",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::pricing_reads",
+      "to": "models::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::proxy_workspace_reads",
+      "to": "application::routing_engine::routing_types",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::proxy_workspace_reads",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_health_reads",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_health_reads",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_mutations",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_mutations",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::runtime_status",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::settings",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::settings",
+      "to": "models",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::settings",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::settings",
+      "to": "models::settings",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_collector_operations",
+      "to": "models::capture",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_collector_operations",
+      "to": "models::collector",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "models::credentials",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "models::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "models::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "models::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::stations",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::stations",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::updater_data_recovery",
+      "to": "commands::data_recovery",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::updater_data_recovery",
+      "to": "services::data_store::types",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::updater_data_recovery",
+      "to": "services::updater",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "app_composition",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "commands::data_store_startup",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "persistence::upgrade_fault",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "runtime_composition",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::capture::session",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::data_directory_port",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::generation_upgrade",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::installation_lease",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::relocation",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::types",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::proxy::startup_auto_start",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::station_collectors",
+      "temporary": false
+    },
+    {
+      "from": "models",
+      "to": "models::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "models",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "models",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "models",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "models",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "models",
+      "to": "models::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "models",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "observability::diagnostics",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "observability::diagnostics",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "outbound::client",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::change_events",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::collector",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::collector_runs",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::credentials",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::settings",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "persistence::error",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "persistence::stores::request_log_write",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "persistence::upgrade_fault",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "persistence::upgrade_journal",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "persistence::upgrade_recovery_plan",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::credential_store",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::monitoring_store",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::pricing_store",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::settings_store",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::station_catalog",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::station_catalog",
+      "to": "models::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "runtime_composition",
+      "to": "application",
+      "temporary": false
+    },
+    {
+      "from": "runtime_composition",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "runtime_composition",
+      "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "runtime_composition",
+      "to": "persistence::upgrade_fault",
+      "temporary": false
+    },
+    {
+      "from": "runtime_composition",
+      "to": "services",
+      "temporary": false
+    },
+    {
+      "from": "services::capture",
+      "to": "models::capture",
+      "temporary": false
+    },
+    {
+      "from": "services::capture",
+      "to": "models::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::capture",
+      "to": "services::secrets::mask",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "application::app_services",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "application::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "application::error",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "application::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "application::pagination",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "application::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "application::routing",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "models::channel_monitors",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "services::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "services::proxy::observability",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "services::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors",
+      "to": "services::time",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors::probe",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "services::channel_monitors::probe",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "application::collectors",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "application::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "application::error",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "application::settings",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::collector",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::settings",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "services::group_categories",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "services::outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "services::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "services::secrets::mask",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "services::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "services::time",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::collector_apply",
+      "to": "services::collectors::output",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::contract",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::contract",
+      "to": "services::collectors::evidence",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::contract",
+      "to": "services::collectors::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers",
+      "to": "services::collectors::contract",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::newapi",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::newapi",
+      "to": "services::collectors::contract",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::newapi",
+      "to": "services::collectors::evidence",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::newapi",
+      "to": "services::collectors::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::openai_compatible",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::openai_compatible",
+      "to": "services::collectors::contract",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::openai_compatible",
+      "to": "services::collectors::evidence",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::openai_compatible",
+      "to": "services::collectors::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::sub2api",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::sub2api",
+      "to": "services::collectors::evidence",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::drivers::sub2api",
+      "to": "services::collectors::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::failure",
+      "to": "services::collectors::evidence",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::login_probe",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::orchestration",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::orchestration",
+      "to": "services::collectors::contract",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::orchestration",
+      "to": "services::collectors::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "application::data_directory",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence::legacy_import",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence::upgrade_fault",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence::upgrade_journal",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence::upgrade_recovery_executor",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence::upgrade_recovery_plan",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::data_store::config",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::data_store::inspect",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::data_store::relocation",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::data_store::types",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::secrets::crypto",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::secrets::mask",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::secrets::validation",
+      "temporary": false
+    },
+    {
+      "from": "services::endpoint_ping",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::outbound",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "services::pricing",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::pricing_catalog",
+      "to": "application::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::pricing_catalog",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "application::app_services",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "application::routing",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "application::routing_engine::router",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "application::routing_engine::routing_failure",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "application::routing_engine::routing_types",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "application::routing_engine::scheduler",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "models",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::proxy::observability",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::proxy::response_body",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::proxy::startup",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::secrets::crypto",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::secrets::mask",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "services::time",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "services::proxy::routing_repository",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::ingress",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::lifecycle",
+      "to": "application::request_lifecycle::attempt",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::lifecycle",
+      "to": "application::request_lifecycle::delivery",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::lifecycle",
+      "to": "application::request_lifecycle::ports",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::lifecycle",
+      "to": "application::request_lifecycle::request",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::request",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::response_body",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::response_body",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::runtime",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::runtime",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::runtime",
+      "to": "services::proxy::routing_repository",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::startup",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::startup",
+      "to": "services::proxy::routing_repository",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "application::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "application::error",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "models::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "models::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "services::collectors::contract",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "services::collectors::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "services::collectors::orchestration",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "services::outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "services::secrets::mask",
+      "temporary": false
+    },
+    {
+      "from": "services::remote_keys",
+      "to": "services::time",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "services::secrets::crypto",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets::vault",
+      "to": "application::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets::vault",
+      "to": "services::secrets::mask",
+      "temporary": false
+    },
+    {
+      "from": "services::shared_capabilities",
+      "to": "models::group_facts",
+      "temporary": false
+    },
+    {
+      "from": "services::shared_capabilities",
+      "to": "models::shared_capabilities",
+      "temporary": false
+    },
+    {
+      "from": "services::shared_capabilities",
+      "to": "services::group_categories",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "application::app_services",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "application::collectors",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "application::pagination",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "services::collectors::apply",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "services::collectors::output",
+      "temporary": false
+    },
+    {
+      "from": "services::station_endpoints",
+      "to": "models::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "services::updater",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::updater",
+      "to": "services::outbound",
+      "temporary": false
+    }
   ],
   "temporary_legacy_consumers": [],
   "temporary_legacy_paths": [],
   "allowed_consumers": {
-    "persistence::legacy_import": ["services::data_store::generation_upgrade"]
+    "persistence::legacy_import": [
+      "services::data_store::generation_upgrade"
+    ]
   },
   "fan_in_baseline": {
-    "DataDirConfigV2": {"direct_consumer_modules": 2},
-    "LifecycleFinalizationLease": {"direct_consumer_modules": 2}
+    "DataDirConfigV2": {
+      "direct_consumer_modules": 2
+    },
+    "LifecycleFinalizationLease": {
+      "direct_consumer_modules": 2
+    }
   },
   "fan_out_baseline": {}
 }
