@@ -7,7 +7,8 @@ Date: 2026-07-28
 - Stage 7 Task 28 release/locked build, artifact and final snapshot qualification.
 - Release candidate version: `v0.3.3`.
 - `v0.3.3` is used because `v0.3.2` already points to the earlier released commit `db51a12b7b783661fd946952600a7a78595ddb0f`.
-- Source revision under test: `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`.
+- Release prebundle source revision under test: `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`.
+- Latest live provider source revision under test: `4217aa9420e4e5e6c0221d5f7038392c199fcf33`.
 - Worktree: `D:\Dev\Projects\relay-pool-desktop-architecture-scale-upgrade`.
 - Branch: `codex/architecture-scale-upgrade`.
 - No desktop app launch, screenshot, or direct visual desktop inspection was used.
@@ -43,6 +44,16 @@ Date: 2026-07-28
   `RELAY_POOL_RELEASE_TAG=v0.3.3 pnpm verify:release-version --require-tag`
   - result: exit code 0
   - verified package/Cargo/Tauri version contract for `v0.3.3`
+- Authenticated OpenAI-compatible live provider probe:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-openai-compatible-live-qualification.ps1 -BaseUrl <approved endpoint> -Model codex-auto-review -OutputPath output\architecture-scale\qualification\live-provider\station-key-connectivity-live-probe-4217aa9-2026-07-28-summary.json`
+  - result: exit code 0
+  - revision: `4217aa9420e4e5e6c0221d5f7038392c199fcf33`
+  - final protocol: `responses`
+  - final response mode: `stream`
+  - final status: 200
+  - final success: true
+  - summary:
+    `output/architecture-scale/qualification/live-provider/station-key-connectivity-live-probe-4217aa9-2026-07-28-summary.json`
 
 ## Entrypoint Repair
 
@@ -67,12 +78,12 @@ Date: 2026-07-28
 - Current `HEAD` is not exactly tagged.
 - Existing `v0.3.2` tag points to `db51a12b7b783661fd946952600a7a78595ddb0f`; it was not moved.
 - A current exact `v0.3.3` release tag still needs to be created on the final release snapshot before rerunning release qualification.
+- Release prebundle must be rerun on the final tagged revision because the live provider harness and qualification documentation commits postdate the `f74326b5e9ebfe808a8a534feb4c1aa262458ed8` prebundle evidence.
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are not present in the environment.
 - No Tauri bundle directory exists for this revision:
   `src-tauri/target/x86_64-pc-windows-msvc/release/bundle`
 - Signed Tauri bundle, final bundle scan, fresh install, supported upgrade, update relaunch, offline startup, old asset/new binary mismatch, single-instance launch and tray/exit matrix were not run.
-- Task 27 authenticated live provider qualification is blocked, so Task 28 cannot claim Stage 7 release readiness.
 
 ## Result
 
-Task 28 is blocked. The release prebundle gate passed for revision `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`, and the candidate version metadata verifies as `v0.3.3`. The release/locked build gate is not complete without a current exact `v0.3.3` release tag, signing key, signed Tauri bundle, bundle scan, install/upgrade matrix and live provider qualification. Stage 7 Gate does not pass.
+Task 28 is blocked. The release prebundle gate passed for revision `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`, the candidate version metadata verifies as `v0.3.3`, and authenticated OpenAI-compatible live provider qualification passed on revision `4217aa9420e4e5e6c0221d5f7038392c199fcf33`. The release/locked build gate is not complete without rerunning release qualification on a final exact `v0.3.3` tag, signing key, signed Tauri bundle, bundle scan and install/upgrade matrix. Stage 7 Gate does not pass.
