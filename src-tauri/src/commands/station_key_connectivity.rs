@@ -468,6 +468,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
             upstream_api_format,
             capabilities,
             response_result.status_code,
+            &response_result.message,
         )
     {
         return Ok(response_result);
@@ -894,6 +895,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound_channel(
             upstream_api_format,
             capabilities,
             response_result.status_code,
+            &response_result.message,
         )
     {
         return response_result;
@@ -1746,6 +1748,66 @@ mod tests {
     }
 
     #[test]
+    fn station_key_connectivity_parse_body_400_can_switch_protocol() {
+        let candidates = vec!["codex-auto-review".to_string()];
+        let mut attempted = Vec::new();
+
+        let (_model, result) =
+            run_station_key_connectivity_model_attempts(&candidates, |candidate| {
+                run_station_key_connectivity_single_model_probe(
+                    &UpstreamApiFormat::CustomOpenAiCompatible,
+                    None,
+                    |kind| {
+                        attempted.push((candidate.to_string(), kind));
+                        match kind {
+                            StationKeyConnectivityProbeKind::Responses => {
+                                StationKeyConnectivityProbeResult::failure(
+                                    400,
+                                    17,
+                                    "Failed to parse request body".to_string(),
+                                )
+                            }
+                            StationKeyConnectivityProbeKind::ChatCompletions => {
+                                StationKeyConnectivityProbeResult::success(
+                                    200,
+                                    23,
+                                    "Chat Completions connected".to_string(),
+                                )
+                            }
+                        }
+                    },
+                )
+            });
+
+        assert_eq!(
+            attempted,
+            vec![
+                (
+                    "codex-auto-review".to_string(),
+                    StationKeyConnectivityProbeKind::Responses,
+                ),
+                (
+                    "codex-auto-review".to_string(),
+                    StationKeyConnectivityProbeKind::ChatCompletions,
+                ),
+            ]
+        );
+        assert!(result.ok);
+        assert_eq!(result.status_code, 200);
+        assert_eq!(result.duration_ms, 40);
+    }
+
+    #[test]
+    fn station_key_connectivity_plain_400_does_not_switch_protocol() {
+        assert!(!should_try_station_key_connectivity_chat_fallback(
+            &UpstreamApiFormat::CustomOpenAiCompatible,
+            None,
+            400,
+            "The provider rejected the current credentials.",
+        ));
+    }
+
+    #[test]
     fn station_key_connectivity_chat_probe_uses_low_token_request() {
         let body = build_station_key_connectivity_probe_body(
             "claude-test",
@@ -1766,6 +1828,7 @@ mod tests {
             &UpstreamApiFormat::Auto,
             None,
             503,
+            "Service temporarily unavailable",
         ));
     }
 }

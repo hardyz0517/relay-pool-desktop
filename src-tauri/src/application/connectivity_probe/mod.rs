@@ -260,6 +260,7 @@ pub(crate) fn should_try_station_key_connectivity_chat_fallback(
     upstream_api_format: &UpstreamApiFormat,
     capabilities: Option<&StationKeyCapabilities>,
     status_code: u16,
+    message: &str,
 ) -> bool {
     if !matches!(
         upstream_api_format,
@@ -273,7 +274,23 @@ pub(crate) fn should_try_station_key_connectivity_chat_fallback(
     {
         return false;
     }
-    matches!(status_code, 404 | 405 | 501) || should_fallback(status_code)
+    matches!(status_code, 404 | 405 | 501)
+        || should_fallback(status_code)
+        || (status_code == 400 && response_error_allows_chat_fallback(message))
+}
+
+fn response_error_allows_chat_fallback(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    [
+        "failed to parse request body",
+        "unknown parameter",
+        "unrecognized request argument",
+        "unsupported parameter",
+        "does not support responses",
+        "responses api is not supported",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
 }
 
 pub(crate) fn station_key_connectivity_model_candidates(
@@ -482,6 +499,7 @@ where
         upstream_api_format,
         capabilities,
         response_result.status_code,
+        &response_result.message,
     ) {
         return response_result;
     }
