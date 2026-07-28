@@ -7,7 +7,7 @@ Date: 2026-07-28
 - Stage 7 Task 28 release/locked build, artifact and final snapshot qualification.
 - Release candidate version: `v0.3.3`.
 - `v0.3.3` is used because `v0.3.2` already points to the earlier released commit `db51a12b7b783661fd946952600a7a78595ddb0f`.
-- Source revision under test before the version bump: `115f6e1c8ee737d92eebec6efe0ee983bac82e99`.
+- Source revision under test: `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`.
 - Worktree: `D:\Dev\Projects\relay-pool-desktop-architecture-scale-upgrade`.
 - Branch: `codex/architecture-scale-upgrade`.
 - No desktop app launch, screenshot, or direct visual desktop inspection was used.
@@ -25,19 +25,20 @@ Date: 2026-07-28
 - Release prebundle shared entrypoint:
   `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile release -ReleasePhase prebundle`
   - result: exit code 0
-  - started at: `2026-07-28T03:17:30.7063183Z`
-  - finished at: `2026-07-28T03:21:25.8667277Z`
-  - revision: `115f6e1c8ee737d92eebec6efe0ee983bac82e99`
+  - started at: `2026-07-28T04:13:21.6427226Z`
+  - finished at: `2026-07-28T04:21:20.7040191Z`
+  - duration: 479.06s
+  - revision: `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`
   - raw evidence:
-    `output/architecture-scale/qualification/release/release-prebundle-clean-2026-07-28.txt`
+    `output/architecture-scale/qualification/release/release-prebundle-v0.3.3-complete-2026-07-28.txt`
   - summary:
-    `output/architecture-scale/qualification/release/release-prebundle-clean-2026-07-28-summary.json`
-  - verified source version: `v0.3.2`
+    `output/architecture-scale/qualification/release/release-v0.3.3-2026-07-28-summary.json`
+  - verified source version: `v0.3.3`
   - covered all deterministic `full` profile gates plus release version contract and locked Rust release build
   - artifact:
     `src-tauri/target/x86_64-pc-windows-msvc/release/relay-pool-desktop.exe`
   - bytes: 36344320
-  - sha256: `31d4a90462d967b776da6b60c8341e3cce6c9c6c56bc55a87cb5a62ddb4a33e6`
+  - sha256: `b21b6eb242a9807df7da2887739eff52f1f69758a3f62b17ec44f6bd8d5c78a2`
 - Version/tag metadata after preparing the next release candidate:
   `RELAY_POOL_RELEASE_TAG=v0.3.3 pnpm verify:release-version --require-tag`
   - result: exit code 0
@@ -57,11 +58,12 @@ Date: 2026-07-28
 - Full release shared entrypoint:
   `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile release`
   - result: failed after passing deterministic/release prebundle steps
-  - started at: `2026-07-28T03:21:33.2598993Z`
-  - finished at: `2026-07-28T03:25:25.9591361Z`
+  - started at: `2026-07-28T04:21:32.0250869Z`
+  - finished at: `2026-07-28T04:25:20.8904961Z`
+  - duration: 228.87s
   - root cause: `TAURI_SIGNING_PRIVATE_KEY is required for release bundling`
   - raw evidence:
-    `output/architecture-scale/qualification/release/release-all-signing-blocker-clean-2026-07-28.txt`
+    `output/architecture-scale/qualification/release/release-all-v0.3.3-signing-blocker-2026-07-28.txt`
 - Current `HEAD` is not exactly tagged.
 - Existing `v0.3.2` tag points to `db51a12b7b783661fd946952600a7a78595ddb0f`; it was not moved.
 - A current exact `v0.3.3` release tag still needs to be created on the final release snapshot before rerunning release qualification.
@@ -73,4 +75,4 @@ Date: 2026-07-28
 
 ## Result
 
-Task 28 is blocked. The release prebundle gate passed for revision `115f6e1c8ee737d92eebec6efe0ee983bac82e99`, and the next candidate version metadata now verifies as `v0.3.3`. The release/locked build gate is not complete without a current exact `v0.3.3` release tag, signing key, signed Tauri bundle, bundle scan, install/upgrade matrix and live provider qualification. Stage 7 Gate does not pass.
+Task 28 is blocked. The release prebundle gate passed for revision `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`, and the candidate version metadata verifies as `v0.3.3`. The release/locked build gate is not complete without a current exact `v0.3.3` release tag, signing key, signed Tauri bundle, bundle scan, install/upgrade matrix and live provider qualification. Stage 7 Gate does not pass.
