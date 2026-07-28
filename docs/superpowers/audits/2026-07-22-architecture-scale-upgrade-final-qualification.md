@@ -5,7 +5,9 @@ Date: 2026-07-28
 ## Scope
 
 - Stage 7 Task 28 release/locked build, artifact and final snapshot qualification.
-- Source revision under test: `115f6e1c8ee737d92eebec6efe0ee983bac82e99`.
+- Release candidate version: `v0.3.3`.
+- `v0.3.3` is used because `v0.3.2` already points to the earlier released commit `db51a12b7b783661fd946952600a7a78595ddb0f`.
+- Source revision under test before the version bump: `115f6e1c8ee737d92eebec6efe0ee983bac82e99`.
 - Worktree: `D:\Dev\Projects\relay-pool-desktop-architecture-scale-upgrade`.
 - Branch: `codex/architecture-scale-upgrade`.
 - No desktop app launch, screenshot, or direct visual desktop inspection was used.
@@ -36,6 +38,10 @@ Date: 2026-07-28
     `src-tauri/target/x86_64-pc-windows-msvc/release/relay-pool-desktop.exe`
   - bytes: 36344320
   - sha256: `31d4a90462d967b776da6b60c8341e3cce6c9c6c56bc55a87cb5a62ddb4a33e6`
+- Version/tag metadata after preparing the next release candidate:
+  `RELAY_POOL_RELEASE_TAG=v0.3.3 pnpm verify:release-version --require-tag`
+  - result: exit code 0
+  - verified package/Cargo/Tauri version contract for `v0.3.3`
 
 ## Entrypoint Repair
 
@@ -57,7 +63,8 @@ Date: 2026-07-28
   - raw evidence:
     `output/architecture-scale/qualification/release/release-all-signing-blocker-clean-2026-07-28.txt`
 - Current `HEAD` is not exactly tagged.
-- Existing `v0.3.2` tag points to `db51a12b7b783661fd946952600a7a78595ddb0f`, not `115f6e1c8ee737d92eebec6efe0ee983bac82e99`.
+- Existing `v0.3.2` tag points to `db51a12b7b783661fd946952600a7a78595ddb0f`; it was not moved.
+- A current exact `v0.3.3` release tag still needs to be created on the final release snapshot before rerunning release qualification.
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are not present in the environment.
 - No Tauri bundle directory exists for this revision:
   `src-tauri/target/x86_64-pc-windows-msvc/release/bundle`
@@ -66,4 +73,4 @@ Date: 2026-07-28
 
 ## Result
 
-Task 28 is blocked. The release prebundle gate passed for revision `115f6e1c8ee737d92eebec6efe0ee983bac82e99`, but the release/locked build gate is not complete without a current exact release tag, signing key, signed Tauri bundle, bundle scan, install/upgrade matrix and live provider qualification. Stage 7 Gate does not pass.
+Task 28 is blocked. The release prebundle gate passed for revision `115f6e1c8ee737d92eebec6efe0ee983bac82e99`, and the next candidate version metadata now verifies as `v0.3.3`. The release/locked build gate is not complete without a current exact `v0.3.3` release tag, signing key, signed Tauri bundle, bundle scan, install/upgrade matrix and live provider qualification. Stage 7 Gate does not pass.
