@@ -9,6 +9,8 @@ This policy separates four data movement modes that are easy to confuse but have
 
 Portable migration is implemented only behind a disabled security gate in the current source tree. It must not be exposed in a release until a formal security policy review approves the capability and the release qualification checklist is completed.
 
+Encrypted secret export is not part of P8. The disabled portable migration implementation does not change this default policy.
+
 ## Default Export
 
 Default exports do not include raw API keys, station login passwords, cookies, sessions, tokens, authorization headers, prompts, responses, or encrypted ciphertext.
