@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokio::runtime::Handle;
+
 use crate::{
     application::{
         app_services::AppServices,
@@ -55,10 +57,11 @@ impl WorkRuntimeConfig {
 
 pub(crate) fn compose_work_runtime(
     config: WorkRuntimeConfig,
+    spawn_handle: Handle,
 ) -> Result<ManagedWorkRuntime, RuntimeCompositionError> {
     validate_work_runtime_config(&config)?;
     Ok(WorkRuntimeBundle::new(
-        TaskSupervisor::new(),
+        TaskSupervisor::with_spawn_handle(spawn_handle),
         BlockingExecutor::new(config.blocking),
         AsyncOutboundClient::new(config.outbound),
         OperationRegistry::new(config.operation),
@@ -209,8 +212,12 @@ mod tests {
 
     #[test]
     fn work_runtime_composition_uses_architecture_budgets() {
-        let runtime =
-            compose_work_runtime(WorkRuntimeConfig::architecture_budget()).expect("work runtime");
+        let tokio_runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let runtime = compose_work_runtime(
+            WorkRuntimeConfig::architecture_budget(),
+            tokio_runtime.handle().clone(),
+        )
+        .expect("work runtime");
 
         assert_eq!(runtime.blocking.metrics().queued, 0);
         assert_eq!(runtime.outbound.metrics().pool_size, 0);
@@ -239,7 +246,8 @@ mod tests {
             operation: OperationRegistryConfig::architecture_budget(),
         };
 
-        let error = match compose_work_runtime(config) {
+        let tokio_runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let error = match compose_work_runtime(config, tokio_runtime.handle().clone()) {
             Ok(_) => panic!("invalid budget must fail closed"),
             Err(error) => error,
         };
@@ -257,7 +265,8 @@ mod tests {
             },
         };
 
-        let error = match compose_work_runtime(config) {
+        let tokio_runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let error = match compose_work_runtime(config, tokio_runtime.handle().clone()) {
             Ok(_) => panic!("invalid operation budget must fail closed"),
             Err(error) => error,
         };

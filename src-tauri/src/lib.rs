@@ -360,6 +360,7 @@ pub fn run() {
             setup_tray(app)?;
             let work_runtime = app_composition::compose_work_runtime(
                 app_composition::WorkRuntimeConfig::architecture_budget(),
+                tauri::async_runtime::handle().inner().clone(),
             )
             .map_err(|error| format!("failed to compose work runtime: {error}"))?;
             let provider_registry = Arc::new(

@@ -9,7 +9,7 @@ Date: 2026-07-29
 - `v0.3.3` is used because `v0.3.2` already points to the earlier released commit `db51a12b7b783661fd946952600a7a78595ddb0f`.
 - Final release source revision under test: `f1dc30009f543e76a50134331b35cecf10d42280`.
 - Latest live provider source revision under test: `4217aa9420e4e5e6c0221d5f7038392c199fcf33`.
-- Worktree: `D:\Dev\Projects\relay-pool-desktop-architecture-scale-upgrade`.
+- Worktree: isolated local `codex/architecture-scale-upgrade` checkout.
 - Branch: `codex/architecture-scale-upgrade`.
 - No desktop app launch, screenshot, or direct visual desktop inspection was used.
 - Persistence V2 protected source and migrations were not modified.
@@ -87,7 +87,7 @@ Date: 2026-07-29
 - `scripts\verify.ps1` also originally invoked the Tauri build script as `pnpm tauri:build -- --target x86_64-pc-windows-msvc`.
 - On this pnpm/Windows path, the literal `--` was forwarded to Tauri, causing the target release binary path to resolve incorrectly.
 - The entrypoint now invokes `pnpm tauri:build --target x86_64-pc-windows-msvc`.
-- The project updater key was generated as a passwordless Tauri key stored outside the repository at `C:\Users\cpp_s\.tauri\relay-pool-desktop.key`; `verify.ps1` now supports loading that key through `TAURI_SIGNING_PRIVATE_KEY_PATH` and keeps the private key out of command-line arguments and tracked files.
+- The project updater key was generated as a passwordless Tauri key stored outside the repository; `verify.ps1` supports loading that key through `TAURI_SIGNING_PRIVATE_KEY_PATH` and keeps the private key out of command-line arguments and tracked files.
 - Focused verification passed:
   - `pnpm verify:release-version --require-tag` with `RELAY_POOL_RELEASE_TAG=v0.3.2`
   - `node scripts\release-verification-entrypoint.test.mjs`

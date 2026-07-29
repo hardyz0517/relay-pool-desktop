@@ -20,6 +20,28 @@ fn immediate_task(
     }
 }
 
+#[test]
+fn can_start_from_non_reactor_thread_when_spawn_handle_is_provided() {
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let supervisor = TaskSupervisor::with_spawn_handle(runtime.handle().clone());
+    supervisor
+        .register(TaskSpec::new(
+            "startup-runner",
+            "periodic",
+            immediate_task(Ok(())),
+        ))
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("startup-runner"))
+        .expect("start from sync setup thread");
+
+    let state = runtime
+        .block_on(supervisor.join_finished(&TaskId::from("startup-runner")))
+        .expect("join task");
+    assert_eq!(state, TaskState::Succeeded);
+}
+
 #[tokio::test]
 async fn rejects_duplicate_task_ids() {
     let supervisor = TaskSupervisor::new();

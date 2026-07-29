@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures_util::FutureExt;
-use tokio::task::JoinHandle;
+use tokio::{runtime::Handle, task::JoinHandle};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::background_tasks::{
@@ -22,6 +22,7 @@ type TaskJoinResult = Result<Result<(), TaskFailure>, ()>;
 pub struct TaskSupervisor {
     inner: Arc<Mutex<SupervisorInner>>,
     tracker: TaskTracker,
+    spawn_handle: Option<Handle>,
 }
 
 #[derive(Default)]
@@ -49,6 +50,15 @@ impl TaskSupervisor {
         Self {
             inner: Arc::new(Mutex::new(SupervisorInner::default())),
             tracker: TaskTracker::new(),
+            spawn_handle: None,
+        }
+    }
+
+    pub fn with_spawn_handle(spawn_handle: Handle) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SupervisorInner::default())),
+            tracker: TaskTracker::new(),
+            spawn_handle: Some(spawn_handle),
         }
     }
 
@@ -230,7 +240,7 @@ impl TaskSupervisor {
             cancellation_token: token.clone(),
         };
         let body = Arc::clone(&slot.spec.body);
-        let join = self.tracker.spawn(async move {
+        let task = async move {
             correlation::in_scope("task.run", correlation_id, async move {
                 match AssertUnwindSafe((body)(context)).catch_unwind().await {
                     Ok(result) => Ok(result),
@@ -238,7 +248,12 @@ impl TaskSupervisor {
                 }
             })
             .await
-        });
+        };
+        let join = if let Some(handle) = &self.spawn_handle {
+            self.tracker.spawn_on(task, handle)
+        } else {
+            self.tracker.spawn(task)
+        };
 
         slot.state = TaskState::Running;
         slot.run_id = Some(run_id);
