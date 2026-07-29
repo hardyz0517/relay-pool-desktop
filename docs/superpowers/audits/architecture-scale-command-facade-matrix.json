@@ -714,7 +714,7 @@
       "commands": [
         {
           "command": "start_capture_session",
-          "use_case": "start_capture_session",
+          "use_case": "prepare_capture_session_start",
           "dependencies": ["StationService", "CredentialService"]
         },
         {
@@ -732,6 +732,9 @@
           "use_case": "finish_web_authorization_session",
           "dependencies": ["StationService", "CredentialService", "CollectorService", "CaptureSessionStore", "AppHandle"]
         }
+      ],
+      "support_methods": [
+        "web_authorization_cookie_url"
       ],
       "non_goals": [
         "get_capture_session_status",

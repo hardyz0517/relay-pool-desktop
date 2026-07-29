@@ -344,6 +344,10 @@ impl PathTokenId {
         self.kind
     }
 
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
+    }
+
     #[cfg(test)]
     fn with_process_nonce_for_test(mut self, process_nonce: [u8; 16]) -> Self {
         self.process_nonce = process_nonce;

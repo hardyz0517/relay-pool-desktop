@@ -188,13 +188,10 @@ impl PortableMigrationOperationRegistry {
             .ok_or(PortableMigrationRegistryError::OwnerMismatch)?;
         let terminal = match operation.terminal.clone() {
             Some(OperationTerminal::Completed) => {
-                let result = inner
-                    .results
-                    .get(&id)
-                    .ok_or(PortableMigrationRegistryError::CompletedResultMissing)?
-                    .result
-                    .clone();
-                Some(PortableMigrationTerminal::Completed { result })
+                match inner.results.get(&id).map(|entry| entry.result.clone()) {
+                    Some(result) => Some(PortableMigrationTerminal::Completed { result }),
+                    None => Some(PortableMigrationTerminal::ResultUnknown),
+                }
             }
             Some(OperationTerminal::Failed { code }) => Some(PortableMigrationTerminal::Failed {
                 code: code.as_str().to_string(),
@@ -781,12 +778,13 @@ mod tests {
             .start_portable_operation(PortableOperationKind::ExportPackage, None, completed_body)
             .expect("completed");
         tokio::task::yield_now().await;
-        assert_eq!(
+        assert!(matches!(
             facade
                 .get_portable_migration_operation(completed, now)
-                .unwrap_err(),
-            PortableMigrationRegistryError::CompletedResultMissing
-        );
+                .expect("completed without typed result")
+                .terminal,
+            Some(PortableMigrationTerminal::ResultUnknown)
+        ));
 
         facade
             .record_terminal_result_at(
@@ -838,14 +836,16 @@ mod tests {
         assert_eq!(
             facade
                 .get_portable_migration_operation(completed, now)
-                .unwrap_err(),
-            PortableMigrationRegistryError::CompletedResultMissing
+                .expect("evicted completed result")
+                .terminal,
+            Some(PortableMigrationTerminal::ResultUnknown)
         );
         assert_eq!(
             facade
                 .get_portable_migration_operation(second, now + Duration::from_secs(30 * 60))
-                .unwrap_err(),
-            PortableMigrationRegistryError::CompletedResultMissing
+                .expect("expired completed result")
+                .terminal,
+            Some(PortableMigrationTerminal::ResultUnknown)
         );
     }
 

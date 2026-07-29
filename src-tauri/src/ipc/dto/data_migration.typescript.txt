@@ -1,0 +1,164 @@
+export type PortableMigrationBlockedReasonDto =
+  | "security_policy_not_approved"
+  | "unsupported_platform"
+  | "security_baseline_incomplete"
+  | "credential_store_key_missing"
+  | "credential_store_unavailable"
+  | "data_store_not_writable"
+  | "maintenance_in_progress";
+
+export type PortableMigrationLimitsDto = {
+  maxAgeFileBytes: number;
+  maxSqliteBytes: number;
+  maxRowsPerTable: number;
+  maxTotalUserTableRows: number;
+  maxJsonDepth: number;
+  maxRegularFieldBytes: number;
+  maxLargeRedactedJsonFieldBytes: number;
+  maxPassphraseUtf8Bytes: number;
+  exportDeadlineMs: number;
+  inspectionDeadlineMs: number;
+  prepareDeadlineMs: number;
+};
+
+export type PortableMigrationCapabilityDto = {
+  enabled: boolean;
+  blockedReasons: PortableMigrationBlockedReasonDto[];
+  supportedFormat: string;
+  supportedProfile: string;
+  currentSchemaProfile: string;
+  historySupported: boolean;
+  limits: PortableMigrationLimitsDto;
+};
+
+export type PortablePathTokenDto = {
+  pathToken: string;
+  expiresInMs: number;
+};
+
+export type PortableExportOptionsDto = {
+  includeHistory: boolean;
+};
+
+export type StartPortableExportInputDto = {
+  outputPathToken: string;
+  passphrase: string;
+  passphraseConfirmation: string;
+  options: PortableExportOptionsDto;
+  idempotencyKey: string;
+};
+
+export type InspectPortableImportInputDto = {
+  inputPathToken: string;
+  passphrase: string;
+  idempotencyKey: string;
+};
+
+export type PortableImportModeDto = "restoreIntoEmpty" | "replaceCurrent";
+
+export type PreparePortableImportInputDto = {
+  inspectedImportId: string;
+  mode: PortableImportModeDto;
+  confirmationText: string;
+  idempotencyKey: string;
+};
+
+export type PortableMigrationResourceKindDto = "export" | "inspection" | "import";
+
+export type PortableMigrationOperationStartedDto = {
+  operationId: string;
+  resourceId: string;
+  resourceKind: PortableMigrationResourceKindDto;
+};
+
+export type PortableMigrationResultInputDto = {
+  resourceId: string;
+};
+
+export type PortableMigrationOperationInputDto = {
+  operationId: string;
+};
+
+export type PortableMigrationOperationKindDto =
+  | "export_package"
+  | "inspect_package"
+  | "prepare_import";
+
+export type PortableMigrationOperationStateDto = "running" | "stopping" | "terminal";
+
+export type PortableMigrationProgressDto =
+  | { phase: "queued" }
+  | { phase: "kdf_started" }
+  | { phase: "kdf_finished" }
+  | { phase: "reading_package"; percent: number; bytesRead: number }
+  | { phase: "writing_database"; percent: number; rowsWritten: number }
+  | { phase: "publishing_package"; percent: number; bytesWritten: number }
+  | { phase: "verifying_package" };
+
+export type PortableMigrationTerminalResultDto =
+  | { result: "exported_package"; exportId: string; packageSizeBytes: number }
+  | {
+      result: "inspected_package";
+      exportId: string;
+      sourcePlatform: string;
+      includedCategories: string[];
+      sqliteSizeBytes: number;
+    }
+  | { result: "prepared_import"; exportId: string; targetRows: number };
+
+export type PortableMigrationTerminalDto =
+  | { terminal: "completed"; result: PortableMigrationTerminalResultDto }
+  | { terminal: "failed"; code: string }
+  | { terminal: "cancelled" }
+  | { terminal: "timed_out" }
+  | { terminal: "result_unknown" };
+
+export type PortableMigrationOperationDto = {
+  operationId: string;
+  kind: PortableMigrationOperationKindDto;
+  state: PortableMigrationOperationStateDto;
+  deadlineMs: number;
+  progress: PortableMigrationProgressDto[];
+  terminal: PortableMigrationTerminalDto | null;
+};
+
+export type PortableExportResultDto = {
+  exportId: string;
+  packageSizeBytes: number;
+};
+
+export type PortableImportInspectionDto = {
+  inspectionId: string;
+  exportId: string;
+  sourcePlatform: string;
+  includedCategories: string[];
+  includeHistory: boolean;
+  sqliteSizeBytes: number;
+};
+
+export type PortableImportPrepareResultDto = {
+  importId: string;
+  restartRequired: boolean;
+};
+
+export type PortableImportRecoveryReasonCodeDto =
+  | "activation_validation_failed"
+  | "atomic_replace_failed"
+  | "journal_invalid"
+  | "artifact_identity_mismatch"
+  | "rollback_validation_failed";
+
+export type PortableImportRecoveryStateDto =
+  | { state: "none" }
+  | { state: "activationPending"; importId: string }
+  | { state: "activated"; importId: string }
+  | {
+      state: "rolledBack";
+      importId: string;
+      reasonCode: PortableImportRecoveryReasonCodeDto;
+    }
+  | {
+      state: "manualRecoveryRequired";
+      importId: string | null;
+      reasonCode: PortableImportRecoveryReasonCodeDto;
+    };

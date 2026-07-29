@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "51309a9ca7e305d0940ea679d4907970b0a0cc025f2f9e536187cdd240709571";
+    "b010099bd19ec9f1827b3d73189b680b4bcf7473a1c3b295f97a72e48b7363e4";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -48,7 +48,14 @@ pub fn command_admission_class(command: &str) -> Option<CommandAdmissionClass> {
         | "open_data_store_backup_dir"
         | "export_data_store_diagnostic"
         | "updater_network_config"
-        | "inspect_latest_update_manifest" => CommandAdmissionClass::Read,
+        | "inspect_latest_update_manifest"
+        | "test_station_login_input" => CommandAdmissionClass::Read,
+        "choose_portable_export_path"
+        | "choose_portable_import_file"
+        | "start_portable_export"
+        | "start_portable_import_inspection" => CommandAdmissionClass::MaintenanceRead,
+        "start_portable_import_prepare" => CommandAdmissionClass::MaintenanceActivity,
+        "resolve_change_event" => CommandAdmissionClass::Mutation,
         name if command_name_is_read_like(name) => CommandAdmissionClass::Read,
         _ => CommandAdmissionClass::Mutation,
     })
@@ -102,6 +109,17 @@ macro_rules! ipc_command_registry {
             create_new_data_store => $crate::commands::data_store_startup::create_new_data_store,
             open_data_store_backup_dir => $crate::commands::data_store_startup::open_data_store_backup_dir,
             export_data_store_diagnostic => $crate::commands::data_store_startup::export_data_store_diagnostic,
+            get_portable_migration_capability => $crate::commands::data_migration::get_portable_migration_capability,
+            choose_portable_export_path => $crate::commands::data_migration::choose_portable_export_path,
+            start_portable_export => $crate::commands::data_migration::start_portable_export,
+            get_portable_export_result => $crate::commands::data_migration::get_portable_export_result,
+            choose_portable_import_file => $crate::commands::data_migration::choose_portable_import_file,
+            start_portable_import_inspection => $crate::commands::data_migration::start_portable_import_inspection,
+            get_portable_import_inspection => $crate::commands::data_migration::get_portable_import_inspection,
+            start_portable_import_prepare => $crate::commands::data_migration::start_portable_import_prepare,
+            get_portable_import_prepare_result => $crate::commands::data_migration::get_portable_import_prepare_result,
+            get_portable_migration_operation => $crate::commands::data_migration::get_portable_migration_operation,
+            get_portable_import_recovery_state => $crate::commands::data_migration::get_portable_import_recovery_state,
             list_stations => $crate::commands::stations::list_stations,
             create_station => $crate::commands::stations::create_station,
             update_station => $crate::commands::stations::update_station,
@@ -712,18 +730,12 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_mutation("EmptyInputDto", "ProxyStatusDto", "non_idempotent", true)
         }
         "get_data_store_startup_state" => migrated_read("EmptyInputDto", "DataStoreStartupViewDto"),
-        "refresh_data_store_candidates" => migrated_mutation(
-            "EmptyInputDto",
-            "DataStoreStartupViewDto",
-            "idempotent",
-            false,
-        ),
-        "locate_data_store_candidate" => migrated_mutation(
-            "EmptyInputDto",
-            "Option<DataStoreCandidateViewDto>",
-            "non_idempotent",
-            true,
-        ),
+        "refresh_data_store_candidates" => {
+            migrated_read("EmptyInputDto", "DataStoreStartupViewDto")
+        }
+        "locate_data_store_candidate" => {
+            migrated_read("EmptyInputDto", "Option<DataStoreCandidateViewDto>")
+        }
         "activate_data_store_candidate" => migrated_mutation(
             "ActivateDataStoreCandidateInputDto",
             "ActivationResultDto",
@@ -736,11 +748,64 @@ fn command_contract(name: &str) -> CommandContract {
             "non_idempotent",
             true,
         ),
-        "open_data_store_backup_dir" => {
-            migrated_mutation("EmptyInputDto", "unit", "non_idempotent", true)
+        "open_data_store_backup_dir" => migrated_read("EmptyInputDto", "unit"),
+        "export_data_store_diagnostic" => migrated_read("EmptyInputDto", "Option<String>"),
+        "get_portable_migration_capability" => {
+            migrated_read("EmptyInputDto", "PortableMigrationCapabilityDto")
         }
-        "export_data_store_diagnostic" => {
-            migrated_mutation("EmptyInputDto", "Option<String>", "non_idempotent", true)
+        "choose_portable_export_path" | "choose_portable_import_file" => CommandContract {
+            input: "EmptyInputDto",
+            output: "Option<PortablePathTokenDto>",
+            error: "CommandError",
+            mutation_kind: "maintenance_read",
+            transport_retry: false,
+            result_unknown: false,
+            runtime_validation: "rust_dto_pre_application",
+        },
+        "start_portable_export" => CommandContract {
+            input: "StartPortableExportInputDto",
+            output: "PortableMigrationOperationStartedDto",
+            error: "CommandError",
+            mutation_kind: "maintenance_read",
+            transport_retry: false,
+            result_unknown: true,
+            runtime_validation: "rust_dto_pre_application",
+        },
+        "get_portable_export_result" => {
+            migrated_read("PortableMigrationResultInputDto", "PortableExportResultDto")
+        }
+        "start_portable_import_inspection" => CommandContract {
+            input: "InspectPortableImportInputDto",
+            output: "PortableMigrationOperationStartedDto",
+            error: "CommandError",
+            mutation_kind: "maintenance_read",
+            transport_retry: false,
+            result_unknown: true,
+            runtime_validation: "rust_dto_pre_application",
+        },
+        "get_portable_import_inspection" => migrated_read(
+            "PortableMigrationResultInputDto",
+            "PortableImportInspectionDto",
+        ),
+        "start_portable_import_prepare" => CommandContract {
+            input: "PreparePortableImportInputDto",
+            output: "PortableMigrationOperationStartedDto",
+            error: "CommandError",
+            mutation_kind: "maintenance_activity",
+            transport_retry: false,
+            result_unknown: true,
+            runtime_validation: "rust_dto_pre_application",
+        },
+        "get_portable_import_prepare_result" => migrated_read(
+            "PortableMigrationResultInputDto",
+            "PortableImportPrepareResultDto",
+        ),
+        "get_portable_migration_operation" => migrated_read(
+            "PortableMigrationOperationInputDto",
+            "PortableMigrationOperationDto",
+        ),
+        "get_portable_import_recovery_state" => {
+            migrated_read("EmptyInputDto", "PortableImportRecoveryStateDto")
         }
         "choose_data_dir" | "reset_data_dir" => {
             migrated_mutation("EmptyInputDto", "SettingsDto", "non_idempotent", true)
@@ -1471,21 +1536,17 @@ mod tests {
             let admission = command_admission_class(command.name)
                 .unwrap_or_else(|| panic!("{} missing admission metadata", command.name));
             let contract = command_contract(command.name);
-            if contract.mutation_kind == "read" {
-                assert_eq!(
-                    admission,
-                    CommandAdmissionClass::Read,
-                    "{} read command should not be blocked by mutation admission",
-                    command.name
-                );
-            } else {
-                assert_eq!(
-                    admission,
-                    CommandAdmissionClass::Mutation,
-                    "{} mutation command must pass through maintenance admission",
-                    command.name
-                );
-            }
+            let expected = match contract.mutation_kind {
+                "read" => CommandAdmissionClass::Read,
+                "maintenance_read" => CommandAdmissionClass::MaintenanceRead,
+                "maintenance_activity" => CommandAdmissionClass::MaintenanceActivity,
+                _ => CommandAdmissionClass::Mutation,
+            };
+            assert_eq!(
+                admission, expected,
+                "{} command admission should match contract metadata",
+                command.name
+            );
         }
         assert_eq!(
             command_admission_class("create_station"),
@@ -1496,6 +1557,14 @@ mod tests {
             Some(CommandAdmissionClass::Read)
         );
         assert_eq!(command_admission_class("not_registered"), None);
+        assert_eq!(
+            command_admission_class("start_portable_export"),
+            Some(CommandAdmissionClass::MaintenanceRead)
+        );
+        assert_eq!(
+            command_admission_class("start_portable_import_prepare"),
+            Some(CommandAdmissionClass::MaintenanceActivity)
+        );
     }
 
     #[test]

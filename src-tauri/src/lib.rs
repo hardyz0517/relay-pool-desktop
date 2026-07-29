@@ -583,6 +583,11 @@ pub fn run() {
             let default_data_dir = app.path().app_data_dir().map_err(|error| {
                 format!("failed to resolve application data directory: {error}")
             })?;
+            app.manage(application::data_migration::PortableMigrationCommandFacade::new(
+                app_config_dir.clone(),
+                default_data_dir.clone(),
+                work_runtime.operation.clone(),
+            ));
             let portable_activation = tauri::async_runtime::block_on(
                 recover_portable_activation_for_startup(
                     &app_config_dir,
