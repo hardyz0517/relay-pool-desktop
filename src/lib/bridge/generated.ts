@@ -2047,6 +2047,50 @@ export function exportDataStoreDiagnostic(input: EmptyInputDto = {}): Promise<st
   return invokeNonIdempotent<string | null>("export_data_store_diagnostic", { input });
 }
 
+export function getPortableMigrationCapability(input: EmptyInputDto = {}): Promise<PortableMigrationCapabilityDto> {
+  return invokeCommand<PortableMigrationCapabilityDto>("get_portable_migration_capability", { input });
+}
+
+export function choosePortableExportPath(input: EmptyInputDto = {}): Promise<PortablePathTokenDto | null> {
+  return invokeNonIdempotent<PortablePathTokenDto | null>("choose_portable_export_path", { input });
+}
+
+export function startPortableExport(input: StartPortableExportInputDto): Promise<PortableMigrationOperationStartedDto> {
+  return invokeNonIdempotent<PortableMigrationOperationStartedDto>("start_portable_export", { input });
+}
+
+export function getPortableExportResult(input: PortableMigrationResultInputDto): Promise<PortableExportResultDto> {
+  return invokeCommand<PortableExportResultDto>("get_portable_export_result", { input });
+}
+
+export function choosePortableImportFile(input: EmptyInputDto = {}): Promise<PortablePathTokenDto | null> {
+  return invokeNonIdempotent<PortablePathTokenDto | null>("choose_portable_import_file", { input });
+}
+
+export function startPortableImportInspection(input: InspectPortableImportInputDto): Promise<PortableMigrationOperationStartedDto> {
+  return invokeNonIdempotent<PortableMigrationOperationStartedDto>("start_portable_import_inspection", { input });
+}
+
+export function getPortableImportInspection(input: PortableMigrationResultInputDto): Promise<PortableImportInspectionDto> {
+  return invokeCommand<PortableImportInspectionDto>("get_portable_import_inspection", { input });
+}
+
+export function startPortableImportPrepare(input: PreparePortableImportInputDto): Promise<PortableMigrationOperationStartedDto> {
+  return invokeNonIdempotent<PortableMigrationOperationStartedDto>("start_portable_import_prepare", { input });
+}
+
+export function getPortableImportPrepareResult(input: PortableMigrationResultInputDto): Promise<PortableImportPrepareResultDto> {
+  return invokeCommand<PortableImportPrepareResultDto>("get_portable_import_prepare_result", { input });
+}
+
+export function getPortableMigrationOperation(input: PortableMigrationOperationInputDto): Promise<PortableMigrationOperationDto> {
+  return invokeCommand<PortableMigrationOperationDto>("get_portable_migration_operation", { input });
+}
+
+export function getPortableImportRecoveryState(input: EmptyInputDto = {}): Promise<PortableImportRecoveryStateDto> {
+  return invokeCommand<PortableImportRecoveryStateDto>("get_portable_import_recovery_state", { input });
+}
+
 export function chooseDataDir(input: EmptyInputDto = {}): Promise<SettingsDto> {
   return invokeNonIdempotent<SettingsDto>("choose_data_dir", { input });
 }

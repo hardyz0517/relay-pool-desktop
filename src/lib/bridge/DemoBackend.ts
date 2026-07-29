@@ -101,6 +101,19 @@ export class DemoBackend implements BackendClient {
     openDataStoreBackupDir: () => this.rejectUnsupported("data_recovery"),
     exportDataStoreDiagnostic: () => this.rejectUnsupported("data_recovery"),
   };
+  readonly dataMigration: BackendClient["dataMigration"] = {
+    getPortableMigrationCapability: () => this.rejectUnsupported("data_migration"),
+    choosePortableExportPath: () => this.rejectUnsupported("data_migration"),
+    startPortableExport: () => this.rejectUnsupported("data_migration"),
+    getPortableExportResult: () => this.rejectUnsupported("data_migration"),
+    choosePortableImportFile: () => this.rejectUnsupported("data_migration"),
+    startPortableImportInspection: () => this.rejectUnsupported("data_migration"),
+    getPortableImportInspection: () => this.rejectUnsupported("data_migration"),
+    startPortableImportPrepare: () => this.rejectUnsupported("data_migration"),
+    getPortableImportPrepareResult: () => this.rejectUnsupported("data_migration"),
+    getPortableMigrationOperation: () => this.rejectUnsupported("data_migration"),
+    getPortableImportRecoveryState: () => this.rejectUnsupported("data_migration"),
+  };
   readonly economics: BackendClient["economics"] = {
     listPricingRules: () => this.rejectUnsupported("economics"),
     upsertPricingRule: () => this.rejectUnsupported("economics"),

@@ -21,6 +21,7 @@ import { useUpdater } from "@/lib/updater/UpdaterProvider";
 import { isUpdaterBusyPhase } from "@/lib/updater/updateState";
 import { ThemeSettings } from "@/features/settings/ThemeSettings";
 import { CommonLoginProfilesSettings } from "@/features/settings/CommonLoginProfilesSettings";
+import { DataMigrationSection } from "@/features/settings/data-migration/DataMigrationSection";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
   appSettingsToUpdateInput,
@@ -422,7 +423,7 @@ export function SettingsPage() {
           />
         </SectionCard>
 
-        <SectionCard contentClassName="p-0" title="数据">
+        <SectionCard contentClassName="p-0" title="数据与备份">
           <SettingRow
             control={
               <div className="flex w-full min-w-0 items-center gap-1.5">
@@ -463,6 +464,8 @@ export function SettingsPage() {
             label="数据目录"
           />
         </SectionCard>
+
+        <DataMigrationSection />
 
         <SectionCard contentClassName="p-0" title="高级">
           <SettingRow
