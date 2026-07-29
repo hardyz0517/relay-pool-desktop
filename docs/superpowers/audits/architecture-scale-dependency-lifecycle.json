@@ -174,6 +174,30 @@
     },
     {
       "ecosystem": "cargo",
+      "package": "age",
+      "resolved_version": "0.12.1",
+      "support_status": "supported-beta-qualified",
+      "decision": "keep",
+      "owner": "Portable Migration Task 0",
+      "checked_on": "2026-07-29",
+      "next_review_on": "2026-10-29",
+      "source_urls": ["https://docs.rs/age/0.12.1", "https://crates.io/crates/age/0.12.1", "https://github.com/str4d/rage"],
+      "notes": "Accepted only behind the disabled portable migration feature gate. The spike verifies passphrase round trip, streaming authenticated EOF, unified wrong-password/truncation public classification, and pre-KDF excessive scrypt work rejection through set_max_work_factor."
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "hmac",
+      "resolved_version": "0.13.0",
+      "support_status": "supported-stable",
+      "decision": "keep",
+      "owner": "Portable Migration Task 0",
+      "checked_on": "2026-07-29",
+      "next_review_on": "2026-10-29",
+      "source_urls": ["https://docs.rs/hmac/0.13.0", "https://crates.io/crates/hmac/0.13.0", "https://github.com/RustCrypto/MACs"],
+      "notes": "Direct dependency reserved for process-local idempotency digests. Cargo.lock also contains hmac 0.12.1 transitively; the direct dependency remains exactly pinned to 0.13.0."
+    },
+    {
+      "ecosystem": "cargo",
       "package": "syn",
       "resolved_version": "2.0.118",
       "support_status": "supported-stable-build-tool",
@@ -187,17 +211,17 @@
     {
       "ecosystem": "tool",
       "component": "node",
-      "resolved_version": "24.14.1",
-      "qualified_versions": ["22.13.0", "24.14.1"],
+      "resolved_version": "24.18.0",
+      "qualified_versions": ["22.13.0", "24.18.0"],
       "ci_version": "22.13.0",
-      "local_reference_version": "24.14.1",
+      "local_reference_version": "24.18.0",
       "support_status": "supported-lts",
       "decision": "keep",
-      "owner": "Task 2",
-      "checked_on": "2026-07-23",
-      "next_review_on": "2026-10-23",
+      "owner": "Portable Migration Task 0",
+      "checked_on": "2026-07-29",
+      "next_review_on": "2026-10-29",
       "source_urls": ["https://nodejs.org/en/about/previous-releases"],
-      "notes": "CI is pinned to 22.13.0 while the reference workstation uses 24.14.1. Both exact runtimes are qualified; unlisted versions fail rather than being accepted by a broad range."
+      "notes": "CI is pinned to 22.13.0 while the reference workstation uses 24.18.0. Both exact runtimes are qualified; unlisted versions fail rather than being accepted by a broad range."
     },
     {
       "ecosystem": "tool",
@@ -214,14 +238,14 @@
     {
       "ecosystem": "tool",
       "component": "rust",
-      "resolved_version": "1.95.0",
+      "resolved_version": "1.97.1",
       "support_status": "supported-stable",
       "decision": "keep",
-      "owner": "Task 2",
-      "checked_on": "2026-07-23",
-      "next_review_on": "2026-10-23",
+      "owner": "Portable Migration Task 0",
+      "checked_on": "2026-07-29",
+      "next_review_on": "2026-10-29",
       "source_urls": ["https://doc.rust-lang.org/book/appendix-07-nightly-rust.html", "https://releases.rs/"],
-      "notes": "Repository crate MSRV remains 1.89 and edition 2021; CI pins 1.95.0 for reproducibility."
+      "notes": "Repository crate MSRV remains 1.89 and edition 2021; local qualification uses rustc 1.97.1."
     }
   ],
   "external_tools": [

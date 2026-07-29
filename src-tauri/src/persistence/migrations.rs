@@ -61,8 +61,8 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=8,
-        writable_schema: BTreeSet::from([8]),
+        readable_schema: 1..=9,
+        writable_schema: BTreeSet::from([9]),
     }
 }
 
