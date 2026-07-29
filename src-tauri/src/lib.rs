@@ -17,7 +17,15 @@ use std::sync::{
 };
 use std::time::Duration;
 
+pub use models::secrets::{canonical_secret_aad, SecretRecordSelector, VersionedEncryptedSecret};
 pub use services::data_store::installation_lease::{InstallationLease, LeaseError};
+pub use services::secrets::{
+    rekey::{
+        BufferedSecretRekeyWriter, SecretRekeyError, SecretRekeyErrorCode, SecretRekeyPolicy,
+        SecretRekeyReport, SecretRekeyRowPolicy, SecretRekeyService, SecretRekeyWriter,
+    },
+    DeviceKeyId, DeviceKeyResolver, SecretKeyMaterial, CURRENT_SECRET_ENCRYPTION_VERSION,
+};
 
 use crate::background_tasks::{BlockingExecutor, ExitCoordinator, ExitReason};
 use services::data_store::{

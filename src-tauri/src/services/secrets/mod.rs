@@ -4,15 +4,17 @@ pub(crate) mod device_key_store;
 pub mod keychain;
 pub mod mask;
 pub(crate) mod material;
+pub mod rekey;
 pub mod validation;
 pub(crate) mod vault;
 
 use crate::background_tasks::{BlockingExecutor, BlockingExecutorError};
 
 use device_key_store::{DeviceKeyError, DeviceKeyStore};
-pub(crate) use material::{
+pub(crate) use material::LEGACY_DEVICE_KEY_ID;
+pub use material::{
     DeviceKeyId, DeviceKeyResolver, SecretKeyAccessError, SecretKeyMaterial,
-    CURRENT_SECRET_ENCRYPTION_VERSION, LEGACY_DEVICE_KEY_ID,
+    CURRENT_SECRET_ENCRYPTION_VERSION,
 };
 
 pub struct SecretManager {

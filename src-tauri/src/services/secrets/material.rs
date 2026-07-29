@@ -2,13 +2,13 @@ use std::{fmt, sync::Arc};
 
 use zeroize::Zeroizing;
 
-pub(crate) const CURRENT_SECRET_ENCRYPTION_VERSION: u16 = 1;
+pub const CURRENT_SECRET_ENCRYPTION_VERSION: u16 = 1;
 pub(crate) const LEGACY_DEVICE_KEY_ID: &str = "local-data-key-v1";
 
-pub(crate) struct SecretKeyMaterial(Zeroizing<[u8; 32]>);
+pub struct SecretKeyMaterial(Zeroizing<[u8; 32]>);
 
 impl SecretKeyMaterial {
-    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(Zeroizing::new(bytes))
     }
 
@@ -24,20 +24,20 @@ impl fmt::Debug for SecretKeyMaterial {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeviceKeyId(String);
+pub struct DeviceKeyId(String);
 
 impl DeviceKeyId {
-    pub(crate) fn new(value: impl Into<String>) -> Self {
+    pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum SecretKeyAccessError {
+pub enum SecretKeyAccessError {
     #[error("unknown device key id")]
     UnknownKeyId,
     #[error("unsupported secret encryption version")]
@@ -45,14 +45,14 @@ pub(crate) enum SecretKeyAccessError {
 }
 
 #[derive(Clone)]
-pub(crate) struct DeviceKeyResolver {
+pub struct DeviceKeyResolver {
     active_key_id: DeviceKeyId,
     active_material: Arc<SecretKeyMaterial>,
     encryption_version: u16,
 }
 
 impl DeviceKeyResolver {
-    pub(crate) fn active(
+    pub fn active(
         active_key_id: DeviceKeyId,
         active_material: SecretKeyMaterial,
         encryption_version: u16,
@@ -73,18 +73,18 @@ impl DeviceKeyResolver {
         )
     }
 
-    pub(crate) fn active_key_id(&self) -> &DeviceKeyId {
+    pub fn active_key_id(&self) -> &DeviceKeyId {
         &self.active_key_id
     }
 
-    pub(crate) fn with_active_key<R>(
+    pub fn with_active_key<R>(
         &self,
         action: impl FnOnce(&[u8; 32]) -> R,
     ) -> Result<R, SecretKeyAccessError> {
         self.with_key(self.active_key_id.as_str(), self.encryption_version, action)
     }
 
-    pub(crate) fn with_key<R>(
+    pub fn with_key<R>(
         &self,
         key_id: &str,
         encryption_version: u16,
