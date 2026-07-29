@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "exceptions": [
+    {
+      "ecosystem": "cargo",
+      "package": "unic-char-property",
+      "advisory_id": "RUSTSEC-2025-0081",
+      "affected_assessment": "accepted",
+      "owner": "Task 28 dependency lifecycle qualification",
+      "approved_on": "2026-07-22",
+      "expires_on": "2026-10-20",
+      "rationale": "Unmaintained transitive dependency of Tauri urlpattern; RustSec reports no safe upgrade. Recheck Tauri/tauri-utils before expiry. No direct application dependency is permitted."
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "unic-char-range",
+      "advisory_id": "RUSTSEC-2025-0075",
+      "affected_assessment": "accepted",
+      "owner": "Task 28 dependency lifecycle qualification",
+      "approved_on": "2026-07-22",
+      "expires_on": "2026-10-20",
+      "rationale": "Unmaintained transitive dependency of Tauri urlpattern; RustSec reports no safe upgrade. Recheck Tauri/tauri-utils before expiry. No direct application dependency is permitted."
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "unic-common",
+      "advisory_id": "RUSTSEC-2025-0080",
+      "affected_assessment": "accepted",
+      "owner": "Task 28 dependency lifecycle qualification",
+      "approved_on": "2026-07-22",
+      "expires_on": "2026-10-20",
+      "rationale": "Unmaintained transitive dependency of Tauri urlpattern; RustSec reports no safe upgrade. Recheck Tauri/tauri-utils before expiry. No direct application dependency is permitted."
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "unic-ucd-ident",
+      "advisory_id": "RUSTSEC-2025-0100",
+      "affected_assessment": "accepted",
+      "owner": "Task 28 dependency lifecycle qualification",
+      "approved_on": "2026-07-22",
+      "expires_on": "2026-10-20",
+      "rationale": "Unmaintained transitive dependency of Tauri urlpattern; RustSec reports no safe upgrade. Recheck Tauri/tauri-utils before expiry. No direct application dependency is permitted."
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "unic-ucd-version",
+      "advisory_id": "RUSTSEC-2025-0098",
+      "affected_assessment": "accepted",
+      "owner": "Task 28 dependency lifecycle qualification",
+      "approved_on": "2026-07-22",
+      "expires_on": "2026-10-20",
+      "rationale": "Unmaintained transitive dependency of Tauri urlpattern; RustSec reports no safe upgrade. Recheck Tauri/tauri-utils before expiry. No direct application dependency is permitted."
+    }
+  ]
+}

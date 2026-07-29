@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import {
   closestCenter,
   type DraggableAttributes,
@@ -18,7 +18,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { LucideIcon } from "lucide-react";
 import { Radio, RefreshCw, Server, Timer } from "lucide-react";
-import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import { Button, EmptyState, SegmentedControl, StatusBadge, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { channelStatusQueryOptions } from "@/lib/query/resourceQueries";
@@ -97,10 +96,9 @@ const outcomeClassName: Record<RecentOutcome, string> = {
   unknown: "bg-muted-foreground/45",
 };
 
-export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
+export function ChannelStatusTab() {
   const toast = useToast();
-  const refreshEnabled = usePageRefreshEnabled();
-  const statusQuery = useActivityQuery(refreshEnabled, channelStatusQueryOptions(5_000));
+  const statusQuery = useActivityQuery(channelStatusQueryOptions(5_000));
   const workspace = statusQuery.data;
   const keys = workspace?.keyPoolItems ?? [];
   const logs = workspace?.requestLogs ?? [];
@@ -114,13 +112,6 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
   const [timeWindow, setTimeWindow] = useState<ChannelWindow>("recent");
   const loading = statusQuery.isPending && workspace === undefined;
   const error = statusQuery.error ? readError(statusQuery.error) : null;
-  const refetchStatus = statusQuery.refetch;
-
-  useEffect(() => {
-    if (refreshToken > 0) {
-      void refetchStatus();
-    }
-  }, [refreshToken, refetchStatus]);
 
   const visibleLogs = useMemo(() => filterLogsByWindow(logs, timeWindow), [logs, timeWindow]);
   const channels = useMemo(
@@ -157,7 +148,7 @@ export function ChannelStatusTab({ refreshToken }: { refreshToken: number }) {
 
   async function refresh(showSuccess = false) {
     try {
-      await refetchStatus({ throwOnError: true });
+      await statusQuery.refetch({ throwOnError: true });
       if (showSuccess) {
         toast.success("渠道状态已刷新");
       }

@@ -5,14 +5,8 @@ import { appRoutes } from "@/app/routes";
 import { LocalProxyRadarIcon } from "@/components/shell/LocalProxyRadarIcon";
 import { shellLayout } from "@/components/ui/layout";
 import {
-  CHANGE_EVENTS_UPDATED_EVENT,
   markChangeEventsRead,
-  notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
-import { PROXY_STATUS_UPDATED_EVENT } from "@/lib/api/proxy";
-import { SETTINGS_UPDATED_EVENT } from "@/lib/api/settings";
-import type { ProxyStatus } from "@/lib/types/proxy";
-import type { AppSettings } from "@/lib/types/settings";
 import {
   changeEventsQueryOptions,
   proxyStatusQueryOptions,
@@ -26,7 +20,7 @@ import {
   markUnreadChangeEventsRead,
   markUnreadChangeEventsReadLocally,
   unreadChangeCount,
-} from "@/features/changes/changeEventViewModels";
+} from "@/lib/changeEvents/changeEventViewModels";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { AppRouteId } from "@/lib/types/navigation";
 
@@ -47,38 +41,6 @@ export function AppShell({
   const { data: changeEvents = [] } = useQuery(changeEventsQueryOptions(10_000));
   const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
   const { data: settings = null } = useQuery(settingsQueryOptions());
-
-  useEffect(() => {
-    function refreshChangeEvents() {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });
-    }
-
-    window.addEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-    return () => window.removeEventListener(CHANGE_EVENTS_UPDATED_EVENT, refreshChangeEvents);
-  }, [queryClient]);
-
-  useEffect(() => {
-    function handleProxyStatusUpdated(event: Event) {
-      queryClient.setQueryData(queryKeys.proxyStatus, (event as CustomEvent<ProxyStatus>).detail);
-    }
-
-    window.addEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
-    return () => window.removeEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated);
-  }, [queryClient]);
-
-  useEffect(() => {
-    function handleSettingsUpdated(event: Event) {
-      const nextSettings = (event as CustomEvent<AppSettings>).detail;
-      if (nextSettings) {
-        queryClient.setQueryData(queryKeys.settings, nextSettings);
-        return;
-      }
-      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
-    }
-
-    window.addEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
-    return () => window.removeEventListener(SETTINGS_UPDATED_EVENT, handleSettingsUpdated);
-  }, [queryClient]);
 
   const visibleRoutes = useMemo(
     () =>
@@ -121,7 +83,6 @@ export function AppShell({
         queryClient.setQueryData<ChangeEvent[]>(queryKeys.changeEvents, (latestEvents) =>
           mergeChangeEventUpdates(latestEvents ?? currentEvents, readOnEntryResult.updatedEvents),
         );
-        notifyChangeEventsUpdated();
       } catch {
         void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });
       }

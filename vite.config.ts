@@ -16,6 +16,7 @@ export default defineConfig({
     watch: {
       ignored: [
         "**/src-tauri/target/**",
+        "**/output/**",
         "**/.worktrees/**",
         "**/dist/**",
         "**/.pnpm-store/**",

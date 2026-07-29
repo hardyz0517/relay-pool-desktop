@@ -27,7 +27,9 @@ assert.ok(
 assert.ok(
   resourceSource.includes('import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";') &&
     resourceSource.includes("queryFn: loadLocalRoutingWorkspace") &&
-    pageSource.includes("useActivityQuery(refreshEnabled, localRoutingWorkspaceQueryOptions())"),
+    pageSource.includes("useActivityQuery(localRoutingWorkspaceQueryOptions())") &&
+    pageSource.includes('import { usePageQueryEnabled } from "@/app/navigation/PageVisibility";') &&
+    !pageSource.includes('from "@/components/shell/PageActivity"'),
   "routing page should consume the local routing query service through an activity-bound shared query",
 );
 

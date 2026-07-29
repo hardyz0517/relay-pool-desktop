@@ -1,0 +1,336 @@
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
+use relay_pool_desktop_lib::background_tasks::{
+    BoxTaskFuture, RestartPolicy, RuntimeTaskStatus, RuntimeTaskSummary, TaskFailure, TaskId,
+    TaskRunContext, TaskSpec, TaskState, TaskSupervisor, TaskSupervisorError,
+};
+
+fn immediate_task(
+    result: Result<(), TaskFailure>,
+) -> impl Fn(TaskRunContext) -> BoxTaskFuture + Send + Sync {
+    move |_| {
+        let result = result.clone();
+        Box::pin(async move { result })
+    }
+}
+
+#[test]
+fn can_start_from_non_reactor_thread_when_spawn_handle_is_provided() {
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let supervisor = TaskSupervisor::with_spawn_handle(runtime.handle().clone());
+    supervisor
+        .register(TaskSpec::new(
+            "startup-runner",
+            "periodic",
+            immediate_task(Ok(())),
+        ))
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("startup-runner"))
+        .expect("start from sync setup thread");
+
+    let state = runtime
+        .block_on(supervisor.join_finished(&TaskId::from("startup-runner")))
+        .expect("join task");
+    assert_eq!(state, TaskState::Succeeded);
+}
+
+#[tokio::test]
+async fn rejects_duplicate_task_ids() {
+    let supervisor = TaskSupervisor::new();
+    supervisor
+        .register(TaskSpec::new(
+            "collector",
+            "periodic",
+            immediate_task(Ok(())),
+        ))
+        .expect("register task");
+
+    let error = supervisor
+        .register(TaskSpec::new(
+            "collector",
+            "periodic",
+            immediate_task(Ok(())),
+        ))
+        .expect_err("duplicate id should fail");
+
+    assert_eq!(
+        error,
+        TaskSupervisorError::DuplicateTaskId(TaskId::from("collector"))
+    );
+}
+
+#[tokio::test]
+async fn supervised_task_context_carries_bounded_correlation_id() {
+    let supervisor = TaskSupervisor::new();
+    let (correlation_tx, correlation_rx) = tokio::sync::oneshot::channel::<String>();
+    let sender = Arc::new(tokio::sync::Mutex::new(Some(correlation_tx)));
+    supervisor
+        .register(TaskSpec::new("correlated", "runner", move |context| {
+            let sender = Arc::clone(&sender);
+            Box::pin(async move {
+                let sender = sender.lock().await.take().expect("correlation sender");
+                sender
+                    .send(context.correlation_id)
+                    .expect("send correlation id");
+                Ok(())
+            })
+        }))
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("correlated"))
+        .expect("start task");
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("correlated"))
+            .await
+            .unwrap(),
+        TaskState::Succeeded
+    );
+    let correlation_id = correlation_rx.await.expect("correlation id");
+
+    assert_eq!(correlation_id.len(), 32);
+    assert!(correlation_id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
+#[tokio::test]
+async fn enforces_concurrency_key_non_reentry() {
+    let supervisor = TaskSupervisor::new();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let release = Arc::new(tokio::sync::Mutex::new(Some(release_rx)));
+    supervisor
+        .register(
+            TaskSpec::new("first", "runner", move |_| {
+                let release = Arc::clone(&release);
+                Box::pin(async move {
+                    let rx = release.lock().await.take().expect("release receiver");
+                    let _ = rx.await;
+                    Ok(())
+                })
+            })
+            .with_concurrency_key("station-collection"),
+        )
+        .expect("register first");
+    supervisor
+        .register(
+            TaskSpec::new("second", "runner", immediate_task(Ok(())))
+                .with_concurrency_key("station-collection"),
+        )
+        .expect("register second");
+
+    supervisor
+        .start(&TaskId::from("first"))
+        .expect("start first");
+    let error = supervisor
+        .start(&TaskId::from("second"))
+        .expect_err("second task should be blocked by concurrency key");
+    assert_eq!(
+        error,
+        TaskSupervisorError::ConcurrencyKeyRunning("station-collection".to_string())
+    );
+
+    release_tx.send(()).expect("release running task");
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("first"))
+            .await
+            .unwrap(),
+        TaskState::Succeeded
+    );
+    supervisor
+        .start(&TaskId::from("second"))
+        .expect("concurrency key released");
+}
+
+#[tokio::test]
+async fn cancellation_is_visible_and_not_counted_as_failure() {
+    let supervisor = TaskSupervisor::new();
+    supervisor
+        .register(TaskSpec::new("cancel-me", "runner", |context| {
+            Box::pin(async move {
+                context.cancellation_token.cancelled().await;
+                Err(TaskFailure::cancelled())
+            })
+        }))
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("cancel-me"))
+        .expect("start task");
+    supervisor
+        .cancel(&TaskId::from("cancel-me"))
+        .expect("cancel task");
+
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("cancel-me"))
+            .await
+            .unwrap(),
+        TaskState::Cancelled
+    );
+    let status = supervisor.status(&TaskId::from("cancel-me")).unwrap();
+    assert_eq!(status.consecutive_failures, 0);
+}
+
+#[tokio::test]
+async fn transient_failure_schedules_deterministic_capped_retry() {
+    let supervisor = TaskSupervisor::new();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let attempt_counter = Arc::clone(&attempts);
+    supervisor
+        .register(
+            TaskSpec::new("flaky", "runner", move |_| {
+                let attempt_counter = Arc::clone(&attempt_counter);
+                Box::pin(async move {
+                    let attempt = attempt_counter.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 0 {
+                        Err(TaskFailure::transient("temporary-network"))
+                    } else {
+                        Ok(())
+                    }
+                })
+            })
+            .with_restart_policy(RestartPolicy::transient(
+                2,
+                Duration::from_millis(50),
+                Duration::from_millis(55),
+            )),
+        )
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("flaky"))
+        .expect("start task");
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("flaky"))
+            .await
+            .unwrap(),
+        TaskState::BackingOff { retry_at_ms: 55 }
+    );
+    assert!(supervisor.tick(54).unwrap().is_empty());
+    assert_eq!(supervisor.tick(55).unwrap().len(), 1);
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("flaky"))
+            .await
+            .unwrap(),
+        TaskState::Succeeded
+    );
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn runtime_task_summary_projects_supervisor_timestamps_and_retry_fields() {
+    let supervisor = TaskSupervisor::new();
+    supervisor
+        .register(
+            TaskSpec::new(
+                "status",
+                "runner",
+                immediate_task(Err(TaskFailure::transient(
+                    "authorization bearer sk-secret",
+                ))),
+            )
+            .with_restart_policy(RestartPolicy::transient(
+                1,
+                Duration::from_millis(10),
+                Duration::from_millis(10),
+            )),
+        )
+        .expect("register task");
+
+    supervisor
+        .start(&TaskId::from("status"))
+        .expect("start task");
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("status"))
+            .await
+            .unwrap(),
+        TaskState::BackingOff { retry_at_ms: 10 }
+    );
+    let summary = RuntimeTaskSummary::from(supervisor.status(&TaskId::from("status")).unwrap());
+
+    assert_eq!(summary.status, RuntimeTaskStatus::BackingOff);
+    assert!(summary.last_started_at_ms.is_some());
+    assert!(summary.last_succeeded_at_ms.is_none());
+    assert_eq!(summary.last_failure_code.as_deref(), Some("[REDACTED]"));
+    assert_eq!(summary.consecutive_failures, 1);
+    assert!(summary.next_retry_at_ms.is_some());
+}
+
+#[tokio::test]
+async fn configuration_failure_and_panic_are_terminal() {
+    let supervisor = TaskSupervisor::new();
+    supervisor
+        .register(TaskSpec::new(
+            "bad-config",
+            "runner",
+            immediate_task(Err(TaskFailure::configuration("bad-config"))),
+        ))
+        .expect("register bad config");
+    supervisor
+        .register(TaskSpec::new("panic", "runner", |_| {
+            Box::pin(async move {
+                panic!("boom");
+                #[allow(unreachable_code)]
+                Ok(())
+            })
+        }))
+        .expect("register panic");
+
+    supervisor.start(&TaskId::from("bad-config")).unwrap();
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("bad-config"))
+            .await
+            .unwrap(),
+        TaskState::Failed {
+            code: "bad-config".to_string()
+        }
+    );
+
+    supervisor.start(&TaskId::from("panic")).unwrap();
+    assert_eq!(
+        supervisor
+            .join_finished(&TaskId::from("panic"))
+            .await
+            .unwrap(),
+        TaskState::Panicked
+    );
+}
+
+#[tokio::test]
+async fn shutdown_cancels_tasks_and_reports_timeout_without_real_sleep() {
+    tokio::time::pause();
+    let supervisor = TaskSupervisor::new();
+    supervisor
+        .register(TaskSpec::new("stubborn", "runner", |_| {
+            Box::pin(async move {
+                std::future::pending::<()>().await;
+                #[allow(unreachable_code)]
+                Ok(())
+            })
+        }))
+        .expect("register task");
+    supervisor
+        .start(&TaskId::from("stubborn"))
+        .expect("start task");
+
+    let shutdown = tokio::spawn(async move { supervisor.shutdown(Duration::from_secs(5)).await });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(5)).await;
+
+    let error = shutdown.await.expect("join shutdown").expect_err("timeout");
+    assert_eq!(error.report.cancelled, vec![TaskId::from("stubborn")]);
+    assert_eq!(error.report.timed_out, vec![TaskId::from("stubborn")]);
+}

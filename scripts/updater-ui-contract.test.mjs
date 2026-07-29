@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(path, "utf8").catch(() => "");
-const provider = await read("src/features/updater/UpdaterProvider.tsx");
-const dialog = await read("src/features/updater/UpdateDialog.tsx");
+const provider = await read("src/lib/updater/UpdaterProvider.tsx");
+const dialog = await read("src/lib/updater/UpdateDialog.tsx");
 const main = await read("src/main.tsx");
 const settings = await read("src/features/settings/SettingsPage.tsx");
 

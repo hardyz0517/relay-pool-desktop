@@ -1,11 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Plus, RefreshCw, RotateCcw, Search } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, Dialog, IconButton, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { useInteractionActivity } from "@/components/ui/InteractionActivity";
-import { listModelBasePrices, resetModelBasePricesToBuiltins, upsertModelBasePrice } from "@/lib/api/economics";
+import { resetModelBasePricesToBuiltins, upsertModelBasePrice } from "@/lib/api/economics";
 import { readError } from "@/lib/errors";
+import { queryKeys } from "@/lib/query/queryKeys";
+import { modelBasePricesQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { ModelBasePrice } from "@/lib/types/economics";
 
 type ModelBasePricesPageProps = {
@@ -80,26 +84,23 @@ function createEmptyDraft(): DraftRow {
 
 export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPageProps) {
   const toast = useToast();
-  const [rows, setRows] = useState<ModelBasePrice[]>([]);
+  const queryClient = useQueryClient();
+  const modelBasePricesQuery = useActivityQuery(modelBasePricesQueryOptions());
+  const rows = modelBasePricesQuery.data ?? [];
   const [query, setQuery] = useState("");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState<DraftRow>(() => createEmptyDraft());
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingKeys, setSavingKeys] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void refresh();
-  }, []);
+  const loading = modelBasePricesQuery.isPending && modelBasePricesQuery.data === undefined;
+  const displayError = error ?? (modelBasePricesQuery.error ? readError(modelBasePricesQuery.error) : null);
 
   async function refresh(showSuccess = false) {
-    setLoading(true);
     setError(null);
     try {
-      const nextRows = await listModelBasePrices();
-      setRows(nextRows);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.modelBasePrices });
       if (showSuccess) {
         toast.success("模型基准价格已刷新");
       }
@@ -107,9 +108,8 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
       const message = readError(requestError);
       setError(message);
       toast.error("读取模型基准价格失败", message);
-    } finally {
-      setLoading(false);
-    }
+  }
+
   }
 
   async function resetBuiltins() {
@@ -117,7 +117,8 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
     setError(null);
     try {
       const nextRows = await resetModelBasePricesToBuiltins();
-      setRows(nextRows);
+      queryClient.setQueryData(queryKeys.modelBasePrices, nextRows);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
       toast.success("已恢复内置基准价格");
     } catch (requestError) {
       const message = readError(requestError);
@@ -137,7 +138,10 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
     setError(null);
     try {
       const saved = await upsertModelBasePrice(draftToInput(createDraft));
-      setRows((currentRows) => upsertRow(currentRows, saved));
+      queryClient.setQueryData(queryKeys.modelBasePrices, (currentRows: ModelBasePrice[] | undefined) =>
+        upsertRow(currentRows ?? [], saved),
+      );
+      await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
       setCreateDialogOpen(false);
       setCreateDraft(createEmptyDraft());
       toast.success("模型基准价格已新增");
@@ -155,7 +159,10 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
     setError(null);
     try {
       const saved = await upsertModelBasePrice(rowToInput(row, patch));
-      setRows((currentRows) => upsertRow(currentRows, saved));
+      queryClient.setQueryData(queryKeys.modelBasePrices, (currentRows: ModelBasePrice[] | undefined) =>
+        upsertRow(currentRows ?? rows, saved),
+      );
+      await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
       return saved;
     } catch (requestError) {
       const message = readError(requestError);
@@ -333,7 +340,7 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
           )}
         </SectionCard>
 
-        {error && <div className="text-sm text-danger-foreground">{error}</div>}
+        {displayError && <div className="text-sm text-danger-foreground">{displayError}</div>}
       </div>
 
       <Dialog

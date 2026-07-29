@@ -1,5 +1,13 @@
 use std::time::{Duration, Instant};
 
+use http::{header, HeaderValue, Method};
+use tokio_util::sync::CancellationToken;
+
+use crate::outbound::{
+    AsyncOutboundClient, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
+    OutboundRetryPolicy, ProxyPolicy, RequestBudget,
+};
+
 #[derive(Debug, Clone)]
 pub struct EndpointPingProbeResult {
     pub ok: bool,
@@ -8,19 +16,33 @@ pub struct EndpointPingProbeResult {
     pub error_summary: Option<String>,
 }
 
-pub fn ping_station_endpoint(base_url: &str, timeout: Duration) -> EndpointPingProbeResult {
+pub async fn ping_station_endpoint(
+    outbound: &AsyncOutboundClient,
+    base_url: &str,
+    timeout: Duration,
+    cancellation_token: CancellationToken,
+) -> EndpointPingProbeResult {
     let url = endpoint_ping_url(base_url);
-    let agent = ureq::AgentBuilder::new().timeout(timeout).build();
     let started_at = Instant::now();
 
-    let response = match agent.head(&url).call() {
+    let response = match execute_ping_request(
+        outbound,
+        Method::HEAD,
+        &url,
+        timeout,
+        cancellation_token.clone(),
+    )
+    .await
+    {
         Ok(response) => Ok(response),
-        Err(ureq::Error::Status(_, response)) => Ok(response),
-        Err(_) => match agent.get(&url).call() {
-            Ok(response) => Ok(response),
-            Err(ureq::Error::Status(_, response)) => Ok(response),
-            Err(error) => Err(error),
-        },
+        Err(_) => {
+            match execute_ping_request(outbound, Method::GET, &url, timeout, cancellation_token)
+                .await
+            {
+                Ok(response) => Ok(response),
+                Err(error) => Err(error),
+            }
+        }
     };
 
     match response {
@@ -34,11 +56,38 @@ pub fn ping_station_endpoint(base_url: &str, timeout: Duration) -> EndpointPingP
     }
 }
 
+async fn execute_ping_request(
+    outbound: &AsyncOutboundClient,
+    method: Method,
+    url: &str,
+    timeout: Duration,
+    cancellation_token: CancellationToken,
+) -> Result<crate::outbound::OutboundResponse, crate::outbound::OutboundFailure> {
+    let policy = OutboundHeaderPolicy::provider_default();
+    let mut headers = OutboundHeaders::new();
+    headers.insert_public(header::ACCEPT, HeaderValue::from_static("*/*"), &policy)?;
+    outbound
+        .execute(
+            OutboundRequest {
+                method,
+                url: url.to_string(),
+                correlation_id: None,
+                headers,
+                body: Vec::new(),
+                proxy: ProxyPolicy::Direct,
+                budget: RequestBudget::from_now(timeout),
+                retry_policy: OutboundRetryPolicy::Never,
+            },
+            cancellation_token,
+        )
+        .await
+}
+
 fn endpoint_ping_response_result(
     started_at: Instant,
-    response: ureq::Response,
+    response: crate::outbound::OutboundResponse,
 ) -> EndpointPingProbeResult {
-    let status_code = response.status();
+    let status_code = response.status.as_u16();
     if (200..400).contains(&status_code) {
         EndpointPingProbeResult {
             ok: true,
@@ -75,6 +124,7 @@ fn short_ping_error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outbound::AsyncOutboundClientConfig;
     use std::{
         io::{Read, Write},
         net::TcpListener,
@@ -110,11 +160,21 @@ mod tests {
         format!("http://{addr}")
     }
 
-    #[test]
-    fn endpoint_ping_uses_http_head_without_token_path() {
+    fn test_outbound() -> AsyncOutboundClient {
+        AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget())
+    }
+
+    #[tokio::test]
+    async fn endpoint_ping_uses_http_head_without_token_path() {
         let base_url = spawn_endpoint("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
-        let result = ping_station_endpoint(&base_url, Duration::from_secs(2));
+        let result = ping_station_endpoint(
+            &test_outbound(),
+            &base_url,
+            Duration::from_secs(2),
+            CancellationToken::new(),
+        )
+        .await;
 
         assert!(result.ok);
         assert_eq!(result.status, "success");
@@ -122,12 +182,18 @@ mod tests {
         assert_eq!(result.error_summary, None);
     }
 
-    #[test]
-    fn endpoint_ping_reports_http_failure_without_model_request() {
+    #[tokio::test]
+    async fn endpoint_ping_reports_http_failure_without_model_request() {
         let base_url =
             spawn_endpoint("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
 
-        let result = ping_station_endpoint(&base_url, Duration::from_secs(2));
+        let result = ping_station_endpoint(
+            &test_outbound(),
+            &base_url,
+            Duration::from_secs(2),
+            CancellationToken::new(),
+        )
+        .await;
 
         assert!(!result.ok);
         assert_eq!(result.status, "failed");
@@ -135,13 +201,19 @@ mod tests {
         assert!(result.error_summary.unwrap().contains("HTTP 503"));
     }
 
-    #[test]
-    fn endpoint_ping_normalizes_fallback_get_http_failure() {
+    #[tokio::test]
+    async fn endpoint_ping_normalizes_fallback_get_http_failure() {
         let base_url = spawn_endpoint_with_head_error_then_get(
             "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n",
         );
 
-        let result = ping_station_endpoint(&base_url, Duration::from_secs(2));
+        let result = ping_station_endpoint(
+            &test_outbound(),
+            &base_url,
+            Duration::from_secs(2),
+            CancellationToken::new(),
+        )
+        .await;
 
         assert!(!result.ok);
         assert_eq!(result.status, "failed");

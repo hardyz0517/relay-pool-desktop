@@ -1,10 +1,11 @@
 [package]
 name = "relay-pool-desktop"
-version = "0.3.2"
+version = "0.3.3"
 description = "Local desktop AI relay pool manager"
 authors = ["Relay Pool Desktop contributors"]
 edition = "2021"
 rust-version = "1.89"
+publish = false
 
 [lib]
 name = "relay_pool_desktop_lib"
@@ -35,6 +36,7 @@ sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-toki
 httparse = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 thiserror = "2"
+tracing = "0.1"
 uuid = { version = "1", features = ["v7", "rng"] }
 sha2 = "0.10"
 subtle = "2"
@@ -42,11 +44,10 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "limit", "request-id"] }
-ureq = { version = "2", features = ["json", "socks-proxy"] }
 url = "2"
 zeroize = "1"
 

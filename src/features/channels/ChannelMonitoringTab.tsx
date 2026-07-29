@@ -1,11 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import {
-  usePageActivation,
-  usePageRefreshEnabled,
-} from "@/components/shell/PageActivity";
 import {
   createChannelMonitor,
   deleteChannelMonitor,
@@ -13,7 +10,7 @@ import {
   updateChannelMonitor,
 } from "@/lib/api/channelMonitors";
 import { readError } from "@/lib/errors";
-import { loadChannelMonitoringWorkspace } from "@/lib/queries/channelQueries";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { channelMonitoringQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { toTimestampMillis } from "@/lib/time";
@@ -28,7 +25,7 @@ import {
   monitorToDraft,
   monitorToCreateInput,
   validateMonitorDraft,
-} from "./channelMonitorViewModel";
+} from "@/lib/channelMonitorViewModel";
 
 type ChannelMonitoringTabProps = {
   headerActions?: ReactNode;
@@ -45,15 +42,26 @@ const monitorGridClassName =
 
 export function ChannelMonitoringTab({ headerActions, onHealthChanged }: ChannelMonitoringTabProps) {
   const toast = useToast();
-  const refreshEnabled = usePageRefreshEnabled();
-  useActivityQuery(refreshEnabled, channelMonitoringQueryOptions());
-  const [monitors, setMonitors] = useState<ChannelMonitor[]>([]);
-  const [stations, setStations] = useState<Station[]>([]);
-  const [keys, setKeys] = useState<KeyPoolItem[]>([]);
-  const [templates, setTemplates] = useState<ChannelMonitorRequestTemplate[]>([]);
-  const [runsByMonitor, setRunsByMonitor] = useState(new Map<string, ChannelMonitorRun[]>());
-  const [runLoadFailedIds, setRunLoadFailedIds] = useState(new Set<string>());
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const workspaceQuery = useActivityQuery(channelMonitoringQueryOptions());
+  const workspace = workspaceQuery.data;
+  const monitorSummaries = workspace?.monitorSummaries ?? [];
+  const monitors = useMemo(
+    () => monitorSummaries.map((summary) => summary.monitor),
+    [monitorSummaries],
+  );
+  const stations = workspace?.stations ?? [];
+  const keys = workspace?.keyPoolItems ?? [];
+  const templates = workspace?.templates ?? [];
+  const runsByMonitor = useMemo(
+    () => new Map(monitorSummaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)),
+    [monitorSummaries],
+  );
+  const runLoadFailedIds = useMemo(
+    () => new Set(monitorSummaries.filter((summary) => summary.runsLoadStatus === "failed").map((summary) => summary.monitor.id)),
+    [monitorSummaries],
+  );
+  const loading = workspaceQuery.isPending && workspace === undefined;
   const [saving, setSaving] = useState(false);
   const [actionState, setActionState] = useState<ActionState>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,10 +69,7 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
   const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [editingMonitor, setEditingMonitor] = useState<ChannelMonitor | null>(null);
   const [pendingDeleteMonitor, setPendingDeleteMonitor] = useState<ChannelMonitor | null>(null);
-
-  usePageActivation(({ isInitial }) => {
-    void refresh(false, isInitial);
-  });
+  const displayError = error ?? (workspaceQuery.error ? readError(workspaceQuery.error) : null);
 
   const summary = useMemo(() => {
     const enabledCount = monitors.filter((monitor) => monitor.enabled).length;
@@ -81,20 +86,10 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
     };
   }, [monitors, runLoadFailedIds, runsByMonitor]);
 
-  async function refresh(showSuccess = false, showLoading = true) {
-    if (showLoading) {
-      setLoading(true);
-    }
+  async function refresh(showSuccess = false) {
     setError(null);
     try {
-      const workspace = await loadChannelMonitoringWorkspace();
-      const nextMonitors = workspace.monitorSummaries.map((summary) => summary.monitor);
-      setMonitors(nextMonitors);
-      setStations(workspace.stations);
-      setKeys(workspace.keyPoolItems);
-      setTemplates(workspace.templates);
-      setRunsByMonitor(new Map(workspace.monitorSummaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)));
-      setRunLoadFailedIds(new Set(workspace.monitorSummaries.filter((summary) => summary.runsLoadStatus === "failed").map((summary) => summary.monitor.id)));
+      await queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring });
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }
@@ -102,10 +97,6 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
       const message = readError(requestError);
       setError(message);
       toast.error("读取渠道监控失败", message);
-    } finally {
-      if (showLoading) {
-        setLoading(false);
-      }
     }
   }
 
@@ -244,7 +235,7 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
         </div>
       </div>
 
-      {error && <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
+      {displayError && <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{displayError}</div>}
 
       {monitors.length === 0 ? (
         <EmptyState

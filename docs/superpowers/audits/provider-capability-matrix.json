@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "stage": "Stage 5 Task 21.B",
+  "status": "sub2api-remote-key-production-cutover",
+  "registryOwner": "src-tauri/src/services/collectors/drivers/mod.rs",
+  "harness": "src-tauri/tests/provider_conformance.rs",
+  "providers": [
+    {
+      "kind": "sub2api",
+      "displayName": "Sub2API",
+      "stationTypes": [
+        "sub2api"
+      ],
+      "capabilities": {
+        "collector": {
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "sub2api-collector-success",
+            "sub2api-collector-partial",
+            "sub2api-collector-auth-failure",
+            "sub2api-collector-rate-limit",
+            "sub2api-collector-server-failure",
+            "sub2api-collector-malformed",
+            "sub2api-collector-unknown-shape",
+            "sub2api-collector-cancel",
+            "sub2api-collector-budget-exhaustion",
+            "sub2api-collector-stale-endpoint-revision",
+            "sub2api-collector-redaction"
+          ]
+        },
+        "remote_key": {
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "sub2api-remote-key-success",
+            "sub2api-remote-key-partial",
+            "sub2api-remote-key-auth-failure",
+            "sub2api-remote-key-rate-limit",
+            "sub2api-remote-key-server-failure",
+            "sub2api-remote-key-malformed",
+            "sub2api-remote-key-unknown-shape",
+            "sub2api-remote-key-cancel",
+            "sub2api-remote-key-budget-exhaustion",
+            "sub2api-remote-key-stale-endpoint-revision",
+            "sub2api-remote-key-redaction"
+          ]
+        },
+        "authorization": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": [
+            "sub2api-authorization-unsupported"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "newapi",
+      "displayName": "NewAPI",
+      "stationTypes": [
+        "newapi"
+      ],
+      "capabilities": {
+        "collector": {
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "newapi-collector-success",
+            "newapi-collector-partial",
+            "newapi-collector-auth-failure",
+            "newapi-collector-rate-limit",
+            "newapi-collector-server-failure",
+            "newapi-collector-malformed",
+            "newapi-collector-unknown-shape",
+            "newapi-collector-cancel",
+            "newapi-collector-budget-exhaustion",
+            "newapi-collector-stale-endpoint-revision",
+            "newapi-collector-redaction"
+          ]
+        },
+        "remote_key": {
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "newapi-remote-key-success",
+            "newapi-remote-key-partial",
+            "newapi-remote-key-auth-failure",
+            "newapi-remote-key-rate-limit",
+            "newapi-remote-key-server-failure",
+            "newapi-remote-key-malformed",
+            "newapi-remote-key-unknown-shape",
+            "newapi-remote-key-cancel",
+            "newapi-remote-key-budget-exhaustion",
+            "newapi-remote-key-stale-endpoint-revision",
+            "newapi-remote-key-redaction"
+          ]
+        },
+        "authorization": {
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "newapi-authorization-success",
+            "newapi-authorization-partial",
+            "newapi-authorization-auth-failure",
+            "newapi-authorization-rate-limit",
+            "newapi-authorization-server-failure",
+            "newapi-authorization-malformed",
+            "newapi-authorization-unknown-shape",
+            "newapi-authorization-cancel",
+            "newapi-authorization-budget-exhaustion",
+            "newapi-authorization-stale-endpoint-revision",
+            "newapi-authorization-redaction"
+          ]
+        }
+      }
+    },
+    {
+      "kind": "openai-compatible",
+      "displayName": "OpenAI-compatible",
+      "stationTypes": [
+        "openai-compatible",
+        "openai_compatible"
+      ],
+      "capabilities": {
+        "collector": {
+          "status": "supported",
+          "declaredInRegistry": true,
+          "fixtureIds": [
+            "openai-compatible-collector-success",
+            "openai-compatible-collector-partial",
+            "openai-compatible-collector-auth-failure",
+            "openai-compatible-collector-rate-limit",
+            "openai-compatible-collector-server-failure",
+            "openai-compatible-collector-malformed",
+            "openai-compatible-collector-unknown-shape",
+            "openai-compatible-collector-cancel",
+            "openai-compatible-collector-budget-exhaustion",
+            "openai-compatible-collector-stale-endpoint-revision",
+            "openai-compatible-collector-redaction"
+          ]
+        },
+        "remote_key": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": [
+            "openai-compatible-remote-key-unsupported"
+          ]
+        },
+        "authorization": {
+          "status": "unsupported",
+          "declaredInRegistry": false,
+          "fixtureIds": [
+            "openai-compatible-authorization-unsupported"
+          ]
+        }
+      }
+    }
+  ]
+}

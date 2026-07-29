@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+/* global console */
+
 const pageSource = await readFile("src/features/key-pool/KeyPoolPage.tsx", "utf8");
 const stationKeysApiSource = await readFile("src/lib/api/stationKeys.ts", "utf8");
 const commandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
@@ -79,20 +81,20 @@ assert.ok(
 );
 
 assert.ok(
-  stationKeysApiSource.includes('import { Channel, invoke } from "@tauri-apps/api/core"') &&
+  stationKeysApiSource.includes('import { invokeStationKeyConnectivityStream } from "@/lib/bridge/streamingAdapter"') &&
+    !stationKeysApiSource.includes('from "@tauri-apps/api/core"') &&
     stationKeysApiSource.includes("StationKeyConnectivityTestEvent") &&
     /testStationKeyConnectivity\(\s*stationKeyId: string,\s*model: string,\s*options: \{ onEvent\?: \(event: StationKeyConnectivityTestEvent\) => void \} = \{\},\s*\)/.test(stationKeysApiSource) &&
-    stationKeysApiSource.includes("const progress = new Channel<StationKeyConnectivityTestEvent>()") &&
-    stationKeysApiSource.includes("progress.onmessage = (event) => options.onEvent?.(event)") &&
-    /invoke<StationKeyConnectivityTestResult>\("test_station_key_connectivity", \{ stationKeyId,\s*model,\s*progress \}\)/.test(stationKeysApiSource),
-  "station key connectivity API should pass a request-scoped Tauri Channel to the selected-model probe",
+    /invokeStationKeyConnectivityStream\(\s*\{\s*stationKeyId,\s*model\s*\},\s*\{\s*onEvent: options\.onEvent\s*\},\s*\)/.test(stationKeysApiSource),
+  "station key connectivity API should route streaming through the typed adapter instead of creating a bare Tauri Channel",
 );
 
 assert.ok(
-  /pub async fn test_station_key_connectivity\([\s\S]*station_key_id: String,[\s\S]*model: String,[\s\S]*progress: Channel<StationKeyConnectivityTestEvent>,[\s\S]*\)/.test(commandsSource) &&
-    /test_station_key_connectivity_blocking\([\s\S]*&database,[\s\S]*&data_key,[\s\S]*&station_key_id,[\s\S]*&model,[\s\S]*progress,[\s\S]*\)/.test(commandsSource) &&
-    /station_key_connectivity_model_candidates\(\s*capabilities\.as_ref\(\),\s*Some\(requested_model\.as_str\(\)\),\s*&discovered_models,\s*\)/.test(commandsSource),
-  "Tauri connectivity command should accept a progress channel and prioritize the selected model for the probe",
+    /pub async fn test_station_key_connectivity\([\s\S]*input: Value,[\s\S]*progress: Channel<StationKeyConnectivityTestEvent>,[\s\S]*\)/.test(commandsSource) &&
+    commandsSource.includes("StationKeyConnectivityInputDto::parse(input)") &&
+    commandsSource.includes('correlation::in_command_scope("test_station_key_connectivity"') &&
+    /station_key_connectivity_model_candidates\(\s*Some\(&capabilities\),\s*Some\(requested_model\.as_str\(\)\),\s*&discovered_models,\s*\)/.test(commandsSource),
+  "Tauri connectivity command should validate typed input, keep correlation scope, and prioritize the selected model for the probe",
 );
 
 assert.ok(
@@ -108,14 +110,21 @@ assert.ok(
 );
 
 assert.ok(
-  commandsSource.includes("enum StationKeyConnectivityTestEvent") &&
+  commandsSource.includes("struct StationKeyConnectivityTestEvent") &&
+    commandsSource.includes("schema_version") &&
+    commandsSource.includes("run_id") &&
+    commandsSource.includes("sequence") &&
+    commandsSource.includes("terminal") &&
+    commandsSource.includes("StationKeyConnectivityCancelCapability::DetachOnly") &&
     commandsSource.includes("AttemptStarted") &&
     commandsSource.includes("Delta") &&
     commandsSource.includes("Fallback") &&
+    commandsSource.includes("Completed") &&
+    commandsSource.includes("Failed") &&
     commandsSource.includes("StationKeyConnectivitySseDecoder") &&
     commandsSource.includes("response.output_text.delta") &&
     commandsSource.includes("[DONE]"),
-  "backend should emit typed progress events and parse real Responses/Chat SSE streams",
+  "backend should emit versioned streaming envelopes and parse real Responses/Chat SSE streams",
 );
 
 assert.ok(

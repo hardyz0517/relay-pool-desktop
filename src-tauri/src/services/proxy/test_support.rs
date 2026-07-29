@@ -44,6 +44,11 @@ impl V2ProxyTestFixture {
             .await
             .expect("initialize V2 persistence runtime");
         let data_key = generate_data_key();
+        let work_runtime = crate::app_composition::compose_work_runtime(
+            crate::app_composition::WorkRuntimeConfig::architecture_budget(),
+            tokio::runtime::Handle::current(),
+        )
+        .expect("compose work runtime");
         let services = crate::app_composition::compose_app_services(
             runtime.handle(),
             data_key,
@@ -55,6 +60,7 @@ impl V2ProxyTestFixture {
                     active_data_dir.clone(),
                 ),
             ),
+            work_runtime.blocking,
         );
         services
             .settings

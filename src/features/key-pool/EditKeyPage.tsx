@@ -1,20 +1,24 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, KeyRound } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
-import { listKeyPoolItems, saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
+import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
+import { queryKeys } from "@/lib/query/queryKeys";
+import { keyPoolQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
-import { StationGroupOptionLabel } from "@/features/stations/components/StationGroupChip";
+import { StationGroupOptionLabel } from "@/components/group/StationGroupChip";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
-} from "@/features/stations/groupOptionViewModels";
+} from "@/lib/groupOptionViewModels";
 import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "./stationKeyCapabilityDefaults";
 
 type EditKeyPageProps = {
@@ -84,9 +88,13 @@ const inputClassName =
 
 const KEEP_GROUP_BINDING_VALUE = "__keep__";
 const CLEAR_GROUP_BINDING_VALUE = "__clear__";
+const emptyKeyPoolItems: KeyPoolItem[] = [];
 
 export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProps) {
   const toast = useToast();
+  const queryClient = useQueryClient();
+  const keyPoolItemsQuery = useActivityQuery(keyPoolQueryOptions());
+  const keyPoolItems = keyPoolItemsQuery.data ?? emptyKeyPoolItems;
   const [sourceItem, setSourceItem] = useState<KeyPoolItem | null>(null);
   const [groupOptions, setGroupOptions] = useState<StationGroupOption[]>([]);
   const [form, setForm] = useState<EditKeyFormState>(emptyForm);
@@ -95,6 +103,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadedStationKeyIdRef = useRef<string | null>(null);
   const hasUnsavedChanges = serializeEditKeyForm(form) !== initialFormSnapshot;
 
   const bindingOptions = [
@@ -108,6 +117,9 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
   ];
 
   useEffect(() => {
+    if (stationKeyId && loadedStationKeyIdRef.current === stationKeyId) {
+      return undefined;
+    }
     let alive = true;
     setLoading(true);
     setError(null);
@@ -117,19 +129,33 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
     setInitialFormSnapshot(serializeEditKeyForm(emptyForm));
 
     if (!stationKeyId) {
+      loadedStationKeyIdRef.current = null;
       setLoading(false);
       setError("未选择要编辑的密钥。");
       return () => {
         alive = false;
       };
     }
+    if (keyPoolItemsQuery.isLoading) {
+      return () => {
+        alive = false;
+      };
+    }
+    if (keyPoolItemsQuery.error) {
+      loadedStationKeyIdRef.current = null;
+      setLoading(false);
+      setError(readError(keyPoolItemsQuery.error));
+      return () => {
+        alive = false;
+      };
+    }
 
-    void listKeyPoolItems()
-      .then(async (items) => {
+    void Promise.resolve()
+      .then(async () => {
         if (!alive) {
           return;
         }
-        const item = items.find((candidate) => candidate.id === stationKeyId) ?? null;
+        const item = keyPoolItems.find((candidate) => candidate.id === stationKeyId) ?? null;
         if (!item) {
           throw new Error("未找到要编辑的密钥。");
         }
@@ -145,6 +171,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         const nextForm = mergeCapabilitiesIntoForm(formFromItem(item, nextGroupOptions), capabilities);
         setForm(nextForm);
         setInitialFormSnapshot(serializeEditKeyForm(nextForm));
+        loadedStationKeyIdRef.current = stationKeyId;
       })
       .catch((requestError) => {
         if (!alive) {
@@ -163,7 +190,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
     return () => {
       alive = false;
     };
-  }, [stationKeyId, toast]);
+  }, [keyPoolItems, keyPoolItemsQuery.error, keyPoolItemsQuery.isLoading, stationKeyId, toast]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -189,6 +216,10 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         groupSelection: groupSelectionFromEditForm(form, sourceItem, groupOptions),
         capabilities: capabilitiesFromEditForm(form),
       });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
+      ]);
       toast.success("密钥已更新");
       onUpdated?.();
     } catch (requestError) {

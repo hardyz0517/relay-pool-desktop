@@ -1,12 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
-import type { CollectorRun } from "@/lib/types/collectorRuns";
+import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 
 export function listCollectorRuns(stationId: string) {
-  return invoke<CollectorRun[]>("list_collector_runs", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return [];
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectorRuns.listCollectorRuns(stationId);
 }

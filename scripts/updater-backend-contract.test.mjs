@@ -2,25 +2,26 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-const commands = await readFile("src-tauri/src/commands/mod.rs", "utf8");
-const lib = await readFile("src-tauri/src/lib.rs", "utf8");
+const localProxyCommands = await readFile("src-tauri/src/commands/local_proxy.rs", "utf8");
+const registry = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const proxyApi = await readFile("src/lib/api/proxy.ts", "utf8");
 
 assert.ok(
-  commands.includes("pub fn prepare_local_proxy_for_update"),
-  "commands should expose prepare_local_proxy_for_update",
+  localProxyCommands.includes("pub async fn prepare_local_proxy_for_update"),
+  "local proxy commands should expose prepare_local_proxy_for_update",
 );
 assert.ok(
-  commands.includes("Duration::from_secs(30)"),
+  localProxyCommands.includes("Duration::from_secs(30)"),
   "update preparation should use a 30 second drain timeout",
 );
 assert.ok(
-  lib.includes("commands::prepare_local_proxy_for_update"),
-  "Tauri invoke handler should register prepare_local_proxy_for_update",
+  registry.includes("prepare_local_proxy_for_update => $crate::commands::local_proxy::prepare_local_proxy_for_update"),
+  "Tauri command registry should register prepare_local_proxy_for_update",
 );
 assert.ok(
-  proxyApi.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update")'),
-  "proxy API should expose the update preparation command",
+  proxyApi.includes("getActiveBackendClient().proxy.prepareLocalProxyForUpdate()") &&
+    !proxyApi.includes('invoke<ProxyStatus>("prepare_local_proxy_for_update")'),
+  "proxy API should expose the generated update preparation command",
 );
 
 for (const featureFile of await listSourceFiles("src/features")) {

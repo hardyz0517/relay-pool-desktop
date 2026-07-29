@@ -4,11 +4,7 @@ pub mod templates;
 
 use std::{
     collections::HashSet,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, OnceLock,
-    },
-    thread::{self, JoinHandle},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -18,6 +14,7 @@ use crate::{
         monitoring::MonitoringService, pagination::PageLimit, pricing::PricingService,
         routing::RoutingService,
     },
+    background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor},
     models::{
         channel_monitors::{
             ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
@@ -27,6 +24,7 @@ use crate::{
         pricing::RequestUsage,
         routing::RuntimeRoutingCandidate,
     },
+    outbound::AsyncOutboundClient,
     services::channel_monitors::{
         probe::{run_monitor_probe, MonitorProbeResult},
         redaction::redact_monitor_text,
@@ -34,16 +32,23 @@ use crate::{
     },
     services::pricing::request_cost_from_pricing_parts_and_usage,
 };
-use futures_util::future::BoxFuture;
+use futures_util::future::{join_all, BoxFuture};
+use tokio_util::sync::CancellationToken;
 
 const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(30);
-const RUNNER_STOP_SLICE: Duration = Duration::from_millis(250);
+const RUNNER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const RUNNER_TASK_ID: &str = "channel-monitor-runner";
+const RUNNER_TASK_KIND: &str = "channel_monitor_runner";
+const RUNNER_CONCURRENCY_KEY: &str = "channel-monitor-runner";
 const DEFAULT_MONITOR_MODEL: &str = "gpt-4.1-mini";
 const DEFAULT_MONITOR_CHALLENGE: &str = "ping";
 const MONITOR_ALREADY_RUNNING_ERROR: &str = "Channel monitor is already running";
 static ACTIVE_MONITOR_RUNS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-pub(crate) fn v2_runner_port(services: &AppServices) -> Arc<dyn ChannelMonitorRunnerPort> {
+pub(crate) fn v2_runner_port(
+    services: &AppServices,
+    outbound: AsyncOutboundClient,
+) -> Arc<dyn ChannelMonitorRunnerPort> {
     let persistence: Arc<dyn ChannelMonitorPersistencePort> = Arc::new(
         V2ChannelMonitorPersistenceAdapter::new((*services.monitoring).clone()),
     );
@@ -51,6 +56,7 @@ pub(crate) fn v2_runner_port(services: &AppServices) -> Arc<dyn ChannelMonitorRu
         services.routing.clone(),
         services.credentials.clone(),
         services.pricing.clone(),
+        outbound,
     ));
     Arc::new(V2ChannelMonitorRunnerAdapter::new(persistence, probes))
 }
@@ -162,6 +168,7 @@ pub(crate) trait ChannelMonitorProbePort: Send + Sync + 'static {
         &self,
         monitor: ChannelMonitor,
         template: ChannelMonitorRequestTemplate,
+        cancellation_token: CancellationToken,
     ) -> BoxFuture<'static, Result<Vec<CompletedMonitorProbe>, String>>;
 }
 
@@ -170,6 +177,7 @@ pub(crate) struct V2ChannelMonitorProbeAdapter {
     routing: Arc<RoutingService>,
     credentials: Arc<CredentialService>,
     pricing: Arc<PricingService>,
+    outbound: AsyncOutboundClient,
 }
 
 impl V2ChannelMonitorProbeAdapter {
@@ -177,11 +185,13 @@ impl V2ChannelMonitorProbeAdapter {
         routing: Arc<RoutingService>,
         credentials: Arc<CredentialService>,
         pricing: Arc<PricingService>,
+        outbound: AsyncOutboundClient,
     ) -> Self {
         Self {
             routing,
             credentials,
             pricing,
+            outbound,
         }
     }
 }
@@ -191,10 +201,12 @@ impl ChannelMonitorProbePort for V2ChannelMonitorProbeAdapter {
         &self,
         monitor: ChannelMonitor,
         template: ChannelMonitorRequestTemplate,
+        cancellation_token: CancellationToken,
     ) -> BoxFuture<'static, Result<Vec<CompletedMonitorProbe>, String>> {
         let routing = self.routing.clone();
         let credentials = self.credentials.clone();
         let pricing = self.pricing.clone();
+        let outbound = self.outbound.clone();
         Box::pin(async move {
             let targets = routing
                 .load_runtime_candidates()
@@ -296,13 +308,18 @@ impl ChannelMonitorProbePort for V2ChannelMonitorProbeAdapter {
                     let target = target.clone();
                     let monitor = monitor.clone();
                     let endpoint = template.endpoint_kind.clone();
-                    workers.push(tauri::async_runtime::spawn_blocking(move || {
+                    let outbound = outbound.clone();
+                    let cancellation_token = cancellation_token.clone();
+                    workers.push(async move {
                         let result = run_monitor_probe(
+                            &outbound,
                             &target.upstream_base_url,
                             api_key.as_str(),
                             &request,
                             monitor.timeout_seconds,
-                        );
+                            cancellation_token,
+                        )
+                        .await;
                         CompletedProbeInput {
                             monitor,
                             target,
@@ -312,12 +329,9 @@ impl ChannelMonitorProbePort for V2ChannelMonitorProbeAdapter {
                             request,
                             result,
                         }
-                    }));
+                    });
                 }
-                for worker in workers {
-                    let completed = worker
-                        .await
-                        .map_err(|error| format!("monitor probe worker failed: {error}"))?;
+                for completed in join_all(workers).await {
                     runs.push(probe_outcome_v2(completed, pricing.as_ref()).await);
                 }
             }
@@ -457,6 +471,7 @@ pub(crate) trait ChannelMonitorRunnerPort: Send + Sync + 'static {
     fn run_monitor(
         &self,
         monitor_id: String,
+        cancellation_token: CancellationToken,
     ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>>;
 }
 
@@ -492,6 +507,7 @@ impl ChannelMonitorRunnerPort for V2ChannelMonitorRunnerAdapter {
     fn run_monitor(
         &self,
         monitor_id: String,
+        cancellation_token: CancellationToken,
     ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>> {
         let persistence = self.persistence.clone();
         let probes = self.probes.clone();
@@ -499,7 +515,7 @@ impl ChannelMonitorRunnerPort for V2ChannelMonitorRunnerAdapter {
             let (monitor, template) = load_monitor_v2(persistence.as_ref(), monitor_id)
                 .await
                 .map_err(|error| error.to_string())?;
-            let pending_runs = probes.probe(monitor, template).await?;
+            let pending_runs = probes.probe(monitor, template, cancellation_token).await?;
             if pending_runs.is_empty() {
                 return Err("Channel monitor probe returned no terminal run".to_string());
             }
@@ -569,84 +585,104 @@ fn short_error(error: &str) -> String {
 }
 
 pub struct ChannelMonitorRunnerState {
-    stop_requested: Arc<AtomicBool>,
-    handle: Mutex<Option<JoinHandle<()>>>,
+    supervisor: TaskSupervisor,
+    task_id: TaskId,
 }
 
 impl ChannelMonitorRunnerState {
-    pub(crate) fn start_v2(port: Arc<dyn ChannelMonitorRunnerPort>) -> Self {
-        let stop_requested = Arc::new(AtomicBool::new(false));
-        let thread_stop = Arc::clone(&stop_requested);
-        let handle = thread::spawn(move || {
-            tauri::async_runtime::block_on(runner_loop_v2(port, thread_stop))
-        });
-        Self {
-            stop_requested,
-            handle: Mutex::new(Some(handle)),
-        }
+    pub(crate) fn start_v2(
+        supervisor: TaskSupervisor,
+        port: Arc<dyn ChannelMonitorRunnerPort>,
+    ) -> Result<Self, String> {
+        let task_id = TaskId::from(RUNNER_TASK_ID);
+        let runner_port = Arc::clone(&port);
+        supervisor
+            .register(
+                TaskSpec::new(task_id.clone(), RUNNER_TASK_KIND, move |context| {
+                    let port = Arc::clone(&runner_port);
+                    Box::pin(runner_loop_v2(port, context))
+                })
+                .with_concurrency_key(RUNNER_CONCURRENCY_KEY)
+                .with_shutdown_timeout(RUNNER_SHUTDOWN_TIMEOUT),
+            )
+            .map_err(|error| error.to_string())?;
+        supervisor
+            .start(&task_id)
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            supervisor,
+            task_id,
+        })
     }
 
     #[allow(dead_code)]
     pub fn stop(&self) {
-        self.stop_requested.store(true, Ordering::Relaxed);
-        if let Ok(mut handle) = self.handle.lock() {
-            if let Some(handle) = handle.take() {
-                let _ = handle.join();
+        let _ = self.supervisor.cancel(&self.task_id);
+    }
+}
+
+async fn runner_loop_v2(
+    port: Arc<dyn ChannelMonitorRunnerPort>,
+    context: TaskRunContext,
+) -> Result<(), TaskFailure> {
+    let mut interval = tokio::time::interval(RUNNER_POLL_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = context.cancellation_token.cancelled() => {
+                return Err(TaskFailure::cancelled());
+            }
+            _ = interval.tick() => {
+                run_due_channel_monitors_once_v2(port.as_ref(), &context).await;
             }
         }
     }
 }
 
-async fn runner_loop_v2(port: Arc<dyn ChannelMonitorRunnerPort>, stop_requested: Arc<AtomicBool>) {
-    while !stop_requested.load(Ordering::Relaxed) {
-        match port.due_monitor_ids(256).await {
-            Ok(monitor_ids) => {
-                for monitor_id in monitor_ids {
-                    if stop_requested.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let _guard = match MonitorRunGuard::try_start(&monitor_id) {
-                        Ok(guard) => guard,
-                        Err(error) => {
-                            if !is_monitor_already_running_error(&error) {
-                                eprintln!("Channel monitor runner failed: {error}");
-                            }
-                            continue;
-                        }
-                    };
-                    if let Err(error) = port.run_monitor(monitor_id).await {
+async fn run_due_channel_monitors_once_v2(
+    port: &dyn ChannelMonitorRunnerPort,
+    context: &TaskRunContext,
+) {
+    match port.due_monitor_ids(256).await {
+        Ok(monitor_ids) => {
+            for monitor_id in monitor_ids {
+                if context.cancellation_token.is_cancelled() {
+                    break;
+                }
+                if let Err(error) = run_channel_monitor_guarded_v2(port, monitor_id, context).await
+                {
+                    if !is_monitor_already_running_error(&error) {
                         eprintln!("Channel monitor runner failed: {error}");
                     }
                 }
             }
-            Err(error) => eprintln!("Channel monitor runner could not query due monitors: {error}"),
         }
-        sleep_until_next_poll(&stop_requested);
+        Err(error) => eprintln!("Channel monitor runner could not query due monitors: {error}"),
     }
+}
+
+async fn run_channel_monitor_guarded_v2(
+    port: &dyn ChannelMonitorRunnerPort,
+    monitor_id: String,
+    context: &TaskRunContext,
+) -> Result<Vec<ChannelMonitorRun>, String> {
+    let _guard = MonitorRunGuard::try_start(&monitor_id)?;
+    port.run_monitor(monitor_id, context.cancellation_token.clone())
+        .await
 }
 
 impl Drop for ChannelMonitorRunnerState {
     fn drop(&mut self) {
-        self.stop_requested.store(true, Ordering::Relaxed);
-        if let Ok(mut handle) = self.handle.lock() {
-            if let Some(handle) = handle.take() {
-                let _ = handle.join();
-            }
-        }
-    }
-}
-
-fn sleep_until_next_poll(stop_requested: &AtomicBool) {
-    let mut slept = Duration::ZERO;
-    while slept < RUNNER_POLL_INTERVAL && !stop_requested.load(Ordering::Relaxed) {
-        thread::sleep(RUNNER_STOP_SLICE);
-        slept += RUNNER_STOP_SLICE;
+        let _ = self.supervisor.cancel(&self.task_id);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::background_tasks::{TaskRunId, TaskState};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::{oneshot, Notify};
+    use tokio_util::sync::CancellationToken;
 
     struct StubPersistence {
         monitor: ChannelMonitor,
@@ -721,6 +757,7 @@ mod tests {
             &self,
             _monitor: ChannelMonitor,
             _template: ChannelMonitorRequestTemplate,
+            _cancellation_token: CancellationToken,
         ) -> BoxFuture<'static, Result<Vec<CompletedMonitorProbe>, String>> {
             let outputs = self.outputs.clone();
             Box::pin(async move { Ok(outputs) })
@@ -741,8 +778,10 @@ mod tests {
             }),
         );
 
-        let runs = tauri::async_runtime::block_on(runner.run_monitor("monitor-1".to_string()))
-            .expect("V2 monitor run");
+        let runs = tauri::async_runtime::block_on(
+            runner.run_monitor("monitor-1".to_string(), CancellationToken::new()),
+        )
+        .expect("V2 monitor run");
 
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].status, "success");
@@ -760,11 +799,249 @@ mod tests {
             }),
         );
 
-        let error = tauri::async_runtime::block_on(runner.run_monitor("monitor-1".to_string()))
-            .expect_err("empty probe result must fail closed");
+        let error = tauri::async_runtime::block_on(
+            runner.run_monitor("monitor-1".to_string(), CancellationToken::new()),
+        )
+        .expect_err("empty probe result must fail closed");
 
         assert_eq!(error, "Channel monitor probe returned no terminal run");
         assert!(recorded.lock().expect("recorded runs").is_empty());
+    }
+
+    #[tokio::test]
+    async fn due_runner_runs_each_due_monitor_once_in_order() {
+        let context = test_run_context();
+        let port = RecordingMonitorRunnerPort::new(
+            vec!["monitor-1".to_string(), "monitor-2".to_string()],
+            vec![Ok(Vec::new()), Ok(Vec::new())],
+        );
+
+        run_due_channel_monitors_once_v2(&port, &context).await;
+
+        assert_eq!(
+            port.calls(),
+            vec!["monitor-1".to_string(), "monitor-2".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn due_runner_stops_between_monitors_when_cancel_is_requested() {
+        let context = test_run_context();
+        let port = StopAfterFirstMonitorRunnerPort::new(
+            context.cancellation_token.clone(),
+            vec!["monitor-stop-1".to_string(), "monitor-stop-2".to_string()],
+        );
+
+        run_due_channel_monitors_once_v2(&port, &context).await;
+
+        assert_eq!(port.calls(), vec!["monitor-stop-1".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn guarded_monitor_run_rejects_same_monitor_reentry_until_guard_drops() {
+        let notify_started = Arc::new(Notify::new());
+        let (release_sender, release_receiver) = oneshot::channel();
+        let port = BlockingFirstMonitorRunnerPort::new(
+            Arc::clone(&notify_started),
+            Mutex::new(Some(release_receiver)),
+        );
+        let running_context = test_run_context();
+        let running = tokio::spawn(async move {
+            run_channel_monitor_guarded_v2(&port, "monitor-guarded".to_string(), &running_context)
+                .await
+        });
+        notify_started.notified().await;
+
+        let duplicate = RecordingMonitorRunnerPort::new(Vec::new(), vec![Ok(Vec::new())]);
+        let duplicate_context = test_run_context();
+        let duplicate_result = run_channel_monitor_guarded_v2(
+            &duplicate,
+            "monitor-guarded".to_string(),
+            &duplicate_context,
+        )
+        .await;
+        assert_eq!(
+            duplicate_result.expect_err("duplicate monitor run must be rejected"),
+            MONITOR_ALREADY_RUNNING_ERROR
+        );
+        assert!(duplicate.calls().is_empty());
+
+        release_sender.send(()).expect("release first run");
+        running
+            .await
+            .expect("first run joins")
+            .expect("first run succeeds");
+
+        let after_release = RecordingMonitorRunnerPort::new(Vec::new(), vec![Ok(Vec::new())]);
+        let after_release_context = test_run_context();
+        run_channel_monitor_guarded_v2(
+            &after_release,
+            "monitor-guarded".to_string(),
+            &after_release_context,
+        )
+        .await
+        .expect("guard is released after first run");
+        assert_eq!(after_release.calls(), vec!["monitor-guarded".to_string()]);
+    }
+
+    struct RecordingMonitorRunnerPort {
+        due: Vec<String>,
+        calls: Arc<Mutex<Vec<String>>>,
+        results: Arc<Mutex<Vec<Result<Vec<ChannelMonitorRun>, String>>>>,
+    }
+
+    impl RecordingMonitorRunnerPort {
+        fn new(due: Vec<String>, results: Vec<Result<Vec<ChannelMonitorRun>, String>>) -> Self {
+            Self {
+                due,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                results: Arc::new(Mutex::new(results)),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    impl ChannelMonitorRunnerPort for RecordingMonitorRunnerPort {
+        fn due_monitor_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+            let due = self.due.clone();
+            Box::pin(async move { Ok(due) })
+        }
+
+        fn run_monitor(
+            &self,
+            monitor_id: String,
+            _cancellation_token: CancellationToken,
+        ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>> {
+            self.calls.lock().expect("calls").push(monitor_id);
+            let result = self
+                .results
+                .lock()
+                .expect("results")
+                .pop()
+                .unwrap_or_else(|| Ok(Vec::new()));
+            Box::pin(async move { result })
+        }
+    }
+
+    struct StopAfterFirstMonitorRunnerPort {
+        cancellation_token: CancellationToken,
+        due: Vec<String>,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl StopAfterFirstMonitorRunnerPort {
+        fn new(cancellation_token: CancellationToken, due: Vec<String>) -> Self {
+            Self {
+                cancellation_token,
+                due,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    impl ChannelMonitorRunnerPort for StopAfterFirstMonitorRunnerPort {
+        fn due_monitor_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+            let due = self.due.clone();
+            Box::pin(async move { Ok(due) })
+        }
+
+        fn run_monitor(
+            &self,
+            monitor_id: String,
+            _cancellation_token: CancellationToken,
+        ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>> {
+            self.calls.lock().expect("calls").push(monitor_id);
+            self.cancellation_token.cancel();
+            Box::pin(async move { Ok(Vec::new()) })
+        }
+    }
+
+    struct BlockingFirstMonitorRunnerPort {
+        notify_started: Arc<Notify>,
+        release_receiver: Mutex<Option<oneshot::Receiver<()>>>,
+        calls: AtomicUsize,
+    }
+
+    impl BlockingFirstMonitorRunnerPort {
+        fn new(
+            notify_started: Arc<Notify>,
+            release_receiver: Mutex<Option<oneshot::Receiver<()>>>,
+        ) -> Self {
+            Self {
+                notify_started,
+                release_receiver,
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl ChannelMonitorRunnerPort for BlockingFirstMonitorRunnerPort {
+        fn due_monitor_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn run_monitor(
+            &self,
+            _monitor_id: String,
+            _cancellation_token: CancellationToken,
+        ) -> BoxFuture<'static, Result<Vec<ChannelMonitorRun>, String>> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                let notify_started = Arc::clone(&self.notify_started);
+                let receiver = self
+                    .release_receiver
+                    .lock()
+                    .expect("release receiver")
+                    .take()
+                    .expect("first call has release receiver");
+                Box::pin(async move {
+                    notify_started.notify_waiters();
+                    receiver
+                        .await
+                        .map(|_| Vec::new())
+                        .map_err(|_| "release dropped".to_string())
+                })
+            } else {
+                Box::pin(async { Ok(Vec::new()) })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn start_v2_registers_runner_with_supervisor_and_stop_cancels_task() {
+        let supervisor = TaskSupervisor::new();
+        let task_id = TaskId::from(RUNNER_TASK_ID);
+        let port = Arc::new(RecordingMonitorRunnerPort::new(Vec::new(), Vec::new()));
+
+        let runner =
+            ChannelMonitorRunnerState::start_v2(supervisor.clone(), port).expect("runner starts");
+
+        assert_eq!(
+            supervisor.status(&task_id).expect("runner status").state,
+            TaskState::Running
+        );
+
+        runner.stop();
+        assert_eq!(
+            supervisor.status(&task_id).expect("runner status").state,
+            TaskState::Stopping
+        );
+    }
+
+    fn test_run_context() -> TaskRunContext {
+        TaskRunContext {
+            task_id: TaskId::from(RUNNER_TASK_ID),
+            run_id: TaskRunId(1),
+            correlation_id: "test-correlation".to_string(),
+            cancellation_token: CancellationToken::new(),
+        }
     }
 
     fn sample_monitor() -> ChannelMonitor {

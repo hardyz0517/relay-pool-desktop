@@ -1,25 +1,25 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
-const updaterApiSource = await readFile("src/lib/api/updater.ts", "utf8");
-const workflowSource = await readFile(".github/workflows/release.yml", "utf8");
+const desktopBackendSource = await readFile("src/lib/bridge/DesktopBackend.ts", "utf8");
+const workflow = parseYaml(await readFile(".github/workflows/release.yml", "utf8"));
 const contractRunnerSource = await readFile("scripts/run-contract-tests.mjs", "utf8");
 
 assert.match(
-  updaterApiSource,
+  desktopBackendSource,
   /checkNative:[\s\S]*catch \(error\) \{[\s\S]*abandonNativeUpdateCheck\(\)[\s\S]*throw error/,
   "a timed-out native check must be detached before manifest inspection starts",
 );
 
 assert.match(
-  updaterApiSource,
-  /function abandonNativeUpdateCheck\(\) \{[\s\S]*nativeUpdateCheckInFlight = null[\s\S]*update\?\.close\(\)/,
+  desktopBackendSource,
+  /private abandonNativeUpdateCheck\(\) \{[\s\S]*nativeUpdateCheckInFlight = null[\s\S]*update\?\.close\(\)/,
   "a detached native check must close a late update resource instead of leaking it into a later install",
 );
 
-assert.match(
-  workflowSource,
-  /run: pnpm verify:release/,
+assert.ok(
+  workflow.jobs.release.steps.some((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase prebundle")),
   "release builds must run the shared release verification gate",
 );
 

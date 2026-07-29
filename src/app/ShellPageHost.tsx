@@ -6,7 +6,11 @@ import {
   navigationMarks,
 } from "@/app/navigationPerformance";
 import { isLatestShellNavigationCompletion } from "@/app/navigationPolicy";
-import { PageActivityProvider } from "@/components/shell/PageActivity";
+import {
+  PageVisibilityProvider,
+  shellPageVisibilityForState,
+} from "@/app/navigation/PageVisibility";
+import { getPageRetentionDecision } from "@/app/navigation/pageRetentionPolicy";
 import {
   TransientPageHost,
   type TransientPageDescriptor,
@@ -40,7 +44,6 @@ const shellPageMotionTargets = {
 type ShellPageSlotProps = {
   routeId: AppRouteId;
   state: ShellPageState;
-  refreshEnabled: boolean;
   actions: ShellPageActions;
   navigationSequence: number;
   onEnteringComplete: (routeId: AppRouteId, sequence: number) => void;
@@ -49,16 +52,15 @@ type ShellPageSlotProps = {
 const ShellPageSlot = memo(function ShellPageSlot({
   routeId,
   state,
-  refreshEnabled,
   actions,
   navigationSequence,
   onEnteringComplete,
 }: ShellPageSlotProps) {
-  const interactive = state === "active" || state === "entering";
-  const inert = !interactive;
+  const visibility = shellPageVisibilityForState(state);
+  const inert = !visibility.interactive;
 
   return (
-    <PageActivityProvider active={interactive} refreshEnabled={refreshEnabled}>
+    <PageVisibilityProvider visibility={visibility}>
       <div
         aria-hidden={inert}
         className="app-page-transition-layer"
@@ -83,7 +85,7 @@ const ShellPageSlot = memo(function ShellPageSlot({
           </ShellPageErrorBoundary>
         </motion.div>
       </div>
-    </PageActivityProvider>
+    </PageVisibilityProvider>
   );
 });
 
@@ -114,14 +116,7 @@ export const ShellPageHost = memo(function ShellPageHost({
   onRememberShellFocusTarget: (target: EventTarget | null) => void;
   pending: boolean;
 }) {
-  const [completedNavigation, setCompletedNavigation] = useState(() => ({
-    sequence: 0,
-    refreshRouteId: activeShellRouteId,
-  }));
-  const {
-    sequence: completedNavigationSequence,
-    refreshRouteId,
-  } = completedNavigation;
+  const [completedNavigationSequence, setCompletedNavigationSequence] = useState(0);
   const handoffActive =
     !transientActive &&
     previousShellRouteId !== null &&
@@ -143,8 +138,8 @@ export const ShellPageHost = memo(function ShellPageHost({
     ) {
       return;
     }
-    setCompletedNavigation((current) => {
-      if (current.sequence >= sequence) {
+    setCompletedNavigationSequence((current) => {
+      if (current >= sequence) {
         return current;
       }
       const completeMark = navigationMarks.complete(sequence);
@@ -154,7 +149,7 @@ export const ShellPageHost = memo(function ShellPageHost({
         navigationMarks.intent(sequence),
         completeMark,
       );
-      return { sequence, refreshRouteId: routeId };
+      return sequence;
     });
   }, [committedNavigationSequence, intentNavigationSequence, intentShellRouteId]);
 
@@ -175,6 +170,13 @@ export const ShellPageHost = memo(function ShellPageHost({
   if (previousShellRouteId && !routeIds.includes(previousShellRouteId)) {
     routeIds.push(previousShellRouteId);
   }
+  const retainedRouteIds = routeIds.filter((routeId) =>
+    getPageRetentionDecision({
+      routeId,
+      activeRouteId: activeShellRouteId,
+      previousRouteId: previousShellRouteId,
+    }).retain,
+  );
 
   return (
     <div
@@ -185,7 +187,7 @@ export const ShellPageHost = memo(function ShellPageHost({
       onFocusCapture={(event) => onRememberShellFocusTarget(event.target)}
     >
       <MotionConfig reducedMotion="user">
-        {routeIds.map((routeId) => {
+        {retainedRouteIds.map((routeId) => {
           const shellPageState: ShellPageState = (() => {
             if (handoffActive) {
               if (routeId === activeShellRouteId) {
@@ -207,17 +209,12 @@ export const ShellPageHost = memo(function ShellPageHost({
             }
             return "active";
           })();
-          const refreshEnabled =
-            routeId === refreshRouteId &&
-            (shellPageState === "active" || shellPageState === "leaving");
-
           return (
             <ShellPageSlot
               key={routeId}
               actions={actions}
               navigationSequence={committedNavigationSequence}
               onEnteringComplete={completeEntering}
-              refreshEnabled={refreshEnabled}
               routeId={routeId}
               state={shellPageState}
             />

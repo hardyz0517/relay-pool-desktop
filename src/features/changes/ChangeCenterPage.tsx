@@ -3,9 +3,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CheckCheck, RefreshCw, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
-  usePageRefreshEnabled,
-} from "@/components/shell/PageActivity";
-import {
   Button,
   ConfirmDialog,
   EmptyState,
@@ -20,7 +17,6 @@ import { readError } from "@/lib/errors";
 import {
   clearChangeEvents,
   markChangeEventsRead,
-  notifyChangeEventsUpdated,
 } from "@/lib/api/changeEvents";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
@@ -46,9 +42,8 @@ import {
 export function ChangeCenterPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const refreshEnabled = usePageRefreshEnabled();
-  const eventsQuery = useActivityQuery(refreshEnabled, changeEventsQueryOptions(false));
-  const stationsQuery = useActivityQuery(refreshEnabled, stationsQueryOptions());
+  const eventsQuery = useActivityQuery(changeEventsQueryOptions(false));
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
   const events = eventsQuery.data ?? [];
   const stationNamesById = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
@@ -89,9 +84,6 @@ export function ChangeCenterPage() {
       queryClient.setQueryData(queryKeys.changeEvents, (latestEvents: typeof events | undefined) =>
         mergeChangeEventUpdates(latestEvents ?? events, result.updatedEvents),
       );
-      if (result.changedCount > 0) {
-        notifyChangeEventsUpdated();
-      }
       toast.success(`已标记 ${result.changedCount} 条变更为已读`);
     } catch (requestError) {
       toast.error("批量标记已读失败", readError(requestError));
@@ -107,7 +99,6 @@ export function ChangeCenterPage() {
       await clearChangeEvents();
       queryClient.setQueryData(queryKeys.changeEvents, []);
       setPage(1);
-      notifyChangeEventsUpdated();
       toast.success("变更记录已清除");
       setClearConfirmOpen(false);
     } catch (requestError) {

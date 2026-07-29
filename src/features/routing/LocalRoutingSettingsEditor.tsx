@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, RotateCcw, Save } from "lucide-react";
 import {
   Button,
@@ -8,10 +9,10 @@ import {
 } from "@/components/ui";
 import {
   getSettings,
-  SETTINGS_UPDATED_EVENT,
   updateSettings,
 } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
+import { queryKeys } from "@/lib/query/queryKeys";
 import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import {
   appSettingsToUpdateInput,
@@ -62,6 +63,7 @@ type LocalRoutingSettingsEditorProps = {
 
 export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEditorProps) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [draft, setDraft] = useState<LocalRoutingSettingsDraft | null>(null);
   const [savedDraft, setSavedDraft] = useState<LocalRoutingSettingsDraft | null>(null);
@@ -89,6 +91,11 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
   function applySettings(nextSettings: AppSettings) {
     settingsRef.current = nextSettings;
     setSettings(nextSettings);
+    queryClient.setQueryData(queryKeys.settings, nextSettings);
+  }
+
+  async function refreshRoutingWorkspace() {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace });
   }
 
   const schedulerDirty = useMemo(
@@ -210,7 +217,7 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
       setDraft((current) => (current ? { ...current, scheduler: nextDraft.scheduler } : nextDraft));
       setSavedDraft((current) => (current ? { ...current, scheduler: nextDraft.scheduler } : nextDraft));
       setSchedulerSaveState("saved");
-      window.dispatchEvent(new Event(SETTINGS_UPDATED_EVENT));
+      await refreshRoutingWorkspace();
       toast.success("调度参数已保存");
     } catch (requestError) {
       if (operationId !== schedulerSaveOperationRef.current) {
@@ -304,7 +311,7 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
           : nextSavedDraft,
       );
       setBoundarySaveState("saved");
-      window.dispatchEvent(new Event(SETTINGS_UPDATED_EVENT));
+      await refreshRoutingWorkspace();
       toast.success("路由边界已保存");
     } catch (requestError) {
       if (operationId !== boundarySaveOperationRef.current) {

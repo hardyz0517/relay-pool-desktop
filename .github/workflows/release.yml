@@ -19,22 +19,25 @@ jobs:
           run_install: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 22
+          node-version: 22.13.0
           cache: pnpm
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
-          toolchain: stable-x86_64-pc-windows-msvc
+          toolchain: 1.95.0-x86_64-pc-windows-msvc
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           workspaces: src-tauri -> target
       - run: pnpm install --frozen-lockfile
+      - name: Install pinned cargo-deny
+        run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Verify release tag and source version
         env:
           RELAY_POOL_RELEASE_TAG: ${{ github.ref_name }}
-        run: node scripts/verify-release-version.mjs --require-tag
+        run: pnpm verify:release-version --require-tag
       - name: Load release notes
         id: release_notes
         shell: pwsh
@@ -52,7 +55,12 @@ jobs:
           "body<<$delimiter" >> $env:GITHUB_OUTPUT
           $body >> $env:GITHUB_OUTPUT
           $delimiter >> $env:GITHUB_OUTPUT
-      - run: pnpm verify:release
+      - name: Run shared release prebundle verification
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}\output\cargo\release
+          RELAY_POOL_RELEASE_TAG: ${{ github.ref_name }}
+        run: ./scripts/verify.ps1 -Profile release -ReleasePhase prebundle
       - uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,4 +74,5 @@ jobs:
           prerelease: false
           args: --target x86_64-pc-windows-msvc
       - name: Scan final release bundle
-        run: pnpm verify:release-bundle
+        shell: pwsh
+        run: ./scripts/verify.ps1 -Profile release -ReleasePhase postbundle

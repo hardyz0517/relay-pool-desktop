@@ -16,9 +16,11 @@ const settingsPage = read("src/features/settings/SettingsPage.tsx");
 assert.match(editTab, /LocalRoutingSettingsEditor/);
 assert.match(editor, /getSettings/);
 assert.match(editor, /updateSettings/);
-assert.match(editor, /SETTINGS_UPDATED_EVENT/);
 assert.match(editor, /appSettingsToUpdateInput/);
-assert.match(editor, /window\.dispatchEvent\(new Event\(SETTINGS_UPDATED_EVENT\)\)/);
+assert.match(editor, /useQueryClient/);
+assert.match(editor, /queryClient\.setQueryData\(queryKeys\.settings, nextSettings\)/);
+assert.match(editor, /queryClient\.invalidateQueries\(\{ queryKey: queryKeys\.localRoutingWorkspace \}\)/);
+assert.doesNotMatch(editor, /SETTINGS_UPDATED_EVENT|window\.dispatchEvent/);
 assert.doesNotMatch(editor, /@tauri-apps\/api|\binvoke\s*\(/);
 
 const editSurface = editTab + editor + fields;
@@ -120,11 +122,11 @@ assert.match(
 );
 assert.doesNotMatch(fields, /<legend/);
 assert.match(fields, /role="group"[\s\S]*aria-label=\{title\}/);
-assert.match(fields, /<h3 className="mb-3 text-xs font-semibold text-slate-700">\{title\}<\/h3>/);
+assert.match(fields, /<h3 className="mb-3 text-xs font-semibold text-foreground">\{title\}<\/h3>/);
 
-assert.match(settingsApi, /normalizeSchedulerAdvancedSettings/);
-assert.match(settingsApi, /SCHEDULER_ADVANCED_FIELD_KINDS/);
-assert.match(settingsApi, /DEFAULT_SCHEDULER_ADVANCED_SETTINGS/);
+assert.match(form, /SCHEDULER_ADVANCED_FIELD_KINDS/);
+assert.match(settingsTypes, /SCHEDULER_ADVANCED_FIELD_KINDS/);
+assert.match(settingsTypes, /DEFAULT_SCHEDULER_ADVANCED_SETTINGS/);
 assert.doesNotMatch(
   settingsPage,
   /["'][^"'\r\n]*\?{3,}[^"'\r\n]*["']/,

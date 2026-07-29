@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const diagnosticSource = await readFile("src-tauri/src/services/data_store/diagnostic.rs", "utf8");
-const commandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
+const commandsSource = await readFile("src-tauri/src/commands/data_store_startup.rs", "utf8");
+const registrySource = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const permissionSource = await readFile("src-tauri/permissions/main-window.toml", "utf8");
 
 assert.ok(
@@ -25,5 +26,9 @@ for (const command of [
 ]) {
   const commandDeclaration = new RegExp(`pub\\s+(?:async\\s+)?fn\\s+${command}\\b`);
   assert.match(commandsSource, commandDeclaration, `commands should expose ${command}`);
+  assert.ok(
+    registrySource.includes(`${command} => $crate::commands::data_store_startup::${command}`),
+    `registry should expose ${command} through data_store_startup`,
+  );
   assert.ok(permissionSource.includes(command), `main-window ACL should grant ${command}`);
 }

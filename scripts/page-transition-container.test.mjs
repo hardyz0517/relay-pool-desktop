@@ -97,13 +97,13 @@ assert.ok(
     /if \(transientActive\) \{\s*return "background";\s*\}[\s\S]*return "active";/.test(
       shellHostSource,
     ) &&
-    shellHostSource.includes('const interactive = state === "active" || state === "entering";') &&
-    shellHostSource.includes('const inert = !interactive;'),
+    shellHostSource.includes("const visibility = shellPageVisibilityForState(state);") &&
+    shellHostSource.includes("const inert = !visibility.interactive;"),
   "shell pages should have explicit active, visible-background, entering, leaving, and inactive states",
 );
 assert.ok(
   shellHostSource.includes(
-    "<PageActivityProvider active={interactive} refreshEnabled={refreshEnabled}>",
+    "<PageVisibilityProvider visibility={visibility}>",
   ) &&
     shellHostSource.includes("data-page-transition-state={state}") &&
     shellHostSource.includes('inert={inert ? "" : undefined}') &&

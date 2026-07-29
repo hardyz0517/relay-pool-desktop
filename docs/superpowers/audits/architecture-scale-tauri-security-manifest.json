@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "source_revision": "6a204908e2b3697e4c80951771950e29872942d9",
+  "production_config": {
+    "path": "src-tauri/tauri.conf.json",
+    "owner": "Task 8",
+    "entry": "index.html -> src/main.tsx",
+    "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost blob: data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  },
+  "development_config": {
+    "path": "src-tauri/tauri.conf.json",
+    "dev_url": "http://127.0.0.1:1430",
+    "owner": "Task 8"
+  },
+  "preview_config": {
+    "path": "vite.demo.config.ts",
+    "entry": "demo.html -> src/demo.tsx",
+    "owner": "Task 8",
+    "status": "physically-separated-from-production"
+  },
+  "window_patterns": [
+    {
+      "label": "main",
+      "local": true,
+      "remote": false,
+      "capability": "src-tauri/capabilities/default.json",
+      "owner": "Task 8"
+    },
+    {
+      "label": "capture-*",
+      "local": false,
+      "remote": true,
+      "allowed_remote_url_shell": ["http://*", "https://*"],
+      "capability": "src-tauri/capabilities/capture.json",
+      "owner": "Task 17"
+    }
+  ],
+  "command_permissions": {
+    "main": {
+      "permission": "main-window",
+      "compiled_source": "src-tauri/gen/schemas/acl-manifests.json",
+      "owner": "Task 3"
+    },
+    "capture": {
+      "permissions": ["record-capture-event"],
+      "maximum_commands_after_cutover": ["record_capture_event", "finish_web_authorization_session"],
+      "owner": "Task 17"
+    }
+  },
+  "application_exact_origin_validator": {
+    "path": "src-tauri/src/application/command_facades/capture.rs::record_capture_event + src-tauri/src/services/capture/session.rs::push_event",
+    "owner": "Task 17",
+    "status": "implemented-stage-4",
+    "required_bindings": ["window_label", "station_id", "endpoint_revision", "exact_origin"],
+    "evidence": [
+      "record_capture_event rejects request_url outside the current station website_url/api_base_url",
+      "CaptureSessionStore::push_event rejects source_window_id that does not match the active capture window label",
+      "capture session receipts carry endpoint_revision into credential/session persistence barriers"
+    ]
+  },
+  "external_navigation": {
+    "owner": "Task 8",
+    "current_command": "open_external_url",
+    "target_policy": "parsed allowlisted scheme and explicit OS browser owner"
+  },
+  "demo_entry_reachability": {
+    "production": false,
+    "demo_entry": "demo.html -> src/demo.tsx",
+    "legacy_browser_fallback_reachable": true,
+    "owner": "Task 8",
+    "qualification": "Task 8 build-entry gate proves production graph cannot reach DemoBackend and demo graph cannot reach DesktopBackend/generated invoke/Tauri/data recovery"
+  },
+  "temporary_entries": []
+}

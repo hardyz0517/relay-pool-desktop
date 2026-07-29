@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, RotateCcw, Save } from "lucide-react";
 import { Button, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
-import { getSettings, SETTINGS_UPDATED_EVENT, updateSettings } from "@/lib/api/settings";
+import { getSettings, updateSettings } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { appSettingsToUpdateInput, type AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
 import {
@@ -26,6 +28,7 @@ const presetOptions = [
 
 export function CollectorAdvancedSettings() {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [draft, setDraft] = useState<CollectorSettingsDraft | null>(null);
   const [savedDraft, setSavedDraft] = useState<CollectorSettingsDraft | null>(null);
@@ -92,10 +95,10 @@ export function CollectorAdvancedSettings() {
       });
       const nextDraft = createCollectorSettingsDraft(nextSettings);
       setSettings(nextSettings);
+      queryClient.setQueryData(queryKeys.settings, nextSettings);
       setDraft(nextDraft);
       setSavedDraft(nextDraft);
       setErrors({});
-      window.dispatchEvent(new Event(SETTINGS_UPDATED_EVENT));
       toast.success("采集设置已保存");
     } catch (requestError) {
       toast.error("保存采集设置失败", readError(requestError));

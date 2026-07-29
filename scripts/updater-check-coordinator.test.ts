@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const modulePath = new URL("../src/lib/api/updaterCheckCoordinator.ts", import.meta.url);
+const modulePath = new URL("../src/lib/bridge/updaterCheckCoordinator.ts", import.meta.url);
 
 test("passes the detected proxy to the authoritative native check", async () => {
   const { coordinateUpdateCheck } = await import(modulePath.href);

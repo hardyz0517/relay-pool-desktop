@@ -1,84 +1,97 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
-}));
+import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import { normalizeDataStoreCandidate, normalizeDataStoreStartupView } from "@/lib/bridge/domainMapping";
+import type { BackendClient } from "@/lib/bridge/BackendClient";
+import type { DataStoreCandidate, DataStoreStartupView } from "@/lib/types/dataRecovery";
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: mocks.invoke,
-}));
+import {
+  activateDataStoreCandidate,
+  createNewDataStore,
+  exportDataStoreDiagnostic,
+  getDataStoreStartupState,
+  locateDataStoreCandidate,
+  openDataStoreBackupDir,
+  refreshDataStoreCandidates,
+  restartApp,
+} from "./dataRecovery";
 
-describe("data recovery API", () => {
+describe("data recovery backend cutover", () => {
+  const dataRecovery = {
+    getDataStoreStartupState: vi.fn(async () => startupView()),
+    refreshDataStoreCandidates: vi.fn(async () => startupView()),
+    locateDataStoreCandidate: vi.fn(async () => candidate()),
+    activateDataStoreCandidate: vi.fn(async () => ({ restartRequired: true })),
+    createNewDataStore: vi.fn(async () => ({ restartRequired: true })),
+    restartApp: vi.fn(async () => undefined),
+    openDataStoreBackupDir: vi.fn(async () => undefined),
+    exportDataStoreDiagnostic: vi.fn(async () => "diagnostic.zip"),
+  };
+
   beforeEach(() => {
-    mocks.invoke.mockReset();
-  });
-
-  it("returns the documented browser preview state only when Tauri invoke is unavailable", async () => {
-    mocks.invoke.mockRejectedValue(new Error("window.__TAURI_INTERNALS__ is undefined"));
-    const { getDataStoreStartupState } = await import("./dataRecovery");
-
-    await expect(getDataStoreStartupState()).resolves.toEqual({
-      mode: "writable",
-      databaseGeneration: "two",
-      compatibility: {
-        decisionCode: "writable",
-        schemaVersion: null,
-        appVersion: "browser-preview",
-      },
-      capabilities: {
-        canBackup: false,
-        canExportDiagnostic: false,
-        canCheckForUpdates: false,
-        canLocateCandidate: false,
-        canActivateCandidate: false,
-        canCreateDataStore: false,
-      },
-      decision: { kind: "ready", candidateId: "browser-preview" },
-      candidates: [],
+    setActiveBackendClient({
+      mode: "desktop",
+      settings: {} as BackendClient["settings"],
+      stations: {} as BackendClient["stations"],
+      stationKeys: {} as BackendClient["stationKeys"],
+      changeEvents: {} as BackendClient["changeEvents"],
+      collectorRuns: {} as BackendClient["collectorRuns"],
+      collectors: {} as BackendClient["collectors"],
+      proxy: {} as BackendClient["proxy"],
+      runtime: {} as BackendClient["runtime"],
+      localRouting: {} as BackendClient["localRouting"],
+      dataRecovery,
+      economics: {} as BackendClient["economics"],
+      groupFacts: {} as BackendClient["groupFacts"],
+      pricing: {} as BackendClient["pricing"],
+      routing: {} as BackendClient["routing"],
+      channels: {} as BackendClient["channels"],
+      updater: {} as BackendClient["updater"],
+      handshake: vi.fn(async () => ({}) as never),
     });
+    for (const fn of Object.values(dataRecovery)) {
+      fn.mockClear();
+    }
   });
 
-  it("activates an inspected candidate by opaque id instead of returning its path", async () => {
-    mocks.invoke.mockResolvedValue({ restartRequired: true });
-    const { activateDataStoreCandidate } = await import("./dataRecovery");
+  afterEach(() => {
+    setActiveBackendClient(null);
+  });
 
+  it("routes startup and recovery commands through the active backend client", async () => {
+    await getDataStoreStartupState();
+    await refreshDataStoreCandidates();
+    await locateDataStoreCandidate();
     await activateDataStoreCandidate("candidate-7");
+    await createNewDataStore(true);
+    await restartApp();
+    await openDataStoreBackupDir();
+    await exportDataStoreDiagnostic();
 
-    expect(mocks.invoke).toHaveBeenCalledWith("activate_data_store_candidate", {
-      candidateId: "candidate-7",
-    });
+    expect(dataRecovery.getDataStoreStartupState).toHaveBeenCalledTimes(1);
+    expect(dataRecovery.refreshDataStoreCandidates).toHaveBeenCalledTimes(1);
+    expect(dataRecovery.locateDataStoreCandidate).toHaveBeenCalledTimes(1);
+    expect(dataRecovery.activateDataStoreCandidate).toHaveBeenCalledWith("candidate-7");
+    expect(dataRecovery.createNewDataStore).toHaveBeenCalledWith(true);
+    expect(dataRecovery.restartApp).toHaveBeenCalledTimes(1);
+    expect(dataRecovery.openDataStoreBackupDir).toHaveBeenCalledTimes(1);
+    expect(dataRecovery.exportDataStoreDiagnostic).toHaveBeenCalledTimes(1);
   });
 
-  it("does not hide ACL or missing-command errors behind browser preview fallback", async () => {
-    const { getDataStoreStartupState } = await import("./dataRecovery");
-
-    mocks.invoke.mockRejectedValue(new Error("Command get_data_store_startup_state not allowed by ACL"));
-    await expect(getDataStoreStartupState()).rejects.toThrow(/not allowed by ACL/i);
-
-    mocks.invoke.mockRejectedValue(new Error("Command get_data_store_startup_state not found"));
-    await expect(getDataStoreStartupState()).rejects.toThrow(/not found/i);
-  });
-
-  it("fails closed when a stale or malformed startup DTO is returned", async () => {
-    const { getDataStoreStartupState } = await import("./dataRecovery");
-
-    mocks.invoke.mockResolvedValue({
+  it("fails closed when a stale or malformed startup DTO is returned", () => {
+    expect(() => normalizeDataStoreStartupView({
       decision: { kind: "ready", candidateId: "legacy" },
       candidates: [],
-    });
-
-    await expect(getDataStoreStartupState()).rejects.toThrow(/invalid data store startup response/i);
+    })).toThrow(/invalid data store startup response/i);
   });
 
-  it("fails closed when manual location returns a malformed candidate", async () => {
-    mocks.invoke.mockResolvedValue({ id: "candidate-without-health" });
-    const { locateDataStoreCandidate } = await import("./dataRecovery");
-
-    await expect(locateDataStoreCandidate()).rejects.toThrow(/invalid data store candidate response/i);
+  it("fails closed when manual location returns a malformed candidate", () => {
+    expect(() => normalizeDataStoreCandidate({ id: "candidate-without-health" }))
+      .toThrow(/invalid data store candidate response/i);
   });
 
   it("parses backend recovery evidence into a selectable candidate", async () => {
-    mocks.invoke.mockResolvedValue({
+    const state = normalizeDataStoreStartupView({
       mode: "recovery",
       databaseGeneration: "one",
       compatibility: null,
@@ -91,26 +104,9 @@ describe("data recovery API", () => {
         canCreateDataStore: true,
       },
       decision: { kind: "needsRecovery", reason: "upgradeRecoveryRequired" },
-      candidates: [{
-        id: "Located:D:\\Relay Pool\\relay-pool-desktop-v2.sqlite3",
-        role: "located",
-        path: "D:\\Relay Pool\\relay-pool-desktop-v2.sqlite3",
-        health: "healthy",
-        databaseGeneration: "two",
-        compatibility: {
-          decisionCode: "writable",
-          schemaVersion: null,
-          appVersion: "0.3.1",
-        },
-        sizeBytes: 4096,
-        modifiedAt: null,
-        counts: { stations: 2 },
-      }],
+      candidates: [candidate()],
     });
-    const { getDataStoreStartupState } = await import("./dataRecovery");
     const { buildRecoveryViewModel } = await import("@/features/data-recovery/recoveryViewModel");
-
-    const state = await getDataStoreStartupState();
     const viewModel = buildRecoveryViewModel(state);
 
     expect(viewModel.candidates[0]).toMatchObject({
@@ -119,3 +115,43 @@ describe("data recovery API", () => {
     });
   });
 });
+
+function startupView(): DataStoreStartupView {
+  return {
+    mode: "writable",
+    databaseGeneration: "two",
+    compatibility: {
+      decisionCode: "writable",
+      schemaVersion: null,
+      appVersion: "0.3.2",
+    },
+    capabilities: {
+      canBackup: false,
+      canExportDiagnostic: false,
+      canCheckForUpdates: false,
+      canLocateCandidate: false,
+      canActivateCandidate: false,
+      canCreateDataStore: false,
+    },
+    decision: { kind: "ready", candidateId: "active" },
+    candidates: [],
+  };
+}
+
+function candidate(): DataStoreCandidate {
+  return {
+    id: "Located:D:\\Relay Pool\\relay-pool-desktop-v2.sqlite3",
+    role: "located",
+    path: "D:\\Relay Pool\\relay-pool-desktop-v2.sqlite3",
+    health: "healthy",
+    databaseGeneration: "two",
+    compatibility: {
+      decisionCode: "writable",
+      schemaVersion: null,
+      appVersion: "0.3.1",
+    },
+    sizeBytes: 4096,
+    modifiedAt: null,
+    counts: { stations: 2 },
+  };
+}

@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { usePageRefreshEnabled } from "@/components/shell/PageActivity";
 import {
   Button,
   EmptyState,
@@ -16,9 +15,9 @@ import { readError } from "@/lib/errors";
 import { formatTrimmedDecimal } from "@/lib/formatters";
 import { parseTimestampLikeDate } from "@/lib/time";
 import { openStationWebsite } from "@/lib/api/stations";
-import { Sub2ApiPlatformIcon } from "@/features/stations/components/Sub2ApiPlatformIcon";
-import { groupVisualMetaFor } from "@/features/stations/groupVisualMeta";
-import { groupVisualClassNames } from "@/features/stations/groupVisualStyles";
+import { Sub2ApiPlatformIcon } from "@/components/group/Sub2ApiPlatformIcon";
+import { groupVisualMetaFor } from "@/lib/groupVisualMeta";
+import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
 import { pricingComparisonQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -59,9 +58,7 @@ type PricingPageProps = {
 
 export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const toast = useToast();
-  const refreshEnabled = usePageRefreshEnabled();
   const pricingQuery = useActivityQuery(
-    refreshEnabled,
     pricingComparisonQueryOptions(),
   );
   const workspace = pricingQuery.data;

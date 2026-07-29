@@ -16,7 +16,7 @@ import {
   validateMonitorDraft,
   type ChannelMonitorProtocol,
   type ChannelMonitorDraft,
-} from "./channelMonitorViewModel";
+} from "@/lib/channelMonitorViewModel";
 
 type ChannelMonitorFormProps = {
   open: boolean;

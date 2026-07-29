@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 const stationsPageSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
 const stationsApiSource = await readFile("src/lib/api/stations.ts", "utf8");
 const commandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
-const libSource = await readFile("src-tauri/src/lib.rs", "utf8");
+const registrySource = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 
 assert.match(
   stationsPageSource,
@@ -32,24 +32,24 @@ assert.doesNotMatch(
 
 assert.match(
   stationsApiSource,
-  /export function openStationWebsite\(url: string\)[\s\S]*invoke<void>\("open_external_url", \{ url \}\)/,
-  "stations API should call the Tauri external URL opener command",
+  /export function openStationWebsite\(url: string\)[\s\S]*openExternalUrlBinding\(\{ url \}\)/,
+  "stations API should call the generated external URL opener wrapper",
 );
 
 assert.match(
   commandsSource,
-  /#\[tauri::command\]\s*pub fn open_external_url\(url: String\) -> Result<\(\), String\>/,
-  "backend should expose an external URL opener command",
+  /#\[tauri::command\]\s*pub async fn open_external_url\(input: Value\) -> Result<\(\), error::CommandError>/,
+  "backend should expose a typed external URL opener command",
 );
 
 assert.match(
   commandsSource,
-  /validate_external_http_url\(&url\)\?/,
+  /OpenExternalUrlInputDto::parse\(input\)\?[\s\S]*validate_external_http_url\(&input\.url\)\?/,
   "backend external URL opener should validate station URLs before launching",
 );
 
 assert.match(
-  libSource,
-  /commands::open_external_url/,
-  "Tauri invoke handler should register the external URL opener command",
+  registrySource,
+  /open_external_url => \$crate::commands::open_external_url/,
+  "Tauri command registry should register the external URL opener command",
 );

@@ -3,6 +3,7 @@ node_modules/
 
 # Frontend build output
 dist/
+dist-demo/
 dist-ssr/
 
 # Tauri / Rust build output

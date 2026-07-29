@@ -1,0 +1,1 @@
+{"__app-acl__":{"permissions":{"capture":{"commands":{"allow":["record_capture_event"]}},"main":{"commands":{"allow":["app_status"]}}}}}

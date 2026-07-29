@@ -1,0 +1,69 @@
+export type CollectorStationIdInputDto = { stationId: string };
+export type CollectorStationIdsInputDto = { stationIds: string[] };
+export type BalanceScopeDto = "station" | "station_key";
+export type BalanceStatusDto = "unknown" | "normal" | "low" | "depleted";
+export type BindingKindDto = "station_group" | "key_binding";
+export type BindingStatusDto = "available" | "bound" | "missing" | "disabled" | "manual_legacy";
+export type StationGroupCategoryDto = "gpt" | "claude" | "gemini" | "grok" | "image_generation" | "embedding" | "rerank" | "unknown";
+
+export type UpsertBalanceSnapshotInputDto = {
+  id: string | null; stationId: string; stationKeyId: string | null; scope: BalanceScopeDto;
+  value: number | null; currency: string; creditUnit: string | null; usedValue: number | null;
+  totalValue: number | null; todayRequestCount: number | null; totalRequestCount: number | null;
+  todayConsumption: number | null; totalConsumption: number | null; todayBaseConsumption: number | null;
+  totalBaseConsumption: number | null; todayTokenCount: number | null; totalTokenCount: number | null;
+  todayInputTokenCount: number | null; todayOutputTokenCount: number | null;
+  totalInputTokenCount: number | null; totalOutputTokenCount: number | null;
+  accountConcurrencyLimit: number | null; lowBalanceThreshold: number | null;
+  status: BalanceStatusDto; source: string; confidence: number; collectedAt: string | null;
+};
+
+export type BalanceSnapshotDto = Omit<UpsertBalanceSnapshotInputDto, "id" | "scope" | "status"> & {
+  id: string; scope: string; status: string; createdAt: string; updatedAt: string;
+};
+
+export type UpsertStationGroupBindingInputDto = {
+  stationId: string; stationKeyId: string | null; bindingKind: BindingKindDto;
+  parentGroupBindingId: string | null; groupKeyHash: string; groupIdHash: string | null;
+  groupName: string; bindingStatus: BindingStatusDto; defaultRateMultiplier: number | null;
+  userRateMultiplier: number | null; effectiveRateMultiplier: number | null;
+  inferredGroupCategory: StationGroupCategoryDto | null; groupCategoryOverride: StationGroupCategoryDto | null;
+  rateSource: string | null; confidence: number; lastSeenAt: string | null;
+  rawJsonRedacted: Record<string, unknown> | null;
+};
+
+export type StationGroupBindingDto = Omit<UpsertStationGroupBindingInputDto, "bindingKind" | "bindingStatus" | "inferredGroupCategory" | "groupCategoryOverride"> & {
+  id: string; bindingKind: string; bindingStatus: string; inferredGroupCategory: string | null;
+  groupCategoryOverride: string | null; lastCheckedAt: string | null; lastRateChangedAt: string | null;
+  createdAt: string; updatedAt: string;
+};
+
+export type StationGroupOptionDto = {
+  value: string; groupBindingId: string | null; groupIdHash: string | null; groupName: string;
+  rateMultiplier: number | null; inferredGroupCategory: string | null;
+  groupCategoryOverride: string | null; effectiveGroupCategory: string;
+  rateSource: string | null; selectableForRemoteKey: boolean;
+};
+
+export type GroupRateRecordDto = {
+  id: string; stationId: string; stationKeyId: string | null; groupBindingId: string | null;
+  bindingKind: string; groupKeyHash: string; groupName: string;
+  defaultRateMultiplier: number | null; userRateMultiplier: number | null;
+  effectiveRateMultiplier: number | null; inferredGroupCategory: string | null;
+  source: string; confidence: number; rawJsonRedacted: Record<string, unknown> | null;
+  checkedAt: string; createdAt: string;
+};
+
+export type CollectorRunDto = {
+  id: string; stationId: string; endpointRevision: number; parentRunId: string | null;
+  adapter: string; taskType: string; status: string; startedAt: string; finishedAt: string | null;
+  durationMs: number | null; endpointCount: number; successCount: number; failureCount: number;
+  manualActionRequired: boolean; errorCode: string | null; errorMessage: string | null;
+  snapshotId: string | null; createdAt: string;
+};
+
+export type CollectorSnapshotDto = {
+  id: string; stationId: string; endpointRevision: number; source: string; status: string;
+  fetchedAt: string; summaryJson: Record<string, unknown>; normalizedJson: Record<string, unknown>;
+  rawJsonRedacted: Record<string, unknown> | null; errorMessage: string | null; createdAt: string;
+};

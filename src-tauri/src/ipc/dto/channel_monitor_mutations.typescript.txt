@@ -1,0 +1,18 @@
+export type ChannelMonitorTargetTypeInputDto = "station_key" | "station";
+export type ChannelMonitorMutationIdInputDto = { id: string };
+
+export type CreateChannelMonitorInputDto = {
+  name: string; targetType: ChannelMonitorTargetTypeInputDto; stationId: string;
+  stationKeyId: string | null; templateId: string; enabled: boolean; intervalSeconds: number;
+  jitterSeconds: number; timeoutSeconds: number; maxConcurrency: number;
+  consecutiveFailureThreshold: number; fallbackModels: string[]; note: string | null;
+};
+
+export type UpdateChannelMonitorInputDto = CreateChannelMonitorInputDto & { id: string };
+
+export type CreateChannelMonitorTemplateInputDto = {
+  name: string; endpointKind: string; method: string; path: string;
+  requestBodyJson: string; enabled: boolean; note: string | null;
+};
+
+export type UpdateChannelMonitorTemplateInputDto = CreateChannelMonitorTemplateInputDto & { id: string };

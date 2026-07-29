@@ -1,0 +1,779 @@
+{
+  "schema_version": 1,
+  "owner": "Task 7",
+  "source_inventory_item": "S2-T7-command-facades",
+  "current_shard": "settings-stations-key-pool-remote-keys-routing-request-log-channel-monitoring-channel-status-collector-metadata-station-collection-station-key-connectivity-capture-pricing-change-events-credentials-data-directory-local-proxy-command-facades",
+  "migration_state": "complete",
+  "facades": [
+    {
+      "state_type": "SettingsStationsCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/settings_stations.rs",
+      "dependencies": [
+        "StationService",
+        "SettingsService",
+        "TrayBehaviorState"
+      ],
+      "commands": [
+        {
+          "command": "list_stations",
+          "use_case": "list_stations",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "create_station",
+          "use_case": "create_station",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "update_station",
+          "use_case": "update_station",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "delete_station",
+          "use_case": "delete_station",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "reorder_stations",
+          "use_case": "reorder_stations",
+          "dependencies": ["StationService"]
+        },
+        {
+          "command": "get_settings",
+          "use_case": "get_settings",
+          "dependencies": ["SettingsService"]
+        },
+        {
+          "command": "get_local_access_key",
+          "use_case": "get_local_access_key",
+          "dependencies": ["SettingsService"]
+        },
+        {
+          "command": "update_local_access_key",
+          "use_case": "update_local_access_key",
+          "dependencies": ["SettingsService"]
+        },
+        {
+          "command": "update_settings",
+          "use_case": "update_settings",
+          "dependencies": ["SettingsService", "TrayBehaviorState"]
+        }
+      ],
+      "non_goals": [
+        "import_relay_pool_to_ccswitch",
+        "station_for_capture",
+        "repair_legacy_settings",
+        "set_data_directory_projection",
+        "set_local_proxy_start_on_launch",
+        "import_known_legacy_settings"
+      ]
+    },
+    {
+      "state_type": "KeyPoolCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/key_pool.rs",
+      "dependencies": [
+        "CredentialService"
+      ],
+      "commands": [
+        {
+          "command": "list_station_keys",
+          "use_case": "list_station_keys",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "create_station_key",
+          "use_case": "create_station_key",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "update_station_key",
+          "use_case": "update_station_key",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "save_station_key_with_defaults",
+          "use_case": "save_station_key_with_defaults",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "update_station_key_group_binding",
+          "use_case": "update_station_key_group_binding",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "delete_station_key",
+          "use_case": "delete_station_key",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "reorder_station_keys",
+          "use_case": "reorder_station_keys",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "get_remote_key_capability",
+          "use_case": "get_remote_key_capability",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "list_remote_station_keys",
+          "use_case": "list_remote_station_keys",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "bind_remote_station_key",
+          "use_case": "bind_remote_station_key",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "unbind_remote_station_key",
+          "use_case": "unbind_remote_station_key",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "list_key_pool_items",
+          "use_case": "list_key_pool_items",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "reorder_key_pool",
+          "use_case": "reorder_key_pool",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "get_station_key_capabilities",
+          "use_case": "get_station_key_capabilities",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "update_station_key_capabilities",
+          "use_case": "update_station_key_capabilities",
+          "dependencies": ["CredentialService"]
+        }
+      ],
+      "non_goals": [
+        "scan_remote_station_keys",
+        "create_remote_station_key",
+        "create_local_station_key_from_remote",
+        "test_station_key_connectivity",
+        "station credential/session capture and login commands"
+      ]
+    },
+    {
+      "state_type": "RemoteKeysCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/remote_keys.rs",
+      "dependencies": [
+        "CollectorService",
+        "CredentialService",
+        "SettingsService",
+        "V2CollectorSourceAdapter"
+      ],
+      "commands": [
+        {
+          "command": "scan_remote_station_keys",
+          "use_case": "scan_remote_station_keys",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
+        },
+        {
+          "command": "create_remote_station_key",
+          "use_case": "create_remote_station_key",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
+        },
+        {
+          "command": "create_local_station_key_from_remote",
+          "use_case": "create_local_station_key_from_remote",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
+        }
+      ],
+      "non_goals": [
+        "bind_remote_station_key",
+        "unbind_remote_station_key",
+        "get_remote_key_capability",
+        "list_remote_station_keys",
+        "test_station_key_connectivity",
+        "collector execution commands",
+        "station login/test commands"
+      ]
+    },
+    {
+      "state_type": "RoutingCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/routing.rs",
+      "dependencies": [
+        "RoutingService",
+        "endpoint ping probe"
+      ],
+      "commands": [
+        {
+          "command": "list_model_aliases",
+          "use_case": "list_model_aliases",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "upsert_model_alias",
+          "use_case": "upsert_model_alias",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "delete_model_alias",
+          "use_case": "delete_model_alias",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "list_station_key_health",
+          "use_case": "list_station_key_health",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "list_station_endpoint_health",
+          "use_case": "list_station_endpoint_health",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "get_station_key_health",
+          "use_case": "get_station_key_health",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "simulate_route",
+          "use_case": "simulate_route",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "list_balance_snapshots_for_station",
+          "use_case": "list_balance_snapshots_for_station",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "ping_station_endpoint",
+          "use_case": "ping_station_endpoint",
+          "dependencies": ["RoutingService", "endpoint ping probe"]
+        }
+      ],
+      "non_goals": [
+        "local proxy workspace and lifecycle commands"
+      ]
+    },
+    {
+      "state_type": "RequestLogsCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/request_logs.rs",
+      "dependencies": [
+        "RequestLogService"
+      ],
+      "commands": [
+        {
+          "command": "list_request_logs",
+          "use_case": "list_request_logs",
+          "dependencies": ["RequestLogService"]
+        },
+        {
+          "command": "clear_request_logs",
+          "use_case": "clear_request_logs",
+          "dependencies": ["RequestLogService"]
+        }
+      ],
+      "non_goals": [
+        "load_local_routing_workspace"
+      ]
+    },
+    {
+      "state_type": "ChannelMonitoringCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/channel_monitoring.rs",
+      "dependencies": [
+        "MonitoringService",
+        "ChannelMonitorRunnerPort"
+      ],
+      "commands": [
+        {
+          "command": "list_channel_monitors",
+          "use_case": "list_channel_monitors",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "list_channel_monitor_summaries",
+          "use_case": "list_channel_monitor_summaries",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "create_channel_monitor",
+          "use_case": "create_channel_monitor",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "update_channel_monitor",
+          "use_case": "update_channel_monitor",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "delete_channel_monitor",
+          "use_case": "delete_channel_monitor",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "list_channel_monitor_runs",
+          "use_case": "list_channel_monitor_runs",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "list_channel_monitor_templates",
+          "use_case": "list_channel_monitor_templates",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "create_channel_monitor_template",
+          "use_case": "create_channel_monitor_template",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "update_channel_monitor_template",
+          "use_case": "update_channel_monitor_template",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "duplicate_channel_monitor_template",
+          "use_case": "duplicate_channel_monitor_template",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "delete_channel_monitor_template",
+          "use_case": "delete_channel_monitor_template",
+          "dependencies": ["MonitoringService"]
+        },
+        {
+          "command": "run_channel_monitor_now",
+          "use_case": "run_channel_monitor_now",
+          "dependencies": ["ChannelMonitorRunnerPort"]
+        }
+      ],
+      "non_goals": [
+        "channel status query workspace commands"
+      ]
+    },
+    {
+      "state_type": "PricingCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/pricing.rs",
+      "dependencies": [
+        "PricingService",
+        "PricingComparisonQuery"
+      ],
+      "commands": [
+        {
+          "command": "list_pricing_rules",
+          "use_case": "list_pricing_rules",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "list_model_base_prices",
+          "use_case": "list_model_base_prices",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "upsert_model_base_price",
+          "use_case": "upsert_model_base_price",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "reset_model_base_prices_to_builtins",
+          "use_case": "reset_model_base_prices_to_builtins",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "upsert_pricing_rule",
+          "use_case": "upsert_pricing_rule",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "delete_pricing_rule",
+          "use_case": "delete_pricing_rule",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "resolve_station_key_pricing_context",
+          "use_case": "resolve_station_key_pricing_context",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "list_balance_snapshots",
+          "use_case": "list_balance_snapshots",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "list_current_station_balance_snapshots",
+          "use_case": "list_balance_snapshots",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "upsert_balance_snapshot",
+          "use_case": "upsert_balance_snapshot",
+          "dependencies": ["PricingService"]
+        },
+        {
+          "command": "load_pricing_comparison_workspace",
+          "use_case": "load_pricing_comparison_workspace",
+          "dependencies": ["PricingComparisonQuery"]
+        }
+      ],
+      "non_goals": [
+        "list_balance_snapshots_for_station"
+      ]
+    },
+    {
+      "state_type": "ChangeEventsCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/change_events.rs",
+      "dependencies": [
+        "ChangeService"
+      ],
+      "commands": [
+        {
+          "command": "list_change_events",
+          "use_case": "list_change_events",
+          "dependencies": ["ChangeService"]
+        },
+        {
+          "command": "clear_change_events",
+          "use_case": "clear_change_events",
+          "dependencies": ["ChangeService"]
+        },
+        {
+          "command": "list_change_events_for_station",
+          "use_case": "list_change_events",
+          "dependencies": ["ChangeService"]
+        },
+        {
+          "command": "upsert_change_event",
+          "use_case": "upsert_change_event",
+          "dependencies": ["ChangeService"]
+        },
+        {
+          "command": "mark_change_event_read",
+          "use_case": "mark_change_event_read",
+          "dependencies": ["ChangeService"]
+        },
+        {
+          "command": "mark_change_events_read",
+          "use_case": "mark_change_events_read",
+          "dependencies": ["ChangeService"]
+        },
+        {
+          "command": "dismiss_change_event",
+          "use_case": "dismiss_change_event",
+          "dependencies": ["ChangeService"]
+        },
+        {
+          "command": "resolve_change_event",
+          "use_case": "resolve_change_event",
+          "dependencies": ["ChangeService"]
+        }
+      ],
+      "non_goals": [
+        "collector-emitted change events",
+        "change-store persistence implementation"
+      ]
+    },
+    {
+      "state_type": "CredentialsCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/credentials.rs",
+      "dependencies": [
+        "CredentialService"
+      ],
+      "commands": [
+        {
+          "command": "get_station_credentials",
+          "use_case": "get_station_credentials",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "update_station_credentials",
+          "use_case": "update_station_credentials",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "update_station_session",
+          "use_case": "update_station_session",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "clear_station_credentials",
+          "use_case": "clear_station_credentials",
+          "dependencies": ["CredentialService"]
+        }
+      ],
+      "non_goals": [
+        "station login/test commands",
+        "collector session persistence",
+        "remote-key credential workflows"
+      ]
+    },
+    {
+      "state_type": "DataDirectoryCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/data_directory.rs",
+      "dependencies": [
+        "DataDirectoryService",
+        "SettingsService"
+      ],
+      "commands": [
+        {
+          "command": "choose_data_dir",
+          "use_case": "choose_data_dir",
+          "dependencies": ["DataDirectoryService", "SettingsService"]
+        },
+        {
+          "command": "reset_data_dir",
+          "use_case": "reset_data_dir",
+          "dependencies": ["DataDirectoryService"]
+        }
+      ],
+      "non_goals": [
+        "startup data-store activation commands",
+        "CCSwitch import/proxy startup"
+      ]
+    },
+    {
+      "state_type": "ChannelStatusCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/channel_status.rs",
+      "dependencies": [
+        "ChannelStatusQuery"
+      ],
+      "commands": [
+        {
+          "command": "list_channel_status_summaries",
+          "use_case": "list_channel_status_summaries",
+          "dependencies": ["ChannelStatusQuery"]
+        },
+        {
+          "command": "load_channel_status_workspace",
+          "use_case": "load_channel_status_workspace",
+          "dependencies": ["ChannelStatusQuery"]
+        }
+      ],
+      "non_goals": [
+        "load_pricing_comparison_workspace",
+        "channel monitor runner commands"
+      ]
+    },
+    {
+      "state_type": "CollectorMetadataCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/collector_metadata.rs",
+      "dependencies": [
+        "CollectorService"
+      ],
+      "commands": [
+        {
+          "command": "list_station_group_bindings",
+          "use_case": "list_station_group_bindings",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_station_group_options",
+          "use_case": "list_station_group_options",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "upsert_station_group_binding",
+          "use_case": "upsert_station_group_binding",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_group_rate_records",
+          "use_case": "list_group_rate_records",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_collector_runs",
+          "use_case": "list_collector_runs",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_collector_snapshots",
+          "use_case": "list_collector_snapshots",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "get_latest_collector_snapshot",
+          "use_case": "get_latest_collector_snapshot",
+          "dependencies": ["CollectorService"]
+        },
+        {
+          "command": "list_latest_collector_snapshots",
+          "use_case": "list_latest_collector_snapshots",
+          "dependencies": ["CollectorService"]
+        }
+      ],
+      "non_goals": [
+        "collector execution commands",
+        "station login/test commands",
+        "capture session commands",
+        "remote-key workflows"
+      ]
+    },
+    {
+      "state_type": "StationCollectionCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/station_collection.rs",
+      "dependencies": [
+        "CollectorService",
+        "CredentialService",
+        "SettingsService",
+        "Data key captured at composition"
+      ],
+      "commands": [
+        {
+          "command": "detect_sub2api_station",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "collect_sub2api_station",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "detect_station_info",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "collect_station_info",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "collect_station_task",
+          "use_case": "run_station_collection",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        },
+        {
+          "command": "test_station_login",
+          "use_case": "test_station_login",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService", "Data key"]
+        }
+      ],
+      "non_goals": [
+        "test_station_login_input",
+        "capture session commands",
+        "web authorization commands",
+        "collector metadata read commands",
+        "remote-key workflows"
+      ]
+    },
+    {
+      "state_type": "StationKeyConnectivityCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/station_key_connectivity.rs",
+      "dependencies": [
+        "CredentialService",
+        "RoutingService"
+      ],
+      "commands": [
+        {
+          "command": "test_station_key_connectivity",
+          "use_case": "prepare_probe_target",
+          "dependencies": ["CredentialService", "RoutingService"]
+        }
+      ],
+      "non_goals": [
+        "endpoint ping command",
+        "route simulation",
+        "station capture/session commands"
+      ]
+    },
+    {
+      "state_type": "CaptureCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/capture.rs",
+      "dependencies": [
+        "StationService",
+        "CredentialService",
+        "CollectorService",
+        "CaptureSessionStore supplied by command state",
+        "AppHandle supplied by command state for web authorization cookie reads"
+      ],
+      "commands": [
+        {
+          "command": "start_capture_session",
+          "use_case": "start_capture_session",
+          "dependencies": ["StationService", "CredentialService"]
+        },
+        {
+          "command": "record_capture_event",
+          "use_case": "record_capture_event",
+          "dependencies": ["StationService", "CredentialService", "CaptureSessionStore"]
+        },
+        {
+          "command": "finish_capture_session",
+          "use_case": "finish_capture_session",
+          "dependencies": ["CollectorService", "CaptureSessionStore"]
+        },
+        {
+          "command": "finish_web_authorization_session",
+          "use_case": "finish_web_authorization_session",
+          "dependencies": ["StationService", "CredentialService", "CollectorService", "CaptureSessionStore", "AppHandle"]
+        }
+      ],
+      "non_goals": [
+        "get_capture_session_status",
+        "clear_capture_session",
+        "close_capture_session",
+        "test_station_login_input",
+        "collector execution commands"
+      ]
+    },
+    {
+      "state_type": "LocalProxyCommandFacade",
+      "source_path": "src-tauri/src/application/command_facades/local_proxy.rs",
+      "dependencies": [
+        "SettingsService",
+        "RoutingService",
+        "RequestLogService",
+        "RequestFinalizationService",
+        "ProxyRuntimeState",
+        "Data key captured at composition"
+      ],
+      "commands": [
+        {
+          "command": "get_proxy_status",
+          "use_case": "get_proxy_status",
+          "dependencies": ["SettingsService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "load_local_routing_workspace",
+          "use_case": "load_local_routing_workspace",
+          "dependencies": ["SettingsService", "RoutingService", "RequestLogService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "reorder_local_routing_keys",
+          "use_case": "reorder_local_routing_keys",
+          "dependencies": ["RoutingService", "SettingsService", "RequestLogService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "start_local_proxy",
+          "use_case": "start_local_proxy",
+          "dependencies": ["SettingsService", "RoutingService", "RequestFinalizationService", "ProxyRuntimeState", "Data key"]
+        },
+        {
+          "command": "stop_local_proxy",
+          "use_case": "stop_local_proxy",
+          "dependencies": ["SettingsService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "cleanup_before_update",
+          "use_case": "cleanup_before_update",
+          "dependencies": ["SettingsService", "ProxyRuntimeState"]
+        },
+        {
+          "command": "restart_local_proxy",
+          "use_case": "restart_local_proxy",
+          "dependencies": ["SettingsService", "RoutingService", "RequestFinalizationService", "ProxyRuntimeState", "Data key"]
+        },
+        {
+          "command": "import_relay_pool_to_ccswitch",
+          "use_case": "import_relay_pool_to_ccswitch",
+          "dependencies": ["SettingsService", "RoutingService", "RequestFinalizationService", "ProxyRuntimeState", "Data key"]
+        }
+      ],
+      "non_goals": [
+        "prepare_local_proxy_for_update",
+        "deeper proxy runtime/lifecycle rewrite",
+        "proxy startup auto-start path"
+      ]
+    }
+  ],
+  "remaining_legacy_state": null
+}

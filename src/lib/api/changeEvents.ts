@@ -1,101 +1,43 @@
-import { invoke } from "@tauri-apps/api/core";
-import {
-  clearMockChangeEvents,
-  listMockChangeEvents,
-  updateMockChangeEventStatus,
-  upsertMockChangeEvent,
-} from "@/lib/mock/changeEvents";
-import { isTauriCommandNotFound, isTauriInvokeUnavailable } from "@/lib/tauriErrors";
+import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
 
-export const CHANGE_EVENTS_UPDATED_EVENT = "relay-pool:change-events-updated";
-
-export function notifyChangeEventsUpdated() {
-  if (typeof window === "undefined") {
-    return;
-  }
-  window.dispatchEvent(new CustomEvent(CHANGE_EVENTS_UPDATED_EVENT));
+function changeEventsClient() {
+  return getActiveBackendClient().changeEvents;
 }
 
-export function listChangeEvents() {
-  return invoke<ChangeEvent[]>("list_change_events").catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return listMockChangeEvents();
-    }
-    throw error;
-  });
+export function listChangeEvents(): Promise<ChangeEvent[]> {
+  return changeEventsClient().listChangeEvents();
 }
 
-export function clearChangeEvents() {
-  return invoke<void>("clear_change_events").catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return clearMockChangeEvents();
-    }
-    throw error;
-  });
+export function clearChangeEvents(): Promise<void> {
+  return changeEventsClient().clearChangeEvents();
 }
 
-export function listChangeEventsForStation(stationId: string) {
-  return invoke<ChangeEvent[]>("list_change_events_for_station", { stationId }).catch((error) => {
-    if (isTauriCommandNotFound(error)) {
-      return listChangeEvents().then((events) => events.filter((event) => event.stationId === stationId));
-    }
-    if (isTauriInvokeUnavailable(error)) {
-      return listMockChangeEvents().then((events) => events.filter((event) => event.stationId === stationId));
-    }
-    throw error;
-  });
+export function listChangeEventsForStation(stationId: string): Promise<ChangeEvent[]> {
+  return changeEventsClient().listChangeEventsForStation(stationId);
 }
 
-export function upsertChangeEvent(input: UpsertChangeEventInput) {
-  return invoke<ChangeEvent>("upsert_change_event", { input }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return upsertMockChangeEvent(input);
-    }
-    throw error;
-  });
+export function upsertChangeEvent(input: UpsertChangeEventInput): Promise<ChangeEvent> {
+  return changeEventsClient().upsertChangeEvent(input);
 }
 
-export function markChangeEventRead(id: string) {
-  return invoke<ChangeEvent>("mark_change_event_read", { id }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return updateMockChangeEventStatus(id, "read");
-    }
-    throw error;
-  });
+export function markChangeEventRead(id: string): Promise<ChangeEvent> {
+  return changeEventsClient().markChangeEventRead(id);
 }
 
-export function markChangeEventsRead(ids: string[]) {
+export function markChangeEventsRead(ids: string[]): Promise<ChangeEvent[]> {
   const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
   if (uniqueIds.length === 0) {
     return Promise.resolve([]);
   }
 
-  return invoke<ChangeEvent[]>("mark_change_events_read", { ids: uniqueIds }).catch((error) => {
-    if (isTauriCommandNotFound(error)) {
-      return Promise.all(uniqueIds.map((id) => markChangeEventRead(id)));
-    }
-    if (isTauriInvokeUnavailable(error)) {
-      return Promise.all(uniqueIds.map((id) => updateMockChangeEventStatus(id, "read")));
-    }
-    throw error;
-  });
+  return changeEventsClient().markChangeEventsRead(uniqueIds);
 }
 
-export function dismissChangeEvent(id: string) {
-  return invoke<ChangeEvent>("dismiss_change_event", { id }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return updateMockChangeEventStatus(id, "dismissed");
-    }
-    throw error;
-  });
+export function dismissChangeEvent(id: string): Promise<ChangeEvent> {
+  return changeEventsClient().dismissChangeEvent(id);
 }
 
-export function resolveChangeEvent(id: string) {
-  return invoke<ChangeEvent>("resolve_change_event", { id }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return updateMockChangeEventStatus(id, "resolved");
-    }
-    throw error;
-  });
+export function resolveChangeEvent(id: string): Promise<ChangeEvent> {
+  return changeEventsClient().resolveChangeEvent(id);
 }

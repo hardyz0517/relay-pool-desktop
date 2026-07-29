@@ -1,14 +1,14 @@
 import { memo } from "react";
-import { ChannelStatusPage } from "@/features/channels/ChannelStatusPage";
-import { ChangeCenterPage } from "@/features/changes/ChangeCenterPage";
-import { CollectorsPage } from "@/features/collectors/CollectorsPage";
-import { DashboardPage } from "@/features/dashboard/DashboardPage";
-import { KeyPoolPage } from "@/features/key-pool/KeyPoolPage";
-import { LogsPage } from "@/features/logs/LogsPage";
-import { PricingPage } from "@/features/pricing/PricingPage";
-import { RoutingPage } from "@/features/routing/RoutingPage";
-import { SettingsPage } from "@/features/settings/SettingsPage";
-import { StationsPage } from "@/features/stations/StationsPage";
+import { ChannelStatusPage } from "@/features/channels";
+import { ChangeCenterPage } from "@/features/changes";
+import { CollectorsPage } from "@/features/collectors";
+import { DashboardPage } from "@/features/dashboard";
+import { KeyPoolPage } from "@/features/key-pool";
+import { LogsPage } from "@/features/logs";
+import { PricingPage } from "@/features/pricing";
+import { RoutingPage } from "@/features/routing";
+import { SettingsPage } from "@/features/settings";
+import { StationsPage } from "@/features/stations";
 import type { AppRouteId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
 

@@ -16,6 +16,7 @@ use super::{
     settings::SettingsService,
     stations::StationService,
 };
+use crate::background_tasks::BlockingExecutor;
 
 #[derive(Clone)]
 pub(crate) struct AppServices {
@@ -40,6 +41,7 @@ impl AppServices {
         data_dir: String,
         pending_data_dir: Option<String>,
         data_directory_port: Arc<dyn DataDirectoryPort>,
+        blocking: BlockingExecutor,
         credential_vault: Arc<dyn CredentialVault>,
         builtin_price_catalog: Arc<dyn BuiltinModelBasePriceCatalog>,
     ) -> Self {
@@ -54,6 +56,7 @@ impl AppServices {
         let data_directory = Arc::new(DataDirectoryService::new(
             data_directory_port,
             settings.clone(),
+            blocking,
         ));
         Self::new(
             Arc::new(StationService::new(

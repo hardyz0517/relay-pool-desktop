@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
 const read = (path) => readFile(path, "utf8").catch(() => "");
 
@@ -8,7 +9,8 @@ const tauriConfig = JSON.parse(await read("src-tauri/tauri.conf.json"));
 const cargoToml = await read("src-tauri/Cargo.toml");
 const tauriLib = await read("src-tauri/src/lib.rs");
 const capabilitySource = await read("src-tauri/capabilities/default.json");
-const workflow = await read(".github/workflows/release.yml");
+const workflow = parseYaml(await read(".github/workflows/release.yml"));
+const verifier = await read("scripts/verify.ps1");
 const contractRunner = await read("scripts/run-contract-tests.mjs");
 const capability = capabilitySource ? JSON.parse(capabilitySource) : { permissions: [] };
 
@@ -36,12 +38,16 @@ assert.ok(
 assert.ok(capability.permissions.includes("updater:default"));
 assert.ok(capability.permissions.includes("process:allow-restart"));
 
-assert.match(workflow, /tags:\s*\["v\*"\]/, "release workflow must run on version tags");
-assert.match(workflow, /windows-latest/, "release workflow must build on Windows");
-assert.match(workflow, /releaseDraft:\s*true/, "release must start as a Draft");
-assert.match(workflow, /TAURI_SIGNING_PRIVATE_KEY/, "release workflow must use updater signing key");
-assert.match(workflow, /--target x86_64-pc-windows-msvc/, "release must target Windows x86_64");
-assert.match(workflow, /run: pnpm verify:release/, "release workflow must use the shared release verification gate");
+const releaseJob = workflow.jobs.release;
+const releaseSteps = releaseJob.steps;
+const tauriAction = releaseSteps.find((step) => String(step.uses ?? "").startsWith("tauri-apps/tauri-action@"));
+assert.deepEqual(workflow.on.push.tags, ["v*"] , "release workflow must run on version tags");
+assert.equal(releaseJob["runs-on"], "windows-latest", "release workflow must build on Windows");
+assert.equal(tauriAction.with.releaseDraft, true, "release must start as a Draft");
+assert.ok(tauriAction.env.TAURI_SIGNING_PRIVATE_KEY, "release workflow must use updater signing key");
+assert.equal(tauriAction.with.args, "--target x86_64-pc-windows-msvc", "release must target Windows x86_64");
+assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase prebundle")), "release workflow must use the shared prebundle verification gate");
+assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase postbundle")), "release workflow must use the shared postbundle verification gate");
 assert.match(
   contractRunner,
   /"scripts\/updater-current-version-fallback\.test\.mjs"/,
@@ -53,9 +59,9 @@ assert.match(
   "shared release verification must run behavioral updater coordinator tests",
 );
 assert.match(
-  packageJson.scripts?.["verify:release"] ?? "",
-  /cargo test[^&]*services::updater/,
-  "shared release verification must run focused Rust updater service tests",
+  verifier,
+  /Invoke-Checked "Rust tests" cargo @\("test", "--locked"/,
+  "shared release verification must run the locked Rust suite containing updater tests",
 );
 assert.match(
   contractRunner,

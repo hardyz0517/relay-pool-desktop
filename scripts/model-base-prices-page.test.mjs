@@ -22,7 +22,7 @@ const settingsPage = read("src/features/settings/SettingsPage.tsx");
 const economicsApi = read("src/lib/api/economics.ts");
 const economicsTypes = read("src/lib/types/economics.ts");
 const commands = read("src-tauri/src/commands/mod.rs");
-const lib = read("src-tauri/src/lib.rs");
+const ipcRegistry = read("src-tauri/src/ipc/registry.rs");
 
 function readRouteLabel(routeId) {
   const match = routes.match(
@@ -79,6 +79,22 @@ assertIncludes(
   "Economics API should expose listModelBasePrices.",
 );
 assertIncludes(
+  modelBasePricesPage,
+  "modelBasePricesQueryOptions()",
+  "ModelBasePricesPage should read model base prices through canonical query options.",
+);
+assertIncludes(
+  modelBasePricesPage,
+  "useActivityQuery(modelBasePricesQueryOptions())",
+  "ModelBasePricesPage should use the page-visibility-aware query owner.",
+);
+assert.ok(
+  !modelBasePricesPage.includes("useState<ModelBasePrice[]>([])") &&
+    !modelBasePricesPage.includes("setRows(") &&
+    !modelBasePricesPage.includes("listModelBasePrices()"),
+  "ModelBasePricesPage should not keep local server-state rows or direct list reads.",
+);
+assertIncludes(
   economicsApi,
   "upsertModelBasePrice",
   "Economics API should expose upsertModelBasePrice.",
@@ -104,9 +120,9 @@ assertIncludes(
   "Tauri commands should expose upsert_model_base_price.",
 );
 assertIncludes(
-  lib,
-  "commands::list_model_base_prices",
-  "Tauri invoke handler should register list_model_base_prices.",
+  ipcRegistry,
+  "list_model_base_prices => $crate::commands::list_model_base_prices",
+  "Tauri generated IPC registry should register list_model_base_prices.",
 );
 
 console.log("model base prices page contract ok");

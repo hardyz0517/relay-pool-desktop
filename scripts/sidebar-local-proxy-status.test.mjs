@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 
 const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8");
 const proxyApiSource = await readFile("src/lib/api/proxy.ts", "utf8");
+const dashboardSource = await readFile("src/features/dashboard/DashboardPage.tsx", "utf8");
+const routingSource = await readFile("src/features/routing/RoutingPage.tsx", "utf8");
+const settingsSource = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
+const updaterSource = await readFile("src/lib/updater/UpdaterProvider.tsx", "utf8");
 
 assert.match(
   appShellSource,
@@ -21,19 +25,27 @@ assert.ok(
 );
 
 assert.ok(
-  proxyApiSource.includes('export const PROXY_STATUS_UPDATED_EVENT = "relay-pool:proxy-status-updated"') &&
-    proxyApiSource.includes("window.dispatchEvent(") &&
-    proxyApiSource.includes("new CustomEvent<ProxyStatus>(PROXY_STATUS_UPDATED_EVENT") &&
-    (proxyApiSource.match(/\.then\(publishProxyStatus\)/g)?.length ?? 0) >= 4,
-  "every successful proxy lifecycle action should immediately broadcast its returned status",
+  !proxyApiSource.includes("PROXY_STATUS_UPDATED_EVENT") &&
+    !proxyApiSource.includes("relay-pool:proxy-status-updated") &&
+    !proxyApiSource.includes("window.dispatchEvent(") &&
+    !proxyApiSource.includes("CustomEvent<ProxyStatus>") &&
+    !proxyApiSource.includes("publishProxyStatus"),
+  "proxy API should not expose DOM status synchronization events",
 );
 
 assert.ok(
-  appShellSource.includes("PROXY_STATUS_UPDATED_EVENT") &&
-    appShellSource.includes("window.addEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated)") &&
-    appShellSource.includes("window.removeEventListener(PROXY_STATUS_UPDATED_EVENT, handleProxyStatusUpdated)") &&
-    appShellSource.includes("queryClient.setQueryData(queryKeys.proxyStatus, (event as CustomEvent<ProxyStatus>).detail)"),
-  "app shell should immediately apply proxy status broadcasts instead of waiting for the fallback poll",
+  !appShellSource.includes("PROXY_STATUS_UPDATED_EVENT") &&
+    !appShellSource.includes("handleProxyStatusUpdated") &&
+    !appShellSource.includes("CustomEvent<ProxyStatus>"),
+  "app shell should not subscribe to proxy DOM synchronization",
+);
+
+assert.ok(
+  dashboardSource.includes("queryClient.setQueryData(queryKeys.proxyStatus, nextStatus)") &&
+    routingSource.includes("queryClient.setQueryData(queryKeys.proxyStatus, nextStatus)") &&
+    settingsSource.includes("queryClient.setQueryData(queryKeys.proxyStatus, nextStatus)") &&
+    updaterSource.includes("queryClient.setQueryData(queryKeys.proxyStatus, nextProxyStatus)"),
+  "proxy lifecycle mutation owners should write returned statuses into the shared query cache",
 );
 
 assert.ok(

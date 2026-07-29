@@ -1,0 +1,38 @@
+export type EndpointPingStatusDto = "success" | "failed";
+
+export type EndpointPingResultDto = {
+  stationId: string;
+  ok: boolean;
+  status: EndpointPingStatusDto;
+  latencyMs: number | null;
+  checkedAt: string;
+  errorSummary: string | null;
+};
+
+export type ReorderLocalRoutingKeysInputDto = { stationKeyIds: string[] };
+
+export type UpdateStationKeyCapabilitiesInputDto = {
+  stationKeyId: string;
+  supportsChatCompletions: boolean;
+  supportsResponses: boolean;
+  supportsEmbeddings: boolean;
+  supportsStream: boolean;
+  supportsTools: boolean;
+  supportsVision: boolean;
+  supportsReasoning: boolean;
+  modelAllowlist: string[];
+  modelBlocklist: string[];
+  preferredModels: string[];
+  onlyUseAsBackup: boolean;
+  routingTags: string[];
+};
+
+export type UpsertModelAliasInputDto = {
+  id: string | null;
+  clientModel: string;
+  upstreamModel: string;
+  enabled: boolean;
+  note: string | null;
+};
+
+export type DeleteModelAliasInputDto = { id: string };

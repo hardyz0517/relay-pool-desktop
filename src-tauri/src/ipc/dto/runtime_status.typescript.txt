@@ -1,0 +1,25 @@
+export type RuntimeTaskStatusDto =
+  | "registered"
+  | "running"
+  | "stopping"
+  | "backing_off"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "panicked";
+
+export type RuntimeTaskSummaryDto = {
+  id: string;
+  kind: string;
+  runId: number | null;
+  status: RuntimeTaskStatusDto;
+  lastStartedAtMs: number | null;
+  lastSucceededAtMs: number | null;
+  lastFailureCode: string | null;
+  consecutiveFailures: number;
+  nextRetryAtMs: number | null;
+};
+
+export type RuntimeStatusDto = {
+  tasks: RuntimeTaskSummaryDto[];
+};

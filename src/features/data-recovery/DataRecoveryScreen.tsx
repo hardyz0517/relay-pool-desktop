@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import { relaunch } from "@tauri-apps/plugin-process";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
-import { useUpdater } from "@/features/updater/UpdaterProvider";
-import { isUpdaterBusyPhase } from "@/features/updater/updateState";
+import { useUpdater } from "@/lib/updater/UpdaterProvider";
+import { isUpdaterBusyPhase } from "@/lib/updater/updateState";
 import {
   activateDataStoreCandidate,
   createNewDataStore,
   exportDataStoreDiagnostic,
   locateDataStoreCandidate,
   openDataStoreBackupDir,
+  restartApp,
 } from "@/lib/api/dataRecovery";
-import { tauriErrorMessage } from "@/lib/tauriErrors";
+import { errorMessage } from "@/lib/errorMessage";
 import type { DataStoreStartupView } from "@/lib/types/dataRecovery";
 import { buildRecoveryViewModel } from "./recoveryViewModel";
 
@@ -52,7 +52,7 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
       const result = await activateDataStoreCandidate(selected.id);
       if (result.restartRequired) {
         try {
-          await relaunch();
+          await restartApp();
         } catch {
           setMessage("配置已保存，请手动重启 Relay Pool。");
         }
@@ -60,7 +60,7 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
       }
       onActivated();
     } catch (error) {
-      setMessage(tauriErrorMessage(error));
+      setMessage(errorMessage(error));
     } finally {
       setActiveOperation(null);
     }
@@ -79,7 +79,7 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
       ]);
       setSelectedId(candidate.id);
     } catch (error) {
-      setMessage(tauriErrorMessage(error));
+      setMessage(errorMessage(error));
     } finally {
       setActiveOperation(null);
     }
@@ -93,7 +93,7 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
       const result = await createNewDataStore(confirmed);
       if (result.restartRequired) {
         try {
-          await relaunch();
+          await restartApp();
         } catch {
           setMessage("配置已保存，请手动重启 Relay Pool。");
         }
@@ -101,7 +101,7 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
       }
       onActivated();
     } catch (error) {
-      setMessage(tauriErrorMessage(error));
+      setMessage(errorMessage(error));
     } finally {
       setActiveOperation(null);
     }
@@ -115,7 +115,7 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
       const path = await exportDataStoreDiagnostic();
       if (path) setMessage(`诊断文件已导出：${path}`);
     } catch (error) {
-      setMessage(tauriErrorMessage(error));
+      setMessage(errorMessage(error));
     } finally {
       setActiveOperation(null);
     }
@@ -128,7 +128,7 @@ export function DataRecoveryScreen({ state, onActivated }: DataRecoveryScreenPro
     try {
       await openDataStoreBackupDir();
     } catch (error) {
-      setMessage(tauriErrorMessage(error));
+      setMessage(errorMessage(error));
     } finally {
       setActiveOperation(null);
     }

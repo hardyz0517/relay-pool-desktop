@@ -1,0 +1,2384 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "sub2api-collector-success",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "success",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "auth": "station-key bearer via Sub2API collector driver"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "quota": {
+            "remaining": 100,
+            "used": 20,
+            "total": 120
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API usage fixture for Task 21.A collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "balances": [
+            "station_key"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sub2api-collector-partial",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "partial",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/v1/groups/available",
+          "/api/v1/groups/rates"
+        ],
+        "auth": "prepared access token"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "groups": [
+            "default"
+          ],
+          "rates": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic partial groups/rates fixture for Task 21.A collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "groups": [
+            "default"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sub2api-collector-auth-failure",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "auth_failure",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/available",
+        "auth": "stale access token without usable login refresh"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "message": "unauthorized"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic auth rejection fixture covering Sub2API collector session failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-rate-limit",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "rate_limit",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "auth": "station-key bearer"
+      },
+      "responseSchema": {
+        "status": 429,
+        "headers": {
+          "retry-after": "1"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic rate-limit fixture covering transient retry evidence."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-server-failure",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "server_failure",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/rates",
+        "auth": "prepared access token"
+      },
+      "responseSchema": {
+        "status": 502,
+        "body": {
+          "message": "bad gateway"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic upstream failure fixture covering Sub2API retry classification."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-malformed",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "malformed",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "auth": "station-key bearer"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": "not-json"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic malformed payload fixture covering invalid JSON retry cap."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-unknown-shape",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "unknown_shape",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/available",
+        "auth": "prepared access token"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic unknown-shape fixture covering no canonical group/rate facts."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-cancel",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "cancel",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "cancellation": "before upstream response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic cancellation fixture covering Sub2API collector cancellation propagation."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-budget-exhaustion",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/rates",
+        "budget": "expired before retry"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic budget fixture covering Sub2API request budget failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-stale-endpoint-revision",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "apiPath": "/v1/usage",
+        "applyGuard": "prepared endpoint revision must match current station revision"
+      },
+      "responseSchema": {
+        "kind": "apply_rejected",
+        "failureKind": "stale_endpoint_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/mod.rs",
+        "provenance": "Synthetic stale revision fixture covering prepared revision apply guard."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-collector-redaction",
+      "providerKind": "sub2api",
+      "capability": "collector",
+      "scenario": "redaction",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/groups/available",
+        "auth": "Bearer sk-p8-sub2api-secret-canary"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": [
+            {
+              "name": "default",
+              "token": "sk-p8-sub2api-secret-canary"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-sub2api-secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic redaction fixture covering bearer and payload secret canaries."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "groups": [
+            "default"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sub2api-remote-key-success",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "success",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "auth": "Bearer access token"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": [
+            {
+              "id": "rk_1",
+              "name": "primary",
+              "key": "sk-sub2api-full-secret-7890",
+              "group": "default"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-full-secret-7890"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key list fixture for Task 21.B production remote-key cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "remoteKeys": [
+            "primary"
+          ]
+        }
+      }
+    },
+    {
+      "id": "sub2api-remote-key-partial",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "partial",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": [
+          "/api/v1/keys",
+          "/api/v1/keys?page=1&page_size=100"
+        ],
+        "commitBarrier": "create response received before reconcile"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {
+            "name": "created",
+            "key": "sk-sub2api-created-secret"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-created-secret"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API create/reconcile fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "result": "created_then_reconciled"
+        }
+      }
+    },
+    {
+      "id": "sub2api-remote-key-auth-failure",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "auth_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "auth": "expired bearer"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "message": "unauthorized"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sub2api-access-token-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key auth rejection fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-rate-limit",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "rate_limit",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "message": "rate limited"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key rate limit fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-server-failure",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "server_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 503,
+        "body": {
+          "message": "service unavailable"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key provider unavailable fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-malformed",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "malformed",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key malformed list fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-unknown-shape",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "unknown_shape",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/v1/keys"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {
+            "token": "unexpected"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-unexpected-secret"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key unknown create shape fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-cancel",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "cancel",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "cancellation": "before response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key cancellation fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-budget-exhaustion",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/v1/keys?page=1&page_size=100",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key budget exhaustion fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-stale-endpoint-revision",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/v1/keys",
+        "commitBarrier": "endpoint revision checked before local persistence"
+      },
+      "responseSchema": {
+        "kind": "application_failure",
+        "failureKind": "stale_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "sub2api-remote-key-service-fixture",
+        "path": "src-tauri/src/services/remote_keys.rs",
+        "provenance": "Synthetic Sub2API remote-key endpoint revision barrier fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "sub2api-remote-key-redaction",
+      "providerKind": "sub2api",
+      "capability": "remote_key",
+      "scenario": "redaction",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/v1/keys",
+        "auth": "bearer access token"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": {
+            "key": "sk-sub2api-redaction-secret"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-sub2api-redaction-secret",
+          "sub2api-access-token-canary"
+        ]
+      },
+      "source": {
+        "kind": "sub2api-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/sub2api/mod.rs",
+        "provenance": "Synthetic Sub2API remote-key secret redaction fixture for Task 21.B."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "secret": "one_time_only"
+        }
+      }
+    },
+    {
+      "id": "sub2api-authorization-unsupported",
+      "providerKind": "sub2api",
+      "capability": "authorization",
+      "scenario": "unsupported",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "Task 19.A registry entry does not declare an authorization driver"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares Sub2API with no authorization capability."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-success",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "success",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "new-api-user plus session secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "quota": 750000,
+            "used_quota": 250000,
+            "request_count": 12
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector success fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "balances": [
+            "station"
+          ]
+        }
+      }
+    },
+    {
+      "id": "newapi-collector-partial",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "partial",
+      "endpointRole": "groups",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/self/groups"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {}
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector partial fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "groups": []
+        }
+      }
+    },
+    {
+      "id": "newapi-collector-auth-failure",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "auth_failure",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "session rejected"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector auth_failure fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-rate-limit",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "rate_limit",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "success": false,
+          "message": "rate limited"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector rate_limit fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-server-failure",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "server_failure",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 502,
+        "body": {
+          "success": false,
+          "message": "bad gateway"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector server_failure fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-malformed",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "malformed",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": "not-json"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector malformed fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-unknown-shape",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "unknown_shape",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": [
+            {
+              "id": "non-string-model-object"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector unknown_shape fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "newapi-collector-cancel",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "cancel",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector cancel fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-budget-exhaustion",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/user/models"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector budget_exhaustion fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-stale-endpoint-revision",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "prepared-session-secret"
+      },
+      "responseSchema": {
+        "kind": "apply_barrier",
+        "failureKind": "stale_endpoint_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/mod.rs",
+        "provenance": "Synthetic NewAPI collector stale_endpoint_revision fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-collector-redaction",
+      "providerKind": "newapi",
+      "capability": "collector",
+      "scenario": "redaction",
+      "endpointRole": "balance",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": [
+          "/api/status",
+          "/api/user/self"
+        ],
+        "auth": "new-api-user plus session secret"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "session rejected"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-collector-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI collector redaction fixture for Task 20.B production collector cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-success",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "success",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "auth": "new-api-user plus session secret"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "page": 1,
+            "page_size": 100,
+            "total": 1,
+            "items": [
+              {
+                "id": 101,
+                "name": "primary",
+                "key": "sk-abc**********7890",
+                "group": "default"
+              }
+            ]
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key list fixture for Task 20.C production remote-key cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "remoteKeys": [
+            "primary"
+          ]
+        }
+      }
+    },
+    {
+      "id": "newapi-remote-key-partial",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "partial",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": [
+          "/api/token/",
+          "/api/token/?p=1&page_size=100",
+          "/api/token/301/key"
+        ],
+        "commitBarrier": "create response received before reconcile/reveal"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "key": "sk-created-secret-f260"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-created-secret-f260"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI create/reconcile/reveal fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "result": "created_then_reconciled"
+        }
+      }
+    },
+    {
+      "id": "newapi-remote-key-auth-failure",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "auth_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "auth": "expired session"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "not logged in"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key auth rejection fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-rate-limit",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "rate_limit",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "success": false,
+          "message": "rate limited"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key rate limit fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-server-failure",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "server_failure",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 503,
+        "body": {
+          "success": false,
+          "message": "service unavailable"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key provider unavailable fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-malformed",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "malformed",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "items": []
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key missing pagination fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-unknown-shape",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "unknown_shape",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/token/301/key"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "token": "unexpected"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-unexpected-secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key reveal unknown shape fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-cancel",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "cancel",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "cancellation": "before response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key cancellation fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-budget-exhaustion",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/token/?p=1&page_size=100",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key budget exhaustion fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-stale-endpoint-revision",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/token/",
+        "commitBarrier": "endpoint revision checked before local persistence"
+      },
+      "responseSchema": {
+        "kind": "application_failure",
+        "failureKind": "stale_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-remote-key-service-fixture",
+        "path": "src-tauri/src/services/remote_keys.rs",
+        "provenance": "Synthetic NewAPI remote-key endpoint revision barrier fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-remote-key-redaction",
+      "providerKind": "newapi",
+      "capability": "remote_key",
+      "scenario": "redaction",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "method": "POST",
+        "websitePath": "/api/token/301/key",
+        "auth": "cookie plus new-api-user"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "key": "sk-p8-secret-plaintext-canary"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary",
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-remote-key-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI remote-key secret redaction fixture for Task 20.C."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "secret": "one_time_only"
+        }
+      }
+    },
+    {
+      "id": "newapi-authorization-success",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "success",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "new-api-user plus short-lived session cookie"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "id": 42,
+            "quota": 1
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization self-probe fixture for Task 20.D production authorization cutover."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "status": "authorized"
+        }
+      }
+    },
+    {
+      "id": "newapi-authorization-partial",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "partial",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "ownerBoundary": "capture owns window/cookie read and persistence; driver only validates the provider session"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "user": {
+              "id": "42"
+            }
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/application/command_facades/capture.rs",
+        "provenance": "Synthetic Task 20.D fixture proving capture remains the WebView/cookie/persistence owner while the driver validates session identity."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "status": "authorized_with_capture_owned_commit"
+        }
+      }
+    },
+    {
+      "id": "newapi-authorization-auth-failure",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "auth_failure",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "expired session cookie"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "unauthorized"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization auth rejection fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-rate-limit",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "rate_limit",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "success": false,
+          "message": "rate limited"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization rate limit fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-server-failure",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "server_failure",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 503,
+        "body": {
+          "success": false,
+          "message": "service unavailable"
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization provider unavailable fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-malformed",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "malformed",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "quota": 1
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization missing identity fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-unknown-shape",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "unknown_shape",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "success": true,
+          "data": {
+            "profile": {
+              "id": "not-trusted"
+            }
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization unknown identity shape fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "malformed_payload",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-cancel",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "cancel",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "cancellation": "before response"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization cancellation fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-budget-exhaustion",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization budget exhaustion fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-stale-endpoint-revision",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "commitBarrier": "capture session commit still checks the captured endpoint revision before persistence"
+      },
+      "responseSchema": {
+        "kind": "application_failure",
+        "failureKind": "stale_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "newapi-authorization-capture-facade-fixture",
+        "path": "src-tauri/src/application/command_facades/capture.rs",
+        "provenance": "Synthetic Task 20.D fixture proving authorization driver validation does not own capture commit or session persistence barriers."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "newapi-authorization-redaction",
+      "providerKind": "newapi",
+      "capability": "authorization",
+      "scenario": "redaction",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "method": "GET",
+        "websitePath": "/api/user/self",
+        "auth": "cookie plus new-api-user"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "success": false,
+          "message": "bad session=secret-canary"
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "session=secret-canary"
+        ]
+      },
+      "source": {
+        "kind": "newapi-authorization-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/newapi/mod.rs",
+        "provenance": "Synthetic NewAPI authorization secret redaction fixture for Task 20.D."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-success",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "success",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "authorization": "bearer-secret-header"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": [
+            {
+              "id": "gpt-4o-mini"
+            },
+            {
+              "id": "text-embedding-3-small"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic OpenAI-compatible /v1/models success fixture for the Task 19.C reference driver."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "models": [
+            "gpt-4o-mini",
+            "text-embedding-3-small"
+          ]
+        }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-partial",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "partial",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "data": []
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic empty model list fixture; canonical status is partial rather than guessed success."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-auth-failure",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "auth_failure",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "error": {
+            "message": "invalid api key"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic OpenAI-compatible auth rejection fixture maps to typed auth failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-rate-limit",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "rate_limit",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 429,
+        "body": {
+          "error": {
+            "message": "rate limited"
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic rate limit fixture maps to retry-within-budget typed failure."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "rate_limited",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-server-failure",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "server_failure",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 502,
+        "body": {
+          "error": {
+            "message": "bad gateway"
+          }
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic server failure fixture maps to provider unavailable."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "provider_unavailable",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-malformed",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "malformed",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": "not-json"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic malformed payload fixture ensures parser does not panic."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-unknown-shape",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "unknown_shape",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "responseSchema": {
+        "status": 200,
+        "body": {
+          "object": "list",
+          "items": [
+            {
+              "name": "not-standard"
+            }
+          ]
+        }
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Synthetic unknown shape fixture verifies only standard data[].id values become facts."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "none",
+        "canonicalFacts": {
+          "models": []
+        }
+      }
+    },
+    {
+      "id": "openai-compatible-collector-cancel",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "cancel",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "cancellation": "before-first-byte"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "cancelled"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Cancellation fixture is enforced through shared AsyncOutboundClient failure mapping."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "cancelled",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-budget-exhaustion",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "budget_exhaustion",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "budget": "expired"
+      },
+      "responseSchema": {
+        "kind": "outbound_failure",
+        "failureKind": "budget_exhausted"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Budget exhaustion fixture is enforced through shared RequestBudget failure mapping."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "budget_exhausted",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-stale-endpoint-revision",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "stale_endpoint_revision",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "endpointRevision": "stale-before-apply"
+      },
+      "responseSchema": {
+        "kind": "apply_barrier",
+        "failureKind": "stale_endpoint_revision"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/mod.rs",
+        "provenance": "Endpoint revision remains carried through the V2 apply barrier after driver collection."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "stale_endpoint_revision",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-collector-redaction",
+      "providerKind": "openai-compatible",
+      "capability": "collector",
+      "scenario": "redaction",
+      "endpointRole": "models",
+      "requestSchema": {
+        "method": "GET",
+        "path": "/v1/models",
+        "authorization": "Bearer sk-p8-secret-plaintext-canary"
+      },
+      "responseSchema": {
+        "status": 401,
+        "body": {
+          "error": {
+            "message": "Bearer sk-p8-secret-plaintext-canary rejected"
+          }
+        }
+      },
+      "redaction": {
+        "status": "verified",
+        "secretCanaries": [
+          "sk-p8-secret-plaintext-canary"
+        ]
+      },
+      "source": {
+        "kind": "openai-compatible-reference-driver-fixture",
+        "path": "src-tauri/src/services/collectors/drivers/openai_compatible/mod.rs",
+        "provenance": "Redaction fixture verifies driver failure detail and evidence never retain full API keys."
+      },
+      "expected": {
+        "registryStatus": "supported",
+        "failureKind": "auth_rejected",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-remote-key-unsupported",
+      "providerKind": "openai-compatible",
+      "capability": "remote_key",
+      "scenario": "unsupported",
+      "endpointRole": "remote_keys",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "OpenAI-compatible provider has no remote-key capability in the Stage 5 plan"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares OpenAI-compatible with no remote-key capability."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    },
+    {
+      "id": "openai-compatible-authorization-unsupported",
+      "providerKind": "openai-compatible",
+      "capability": "authorization",
+      "scenario": "unsupported",
+      "endpointRole": "authorization",
+      "requestSchema": {
+        "kind": "none",
+        "reason": "OpenAI-compatible provider has no web authorization capability in the Stage 5 plan"
+      },
+      "responseSchema": {
+        "kind": "driver_failure",
+        "failureKind": "unsupported"
+      },
+      "redaction": {
+        "status": "not_applicable",
+        "secretCanaries": []
+      },
+      "source": {
+        "kind": "stage19a-registry-descriptor",
+        "path": "src-tauri/src/services/collectors/drivers/mod.rs",
+        "provenance": "Static registry declares OpenAI-compatible with no authorization capability."
+      },
+      "expected": {
+        "registryStatus": "unsupported",
+        "failureKind": "unsupported",
+        "canonicalFacts": null
+      }
+    }
+  ]
+}

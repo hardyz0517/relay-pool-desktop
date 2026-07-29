@@ -1,7 +1,11 @@
 mod app_composition;
 mod application;
+pub mod background_tasks;
 mod commands;
+mod ipc;
 mod models;
+mod observability;
+pub mod outbound;
 mod persistence;
 mod runtime_composition;
 mod services;
@@ -15,6 +19,7 @@ use std::time::Duration;
 
 pub use services::data_store::installation_lease::{InstallationLease, LeaseError};
 
+use crate::background_tasks::{ExitCoordinator, ExitReason};
 use services::data_store::{
     inspect_startup,
     relocation::apply_trusted_relocation,
@@ -23,6 +28,12 @@ use services::data_store::{
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, RunEvent, WindowEvent};
+
+macro_rules! tauri_handler_from_registry {
+    ($( $name:ident => $handler:path, )*) => {
+        tauri::generate_handler![$($handler),*]
+    };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrayBehavior {
@@ -78,7 +89,7 @@ impl TrayBehavior {
 
 fn current_tray_behavior<R: tauri::Runtime>(window: &tauri::Window<R>) -> TrayBehavior {
     window
-        .try_state::<TrayBehaviorState>()
+        .try_state::<Arc<TrayBehaviorState>>()
         .map(|state| state.get())
         .unwrap_or(TrayBehavior::CloseToTray)
 }
@@ -106,7 +117,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 show_main_window(app);
             }
             if menu_id.as_ref() == "quit" {
-                app.exit(0);
+                if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
+                    coordinator.request_exit(app.clone(), ExitReason::TrayQuit, 0);
+                } else {
+                    eprintln!("exit coordinator unavailable for tray quit request");
+                }
             }
         })
         .on_tray_icon_event(|tray, event| match event {
@@ -284,7 +299,7 @@ fn prepare_data_store(
     }
 }
 
-fn shutdown_application(app: &tauri::AppHandle) {
+async fn drain_application_shutdown(app: tauri::AppHandle) {
     if let Some(runner) = app.try_state::<services::channel_monitors::ChannelMonitorRunnerState>() {
         runner.stop();
     }
@@ -293,7 +308,7 @@ fn shutdown_application(app: &tauri::AppHandle) {
     {
         runner.stop();
     }
-    if let Some(proxy) = app.try_state::<services::proxy::runtime::ProxyRuntimeState>() {
+    if let Some(proxy) = app.try_state::<Arc<services::proxy::runtime::ProxyRuntimeState>>() {
         let drain = runtime_composition::drain_finalization(
             &persistence::upgrade_fault::NoUpgradeFaults,
             async {
@@ -304,13 +319,29 @@ fn shutdown_application(app: &tauri::AppHandle) {
                     .map_err(|_| ())
             },
         );
-        if let Err(error) = tauri::async_runtime::block_on(drain) {
+        if let Err(error) = drain.await {
             eprintln!("application shutdown stopped before persistence close: {error}");
             return;
         }
     }
+    if let Some(work_runtime) = app.try_state::<app_composition::ManagedWorkRuntime>() {
+        if let Err(error) = work_runtime
+            .supervisor
+            .shutdown(Duration::from_secs(10))
+            .await
+        {
+            eprintln!("task supervisor shutdown failed: {error}");
+        }
+        if let Err(error) = work_runtime
+            .blocking
+            .shutdown(Duration::from_secs(10))
+            .await
+        {
+            eprintln!("blocking executor shutdown failed: {error}");
+        }
+    }
     if let Some(owner) = app.try_state::<DataStoreRuntimeOwner>() {
-        if let Err(error) = tauri::async_runtime::block_on(owner.shutdown()) {
+        if let Err(error) = owner.shutdown().await {
             eprintln!("data store shutdown failed: {error}");
         }
     }
@@ -324,9 +355,22 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            app.manage(TrayBehaviorState::default());
+            app.manage(Arc::new(TrayBehaviorState::default()));
+            app.manage(ExitCoordinator::new(Duration::from_secs(45)));
             setup_tray(app)?;
-            let secret_manager = services::secrets::SecretManager::initialize()?;
+            let work_runtime = app_composition::compose_work_runtime(
+                app_composition::WorkRuntimeConfig::architecture_budget(),
+                tauri::async_runtime::handle().inner().clone(),
+            )
+            .map_err(|error| format!("failed to compose work runtime: {error}"))?;
+            let provider_registry = Arc::new(
+                app_composition::compose_provider_registry()
+                    .map_err(|error| format!("failed to compose provider registry: {error}"))?,
+            );
+            let blocking_executor = work_runtime.blocking.clone();
+            let secret_manager = tauri::async_runtime::block_on(
+                services::secrets::SecretManager::initialize(blocking_executor.clone()),
+            )?;
             let app_config_dir = app.path().app_config_dir().map_err(|error| {
                 format!("failed to resolve application config directory: {error}")
             })?;
@@ -338,6 +382,8 @@ pub fn run() {
             let prepared_data_store =
                 prepare_data_store(default_data_dir, *secret_manager.data_key())?;
             app.manage(secret_manager);
+            let proxy_runtime = Arc::new(services::proxy::runtime::ProxyRuntimeState::default());
+            let capture_session_store = services::capture::session::CaptureSessionStore::default();
             let runtime_owner = match prepared_data_store {
                 PreparedDataStore::Ready {
                     runtime,
@@ -360,13 +406,86 @@ pub fn run() {
                             active_data_dir.clone(),
                         ),
                     );
+                    let outbound_client = work_runtime.outbound.clone();
+                    let supervisor_handle = work_runtime.supervisor.clone();
                     let app_services = app_composition::compose_app_services(
                         runtime.handle(),
                         data_key,
                         active_data_dir.display().to_string(),
                         None,
                         data_directory_port,
+                        blocking_executor.clone(),
                     );
+                    let settings_stations_command_facade =
+                        app_composition::compose_settings_stations_command_facade(
+                            &app_services,
+                            Arc::clone(app.state::<Arc<TrayBehaviorState>>().inner()),
+                        );
+                    let key_pool_command_facade =
+                        app_composition::compose_key_pool_command_facade(&app_services);
+                    let remote_keys_command_facade =
+                        app_composition::compose_remote_keys_command_facade(
+                            &app_services,
+                            blocking_executor.clone(),
+                            outbound_client.clone(),
+                            Arc::clone(&provider_registry),
+                            data_key,
+                        );
+                    let routing_command_facade = app_composition::compose_routing_command_facade(
+                        &app_services,
+                        outbound_client.clone(),
+                    );
+                    let request_logs_command_facade =
+                        app_composition::compose_request_logs_command_facade(&app_services);
+                    let channel_monitor_runner_port = services::channel_monitors::v2_runner_port(
+                        &app_services,
+                        outbound_client.clone(),
+                    );
+                    let channel_monitoring_command_facade =
+                        app_composition::compose_channel_monitoring_command_facade(
+                            &app_services,
+                            Arc::clone(&channel_monitor_runner_port),
+                        );
+                    let channel_status_command_facade =
+                        app_composition::compose_channel_status_command_facade(&app_services);
+                    let collector_metadata_command_facade =
+                        app_composition::compose_collector_metadata_command_facade(&app_services);
+                    let station_collection_command_facade =
+                        app_composition::compose_station_collection_command_facade(
+                            &app_services,
+                            blocking_executor.clone(),
+                            outbound_client.clone(),
+                            Arc::clone(&provider_registry),
+                            data_key,
+                        );
+                    let station_key_connectivity_command_facade =
+                        app_composition::compose_station_key_connectivity_command_facade(
+                            &app_services,
+                            outbound_client.clone(),
+                        );
+                    let capture_command_facade = app_composition::compose_capture_command_facade(
+                        &app_services,
+                        capture_session_store.clone(),
+                        outbound_client.clone(),
+                        Arc::clone(&provider_registry),
+                    );
+                    let pricing_command_facade =
+                        app_composition::compose_pricing_command_facade(&app_services);
+                    let change_events_command_facade =
+                        app_composition::compose_change_events_command_facade(&app_services);
+                    let credentials_command_facade =
+                        app_composition::compose_credentials_command_facade(&app_services);
+                    let data_directory_command_facade =
+                        app_composition::compose_data_directory_command_facade(
+                            &app_services,
+                            blocking_executor.clone(),
+                        );
+                    let local_proxy_command_facade =
+                        app_composition::compose_local_proxy_command_facade(
+                            &app_services,
+                            Arc::clone(&proxy_runtime),
+                            data_key,
+                        );
                     tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
                         .map_err(|error| {
                             format!("failed to repair legacy application settings: {error}")
@@ -383,29 +502,65 @@ pub fn run() {
                     })?;
                     let settings = tauri::async_runtime::block_on(app_services.settings.load())
                         .map_err(|error| format!("failed to load application settings: {error}"))?;
-                    app.state::<TrayBehaviorState>()
+                    app.state::<Arc<TrayBehaviorState>>()
                         .set(TrayBehavior::from_setting(&settings.tray_behavior));
+                    runtime_composition::register_work_runtime(
+                        &persistence::upgrade_fault::NoUpgradeFaults,
+                        app,
+                        work_runtime,
+                    )
+                    .map_err(|error| format!("failed to register work runtime: {error}"))?;
                     let channel_monitor_runner =
                         services::channel_monitors::ChannelMonitorRunnerState::start_v2(
-                            services::channel_monitors::v2_runner_port(&app_services),
-                        );
+                            supervisor_handle.clone(),
+                            channel_monitor_runner_port,
+                        )
+                        .map_err(|error| {
+                            format!("failed to start channel monitor runner: {error}")
+                        })?;
                     let station_collector_runner =
                         services::station_collectors::StationCollectorRunnerState::start_v2(
-                            services::station_collectors::v2_runner_port(&app_services, data_key),
-                        );
+                            supervisor_handle,
+                            services::station_collectors::v2_runner_port(
+                                &app_services,
+                                blocking_executor,
+                                outbound_client,
+                                provider_registry,
+                                data_key,
+                            ),
+                        )
+                        .map_err(|error| {
+                            format!("failed to start station collector runner: {error}")
+                        })?;
                     println!(
                         "Relay Pool Desktop database initialized at {}",
                         database_path.display()
                     );
                     let runtime_owner =
                         DataStoreRuntimeOwner::new(Some(Arc::clone(&runtime)), installation_lease);
-                    runtime_composition::register_ready_services(
+                    runtime_composition::register_ready_services_with_command_facades(
                         &persistence::upgrade_fault::NoUpgradeFaults,
                         app,
-                        runtime_composition::ReadyServiceBundle::new(
+                        runtime_composition::ReadyServiceBundleWithCommandFacades::new(
                             startup_state,
                             runtime,
                             app_services,
+                            settings_stations_command_facade,
+                            key_pool_command_facade,
+                            remote_keys_command_facade,
+                            routing_command_facade,
+                            request_logs_command_facade,
+                            channel_monitoring_command_facade,
+                            channel_status_command_facade,
+                            collector_metadata_command_facade,
+                            station_collection_command_facade,
+                            station_key_connectivity_command_facade,
+                            capture_command_facade,
+                            pricing_command_facade,
+                            change_events_command_facade,
+                            credentials_command_facade,
+                            data_directory_command_facade,
+                            local_proxy_command_facade,
                             channel_monitor_runner,
                             station_collector_runner,
                         ),
@@ -422,9 +577,9 @@ pub fn run() {
                 }
             };
             app.manage(runtime_owner);
-            app.manage(commands::LocatedDataStoreCandidates::default());
-            app.manage(services::capture::session::CaptureSessionStore::default());
-            app.manage(services::proxy::runtime::ProxyRuntimeState::default());
+            app.manage(commands::data_store_startup::LocatedDataStoreCandidates::default());
+            app.manage(capture_session_store);
+            app.manage(proxy_runtime);
             services::proxy::startup_auto_start::schedule(app.handle().clone());
             Ok(())
         })
@@ -441,7 +596,15 @@ pub fn run() {
                 }
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    window.app_handle().exit(0);
+                    if let Some(coordinator) = window.try_state::<ExitCoordinator>() {
+                        coordinator.request_exit(
+                            window.app_handle().clone(),
+                            ExitReason::MainWindowClose,
+                            0,
+                        );
+                    } else {
+                        eprintln!("exit coordinator unavailable for main window close request");
+                    }
                 }
                 WindowEvent::Resized(_)
                     if behavior.hides_on_minimize() && window.is_minimized().unwrap_or(false) =>
@@ -451,133 +614,25 @@ pub fn run() {
                 _ => {}
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::app_status,
-            commands::get_data_store_startup_state,
-            commands::refresh_data_store_candidates,
-            commands::locate_data_store_candidate,
-            commands::activate_data_store_candidate,
-            commands::create_new_data_store,
-            commands::open_data_store_backup_dir,
-            commands::export_data_store_diagnostic,
-            commands::list_stations,
-            commands::create_station,
-            commands::update_station,
-            commands::delete_station,
-            commands::reorder_stations,
-            commands::get_settings,
-            commands::get_local_access_key,
-            commands::update_local_access_key,
-            commands::import_relay_pool_to_ccswitch,
-            commands::open_external_url,
-            commands::updater_network_config,
-            commands::inspect_latest_update_manifest,
-            commands::update_settings,
-            commands::choose_data_dir,
-            commands::reset_data_dir,
-            commands::get_proxy_status,
-            commands::load_local_routing_workspace,
-            commands::reorder_local_routing_keys,
-            commands::start_local_proxy,
-            commands::stop_local_proxy,
-            commands::cleanup_before_update,
-            commands::prepare_local_proxy_for_update,
-            commands::restart_local_proxy,
-            commands::list_request_logs,
-            commands::clear_request_logs,
-            commands::list_station_keys,
-            commands::create_station_key,
-            commands::update_station_key,
-            commands::save_station_key_with_defaults,
-            commands::update_station_key_group_binding,
-            commands::delete_station_key,
-            commands::reorder_station_keys,
-            commands::get_remote_key_capability,
-            commands::list_remote_station_keys,
-            commands::scan_remote_station_keys,
-            commands::create_remote_station_key,
-            commands::create_local_station_key_from_remote,
-            commands::bind_remote_station_key,
-            commands::unbind_remote_station_key,
-            commands::list_key_pool_items,
-            commands::reorder_key_pool,
-            commands::get_station_key_capabilities,
-            commands::update_station_key_capabilities,
-            commands::list_model_aliases,
-            commands::upsert_model_alias,
-            commands::delete_model_alias,
-            commands::list_station_key_health,
-            commands::list_station_endpoint_health,
-            commands::list_channel_monitors,
-            commands::list_channel_monitor_summaries,
-            commands::list_channel_status_summaries,
-            commands::load_channel_status_workspace,
-            commands::load_pricing_comparison_workspace,
-            commands::create_channel_monitor,
-            commands::update_channel_monitor,
-            commands::delete_channel_monitor,
-            commands::list_channel_monitor_runs,
-            commands::list_channel_monitor_templates,
-            commands::create_channel_monitor_template,
-            commands::update_channel_monitor_template,
-            commands::duplicate_channel_monitor_template,
-            commands::delete_channel_monitor_template,
-            commands::run_channel_monitor_now,
-            commands::get_station_key_health,
-            commands::ping_station_endpoint,
-            commands::test_station_key_connectivity,
-            commands::simulate_route,
-            commands::list_pricing_rules,
-            commands::list_model_base_prices,
-            commands::upsert_model_base_price,
-            commands::reset_model_base_prices_to_builtins,
-            commands::upsert_pricing_rule,
-            commands::delete_pricing_rule,
-            commands::resolve_station_key_pricing_context,
-            commands::list_balance_snapshots,
-            commands::list_current_station_balance_snapshots,
-            commands::list_balance_snapshots_for_station,
-            commands::upsert_balance_snapshot,
-            commands::list_station_group_bindings,
-            commands::list_station_group_options,
-            commands::upsert_station_group_binding,
-            commands::list_group_rate_records,
-            commands::list_collector_runs,
-            commands::list_change_events,
-            commands::clear_change_events,
-            commands::list_change_events_for_station,
-            commands::upsert_change_event,
-            commands::mark_change_event_read,
-            commands::mark_change_events_read,
-            commands::dismiss_change_event,
-            commands::resolve_change_event,
-            commands::get_station_credentials,
-            commands::update_station_credentials,
-            commands::update_station_session,
-            commands::clear_station_credentials,
-            commands::detect_station_info,
-            commands::collect_station_info,
-            commands::collect_station_task,
-            commands::test_station_login,
-            commands::test_station_login_input,
-            commands::detect_sub2api_station,
-            commands::collect_sub2api_station,
-            commands::list_collector_snapshots,
-            commands::get_latest_collector_snapshot,
-            commands::start_capture_session,
-            commands::get_capture_session_status,
-            commands::record_capture_event,
-            commands::finish_capture_session,
-            commands::finish_web_authorization_session,
-            commands::clear_capture_session,
-            commands::close_capture_session,
-        ])
+        // commands::cleanup_before_update, commands::prepare_local_proxy_for_update,
+        // commands::restart_local_proxy, commands::updater_network_config, and
+        // commands::inspect_latest_update_manifest stay registered through the generated IPC registry.
+        .invoke_handler(crate::ipc_command_registry!(tauri_handler_from_registry))
         .build(tauri::generate_context!())
         .expect("failed to build Relay Pool Desktop");
-    app.run(|app, event| {
-        if matches!(event, RunEvent::Exit) {
-            shutdown_application(app);
+    app.run(|app, event| match event {
+        RunEvent::ExitRequested { api, code, .. } => {
+            if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
+                coordinator.handle_exit_requested(
+                    app.clone(),
+                    code,
+                    &api,
+                    drain_application_shutdown,
+                );
+            }
         }
+        RunEvent::Exit => {}
+        _ => {}
     });
 }
 
@@ -641,6 +696,37 @@ mod tests {
         assert_eq!(runtime.state(), RuntimeState::Closed);
         InstallationLease::try_acquire(&config_dir)
             .expect("lease released after pool close")
+            .release()
+            .expect("release verification lease");
+    }
+
+    #[tokio::test]
+    async fn recovery_data_store_owner_releases_lease_without_runtime() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let config_dir = root.path().join("config");
+        let lease = InstallationLease::try_acquire(&config_dir).expect("acquire lease");
+        let owner = DataStoreRuntimeOwner::new(None, lease);
+
+        owner.shutdown().await.expect("shutdown recovery owner");
+
+        InstallationLease::try_acquire(&config_dir)
+            .expect("recovery shutdown releases lease")
+            .release()
+            .expect("release verification lease");
+    }
+
+    #[tokio::test]
+    async fn data_store_owner_shutdown_is_idempotent_after_lease_release() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let config_dir = root.path().join("config");
+        let lease = InstallationLease::try_acquire(&config_dir).expect("acquire lease");
+        let owner = DataStoreRuntimeOwner::new(None, lease);
+
+        owner.shutdown().await.expect("first shutdown");
+        owner.shutdown().await.expect("second shutdown");
+
+        InstallationLease::try_acquire(&config_dir)
+            .expect("lease remains released")
             .release()
             .expect("release verification lease");
     }

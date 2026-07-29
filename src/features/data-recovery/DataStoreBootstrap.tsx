@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { App } from "@/app/App";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
 import { getDataStoreStartupState } from "@/lib/api/dataRecovery";
-import { tauriErrorMessage } from "@/lib/tauriErrors";
+import { errorMessage } from "@/lib/errorMessage";
 import type { DataStoreStartupView } from "@/lib/types/dataRecovery";
 import { DataRecoveryScreen } from "./DataRecoveryScreen";
 
@@ -14,10 +13,10 @@ type BootstrapStatus =
   | { kind: "loaded"; state: DataStoreStartupView };
 
 type DataStoreBootstrapProps = {
-  renderReady?: () => ReactNode;
+  renderReady: () => ReactNode;
 };
 
-export function DataStoreBootstrap({ renderReady = () => <App /> }: DataStoreBootstrapProps) {
+export function DataStoreBootstrap({ renderReady }: DataStoreBootstrapProps) {
   const [status, setStatus] = useState<BootstrapStatus>({ kind: "loading" });
   const requestSequence = useRef(0);
 
@@ -71,7 +70,7 @@ function StartupFatalError({ error, onRetry }: { error: unknown; onRetry: () => 
           Relay Pool 无法读取启动期数据状态。为避免误打开空数据库，业务页面已暂停加载。
         </p>
         <pre className="mt-4 max-h-40 overflow-auto rounded-[var(--surface-radius)] border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-          {tauriErrorMessage(error)}
+          {errorMessage(error)}
         </pre>
         <Button className="mt-4" variant="secondary" onClick={onRetry}>重试</Button>
       </Card>

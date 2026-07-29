@@ -1,107 +1,48 @@
-import { invoke } from "@tauri-apps/api/core";
-import { isTauriInvokeUnavailable } from "@/lib/tauriErrors";
-import type {
-  CaptureSessionStatus,
-  CollectorRunResult,
-  CollectorSnapshot,
-  CollectorTaskType,
-  StationLoginTestInput,
-  StationLoginTestResult,
-} from "@/lib/types/collector";
-
-const memorySnapshots = new Map<string, CollectorSnapshot>();
+import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
+import type { CollectorTaskType, StationLoginTestInput } from "@/lib/types/collector";
 
 export function detectSub2apiStation(stationId: string) {
-  return detectStationInfo(stationId);
+  return getActiveBackendClient().collectors.detectSub2apiStation(stationId);
 }
 
 export function collectSub2apiStation(stationId: string) {
-  return collectStationInfo(stationId);
+  return getActiveBackendClient().collectors.collectSub2apiStation(stationId);
 }
 
 export function detectStationInfo(stationId: string) {
-  return invoke<CollectorRunResult>("detect_station_info", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return createMemoryRun(stationId, "station-info-detect", "checked");
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.detectStationInfo(stationId);
 }
 
 export function collectStationInfo(stationId: string) {
-  return invoke<CollectorRunResult>("collect_station_info", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return createMemoryRun(stationId, "station-info-collect", "checked");
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.collectStationInfo(stationId);
 }
 
 export function collectStationTask(stationId: string, taskType: CollectorTaskType) {
-  return invoke<CollectorRunResult>("collect_station_task", { stationId, taskType }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return createMemoryRun(stationId, `station-${taskType}`, "checked");
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.collectStationTask(stationId, taskType);
 }
 
 export function testStationLogin(stationId: string) {
-  return invoke<CollectorRunResult>("test_station_login", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return createMemoryRun(stationId, "login-state-test", "manual_required");
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.testStationLogin(stationId);
 }
 
 export function testStationLoginInput(input: StationLoginTestInput) {
-  return invoke<StationLoginTestResult>("test_station_login_input", { input }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return {
-        status: "manual_required",
-        message: "普通浏览器环境无法执行真实连通性测试。",
-        diagnosis: "请在 Tauri 桌面窗口中测试。",
-        tokenPresent: false,
-      };
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.testStationLoginInput(input);
 }
 
 export function listCollectorSnapshots(stationId: string) {
-  return invoke<CollectorSnapshot[]>("list_collector_snapshots", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return memorySnapshots.get(stationId) ? [memorySnapshots.get(stationId)!] : [];
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.listCollectorSnapshots(stationId);
 }
 
 export function getLatestCollectorSnapshot(stationId: string) {
-  return invoke<CollectorSnapshot | null>("get_latest_collector_snapshot", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return memorySnapshots.get(stationId) ?? null;
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.getLatestCollectorSnapshot(stationId);
+}
+
+export function listLatestCollectorSnapshots(stationIds: string[]) {
+  return getActiveBackendClient().collectors.listLatestCollectorSnapshots(stationIds);
 }
 
 export function startCaptureSession(stationId: string) {
-  return invoke<CaptureSessionStatus>("start_capture_session", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return {
-        stationId,
-        status: "capturing",
-        captureCount: 0,
-        recognizedFieldCount: 0,
-        pendingConfirmationCount: 0,
-        webAuthorizationCandidate: false,
-        lastError: null,
-      };
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.startCaptureSession(stationId);
 }
 
 export function startManualAuthorization(stationId: string) {
@@ -109,125 +50,21 @@ export function startManualAuthorization(stationId: string) {
 }
 
 export function getCaptureSessionStatus(stationId: string) {
-  return invoke<CaptureSessionStatus>("get_capture_session_status", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return {
-        stationId,
-        status: "idle",
-        captureCount: 0,
-        recognizedFieldCount: 0,
-        pendingConfirmationCount: 0,
-        webAuthorizationCandidate: false,
-        lastError: null,
-      };
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.getCaptureSessionStatus(stationId);
 }
 
 export function finishCaptureSession(stationId: string) {
-  return invoke<CollectorRunResult>("finish_capture_session", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return createMemoryRun(stationId, "webview-capture", "manual_required");
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.finishCaptureSession(stationId);
 }
 
 export function finishWebAuthorizationSession(stationId: string) {
-  return invoke<CollectorRunResult>("finish_web_authorization_session", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return createMemoryRun(stationId, "webview-capture", "manual_required");
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.finishWebAuthorizationSession(stationId);
 }
 
 export function clearCaptureSession(stationId: string) {
-  return invoke<CaptureSessionStatus>("clear_capture_session", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return {
-        stationId,
-        status: "idle",
-        captureCount: 0,
-        recognizedFieldCount: 0,
-        pendingConfirmationCount: 0,
-        webAuthorizationCandidate: false,
-        lastError: null,
-      };
-    }
-    throw error;
-  });
+  return getActiveBackendClient().collectors.clearCaptureSession(stationId);
 }
 
 export function closeCaptureSession(stationId: string) {
-  return invoke<CaptureSessionStatus>("close_capture_session", { stationId }).catch((error) => {
-    if (isTauriInvokeUnavailable(error)) {
-      return {
-        stationId,
-        status: "idle",
-        captureCount: 0,
-        recognizedFieldCount: 0,
-        pendingConfirmationCount: 0,
-        webAuthorizationCandidate: false,
-        lastError: null,
-      };
-    }
-    throw error;
-  });
-}
-
-function createMemoryRun(stationId: string, source: string, status: string): CollectorRunResult {
-  const now = new Date().toISOString();
-  const snapshot: CollectorSnapshot = {
-    id: `snapshot-${Date.now()}`,
-    stationId,
-    endpointRevision: 1,
-    source,
-    status,
-    fetchedAt: now,
-    summaryJson: {
-      mode: source.includes("login-state") ? "login-state" : source.includes("detect") ? "detect" : "collect",
-      adapter: source.includes("login-state") ? "Login State Adapter" : "Auto Detect",
-      detectedType: source.includes("login-state") ? "Login State" : "Unknown",
-      conclusion: source.includes("login-state") ? "需要登录" : "未识别",
-      message: source.includes("login-state")
-        ? "登录态采集主流程已切换到账号密码测试。"
-        : "普通浏览器环境没有 Tauri invoke；桌面窗口会使用真实 SQLite 快照。",
-      endpointResults: [],
-      recognized: {
-        balanceLabel: "未识别",
-        groupCount: 0,
-        rateCount: 0,
-        keyCount: 0,
-        matchedFieldCount: 0,
-      },
-      webviewRequired: source.includes("login-state"),
-      webviewNote: "WebView 登录捕获仍保留为高级兜底功能。",
-    },
-    normalizedJson: {
-      balance: null,
-      groups: [],
-      rateMultipliers: [],
-      keys: [],
-      matchedFields: [],
-    },
-    rawJsonRedacted: {
-      stationId,
-      note: "Browser fallback only; Tauri commands persist real snapshots.",
-    },
-    errorMessage: "普通浏览器环境没有 Tauri invoke；桌面窗口会使用真实 SQLite 快照。",
-    createdAt: now,
-  };
-  memorySnapshots.set(stationId, snapshot);
-  return {
-    snapshot,
-    events: [
-      {
-        eventType: "fallback",
-        message: "Tauri invoke unavailable in browser preview.",
-        status: "checked",
-      },
-    ],
-  };
+  return getActiveBackendClient().collectors.closeCaptureSession(stationId);
 }

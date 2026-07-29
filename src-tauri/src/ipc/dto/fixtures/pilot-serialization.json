@@ -1,0 +1,2985 @@
+{
+  "commands": [
+    {
+      "command": "get_settings",
+      "input": {},
+      "output": {
+        "allowDepletedFallback": false,
+        "balanceIntervalMinutes": 5,
+        "collectorIntervalMinutes": 30,
+        "collectorMaxConcurrency": 3,
+        "collectorProxyMode": "direct",
+        "collectorProxyUrl": null,
+        "collectorTimeoutSeconds": 15,
+        "dataDir": "fixture-data-dir-redacted",
+        "dataDirChangeRequiresRestart": false,
+        "defaultRoutingGroupFilter": "all_groups",
+        "defaultRoutingStrategy": "automatic_balanced",
+        "developerModeEnabled": false,
+        "groupRateIntervalMinutes": 20,
+        "localKeyMasked": "sk-fixture-...redacted",
+        "localProxyPort": 8787,
+        "localProxyStartOnLaunch": false,
+        "lowBalanceThresholdCny": 15.0,
+        "maxRateMultiplier": null,
+        "modelListIntervalMinutes": 60,
+        "pendingDataDir": null,
+        "pricingRefreshIntervalMinutes": 60,
+        "schedulerAdvancedSettings": {
+          "errorRate": 0.8,
+          "fallbackMaxWaiting": 100,
+          "fallbackWaitTimeoutSeconds": 30,
+          "load": 1.0,
+          "multiplier": 1.0,
+          "multiplierMinConfidence": 0.8,
+          "previousResponse": 5.0,
+          "priority": 1.0,
+          "queue": 0.7,
+          "quotaHeadroom": 0.0,
+          "sessionSticky": 3.0,
+          "stickyEscape": true,
+          "stickyEscapeErrorRate": 0.5,
+          "stickyEscapeTtftMs": 15000,
+          "stickyMaxWaiting": 3,
+          "stickyResponseTtlSeconds": 3600,
+          "stickySessionTtlSeconds": 3600,
+          "stickyWaitTimeoutSeconds": 120,
+          "stickyWeighted": false,
+          "topK": 7,
+          "ttft": 0.5
+        },
+        "trayBehavior": "close_to_tray"
+      }
+    },
+    {
+      "command": "list_stations",
+      "input": {},
+      "output": [
+        {
+          "apiBaseUrl": "https://provider.invalid/v1",
+          "apiKeyMasked": "sk-fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceCny": null,
+          "balanceRaw": null,
+          "collectionIntervalMinutes": 5,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "creditPerCny": 1.0,
+          "enabled": true,
+          "endpointRevision": 1,
+          "id": "station-fixture",
+          "keyCount": 1,
+          "lastCheckedAt": null,
+          "lastPricingFetchedAt": null,
+          "latencyMs": null,
+          "lowBalanceThresholdCny": 15.0,
+          "name": "Fixture Station",
+          "note": null,
+          "priority": 0,
+          "stationType": "newapi",
+          "status": "unchecked",
+          "updatedAt": "2026-01-01T00:00:00Z",
+          "websiteUrl": "https://provider.invalid"
+        }
+      ]
+    },
+    {
+      "command": "update_settings",
+      "input": {
+        "allowDepletedFallback": false,
+        "balanceIntervalMinutes": 5,
+        "collectorIntervalMinutes": 30,
+        "collectorMaxConcurrency": 3,
+        "collectorProxyMode": "direct",
+        "collectorProxyUrl": null,
+        "collectorTimeoutSeconds": 15,
+        "defaultRoutingGroupFilter": "all_groups",
+        "defaultRoutingStrategy": "automatic_balanced",
+        "developerModeEnabled": false,
+        "groupRateIntervalMinutes": 20,
+        "localProxyPort": 8787,
+        "lowBalanceThresholdCny": 15.0,
+        "maxRateMultiplier": null,
+        "modelListIntervalMinutes": 60,
+        "pricingRefreshIntervalMinutes": 60,
+        "schedulerAdvancedSettings": null,
+        "trayBehavior": null
+      },
+      "output": {
+        "allowDepletedFallback": false,
+        "balanceIntervalMinutes": 5,
+        "collectorIntervalMinutes": 30,
+        "collectorMaxConcurrency": 3,
+        "collectorProxyMode": "direct",
+        "collectorProxyUrl": null,
+        "collectorTimeoutSeconds": 15,
+        "dataDir": "fixture-data-dir-redacted",
+        "dataDirChangeRequiresRestart": false,
+        "defaultRoutingGroupFilter": "all_groups",
+        "defaultRoutingStrategy": "automatic_balanced",
+        "developerModeEnabled": false,
+        "groupRateIntervalMinutes": 20,
+        "localKeyMasked": "sk-fixture-...redacted",
+        "localProxyPort": 8787,
+        "localProxyStartOnLaunch": false,
+        "lowBalanceThresholdCny": 15.0,
+        "maxRateMultiplier": null,
+        "modelListIntervalMinutes": 60,
+        "pendingDataDir": null,
+        "pricingRefreshIntervalMinutes": 60,
+        "schedulerAdvancedSettings": {
+          "errorRate": 0.8,
+          "fallbackMaxWaiting": 100,
+          "fallbackWaitTimeoutSeconds": 30,
+          "load": 1.0,
+          "multiplier": 1.0,
+          "multiplierMinConfidence": 0.8,
+          "previousResponse": 5.0,
+          "priority": 1.0,
+          "queue": 0.7,
+          "quotaHeadroom": 0.0,
+          "sessionSticky": 3.0,
+          "stickyEscape": true,
+          "stickyEscapeErrorRate": 0.5,
+          "stickyEscapeTtftMs": 15000,
+          "stickyMaxWaiting": 3,
+          "stickyResponseTtlSeconds": 3600,
+          "stickySessionTtlSeconds": 3600,
+          "stickyWaitTimeoutSeconds": 120,
+          "stickyWeighted": false,
+          "topK": 7,
+          "ttft": 0.5
+        },
+        "trayBehavior": "close_to_tray"
+      }
+    },
+    {
+      "command": "create_station",
+      "input": {
+        "apiBaseUrl": "https://provider.invalid/v1",
+        "apiKey": "",
+        "collectionIntervalMinutes": 5,
+        "collectorProxyMode": "inherit",
+        "collectorProxyUrl": null,
+        "creditPerCny": 1.0,
+        "enabled": true,
+        "lowBalanceThresholdCny": 15.0,
+        "name": "Fixture Station",
+        "note": null,
+        "stationType": "newapi",
+        "websiteUrl": "https://provider.invalid"
+      },
+      "output": {
+        "apiBaseUrl": "https://provider.invalid/v1",
+        "apiKeyMasked": "sk-fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceCny": null,
+        "balanceRaw": null,
+        "collectionIntervalMinutes": 5,
+        "collectorProxyMode": "inherit",
+        "collectorProxyUrl": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "creditPerCny": 1.0,
+        "enabled": true,
+        "endpointRevision": 1,
+        "id": "station-fixture",
+        "keyCount": 1,
+        "lastCheckedAt": null,
+        "lastPricingFetchedAt": null,
+        "latencyMs": null,
+        "lowBalanceThresholdCny": 15.0,
+        "name": "Fixture Station",
+        "note": null,
+        "priority": 0,
+        "stationType": "newapi",
+        "status": "unchecked",
+        "updatedAt": "2026-01-01T00:00:00Z",
+        "websiteUrl": "https://provider.invalid"
+      }
+    },
+    {
+      "command": "update_station",
+      "input": {
+        "apiBaseUrl": "https://provider.invalid/v1",
+        "apiKey": null,
+        "collectionIntervalMinutes": 5,
+        "collectorProxyMode": "inherit",
+        "collectorProxyUrl": null,
+        "creditPerCny": 1.0,
+        "enabled": true,
+        "id": "station-fixture",
+        "lowBalanceThresholdCny": 15.0,
+        "name": "Fixture Station",
+        "note": null,
+        "stationType": "newapi",
+        "websiteUrl": "https://provider.invalid"
+      },
+      "output": {
+        "apiBaseUrl": "https://provider.invalid/v1",
+        "apiKeyMasked": "sk-fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceCny": null,
+        "balanceRaw": null,
+        "collectionIntervalMinutes": 5,
+        "collectorProxyMode": "inherit",
+        "collectorProxyUrl": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "creditPerCny": 1.0,
+        "enabled": true,
+        "endpointRevision": 1,
+        "id": "station-fixture",
+        "keyCount": 1,
+        "lastCheckedAt": null,
+        "lastPricingFetchedAt": null,
+        "latencyMs": null,
+        "lowBalanceThresholdCny": 15.0,
+        "name": "Fixture Station",
+        "note": null,
+        "priority": 0,
+        "stationType": "newapi",
+        "status": "unchecked",
+        "updatedAt": "2026-01-01T00:00:00Z",
+        "websiteUrl": "https://provider.invalid"
+      }
+    },
+    {
+      "command": "delete_station",
+      "input": {
+        "id": "station-fixture"
+      },
+      "output": null
+    },
+    {
+      "command": "reorder_stations",
+      "input": {
+        "stationIds": [
+          "station-fixture"
+        ]
+      },
+      "output": [
+        {
+          "apiBaseUrl": "https://provider.invalid/v1",
+          "apiKeyMasked": "sk-fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceCny": null,
+          "balanceRaw": null,
+          "collectionIntervalMinutes": 5,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "creditPerCny": 1.0,
+          "enabled": true,
+          "endpointRevision": 1,
+          "id": "station-fixture",
+          "keyCount": 1,
+          "lastCheckedAt": null,
+          "lastPricingFetchedAt": null,
+          "latencyMs": null,
+          "lowBalanceThresholdCny": 15.0,
+          "name": "Fixture Station",
+          "note": null,
+          "priority": 0,
+          "stationType": "newapi",
+          "status": "unchecked",
+          "updatedAt": "2026-01-01T00:00:00Z",
+          "websiteUrl": "https://provider.invalid"
+        }
+      ]
+    },
+    {
+      "command": "list_station_keys",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "create_station_key",
+      "input": {
+        "apiKey": "fixture-not-a-real-api-key",
+        "balanceScope": null,
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "tierLabel": null
+      },
+      "output": {
+        "apiKeyMasked": "fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceScope": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "lastCheckedAt": null,
+        "lastUsedAt": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "manualRateUpdatedAt": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateCollectedAt": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "update_station_key",
+      "input": {
+        "apiKey": null,
+        "balanceScope": null,
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null
+      },
+      "output": {
+        "apiKeyMasked": "fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceScope": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "lastCheckedAt": null,
+        "lastUsedAt": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "manualRateUpdatedAt": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateCollectedAt": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "save_station_key_with_defaults",
+      "input": {
+        "apiKey": "fixture-not-a-real-api-key",
+        "balanceScope": null,
+        "capabilities": null,
+        "enabled": true,
+        "groupSelection": {
+          "kind": "clear"
+        },
+        "id": null,
+        "mode": "create",
+        "name": "Fixture default key",
+        "note": null,
+        "priority": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null
+      },
+      "output": {
+        "capabilities": {
+          "modelAllowlist": [],
+          "modelBlocklist": [],
+          "onlyUseAsBackup": false,
+          "preferredModels": [],
+          "routingTags": [
+            "fixture"
+          ],
+          "stationKeyId": "station-key-fixture",
+          "supportsChatCompletions": true,
+          "supportsEmbeddings": true,
+          "supportsReasoning": true,
+          "supportsResponses": true,
+          "supportsStream": true,
+          "supportsTools": true,
+          "supportsVision": true,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        },
+        "message": "Fixture station key saved.",
+        "stationKey": {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "command": "update_station_key_group_binding",
+      "input": {
+        "groupBindingId": "group-fixture",
+        "stationKeyId": "station-key-fixture"
+      },
+      "output": {
+        "apiKeyMasked": "fixture-...redacted",
+        "apiKeyPresent": true,
+        "balanceScope": null,
+        "createdAt": "2026-01-01T00:00:00Z",
+        "enabled": true,
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "id": "station-key-fixture",
+        "lastCheckedAt": null,
+        "lastUsedAt": null,
+        "loadFactor": null,
+        "manualRateMultiplier": null,
+        "manualRateUpdatedAt": null,
+        "maxConcurrency": 3,
+        "name": "Fixture key",
+        "note": null,
+        "priority": 0,
+        "rateCollectedAt": null,
+        "rateMultiplier": null,
+        "rateSource": null,
+        "schedulable": true,
+        "stationId": "station-fixture",
+        "status": "unchecked",
+        "tierLabel": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "delete_station_key",
+      "input": {
+        "id": "station-key-fixture"
+      },
+      "output": null
+    },
+    {
+      "command": "reorder_station_keys",
+      "input": {
+        "keyIds": [
+          "station-key-fixture"
+        ],
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "get_remote_key_capability",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "canCreateRemoteKey": true,
+        "canListRemoteKeys": true,
+        "canReadGroups": true,
+        "requiresManualSession": false,
+        "stationId": "station-fixture",
+        "stationType": "newapi",
+        "unsupportedReason": null
+      }
+    },
+    {
+      "command": "list_remote_station_keys",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        }
+      ]
+    },
+    {
+      "command": "scan_remote_station_keys",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "capability": {
+          "canCreateRemoteKey": true,
+          "canListRemoteKeys": true,
+          "canReadGroups": true,
+          "requiresManualSession": false,
+          "stationId": "station-fixture",
+          "stationType": "newapi",
+          "unsupportedReason": null
+        },
+        "keys": [
+          {
+            "apiKeyFingerprint": "fixture-fingerprint",
+            "apiKeyMasked": "fixture-...redacted",
+            "collectedAt": "2026-01-01T00:00:00Z",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "groupIdHash": null,
+            "groupName": null,
+            "id": "remote-key-fixture",
+            "lastUsedAt": null,
+            "matchConfidence": 1.0,
+            "matchStatus": "matched",
+            "matchedStationKeyId": "station-key-fixture",
+            "rateMultiplier": null,
+            "rateSource": null,
+            "rawSource": "fixture_sanitized",
+            "remoteKeyIdHash": "fixture-id-hash",
+            "remoteKeyName": "Fixture remote key",
+            "stationId": "station-fixture",
+            "tierLabel": null
+          }
+        ],
+        "message": "Fixture scan completed.",
+        "stationId": "station-fixture",
+        "syncedStationKeyIds": [
+          "station-key-fixture"
+        ]
+      }
+    },
+    {
+      "command": "create_remote_station_key",
+      "input": {
+        "groupBindingId": null,
+        "groupIdHash": null,
+        "groupName": null,
+        "name": "Fixture remote key",
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "fullKeyOnce": "fixture-not-a-real-key-one-time",
+        "message": "Fixture remote key created.",
+        "remoteKey": {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        },
+        "stationKey": {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "command": "create_local_station_key_from_remote",
+      "input": {
+        "remoteKeyId": "remote-key-fixture",
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "message": "Fixture local key created.",
+        "remoteKey": {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        },
+        "stationKey": {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "balanceScope": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "name": "Fixture key",
+          "note": null,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationId": "station-fixture",
+          "status": "unchecked",
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "command": "bind_remote_station_key",
+      "input": {
+        "remoteKeyId": "remote-key-fixture",
+        "stationKeyId": "station-key-fixture"
+      },
+      "output": [
+        {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        }
+      ]
+    },
+    {
+      "command": "unbind_remote_station_key",
+      "input": {
+        "remoteKeyId": "remote-key-fixture",
+        "stationId": "station-fixture"
+      },
+      "output": [
+        {
+          "apiKeyFingerprint": "fixture-fingerprint",
+          "apiKeyMasked": "fixture-...redacted",
+          "collectedAt": "2026-01-01T00:00:00Z",
+          "createdAt": "2026-01-01T00:00:00Z",
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "remote-key-fixture",
+          "lastUsedAt": null,
+          "matchConfidence": 1.0,
+          "matchStatus": "matched",
+          "matchedStationKeyId": "station-key-fixture",
+          "rateMultiplier": null,
+          "rateSource": null,
+          "rawSource": "fixture_sanitized",
+          "remoteKeyIdHash": "fixture-id-hash",
+          "remoteKeyName": "Fixture remote key",
+          "stationId": "station-fixture",
+          "tierLabel": null
+        }
+      ]
+    },
+    {
+      "command": "list_key_pool_items",
+      "input": {},
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "avgLatencyMs": null,
+          "balanceScope": null,
+          "capabilitySummary": [
+            "chat_completions"
+          ],
+          "consecutiveFailures": 0,
+          "cooldownUntil": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "endpointPingCheckedAt": null,
+          "endpointPingError": null,
+          "endpointPingMs": null,
+          "endpointPingStatus": "unchecked",
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastErrorSummary": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "modelScopeSummary": "all models",
+          "name": "Fixture key",
+          "note": null,
+          "onlyUseAsBackup": false,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationApiBaseUrl": "https://provider.invalid/v1",
+          "stationEndpointRevision": 1,
+          "stationId": "station-fixture",
+          "stationName": "Fixture Station",
+          "stationType": "newapi",
+          "stationUpstreamApiFormat": "auto",
+          "status": "unchecked",
+          "successRate": null,
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "reorder_key_pool",
+      "input": {
+        "keyIds": [
+          "station-key-fixture"
+        ]
+      },
+      "output": [
+        {
+          "apiKeyMasked": "fixture-...redacted",
+          "apiKeyPresent": true,
+          "avgLatencyMs": null,
+          "balanceScope": null,
+          "capabilitySummary": [
+            "chat_completions"
+          ],
+          "consecutiveFailures": 0,
+          "cooldownUntil": null,
+          "createdAt": "2026-01-01T00:00:00Z",
+          "enabled": true,
+          "endpointPingCheckedAt": null,
+          "endpointPingError": null,
+          "endpointPingMs": null,
+          "endpointPingStatus": "unchecked",
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupName": null,
+          "id": "station-key-fixture",
+          "lastCheckedAt": null,
+          "lastErrorSummary": null,
+          "lastUsedAt": null,
+          "loadFactor": null,
+          "manualRateMultiplier": null,
+          "manualRateUpdatedAt": null,
+          "maxConcurrency": 3,
+          "modelScopeSummary": "all models",
+          "name": "Fixture key",
+          "note": null,
+          "onlyUseAsBackup": false,
+          "priority": 0,
+          "rateCollectedAt": null,
+          "rateMultiplier": null,
+          "rateSource": null,
+          "schedulable": true,
+          "stationApiBaseUrl": "https://provider.invalid/v1",
+          "stationEndpointRevision": 1,
+          "stationId": "station-fixture",
+          "stationName": "Fixture Station",
+          "stationType": "newapi",
+          "stationUpstreamApiFormat": "auto",
+          "status": "unchecked",
+          "successRate": null,
+          "tierLabel": null,
+          "updatedAt": "2026-01-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "command": "get_station_credentials",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "update_station_credentials",
+      "input": {
+        "loginPassword": "fixture-not-a-real-password",
+        "loginUsername": "fixture-user",
+        "rememberPassword": false,
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "update_station_session",
+      "input": {
+        "accessToken": "fixture-not-a-real-access-token",
+        "cookie": null,
+        "newapiUserId": null,
+        "refreshToken": null,
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "clear_station_credentials",
+      "input": {
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "accessTokenPresent": true,
+        "cookiePresent": false,
+        "lastLoginAt": null,
+        "loginError": null,
+        "loginStatus": "saved",
+        "loginUsername": "fixture-user",
+        "newapiUserId": null,
+        "passwordPresent": true,
+        "refreshTokenPresent": false,
+        "rememberPassword": false,
+        "sessionExpiresAt": null,
+        "sessionSource": "fixture",
+        "sessionStatus": "valid",
+        "stationId": "station-fixture",
+        "tokenExpiresAt": null,
+        "tokenRefreshedAt": null,
+        "updatedAt": "2026-01-01T00:00:00Z"
+      }
+    },
+    {
+      "command": "list_request_logs",
+      "input": {},
+      "output": [
+        {
+          "attemptCount": 1,
+          "attemptsJson": "[]",
+          "balanceScope": null,
+          "baseFixedCost": null,
+          "baseInputCost": 0.001,
+          "baseOutputCost": 0.002,
+          "baseTotalCost": 0.003,
+          "billingMode": "token",
+          "bodyBytes": 128,
+          "cacheCreationTokens": null,
+          "cacheReadTokens": null,
+          "completionSource": "upstream",
+          "completionTokens": 5,
+          "costCurrency": "USD",
+          "costStatus": "estimated",
+          "createdAt": "1700000000000",
+          "durationMs": 100,
+          "economicContextJson": "{}",
+          "errorMessage": null,
+          "estimatedInputCost": 0.001,
+          "estimatedOutputCost": 0.002,
+          "estimatedTotalCost": 0.003,
+          "failureSource": null,
+          "fallbackCount": 0,
+          "finishedAt": "1700000000100",
+          "firstTokenMs": 30,
+          "groupBindingId": null,
+          "id": "request-log-1",
+          "lifecycleStatus": "completed",
+          "method": "POST",
+          "model": "fixture-model",
+          "normalizationStatus": "normalized",
+          "path": "/v1/chat/completions",
+          "pricingRuleId": null,
+          "pricingSource": "fixture",
+          "promptTokens": 10,
+          "reasoningEffort": null,
+          "rejectedCandidatesJson": "[]",
+          "requestId": "request-1",
+          "routePolicy": "automatic_balanced",
+          "routeReason": null,
+          "routeWaitMs": 1,
+          "startedAt": "1700000000000",
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "status": "success",
+          "stream": false,
+          "totalTokens": 15,
+          "upstreamBaseUrl": "https://provider.invalid/v1",
+          "upstreamHeadersMs": 20
+        }
+      ]
+    },
+    {
+      "command": "clear_request_logs",
+      "input": {},
+      "output": null
+    },
+    {
+      "command": "list_change_events",
+      "input": {},
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "dedupeKey": "fixture-change-1",
+          "detectedAt": "1700000000000",
+          "eventType": "fixture.changed",
+          "id": "change-1",
+          "impactJson": null,
+          "message": "Fixture message",
+          "newValueJson": "{}",
+          "objectId": "station-1",
+          "objectType": "station",
+          "oldValueJson": null,
+          "pricingRuleId": null,
+          "requestLogId": null,
+          "resolvedAt": null,
+          "severity": "warning",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "stationName": "Fixture station",
+          "status": "unread",
+          "title": "Fixture change",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "clear_change_events",
+      "input": {},
+      "output": null
+    },
+    {
+      "command": "list_change_events_for_station",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "dedupeKey": "fixture-change-1",
+          "detectedAt": "1700000000000",
+          "eventType": "fixture.changed",
+          "id": "change-1",
+          "impactJson": null,
+          "message": "Fixture message",
+          "newValueJson": "{}",
+          "objectId": "station-1",
+          "objectType": "station",
+          "oldValueJson": null,
+          "pricingRuleId": null,
+          "requestLogId": null,
+          "resolvedAt": null,
+          "severity": "warning",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "stationName": "Fixture station",
+          "status": "unread",
+          "title": "Fixture change",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "upsert_change_event",
+      "input": {
+        "dedupeKey": "fixture-change-1",
+        "eventType": "fixture.changed",
+        "impactJson": null,
+        "message": "Fixture message",
+        "newValueJson": "{}",
+        "objectId": "station-1",
+        "objectType": "station",
+        "oldValueJson": null,
+        "pricingRuleId": null,
+        "requestLogId": null,
+        "severity": "warning",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "title": "Fixture change"
+      },
+      "output": {
+        "createdAt": "1700000000000",
+        "dedupeKey": "fixture-change-1",
+        "detectedAt": "1700000000000",
+        "eventType": "fixture.changed",
+        "id": "change-1",
+        "impactJson": null,
+        "message": "Fixture message",
+        "newValueJson": "{}",
+        "objectId": "station-1",
+        "objectType": "station",
+        "oldValueJson": null,
+        "pricingRuleId": null,
+        "requestLogId": null,
+        "resolvedAt": null,
+        "severity": "warning",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "stationName": "Fixture station",
+        "status": "unread",
+        "title": "Fixture change",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "mark_change_event_read",
+      "input": {
+        "id": "change-1"
+      },
+      "output": {
+        "createdAt": "1700000000000",
+        "dedupeKey": "fixture-change-1",
+        "detectedAt": "1700000000000",
+        "eventType": "fixture.changed",
+        "id": "change-1",
+        "impactJson": null,
+        "message": "Fixture message",
+        "newValueJson": "{}",
+        "objectId": "station-1",
+        "objectType": "station",
+        "oldValueJson": null,
+        "pricingRuleId": null,
+        "requestLogId": null,
+        "resolvedAt": null,
+        "severity": "warning",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "stationName": "Fixture station",
+        "status": "unread",
+        "title": "Fixture change",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "mark_change_events_read",
+      "input": {
+        "ids": [
+          "change-1"
+        ]
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "dedupeKey": "fixture-change-1",
+          "detectedAt": "1700000000000",
+          "eventType": "fixture.changed",
+          "id": "change-1",
+          "impactJson": null,
+          "message": "Fixture message",
+          "newValueJson": "{}",
+          "objectId": "station-1",
+          "objectType": "station",
+          "oldValueJson": null,
+          "pricingRuleId": null,
+          "requestLogId": null,
+          "resolvedAt": null,
+          "severity": "warning",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "stationName": "Fixture station",
+          "status": "unread",
+          "title": "Fixture change",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "dismiss_change_event",
+      "input": {
+        "id": "change-1"
+      },
+      "output": {
+        "createdAt": "1700000000000",
+        "dedupeKey": "fixture-change-1",
+        "detectedAt": "1700000000000",
+        "eventType": "fixture.changed",
+        "id": "change-1",
+        "impactJson": null,
+        "message": "Fixture message",
+        "newValueJson": "{}",
+        "objectId": "station-1",
+        "objectType": "station",
+        "oldValueJson": null,
+        "pricingRuleId": null,
+        "requestLogId": null,
+        "resolvedAt": null,
+        "severity": "warning",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "stationName": "Fixture station",
+        "status": "unread",
+        "title": "Fixture change",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "resolve_change_event",
+      "input": {
+        "id": "change-1"
+      },
+      "output": {
+        "createdAt": "1700000000000",
+        "dedupeKey": "fixture-change-1",
+        "detectedAt": "1700000000000",
+        "eventType": "fixture.changed",
+        "id": "change-1",
+        "impactJson": null,
+        "message": "Fixture message",
+        "newValueJson": "{}",
+        "objectId": "station-1",
+        "objectType": "station",
+        "oldValueJson": null,
+        "pricingRuleId": null,
+        "requestLogId": null,
+        "resolvedAt": null,
+        "severity": "warning",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "stationName": "Fixture station",
+        "status": "unread",
+        "title": "Fixture change",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "list_balance_snapshots",
+      "input": {},
+      "output": [
+        {
+          "accountConcurrencyLimit": null,
+          "collectedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "creditUnit": null,
+          "currency": "CNY",
+          "id": "balance-1",
+          "lowBalanceThreshold": 5.0,
+          "scope": "station",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "status": "normal",
+          "todayBaseConsumption": null,
+          "todayConsumption": null,
+          "todayInputTokenCount": null,
+          "todayOutputTokenCount": null,
+          "todayRequestCount": null,
+          "todayTokenCount": null,
+          "totalBaseConsumption": null,
+          "totalConsumption": null,
+          "totalInputTokenCount": null,
+          "totalOutputTokenCount": null,
+          "totalRequestCount": null,
+          "totalTokenCount": null,
+          "totalValue": null,
+          "updatedAt": "1700000000000",
+          "usedValue": null,
+          "value": 12.5
+        }
+      ]
+    },
+    {
+      "command": "list_current_station_balance_snapshots",
+      "input": {},
+      "output": [
+        {
+          "accountConcurrencyLimit": null,
+          "collectedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "creditUnit": null,
+          "currency": "CNY",
+          "id": "balance-1",
+          "lowBalanceThreshold": 5.0,
+          "scope": "station",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "status": "normal",
+          "todayBaseConsumption": null,
+          "todayConsumption": null,
+          "todayInputTokenCount": null,
+          "todayOutputTokenCount": null,
+          "todayRequestCount": null,
+          "todayTokenCount": null,
+          "totalBaseConsumption": null,
+          "totalConsumption": null,
+          "totalInputTokenCount": null,
+          "totalOutputTokenCount": null,
+          "totalRequestCount": null,
+          "totalTokenCount": null,
+          "totalValue": null,
+          "updatedAt": "1700000000000",
+          "usedValue": null,
+          "value": 12.5
+        }
+      ]
+    },
+    {
+      "command": "list_balance_snapshots_for_station",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "accountConcurrencyLimit": null,
+          "collectedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "creditUnit": null,
+          "currency": "CNY",
+          "id": "balance-1",
+          "lowBalanceThreshold": 5.0,
+          "scope": "station",
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "status": "normal",
+          "todayBaseConsumption": null,
+          "todayConsumption": null,
+          "todayInputTokenCount": null,
+          "todayOutputTokenCount": null,
+          "todayRequestCount": null,
+          "todayTokenCount": null,
+          "totalBaseConsumption": null,
+          "totalConsumption": null,
+          "totalInputTokenCount": null,
+          "totalOutputTokenCount": null,
+          "totalRequestCount": null,
+          "totalTokenCount": null,
+          "totalValue": null,
+          "updatedAt": "1700000000000",
+          "usedValue": null,
+          "value": 12.5
+        }
+      ]
+    },
+    {
+      "command": "upsert_balance_snapshot",
+      "input": {
+        "accountConcurrencyLimit": null,
+        "collectedAt": "1700000000000",
+        "confidence": 0.9,
+        "creditUnit": null,
+        "currency": "CNY",
+        "id": null,
+        "lowBalanceThreshold": 5.0,
+        "scope": "station",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "status": "normal",
+        "todayBaseConsumption": null,
+        "todayConsumption": null,
+        "todayInputTokenCount": null,
+        "todayOutputTokenCount": null,
+        "todayRequestCount": null,
+        "todayTokenCount": null,
+        "totalBaseConsumption": null,
+        "totalConsumption": null,
+        "totalInputTokenCount": null,
+        "totalOutputTokenCount": null,
+        "totalRequestCount": null,
+        "totalTokenCount": null,
+        "totalValue": null,
+        "usedValue": null,
+        "value": 12.5
+      },
+      "output": {
+        "accountConcurrencyLimit": null,
+        "collectedAt": "1700000000000",
+        "confidence": 0.9,
+        "createdAt": "1700000000000",
+        "creditUnit": null,
+        "currency": "CNY",
+        "id": "balance-1",
+        "lowBalanceThreshold": 5.0,
+        "scope": "station",
+        "source": "fixture",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "status": "normal",
+        "todayBaseConsumption": null,
+        "todayConsumption": null,
+        "todayInputTokenCount": null,
+        "todayOutputTokenCount": null,
+        "todayRequestCount": null,
+        "todayTokenCount": null,
+        "totalBaseConsumption": null,
+        "totalConsumption": null,
+        "totalInputTokenCount": null,
+        "totalOutputTokenCount": null,
+        "totalRequestCount": null,
+        "totalTokenCount": null,
+        "totalValue": null,
+        "updatedAt": "1700000000000",
+        "usedValue": null,
+        "value": 12.5
+      }
+    },
+    {
+      "command": "list_station_group_bindings",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "bindingKind": "station_group",
+          "bindingStatus": "available",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "defaultRateMultiplier": 1.0,
+          "effectiveRateMultiplier": 1.0,
+          "groupCategoryOverride": null,
+          "groupIdHash": "group-id-hash-1",
+          "groupKeyHash": "group-hash-1",
+          "groupName": "default",
+          "id": "binding-1",
+          "inferredGroupCategory": "gpt",
+          "lastCheckedAt": "1700000000000",
+          "lastRateChangedAt": null,
+          "lastSeenAt": "1700000000000",
+          "parentGroupBindingId": null,
+          "rateSource": "fixture",
+          "rawJsonRedacted": null,
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "updatedAt": "1700000000000",
+          "userRateMultiplier": null
+        }
+      ]
+    },
+    {
+      "command": "list_station_group_options",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "effectiveGroupCategory": "gpt",
+          "groupBindingId": "binding-1",
+          "groupCategoryOverride": null,
+          "groupIdHash": "group-id-hash-1",
+          "groupName": "default",
+          "inferredGroupCategory": "gpt",
+          "rateMultiplier": 1.0,
+          "rateSource": "fixture",
+          "selectableForRemoteKey": true,
+          "value": "binding:binding-1"
+        }
+      ]
+    },
+    {
+      "command": "upsert_station_group_binding",
+      "input": {
+        "bindingKind": "station_group",
+        "bindingStatus": "available",
+        "confidence": 0.9,
+        "defaultRateMultiplier": 1.0,
+        "effectiveRateMultiplier": 1.0,
+        "groupCategoryOverride": null,
+        "groupIdHash": "group-id-hash-1",
+        "groupKeyHash": "group-hash-1",
+        "groupName": "default",
+        "inferredGroupCategory": "gpt",
+        "lastSeenAt": "1700000000000",
+        "parentGroupBindingId": null,
+        "rateSource": "fixture",
+        "rawJsonRedacted": null,
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "userRateMultiplier": null
+      },
+      "output": {
+        "bindingKind": "station_group",
+        "bindingStatus": "available",
+        "confidence": 0.9,
+        "createdAt": "1700000000000",
+        "defaultRateMultiplier": 1.0,
+        "effectiveRateMultiplier": 1.0,
+        "groupCategoryOverride": null,
+        "groupIdHash": "group-id-hash-1",
+        "groupKeyHash": "group-hash-1",
+        "groupName": "default",
+        "id": "binding-1",
+        "inferredGroupCategory": "gpt",
+        "lastCheckedAt": "1700000000000",
+        "lastRateChangedAt": null,
+        "lastSeenAt": "1700000000000",
+        "parentGroupBindingId": null,
+        "rateSource": "fixture",
+        "rawJsonRedacted": null,
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "updatedAt": "1700000000000",
+        "userRateMultiplier": null
+      }
+    },
+    {
+      "command": "list_group_rate_records",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "bindingKind": "station_group",
+          "checkedAt": "1700000000000",
+          "confidence": 0.9,
+          "createdAt": "1700000000000",
+          "defaultRateMultiplier": 1.0,
+          "effectiveRateMultiplier": 1.0,
+          "groupBindingId": "binding-1",
+          "groupKeyHash": "group-hash-1",
+          "groupName": "default",
+          "id": "rate-1",
+          "inferredGroupCategory": "gpt",
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": null,
+          "userRateMultiplier": null
+        }
+      ]
+    },
+    {
+      "command": "list_collector_runs",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "adapter": "fixture",
+          "createdAt": "1700000000000",
+          "durationMs": 100,
+          "endpointCount": 1,
+          "endpointRevision": 1,
+          "errorCode": null,
+          "errorMessage": null,
+          "failureCount": 0,
+          "finishedAt": "1700000000100",
+          "id": "run-1",
+          "manualActionRequired": false,
+          "parentRunId": null,
+          "snapshotId": "snapshot-1",
+          "startedAt": "1700000000000",
+          "stationId": "station-1",
+          "status": "success",
+          "successCount": 1,
+          "taskType": "full"
+        }
+      ]
+    },
+    {
+      "command": "list_collector_snapshots",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "success",
+          "summaryJson": {
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "command": "get_latest_collector_snapshot",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "createdAt": "1700000000000",
+        "endpointRevision": 1,
+        "errorMessage": null,
+        "fetchedAt": "1700000000000",
+        "id": "snapshot-1",
+        "normalizedJson": {},
+        "rawJsonRedacted": null,
+        "source": "fixture",
+        "stationId": "station-1",
+        "status": "success",
+        "summaryJson": {
+          "status": "success"
+        }
+      }
+    },
+    {
+      "command": "list_latest_collector_snapshots",
+      "input": {
+        "stationIds": [
+          "station-1"
+        ]
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "success",
+          "summaryJson": {
+            "status": "success"
+          }
+        }
+      ]
+    },
+    {
+      "command": "list_channel_monitors",
+      "input": {},
+      "output": [
+        {
+          "consecutiveFailureThreshold": 3,
+          "createdAt": "1700000000000",
+          "enabled": true,
+          "fallbackModels": [
+            "fixture-model"
+          ],
+          "id": "monitor-1",
+          "intervalSeconds": 60,
+          "jitterSeconds": 5,
+          "maxConcurrency": 1,
+          "name": "Fixture monitor",
+          "note": null,
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "targetType": "station_key",
+          "templateId": "template-1",
+          "timeoutSeconds": 15,
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "list_channel_monitor_summaries",
+      "input": {
+        "runLimit": 60,
+        "runSince": "1700000000000"
+      },
+      "output": [
+        {
+          "latestRun": {
+            "createdAt": "1700000000000",
+            "durationMs": 100,
+            "errorMessage": null,
+            "fallbackModel": null,
+            "finishedAt": "1700000000100",
+            "httpStatus": 200,
+            "id": "monitor-run-1",
+            "latencyMs": 80,
+            "monitorId": "monitor-1",
+            "responseModel": "fixture-model",
+            "startedAt": "1700000000000",
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "status": "success",
+            "templateId": "template-1"
+          },
+          "monitor": {
+            "consecutiveFailureThreshold": 3,
+            "createdAt": "1700000000000",
+            "enabled": true,
+            "fallbackModels": [
+              "fixture-model"
+            ],
+            "id": "monitor-1",
+            "intervalSeconds": 60,
+            "jitterSeconds": 5,
+            "maxConcurrency": 1,
+            "name": "Fixture monitor",
+            "note": null,
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "targetType": "station_key",
+            "templateId": "template-1",
+            "timeoutSeconds": 15,
+            "updatedAt": "1700000000000"
+          },
+          "recentRuns": [
+            {
+              "createdAt": "1700000000000",
+              "durationMs": 100,
+              "errorMessage": null,
+              "fallbackModel": null,
+              "finishedAt": "1700000000100",
+              "httpStatus": 200,
+              "id": "monitor-run-1",
+              "latencyMs": 80,
+              "monitorId": "monitor-1",
+              "responseModel": "fixture-model",
+              "startedAt": "1700000000000",
+              "stationId": "station-1",
+              "stationKeyId": "key-1",
+              "status": "success",
+              "templateId": "template-1"
+            }
+          ],
+          "runsLoadStatus": "ok"
+        }
+      ]
+    },
+    {
+      "command": "list_channel_status_summaries",
+      "input": {},
+      "output": [
+        {
+          "last24h": {
+            "availabilityPercent": 100.0,
+            "avgEndpointPingMs": 20,
+            "avgLatencyMs": 80,
+            "failureCount": 0,
+            "lastCheckedAt": "1700000000100",
+            "latestErrorMessage": null,
+            "latestStatus": "success",
+            "successCount": 1,
+            "timeline": [
+              {
+                "checkedAt": "1700000000100",
+                "endpointPingMs": 20,
+                "latencyMs": 80,
+                "status": "success"
+              }
+            ],
+            "totalCount": 1,
+            "warningCount": 0,
+            "window": "24h"
+          },
+          "last7d": {
+            "availabilityPercent": 100.0,
+            "avgEndpointPingMs": 20,
+            "avgLatencyMs": 80,
+            "failureCount": 0,
+            "lastCheckedAt": "1700000000100",
+            "latestErrorMessage": null,
+            "latestStatus": "success",
+            "successCount": 1,
+            "timeline": [
+              {
+                "checkedAt": "1700000000100",
+                "endpointPingMs": 20,
+                "latencyMs": 80,
+                "status": "success"
+              }
+            ],
+            "totalCount": 1,
+            "warningCount": 0,
+            "window": "7d"
+          },
+          "monitor": {
+            "consecutiveFailureThreshold": 3,
+            "createdAt": "1700000000000",
+            "enabled": true,
+            "fallbackModels": [
+              "fixture-model"
+            ],
+            "id": "monitor-1",
+            "intervalSeconds": 60,
+            "jitterSeconds": 5,
+            "maxConcurrency": 1,
+            "name": "Fixture monitor",
+            "note": null,
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "targetType": "station_key",
+            "templateId": "template-1",
+            "timeoutSeconds": 15,
+            "updatedAt": "1700000000000"
+          },
+          "recent": {
+            "availabilityPercent": 100.0,
+            "avgEndpointPingMs": 20,
+            "avgLatencyMs": 80,
+            "failureCount": 0,
+            "lastCheckedAt": "1700000000100",
+            "latestErrorMessage": null,
+            "latestStatus": "success",
+            "successCount": 1,
+            "timeline": [
+              {
+                "checkedAt": "1700000000100",
+                "endpointPingMs": 20,
+                "latencyMs": 80,
+                "status": "success"
+              }
+            ],
+            "totalCount": 1,
+            "warningCount": 0,
+            "window": "recent"
+          }
+        }
+      ]
+    },
+    {
+      "command": "list_channel_monitor_runs",
+      "input": {
+        "monitorId": "monitor-1"
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "durationMs": 100,
+          "errorMessage": null,
+          "fallbackModel": null,
+          "finishedAt": "1700000000100",
+          "httpStatus": 200,
+          "id": "monitor-run-1",
+          "latencyMs": 80,
+          "monitorId": "monitor-1",
+          "responseModel": "fixture-model",
+          "startedAt": "1700000000000",
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "status": "success",
+          "templateId": "template-1"
+        }
+      ]
+    },
+    {
+      "command": "list_channel_monitor_templates",
+      "input": {},
+      "output": [
+        {
+          "builtIn": false,
+          "createdAt": "1700000000000",
+          "enabled": true,
+          "endpointKind": "chat_completions",
+          "id": "template-1",
+          "method": "POST",
+          "name": "Fixture template",
+          "note": null,
+          "path": "/v1/chat/completions",
+          "requestBodyJson": "{}",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "create_channel_monitor",
+      "input": {
+        "consecutiveFailureThreshold": 3,
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15
+      },
+      "output": {
+        "consecutiveFailureThreshold": 3,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "id": "monitor-1",
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "update_channel_monitor",
+      "input": {
+        "consecutiveFailureThreshold": 3,
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "id": "monitor-1",
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15
+      },
+      "output": {
+        "consecutiveFailureThreshold": 3,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "fallbackModels": [
+          "fixture-model"
+        ],
+        "id": "monitor-1",
+        "intervalSeconds": 60,
+        "jitterSeconds": 5,
+        "maxConcurrency": 1,
+        "name": "Fixture monitor",
+        "note": null,
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "targetType": "station_key",
+        "templateId": "template-1",
+        "timeoutSeconds": 15,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "delete_channel_monitor",
+      "input": {
+        "id": "monitor-1"
+      },
+      "output": null
+    },
+    {
+      "command": "create_channel_monitor_template",
+      "input": {
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "update_channel_monitor_template",
+      "input": {
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "duplicate_channel_monitor_template",
+      "input": {
+        "id": "template-1"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "endpointKind": "chat_completions",
+        "id": "template-1",
+        "method": "POST",
+        "name": "Fixture template",
+        "note": null,
+        "path": "/v1/chat/completions",
+        "requestBodyJson": "{}",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "delete_channel_monitor_template",
+      "input": {
+        "id": "template-1"
+      },
+      "output": null
+    },
+    {
+      "command": "load_channel_status_workspace",
+      "input": {},
+      "output": {
+        "channelStatusSummaries": [],
+        "keyPoolItems": [],
+        "requestLogs": [],
+        "stationKeyHealth": []
+      }
+    },
+    {
+      "command": "run_channel_monitor_now",
+      "input": {
+        "monitorId": "monitor-1"
+      },
+      "output": [
+        {
+          "createdAt": "1700000000000",
+          "durationMs": 100,
+          "errorMessage": null,
+          "fallbackModel": null,
+          "finishedAt": "1700000000100",
+          "httpStatus": 200,
+          "id": "monitor-run-1",
+          "latencyMs": 80,
+          "monitorId": "monitor-1",
+          "responseModel": "fixture-model",
+          "startedAt": "1700000000000",
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "status": "success",
+          "templateId": "template-1"
+        }
+      ]
+    },
+    {
+      "command": "detect_sub2api_station",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "collect_sub2api_station",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "detect_station_info",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "collect_station_info",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "collect_station_task",
+      "input": {
+        "stationId": "station-1",
+        "taskType": "groups"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "test_station_login",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "events": [
+          {
+            "eventType": "fixture",
+            "message": "Collection completed.",
+            "status": "checked"
+          }
+        ],
+        "snapshot": {
+          "createdAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorMessage": null,
+          "fetchedAt": "1700000000000",
+          "id": "collector-snapshot-1",
+          "normalizedJson": {},
+          "rawJsonRedacted": null,
+          "source": "fixture",
+          "stationId": "station-1",
+          "status": "checked",
+          "summaryJson": {
+            "mode": "fixture"
+          }
+        }
+      }
+    },
+    {
+      "command": "test_station_login_input",
+      "input": {
+        "loginPassword": "",
+        "loginUsername": "",
+        "stationType": "newapi",
+        "websiteUrl": "https://example.test"
+      },
+      "output": {
+        "diagnosis": null,
+        "message": "Credentials are required.",
+        "status": "missing_credentials",
+        "tokenPresent": false
+      }
+    },
+    {
+      "command": "record_capture_event",
+      "input": {
+        "contentType": "application/json",
+        "durationMs": 25,
+        "errorMessage": null,
+        "finishedAt": "2026-07-24T00:00:01Z",
+        "method": "GET",
+        "pageUrl": "https://example.test/admin",
+        "requestPath": "/api/user",
+        "requestUrl": "https://example.test/api/user",
+        "responseJson": {
+          "ok": true
+        },
+        "responseKind": "json",
+        "responseSize": 42,
+        "responseText": null,
+        "sourceWindowId": "capture-station-1",
+        "startedAt": "2026-07-24T00:00:00Z",
+        "stationId": "station-1",
+        "status": 200
+      },
+      "output": {
+        "captureCount": 1,
+        "lastError": null,
+        "pendingConfirmationCount": 0,
+        "recognizedFieldCount": 0,
+        "stationId": "station-1",
+        "status": "capturing",
+        "webAuthorizationCandidate": false
+      }
+    },
+    {
+      "command": "get_station_key_capabilities",
+      "input": {
+        "stationKeyId": "key-1"
+      },
+      "output": {
+        "modelAllowlist": [
+          "fixture-model"
+        ],
+        "modelBlocklist": [],
+        "onlyUseAsBackup": false,
+        "preferredModels": [
+          "fixture-model"
+        ],
+        "routingTags": [
+          "fixture"
+        ],
+        "stationKeyId": "key-1",
+        "supportsChatCompletions": true,
+        "supportsEmbeddings": false,
+        "supportsReasoning": false,
+        "supportsResponses": true,
+        "supportsStream": true,
+        "supportsTools": false,
+        "supportsVision": false,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "list_model_aliases",
+      "input": {},
+      "output": [
+        {
+          "clientModel": "fixture-model",
+          "createdAt": "1700000000000",
+          "enabled": true,
+          "id": "alias-1",
+          "note": null,
+          "updatedAt": "1700000000000",
+          "upstreamModel": "fixture-upstream-model"
+        }
+      ]
+    },
+    {
+      "command": "list_station_key_health",
+      "input": {},
+      "output": [
+        {
+          "avgLatencyMs": 120,
+          "consecutiveFailures": 0,
+          "cooldownUntil": null,
+          "failureCount": 0,
+          "lastErrorSummary": null,
+          "lastFailureAt": null,
+          "lastSuccessAt": "1700000000000",
+          "stationKeyId": "key-1",
+          "successCount": 1,
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "list_station_endpoint_health",
+      "input": {},
+      "output": [
+        {
+          "checkedAt": "1700000000000",
+          "endpointRevision": 1,
+          "errorSummary": null,
+          "latencyMs": 120,
+          "stationId": "station-1",
+          "status": "success",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "get_station_key_health",
+      "input": {
+        "stationKeyId": "key-1"
+      },
+      "output": {
+        "avgLatencyMs": 120,
+        "consecutiveFailures": 0,
+        "cooldownUntil": null,
+        "failureCount": 0,
+        "lastErrorSummary": null,
+        "lastFailureAt": null,
+        "lastSuccessAt": "1700000000000",
+        "stationKeyId": "key-1",
+        "successCount": 1,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "simulate_route",
+      "input": {
+        "endpoint": "chat_completions",
+        "maxRateMultiplier": 2.0,
+        "model": "fixture-model",
+        "policy": "cost_stable_first",
+        "previousResponseId": null,
+        "routingGroupFilter": {
+          "group_type": "gpt"
+        },
+        "sessionHash": "session-1",
+        "stream": true,
+        "usesReasoning": false,
+        "usesTools": false,
+        "usesVision": false
+      },
+      "output": {
+        "candidates": [],
+        "mappedModel": "fixture-model",
+        "maxRateMultiplier": 2.0,
+        "message": "Route simulation completed.",
+        "policy": "cost_stable_first",
+        "routingGroupFilter": {
+          "group_type": "gpt"
+        },
+        "schedulerErrorCode": null,
+        "selectedStationId": "station-1",
+        "selectedStationKeyId": "key-1"
+      }
+    },
+    {
+      "command": "ping_station_endpoint",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "checkedAt": "1700000000000",
+        "errorSummary": null,
+        "latencyMs": 20,
+        "ok": true,
+        "stationId": "station-1",
+        "status": "success"
+      }
+    },
+    {
+      "command": "reorder_local_routing_keys",
+      "input": {
+        "stationKeyIds": [
+          "key-1",
+          "key-2"
+        ]
+      },
+      "output": {
+        "candidates": [],
+        "latestDecision": null,
+        "proxyStatus": {
+          "activeRequests": 1,
+          "bindAddr": "127.0.0.1",
+          "lastError": null,
+          "lifecycle": "running",
+          "port": 8787,
+          "requestCount": 2,
+          "running": true,
+          "startedAt": "1700000000000"
+        },
+        "recentEvents": [],
+        "settings": {
+          "bindAddr": "127.0.0.1",
+          "enabled": true,
+          "endpoint": "chat_completions",
+          "fallbackEnabled": true,
+          "maxRateMultiplier": 2.0,
+          "policy": "automatic_balanced",
+          "port": 8787,
+          "previewKind": "baseline_eligibility",
+          "routingGroupFilter": "all_groups"
+        },
+        "summary": {
+          "candidateCount": 0,
+          "cooldownCandidateCount": 0,
+          "lastDecisionAt": null,
+          "previewEligibleCandidateCount": 0,
+          "previewExcludedCandidateCount": 0
+        }
+      }
+    },
+    {
+      "command": "update_station_key_capabilities",
+      "input": {
+        "modelAllowlist": [
+          "fixture-model"
+        ],
+        "modelBlocklist": [],
+        "onlyUseAsBackup": false,
+        "preferredModels": [
+          "fixture-model"
+        ],
+        "routingTags": [
+          "fixture"
+        ],
+        "stationKeyId": "key-1",
+        "supportsChatCompletions": true,
+        "supportsEmbeddings": false,
+        "supportsReasoning": false,
+        "supportsResponses": true,
+        "supportsStream": true,
+        "supportsTools": false,
+        "supportsVision": false
+      },
+      "output": {
+        "modelAllowlist": [
+          "fixture-model"
+        ],
+        "modelBlocklist": [],
+        "onlyUseAsBackup": false,
+        "preferredModels": [
+          "fixture-model"
+        ],
+        "routingTags": [
+          "fixture"
+        ],
+        "stationKeyId": "key-1",
+        "supportsChatCompletions": true,
+        "supportsEmbeddings": false,
+        "supportsReasoning": false,
+        "supportsResponses": true,
+        "supportsStream": true,
+        "supportsTools": false,
+        "supportsVision": false,
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "upsert_model_alias",
+      "input": {
+        "clientModel": "client-model",
+        "enabled": true,
+        "id": null,
+        "note": null,
+        "upstreamModel": "upstream-model"
+      },
+      "output": {
+        "clientModel": "client-model",
+        "createdAt": "1700000000000",
+        "enabled": true,
+        "id": "alias-1",
+        "note": null,
+        "updatedAt": "1700000000000",
+        "upstreamModel": "upstream-model"
+      }
+    },
+    {
+      "command": "delete_model_alias",
+      "input": {
+        "id": "alias-1"
+      },
+      "output": null
+    },
+    {
+      "command": "list_pricing_rules",
+      "input": {},
+      "output": [
+        {
+          "basePriceSource": "fixture",
+          "collectedAt": "1700000000000",
+          "confidence": 1.0,
+          "createdAt": "1700000000000",
+          "currency": "USD",
+          "enabled": true,
+          "fixedPrice": null,
+          "groupBindingId": null,
+          "groupName": null,
+          "id": "pricing-rule-1",
+          "inputPrice": 1.0,
+          "model": "fixture-model",
+          "normalizationStatus": "complete",
+          "note": null,
+          "outputPrice": 2.0,
+          "priceType": "token",
+          "rateMultiplier": 0.8,
+          "source": "fixture",
+          "stationId": "station-1",
+          "stationKeyId": "key-1",
+          "tierLabel": null,
+          "unit": "M",
+          "updatedAt": "1700000000000",
+          "validFrom": null,
+          "validUntil": null
+        }
+      ]
+    },
+    {
+      "command": "list_model_base_prices",
+      "input": {},
+      "output": [
+        {
+          "builtIn": false,
+          "createdAt": "1700000000000",
+          "currency": "USD",
+          "enabled": true,
+          "id": "base-price-1",
+          "inputPrice": 1.0,
+          "model": "fixture-model",
+          "note": null,
+          "outputPrice": 2.0,
+          "provider": "fixture",
+          "sourceCheckedAt": "2026-07-24",
+          "sourceLabel": "Fixture pricing",
+          "sourceUrl": "https://provider.invalid/pricing",
+          "unit": "M",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "resolve_station_key_pricing_context",
+      "input": {
+        "requestKind": "text",
+        "requestedModel": "fixture-model",
+        "stationKeyId": "key-1"
+      },
+      "output": {
+        "baseFixedPrice": null,
+        "baseInputPrice": 1.0,
+        "baseOutputPrice": 2.0,
+        "basePriceSource": "fixture",
+        "confidence": 1.0,
+        "currency": "USD",
+        "effectiveRateMultiplier": 0.8,
+        "estimatedFixedPrice": null,
+        "estimatedInputPrice": 0.8,
+        "estimatedOutputPrice": 1.6,
+        "groupBindingId": null,
+        "pricingStatus": "priced",
+        "rateCollectedAt": "1700000000000",
+        "rateSource": "fixture",
+        "reason": null,
+        "requestKind": "text",
+        "requestedModel": "fixture-model",
+        "resolvedAt": "1700000000000",
+        "resolvedModel": "fixture-model",
+        "sourceChain": [
+          "fixture"
+        ],
+        "stationId": "station-1",
+        "stationKeyId": "key-1",
+        "unit": "M"
+      }
+    },
+    {
+      "command": "load_pricing_comparison_workspace",
+      "input": {},
+      "output": {
+        "developerModeEnabled": false,
+        "groupBindings": [],
+        "groupRates": [],
+        "pricingRules": [
+          {
+            "basePriceSource": "fixture",
+            "collectedAt": "1700000000000",
+            "confidence": 1.0,
+            "createdAt": "1700000000000",
+            "currency": "USD",
+            "enabled": true,
+            "fixedPrice": null,
+            "groupBindingId": null,
+            "groupName": null,
+            "id": "pricing-rule-1",
+            "inputPrice": 1.0,
+            "model": "fixture-model",
+            "normalizationStatus": "complete",
+            "note": null,
+            "outputPrice": 2.0,
+            "priceType": "token",
+            "rateMultiplier": 0.8,
+            "source": "fixture",
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "tierLabel": null,
+            "unit": "M",
+            "updatedAt": "1700000000000",
+            "validFrom": null,
+            "validUntil": null
+          }
+        ],
+        "stationKeys": [],
+        "stations": []
+      }
+    },
+    {
+      "command": "upsert_model_base_price",
+      "input": {
+        "builtIn": false,
+        "currency": "USD",
+        "enabled": true,
+        "id": null,
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "note": null,
+        "outputPrice": 2.0,
+        "provider": "openai",
+        "sourceCheckedAt": null,
+        "sourceLabel": "Fixture",
+        "sourceUrl": "https://example.test/pricing",
+        "unit": "M"
+      },
+      "output": {
+        "builtIn": false,
+        "createdAt": "1700000000000",
+        "currency": "USD",
+        "enabled": true,
+        "id": "price-1",
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "note": null,
+        "outputPrice": 2.0,
+        "provider": "openai",
+        "sourceCheckedAt": null,
+        "sourceLabel": "Fixture",
+        "sourceUrl": "https://example.test/pricing",
+        "unit": "M",
+        "updatedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "reset_model_base_prices_to_builtins",
+      "input": {},
+      "output": [
+        {
+          "builtIn": false,
+          "createdAt": "1700000000000",
+          "currency": "USD",
+          "enabled": true,
+          "id": "price-1",
+          "inputPrice": 1.0,
+          "model": "fixture-model",
+          "note": null,
+          "outputPrice": 2.0,
+          "provider": "openai",
+          "sourceCheckedAt": null,
+          "sourceLabel": "Fixture",
+          "sourceUrl": "https://example.test/pricing",
+          "unit": "M",
+          "updatedAt": "1700000000000"
+        }
+      ]
+    },
+    {
+      "command": "upsert_pricing_rule",
+      "input": {
+        "basePriceSource": null,
+        "collectedAt": null,
+        "confidence": 1.0,
+        "currency": "USD",
+        "enabled": true,
+        "fixedPrice": null,
+        "groupBindingId": null,
+        "groupName": null,
+        "id": null,
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "normalizationStatus": null,
+        "note": null,
+        "outputPrice": 2.0,
+        "priceType": "token",
+        "rateMultiplier": 1.0,
+        "source": "manual",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "tierLabel": null,
+        "unit": "M",
+        "validFrom": null,
+        "validUntil": null
+      },
+      "output": {
+        "basePriceSource": null,
+        "collectedAt": null,
+        "confidence": 1.0,
+        "createdAt": "1700000000000",
+        "currency": "USD",
+        "enabled": true,
+        "fixedPrice": null,
+        "groupBindingId": null,
+        "groupName": null,
+        "id": "rule-1",
+        "inputPrice": 1.0,
+        "model": "fixture-model",
+        "normalizationStatus": "manual",
+        "note": null,
+        "outputPrice": 2.0,
+        "priceType": "token",
+        "rateMultiplier": 1.0,
+        "source": "manual",
+        "stationId": "station-1",
+        "stationKeyId": null,
+        "tierLabel": null,
+        "unit": "M",
+        "updatedAt": "1700000000000",
+        "validFrom": null,
+        "validUntil": null
+      }
+    },
+    {
+      "command": "delete_pricing_rule",
+      "input": {
+        "id": "rule-1"
+      },
+      "output": null
+    },
+    {
+      "command": "get_proxy_status",
+      "input": {},
+      "output": {
+        "activeRequests": 1,
+        "bindAddr": "127.0.0.1",
+        "lastError": null,
+        "lifecycle": "running",
+        "port": 8787,
+        "requestCount": 2,
+        "running": true,
+        "startedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "load_local_routing_workspace",
+      "input": {},
+      "output": {
+        "candidates": [],
+        "latestDecision": null,
+        "proxyStatus": {
+          "activeRequests": 1,
+          "bindAddr": "127.0.0.1",
+          "lastError": null,
+          "lifecycle": "running",
+          "port": 8787,
+          "requestCount": 2,
+          "running": true,
+          "startedAt": "1700000000000"
+        },
+        "recentEvents": [],
+        "settings": {
+          "bindAddr": "127.0.0.1",
+          "enabled": true,
+          "endpoint": "chat_completions",
+          "fallbackEnabled": true,
+          "maxRateMultiplier": 2.0,
+          "policy": "automatic_balanced",
+          "port": 8787,
+          "previewKind": "baseline_eligibility",
+          "routingGroupFilter": "all_groups"
+        },
+        "summary": {
+          "candidateCount": 0,
+          "cooldownCandidateCount": 0,
+          "lastDecisionAt": null,
+          "previewEligibleCandidateCount": 0,
+          "previewExcludedCandidateCount": 0
+        }
+      }
+    },
+    {
+      "command": "start_local_proxy",
+      "input": {},
+      "output": {
+        "activeRequests": 1,
+        "bindAddr": "127.0.0.1",
+        "lastError": null,
+        "lifecycle": "running",
+        "port": 8787,
+        "requestCount": 2,
+        "running": true,
+        "startedAt": "1700000000000"
+      }
+    }
+  ],
+  "schemaVersion": 1
+}

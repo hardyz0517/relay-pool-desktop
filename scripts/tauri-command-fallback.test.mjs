@@ -18,26 +18,18 @@ await esbuild.build({
   format: "esm",
 });
 
-const { classifyTauriInvokeError, isTauriCommandNotFound, isTauriInvokeUnavailable } = await import(
+const { isTauriInvokeUnavailable } = await import(
   pathToFileURL(outFile).href
 );
 
-const cases = [
-  ["Command load_pricing_comparison_workspace not found", "command-not-found"],
-  ["Command load_channel_status_workspace not found", "command-not-found"],
-  ["Command mark_change_events_read not found", "command-not-found"],
-  ["Command load_pricing_comparison_workspace not allowed by ACL", "acl-denied"],
-  ["database record not found", "other"],
-  ["Cannot read properties of undefined (reading '__TAURI_INTERNALS__')", "runtime-unavailable"],
-];
+globalThis.isTauri = false;
+assert.equal(isTauriInvokeUnavailable(new Error("any browser preview failure")), true);
 
-for (const [message, expected] of cases) {
-  assert.equal(classifyTauriInvokeError(new Error(message)), expected, message);
+globalThis.isTauri = true;
+for (const message of [
+  "Command load_pricing_comparison_workspace not found",
+  "Command load_pricing_comparison_workspace not allowed by ACL",
+  "Cannot read properties of undefined (reading '__TAURI_INTERNALS__')",
+]) {
+  assert.equal(isTauriInvokeUnavailable(new Error(message)), false, message);
 }
-
-assert.equal(
-  isTauriCommandNotFound(new Error("Command load_pricing_comparison_workspace not allowed by ACL")),
-  false,
-);
-
-assert.equal(isTauriInvokeUnavailable(new Error("Command mark_change_events_read not found")), false);
