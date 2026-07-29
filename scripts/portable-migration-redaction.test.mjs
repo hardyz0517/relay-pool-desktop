@@ -48,8 +48,9 @@ for (const absolutePath of scannedFiles) {
   }
 }
 
+const frontendRoot = path.join(repoRoot, "src") + path.sep;
 const frontend = scannedFiles
-  .filter((file) => file.includes(`${path.sep}src${path.sep}`))
+  .filter((file) => file.startsWith(frontendRoot))
   .map((file) => fs.readFileSync(file, "utf8"))
   .join("\n");
 assert.ok(!/localStorage\s*\./.test(frontend), "portable migration UI must not persist passphrases or operation state in localStorage");

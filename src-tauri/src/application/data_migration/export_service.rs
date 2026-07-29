@@ -731,6 +731,22 @@ mod tests {
             &std::fs::read(&artifact.package_path).expect("package")[..8],
             b"SQLite f"
         );
+        let package_bytes = std::fs::read(&artifact.package_path).expect("package bytes");
+        assert!(
+            !contains_bytes(&package_bytes, &source_material),
+            "portable package must not contain source device key bytes"
+        );
+        assert!(
+            !contains_bytes(&package_bytes, b"sk-p8-secret-plaintext-canary"),
+            "portable package must not contain source plaintext secret canary"
+        );
+        assert!(
+            !working_tree_contains_bytes(
+                directory.path().join("working").as_path(),
+                &source_material
+            ),
+            "working directory must not retain source device key bytes"
+        );
         assert!(
             std::fs::read_dir(directory.path().join("working"))
                 .expect("working dir")
@@ -881,6 +897,31 @@ mod tests {
         .execute(&mut connection)
         .await?;
         connection.close().await
+    }
+
+    fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+        !needle.is_empty()
+            && haystack
+                .windows(needle.len())
+                .any(|window| window == needle)
+    }
+
+    fn working_tree_contains_bytes(root: &Path, needle: &[u8]) -> bool {
+        if !root.exists() {
+            return false;
+        }
+        std::fs::read_dir(root)
+            .expect("read working tree")
+            .any(|entry| {
+                let path = entry.expect("entry").path();
+                if path.is_dir() {
+                    working_tree_contains_bytes(&path, needle)
+                } else {
+                    std::fs::read(&path)
+                        .map(|bytes| contains_bytes(&bytes, needle))
+                        .unwrap_or(false)
+                }
+            })
     }
 
     async fn mutate_source_after_export(path: &Path) -> Result<(), sqlx::Error> {
