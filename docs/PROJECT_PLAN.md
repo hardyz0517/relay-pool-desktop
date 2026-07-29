@@ -30,7 +30,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - P5 已完成本地 OpenAI-compatible 网关主干。
 - P6 已完成模型 / 协议 / 健康感知路由层。
 - P7 已完成价格归一化、余额快照、请求成本和 cheap_first 路由展示。
-- P8 正在推进安全与凭据治理。
+- P8 正在推进安全与凭据治理；跨设备数据搬家实现必须保持在禁用的安全门禁后，直到安全政策评审和两机发布资格完成。
 - P9 真实站点采集与路由事实层：补齐 Sub2API / NewAPI / OpenAI-compatible adapter，建立 group binding、倍率历史、collector run、价格归一化和路由经济解释，让 UI 和路由消费稳定事实而不是 raw snapshot JSON。
 
 ## 2.1 信息架构
@@ -217,6 +217,8 @@ P7 完成时应满足：
 P8 安全与凭据治理：统一 SecretManager、本地加密存储、旧明文凭据迁移、UI 脱敏、日志 / 快照脱敏、导入导出安全边界和本地代理安全复核。
 
 P8 不继续扩展路由、价格或采集能力。它的核心目标是让真实 Station Key、站点登录密码、token / cookie / session、collector snapshot 和 request log 可以在本地长期使用时保持可控暴露面。
+
+跨设备数据搬家属于 P8 安全边界的一部分，但不是默认导出或本机备份的扩展。当前实现只能在安全政策正式批准、发布 checklist 完成且同一 revision 自动门禁通过后开启；在此之前 capability 必须报告禁用。
 
 ## 7. 后续阶段
 

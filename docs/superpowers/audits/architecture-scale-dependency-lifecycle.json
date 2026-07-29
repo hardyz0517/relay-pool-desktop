@@ -182,7 +182,7 @@
       "checked_on": "2026-07-29",
       "next_review_on": "2026-10-29",
       "source_urls": ["https://docs.rs/age/0.12.1", "https://crates.io/crates/age/0.12.1", "https://github.com/str4d/rage"],
-      "notes": "Accepted only behind the disabled portable migration feature gate. The spike verifies passphrase round trip, streaming authenticated EOF, unified wrong-password/truncation public classification, and pre-KDF excessive scrypt work rejection through set_max_work_factor."
+      "notes": "Accepted only behind the disabled portable migration feature gate. The spike verifies passphrase round trip, streaming authenticated EOF, unified wrong-password/truncation public classification, and pre-KDF excessive scrypt work rejection through set_max_work_factor. Release enablement requires the portable migration smoke checklist and security approval record for the same source revision."
     },
     {
       "ecosystem": "cargo",

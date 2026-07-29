@@ -58,6 +58,17 @@ Until `docs/SECURITY_EXPORT_IMPORT.md` is formally updated and approved, portabl
 
 Default export semantics remain unchanged: default exports do not include raw secrets or encrypted ciphertext.
 
+The current release policy is intentionally not approved. `SECURITY_POLICY_APPROVED` must remain `false` until the approval record and two-machine smoke evidence are attached to the release qualification. Documentation updates alone do not authorize enabling the capability.
+
+## Release Qualification
+
+Before the first release that enables portable migration, the same source revision must have:
+
+- completed `docs/release/PORTABLE_MIGRATION_SMOKE_CHECKLIST.md`;
+- passing full and release shared verifier runs, including the portable migration integration gates;
+- a canary/artifact audit proving that no real package, local database, key, cookie, token, or unredacted screenshot was committed;
+- an explicit decision that the 24-month v1 reader support window has started.
+
 ## Rollback
 
 If `age 0.12.1` is later found unsuitable, roll back to this branch point by removing the direct `age`, `hmac`, and `static_assertions` additions, deleting the age envelope adapter and tests introduced after Task 0, and keeping the feature gate disabled. No released `.rpd-move` reader obligation starts until the feature is enabled by policy and shipped.

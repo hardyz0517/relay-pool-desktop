@@ -5,6 +5,10 @@ import { parse as parseYaml } from "yaml";
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
 const workflow = parseYaml(await readFile(".github/workflows/release.yml", "utf8"));
 const verifier = await readFile("scripts/verify.ps1", "utf8");
+const securityPolicy = await readFile("docs/SECURITY_EXPORT_IMPORT.md", "utf8");
+const portableMigrationAdr = await readFile("docs/superpowers/specs/2026-07-29-portable-migration-crypto-format-adr.md", "utf8");
+const portableMigrationChecklist = await readFile("docs/release/PORTABLE_MIGRATION_SMOKE_CHECKLIST.md", "utf8");
+const portableMigrationFacade = await readFile("src-tauri/src/application/data_migration/mod.rs", "utf8");
 const steps = workflow.jobs.release.steps;
 const checkoutStep = steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
 const actionIndex = steps.findIndex((step) => String(step.uses ?? "").startsWith("tauri-apps/tauri-action@"));
@@ -24,6 +28,9 @@ for (const required of [
   "test:contracts",
   "Frontend unit tests",
   "Frontend production build",
+  "Portable migration e2e integration",
+  "portable_migration_faults",
+  "portable_migration_malicious",
   "cargo",
   "--locked",
   "verify:release-bundle",
@@ -45,6 +52,12 @@ assert.ok(
   !verifier.includes('"tauri:build", "--", "--target"'),
   "shared verifier must not forward a literal -- to the Tauri build script",
 );
+assert.match(portableMigrationFacade, /SECURITY_POLICY_APPROVED:\s*bool\s*=\s*false/, "portable migration must remain disabled without policy approval");
+assert.match(securityPolicy, /feature_unavailable/, "security policy must document fail-closed public error while disabled");
+assert.match(securityPolicy, /A lost migration password is unrecoverable/, "security policy must document unrecoverable migration passwords");
+assert.match(portableMigrationAdr, /Documentation updates alone do not authorize enabling the capability/, "ADR must keep approval separate from documentation updates");
+assert.match(portableMigrationChecklist, /Windows 10\/11 virtual machines/, "smoke checklist must require two-machine Windows qualification");
+assert.match(portableMigrationChecklist, /run-portable-migration-performance\.ps1/, "smoke checklist must record the portable migration performance harness");
 assert.ok(actionIndex > prebundleIndex, "signed packaging must run only after shared prebundle verification");
 assert.ok(postbundleIndex > actionIndex, "final artifact scan must run after Tauri packaging");
 assert.equal(steps[actionIndex].with.tagName, "${{ github.ref_name }}");

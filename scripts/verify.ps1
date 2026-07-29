@@ -50,6 +50,15 @@ function Invoke-ArchitectureGates {
     Invoke-Checked "Dependency lifecycle" node @("scripts/architecture/check-dependency-lifecycle.mjs")
 }
 
+function Invoke-PortableMigrationReleaseGates {
+    Invoke-Checked "Portable migration fixture matrix" node @("scripts/portable-migration-fixture-matrix.test.mjs")
+    Invoke-Checked "Portable migration redaction gate" node @("scripts/portable-migration-redaction.test.mjs")
+    Invoke-Checked "Portable migration boundary gate" node @("scripts/portable-migration-boundary.test.mjs")
+    Invoke-Checked "Portable migration e2e integration" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "portable_migration_e2e", "--", "--nocapture")
+    Invoke-Checked "Portable migration fault integration" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "portable_migration_faults", "--", "--nocapture")
+    Invoke-Checked "Portable migration malicious integration" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "portable_migration_malicious", "--", "--nocapture")
+}
+
 function Write-Provenance {
     $artifactRoot = Join-Path $repoRoot "output/architecture-scale/qualification/release"
     New-Item -ItemType Directory -Force $artifactRoot | Out-Null
@@ -93,6 +102,7 @@ try {
         Invoke-Checked "Deterministic frontend scale baseline" $pnpm @("architecture:scale-baseline")
         Invoke-Checked "Advisory, license and source policy" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/check-advisories.ps1")
         Invoke-Checked "Frontend contract tests" $pnpm @("test:contracts")
+        Invoke-PortableMigrationReleaseGates
         Invoke-Checked "Frontend unit tests" $pnpm @("test")
         Invoke-Checked "Frontend production build" $pnpm @("build")
         Invoke-Checked "Rust formatting" cargo @("fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check")
