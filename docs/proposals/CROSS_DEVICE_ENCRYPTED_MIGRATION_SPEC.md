@@ -478,7 +478,7 @@ enum SensitiveFieldPolicy {
 - `pricing_rules`
 - `model_base_prices`
 - `station_group_bindings`
-- 路由、采集频率、监控模板和用户设置
+- 路由、采集频率、既有监控模板配置和用户设置；不得引入或扩展监控状态相关功能
 - `remote_station_keys` 中不含完整远端 Key 的脱敏元数据
 
 ### 11.2 默认重置或排除
@@ -546,16 +546,16 @@ enum SensitiveFieldPolicy {
 | `collector_task_state` | `Reset` | 由目标调度器重建 |
 | `change_events` | `OptionalHistory` | JSON 与 message 再次脱敏；清理被排除的日志引用 |
 | `model_base_prices` | `Include` | 完整保留 |
-| `channel_monitor_request_templates` | `IncludeWithTransform` | 请求体通过禁止敏感字段校验后保留 |
-| `channel_monitors` | `IncludeWithTransform` | 保留配置，清空 last/next run 和临时错误状态 |
-| `channel_monitor_runs` | `OptionalHistory` | 错误文本再次脱敏 |
+| `channel_monitor_request_templates` | `IncludeWithTransform` | 仅作为既有配置数据保留；请求体通过禁止敏感字段校验后保留；不得新增监控状态功能 |
+| `channel_monitors` | `IncludeWithTransform` | 仅保留既有配置；清空 last/next run 和临时错误状态；不得迁移运行态或扩展监控状态功能 |
+| `channel_monitor_runs` | `OptionalHistory` | 可选历史数据；错误文本再次脱敏；不得作为目标端运行态恢复依据 |
 | `provider_drafts` | `Exclude` | 首版不导出未提交工作区 |
 | `provider_draft_previews` | `Exclude` | 随 draft 排除 |
 | `app_secret_bindings`（前置新增） | `IncludeWithTransform` | 不包含 Local Key 绑定；其他绑定必须逐项声明策略 |
 
 `settings` 必须采用 key allowlist，不能使用“复制所有未知设置”的策略。当前已知设置至少分为：
 
-- 可携带：路由策略、倍率限制、余额阈值、采集/价格刷新周期、超时、并发、监控和用户 UI 偏好。
+- 可携带：路由策略、倍率限制、余额阈值、采集/价格刷新周期、超时、并发、既有监控配置项（不含运行态/状态功能）和用户 UI 偏好。
 - 携带但转换：`common_login_profiles_json`，只保留 profile 元数据和有效 secret 引用。
 - 重置：`local_key`、`local_proxy_start_on_launch`、数据目录、待搬迁目录、运行时和设备路径。
 - 未知 setting key：导出必须失败并要求 catalog 更新，不能静默包含或丢弃。
@@ -667,7 +667,7 @@ recordCounts
 
 首版禁止自动 merge。未来 merge 必须基于领域对象、稳定 ID 和显式冲突决策实现，不得通过 SQLite `INSERT OR REPLACE` 拼接。
 
-`restore_into_empty` 不能只检查 `stations = 0`。必须由 `MigrationDataCatalog` 为每张用户拥有的表定义 occupancy 查询；只有 Station、Key、非设备 secret、自定义路由/价格/监控、通用登录资料和 draft 等用户数据全部为空，且数据库只含 binary 创建的默认设置与 built-in 行时才视为空。发现未知表或未知 setting key 时不得判空。
+`restore_into_empty` 不能只检查 `stations = 0`。必须由 `MigrationDataCatalog` 为每张用户拥有的表定义 occupancy 查询；只有 Station、Key、非设备 secret、自定义路由/价格、既有监控配置、通用登录资料和 draft 等用户数据全部为空，且数据库只含 binary 创建的默认设置与 built-in 行时才视为空。发现未知表或未知 setting key 时不得判空。
 
 ### 13.2 解密前预检
 
@@ -749,7 +749,7 @@ Registry 条目默认 10 分钟过期，单次确认后立即消费。过期时�
 `PortableSchemaReader` 只能输出版本化的领域记录，不能向目标库返回 SQL。`MigrationTargetWriter` 必须在一个受控事务中按以下依赖阶段写入；阶段内的精确表序由 catalog 声明并接受外键测试约束：
 
 1. 运行当前 binary migrations，生成 schema、默认设置和 built-in 行。
-2. 写入不依赖 secret 的根记录：Station（secret 引用暂置空）、model alias、model base price、监控模板和已允许的普通设置。
+2. 写入不依赖 secret 的根记录：Station（secret 引用暂置空）、model alias、model base price、既有监控模板配置和已允许的普通设置；不得写入或恢复监控运行态。
 3. 写入 Station Key（secret 引用暂置空）及其他只依赖根记录的资产元数据。
 4. 逐条完成 transport -> target 换钥并写入 `secrets`；不得缓存明文集合。
 5. 回填 Station / Station Key secret 引用，写入 station credential、非设备 `app_secret_bindings`，再写入引用 secret 的 `common_login_profiles_json`。
