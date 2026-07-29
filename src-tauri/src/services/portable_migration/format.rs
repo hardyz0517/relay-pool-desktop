@@ -88,6 +88,73 @@ impl PortableMigrationManifest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PortableMigrationManifestInput {
+    pub(crate) export_id: String,
+    pub(crate) created_at: DateTime<Utc>,
+    pub(crate) source_app_version: String,
+    pub(crate) source_platform: String,
+    pub(crate) minimum_importer_version: String,
+    pub(crate) transport_key_id: String,
+    pub(crate) include_history: bool,
+    pub(crate) record_counts: BTreeMap<String, u64>,
+    pub(crate) sqlite_size_bytes: u64,
+    pub(crate) sqlite_sha256: [u8; 32],
+}
+
+pub(crate) fn build_manifest_v1(
+    input: PortableMigrationManifestInput,
+    expected_record_count_keys: &[&str],
+    limits: PortableMigrationLimitsV1,
+) -> Result<PortableMigrationManifest, PortableFormatError> {
+    let (included_categories, excluded_categories) = if input.include_history {
+        (
+            vec![CATEGORY_CORE_DATA.to_string(), CATEGORY_HISTORY.to_string()],
+            vec![
+                CATEGORY_SESSION_CREDENTIALS.to_string(),
+                CATEGORY_LOCAL_PROXY_ACCESS_KEY.to_string(),
+                CATEGORY_DEVICE_RUNTIME_STATE.to_string(),
+                CATEGORY_PROVIDER_DRAFTS.to_string(),
+            ],
+        )
+    } else {
+        (
+            vec![CATEGORY_CORE_DATA.to_string()],
+            vec![
+                CATEGORY_HISTORY.to_string(),
+                CATEGORY_SESSION_CREDENTIALS.to_string(),
+                CATEGORY_LOCAL_PROXY_ACCESS_KEY.to_string(),
+                CATEGORY_DEVICE_RUNTIME_STATE.to_string(),
+                CATEGORY_PROVIDER_DRAFTS.to_string(),
+            ],
+        )
+    };
+    let manifest = PortableMigrationManifest {
+        format: PORTABLE_MIGRATION_FORMAT.to_string(),
+        format_version: PORTABLE_MIGRATION_FORMAT_VERSION,
+        export_id: input.export_id,
+        created_at: input.created_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        source_app_version: input.source_app_version,
+        source_platform: input.source_platform,
+        database_generation: PORTABLE_MIGRATION_DATABASE_GENERATION,
+        database_schema_version: PORTABLE_MIGRATION_MIN_SCHEMA_VERSION,
+        portable_schema_profile: PORTABLE_MIGRATION_SCHEMA_PROFILE.to_string(),
+        minimum_importer_version: input.minimum_importer_version,
+        transport_key_id: input.transport_key_id,
+        encryption_version: PORTABLE_MIGRATION_ENCRYPTION_VERSION,
+        export_policy_version: PORTABLE_MIGRATION_EXPORT_POLICY_VERSION,
+        required_features: vec![],
+        extensions: serde_json::json!({}),
+        included_categories,
+        excluded_categories,
+        record_counts: input.record_counts,
+        sqlite_size_bytes: input.sqlite_size_bytes,
+        sqlite_sha256: general_purpose::STANDARD.encode(input.sqlite_sha256),
+    };
+    validate_manifest(&manifest, expected_record_count_keys, limits)?;
+    Ok(manifest)
+}
+
 pub(crate) struct TransportKeyMaterial(Zeroizing<[u8; 32]>);
 
 impl TransportKeyMaterial {
@@ -111,6 +178,13 @@ pub(crate) struct ParsedPortablePayload {
     pub(crate) manifest: PortableMigrationManifest,
     pub(crate) transport_key: TransportKeyMaterial,
     pub(crate) sqlite_bytes: Vec<u8>,
+    pub(crate) sqlite_sha256: [u8; 32],
+}
+
+#[derive(Debug)]
+pub(crate) struct ParsedPortablePayloadInfo {
+    pub(crate) manifest: PortableMigrationManifest,
+    pub(crate) transport_key: TransportKeyMaterial,
     pub(crate) sqlite_sha256: [u8; 32],
 }
 
@@ -170,6 +244,27 @@ pub(crate) fn read_framed_payload<R: Read>(
     expected_record_count_keys: &[&str],
     limits: PortableMigrationLimitsV1,
 ) -> Result<ParsedPortablePayload, PortableFormatError> {
+    let mut sqlite_bytes = Vec::new();
+    let parsed = read_framed_payload_to_writer(
+        &mut reader,
+        expected_record_count_keys,
+        limits,
+        &mut sqlite_bytes,
+    )?;
+    Ok(ParsedPortablePayload {
+        manifest: parsed.manifest,
+        transport_key: parsed.transport_key,
+        sqlite_bytes,
+        sqlite_sha256: parsed.sqlite_sha256,
+    })
+}
+
+pub(crate) fn read_framed_payload_to_writer<R: Read, W: Write>(
+    mut reader: R,
+    expected_record_count_keys: &[&str],
+    limits: PortableMigrationLimitsV1,
+    mut sqlite_writer: W,
+) -> Result<ParsedPortablePayloadInfo, PortableFormatError> {
     let mut magic = [0_u8; 8];
     read_exact_or_truncated(&mut reader, &mut magic)?;
     if &magic != PORTABLE_MIGRATION_MAGIC {
@@ -199,16 +294,28 @@ pub(crate) fn read_framed_payload<R: Read>(
     {
         return Err(PortableFormatError::LengthLimitExceeded);
     }
-    let sqlite_len_usize =
-        usize::try_from(sqlite_len).map_err(|_| PortableFormatError::LengthOverflow)?;
-    let mut sqlite_bytes = vec![0_u8; sqlite_len_usize];
-    read_exact_or_truncated(&mut reader, &mut sqlite_bytes)?;
+    let mut hasher = Sha256::new();
+    let mut remaining = sqlite_len;
+    let mut buffer = [0_u8; 64 * 1024];
+    while remaining > 0 {
+        let chunk_len = buffer
+            .len()
+            .min(usize::try_from(remaining).unwrap_or(buffer.len()));
+        let read = reader
+            .read(&mut buffer[..chunk_len])
+            .map_err(|_| PortableFormatError::Truncated)?;
+        if read == 0 {
+            return Err(PortableFormatError::Truncated);
+        }
+        hasher.update(&buffer[..read]);
+        write_all(&mut sqlite_writer, &buffer[..read])?;
+        remaining -= read as u64;
+    }
 
     let mut tail_digest = [0_u8; 32];
     read_exact_or_truncated(&mut reader, &mut tail_digest)?;
 
-    let actual_digest = Sha256::digest(&sqlite_bytes);
-    let actual_digest: [u8; 32] = actual_digest.into();
+    let actual_digest: [u8; 32] = hasher.finalize().into();
     let manifest_digest = decode_sha256_digest(&manifest.sqlite_sha256)?;
     if tail_digest != actual_digest || manifest_digest != actual_digest {
         return Err(PortableFormatError::DigestMismatch);
@@ -221,10 +328,9 @@ pub(crate) fn read_framed_payload<R: Read>(
         Err(_) => return Err(PortableFormatError::Truncated),
     }
 
-    Ok(ParsedPortablePayload {
+    Ok(ParsedPortablePayloadInfo {
         manifest,
         transport_key,
-        sqlite_bytes,
         sqlite_sha256: actual_digest,
     })
 }

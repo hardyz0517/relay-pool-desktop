@@ -1,17 +1,34 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    fmt, fs,
+    fs::File,
+    io::Read,
     path::{Path, PathBuf},
 };
 
+use chrono::Utc;
+use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
+use zeroize::Zeroizing;
 
 use crate::{
     application::data_maintenance::{DataMaintenanceActivity, DataMaintenanceCoordinator},
     services::{
+        data_store::atomic_file::{
+            ApprovedLeaf, LocalAtomicFileAdapter, PublishEvidence, PublishMode,
+        },
         portable_migration::{
+            age_envelope::{AgeEnvelopeError, AgeEnvelopeErrorCode, AgeEnvelopeOptions},
+            format::{
+                build_manifest_v1, PortableMigrationManifest, PortableMigrationManifestInput,
+                TransportKeyMaterial,
+            },
             schema_reader::{ordered_import_tables_v1, PortableSchemaReader},
             snapshot::{create_consistent_snapshot, remove_snapshot_file},
+            staging::{
+                publish_verified_partial, remove_file_if_exists, self_test_encrypted_package,
+                write_encrypted_partial, PortablePackageSelfTestReport,
+            },
             target_writer::{TrustedTableBatch, TrustedTargetWriter},
             transform::{
                 encrypted_secret_from_portable_row, portable_row_from_encrypted_secret,
@@ -46,6 +63,44 @@ pub(crate) struct PortableExportArtifact {
     pub(crate) row_counts: BTreeMap<String, usize>,
     pub(crate) rekey_report: SecretRekeyReport,
     pub(crate) transport_key: TransportSecretKey,
+}
+
+pub(crate) struct PortablePackageExportRequest {
+    pub(crate) source_database_path: PathBuf,
+    pub(crate) package_path: PathBuf,
+    pub(crate) working_directory: PathBuf,
+    pub(crate) include_history: bool,
+    pub(crate) overwrite_existing: bool,
+    pub(crate) passphrase: Zeroizing<String>,
+    pub(crate) passphrase_confirmation: Zeroizing<String>,
+}
+
+impl fmt::Debug for PortablePackageExportRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PortablePackageExportRequest")
+            .field("source_database_path", &self.source_database_path)
+            .field("package_path", &self.package_path)
+            .field("working_directory", &self.working_directory)
+            .field("include_history", &self.include_history)
+            .field("overwrite_existing", &self.overwrite_existing)
+            .field("passphrase", &"<redacted>")
+            .field("passphrase_confirmation", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PortablePackageExportArtifact {
+    pub(crate) package_path: PathBuf,
+    pub(crate) export_id: String,
+    pub(crate) package_size_bytes: u64,
+    pub(crate) publish_evidence: PublishEvidence,
+    pub(crate) manifest: PortableMigrationManifest,
+    pub(crate) pre_publish_self_test: PortablePackageSelfTestReport,
+    pub(crate) published_self_test: PortablePackageSelfTestReport,
+    pub(crate) row_counts: BTreeMap<String, usize>,
+    pub(crate) rekey_report: SecretRekeyReport,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +167,225 @@ impl DataMigrationExportService {
             (Ok(_), Err(error)) => {
                 cleanup_unpublished_target(&request.portable_database_path)?;
                 Err(DataMigrationError::Snapshot(error))
+            }
+        }
+    }
+
+    pub(crate) async fn export_portable_package(
+        &self,
+        request: PortablePackageExportRequest,
+        cancellation: Option<&CancellationToken>,
+    ) -> DataMigrationResult<PortablePackageExportArtifact> {
+        self.export_portable_package_with_options(
+            request,
+            cancellation,
+            AgeEnvelopeOptions::CURRENT,
+        )
+        .await
+    }
+
+    async fn export_portable_package_with_options(
+        &self,
+        request: PortablePackageExportRequest,
+        cancellation: Option<&CancellationToken>,
+        age_options: AgeEnvelopeOptions,
+    ) -> DataMigrationResult<PortablePackageExportArtifact> {
+        if request.passphrase.as_str() != request.passphrase_confirmation.as_str() {
+            return Err(DataMigrationError::PassphraseConfirmationMismatch);
+        }
+        age_options
+            .limits
+            .validate_passphrase(request.passphrase.as_str())
+            .map_err(|_| {
+                DataMigrationError::Envelope(AgeEnvelopeError::new(
+                    AgeEnvelopeErrorCode::LimitExceeded,
+                ))
+            })?;
+        if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            return Err(DataMigrationError::Snapshot(
+                crate::services::portable_migration::snapshot::PortableSnapshotError::Cancelled,
+            ));
+        }
+
+        let target_parent = request
+            .package_path
+            .parent()
+            .ok_or(DataMigrationError::Validation(
+                PortableMigrationValidationError::AtomicPublish,
+            ))?;
+        let target_leaf =
+            request
+                .package_path
+                .file_name()
+                .ok_or(DataMigrationError::Validation(
+                    PortableMigrationValidationError::AtomicPublish,
+                ))?;
+        let approved_target = ApprovedLeaf::approve(target_parent, target_leaf).map_err(|_| {
+            DataMigrationError::Validation(PortableMigrationValidationError::AtomicPublish)
+        })?;
+        if approved_target.path().exists() && !request.overwrite_existing {
+            return Err(DataMigrationError::TargetExists);
+        }
+        fs::create_dir_all(&request.working_directory)
+            .map_err(|_| DataMigrationError::CleanupFailed)?;
+
+        let export_id = uuid::Uuid::now_v7().to_string();
+        let portable_sqlite_path =
+            unique_portable_sqlite_path(&request.working_directory, &export_id);
+        let sqlite_artifact_result = self
+            .export_portable_sqlite(
+                PortableExportRequest {
+                    source_database_path: request.source_database_path.clone(),
+                    portable_database_path: portable_sqlite_path.clone(),
+                    working_directory: request.working_directory.clone(),
+                    include_history: request.include_history,
+                },
+                cancellation,
+            )
+            .await;
+        let sqlite_artifact = match sqlite_artifact_result {
+            Ok(artifact) => artifact,
+            Err(error) => {
+                cleanup_unpublished_target(&portable_sqlite_path)?;
+                return Err(error);
+            }
+        };
+
+        let package_result = self
+            .publish_package_from_portable_sqlite(
+                &request,
+                &approved_target,
+                &export_id,
+                &sqlite_artifact,
+                cancellation,
+                age_options,
+            )
+            .await;
+        let sqlite_cleanup = cleanup_unpublished_target(&portable_sqlite_path);
+        match (package_result, sqlite_cleanup) {
+            (Ok(artifact), Ok(())) => Ok(artifact),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    async fn publish_package_from_portable_sqlite(
+        &self,
+        request: &PortablePackageExportRequest,
+        approved_target: &ApprovedLeaf,
+        export_id: &str,
+        sqlite_artifact: &PortableExportArtifact,
+        cancellation: Option<&CancellationToken>,
+        age_options: AgeEnvelopeOptions,
+    ) -> DataMigrationResult<PortablePackageExportArtifact> {
+        if cancellation.is_some_and(CancellationToken::is_cancelled) {
+            return Err(DataMigrationError::Snapshot(
+                crate::services::portable_migration::snapshot::PortableSnapshotError::Cancelled,
+            ));
+        }
+        let (sqlite_size_bytes, sqlite_sha256) =
+            file_len_and_sha256(&sqlite_artifact.portable_database_path)?;
+        let record_counts = sqlite_artifact
+            .row_counts
+            .iter()
+            .map(|(table, count)| {
+                Ok((
+                    table.clone(),
+                    u64::try_from(*count).map_err(|_| {
+                        DataMigrationError::Validation(
+                            PortableMigrationValidationError::UnsupportedSchema,
+                        )
+                    })?,
+                ))
+            })
+            .collect::<DataMigrationResult<BTreeMap<_, _>>>()?;
+        let expected_keys = ordered_import_tables_v1();
+        let manifest = build_manifest_v1(
+            PortableMigrationManifestInput {
+                export_id: export_id.to_string(),
+                created_at: Utc::now(),
+                source_app_version: env!("CARGO_PKG_VERSION").to_string(),
+                source_platform: std::env::consts::OS.to_string(),
+                minimum_importer_version: env!("CARGO_PKG_VERSION").to_string(),
+                transport_key_id: sqlite_artifact.transport_key.key_id().to_string(),
+                include_history: request.include_history,
+                record_counts,
+                sqlite_size_bytes,
+                sqlite_sha256,
+            },
+            &expected_keys,
+            age_options.limits,
+        )
+        .map_err(|_| {
+            DataMigrationError::Validation(PortableMigrationValidationError::UnsupportedSchema)
+        })?;
+        let transport_material = sqlite_artifact
+            .transport_key
+            .with_key(|bytes| TransportKeyMaterial::from_bytes(*bytes))
+            .map_err(|_| DataMigrationError::TransportKeyUnavailable)?;
+        let sqlite_file = File::open(&sqlite_artifact.portable_database_path).map_err(|_| {
+            DataMigrationError::Validation(PortableMigrationValidationError::OpenFailed)
+        })?;
+        let partial_path = write_encrypted_partial(
+            approved_target,
+            export_id,
+            request.passphrase.as_str(),
+            &manifest,
+            &transport_material,
+            sqlite_file,
+            &expected_keys,
+            age_options,
+        )?;
+
+        let package_result = async {
+            let pre_publish_self_test = self_test_encrypted_package(
+                &partial_path,
+                &request.working_directory,
+                request.passphrase.as_str(),
+                &expected_keys,
+                age_options,
+            )
+            .await?;
+            let mode = if request.overwrite_existing {
+                PublishMode::ReplaceExisting
+            } else {
+                PublishMode::CreateNew
+            };
+            let publisher = LocalAtomicFileAdapter;
+            let publish_evidence =
+                publish_verified_partial(&publisher, &partial_path, approved_target, mode)?;
+            let published_self_test = self_test_encrypted_package(
+                &publish_evidence.target,
+                &request.working_directory,
+                request.passphrase.as_str(),
+                &expected_keys,
+                age_options,
+            )
+            .await?;
+            let package_size_bytes = fs::metadata(&publish_evidence.target)
+                .map_err(|_| {
+                    DataMigrationError::Validation(PortableMigrationValidationError::OpenFailed)
+                })?
+                .len();
+            Ok(PortablePackageExportArtifact {
+                package_path: publish_evidence.target.clone(),
+                export_id: export_id.to_string(),
+                package_size_bytes,
+                publish_evidence,
+                manifest,
+                pre_publish_self_test,
+                published_self_test,
+                row_counts: sqlite_artifact.row_counts.clone(),
+                rekey_report: sqlite_artifact.rekey_report.clone(),
+            })
+        }
+        .await;
+
+        match package_result {
+            Ok(artifact) => Ok(artifact),
+            Err(error) => {
+                remove_file_if_exists(&partial_path)?;
+                Err(error)
             }
         }
     }
@@ -223,6 +497,34 @@ fn unique_snapshot_path(directory: &Path) -> PathBuf {
     ))
 }
 
+fn unique_portable_sqlite_path(directory: &Path, export_id: &str) -> PathBuf {
+    directory.join(format!("portable-export-{export_id}.sqlite3"))
+}
+
+fn file_len_and_sha256(path: &Path) -> DataMigrationResult<(u64, [u8; 32])> {
+    let mut file = File::open(path).map_err(|_| {
+        DataMigrationError::Validation(PortableMigrationValidationError::OpenFailed)
+    })?;
+    let mut hasher = Sha256::new();
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|_| {
+            DataMigrationError::Validation(PortableMigrationValidationError::OpenFailed)
+        })?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or(DataMigrationError::Validation(
+                PortableMigrationValidationError::UnsupportedSchema,
+            ))?;
+        hasher.update(&buffer[..read]);
+    }
+    Ok((total, hasher.finalize().into()))
+}
+
 fn cleanup_unpublished_target(path: &Path) -> DataMigrationResult<()> {
     for candidate in [
         path.to_path_buf(),
@@ -249,10 +551,12 @@ fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
 mod tests {
     use base64::{engine::general_purpose, Engine as _};
     use sqlx::{Connection, SqliteConnection};
+    use zeroize::Zeroizing;
 
     use crate::{
         models::secrets::canonical_secret_aad,
         services::{
+            portable_migration::age_envelope::AgeEnvelopeOptions,
             portable_migration::snapshot::PortableSnapshotError,
             secrets::{crypto, DeviceKeyResolver},
         },
@@ -386,6 +690,139 @@ mod tests {
             error,
             DataMigrationError::Snapshot(PortableSnapshotError::Cancelled)
         ));
+    }
+
+    #[tokio::test]
+    async fn portable_export_package_writes_self_verified_age_file() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let source = directory.path().join("source.sqlite3");
+        let package = directory.path().join("portable.rpd-move");
+        let working = directory.path().join("working");
+        let source_material = [7_u8; 32];
+        crate::persistence::migrations::initialize_v2_database(&source)
+            .await
+            .expect("source db");
+        seed_secret_database(&source, source_material)
+            .await
+            .expect("seed");
+
+        let service = DataMigrationExportService::new(
+            DataMaintenanceCoordinator::new(),
+            DeviceKeyResolver::for_test(source_material),
+        );
+        let artifact = service
+            .export_portable_package_with_options(
+                package_request(source, package.clone(), working, false, "move-passphrase"),
+                None,
+                AgeEnvelopeOptions::TEST_FAST,
+            )
+            .await
+            .expect("package export");
+
+        assert_eq!(artifact.package_path, package);
+        assert_eq!(artifact.manifest, artifact.published_self_test.manifest);
+        assert_eq!(
+            artifact.pre_publish_self_test.row_counts,
+            artifact.published_self_test.row_counts
+        );
+        assert_eq!(artifact.row_counts.get("secrets"), Some(&1));
+        assert!(artifact.package_size_bytes > 0);
+        assert_ne!(
+            &std::fs::read(&artifact.package_path).expect("package")[..8],
+            b"SQLite f"
+        );
+        assert!(
+            std::fs::read_dir(directory.path().join("working"))
+                .expect("working dir")
+                .all(|entry| !entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".sqlite3")),
+            "plaintext staging sqlite must be cleaned after publish"
+        );
+    }
+
+    #[tokio::test]
+    async fn portable_export_package_rejects_wrong_confirmation_before_writes() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let source = directory.path().join("source.sqlite3");
+        let package = directory.path().join("portable.rpd-move");
+        let service = DataMigrationExportService::new(
+            DataMaintenanceCoordinator::new(),
+            DeviceKeyResolver::for_test([1_u8; 32]),
+        );
+
+        let error = service
+            .export_portable_package_with_options(
+                PortablePackageExportRequest {
+                    source_database_path: source,
+                    package_path: package.clone(),
+                    working_directory: directory.path().join("working"),
+                    include_history: false,
+                    overwrite_existing: false,
+                    passphrase: Zeroizing::new("first".to_string()),
+                    passphrase_confirmation: Zeroizing::new("second".to_string()),
+                },
+                None,
+                AgeEnvelopeOptions::TEST_FAST,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DataMigrationError::PassphraseConfirmationMismatch
+        ));
+        assert!(!package.exists());
+    }
+
+    #[tokio::test]
+    async fn portable_export_package_preserves_existing_without_overwrite() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let source = directory.path().join("source.sqlite3");
+        let package = directory.path().join("portable.rpd-move");
+        std::fs::write(&package, b"old-package").expect("old");
+        let service = DataMigrationExportService::new(
+            DataMaintenanceCoordinator::new(),
+            DeviceKeyResolver::for_test([1_u8; 32]),
+        );
+
+        let error = service
+            .export_portable_package_with_options(
+                package_request(
+                    source,
+                    package.clone(),
+                    directory.path().join("working"),
+                    false,
+                    "p",
+                ),
+                None,
+                AgeEnvelopeOptions::TEST_FAST,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, DataMigrationError::TargetExists));
+        assert_eq!(std::fs::read(package).expect("read old"), b"old-package");
+    }
+
+    fn package_request(
+        source: PathBuf,
+        package: PathBuf,
+        working: PathBuf,
+        overwrite_existing: bool,
+        passphrase: &str,
+    ) -> PortablePackageExportRequest {
+        PortablePackageExportRequest {
+            source_database_path: source,
+            package_path: package,
+            working_directory: working,
+            include_history: false,
+            overwrite_existing,
+            passphrase: Zeroizing::new(passphrase.to_string()),
+            passphrase_confirmation: Zeroizing::new(passphrase.to_string()),
+        }
     }
 
     async fn seed_secret_database(path: &Path, material: [u8; 32]) -> Result<(), sqlx::Error> {
