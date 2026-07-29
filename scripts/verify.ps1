@@ -113,6 +113,13 @@ try {
             if (-not [string]::IsNullOrWhiteSpace($privateKeyPath) -and -not (Test-Path -LiteralPath $privateKeyPath -PathType Leaf)) {
                 throw "TAURI_SIGNING_PRIVATE_KEY_PATH does not point to a file"
             }
+            if ([string]::IsNullOrWhiteSpace($privateKey) -and -not [string]::IsNullOrWhiteSpace($privateKeyPath)) {
+                [Environment]::SetEnvironmentVariable(
+                    "TAURI_SIGNING_PRIVATE_KEY",
+                    (Get-Content -Raw -LiteralPath $privateKeyPath).Trim(),
+                    "Process"
+                )
+            }
             if ($null -eq [Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")) {
                 throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD must be set for non-interactive release bundling; use an empty value for a passwordless key"
             }
