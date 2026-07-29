@@ -1,8 +1,11 @@
 use std::{
-    fs,
+    fs::{self, File},
+    io::Write,
     path::{Path, PathBuf},
     time::SystemTime,
 };
+
+use serde::{Deserialize, Serialize};
 
 use crate::persistence::create_verified_backup_from_path;
 
@@ -31,6 +34,53 @@ pub(crate) fn backup_selected_database(
     return backup_selected_database_inner(source_path, default_app_data);
     #[cfg(test)]
     return backup_selected_database_inner(source_path, default_app_data, None);
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SecurityBaselineBackupMetadata {
+    metadata_version: u32,
+    schema_profile: String,
+    security_format: String,
+    recovery_scope: String,
+}
+
+pub(crate) fn write_security_baseline_backup_metadata(
+    backup_path: &Path,
+    schema_profile: &str,
+    security_format: &str,
+) -> Result<(), String> {
+    let parent = backup_path
+        .parent()
+        .ok_or_else(|| "baseline backup path has no parent".to_string())?;
+    let metadata = SecurityBaselineBackupMetadata {
+        metadata_version: 1,
+        schema_profile: schema_profile.to_owned(),
+        security_format: security_format.to_owned(),
+        recovery_scope: "old-security-format-local-machine-only".to_string(),
+    };
+    let bytes = serde_json::to_vec_pretty(&metadata)
+        .map_err(|error| format!("failed to serialize baseline backup metadata: {error}"))?;
+    let path = parent.join("security-baseline-backup-metadata.json");
+    let mut file = File::create(&path).map_err(|error| {
+        format!(
+            "failed to create baseline backup metadata {}: {error}",
+            path.display()
+        )
+    })?;
+    file.write_all(&bytes).map_err(|error| {
+        format!(
+            "failed to write baseline backup metadata {}: {error}",
+            path.display()
+        )
+    })?;
+    file.sync_all().map_err(|error| {
+        format!(
+            "failed to sync baseline backup metadata {}: {error}",
+            path.display()
+        )
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]

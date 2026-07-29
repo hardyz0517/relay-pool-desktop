@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const settingsPageSource = await readFile("src/features/settings/SettingsPage.tsx", "utf8");
 const settingsApiSource = await readFile("src/lib/api/settings.ts", "utf8");
-const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
+const tauriCommandsSource = await readFile("src-tauri/src/commands/settings.rs", "utf8");
 const registrySource = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const settingsServiceSource = await readFile("src-tauri/src/application/settings.rs", "utf8");
 const settingsStoreSource = await readFile(
@@ -34,7 +34,7 @@ assert.ok(
 
 assert.ok(
   settingsApiSource.includes("updateLocalAccessKey") &&
-    settingsApiSource.includes("updateLocalAccessKeyBinding({ value })") &&
+    settingsApiSource.includes("getActiveBackendClient().settings.updateLocalAccessKey(value)") &&
     !settingsApiSource.includes('invoke<AppSettings>("update_local_access_key"'),
   "settings API should expose updateLocalAccessKey through the generated IPC wrapper",
 );
@@ -42,19 +42,21 @@ assert.ok(
 assert.ok(
   tauriCommandsSource.includes("pub async fn update_local_access_key") &&
     tauriCommandsSource.includes("UpdateLocalAccessKeyInputDto::parse(input)?") &&
-    tauriCommandsSource.includes(".settings") &&
+    tauriCommandsSource.includes("SettingsStationsCommandFacade") &&
     tauriCommandsSource.includes(".update_local_access_key(input.value)"),
   "Tauri commands should expose typed update_local_access_key input",
 );
 
 assert.ok(
-  registrySource.includes("update_local_access_key => $crate::commands::update_local_access_key"),
+  registrySource.includes("update_local_access_key => $crate::commands::settings::update_local_access_key"),
   "Tauri command registry should register update_local_access_key",
 );
 
 assert.ok(
   settingsServiceSource.includes("pub(crate) async fn update_local_access_key") &&
-    settingsStoreSource.includes("if local_key.is_empty()") &&
-    settingsStoreSource.includes('upsert_setting(write.connection(), "local_key"'),
-  "settings application and store should validate and persist the local access key setting",
+    settingsServiceSource.includes("encrypt_local_access_key") &&
+    settingsStoreSource.includes("upsert_local_access_key_secret") &&
+    settingsStoreSource.includes("app_secret_bindings") &&
+    settingsStoreSource.includes("UPDATE settings SET value = ''"),
+  "settings application and store should validate local access keys but persist them through encrypted secret bindings",
 );

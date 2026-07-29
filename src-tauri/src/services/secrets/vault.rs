@@ -44,22 +44,29 @@ impl CredentialVault for DataKeyVault {
             ciphertext,
             nonce,
             masked_value: mask_secret(&value),
+            key_id: self.resolver.active_key_id().as_str().to_string(),
+            encryption_version: self.resolver.encryption_version(),
+            value_hash: payload.value_hash,
         })
     }
 
     fn decrypt(
         &self,
         aad: &str,
+        key_id: &str,
+        encryption_version: u16,
         encrypted: &EncryptedSecret,
     ) -> Result<SecretBytes, CredentialError> {
         let payload = crypto::EncryptedPayload {
             ciphertext: general_purpose::STANDARD.encode(&encrypted.ciphertext),
             nonce: general_purpose::STANDARD.encode(&encrypted.nonce),
             aad: aad.to_string(),
-            value_hash: String::new(),
+            value_hash: encrypted.value_hash.clone(),
         };
         self.resolver
-            .with_active_key(|key| crypto::decrypt_secret(key, &payload))
+            .with_key(key_id, encryption_version, |key| {
+                crypto::decrypt_secret(key, &payload)
+            })
             .map_err(|_| CredentialError::SecretValidationFailed)?
             .map(SecretBytes::from)
             .map_err(|_| CredentialError::SecretValidationFailed)
@@ -83,7 +90,14 @@ mod tests {
 
         assert_eq!(encrypted.masked_value, "sk-...nary");
         assert_ne!(encrypted.ciphertext.as_slice(), secret.as_bytes());
-        let decrypted = vault.decrypt(AAD, &encrypted).expect("decrypt secret");
+        let decrypted = vault
+            .decrypt(
+                AAD,
+                &encrypted.key_id,
+                encrypted.encryption_version,
+                &encrypted,
+            )
+            .expect("decrypt secret");
         assert_eq!(decrypted.as_bytes(), secret.as_bytes());
     }
 
@@ -94,7 +108,12 @@ mod tests {
             .encrypt(AAD, SecretBytes::from("sk-p8-aad-canary".to_string()))
             .expect("encrypt secret");
 
-        let result = vault.decrypt("station_key:key-2:api_key", &encrypted);
+        let result = vault.decrypt(
+            "station_key:key-2:api_key:v1",
+            &encrypted.key_id,
+            encrypted.encryption_version,
+            &encrypted,
+        );
 
         assert!(matches!(
             result,

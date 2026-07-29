@@ -259,27 +259,21 @@ fn prepare_data_store(
                 };
                 return Ok(PreparedDataStore::Recovery(startup_state));
             };
-            device_keys
-                .with_active_key(|key_bytes| {
-                    services::data_store::generation_upgrade::prepare_generation_two(
-                        &default_data_dir,
-                        &active_data_dir,
-                        Some(&db_path),
-                        *key_bytes,
-                    )
-                })
-                .map_err(|error| error.to_string())?
+            services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
+                &default_data_dir,
+                &active_data_dir,
+                Some(&db_path),
+                device_keys,
+            )
         }
-        StartupDecision::FirstRun { default_data_dir } => device_keys
-            .with_active_key(|key_bytes| {
-                services::data_store::generation_upgrade::prepare_generation_two(
-                    &default_data_dir,
-                    &default_data_dir,
-                    None,
-                    *key_bytes,
-                )
-            })
-            .map_err(|error| error.to_string())?,
+        StartupDecision::FirstRun { default_data_dir } => {
+            services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
+                &default_data_dir,
+                &default_data_dir,
+                None,
+                device_keys,
+            )
+        }
         StartupDecision::NeedsRecovery { .. } | StartupDecision::Conflict { .. } => {
             return Ok(PreparedDataStore::Recovery(startup_state));
         }

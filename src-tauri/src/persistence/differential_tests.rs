@@ -877,12 +877,17 @@ impl CredentialVault for DeterministicCredentialVault {
             ciphertext,
             nonce: self.key[..12].to_vec(),
             masked_value: mask_secret_bytes(plaintext.as_bytes()),
+            key_id: "deterministic-test-key".to_string(),
+            encryption_version: crate::services::secrets::CURRENT_SECRET_ENCRYPTION_VERSION,
+            value_hash: "deterministic-value-hash".to_string(),
         })
     }
 
     fn decrypt(
         &self,
         aad: &str,
+        _key_id: &str,
+        _encryption_version: u16,
         encrypted: &EncryptedSecret,
     ) -> Result<SecretBytes, CredentialError> {
         *self.last_aad.lock().expect("last aad") = Some(aad.to_string());
@@ -937,6 +942,8 @@ impl V2Fixture {
         SettingsService::new(
             self.runtime().await.handle(),
             Arc::new(FixedClock),
+            Arc::new(SequenceIds::new(vec!["settings-local-key-secret"])),
+            Arc::new(DeterministicCredentialVault::new([3; 32])),
             "fixture-data-dir".to_string(),
             None,
         )

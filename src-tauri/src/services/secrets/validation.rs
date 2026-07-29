@@ -68,15 +68,19 @@ mod tests {
         let wrong_key = generate_data_key();
         let path = db_path("encrypted-rows");
         initialize_v2(&path);
-        let payload = encrypt_secret(&key, "sk-validation-canary", "station_key:key-1:api_key")
-            .expect("encrypt");
+        let payload = encrypt_secret(
+            &key,
+            "sk-validation-canary",
+            &crate::models::secrets::canonical_secret_aad("station_key", "key-1", "api_key", 1),
+        )
+        .expect("encrypt");
         let mut connection = open_existing(&path);
         tauri::async_runtime::block_on(
             sqlx::query(
                 "INSERT INTO secrets (
                     id, scope, owner_id, kind, masked_value, ciphertext, nonce,
-                    created_at, updated_at
-                ) VALUES (?1, 'station_key', 'key-1', 'api_key', 'sk-***', ?2, ?3, '1', '1')",
+                    key_id, encryption_version, value_hash, created_at, updated_at
+                ) VALUES (?1, 'station_key', 'key-1', 'api_key', 'sk-***', ?2, ?3, 'test-device-key', 1, ?4, '1', '1')",
             )
             .bind("secret-row-canary")
             .bind(
@@ -89,6 +93,7 @@ mod tests {
                     .decode(payload.nonce)
                     .expect("nonce"),
             )
+            .bind(payload.value_hash)
             .execute(&mut connection),
         )
         .expect("secret row");

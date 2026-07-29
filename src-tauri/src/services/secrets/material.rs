@@ -77,6 +77,10 @@ impl DeviceKeyResolver {
         &self.active_key_id
     }
 
+    pub fn encryption_version(&self) -> u16 {
+        self.encryption_version
+    }
+
     pub fn with_active_key<R>(
         &self,
         action: impl FnOnce(&[u8; 32]) -> R,

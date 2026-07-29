@@ -11,6 +11,9 @@ use crate::{
         error::PersistenceError,
         read_session::ReadSession,
         settings_compat::{canonical_tray_behavior, repair_legacy_settings},
+        stores::credential_store::{
+            EncryptedSecretRow, StoredEncryptedSecret as CredentialStoredEncryptedSecret,
+        },
         write_session::WriteSession,
     },
 };
@@ -66,6 +69,84 @@ impl SettingsStore {
         .fetch_optional(write.connection())
         .await?
         .ok_or(PersistenceError::NotFound)
+    }
+
+    pub(crate) async fn local_access_key_secret(
+        &self,
+        read: &mut ReadSession,
+    ) -> Result<Option<CredentialStoredEncryptedSecret>, PersistenceError> {
+        local_access_key_secret_from_connection(read.connection()).await
+    }
+
+    pub(crate) async fn local_access_key_secret_for_write(
+        &self,
+        write: &mut WriteSession,
+    ) -> Result<Option<CredentialStoredEncryptedSecret>, PersistenceError> {
+        local_access_key_secret_from_connection(write.connection()).await
+    }
+
+    pub(crate) async fn legacy_local_access_key_value(
+        &self,
+        write: &mut WriteSession,
+    ) -> Result<String, PersistenceError> {
+        read_setting(write.connection(), "local_key").await
+    }
+
+    pub(crate) async fn upsert_local_access_key_secret(
+        &self,
+        write: &mut WriteSession,
+        secret: &EncryptedSecretRow,
+    ) -> Result<(), PersistenceError> {
+        sqlx::query(
+            r#"
+            INSERT INTO secrets (
+                id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                key_id, encryption_version, value_hash, created_at, updated_at
+            ) VALUES (?1, 'settings', 'local_key', 'local_access_key', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+            ON CONFLICT(scope, owner_id, kind) DO UPDATE SET
+                masked_value = excluded.masked_value,
+                ciphertext = excluded.ciphertext,
+                nonce = excluded.nonce,
+                key_id = excluded.key_id,
+                encryption_version = excluded.encryption_version,
+                value_hash = excluded.value_hash,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&secret.id)
+        .bind(&secret.masked_value)
+        .bind(&secret.ciphertext)
+        .bind(&secret.nonce)
+        .bind(&secret.key_id)
+        .bind(i64::from(secret.encryption_version))
+        .bind(&secret.value_hash)
+        .bind(&secret.now)
+        .execute(write.connection())
+        .await?;
+        let secret_id = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM secrets WHERE scope = 'settings' AND owner_id = 'local_key' AND kind = 'local_access_key'",
+        )
+        .fetch_one(write.connection())
+        .await?;
+        sqlx::query(
+            r#"
+            INSERT INTO app_secret_bindings (
+                binding_scope, binding_owner_id, binding_kind, secret_id, created_at, updated_at
+            ) VALUES ('settings', 'local_key', 'local_access_key', ?1, ?2, ?2)
+            ON CONFLICT(binding_scope, binding_owner_id, binding_kind) DO UPDATE SET
+                secret_id = excluded.secret_id,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(secret_id)
+        .bind(&secret.now)
+        .execute(write.connection())
+        .await?;
+        sqlx::query("UPDATE settings SET value = '', updated_at = ?1 WHERE key = 'local_key'")
+            .bind(&secret.now)
+            .execute(write.connection())
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn update_local_access_key(
@@ -255,7 +336,7 @@ async fn settings_from_connection(
     data_dir: &str,
     pending_data_dir: Option<String>,
 ) -> Result<AppSettings, PersistenceError> {
-    let local_key = read_setting(&mut *connection, "local_key").await?;
+    let local_key_masked = local_access_key_masked(&mut *connection).await?;
     let data_dir_change_requires_restart = pending_data_dir
         .as_ref()
         .map(|pending| pending != data_dir)
@@ -269,7 +350,7 @@ async fn settings_from_connection(
             "false",
         )
         .await?,
-        local_key_masked: mask_secret(&local_key),
+        local_key_masked,
         default_routing_strategy: read_setting(&mut *connection, "default_routing_strategy")
             .await?,
         collector_proxy_mode: normalize_proxy_mode(
@@ -353,6 +434,57 @@ async fn settings_from_connection(
         pending_data_dir,
         data_dir_change_requires_restart,
     })
+}
+
+async fn local_access_key_masked(
+    connection: &mut SqliteConnection,
+) -> Result<String, PersistenceError> {
+    if let Some(secret) = local_access_key_secret_from_connection(&mut *connection).await? {
+        return Ok(secret.masked_value);
+    }
+    let local_key = read_setting(&mut *connection, "local_key").await?;
+    Ok(mask_secret(&local_key))
+}
+
+async fn local_access_key_secret_from_connection(
+    connection: &mut SqliteConnection,
+) -> Result<Option<CredentialStoredEncryptedSecret>, PersistenceError> {
+    let has_binding_table = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_secret_bindings')",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    if has_binding_table != 1 {
+        return Ok(None);
+    }
+    let row = sqlx::query(
+        r#"
+        SELECT s.id, s.scope, s.owner_id, s.kind, s.masked_value, s.ciphertext, s.nonce,
+               s.key_id, s.encryption_version, s.value_hash
+        FROM app_secret_bindings b
+        JOIN secrets s ON s.id = b.secret_id
+        WHERE b.binding_scope = 'settings'
+          AND b.binding_owner_id = 'local_key'
+          AND b.binding_kind = 'local_access_key'
+          AND s.scope = 'settings'
+          AND s.owner_id = 'local_key'
+          AND s.kind = 'local_access_key'
+        "#,
+    )
+    .fetch_optional(&mut *connection)
+    .await?;
+    Ok(row.map(|row| CredentialStoredEncryptedSecret {
+        id: row.get("id"),
+        scope: row.get("scope"),
+        owner_id: row.get("owner_id"),
+        kind: row.get("kind"),
+        masked_value: row.get("masked_value"),
+        ciphertext: row.get("ciphertext"),
+        nonce: row.get("nonce"),
+        key_id: row.get("key_id"),
+        encryption_version: row.get::<i64, _>("encryption_version") as u16,
+        value_hash: row.get("value_hash"),
+    }))
 }
 
 async fn read_setting<'e, E>(executor: E, key: &str) -> Result<String, PersistenceError>

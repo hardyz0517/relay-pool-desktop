@@ -1,3 +1,4 @@
+pub(crate) mod baseline_conversion;
 pub mod crypto;
 pub(crate) mod device_key_journal;
 pub(crate) mod device_key_store;

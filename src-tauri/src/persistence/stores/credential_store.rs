@@ -24,6 +24,9 @@ pub(crate) struct EncryptedSecretRow {
     pub(crate) masked_value: String,
     pub(crate) ciphertext: Vec<u8>,
     pub(crate) nonce: Vec<u8>,
+    pub(crate) key_id: String,
+    pub(crate) encryption_version: u16,
+    pub(crate) value_hash: String,
     pub(crate) now: String,
 }
 
@@ -112,6 +115,9 @@ pub(crate) struct StoredEncryptedSecret {
     pub(crate) masked_value: String,
     pub(crate) ciphertext: Vec<u8>,
     pub(crate) nonce: Vec<u8>,
+    pub(crate) key_id: String,
+    pub(crate) encryption_version: u16,
+    pub(crate) value_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,7 +203,8 @@ impl CredentialStore {
         let secret_id = entry.password_secret_id.ok_or(PersistenceError::NotFound)?;
         sqlx::query(
             r#"
-            SELECT id, scope, owner_id, kind, masked_value, ciphertext, nonce
+            SELECT id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                   key_id, encryption_version, value_hash
             FROM secrets
             WHERE id = ?1
               AND scope = 'common_login_profile'
@@ -344,7 +351,8 @@ impl CredentialStore {
     ) -> Result<StoredEncryptedSecret, PersistenceError> {
         let row = sqlx::query(
             r#"
-            SELECT s.id, s.scope, s.owner_id, s.kind, s.masked_value, s.ciphertext, s.nonce
+            SELECT s.id, s.scope, s.owner_id, s.kind, s.masked_value, s.ciphertext, s.nonce,
+                   s.key_id, s.encryption_version, s.value_hash
             FROM station_keys k
             JOIN secrets s ON s.id = k.api_key_secret_id
             WHERE k.id = ?1
@@ -366,7 +374,8 @@ impl CredentialStore {
         let secret_column = station_credential_secret_column(kind)?;
         let query = format!(
             r#"
-            SELECT s.id, s.scope, s.owner_id, s.kind, s.masked_value, s.ciphertext, s.nonce
+            SELECT s.id, s.scope, s.owner_id, s.kind, s.masked_value, s.ciphertext, s.nonce,
+                   s.key_id, s.encryption_version, s.value_hash
             FROM station_credentials c
             JOIN secrets s ON s.id = c.{secret_column}
             WHERE c.station_id = ?1
@@ -1579,6 +1588,9 @@ fn row_to_stored_secret(row: sqlx::sqlite::SqliteRow) -> StoredEncryptedSecret {
         masked_value: row.get("masked_value"),
         ciphertext: row.get("ciphertext"),
         nonce: row.get("nonce"),
+        key_id: row.get("key_id"),
+        encryption_version: row.get::<i64, _>("encryption_version") as u16,
+        value_hash: row.get("value_hash"),
     }
 }
 
@@ -1589,12 +1601,16 @@ async fn upsert_secret(
     sqlx::query(
         r#"
         INSERT INTO secrets (
-            id, scope, owner_id, kind, masked_value, ciphertext, nonce, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+            key_id, encryption_version, value_hash, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         ON CONFLICT(scope, owner_id, kind) DO UPDATE SET
             masked_value = excluded.masked_value,
             ciphertext = excluded.ciphertext,
             nonce = excluded.nonce,
+            key_id = excluded.key_id,
+            encryption_version = excluded.encryption_version,
+            value_hash = excluded.value_hash,
             updated_at = excluded.updated_at
         "#,
     )
@@ -1605,6 +1621,9 @@ async fn upsert_secret(
     .bind(&secret.masked_value)
     .bind(&secret.ciphertext)
     .bind(&secret.nonce)
+    .bind(&secret.key_id)
+    .bind(i64::from(secret.encryption_version))
+    .bind(&secret.value_hash)
     .bind(&secret.now)
     .bind(&secret.now)
     .execute(&mut *connection)

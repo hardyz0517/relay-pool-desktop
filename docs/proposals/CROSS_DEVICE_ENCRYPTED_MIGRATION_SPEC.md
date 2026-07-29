@@ -527,7 +527,7 @@ enum SensitiveFieldPolicy {
 | `settings` | `IncludeWithTransform` | 只包含设置 key allowlist；重置 Local Key、启动状态、路径和设备相关值 |
 | `secrets` | `IncludeWithTransform` | 依据 secret kind 包含、排除并换成 transport key |
 | `stations` | `IncludeWithTransform` | 保留资产配置；明文兼容 API Key 列必须为空；健康与临时登录状态重置 |
-| `station_keys` | `IncludeWithTransform` | 保留 Key 元数据和 secret 引用；明文兼容 API Key 列必须为空；临时健康状态重置 |
+| `station_keys` | `IncludeWithTransform` | 保留 Key 元数据和 secret 引用；明文兼容 API Key 列必须为空；不新增或改造监控状态相关功能 |
 | `station_endpoint_health` | `Reset` | 为现有 Station 重建 unchecked 基线 |
 | `station_key_health` | `Reset` | 为现有 Station Key 重建 unchecked 基线 |
 | `station_credentials` | `IncludeWithTransform` | 保留账号名和用户选择保存的密码；清空 session、token、cookie 及其状态 |

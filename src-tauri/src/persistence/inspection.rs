@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 use base64::{engine::general_purpose, Engine as _};
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row, SqliteConnection};
 
-use crate::persistence::error::PersistenceError;
+use crate::{models::secrets::canonical_secret_aad, persistence::error::PersistenceError};
 
 const RECOVERY_SUMMARY_TABLES: [&str; 4] =
     ["stations", "station_keys", "channel_monitors", "settings"];
@@ -106,7 +106,31 @@ pub(crate) async fn read_encrypted_secrets(
     }
 
     let columns = table_columns(&mut connection, "secrets").await?;
-    let records = if columns.contains("aad") && columns.contains("value_hash") {
+    let records = if columns.contains("key_id") && columns.contains("encryption_version") {
+        let rows = sqlx::query_as::<_, (String, String, String, String, Vec<u8>, Vec<u8>, i64)>(
+            "SELECT id, scope, owner_id, kind, ciphertext, nonce, encryption_version FROM secrets ORDER BY id",
+        )
+        .fetch_all(&mut connection)
+        .await?;
+        rows.into_iter()
+            .map(
+                |(id, scope, owner_id, kind, ciphertext, nonce, encryption_version)| {
+                    StoredEncryptedSecret {
+                        id,
+                        ciphertext: general_purpose::STANDARD.encode(ciphertext),
+                        nonce: general_purpose::STANDARD.encode(nonce),
+                        aad: canonical_secret_aad(
+                            &scope,
+                            &owner_id,
+                            &kind,
+                            encryption_version as u16,
+                        ),
+                        value_hash: String::new(),
+                    }
+                },
+            )
+            .collect()
+    } else if columns.contains("aad") && columns.contains("value_hash") {
         let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
             "SELECT id, ciphertext, nonce, aad, value_hash FROM secrets ORDER BY id",
         )

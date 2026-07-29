@@ -11,7 +11,10 @@ use super::{
     upgrade_fault::{
         AtomicStep, TombstoneStep, UpgradeFailpoint, UpgradeFaultInjector, UpgradeInjectedFailure,
     },
-    upgrade_journal::{Sha256Digest, UpgradeAttemptId, UpgradeJournal},
+    upgrade_journal::{
+        BaselineConversionJournal, BaselineConversionPhase, Sha256Digest, UpgradeAttemptId,
+        UpgradeJournal,
+    },
     upgrade_recovery_plan::{
         BackupState, JournalState, LegacySourceState, ObservedUpgradeState, RecoveryHaltReason,
         RecoveryPlan, RecoveryPlanner,
@@ -33,6 +36,19 @@ const SQLITE_HEADER: &[u8] = b"SQLite format 3\0";
 pub(crate) struct ObservedJournal {
     pub(crate) state: JournalState,
     pub(crate) journal: Option<UpgradeJournal>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BaselineConversionJournalState {
+    Missing,
+    Invalid,
+    Valid(BaselineConversionPhase),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ObservedBaselineConversionJournal {
+    pub(crate) state: BaselineConversionJournalState,
+    pub(crate) journal: Option<BaselineConversionJournal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,6 +371,16 @@ pub(crate) fn write_journal_atomically_with_faults(
     })
 }
 
+pub(crate) fn write_baseline_conversion_journal_atomically(
+    journal_path: &Path,
+    journal: &BaselineConversionJournal,
+) -> Result<(), UpgradeExecutionError> {
+    let bytes = journal
+        .to_canonical_json()
+        .map_err(|_| UpgradeExecutionError::JournalInvalid)?;
+    write_same_directory_atomically_with(journal_path, &bytes, |_| Ok(()))
+}
+
 pub(crate) fn observe_journal(journal_path: &Path) -> ObservedJournal {
     let bytes = match fs::read(journal_path) {
         Ok(bytes) => bytes,
@@ -378,6 +404,36 @@ pub(crate) fn observe_journal(journal_path: &Path) -> ObservedJournal {
         },
         Err(_) => ObservedJournal {
             state: JournalState::Invalid,
+            journal: None,
+        },
+    }
+}
+
+pub(crate) fn observe_baseline_conversion_journal(
+    journal_path: &Path,
+) -> ObservedBaselineConversionJournal {
+    let bytes = match fs::read(journal_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ObservedBaselineConversionJournal {
+                state: BaselineConversionJournalState::Missing,
+                journal: None,
+            }
+        }
+        Err(_) => {
+            return ObservedBaselineConversionJournal {
+                state: BaselineConversionJournalState::Invalid,
+                journal: None,
+            }
+        }
+    };
+    match BaselineConversionJournal::from_json(&bytes) {
+        Ok(journal) => ObservedBaselineConversionJournal {
+            state: BaselineConversionJournalState::Valid(journal.payload().phase),
+            journal: Some(journal),
+        },
+        Err(_) => ObservedBaselineConversionJournal {
+            state: BaselineConversionJournalState::Invalid,
             journal: None,
         },
     }

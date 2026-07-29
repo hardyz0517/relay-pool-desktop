@@ -67,6 +67,9 @@ pub(crate) struct EncryptedSecret {
     pub(crate) ciphertext: Vec<u8>,
     pub(crate) nonce: Vec<u8>,
     pub(crate) masked_value: String,
+    pub(crate) key_id: String,
+    pub(crate) encryption_version: u16,
+    pub(crate) value_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +82,12 @@ pub(crate) struct SecretRef {
 
 impl SecretRef {
     pub(crate) fn aad(&self) -> String {
-        secret_aad(&self.scope, &self.owner_id, &self.kind)
+        secret_aad(
+            &self.scope,
+            &self.owner_id,
+            &self.kind,
+            crate::services::secrets::CURRENT_SECRET_ENCRYPTION_VERSION,
+        )
     }
 }
 
@@ -111,6 +119,8 @@ pub(crate) trait CredentialVault: Send + Sync {
     fn decrypt(
         &self,
         aad: &str,
+        key_id: &str,
+        encryption_version: u16,
         encrypted: &EncryptedSecret,
     ) -> Result<SecretBytes, CredentialError>;
 }
@@ -1220,13 +1230,19 @@ impl CredentialService {
             owner_id: secret.owner_id,
             kind: secret.kind,
         };
+        let encrypted = EncryptedSecret {
+            ciphertext: secret.ciphertext,
+            nonce: secret.nonce,
+            masked_value: secret.masked_value,
+            key_id: secret.key_id,
+            encryption_version: secret.encryption_version,
+            value_hash: secret.value_hash,
+        };
         self.vault.decrypt(
             &secret_ref.aad(),
-            &EncryptedSecret {
-                ciphertext: secret.ciphertext,
-                nonce: secret.nonce,
-                masked_value: secret.masked_value,
-            },
+            &encrypted.key_id,
+            encrypted.encryption_version,
+            &encrypted,
         )
     }
 
@@ -1375,12 +1391,20 @@ fn encrypted_secret_row(
         masked_value: encrypted_secret.masked_value,
         ciphertext: encrypted_secret.ciphertext,
         nonce: encrypted_secret.nonce,
+        key_id: encrypted_secret.key_id,
+        encryption_version: encrypted_secret.encryption_version,
+        value_hash: encrypted_secret.value_hash,
         now,
     }
 }
 
-pub(crate) fn secret_aad(scope: &str, owner_id: &str, kind: &str) -> String {
-    format!("{scope}:{owner_id}:{kind}")
+pub(crate) fn secret_aad(
+    scope: &str,
+    owner_id: &str,
+    kind: &str,
+    encryption_version: u16,
+) -> String {
+    crate::models::secrets::canonical_secret_aad(scope, owner_id, kind, encryption_version)
 }
 
 #[cfg(test)]

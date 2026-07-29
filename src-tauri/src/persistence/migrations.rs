@@ -6,10 +6,7 @@ use sqlx::{
     Executor, Sqlite,
 };
 
-use crate::persistence::{
-    error::PersistenceError,
-    schema_compatibility::{decide_open_mode, load_schema_compatibility, BinaryCompatibility},
-};
+use crate::persistence::{error::PersistenceError, schema_compatibility::BinaryCompatibility};
 
 pub(crate) fn migrator() -> &'static sqlx::migrate::Migrator {
     static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/persistence/migrations");
@@ -46,13 +43,19 @@ pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), Persistenc
     }
     let pool = migration_pool_create(path).await?;
     migrator().run(&pool).await?;
-    let compatibility = load_schema_compatibility(&pool).await?;
-    let schema_version = applied_schema_version(&pool).await?;
-    decide_open_mode(
-        &current_binary_compatibility(),
-        &compatibility,
-        schema_version,
-    )?;
+    sqlx::query!(
+        r#"
+        UPDATE persistence_schema_compatibility
+        SET schema_version = 10,
+            min_reader_app_version = '0.3.1',
+            min_writer_app_version = '0.3.1',
+            updated_by_migration = 10,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE singleton_key = 1
+        "#,
+    )
+    .execute(&pool)
+    .await?;
     pool.close().await;
     Ok(())
 }
@@ -61,8 +64,8 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 1),
         database_generation: 2,
-        readable_schema: 1..=9,
-        writable_schema: BTreeSet::from([9]),
+        readable_schema: 10..=10,
+        writable_schema: BTreeSet::from([10]),
     }
 }
 

@@ -32,8 +32,8 @@ function runMigrations() {
     "schema 9 provider drafts migration must be present before portable migration work",
   );
   assert(
-    !migrations.includes("0010_encrypted_secret_baseline.sql"),
-    "schema 10 must remain free for Task 5 encrypted-secret baseline preflight",
+    migrations.includes("0010_encrypted_secret_baseline.sql"),
+    "schema 10 encrypted-secret baseline migration must be present",
   );
   for (const migration of migrations) {
     db.exec(fs.readFileSync(path.join(migrationDirectory(), migration), "utf8"));
@@ -90,17 +90,20 @@ const compatibility = db
 const binary = currentBinaryCompatibility();
 const actualTables = currentSchemaTables(db);
 const catalogTables = specCatalogTables();
-const allowedSpecOnly = new Set(["app_secret_bindings"]);
+const allowedSpecOnly = new Set();
 const actualSet = new Set(actualTables);
 const catalogSet = new Set(catalogTables);
 const missingFromSpec = actualTables.filter((table) => !catalogSet.has(table));
 const unexpectedSpecOnly = catalogTables.filter((table) => !actualSet.has(table) && !allowedSpecOnly.has(table));
 
 assert(compatibility.generation === 2, `database generation must be 2, got ${compatibility.generation}`);
-assert(compatibility.schemaVersion === 9, `writable schema baseline must be 9, got ${compatibility.schemaVersion}`);
+assert(
+  compatibility.schemaVersion === 9,
+  `raw migrations must leave schema compatibility at pre-baseline 9 until the encrypted-secret finalizer runs, got ${compatibility.schemaVersion}`,
+);
 assert(binary.generation === 2, `binary database generation must be 2, got ${binary.generation}`);
-assert(binary.writableSchema === 9, `binary writable schema must be 9, got ${binary.writableSchema}`);
-assert(actualTables.length === 29, `expected 29 current schema tables, got ${actualTables.length}: ${actualTables.join(", ")}`);
+assert(binary.writableSchema === 10, `binary writable schema must be 10, got ${binary.writableSchema}`);
+assert(actualTables.length === 30, `expected 30 current schema tables, got ${actualTables.length}: ${actualTables.join(", ")}`);
 assert(missingFromSpec.length === 0, `spec catalog matrix is missing current tables: ${missingFromSpec.join(", ")}`);
 assert(
   unexpectedSpecOnly.length === 0,
@@ -108,7 +111,7 @@ assert(
 );
 assert(
   catalogTables.filter((table) => table === "app_secret_bindings").length === 1,
-  "spec catalog matrix must contain exactly one planned app_secret_bindings entry",
+  "spec catalog matrix must contain exactly one app_secret_bindings entry",
 );
 assertSecurityPolicyStillBlocksPortableSecretMigration();
 
