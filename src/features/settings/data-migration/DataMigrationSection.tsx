@@ -1,6 +1,6 @@
 import { ArrowDownToLine, ArrowUpFromLine, RefreshCw, ShieldCheck } from "lucide-react";
 import { Button, SectionCard, StatusBadge } from "@/components/ui";
-import { describeCapability, operationProgressLabel, terminalLabel } from "@/lib/dataMigrationViewModel";
+import { describeCapability, operationProgressLabel, terminalLabel } from "./migrationViewModel";
 import { ExportMigrationDialog } from "./ExportMigrationDialog";
 import { ImportMigrationDialog } from "./ImportMigrationDialog";
 import { useDataMigrationController } from "./useDataMigrationController";
