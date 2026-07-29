@@ -7,6 +7,7 @@ Date: 2026-07-28
 - Stage 7 Task 27 soak/live qualification for the architecture scale upgrade.
 - Soak source revision under test: `eb1fbea419afffe0c0b0c664bad98ffd2509d579`.
 - Live provider source revision under test: `4217aa9420e4e5e6c0221d5f7038392c199fcf33`.
+- Final release candidate requalification revision: `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`.
 - Worktree: `D:\Dev\Projects\relay-pool-desktop-architecture-scale-upgrade`.
 - Branch: `codex/architecture-scale-upgrade`.
 - No desktop app launch, screenshot, or direct visual desktop inspection was used.
@@ -58,6 +59,22 @@ Date: 2026-07-28
 - The first manual smoke proved `/v1/models` and `/v1/chat/completions` non-stream availability, but the final qualification evidence above is the cleaner product-shaped harness run on revision `4217aa9420e4e5e6c0221d5f7038392c199fcf33`.
 - The supplied account/password were not used; only the temporary bearer key was used.
 
+## Final Candidate Requalification
+
+- The authenticated OpenAI-compatible probe was rerun on revision `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`.
+- Summary:
+  `output/architecture-scale/qualification/live-provider/station-key-connectivity-live-probe-5f8467f-2026-07-29-summary.json`
+- Result: `responses` protocol, streaming response mode, HTTP 200, success true.
+- The summary records the bearer credential only as `redacted`; account/password were not used.
+- The 60-minute proxy lifecycle soak was rerun on the same revision.
+- Raw evidence:
+  `output/architecture-scale/qualification/soak/proxy-lifecycle-soak-5f8467f-2026-07-29.txt`
+- Summary:
+  `output/architecture-scale/qualification/soak/proxy-lifecycle-soak-5f8467f-2026-07-29-summary.json`
+- Result: 1373 passes/samples, p95 2853.27 ms, zero failures.
+- Final assertion:
+  `services::proxy::soak_tests::v2_soak_returns_all_resource_counters_to_zero`
+
 ## Result
 
-Task 27 passes for the recorded Stage 7 soak/live scope. The 60-minute deterministic proxy lifecycle soak passed on revision `eb1fbea419afffe0c0b0c664bad98ffd2509d579`, and the authenticated OpenAI-compatible live provider probe passed on revision `4217aa9420e4e5e6c0221d5f7038392c199fcf33`. Release readiness still depends on Task 28 signed bundle, install/upgrade and final artifact qualification.
+Task 27 passes on final candidate revision `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`. The authenticated OpenAI-compatible live probe passed with a streaming Responses API result, and the 60-minute deterministic proxy lifecycle soak completed 1373 successful samples with p95 2853.27 ms and the final resource counters returned to zero. The earlier `eb1fbea`/`4217aa9` evidence remains as history; the final Gate uses this same-revision requalification.

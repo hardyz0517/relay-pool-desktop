@@ -214,8 +214,26 @@ function Uninstall-CurrentPackage([string]$Name) {
   } else {
     Add-Result $Name "pass" @{ nothingInstalled = $true }
   }
-  if ($installDirFull.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $installDirFull)) {
-    Remove-Item -LiteralPath $installDirFull -Recurse -Force
+  Remove-InstallDirectoryWithRetry
+}
+
+function Remove-InstallDirectoryWithRetry {
+  if (-not $installDirFull.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove install directory outside expected root: $installDirFull"
+  }
+  for ($attempt = 1; $attempt -le 10; $attempt++) {
+    if (-not (Test-Path -LiteralPath $installDirFull)) {
+      return
+    }
+    try {
+      Remove-Item -LiteralPath $installDirFull -Recurse -Force -ErrorAction Stop
+      return
+    } catch {
+      if ($attempt -eq 10) {
+        throw
+      }
+      Start-Sleep -Milliseconds 750
+    }
   }
 }
 

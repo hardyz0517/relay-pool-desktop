@@ -4,14 +4,13 @@ Date: 2026-07-29
 
 ## Scope
 
-- Stage 7 Task 28 release/locked build, artifact and final snapshot qualification.
+- Stage 7 Task 28 release/locked build, artifact, install/upgrade and final snapshot qualification.
 - Release candidate version: `v0.3.3`.
-- `v0.3.3` is used because `v0.3.2` already points to the earlier released commit `db51a12b7b783661fd946952600a7a78595ddb0f`.
-- Final release source revision under test: `f1dc30009f543e76a50134331b35cecf10d42280`.
-- Latest live provider source revision under test: `4217aa9420e4e5e6c0221d5f7038392c199fcf33`.
+- Exact release candidate revision: `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`.
+- Local tag `v0.3.3` points to that revision and has not been pushed.
+- Rollback revision: released `v0.3.2` at `db51a12b7b783661fd946952600a7a78595ddb0f`.
 - Worktree: isolated local `codex/architecture-scale-upgrade` checkout.
-- Branch: `codex/architecture-scale-upgrade`.
-- No desktop app launch, screenshot, or direct visual desktop inspection was used.
+- No screenshot or direct visual desktop inspection was used.
 - Persistence V2 protected source and migrations were not modified.
 
 ## Prior Qualification Inputs
@@ -20,99 +19,89 @@ Date: 2026-07-29
   `docs/superpowers/audits/2026-07-22-architecture-scale-deterministic-qualification.md`
 - Task 27 soak/live qualification:
   `docs/superpowers/audits/2026-07-22-architecture-scale-soak-live-qualification.md`
+- The release profile below reran the full deterministic profile on the final candidate. The Task 27 live probe was also rerun on the final candidate. A final-candidate lifecycle soak rerun is recorded below before merge.
 
-## Passed Evidence
+## Signed Release Gate
 
-- Release prebundle shared entrypoint:
-  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile release -ReleasePhase prebundle`
-  - result: exit code 0
-  - started at: `2026-07-28T04:13:21.6427226Z`
-  - finished at: `2026-07-28T04:21:20.7040191Z`
-  - duration: 479.06s
-  - revision: `f74326b5e9ebfe808a8a534feb4c1aa262458ed8`
-  - raw evidence:
-    `output/architecture-scale/qualification/release/release-prebundle-v0.3.3-complete-2026-07-28.txt`
-  - summary:
-    `output/architecture-scale/qualification/release/release-v0.3.3-2026-07-28-summary.json`
-  - verified source version: `v0.3.3`
-  - covered all deterministic `full` profile gates plus release version contract and locked Rust release build
-  - artifact:
-    `src-tauri/target/x86_64-pc-windows-msvc/release/relay-pool-desktop.exe`
-  - bytes: 36344320
-  - sha256: `b21b6eb242a9807df7da2887739eff52f1f69758a3f62b17ec44f6bd8d5c78a2`
-- Version/tag metadata after preparing the next release candidate:
-  `RELAY_POOL_RELEASE_TAG=v0.3.3 pnpm verify:release-version --require-tag`
-  - result: exit code 0
-  - verified package/Cargo/Tauri version contract for `v0.3.3`
-- Full release shared entrypoint on exact local tag `v0.3.3`:
+- Command:
   `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile release`
-  - result: exit code 0
-  - started at: `2026-07-29T02:28:58.1684357Z`
-  - finished at: `2026-07-29T02:37:29.7464155Z`
-  - duration: 511.58s
-  - revision: `f1dc30009f543e76a50134331b35cecf10d42280`
-  - raw evidence:
-    `output/architecture-scale/qualification/release/release-all-v0.3.3-signed-f1dc300-2026-07-29.txt`
-  - provenance:
-    `output/architecture-scale/qualification/release/provenance.json`
-  - covered all deterministic release gates, release version contract, locked Rust release build, signed Tauri bundle and final release bundle scan
-  - release executable:
-    `src-tauri/target/x86_64-pc-windows-msvc/release/relay-pool-desktop.exe`
-  - executable bytes: 36454912
-  - executable sha256: `69dfb46cef5ebd192299e6543d3754b832d6670704cbb277a2b56d418448e902`
-  - signed NSIS bundle:
-    `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Relay Pool Desktop_0.3.3_x64-setup.exe`
-  - signed NSIS bundle bytes: 8287015
-  - signed NSIS bundle sha256: `7ee8f67eacd96797986075c6c46c00ec52d7accda7f48acb2a7480ba8659ae8b`
-  - updater signature:
-    `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Relay Pool Desktop_0.3.3_x64-setup.exe.sig`
-  - updater signature bytes: 432
-  - updater signature sha256: `3f0958b2dd8605f66b668b3a4bee6d4dc9791d353d6475eccc9d4ed8c026fea6`
+- Result: exit code 0.
+- Started: `2026-07-29T03:52:58.8754788Z`.
+- Finished: `2026-07-29T04:07:57.6019284Z`.
+- Duration: 898.73s.
+- Revision: `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`.
+- Raw evidence:
+  `output/architecture-scale/qualification/release/release-all-v0.3.3-signed-5f8467f-2026-07-29.txt`
+- Provenance:
+  `output/architecture-scale/qualification/release/provenance.json`
+- Passed the shared deterministic release gates, release version contract, locked Rust release build, signed Tauri bundle and final release bundle scan.
+- The same run included updater drain-aware preparation contracts, updater timeout recovery, production runtime-contract fail-closed tests, Tauri security checks and final bundle scanning.
+
+## Artifacts
+
+- Release executable:
+  `src-tauri/target/x86_64-pc-windows-msvc/release/relay-pool-desktop.exe`
+  - bytes: 36603392
+  - sha256: `0f767ba17f8796b141a43d155ac00480067f4508823f3bc9ec4ad9743ef19cf1`
+- Signed NSIS installer:
+  `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Relay Pool Desktop_0.3.3_x64-setup.exe`
+  - bytes: 8357567
+  - sha256: `b1a6ab739b59f3388746a574a1356fe00759fc8f2a8049eb3218aa670f5c3c96`
+- Updater signature:
+  `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/Relay Pool Desktop_0.3.3_x64-setup.exe.sig`
+  - bytes: 432
+  - sha256: `e7e87bc1fc0db9151ff27cd2d9634ad9c070eafa0693cc56353188b38fd80378`
+
+## Install And Upgrade Matrix
+
+- Harness:
+  `scripts/run-install-upgrade-matrix.ps1`
+- Summary:
+  `output/architecture-scale/qualification/release/install-upgrade-matrix-v0.3.3-2026-07-29-summary.json`
+- Overall result: `pass`.
+- Passed steps:
+  - preserve existing Local/Roaming application data
+  - remove prior install or orphan state
+  - fresh install signed `v0.3.3`
+  - fresh startup stability, no established startup TCP connections, single-instance second launch and close-to-tray probe
+  - uninstall fresh `v0.3.3`
+  - install and start supported baseline `v0.3.2`
+  - upgrade `v0.3.2 -> v0.3.3`
+  - post-upgrade startup, single-instance second launch and close-to-tray probe
+  - restore preserved application data
+- The final installed snapshot reports registry/file/product version `0.3.3` and the expected signed installer hash.
+- The harness used process, registry, version-resource, hash and TCP evidence only. It did not capture screenshots or inspect the desktop visually.
+
+## Final-Candidate Live And Soak Evidence
+
 - Authenticated OpenAI-compatible live provider probe:
-  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run-openai-compatible-live-qualification.ps1 -BaseUrl <approved endpoint> -Model codex-auto-review -OutputPath output\architecture-scale\qualification\live-provider\station-key-connectivity-live-probe-4217aa9-2026-07-28-summary.json`
-  - result: exit code 0
-  - revision: `4217aa9420e4e5e6c0221d5f7038392c199fcf33`
-  - final protocol: `responses`
-  - final response mode: `stream`
-  - final status: 200
-  - final success: true
-  - summary:
-    `output/architecture-scale/qualification/live-provider/station-key-connectivity-live-probe-4217aa9-2026-07-28-summary.json`
+  `output/architecture-scale/qualification/live-provider/station-key-connectivity-live-probe-5f8467f-2026-07-29-summary.json`
+  - revision: `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`
+  - protocol: `responses`
+  - response mode: `stream`
+  - status: 200
+  - success: true
+  - credential: recorded only as `redacted`
+- 60-minute proxy lifecycle soak:
+  `output/architecture-scale/qualification/soak/proxy-lifecycle-soak-5f8467f-2026-07-29-summary.json`
+  - revision: `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`
+  - passes/samples: 1373
+  - p95: 2853.27 ms
+  - failures: 0
+  - final resource-counter assertion: pass
 
-## Entrypoint Repair
+## Qualification Boundaries
 
-- `scripts\verify.ps1` originally invoked the release version script as `pnpm verify:release-version -- --require-tag`.
-- On this pnpm/Windows path, the literal `--` was forwarded to `scripts/verify-release-version.mjs`, causing `unknown argument: --`.
-- The entrypoint now invokes `pnpm verify:release-version --require-tag`.
-- `scripts\verify.ps1` also originally invoked the Tauri build script as `pnpm tauri:build -- --target x86_64-pc-windows-msvc`.
-- On this pnpm/Windows path, the literal `--` was forwarded to Tauri, causing the target release binary path to resolve incorrectly.
-- The entrypoint now invokes `pnpm tauri:build --target x86_64-pc-windows-msvc`.
-- The project updater key was generated as a passwordless Tauri key stored outside the repository; `verify.ps1` supports loading that key through `TAURI_SIGNING_PRIVATE_KEY_PATH` and keeps the private key out of command-line arguments and tracked files.
-- Focused verification passed:
-  - `pnpm verify:release-version --require-tag` with `RELAY_POOL_RELEASE_TAG=v0.3.2`
-  - `node scripts\release-verification-entrypoint.test.mjs`
+- Offline startup was checked by ten-second launch stability and an empty established-TCP snapshot; the host network adapter was not disabled.
+- Closing the main window was verified to return successfully while the process remained alive, matching close-to-tray behavior. The harness then terminated only the exact test executable processes to isolate the next matrix step.
+- The tray menu was not clicked through the desktop shell. Tray Quit routing through `ExitCoordinator`, updater preparation/relaunch ownership and stale runtime-contract mismatch fail-closed behavior are covered by the same-revision release test suite rather than screenshot-driven desktop interaction.
+- The supported upgrade used the signed NSIS installer directly. It validates installed-package replacement and post-upgrade startup; it does not depend on a published updater manifest for this unpushed local tag.
 
-## Superseded Blocking Evidence
+## Superseded Evidence
 
-- Full release shared entrypoint:
-  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile release`
-  - result: failed after passing deterministic/release prebundle steps
-  - started at: `2026-07-28T04:21:32.0250869Z`
-  - finished at: `2026-07-28T04:25:20.8904961Z`
-  - duration: 228.87s
-  - root cause: `TAURI_SIGNING_PRIVATE_KEY is required for release bundling`
-  - raw evidence:
-    `output/architecture-scale/qualification/release/release-all-v0.3.3-signing-blocker-2026-07-28.txt`
-- This blocker is superseded by the successful signed release run on `2026-07-29`.
-
-## Remaining Manual Matrix
-
-- Existing `v0.3.2` tag points to `db51a12b7b783661fd946952600a7a78595ddb0f`; it was not moved.
-- A local exact `v0.3.3` tag now points to `f1dc30009f543e76a50134331b35cecf10d42280`; it has not been pushed.
-- Signed Tauri bundle and final bundle scan passed.
-- Fresh install, supported upgrade, update relaunch, offline startup, old asset/new binary mismatch, single-instance launch and tray/exit matrix were not run in this pass.
-- No desktop app launch, screenshot, or direct visual desktop inspection was used.
+- The earlier signing-key blocker and release runs on `f1dc300` are superseded by the successful signed release gate on `5f8467f`.
+- Earlier Task 26/27 reports retain their original evidence history. The final release profile, live probe and lifecycle soak above are the same-revision requalification used by this Gate.
 
 ## Result
 
-Task 28 passes for deterministic release build, signing, bundle scan and artifact provenance on exact local tag `v0.3.3` at revision `f1dc30009f543e76a50134331b35cecf10d42280`. Authenticated OpenAI-compatible live provider qualification passed on revision `4217aa9420e4e5e6c0221d5f7038392c199fcf33`. The remaining unverified release surface is the destructive/manual install, upgrade, relaunch, offline startup, old asset/new binary mismatch, single-instance launch and tray/exit matrix, which was not run because this pass avoided launching or visually inspecting the desktop app.
+Stage 7 Gate passes for the authorized non-visual qualification scope on exact local candidate tag `v0.3.3` at revision `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`. The same revision passed the full deterministic/release profile, signed bundle and bundle scan, authenticated streaming live-provider probe, 60-minute lifecycle soak, fresh install, supported `v0.3.2 -> v0.3.3` upgrade, startup, single-instance and close-to-tray process probes. The tray menu itself was not clicked and the unpushed local tag could not exercise a published updater manifest; those boundaries are explicitly covered by same-revision automated contracts and are not represented as direct desktop interaction. The branch is qualified for local merge; no remote push or release publication is authorized by this report.

@@ -51,6 +51,13 @@ Date: 2026-07-28
 - Rust completed with existing dead-code, type-complexity, too-many-arguments and clippy advisory warnings and no failing gate.
 - This Task 26 report is deterministic/local qualification only. Stage 7 Task 27 soak/live qualification and Task 28 release/locked build qualification remain separate gates.
 
+## Final Candidate Requalification
+
+- The shared full deterministic profile was rerun as part of the signed release entrypoint on final candidate revision `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`.
+- Raw evidence:
+  `output/architecture-scale/qualification/release/release-all-v0.3.3-signed-5f8467f-2026-07-29.txt`
+- The release entrypoint completed with exit code 0 and continued through signed bundle generation and final bundle scanning, so the Task 26 deterministic gates were green on the exact release candidate rather than inherited only from the earlier baseline revision.
+
 ## Result
 
-Task 26 deterministic qualification passes for revision `83defbc241d1b4d28ec930853d712adff4cfc671`. Task 27 may start from this qualified baseline, but release readiness is not claimed until Task 27 and Task 28 pass.
+Task 26 deterministic qualification passes for the original baseline revision `83defbc241d1b4d28ec930853d712adff4cfc671` and was requalified by the shared release profile on final candidate revision `5f8467ffcf1bea2fbc2436710d9141b267ea2a20`. Final release readiness remains governed by the Task 27 and Task 28 reports.
