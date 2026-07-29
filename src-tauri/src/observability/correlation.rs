@@ -85,7 +85,8 @@ pub(crate) async fn in_command_scope<T>(
     command: &'static str,
     future: impl Future<Output = T>,
 ) -> T {
-    StableEventCode::new(command).expect("command span scope must be a stable public code");
+    StableEventCode::from_command_name(command)
+        .expect("command span scope must be a public command identifier");
     let correlation_id = CorrelationId::new();
     let span = tracing::info_span!(
         "ipc.command",
@@ -125,6 +126,17 @@ mod tests {
             .as_str()
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit()));
+        assert!(current().is_none(), "command scope must not leak");
+    }
+
+    #[tokio::test]
+    async fn command_scope_accepts_secret_domain_terms_in_static_command_names() {
+        let observed = in_command_scope("upsert_common_login_password", async {
+            current().expect("command correlation")
+        })
+        .await;
+
+        assert_eq!(observed.as_str().len(), CORRELATION_ID_BYTES);
         assert!(current().is_none(), "command scope must not leak");
     }
 
@@ -178,7 +190,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "command span scope must be a stable public code")]
+    #[should_panic(expected = "command span scope must be a public command identifier")]
     async fn command_scope_rejects_secret_or_url_shaped_span_fields() {
         in_command_scope("https://example.test/v1?token=secret", async {}).await;
     }
