@@ -3,17 +3,20 @@ pub(crate) mod device_key_journal;
 pub(crate) mod device_key_store;
 pub mod keychain;
 pub mod mask;
+pub(crate) mod material;
 pub mod validation;
 pub(crate) mod vault;
 
 use crate::background_tasks::{BlockingExecutor, BlockingExecutorError};
 
 use device_key_store::{DeviceKeyError, DeviceKeyStore};
+pub(crate) use material::{
+    DeviceKeyId, DeviceKeyResolver, SecretKeyAccessError, SecretKeyMaterial,
+    CURRENT_SECRET_ENCRYPTION_VERSION, LEGACY_DEVICE_KEY_ID,
+};
 
-#[derive(Clone)]
 pub struct SecretManager {
-    data_key: [u8; 32],
-    active_key_id: Option<String>,
+    resolver: DeviceKeyResolver,
 }
 
 impl SecretManager {
@@ -31,10 +34,10 @@ impl SecretManager {
             .result()
             .await
             .map_err(blocking_error_to_device_key_error)?;
-        Ok(Self {
-            data_key: key.material,
-            active_key_id: key.id,
-        })
+        Ok(Self::from_loaded_key(
+            key.id.unwrap_or_else(|| LEGACY_DEVICE_KEY_ID.to_string()),
+            key.material,
+        ))
     }
 
     pub async fn create_pending_for_first_run(
@@ -54,16 +57,14 @@ impl SecretManager {
             .result()
             .await
             .map_err(blocking_error_to_device_key_error)?;
-        Ok(Self {
-            data_key: pending.material,
-            active_key_id: Some(pending.id),
-        })
+        Ok(Self::from_loaded_key(pending.id, pending.material))
     }
 
     pub async fn commit_active(&self, blocking: BlockingExecutor) -> Result<(), DeviceKeyError> {
-        let Some(key_id) = self.active_key_id.clone() else {
+        let key_id = self.resolver.active_key_id().as_str().to_string();
+        if key_id == LEGACY_DEVICE_KEY_ID {
             return Ok(());
-        };
+        }
         blocking
             .submit("device_key_commit_active", None, None, None, move |_| {
                 let store = DeviceKeyStore::new(keychain::SystemCredentialBackend);
@@ -79,8 +80,25 @@ impl SecretManager {
             .map_err(blocking_error_to_device_key_error)
     }
 
-    pub fn data_key(&self) -> &[u8; 32] {
-        &self.data_key
+    pub(crate) fn resolver(&self) -> DeviceKeyResolver {
+        self.resolver.clone()
+    }
+
+    pub(crate) fn with_active_key<R>(
+        &self,
+        action: impl FnOnce(&[u8; 32]) -> R,
+    ) -> Result<R, SecretKeyAccessError> {
+        self.resolver.with_active_key(action)
+    }
+
+    fn from_loaded_key(key_id: String, material: [u8; 32]) -> Self {
+        Self {
+            resolver: DeviceKeyResolver::active(
+                DeviceKeyId::new(key_id),
+                SecretKeyMaterial::from_bytes(material),
+                CURRENT_SECRET_ENCRYPTION_VERSION,
+            ),
+        }
     }
 }
 

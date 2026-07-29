@@ -4,6 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Task 3 reviewed exception: this module is the legacy generation-1 to
+// generation-2 conversion adapter. It may receive a borrowed/callback-scoped
+// device key from startup/recovery while it rebuilds or validates a local
+// database candidate, but it must not be used as a long-lived business service
+// key holder.
+
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{SecondsFormat, Utc};
 

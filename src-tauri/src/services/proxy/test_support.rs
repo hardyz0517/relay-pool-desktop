@@ -22,14 +22,14 @@ use crate::{
     persistence::runtime::PersistenceRuntime,
     services::{
         proxy::{http_request::parse_http_request, runtime::ProxyStartConfig},
-        secrets::crypto::generate_data_key,
+        secrets::{crypto::generate_data_key, DeviceKeyResolver},
     },
 };
 
 pub(crate) struct V2ProxyTestFixture {
     pub(crate) services: AppServices,
     runtime: PersistenceRuntime,
-    pub(crate) data_key: [u8; 32],
+    pub(crate) device_keys: DeviceKeyResolver,
     _root: tempfile::TempDir,
 }
 
@@ -44,6 +44,7 @@ impl V2ProxyTestFixture {
             .await
             .expect("initialize V2 persistence runtime");
         let data_key = generate_data_key();
+        let device_keys = DeviceKeyResolver::for_test(data_key);
         let work_runtime = crate::app_composition::compose_work_runtime(
             crate::app_composition::WorkRuntimeConfig::architecture_budget(),
             tokio::runtime::Handle::current(),
@@ -51,7 +52,7 @@ impl V2ProxyTestFixture {
         .expect("compose work runtime");
         let services = crate::app_composition::compose_app_services(
             runtime.handle(),
-            data_key,
+            device_keys.clone(),
             active_data_dir.to_string_lossy().into_owned(),
             None,
             Arc::new(
@@ -70,7 +71,7 @@ impl V2ProxyTestFixture {
         Self {
             services,
             runtime,
-            data_key,
+            device_keys,
             _root: root,
         }
     }
@@ -81,7 +82,7 @@ impl V2ProxyTestFixture {
         > = Arc::new(
             crate::services::proxy::routing_repository::V2RoutingRepository::new(
                 self.services.routing.as_ref().clone(),
-                self.data_key,
+                self.device_keys.clone(),
             ),
         );
         let lifecycle_store: Arc<

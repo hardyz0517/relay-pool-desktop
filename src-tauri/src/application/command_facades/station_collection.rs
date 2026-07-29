@@ -27,7 +27,6 @@ pub(crate) struct StationCollectionCommandFacade {
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
-    data_key: [u8; 32],
 }
 
 impl StationCollectionCommandFacade {
@@ -38,7 +37,6 @@ impl StationCollectionCommandFacade {
         blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<collectors::orchestration::ProviderRegistry>,
-        data_key: [u8; 32],
     ) -> Self {
         Self {
             collectors,
@@ -47,7 +45,6 @@ impl StationCollectionCommandFacade {
             blocking,
             outbound,
             providers,
-            data_key,
         }
     }
 
@@ -57,7 +54,6 @@ impl StationCollectionCommandFacade {
         task: CollectorTask,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let source = self.source();
-        let data_key = self.data_key;
         let prepared = self
             .blocking
             .submit(
@@ -67,7 +63,7 @@ impl StationCollectionCommandFacade {
                 None,
                 move |_| {
                     Ok(collectors::prepare_station_collection_route_v2(
-                        &source, &data_key, station_id, task,
+                        &source, station_id, task,
                     ))
                 },
             )
@@ -119,7 +115,6 @@ impl StationCollectionCommandFacade {
         station_id: String,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let source = self.source();
-        let data_key = self.data_key;
         let prepared = self
             .blocking
             .submit(
@@ -129,7 +124,7 @@ impl StationCollectionCommandFacade {
                 None,
                 move |_| {
                     Ok(collectors::prepare_station_login_probe_v2(
-                        &source, &data_key, station_id,
+                        &source, station_id,
                     ))
                 },
             )
@@ -141,7 +136,6 @@ impl StationCollectionCommandFacade {
         let source = self.source();
         let prepared = collectors::finish_station_login_probe_v2(
             &source,
-            &self.data_key,
             &self.outbound,
             prepared,
             tokio_util::sync::CancellationToken::new(),

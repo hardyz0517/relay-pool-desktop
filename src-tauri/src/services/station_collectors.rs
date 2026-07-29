@@ -33,7 +33,6 @@ pub(crate) fn v2_runner_port(
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
-    data_key: [u8; 32],
 ) -> Arc<dyn StationCollectorRunnerPort> {
     let source: Arc<dyn CollectorSourcePort> = Arc::new(V2CollectorSourceAdapter::new(
         services.collectors.clone(),
@@ -43,7 +42,7 @@ pub(crate) fn v2_runner_port(
     let apply: Arc<dyn CollectorApplyPort> =
         Arc::new(V2CollectorApplyAdapter::new((*services.collectors).clone()));
     let tasks: Arc<dyn StationCollectorTaskPort> = Arc::new(V2StationCollectorTaskAdapter::new(
-        source, apply, blocking, outbound, providers, data_key,
+        source, apply, blocking, outbound, providers,
     ));
     Arc::new(V2StationCollectorRunnerAdapter::new(
         services.collectors.clone(),
@@ -85,7 +84,6 @@ pub(crate) struct V2StationCollectorTaskAdapter {
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
-    data_key: [u8; 32],
 }
 
 impl V2StationCollectorTaskAdapter {
@@ -95,7 +93,6 @@ impl V2StationCollectorTaskAdapter {
         blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<collectors::orchestration::ProviderRegistry>,
-        data_key: [u8; 32],
     ) -> Self {
         Self {
             source,
@@ -103,7 +100,6 @@ impl V2StationCollectorTaskAdapter {
             blocking,
             outbound,
             providers,
-            data_key,
         }
     }
 }
@@ -120,7 +116,6 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
         let blocking = self.blocking.clone();
         let outbound = self.outbound.clone();
         let providers = self.providers.clone();
-        let data_key = self.data_key;
         Box::pin(async move {
             let operation_id = Some(format!("{}:{}", context.task_id, context.run_id));
             let prepare = blocking
@@ -132,7 +127,6 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                     move |_| {
                         Ok(collectors::prepare_station_task_route_v2(
                             source.as_ref(),
-                            &data_key,
                             station_id,
                             task,
                         ))

@@ -7,7 +7,10 @@ use crate::{
     services::{
         outbound::resolve_proxy_config,
         proxy::routing_types::{RichRouteCandidate, RouteCandidate, RouteCandidateEconomics},
-        secrets::crypto::{decrypt_secret, EncryptedPayload},
+        secrets::{
+            crypto::{decrypt_secret, EncryptedPayload},
+            DeviceKeyResolver,
+        },
     },
 };
 use base64::{engine::general_purpose, Engine as _};
@@ -17,12 +20,15 @@ pub(crate) type RoutingExecutionSettings = RuntimeRoutingSettings;
 #[derive(Clone)]
 pub(crate) struct V2RoutingRepository {
     routing: RoutingService,
-    data_key: [u8; 32],
+    device_keys: DeviceKeyResolver,
 }
 
 impl V2RoutingRepository {
-    pub(crate) fn new(routing: RoutingService, data_key: [u8; 32]) -> Self {
-        Self { routing, data_key }
+    pub(crate) fn new(routing: RoutingService, device_keys: DeviceKeyResolver) -> Self {
+        Self {
+            routing,
+            device_keys,
+        }
     }
 }
 
@@ -55,7 +61,7 @@ impl RoutingRepository for V2RoutingRepository {
         &self,
     ) -> futures_util::future::BoxFuture<'static, Result<Vec<RichRouteCandidate>, String>> {
         let routing = self.routing.clone();
-        let data_key = self.data_key;
+        let device_keys = self.device_keys.clone();
         Box::pin(async move {
             let proxy_defaults = routing
                 .load_proxy_defaults()
@@ -68,7 +74,7 @@ impl RoutingRepository for V2RoutingRepository {
             candidates
                 .into_iter()
                 .map(|candidate| {
-                    rich_route_candidate_from_v2(candidate, &data_key, &proxy_defaults)
+                    rich_route_candidate_from_v2(candidate, &device_keys, &proxy_defaults)
                 })
                 .collect()
         })
@@ -113,7 +119,7 @@ impl RoutingRepository for V2RoutingRepository {
 
 fn rich_route_candidate_from_v2(
     candidate: RuntimeRoutingCandidate,
-    data_key: &[u8; 32],
+    device_keys: &DeviceKeyResolver,
     proxy_defaults: &RoutingProxyDefaults,
 ) -> Result<RichRouteCandidate, String> {
     let proxy = resolve_proxy_config(
@@ -122,7 +128,7 @@ fn rich_route_candidate_from_v2(
         &proxy_defaults.collector_proxy_mode,
         proxy_defaults.collector_proxy_url.clone(),
     );
-    let api_key = runtime_candidate_api_key(&candidate, data_key)?;
+    let api_key = runtime_candidate_api_key(&candidate, device_keys)?;
     Ok(RichRouteCandidate {
         candidate: RouteCandidate {
             station_key_id: candidate.station_key_id.clone(),
@@ -156,7 +162,7 @@ fn rich_route_candidate_from_v2(
 
 fn runtime_candidate_api_key(
     candidate: &RuntimeRoutingCandidate,
-    data_key: &[u8; 32],
+    device_keys: &DeviceKeyResolver,
 ) -> Result<String, String> {
     if let Some(api_key) = candidate
         .api_key
@@ -170,16 +176,20 @@ fn runtime_candidate_api_key(
         .api_key_secret
         .as_ref()
         .ok_or_else(|| "station key secret unavailable".to_string())?;
-    decrypt_secret(
-        data_key,
-        &EncryptedPayload {
-            ciphertext: general_purpose::STANDARD.encode(&secret.ciphertext),
-            nonce: general_purpose::STANDARD.encode(&secret.nonce),
-            aad: format!("{}:{}:{}", secret.scope, secret.owner_id, secret.kind),
-            value_hash: String::new(),
-        },
-    )
-    .map_err(|_| "station key secret unavailable".to_string())
+    device_keys
+        .with_active_key(|key| {
+            decrypt_secret(
+                key,
+                &EncryptedPayload {
+                    ciphertext: general_purpose::STANDARD.encode(&secret.ciphertext),
+                    nonce: general_purpose::STANDARD.encode(&secret.nonce),
+                    aad: format!("{}:{}:{}", secret.scope, secret.owner_id, secret.kind),
+                    value_hash: String::new(),
+                },
+            )
+        })
+        .map_err(|_| "station key secret unavailable".to_string())?
+        .map_err(|_| "station key secret unavailable".to_string())
 }
 
 fn route_candidate_economics_from_balance(

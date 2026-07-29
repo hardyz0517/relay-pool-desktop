@@ -1402,7 +1402,7 @@ mod tests {
             .expect("runtime");
         let service = CredentialService::new(
             runtime.handle(),
-            Arc::new(DataKeyVault::new([23; 32])),
+            Arc::new(DataKeyVault::for_test([23; 32])),
             Arc::new(SystemClock),
             Arc::new(UuidV7Generator),
         );

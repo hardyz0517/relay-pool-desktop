@@ -25,7 +25,6 @@ pub(crate) struct RemoteKeysCommandFacade {
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
-    data_key: [u8; 32],
 }
 
 impl RemoteKeysCommandFacade {
@@ -36,7 +35,6 @@ impl RemoteKeysCommandFacade {
         blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<ProviderRegistry>,
-        data_key: [u8; 32],
     ) -> Self {
         Self {
             collectors,
@@ -45,7 +43,6 @@ impl RemoteKeysCommandFacade {
             blocking,
             outbound,
             providers,
-            data_key,
         }
     }
 
@@ -53,13 +50,11 @@ impl RemoteKeysCommandFacade {
         &self,
         station_id: String,
     ) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
-        let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
         let newapi_prepared = self
             .prepare_remote_key_context("remote_key_prepare_newapi_scan", move |source| {
                 remote_keys::prepare_newapi_remote_key_driver_context_v2(
                     &source,
-                    &data_key,
                     station_id_for_probe,
                 )
             })
@@ -76,13 +71,11 @@ impl RemoteKeysCommandFacade {
             return remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared)
                 .await;
         }
-        let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
         let sub2api_prepared = self
             .prepare_remote_key_context("remote_key_prepare_sub2api_scan", move |source| {
                 remote_keys::prepare_sub2api_remote_key_driver_context_v2(
                     &source,
-                    &data_key,
                     station_id_for_probe,
                 )
             })
@@ -111,13 +104,10 @@ impl RemoteKeysCommandFacade {
         &self,
         input: CreateRemoteStationKeyInput,
     ) -> Result<CreateRemoteStationKeyResult, RemoteKeyOperationError> {
-        let data_key = self.data_key;
         let station_id = input.station_id.clone();
         let newapi_prepared = self
             .prepare_remote_key_context("remote_key_prepare_newapi_create", move |source| {
-                remote_keys::prepare_newapi_remote_key_driver_context_v2(
-                    &source, &data_key, station_id,
-                )
+                remote_keys::prepare_newapi_remote_key_driver_context_v2(&source, station_id)
             })
             .await?;
         if let Some(prepared) = newapi_prepared {
@@ -133,13 +123,10 @@ impl RemoteKeysCommandFacade {
             return remote_keys::finish_remote_key_creation_v2(self.credentials.as_ref(), prepared)
                 .await;
         }
-        let data_key = self.data_key;
         let station_id = input.station_id.clone();
         let sub2api_prepared = self
             .prepare_remote_key_context("remote_key_prepare_sub2api_create", move |source| {
-                remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                    &source, &data_key, station_id,
-                )
+                remote_keys::prepare_sub2api_remote_key_driver_context_v2(&source, station_id)
             })
             .await?;
         if let Some(prepared) = sub2api_prepared {
@@ -164,13 +151,11 @@ impl RemoteKeysCommandFacade {
         station_id: String,
         remote_key_id: String,
     ) -> Result<CreateLocalStationKeyFromRemoteResult, RemoteKeyOperationError> {
-        let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
         let newapi_prepared = self
             .prepare_remote_key_context("remote_key_prepare_newapi_reveal", move |source| {
                 remote_keys::prepare_newapi_remote_key_driver_context_v2(
                     &source,
-                    &data_key,
                     station_id_for_probe,
                 )
             })
@@ -191,13 +176,11 @@ impl RemoteKeysCommandFacade {
             )
             .await;
         }
-        let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
         let sub2api_prepared = self
             .prepare_remote_key_context("remote_key_prepare_sub2api_reveal", move |source| {
                 remote_keys::prepare_sub2api_remote_key_driver_context_v2(
                     &source,
-                    &data_key,
                     station_id_for_probe,
                 )
             })
@@ -235,13 +218,11 @@ impl RemoteKeysCommandFacade {
             .find(|key| key.id == remote_key_id)
             .and_then(|key| key.matched_station_key_id);
 
-        let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
         let newapi_prepared = self
             .prepare_remote_key_context("remote_key_prepare_newapi_delete", move |source| {
                 remote_keys::prepare_newapi_remote_key_driver_context_v2(
                     &source,
-                    &data_key,
                     station_id_for_probe,
                 )
             })
@@ -261,13 +242,11 @@ impl RemoteKeysCommandFacade {
                 .await;
         }
 
-        let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
         let sub2api_prepared = self
             .prepare_remote_key_context("remote_key_prepare_sub2api_delete", move |source| {
                 remote_keys::prepare_sub2api_remote_key_driver_context_v2(
                     &source,
-                    &data_key,
                     station_id_for_probe,
                 )
             })

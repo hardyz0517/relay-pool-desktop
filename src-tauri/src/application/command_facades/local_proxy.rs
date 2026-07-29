@@ -12,6 +12,7 @@ use crate::{
         routing_types::LocalRoutingWorkspace,
         runtime::{ProxyRuntimeState, ProxyStartConfig},
     },
+    services::secrets::DeviceKeyResolver,
 };
 
 #[derive(Debug)]
@@ -44,7 +45,7 @@ pub(crate) struct LocalProxyCommandFacade {
     request_logs: Arc<RequestLogService>,
     request_finalization: Arc<RequestFinalizationService>,
     proxy: Arc<ProxyRuntimeState>,
-    data_key: [u8; 32],
+    device_keys: DeviceKeyResolver,
 }
 
 impl LocalProxyCommandFacade {
@@ -54,7 +55,7 @@ impl LocalProxyCommandFacade {
         request_logs: Arc<RequestLogService>,
         request_finalization: Arc<RequestFinalizationService>,
         proxy: Arc<ProxyRuntimeState>,
-        data_key: [u8; 32],
+        device_keys: DeviceKeyResolver,
     ) -> Self {
         Self {
             settings,
@@ -62,7 +63,7 @@ impl LocalProxyCommandFacade {
             request_logs,
             request_finalization,
             proxy,
-            data_key,
+            device_keys,
         }
     }
 
@@ -163,7 +164,7 @@ impl LocalProxyCommandFacade {
         let local_access_key = self.settings.ensure_local_access_key().await?;
         let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
             self.routing.as_ref().clone(),
-            self.data_key,
+            self.device_keys.clone(),
         ));
         let lifecycle_store: Arc<dyn RequestLifecycleStore> = self.request_finalization.clone();
         let config = ProxyStartConfig::new_v2(

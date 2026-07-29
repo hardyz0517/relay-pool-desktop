@@ -23,18 +23,16 @@ pub(crate) trait NewApiAuthSessionSource {
     fn resolve_newapi_session(
         &self,
         station_id: &str,
-        data_key: &[u8; 32],
         now_ms: i64,
     ) -> Result<NewApiResolvedSession, String>;
 }
 
 pub(crate) fn prepare_collector_auth_context<S: NewApiAuthSessionSource + ?Sized>(
     source: &S,
-    data_key: &[u8; 32],
     station_id: &str,
     now_ms: i64,
 ) -> Result<PreparedNewApiAuthContext, String> {
-    let session = source.resolve_newapi_session(station_id, data_key, now_ms)?;
+    let session = source.resolve_newapi_session(station_id, now_ms)?;
     let user_id = session
         .newapi_user_id
         .clone()
@@ -79,7 +77,6 @@ mod tests {
         fn resolve_newapi_session(
             &self,
             _station_id: &str,
-            _data_key: &[u8; 32],
             _now_ms: i64,
         ) -> Result<NewApiResolvedSession, String> {
             Ok(self.session.clone())
@@ -97,8 +94,7 @@ mod tests {
             },
         };
 
-        let context =
-            prepare_collector_auth_context(&source, &[0; 32], "station-1", 123).expect("context");
+        let context = prepare_collector_auth_context(&source, "station-1", 123).expect("context");
 
         assert_eq!(context.kind, PreparedNewApiAuthKind::AccessToken);
         assert_eq!(context.secret, "token");
@@ -116,8 +112,7 @@ mod tests {
             },
         };
 
-        let context =
-            prepare_collector_auth_context(&source, &[0; 32], "station-1", 123).expect("context");
+        let context = prepare_collector_auth_context(&source, "station-1", 123).expect("context");
 
         assert_eq!(context.kind, PreparedNewApiAuthKind::Cookie);
         assert_eq!(context.secret, "session=abc");
@@ -134,7 +129,7 @@ mod tests {
             },
         };
         assert_eq!(
-            prepare_collector_auth_context(&source, &[0; 32], "station-1", 123).unwrap_err(),
+            prepare_collector_auth_context(&source, "station-1", 123).unwrap_err(),
             "manual session required"
         );
 
@@ -147,7 +142,7 @@ mod tests {
             },
         };
         assert_eq!(
-            prepare_collector_auth_context(&source, &[0; 32], "station-1", 123).unwrap_err(),
+            prepare_collector_auth_context(&source, "station-1", 123).unwrap_err(),
             "NewAPI session is missing user id"
         );
     }

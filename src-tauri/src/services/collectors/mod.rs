@@ -67,33 +67,22 @@ pub(crate) trait CollectorSourcePort: Send + Sync {
     fn station_for_collector(&self, station_id: &str) -> Result<Station, String>;
     fn get_settings(&self) -> Result<AppSettings, String>;
     fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String>;
-    fn resolve_station_key_secret_with_data_key(
-        &self,
-        data_key: &[u8; 32],
-        station_key_id: &str,
-    ) -> Result<String, String>;
+    fn resolve_station_key_secret(&self, station_key_id: &str) -> Result<String, String>;
     fn get_station_credentials(&self, station_id: String) -> Result<StationCredentials, String>;
-    fn get_station_login_password_with_data_key(
+    fn get_station_login_password(&self, station_id: String) -> Result<Option<String>, String>;
+    fn resolve_station_session(
         &self,
         station_id: String,
-        data_key: &[u8; 32],
-    ) -> Result<Option<String>, String>;
-    fn resolve_station_session_with_data_key(
-        &self,
-        station_id: String,
-        data_key: &[u8; 32],
         now_ms: i64,
     ) -> Result<ResolvedSession, String>;
-    fn update_station_session_with_data_key(
+    fn update_station_session(
         &self,
         input: UpdateStationSessionInput,
-        data_key: &[u8; 32],
         expected_revision: i64,
     ) -> Result<StationCredentials, String>;
-    fn persist_station_session_with_data_key(
+    fn persist_station_session(
         &self,
         input: PersistStationSessionInput,
-        data_key: &[u8; 32],
         expected_revision: i64,
     ) -> Result<StationCredentials, String>;
     fn invalidate_station_session_credential(
@@ -143,11 +132,7 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
             .map_err(application_error)
     }
 
-    fn resolve_station_key_secret_with_data_key(
-        &self,
-        _data_key: &[u8; 32],
-        station_key_id: &str,
-    ) -> Result<String, String> {
+    fn resolve_station_key_secret(&self, station_key_id: &str) -> Result<String, String> {
         let secret = tauri::async_runtime::block_on(
             self.credentials
                 .resolve_station_key_secret(station_key_id.to_string()),
@@ -162,11 +147,7 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
             .map_err(application_error)
     }
 
-    fn get_station_login_password_with_data_key(
-        &self,
-        station_id: String,
-        _data_key: &[u8; 32],
-    ) -> Result<Option<String>, String> {
+    fn get_station_login_password(&self, station_id: String) -> Result<Option<String>, String> {
         let secret =
             tauri::async_runtime::block_on(self.credentials.get_station_login_password(station_id))
                 .map_err(application_error)?;
@@ -178,20 +159,18 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
             .transpose()
     }
 
-    fn resolve_station_session_with_data_key(
+    fn resolve_station_session(
         &self,
         station_id: String,
-        _data_key: &[u8; 32],
         now_ms: i64,
     ) -> Result<ResolvedSession, String> {
         tauri::async_runtime::block_on(self.credentials.resolve_station_session(station_id, now_ms))
             .map_err(application_error)
     }
 
-    fn update_station_session_with_data_key(
+    fn update_station_session(
         &self,
         input: UpdateStationSessionInput,
-        _data_key: &[u8; 32],
         expected_revision: i64,
     ) -> Result<StationCredentials, String> {
         tauri::async_runtime::block_on(
@@ -201,10 +180,9 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
         .map_err(application_error)
     }
 
-    fn persist_station_session_with_data_key(
+    fn persist_station_session(
         &self,
         input: PersistStationSessionInput,
-        _data_key: &[u8; 32],
         expected_revision: i64,
     ) -> Result<StationCredentials, String> {
         tauri::async_runtime::block_on(
@@ -239,11 +217,9 @@ impl drivers::newapi::auth::NewApiAuthSessionSource for dyn CollectorSourcePort 
     fn resolve_newapi_session(
         &self,
         station_id: &str,
-        data_key: &[u8; 32],
         now_ms: i64,
     ) -> Result<drivers::newapi::auth::NewApiResolvedSession, String> {
-        let session =
-            self.resolve_station_session_with_data_key(station_id.to_string(), data_key, now_ms)?;
+        let session = self.resolve_station_session(station_id.to_string(), now_ms)?;
         Ok(drivers::newapi::auth::NewApiResolvedSession {
             access_token: session.access_token,
             cookie: session.cookie,
@@ -382,7 +358,6 @@ impl contract::DriverSecretAccessor for StaticSecretAccessor {
 
 pub(crate) fn prepare_station_collection_route_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station_id: String,
     task: CollectorTask,
 ) -> Result<PreparedStationCollectionRoute, ApplicationError> {
@@ -392,16 +367,12 @@ pub(crate) fn prepare_station_collection_route_v2(
     let provider = provider_kind_for_station_type(&station.station_type)
         .map_err(|_| ApplicationError::ConstraintViolation)?;
     match provider {
-        contract::ProviderKind::Sub2Api => {
-            prepare_sub2api_collection_v2(source, data_key, station, task)
-                .map(PreparedStationCollectionRoute::Sub2Api)
-        }
-        contract::ProviderKind::NewApi => {
-            prepare_newapi_collection_v2(source, data_key, station, task)
-                .map(PreparedStationCollectionRoute::NewApi)
-        }
+        contract::ProviderKind::Sub2Api => prepare_sub2api_collection_v2(source, station, task)
+            .map(PreparedStationCollectionRoute::Sub2Api),
+        contract::ProviderKind::NewApi => prepare_newapi_collection_v2(source, station, task)
+            .map(PreparedStationCollectionRoute::NewApi),
         contract::ProviderKind::OpenAiCompatible => {
-            prepare_openai_compatible_collection_v2(source, data_key, station, task)
+            prepare_openai_compatible_collection_v2(source, station, task)
                 .map(PreparedStationCollectionRoute::OpenAiCompatible)
         }
     }
@@ -409,7 +380,6 @@ pub(crate) fn prepare_station_collection_route_v2(
 
 pub(crate) fn prepare_station_task_route_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station_id: String,
     task: CollectorTask,
 ) -> Result<PreparedStationTaskRoute, ApplicationError> {
@@ -419,16 +389,12 @@ pub(crate) fn prepare_station_task_route_v2(
     let provider = provider_kind_for_station_type(&station.station_type)
         .map_err(|_| ApplicationError::ConstraintViolation)?;
     match provider {
-        contract::ProviderKind::Sub2Api => {
-            prepare_sub2api_collection_v2(source, data_key, station, task)
-                .map(PreparedStationTaskRoute::Sub2Api)
-        }
-        contract::ProviderKind::NewApi => {
-            prepare_newapi_collection_v2(source, data_key, station, task)
-                .map(PreparedStationTaskRoute::NewApi)
-        }
+        contract::ProviderKind::Sub2Api => prepare_sub2api_collection_v2(source, station, task)
+            .map(PreparedStationTaskRoute::Sub2Api),
+        contract::ProviderKind::NewApi => prepare_newapi_collection_v2(source, station, task)
+            .map(PreparedStationTaskRoute::NewApi),
         contract::ProviderKind::OpenAiCompatible => {
-            prepare_openai_compatible_collection_v2(source, data_key, station, task)
+            prepare_openai_compatible_collection_v2(source, station, task)
                 .map(PreparedStationTaskRoute::OpenAiCompatible)
         }
     }
@@ -436,7 +402,6 @@ pub(crate) fn prepare_station_task_route_v2(
 
 fn prepare_openai_compatible_collection_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station: Station,
     task: CollectorTask,
 ) -> Result<PreparedOpenAiCompatibleCollection, ApplicationError> {
@@ -489,7 +454,7 @@ fn prepare_openai_compatible_collection_v2(
             ),
         ));
     };
-    let api_key = match source.resolve_station_key_secret_with_data_key(data_key, &key.id) {
+    let api_key = match source.resolve_station_key_secret(&key.id) {
         Ok(api_key) => api_key,
         Err(error) => {
             return Ok(PreparedOpenAiCompatibleCollection::Immediate(
@@ -552,7 +517,6 @@ fn prepare_openai_compatible_collection_v2(
 
 fn prepare_sub2api_collection_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station: Station,
     task: CollectorTask,
 ) -> Result<PreparedSub2ApiCollection, ApplicationError> {
@@ -581,7 +545,7 @@ fn prepare_sub2api_collection_v2(
             credential_revision: station.endpoint_revision,
             scope: contract::CredentialScope::StationKey,
         };
-        if let Ok(secret) = source.resolve_station_key_secret_with_data_key(data_key, &key.id) {
+        if let Ok(secret) = source.resolve_station_key_secret(&key.id) {
             records.push(SecretRecord {
                 handle: handle.clone(),
                 purpose: contract::CredentialSecretPurpose::AuthorizationHeader,
@@ -595,9 +559,8 @@ fn prepare_sub2api_collection_v2(
     }
 
     let session = source
-        .resolve_station_session_with_data_key(
+        .resolve_station_session(
             station_id.clone(),
-            data_key,
             crate::services::time::now_millis_for_services() as i64,
         )
         .map_err(|_| ApplicationError::Internal)?;
@@ -631,7 +594,7 @@ fn prepare_sub2api_collection_v2(
                 return None;
             }
             let password = source
-                .get_station_login_password_with_data_key(station_id.clone(), data_key)
+                .get_station_login_password(station_id.clone())
                 .ok()
                 .flatten()?;
             if password.trim().is_empty() {
@@ -696,7 +659,6 @@ fn prepare_sub2api_collection_v2(
 
 fn prepare_newapi_collection_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station: Station,
     task: CollectorTask,
 ) -> Result<PreparedNewApiCollection, ApplicationError> {
@@ -721,7 +683,6 @@ fn prepare_newapi_collection_v2(
     let (auth_context, secret_purpose, secret) = if needs_auth {
         match drivers::newapi::auth::prepare_collector_auth_context(
             source,
-            data_key,
             &station.id,
             crate::services::time::now_millis_for_services() as i64,
         ) {
@@ -1131,7 +1092,6 @@ pub(crate) struct PreparedStationLoginProbe {
 
 pub(crate) fn prepare_station_login_probe_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station_id: String,
 ) -> Result<PreparedStationLoginProbe, ApplicationError> {
     let station = source
@@ -1142,7 +1102,7 @@ pub(crate) fn prepare_station_login_probe_v2(
         .map_err(|_| ApplicationError::Internal)?;
     let username = credentials.login_username.clone().unwrap_or_default();
     let password = source
-        .get_station_login_password_with_data_key(station_id, data_key)
+        .get_station_login_password(station_id)
         .map_err(|_| ApplicationError::Internal)?;
     let settings = source
         .get_settings()
@@ -1166,7 +1126,6 @@ pub(crate) fn prepare_station_login_probe_v2(
 
 pub(crate) async fn finish_station_login_probe_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     outbound: &AsyncOutboundClient,
     prepared: PreparedStationLoginProbe,
     cancellation_token: CancellationToken,
@@ -1206,7 +1165,7 @@ pub(crate) async fn finish_station_login_probe_v2(
 
     if let Some(session) = attempt.newapi_session.clone() {
         source
-            .persist_station_session_with_data_key(
+            .persist_station_session(
                 PersistStationSessionInput {
                     station_id: prepared.station.id.clone(),
                     access_token: None,
@@ -1217,7 +1176,6 @@ pub(crate) async fn finish_station_login_probe_v2(
                     session_expires_at: None,
                     session_source: "password_login".to_string(),
                 },
-                data_key,
                 prepared.station.endpoint_revision,
             )
             .map_err(|_| ApplicationError::Internal)?;

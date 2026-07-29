@@ -213,7 +213,7 @@ enum DataStoreShutdownError {
 fn prepare_data_store(
     default_data_dir: PathBuf,
     mut startup_state: DataStoreStartupState,
-    data_key: [u8; 32],
+    device_keys: &services::secrets::DeviceKeyResolver,
 ) -> Result<PreparedDataStore, String> {
     if let Some(intent) = startup_state.relocation_intent.clone() {
         match apply_trusted_relocation(&default_data_dir, &intent) {
@@ -251,21 +251,27 @@ fn prepare_data_store(
                 };
                 return Ok(PreparedDataStore::Recovery(startup_state));
             };
-            services::data_store::generation_upgrade::prepare_generation_two(
-                &default_data_dir,
-                &active_data_dir,
-                Some(&db_path),
-                data_key,
-            )
+            device_keys
+                .with_active_key(|key_bytes| {
+                    services::data_store::generation_upgrade::prepare_generation_two(
+                        &default_data_dir,
+                        &active_data_dir,
+                        Some(&db_path),
+                        *key_bytes,
+                    )
+                })
+                .map_err(|error| error.to_string())?
         }
-        StartupDecision::FirstRun { default_data_dir } => {
-            services::data_store::generation_upgrade::prepare_generation_two(
-                &default_data_dir,
-                &default_data_dir,
-                None,
-                data_key,
-            )
-        }
+        StartupDecision::FirstRun { default_data_dir } => device_keys
+            .with_active_key(|key_bytes| {
+                services::data_store::generation_upgrade::prepare_generation_two(
+                    &default_data_dir,
+                    &default_data_dir,
+                    None,
+                    *key_bytes,
+                )
+            })
+            .map_err(|error| error.to_string())?,
         StartupDecision::NeedsRecovery { .. } | StartupDecision::Conflict { .. } => {
             return Ok(PreparedDataStore::Recovery(startup_state));
         }
@@ -547,7 +553,7 @@ pub fn run() {
                 Some(secret_manager) => prepare_data_store(
                     default_data_dir,
                     secret_material.startup_state,
-                    *secret_manager.data_key(),
+                    &secret_manager.resolver(),
                 )?,
                 None => PreparedDataStore::Recovery(secret_material.startup_state),
             };
@@ -597,7 +603,7 @@ pub fn run() {
                         app.manage(startup_state);
                         DataStoreRuntimeOwner::new(None, installation_lease)
                     } else {
-                        let data_key = *secret_manager.data_key();
+                        let device_keys = secret_manager.resolver();
                         app.manage(secret_manager);
                         let active_data_dir = database_path
                             .parent()
@@ -618,7 +624,7 @@ pub fn run() {
                         let supervisor_handle = work_runtime.supervisor.clone();
                         let app_services = app_composition::compose_app_services(
                             runtime.handle(),
-                            data_key,
+                            device_keys.clone(),
                             active_data_dir.display().to_string(),
                             None,
                             data_directory_port,
@@ -637,7 +643,6 @@ pub fn run() {
                                 blocking_executor.clone(),
                                 outbound_client.clone(),
                                 Arc::clone(&provider_registry),
-                                data_key,
                             );
                         let routing_command_facade =
                             app_composition::compose_routing_command_facade(
@@ -668,7 +673,6 @@ pub fn run() {
                                 blocking_executor.clone(),
                                 outbound_client.clone(),
                                 Arc::clone(&provider_registry),
-                                data_key,
                             );
                         let station_key_connectivity_command_facade =
                             app_composition::compose_station_key_connectivity_command_facade(
@@ -697,7 +701,7 @@ pub fn run() {
                             app_composition::compose_local_proxy_command_facade(
                                 &app_services,
                                 Arc::clone(&proxy_runtime),
-                                data_key,
+                                device_keys.clone(),
                             );
                         tauri::async_runtime::block_on(
                             app_services.settings.repair_legacy_settings(),
@@ -745,7 +749,6 @@ pub fn run() {
                                     blocking_executor,
                                     outbound_client,
                                     provider_registry,
-                                    data_key,
                                 ),
                             )
                             .map_err(|error| {

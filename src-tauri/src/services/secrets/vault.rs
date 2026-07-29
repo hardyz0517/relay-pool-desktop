@@ -4,13 +4,20 @@ use crate::application::credentials::{
     CredentialError, CredentialVault, EncryptedSecret, SecretBytes,
 };
 
-use super::{crypto, mask::mask_secret};
+use super::{crypto, mask::mask_secret, DeviceKeyResolver};
 
-pub(crate) struct DataKeyVault([u8; 32]);
+pub(crate) struct DataKeyVault {
+    resolver: DeviceKeyResolver,
+}
 
 impl DataKeyVault {
-    pub(crate) fn new(data_key: [u8; 32]) -> Self {
-        Self(data_key)
+    pub(crate) fn new(resolver: DeviceKeyResolver) -> Self {
+        Self { resolver }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(data_key: [u8; 32]) -> Self {
+        Self::new(DeviceKeyResolver::for_test(data_key))
     }
 }
 
@@ -22,8 +29,11 @@ impl CredentialVault for DataKeyVault {
     ) -> Result<EncryptedSecret, CredentialError> {
         let value = String::from_utf8(plaintext.as_bytes().to_vec())
             .map_err(|_| CredentialError::SecretValidationFailed)?;
-        let payload =
-            crypto::encrypt_secret(&self.0, &value, aad).map_err(|_| CredentialError::Internal)?;
+        let payload = self
+            .resolver
+            .with_active_key(|key| crypto::encrypt_secret(key, &value, aad))
+            .map_err(|_| CredentialError::Internal)?
+            .map_err(|_| CredentialError::Internal)?;
         let ciphertext = general_purpose::STANDARD
             .decode(payload.ciphertext)
             .map_err(|_| CredentialError::Internal)?;
@@ -48,7 +58,9 @@ impl CredentialVault for DataKeyVault {
             aad: aad.to_string(),
             value_hash: String::new(),
         };
-        crypto::decrypt_secret(&self.0, &payload)
+        self.resolver
+            .with_active_key(|key| crypto::decrypt_secret(key, &payload))
+            .map_err(|_| CredentialError::SecretValidationFailed)?
             .map(SecretBytes::from)
             .map_err(|_| CredentialError::SecretValidationFailed)
     }
@@ -62,7 +74,7 @@ mod tests {
 
     #[test]
     fn vault_round_trip_preserves_secret_and_exposes_only_masked_value() {
-        let vault = DataKeyVault::new([7; 32]);
+        let vault = DataKeyVault::for_test([7; 32]);
         let secret = "sk-p8-secret-plaintext-canary";
 
         let encrypted = vault
@@ -77,7 +89,7 @@ mod tests {
 
     #[test]
     fn vault_rejects_aad_mismatch() {
-        let vault = DataKeyVault::new([11; 32]);
+        let vault = DataKeyVault::for_test([11; 32]);
         let encrypted = vault
             .encrypt(AAD, SecretBytes::from("sk-p8-aad-canary".to_string()))
             .expect("encrypt secret");
