@@ -21,6 +21,11 @@ export class DemoBackend implements BackendClient {
     updateSettings: () => this.rejectUnsupported("settings"),
     chooseDataDir: () => this.rejectUnsupported("settings.data_dir"),
     resetDataDir: () => this.rejectUnsupported("settings.data_dir"),
+    listCommonLoginProfiles: () => this.rejectUnsupported("settings.common_login_profiles"),
+    upsertCommonLoginProfile: () => this.rejectUnsupported("settings.common_login_profiles"),
+    deleteCommonLoginProfile: (_id: string) => this.rejectUnsupported("settings.common_login_profiles"),
+    getCommonLoginProfilePassword: (_id: string) =>
+      this.rejectUnsupported("settings.common_login_profiles"),
   };
   readonly stations: BackendClient["stations"] = {
     listStations: () => this.rejectUnsupported("stations"),

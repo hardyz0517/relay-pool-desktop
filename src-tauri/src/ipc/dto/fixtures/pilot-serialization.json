@@ -977,6 +977,46 @@
       }
     },
     {
+      "command": "list_common_login_profiles",
+      "input": {},
+      "output": [
+        {
+          "email": "fixture@example.com",
+          "id": "common-login-fixture",
+          "passwordMasked": "fix...word",
+          "passwordPresent": true
+        }
+      ]
+    },
+    {
+      "command": "upsert_common_login_profile",
+      "input": {
+        "email": "fixture@example.com",
+        "id": null,
+        "password": "fixture-not-a-real-password"
+      },
+      "output": {
+        "email": "fixture@example.com",
+        "id": "common-login-fixture",
+        "passwordMasked": "fix...word",
+        "passwordPresent": true
+      }
+    },
+    {
+      "command": "delete_common_login_profile",
+      "input": {
+        "id": "common-login-fixture"
+      },
+      "output": null
+    },
+    {
+      "command": "get_common_login_profile_password",
+      "input": {
+        "id": "common-login-fixture"
+      },
+      "output": "fixture-not-a-real-password"
+    },
+    {
       "command": "update_station_credentials",
       "input": {
         "loginPassword": "fixture-not-a-real-password",

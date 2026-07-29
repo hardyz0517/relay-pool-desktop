@@ -61,6 +61,8 @@ describe("AddProviderSections", () => {
   });
 
   it("delegates connection actions to page handlers", async () => {
+    const onCommonEmailSelect = vi.fn();
+    const onCommonPasswordSelect = vi.fn();
     const onCopyWebsiteUrl = vi.fn();
     const host = document.createElement("div");
     const root = createRoot(host);
@@ -69,15 +71,24 @@ describe("AddProviderSections", () => {
     await act(async () =>
       root.render(
         <ProviderConnectionSection
+          commonLoginProfiles={[{
+            id: "profile-1",
+            email: "shared@example.com",
+            passwordPresent: true,
+            passwordMasked: "sha...word",
+          }]}
           connectionTest={{ status: "idle", message: null }}
           editing={false}
           error={null}
           form={form}
           loading={false}
+          passwordProfileLoading={false}
           saving={false}
           startingAuthorization={false}
           testingConnection={false}
           onConnectionTestReset={vi.fn()}
+          onCommonEmailSelect={onCommonEmailSelect}
+          onCommonPasswordSelect={onCommonPasswordSelect}
           onCopyWebsiteUrl={onCopyWebsiteUrl}
           onFormChange={vi.fn()}
           onStartManualAuthorization={vi.fn()}
@@ -93,6 +104,25 @@ describe("AddProviderSections", () => {
     await act(async () => copyButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
     expect(onCopyWebsiteUrl).toHaveBeenCalledOnce();
+    const emailMenuButton = host.querySelector<HTMLButtonElement>('button[aria-label="选择常用邮箱"]')!;
+    const usernameInput = host.querySelector<HTMLInputElement>('input[aria-label="登录用户名或邮箱"]')!;
+    expect(emailMenuButton.closest("label")).toBeNull();
+    expect(usernameInput.closest("label")).toBeNull();
+    expect(usernameInput.type).toBe("text");
+    expect(usernameInput.autocomplete).toBe("username");
+    await act(async () => emailMenuButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const emailOption = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((button) => button.textContent?.includes("shared@example.com"))!;
+    await act(async () => emailOption.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const passwordMenuButton = host.querySelector<HTMLButtonElement>('button[aria-label="选择常用密码"]')!;
+    await act(async () => passwordMenuButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const passwordOption = [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((button) => button.textContent?.includes("sha...word"))!;
+    await act(async () => passwordOption.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(onCommonEmailSelect).toHaveBeenCalledWith("profile-1");
+    expect(onCommonPasswordSelect).toHaveBeenCalledWith("profile-1");
 
     await act(async () => root.unmount());
   });

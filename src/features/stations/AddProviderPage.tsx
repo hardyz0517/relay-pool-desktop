@@ -22,6 +22,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     applyPreset,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
+    commonLoginProfiles,
     confirmDiscardChanges,
     connectionTest,
     createRemoteDisabled,
@@ -37,6 +38,8 @@ export function AddProviderPage(props: AddProviderPageProps) {
     handleAddGroup,
     handleAddLocalKey,
     handleBindRemoteKey,
+    handleCommonEmailSelect,
+    handleCommonPasswordSelect,
     handleCopyWebsiteUrl,
     handleCreateRemoteKey,
     handleGroupRowsChange,
@@ -50,6 +53,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     handleTestConnection,
     keyRows,
     loading,
+    passwordProfileLoading,
     localStationKeys,
     remoteCapability,
     remoteCapabilityError,
@@ -101,15 +105,19 @@ export function AddProviderPage(props: AddProviderPageProps) {
             {!editing && <ProviderPresetSection presetId={form.presetId} onApplyPreset={applyPreset} />}
 
             <ProviderConnectionSection
+              commonLoginProfiles={commonLoginProfiles}
               connectionTest={connectionTest}
               editing={editing}
               error={error}
               form={form}
               loading={loading}
+              passwordProfileLoading={passwordProfileLoading}
               saving={saving}
               startingAuthorization={startingAuthorization}
               testingConnection={testingConnection}
               onConnectionTestReset={resetConnectionTest}
+              onCommonEmailSelect={handleCommonEmailSelect}
+              onCommonPasswordSelect={(profileId) => void handleCommonPasswordSelect(profileId)}
               onCopyWebsiteUrl={handleCopyWebsiteUrl}
               onFormChange={setForm}
               onStartManualAuthorization={handleStartManualAuthorization}

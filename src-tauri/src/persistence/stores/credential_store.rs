@@ -1,8 +1,9 @@
+use serde::{Deserialize, Serialize};
 use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 
 use crate::{
     models::{
-        credentials::{StationCredentials, StationSessionCredentialKind},
+        credentials::{CommonLoginProfile, StationCredentials, StationSessionCredentialKind},
         group_facts::UpdateStationKeyGroupBindingInput,
         remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
         routing::{StationKeyCapabilities, UpdateStationKeyCapabilitiesInput},
@@ -113,6 +114,14 @@ pub(crate) struct StoredEncryptedSecret {
     pub(crate) nonce: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommonLoginProfileIndexEntry {
+    id: String,
+    email: String,
+    password_secret_id: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct StationCredentialPatch {
     pub(crate) station_id: String,
@@ -139,6 +148,156 @@ pub(crate) struct StationSessionPatch {
 pub(crate) struct CredentialStore;
 
 impl CredentialStore {
+    pub(crate) async fn list_common_login_profiles(
+        &self,
+        read: &mut ReadSession,
+    ) -> Result<Vec<CommonLoginProfile>, PersistenceError> {
+        let entries = common_login_profile_entries(read.connection()).await?;
+        let mut profiles = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let password_masked = match entry.password_secret_id.as_deref() {
+                Some(secret_id) => {
+                    sqlx::query_scalar::<_, String>(
+                        r#"
+                    SELECT masked_value
+                    FROM secrets
+                    WHERE id = ?1
+                      AND scope = 'common_login_profile'
+                      AND owner_id = ?2
+                      AND kind = 'password'
+                    "#,
+                    )
+                    .bind(secret_id)
+                    .bind(&entry.id)
+                    .fetch_optional(&mut *read.connection())
+                    .await?
+                }
+                None => None,
+            };
+            profiles.push(CommonLoginProfile {
+                id: entry.id,
+                email: entry.email,
+                password_present: password_masked.is_some(),
+                password_masked: password_masked.unwrap_or_else(|| "未设置".to_string()),
+            });
+        }
+        Ok(profiles)
+    }
+
+    pub(crate) async fn common_login_profile_secret(
+        &self,
+        read: &mut ReadSession,
+        profile_id: &str,
+    ) -> Result<StoredEncryptedSecret, PersistenceError> {
+        let entry = common_login_profile_entries(read.connection())
+            .await?
+            .into_iter()
+            .find(|entry| entry.id == profile_id)
+            .ok_or(PersistenceError::NotFound)?;
+        let secret_id = entry.password_secret_id.ok_or(PersistenceError::NotFound)?;
+        sqlx::query(
+            r#"
+            SELECT id, scope, owner_id, kind, masked_value, ciphertext, nonce
+            FROM secrets
+            WHERE id = ?1
+              AND scope = 'common_login_profile'
+              AND owner_id = ?2
+              AND kind = 'password'
+            "#,
+        )
+        .bind(secret_id)
+        .bind(profile_id)
+        .fetch_optional(read.connection())
+        .await?
+        .map(row_to_stored_secret)
+        .ok_or(PersistenceError::NotFound)
+    }
+
+    pub(crate) async fn upsert_common_login_profile(
+        &self,
+        write: &mut WriteSession,
+        profile_id: String,
+        email: String,
+        password_secret: Option<EncryptedSecretRow>,
+        now: &str,
+    ) -> Result<CommonLoginProfile, PersistenceError> {
+        let mut entries = common_login_profile_entries(write.connection()).await?;
+        let existing_index = entries.iter().position(|entry| entry.id == profile_id);
+        let existing_secret_id =
+            existing_index.and_then(|index| entries[index].password_secret_id.clone());
+        let password_secret_id = match password_secret.as_ref() {
+            Some(secret) => Some(upsert_secret(write.connection(), secret).await?),
+            None => existing_secret_id,
+        };
+        let next_entry = CommonLoginProfileIndexEntry {
+            id: profile_id.clone(),
+            email: email.trim().to_string(),
+            password_secret_id: password_secret_id.clone(),
+        };
+        if let Some(index) = existing_index {
+            entries[index] = next_entry;
+        } else {
+            entries.push(next_entry);
+        }
+        write_common_login_profile_entries(write.connection(), &entries, now).await?;
+        let password_masked = match password_secret_id {
+            Some(secret_id) => {
+                sqlx::query_scalar::<_, String>(
+                    r#"
+                SELECT masked_value
+                FROM secrets
+                WHERE id = ?1
+                  AND scope = 'common_login_profile'
+                  AND owner_id = ?2
+                  AND kind = 'password'
+                "#,
+                )
+                .bind(secret_id)
+                .bind(&profile_id)
+                .fetch_optional(write.connection())
+                .await?
+            }
+            None => None,
+        };
+        Ok(CommonLoginProfile {
+            id: profile_id,
+            email: email.trim().to_string(),
+            password_present: password_masked.is_some(),
+            password_masked: password_masked.unwrap_or_else(|| "未设置".to_string()),
+        })
+    }
+
+    pub(crate) async fn delete_common_login_profile(
+        &self,
+        write: &mut WriteSession,
+        profile_id: &str,
+        now: &str,
+    ) -> Result<(), PersistenceError> {
+        let mut entries = common_login_profile_entries(write.connection()).await?;
+        let index = entries
+            .iter()
+            .position(|entry| entry.id == profile_id)
+            .ok_or(PersistenceError::NotFound)?;
+        let removed = entries.remove(index);
+        write_common_login_profile_entries(write.connection(), &entries, now).await?;
+        if let Some(secret_id) = removed.password_secret_id {
+            sqlx::query(
+                r#"
+                DELETE FROM secrets
+                WHERE id = ?1
+                  AND scope = 'common_login_profile'
+                  AND owner_id = ?2
+                  AND kind = 'password'
+                "#,
+            )
+            .bind(secret_id)
+            .bind(profile_id)
+            .execute(write.connection())
+            .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn assert_station_endpoint_revision(
         &self,
         write: &mut WriteSession,
@@ -1060,6 +1219,44 @@ impl CredentialStore {
         .await?;
         station_key_capabilities(write.connection(), &input.station_key_id).await
     }
+}
+
+async fn common_login_profile_entries(
+    connection: &mut SqliteConnection,
+) -> Result<Vec<CommonLoginProfileIndexEntry>, PersistenceError> {
+    let value = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM settings WHERE key = 'common_login_profiles_json'",
+    )
+    .fetch_optional(connection)
+    .await?
+    .unwrap_or_else(|| "[]".to_string());
+    serde_json::from_str(&value).map_err(|_| {
+        PersistenceError::InvariantViolation("invalid common login profile index".to_string())
+    })
+}
+
+async fn write_common_login_profile_entries(
+    connection: &mut SqliteConnection,
+    entries: &[CommonLoginProfileIndexEntry],
+    now: &str,
+) -> Result<(), PersistenceError> {
+    let value = serde_json::to_string(entries).map_err(|_| {
+        PersistenceError::InvariantViolation(
+            "common login profile index serialization failed".to_string(),
+        )
+    })?;
+    sqlx::query(
+        r#"
+        INSERT INTO settings (key, value, updated_at)
+        VALUES ('common_login_profiles_json', ?1, ?2)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(value)
+    .bind(now)
+    .execute(connection)
+    .await?;
+    Ok(())
 }
 
 async fn validate_remote_station_key(

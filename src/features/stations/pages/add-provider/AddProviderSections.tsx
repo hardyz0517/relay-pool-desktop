@@ -18,6 +18,7 @@ import {
 } from "../../components/StationKeyRowsEditor";
 import { RemoteKeyDiscoveryList } from "../../components/RemoteKeyDiscoveryList";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
+import type { CommonLoginProfile } from "@/lib/types/settings";
 import { inputClassName, type AddProviderFormState, type ConnectionTestState } from "./formModel";
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -72,15 +73,19 @@ export function ProviderPresetSection({ presetId, onApplyPreset }: ProviderPrese
 }
 
 type ProviderConnectionSectionProps = {
+  commonLoginProfiles: CommonLoginProfile[];
   connectionTest: ConnectionTestState;
   editing: boolean;
   error: string | null;
   form: AddProviderFormState;
   loading: boolean;
+  passwordProfileLoading: boolean;
   saving: boolean;
   startingAuthorization: boolean;
   testingConnection: boolean;
   onConnectionTestReset: () => void;
+  onCommonEmailSelect: (profileId: string) => void;
+  onCommonPasswordSelect: (profileId: string) => void;
   onCopyWebsiteUrl: () => void;
   onFormChange: (form: AddProviderFormState) => void;
   onStartManualAuthorization: () => void;
@@ -89,15 +94,19 @@ type ProviderConnectionSectionProps = {
 };
 
 export function ProviderConnectionSection({
+  commonLoginProfiles,
   connectionTest,
   editing,
   error,
   form,
   loading,
+  passwordProfileLoading,
   saving,
   startingAuthorization,
   testingConnection,
   onConnectionTestReset,
+  onCommonEmailSelect,
+  onCommonPasswordSelect,
   onCopyWebsiteUrl,
   onFormChange,
   onStartManualAuthorization,
@@ -157,33 +166,39 @@ export function ProviderConnectionSection({
         </Button>
       </div>
       <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:items-end">
-        <Field label="登录用户名 / 邮箱">
-          <input
-            className={inputClassName}
+        <CompoundField label="登录用户名 / 邮箱">
+          <FillableLoginInput
+            ariaLabel="登录用户名或邮箱"
+            disabled={loading}
+            kind="email"
+            profiles={commonLoginProfiles}
             value={form.loginUsername}
-            onChange={(event) => {
-              onFormChange({ ...form, loginUsername: event.target.value });
+            onChange={(value) => {
+              onFormChange({ ...form, loginUsername: value });
               onConnectionTestReset();
             }}
-            placeholder="user@example.com"
+            onProfileSelect={onCommonEmailSelect}
           />
-        </Field>
-        <Field label="登录密码">
-          <input
-            className={inputClassName}
-            type="password"
+        </CompoundField>
+        <CompoundField label="登录密码">
+          <FillableLoginInput
+            ariaLabel="登录密码"
+            disabled={loading || passwordProfileLoading}
+            kind="password"
+            profiles={commonLoginProfiles}
             value={form.loginPassword}
-            onChange={(event) => {
+            onChange={(value) => {
               onFormChange({
                 ...form,
-                loginPassword: event.target.value,
-                rememberPassword: Boolean(event.target.value.trim()),
+                loginPassword: value,
+                rememberPassword: Boolean(value.trim()),
               });
               onConnectionTestReset();
             }}
             placeholder={editing ? "留空保留旧密码" : "用于采集登录"}
+            onProfileSelect={onCommonPasswordSelect}
           />
-        </Field>
+        </CompoundField>
         <Button
           variant="outline"
           onClick={onTestConnection}
@@ -222,6 +237,67 @@ export function ProviderConnectionSection({
         </div>
       )}
     </SectionCard>
+  );
+}
+
+function CompoundField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+      <div>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+function FillableLoginInput({
+  ariaLabel,
+  disabled,
+  kind,
+  profiles,
+  value,
+  placeholder,
+  onChange,
+  onProfileSelect,
+}: {
+  ariaLabel: string;
+  disabled: boolean;
+  kind: "email" | "password";
+  profiles: CommonLoginProfile[];
+  value: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+  onProfileSelect: (profileId: string) => void;
+}) {
+  const availableProfiles = kind === "password"
+    ? profiles.filter((profile) => profile.passwordPresent)
+    : profiles;
+  return (
+    <div className="flex min-w-0">
+      <SelectControl
+        ariaLabel={kind === "email" ? "选择常用邮箱" : "选择常用密码"}
+        className="h-8 w-9 min-w-0 shrink-0 rounded-r-none px-2 shadow-none"
+        disabled={disabled || availableProfiles.length === 0}
+        menuClassName="min-w-[220px]"
+        options={availableProfiles.map((profile) => ({
+          value: profile.id,
+          label: profile.email,
+          description: kind === "password" ? profile.passwordMasked : undefined,
+        }))}
+        placeholder=""
+        value=""
+        onChange={onProfileSelect}
+      />
+      <input
+        aria-label={ariaLabel}
+        autoComplete={kind === "email" ? "username" : "current-password"}
+        className={cn(inputClassName, "-ml-px rounded-l-none")}
+        disabled={disabled}
+        placeholder={placeholder ?? "user@example.com"}
+        type={kind === "password" ? "password" : "text"}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
   );
 }
 

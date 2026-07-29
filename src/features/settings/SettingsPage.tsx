@@ -20,6 +20,7 @@ import type { ProxyStatus } from "@/lib/types/proxy";
 import { useUpdater } from "@/lib/updater/UpdaterProvider";
 import { isUpdaterBusyPhase } from "@/lib/updater/updateState";
 import { ThemeSettings } from "@/features/settings/ThemeSettings";
+import { CommonLoginProfilesSettings } from "@/features/settings/CommonLoginProfilesSettings";
 import { DEFAULT_MANUAL_PROXY_URL, withManualProxyDefault } from "@/lib/proxyDefaults";
 import {
   appSettingsToUpdateInput,
@@ -303,6 +304,8 @@ export function SettingsPage() {
     <PageScaffold title="设置" width="settings">
       <div className="grid min-w-0 gap-[var(--shell-page-gap)]">
         <ThemeSettings />
+
+        <CommonLoginProfilesSettings />
 
         <SectionCard
           contentClassName="p-0"

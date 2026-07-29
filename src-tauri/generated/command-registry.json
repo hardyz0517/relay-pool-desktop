@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "51309a9ca7e305d0940ea679d4907970b0a0cc025f2f9e536187cdd240709571",
+  "contract_hash": "2bcce7fa4539170d116e206fb528041492623dd2b60736a7d86f99de710d3663",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -258,6 +258,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "delete_common_login_profile",
+      "transport": "ordinary",
+      "input_schema_hash": "7a6349c4442f8ce9be2e2f63c57dc7837a1d9ee2e85982f6e2c9107d86e2521f",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "delete_model_alias",
       "transport": "ordinary",
       "input_schema_hash": "f89ab76e01990fa8be7f59e541a6c849001fb840287e843fca74858e8dee05d5",
@@ -383,6 +394,17 @@
       "transport": "ordinary",
       "input_schema_hash": "3ead33aea82e96d8b76ab8eb1799af7b25011f1cb11530cef58c0788a4016f1e",
       "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "get_common_login_profile_password",
+      "transport": "ordinary",
+      "input_schema_hash": "7a6349c4442f8ce9be2e2f63c57dc7837a1d9ee2e85982f6e2c9107d86e2521f",
+      "output_schema_hash": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -658,6 +680,17 @@
       "transport": "ordinary",
       "input_schema_hash": "08e5b676bfd39c5d4107a185f30d66f6475773d99a97718a26a625d8ef2c1847",
       "output_schema_hash": "76012487918ccba8a4a317eec0267811961a991adc54221e2a6c247057a888ec",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "list_common_login_profiles",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "2db7738c8ee01bc312cff6901ae601ee02231eca88a530971486c73995f76295",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -1336,6 +1369,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "upsert_common_login_profile",
+      "transport": "ordinary",
+      "input_schema_hash": "39cab125badf02ed82df86e5fd28317801413467c9625e6c33c407daa23bd0e4",
+      "output_schema_hash": "c27af9e51d345b4e5ea6e404f1158ec3a997c8b5a249f5fef29a68d82f8b6d0b",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "upsert_model_alias",
       "transport": "ordinary",
       "input_schema_hash": "72583cd149341c04fb75ee01ca5d8fb92390568433461bef33c5339d95abac91",
@@ -1390,6 +1434,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "7e2d68f6f179cde55fda77679469a69a0f227eda764f898ed8537081c0598b07"
+    "serialization_fixture_hash": "ef7006abdd991223b88a9ec494840ff4a1c08584c116c83be9f718ec9859b4d0"
   }
 }

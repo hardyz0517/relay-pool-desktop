@@ -2,6 +2,22 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CommonLoginProfile {
+    pub id: String,
+    pub email: String,
+    pub password_present: bool,
+    pub password_masked: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertCommonLoginProfileInput {
+    pub id: Option<String>,
+    pub email: String,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StationCredentials {
     pub station_id: String,
     pub login_username: Option<String>,

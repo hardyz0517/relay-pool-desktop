@@ -203,6 +203,23 @@ export type StationCredentialsDto = {
   updatedAt: string | null;
 };
 
+export type CommonLoginProfileDto = {
+  id: string;
+  email: string;
+  passwordPresent: boolean;
+  passwordMasked: string;
+};
+
+export type CommonLoginProfileIdInputDto = {
+  id: string;
+};
+
+export type UpsertCommonLoginProfileInputDto = {
+  id?: string | null;
+  email: string;
+  password?: string | null;
+};
+
 export type SaveStationKeyWithDefaultsResultDto = {
   stationKey: StationKeyDto;
   capabilities: UpdateStationKeyCapabilitiesInputDto & { updatedAt: string };

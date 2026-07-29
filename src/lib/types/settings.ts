@@ -95,6 +95,19 @@ export type CcswitchImportResult = {
   endpoint: string;
 };
 
+export type CommonLoginProfile = {
+  id: string;
+  email: string;
+  passwordPresent: boolean;
+  passwordMasked: string;
+};
+
+export type UpsertCommonLoginProfileInput = {
+  id?: string | null;
+  email: string;
+  password?: string | null;
+};
+
 export type UpdateSettingsInput = {
   localProxyPort: number;
   defaultRoutingStrategy: RoutingStrategy;

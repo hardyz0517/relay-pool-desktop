@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::{
     application::{credentials::CredentialService, error::ApplicationError},
     models::credentials::{
-        StationCredentials, UpdateStationCredentialsInput, UpdateStationSessionInput,
+        CommonLoginProfile, StationCredentials, UpdateStationCredentialsInput,
+        UpdateStationSessionInput, UpsertCommonLoginProfileInput,
     },
 };
 
@@ -15,6 +16,37 @@ pub(crate) struct CredentialsCommandFacade {
 impl CredentialsCommandFacade {
     pub(crate) fn new(credentials: Arc<CredentialService>) -> Self {
         Self { credentials }
+    }
+
+    pub(crate) async fn list_common_login_profiles(
+        &self,
+    ) -> Result<Vec<CommonLoginProfile>, ApplicationError> {
+        self.credentials.list_common_login_profiles().await
+    }
+
+    pub(crate) async fn upsert_common_login_profile(
+        &self,
+        input: UpsertCommonLoginProfileInput,
+    ) -> Result<CommonLoginProfile, ApplicationError> {
+        self.credentials.upsert_common_login_profile(input).await
+    }
+
+    pub(crate) async fn delete_common_login_profile(
+        &self,
+        profile_id: String,
+    ) -> Result<(), ApplicationError> {
+        self.credentials
+            .delete_common_login_profile(profile_id)
+            .await
+    }
+
+    pub(crate) async fn get_common_login_profile_password(
+        &self,
+        profile_id: String,
+    ) -> Result<String, ApplicationError> {
+        self.credentials
+            .get_common_login_profile_password(profile_id)
+            .await
     }
 
     pub(crate) async fn get_station_credentials(

@@ -13,6 +13,7 @@ import {
   chooseDataDir as chooseDataDirBinding,
   closeCaptureSession as closeCaptureSessionBinding,
   clearStationCredentials as clearStationCredentialsBinding,
+  deleteCommonLoginProfile as deleteCommonLoginProfileBinding,
   activateDataStoreCandidate as activateDataStoreCandidateBinding,
   createChannelMonitor as createChannelMonitorBinding,
   createChannelMonitorTemplate as createChannelMonitorTemplateBinding,
@@ -36,6 +37,7 @@ import {
   finishWebAuthorizationSession as finishWebAuthorizationSessionBinding,
   getCaptureSessionStatus as getCaptureSessionStatusBinding,
   getLatestCollectorSnapshot as getLatestCollectorSnapshotBinding,
+  getCommonLoginProfilePassword as getCommonLoginProfilePasswordBinding,
   getRemoteKeyCapability as getRemoteKeyCapabilityBinding,
   getDataStoreStartupState as getDataStoreStartupStateBinding,
   getLocalAccessKey as getLocalAccessKeyBinding,
@@ -55,6 +57,7 @@ import {
   listChannelMonitors as listChannelMonitorsBinding,
   listChannelStatusSummaries as listChannelStatusSummariesBinding,
   listCollectorSnapshots as listCollectorSnapshotsBinding,
+  listCommonLoginProfiles as listCommonLoginProfilesBinding,
   listLatestCollectorSnapshots as listLatestCollectorSnapshotsBinding,
   listCurrentStationBalanceSnapshots as listCurrentStationBalanceSnapshotsBinding,
   listGroupRateRecords as listGroupRateRecordsBinding,
@@ -101,6 +104,7 @@ import {
   unbindRemoteStationKey as unbindRemoteStationKeyBinding,
   updateLocalAccessKey as updateLocalAccessKeyBinding,
   upsertBalanceSnapshot as upsertBalanceSnapshotBinding,
+  upsertCommonLoginProfile as upsertCommonLoginProfileBinding,
   upsertChangeEvent as upsertChangeEventBinding,
   upsertModelAlias as upsertModelAliasBinding,
   upsertModelBasePrice as upsertModelBasePriceBinding,
@@ -155,6 +159,13 @@ export class DesktopBackend implements BackendClient {
       updateSettingsBinding(toUpdateSettingsDto(input)).then(normalizeSettings),
     chooseDataDir: () => chooseDataDirBinding().then(normalizeSettings),
     resetDataDir: () => resetDataDirBinding().then(normalizeSettings),
+    listCommonLoginProfiles: () => listCommonLoginProfilesBinding(),
+    upsertCommonLoginProfile: (
+      input: Parameters<BackendClient["settings"]["upsertCommonLoginProfile"]>[0],
+    ) => upsertCommonLoginProfileBinding(input),
+    deleteCommonLoginProfile: (id: string) => deleteCommonLoginProfileBinding({ id }),
+    getCommonLoginProfilePassword: (id: string) =>
+      getCommonLoginProfilePasswordBinding({ id }),
   };
   readonly stations = {
     listStations: () => listStationsBinding().then((stations) => stations.map(normalizeStation)),

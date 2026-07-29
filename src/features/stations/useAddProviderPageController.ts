@@ -3,7 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/ui";
 import { collectStationTask, startManualAuthorization, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
-import { getSettings } from "@/lib/api/settings";
+import {
+  getCommonLoginProfilePassword,
+  getSettings,
+  listCommonLoginProfiles,
+} from "@/lib/api/settings";
 import {
   bindRemoteStationKey,
   createLocalStationKeyFromRemote,
@@ -25,6 +29,7 @@ import { normalizeStationGroupOptions } from "@/lib/groupOptionViewModels";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import type { StationType } from "@/lib/types/stations";
+import type { CommonLoginProfile } from "@/lib/types/settings";
 import {
   createEmptyStationGroupDraft,
   type StationGroupDraft,
@@ -109,6 +114,8 @@ export function useAddProviderPageController({
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
+  const [commonLoginProfiles, setCommonLoginProfiles] = useState<CommonLoginProfile[]>([]);
+  const [passwordProfileLoading, setPasswordProfileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initialDraftSnapshot, setInitialDraftSnapshot] = useState(() =>
     serializeProviderDraft(createDefaultProviderForm(), [], [createEmptyStationKeyDraft(0)]),
@@ -175,6 +182,18 @@ export function useAddProviderPageController({
         if (alive) {
           setDeveloperModeEnabled(settings.developerModeEnabled);
         }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void listCommonLoginProfiles()
+      .then((profiles) => {
+        if (alive) setCommonLoginProfiles(profiles);
       })
       .catch(() => undefined);
     return () => {
@@ -357,7 +376,7 @@ export function useAddProviderPageController({
       await updateStationCredentials({
         stationId: station.id,
         loginUsername: form.loginUsername.trim() ? form.loginUsername.trim() : null,
-        loginPassword: form.loginPassword.trim() ? form.loginPassword.trim() : null,
+        loginPassword: form.loginPassword.trim() ? form.loginPassword : null,
         rememberPassword: Boolean(form.loginPassword.trim()),
       });
     }
@@ -427,7 +446,7 @@ export function useAddProviderPageController({
           await updateStationCredentials({
             stationId: activeStationId,
             loginUsername: form.loginUsername.trim() ? form.loginUsername.trim() : null,
-            loginPassword: form.loginPassword.trim() ? form.loginPassword.trim() : null,
+            loginPassword: form.loginPassword.trim() ? form.loginPassword : null,
             rememberPassword: form.rememberPassword,
           });
         }
@@ -484,7 +503,7 @@ export function useAddProviderPageController({
         await updateStationCredentials({
           stationId: station.id,
           loginUsername: form.loginUsername.trim() ? form.loginUsername.trim() : null,
-          loginPassword: form.loginPassword.trim() ? form.loginPassword.trim() : null,
+          loginPassword: form.loginPassword.trim() ? form.loginPassword : null,
           rememberPassword: Boolean(form.loginPassword.trim()),
         });
       }
@@ -524,7 +543,7 @@ export function useAddProviderPageController({
         stationType: form.stationType,
         websiteUrl: form.websiteUrl.trim(),
         loginUsername: form.loginUsername.trim(),
-        loginPassword: form.loginPassword.trim(),
+        loginPassword: form.loginPassword,
       });
       const message = result.diagnosis
         ? `${result.message} ${result.diagnosis}`
@@ -784,6 +803,30 @@ export function useAddProviderPageController({
     }));
   }
 
+  function handleCommonEmailSelect(profileId: string) {
+    const profile = commonLoginProfiles.find((item) => item.id === profileId);
+    if (!profile) return;
+    setForm((current) => ({ ...current, loginUsername: profile.email }));
+    resetConnectionTest();
+  }
+
+  async function handleCommonPasswordSelect(profileId: string) {
+    setPasswordProfileLoading(true);
+    try {
+      const password = await getCommonLoginProfilePassword(profileId);
+      setForm((current) => ({
+        ...current,
+        loginPassword: password,
+        rememberPassword: true,
+      }));
+      resetConnectionTest();
+    } catch (requestError) {
+      toast.error("填充常用密码失败", readError(requestError));
+    } finally {
+      setPasswordProfileLoading(false);
+    }
+  }
+
   function handleStationTypeChange(stationType: StationType) {
     setForm({ ...form, stationType });
     if (!activeStationId) {
@@ -836,6 +879,7 @@ export function useAddProviderPageController({
     applyPreset,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
+    commonLoginProfiles,
     confirmDiscardChanges,
     connectionTest,
     createRemoteDisabled,
@@ -850,6 +894,8 @@ export function useAddProviderPageController({
     groupRows,
     handleAddGroup,
     handleAddLocalKey,
+    handleCommonEmailSelect,
+    handleCommonPasswordSelect,
     handleBindRemoteKey,
     handleCreateRemoteKey,
     handleGroupRowsChange,
@@ -863,6 +909,7 @@ export function useAddProviderPageController({
     handleTestConnection,
     keyRows,
     loading,
+    passwordProfileLoading,
     localStationKeys,
     remoteCapability,
     remoteCapabilityError,

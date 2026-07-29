@@ -478,6 +478,26 @@
       ],
       "commands": [
         {
+          "command": "list_common_login_profiles",
+          "use_case": "list_common_login_profiles",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "upsert_common_login_profile",
+          "use_case": "upsert_common_login_profile",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "delete_common_login_profile",
+          "use_case": "delete_common_login_profile",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "get_common_login_profile_password",
+          "use_case": "get_common_login_profile_password",
+          "dependencies": ["CredentialService"]
+        },
+        {
           "command": "get_station_credentials",
           "use_case": "get_station_credentials",
           "dependencies": ["CredentialService"]

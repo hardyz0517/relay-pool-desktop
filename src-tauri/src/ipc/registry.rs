@@ -158,6 +158,10 @@ macro_rules! ipc_command_registry {
             update_station_credentials => $crate::commands::credentials::update_station_credentials,
             update_station_session => $crate::commands::credentials::update_station_session,
             clear_station_credentials => $crate::commands::credentials::clear_station_credentials,
+            list_common_login_profiles => $crate::commands::credentials::list_common_login_profiles,
+            upsert_common_login_profile => $crate::commands::credentials::upsert_common_login_profile,
+            delete_common_login_profile => $crate::commands::credentials::delete_common_login_profile,
+            get_common_login_profile_password => $crate::commands::credentials::get_common_login_profile_password,
             detect_station_info => $crate::commands::station_collection::detect_station_info,
             collect_station_info => $crate::commands::station_collection::collect_station_info,
             collect_station_task => $crate::commands::station_collection::collect_station_task,
@@ -290,6 +294,21 @@ fn command_contract(name: &str) -> CommandContract {
         ),
         "list_key_pool_items" => migrated_read("EmptyInputDto", "Vec<KeyPoolItemDto>"),
         "get_station_credentials" => migrated_read("StationIdInputDto", "StationCredentialsDto"),
+        "list_common_login_profiles" => {
+            migrated_read("EmptyInputDto", "Vec<CommonLoginProfileDto>")
+        }
+        "get_common_login_profile_password" => {
+            migrated_read("CommonLoginProfileIdInputDto", "String")
+        }
+        "upsert_common_login_profile" => migrated_mutation(
+            "UpsertCommonLoginProfileInputDto",
+            "CommonLoginProfileDto",
+            "non_idempotent",
+            true,
+        ),
+        "delete_common_login_profile" => {
+            migrated_mutation("CommonLoginProfileIdInputDto", "unit", "idempotent", false)
+        }
         "create_station_key" => migrated_mutation(
             "CreateStationKeyInputDto",
             "StationKeyDto",
@@ -924,7 +943,23 @@ export function openExternalUrl(input: OpenExternalUrlInputDto): Promise<void> {
         )
         .replace(
             "export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>",
-            r#"export function listRequestLogs(input: EmptyInputDto = {}): Promise<RequestLogDto[]> {
+            r#"export function listCommonLoginProfiles(input: EmptyInputDto = {}): Promise<CommonLoginProfileDto[]> {
+  return invokeCommand<CommonLoginProfileDto[]>("list_common_login_profiles", { input });
+}
+
+export function upsertCommonLoginProfile(input: UpsertCommonLoginProfileInputDto): Promise<CommonLoginProfileDto> {
+  return invokeNonIdempotent<CommonLoginProfileDto>("upsert_common_login_profile", { input });
+}
+
+export function deleteCommonLoginProfile(input: CommonLoginProfileIdInputDto): Promise<void> {
+  return invokeCommand<void>("delete_common_login_profile", { input });
+}
+
+export function getCommonLoginProfilePassword(input: CommonLoginProfileIdInputDto): Promise<string> {
+  return invokeCommand<string>("get_common_login_profile_password", { input });
+}
+
+export function listRequestLogs(input: EmptyInputDto = {}): Promise<RequestLogDto[]> {
   return invokeCommand<RequestLogDto[]>("list_request_logs", { input });
 }
 

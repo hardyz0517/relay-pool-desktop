@@ -6,9 +6,10 @@ use crate::{
     application::{clock::Clock, error::ApplicationError, ids::IdGenerator},
     models::{
         credentials::{
-            token_is_fresh, PersistStationSessionInput, ResolvedSession, SessionResolveStatus,
-            StationCredentials, StationSessionCredentialKind, UpdateStationCredentialsInput,
-            UpdateStationSessionInput,
+            token_is_fresh, CommonLoginProfile, PersistStationSessionInput, ResolvedSession,
+            SessionResolveStatus, StationCredentials, StationSessionCredentialKind,
+            UpdateStationCredentialsInput, UpdateStationSessionInput,
+            UpsertCommonLoginProfileInput,
         },
         group_facts::UpdateStationKeyGroupBindingInput,
         remote_keys::{RemoteKeyCapability, RemoteKeyMatchStatus, RemoteStationKey},
@@ -152,6 +153,89 @@ impl CredentialService {
             ids,
             store: CredentialStore,
         }
+    }
+
+    pub(crate) async fn list_common_login_profiles(
+        &self,
+    ) -> Result<Vec<CommonLoginProfile>, ApplicationError> {
+        let store = self.store;
+        let mut read = self.runtime.begin_read().await?;
+        store
+            .list_common_login_profiles(&mut read)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn upsert_common_login_profile(
+        &self,
+        input: UpsertCommonLoginProfileInput,
+    ) -> Result<CommonLoginProfile, ApplicationError> {
+        let profile_id = input.id.unwrap_or_else(|| self.ids.next_id());
+        let now = self.now_ms_string();
+        let password_secret = input
+            .password
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| {
+                let secret_ref = SecretRef {
+                    id: self.ids.next_id(),
+                    scope: "common_login_profile".to_string(),
+                    owner_id: profile_id.clone(),
+                    kind: "password".to_string(),
+                };
+                let encrypted = self
+                    .vault
+                    .encrypt(&secret_ref.aad(), SecretBytes::from(value))?;
+                Ok::<_, CredentialError>(encrypted_secret_row(secret_ref, encrypted, now.clone()))
+            })
+            .transpose()?;
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .upsert_common_login_profile(
+                            write,
+                            profile_id,
+                            input.email,
+                            password_secret,
+                            &now,
+                        )
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn delete_common_login_profile(
+        &self,
+        profile_id: String,
+    ) -> Result<(), ApplicationError> {
+        let store = self.store;
+        let now = self.now_ms_string();
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .delete_common_login_profile(write, &profile_id, &now)
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn get_common_login_profile_password(
+        &self,
+        profile_id: String,
+    ) -> Result<String, ApplicationError> {
+        let store = self.store;
+        let mut read = self.runtime.begin_read().await?;
+        let secret = store
+            .common_login_profile_secret(&mut read, &profile_id)
+            .await?;
+        let plaintext = self.decrypt_stored_secret(secret)?;
+        String::from_utf8(plaintext.as_bytes().to_vec()).map_err(|_| ApplicationError::Internal)
     }
 
     pub(crate) async fn list_station_keys(
@@ -657,8 +741,7 @@ impl CredentialService {
             input
                 .login_password
                 .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+                .filter(|value| !value.trim().is_empty())
                 .map(|value| {
                     self.encrypt_station_secret(&input.station_id, "login_password", value, &now)
                 })
@@ -1297,4 +1380,79 @@ fn encrypted_secret_row(
 
 pub(crate) fn secret_aad(scope: &str, owner_id: &str, kind: &str) -> String {
     format!("{scope}:{owner_id}:{kind}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        application::{clock::SystemClock, ids::UuidV7Generator},
+        models::credentials::UpsertCommonLoginProfileInput,
+        persistence::runtime::PersistenceRuntime,
+        services::secrets::vault::DataKeyVault,
+    };
+
+    #[tokio::test]
+    async fn common_login_profiles_persist_only_encrypted_password_material() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let database_path = temp.path().join("common-login-profiles.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&database_path)
+            .await
+            .expect("runtime");
+        let service = CredentialService::new(
+            runtime.handle(),
+            Arc::new(DataKeyVault::new([23; 32])),
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        );
+        let password = " common-password-plaintext-canary ";
+
+        let saved = service
+            .upsert_common_login_profile(UpsertCommonLoginProfileInput {
+                id: None,
+                email: "shared@example.com".to_string(),
+                password: Some(password.to_string()),
+            })
+            .await
+            .expect("save common login profile");
+
+        assert!(saved.password_present);
+        assert!(!saved.password_masked.contains("plaintext-canary"));
+        assert_eq!(
+            service
+                .get_common_login_profile_password(saved.id.clone())
+                .await
+                .expect("resolve common password"),
+            password
+        );
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        let index: String = sqlx::query_scalar(
+            "SELECT value FROM settings WHERE key = 'common_login_profiles_json'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("profile index");
+        let ciphertext: Vec<u8> = sqlx::query_scalar(
+            "SELECT ciphertext FROM secrets WHERE scope = 'common_login_profile'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("encrypted password");
+        assert!(!index.contains(password));
+        assert!(!String::from_utf8_lossy(&ciphertext).contains(password));
+        drop(read);
+
+        service
+            .delete_common_login_profile(saved.id)
+            .await
+            .expect("delete common login profile");
+        assert!(service
+            .list_common_login_profiles()
+            .await
+            .expect("list profiles")
+            .is_empty());
+        drop(service);
+        runtime.close().await.expect("close runtime");
+    }
 }

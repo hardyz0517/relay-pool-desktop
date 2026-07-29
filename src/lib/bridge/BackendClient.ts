@@ -18,7 +18,13 @@ import type {
   UpdateChannelMonitorInput,
   UpdateChannelMonitorTemplateInput,
 } from "@/lib/types/channelMonitors";
-import type { AppSettings, CcswitchImportResult, UpdateSettingsInput } from "@/lib/types/settings";
+import type {
+  AppSettings,
+  CcswitchImportResult,
+  CommonLoginProfile,
+  UpdateSettingsInput,
+  UpsertCommonLoginProfileInput,
+} from "@/lib/types/settings";
 import type {
   BalanceSnapshot,
   ModelBasePrice,
@@ -87,6 +93,10 @@ export type SettingsDomainClient = {
   updateSettings(input: UpdateSettingsInput): Promise<AppSettings>;
   chooseDataDir(): Promise<AppSettings>;
   resetDataDir(): Promise<AppSettings>;
+  listCommonLoginProfiles(): Promise<CommonLoginProfile[]>;
+  upsertCommonLoginProfile(input: UpsertCommonLoginProfileInput): Promise<CommonLoginProfile>;
+  deleteCommonLoginProfile(id: string): Promise<void>;
+  getCommonLoginProfilePassword(id: string): Promise<string>;
 };
 
 export type StationsDomainClient = {
