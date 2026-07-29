@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
+
+use crate::models::secrets::{SecretRecordSelector, VersionedEncryptedSecret};
 
 use super::{
     catalog::{
@@ -43,6 +46,12 @@ pub(crate) enum TransformError {
     UnknownSetting(String),
     #[error("portable migration row contains an undeclared secret selector")]
     UnknownSecretSelector { scope: String, kind: String },
+    #[error("portable migration row is missing a required secret field")]
+    MissingSecretField(&'static str),
+    #[error("portable migration row contains invalid binary secret material")]
+    InvalidSecretBinary,
+    #[error("portable migration row contains invalid secret encryption version")]
+    InvalidSecretEncryptionVersion,
     #[error("portable migration row contains legacy plaintext secret material")]
     PlaintextSecretResidue { table: String, column: String },
     #[error("portable migration JSON field is invalid")]
@@ -51,6 +60,85 @@ pub(crate) enum TransformError {
     LimitExceeded,
     #[error("portable migration canary scan found sensitive residue")]
     SensitiveResidue,
+}
+
+const PORTABLE_BINARY_PREFIX: &str = "base64:";
+
+pub(crate) fn portable_binary_value(bytes: &[u8]) -> Value {
+    Value::String(format!(
+        "{PORTABLE_BINARY_PREFIX}{}",
+        general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+pub(crate) fn portable_binary_bytes(value: &Value) -> Result<Vec<u8>, TransformError> {
+    let text = value.as_str().ok_or(TransformError::InvalidSecretBinary)?;
+    let encoded = text
+        .strip_prefix(PORTABLE_BINARY_PREFIX)
+        .ok_or(TransformError::InvalidSecretBinary)?;
+    general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| TransformError::InvalidSecretBinary)
+}
+
+pub(crate) fn encrypted_secret_from_portable_row(
+    row: &PortableRow,
+) -> Result<VersionedEncryptedSecret, TransformError> {
+    let id = required_text(row, "id")?;
+    let scope = required_text(row, "scope")?;
+    let owner_id = required_text(row, "owner_id")?;
+    let kind = required_text(row, "kind")?;
+    let key_id = required_text(row, "key_id")?;
+    let encryption_version = required_text(row, "encryption_version")?
+        .parse::<u16>()
+        .map_err(|_| TransformError::InvalidSecretEncryptionVersion)?;
+    let value_hash = required_text(row, "value_hash")?;
+    let ciphertext = portable_binary_bytes(
+        row.get("ciphertext")
+            .ok_or(TransformError::MissingSecretField("ciphertext"))?,
+    )?;
+    let nonce = portable_binary_bytes(
+        row.get("nonce")
+            .ok_or(TransformError::MissingSecretField("nonce"))?,
+    )?;
+    Ok(VersionedEncryptedSecret {
+        id,
+        selector: SecretRecordSelector::new(scope, owner_id, kind),
+        key_id,
+        encryption_version,
+        ciphertext,
+        nonce,
+        value_hash,
+    })
+}
+
+pub(crate) fn portable_row_from_encrypted_secret(
+    template: &PortableRow,
+    secret: &VersionedEncryptedSecret,
+) -> PortableRow {
+    let mut row = template.clone();
+    row.insert("id".into(), Value::String(secret.id.clone()));
+    row.insert("scope".into(), Value::String(secret.selector.scope.clone()));
+    row.insert(
+        "owner_id".into(),
+        Value::String(secret.selector.owner_id.clone()),
+    );
+    row.insert("kind".into(), Value::String(secret.selector.kind.clone()));
+    row.insert("key_id".into(), Value::String(secret.key_id.clone()));
+    row.insert(
+        "encryption_version".into(),
+        Value::String(secret.encryption_version.to_string()),
+    );
+    row.insert(
+        "value_hash".into(),
+        Value::String(secret.value_hash.clone()),
+    );
+    row.insert(
+        "ciphertext".into(),
+        portable_binary_value(&secret.ciphertext),
+    );
+    row.insert("nonce".into(), portable_binary_value(&secret.nonce));
+    row
 }
 
 pub(crate) fn transform_row(
@@ -371,6 +459,13 @@ fn text_field<'a>(row: &'a PortableRow, column: &str) -> Option<&'a str> {
     row.get(column).and_then(Value::as_str)
 }
 
+fn required_text(row: &PortableRow, column: &'static str) -> Result<String, TransformError> {
+    text_field(row, column)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or(TransformError::MissingSecretField(column))
+}
+
 impl From<PortableFormatError> for TransformError {
     fn from(_: PortableFormatError) -> Self {
         TransformError::LimitExceeded
@@ -552,5 +647,34 @@ mod tests {
             scan_for_sensitive_residue(b"contains sk-p8-secret-plaintext-canary").unwrap_err(),
             TransformError::SensitiveResidue
         );
+    }
+
+    #[test]
+    fn encrypted_secret_rows_use_tagged_base64_for_blob_fields() {
+        let row = PortableRow::from([
+            ("id".into(), json!("secret-1")),
+            ("scope".into(), json!("station_key")),
+            ("owner_id".into(), json!("key-1")),
+            ("kind".into(), json!("api_key")),
+            ("masked_value".into(), json!("sk-...nary")),
+            ("ciphertext".into(), portable_binary_value(&[1, 2, 3])),
+            ("nonce".into(), portable_binary_value(&[4, 5, 6])),
+            ("created_at".into(), json!("1")),
+            ("updated_at".into(), json!("2")),
+            ("key_id".into(), json!("source-key")),
+            ("encryption_version".into(), json!("1")),
+            ("value_hash".into(), json!("hash")),
+        ]);
+
+        let secret = encrypted_secret_from_portable_row(&row).expect("secret row");
+        assert_eq!(secret.ciphertext, vec![1, 2, 3]);
+        assert_eq!(secret.nonce, vec![4, 5, 6]);
+
+        let next = portable_row_from_encrypted_secret(&row, &secret);
+        assert_eq!(next["ciphertext"], portable_binary_value(&[1, 2, 3]));
+        assert!(matches!(
+            portable_binary_bytes(&json!("not-base64")),
+            Err(TransformError::InvalidSecretBinary)
+        ));
     }
 }

@@ -12,7 +12,10 @@ use zeroize::Zeroizing;
 
 use crate::models::secrets::{SecretRecordSelector, VersionedEncryptedSecret};
 
-use super::{DeviceKeyResolver, SecretKeyAccessError};
+use super::{
+    DeviceKeyId, DeviceKeyResolver, SecretKeyAccessError, SecretKeyMaterial,
+    CURRENT_SECRET_ENCRYPTION_VERSION,
+};
 
 const AES_GCM_NONCE_LEN: usize = 12;
 
@@ -247,6 +250,54 @@ pub struct SecretRekeyService {
     source_keys: DeviceKeyResolver,
     target_keys: DeviceKeyResolver,
     target_encryption_version: u16,
+}
+
+#[derive(Clone)]
+pub struct TransportSecretKey {
+    resolver: DeviceKeyResolver,
+}
+
+impl TransportSecretKey {
+    pub fn generate() -> Self {
+        let mut material = [0_u8; 32];
+        OsRng.fill_bytes(&mut material);
+        Self::from_parts(format!("transport:{}", uuid::Uuid::now_v7()), material)
+    }
+
+    pub fn from_parts(key_id: String, material: [u8; 32]) -> Self {
+        Self {
+            resolver: DeviceKeyResolver::active(
+                DeviceKeyId::new(key_id),
+                SecretKeyMaterial::from_bytes(material),
+                CURRENT_SECRET_ENCRYPTION_VERSION,
+            ),
+        }
+    }
+
+    pub fn key_id(&self) -> &str {
+        self.resolver.active_key_id().as_str()
+    }
+
+    pub fn resolver(&self) -> DeviceKeyResolver {
+        self.resolver.clone()
+    }
+
+    pub fn with_key<R>(
+        &self,
+        action: impl FnOnce(&[u8; 32]) -> R,
+    ) -> Result<R, SecretKeyAccessError> {
+        self.resolver.with_active_key(action)
+    }
+}
+
+impl std::fmt::Debug for TransportSecretKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TransportSecretKey")
+            .field("key_id", &self.key_id())
+            .field("material", &"<redacted>")
+            .finish()
+    }
 }
 
 impl SecretRekeyService {

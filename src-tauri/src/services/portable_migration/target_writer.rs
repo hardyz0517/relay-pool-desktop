@@ -14,7 +14,7 @@ use sqlx::{
 use super::{
     catalog::{table_catalog, TablePolicy},
     schema_reader::ordered_import_tables_v1,
-    transform::{scan_for_sensitive_residue, PortableRow},
+    transform::{portable_binary_bytes, scan_for_sensitive_residue, PortableRow},
     validate::{
         quote_identifier, validate_closed_sqlite_database, PortableMigrationValidationError,
         PortableValidationResult,
@@ -189,7 +189,11 @@ async fn insert_row(
     {
         let mut separated = builder.separated(", ");
         for column in &columns {
-            separated.push_bind(sqlite_text(row.get(*column)));
+            if table_name == "secrets" && matches!(*column, "ciphertext" | "nonce") {
+                separated.push_bind(sqlite_blob(row.get(*column))?);
+            } else {
+                separated.push_bind(sqlite_text(row.get(*column)));
+            }
         }
     }
     builder.push(")");
@@ -300,6 +304,11 @@ fn sqlite_text(value: Option<&Value>) -> Option<String> {
     }
 }
 
+fn sqlite_blob(value: Option<&Value>) -> PortableValidationResult<Vec<u8>> {
+    let value = value.ok_or(PortableMigrationValidationError::UnsupportedSchema)?;
+    portable_binary_bytes(value).map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -404,4 +413,53 @@ mod tests {
             Err(PortableMigrationValidationError::Transform(_))
         ));
     }
+
+    #[tokio::test]
+    async fn writer_preserves_secret_blob_types_from_portable_base64() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let target = directory.path().join("secret-blobs.sqlite");
+        let writer = TrustedTargetWriter;
+        let batch = TrustedTableBatch {
+            table_name: "secrets".to_string(),
+            rows: vec![PortableRow::from([
+                ("id".to_string(), json!("secret-1")),
+                ("scope".to_string(), json!("station_key")),
+                ("owner_id".to_string(), json!("key-1")),
+                ("kind".to_string(), json!("api_key")),
+                ("masked_value".to_string(), json!("sk-...nary")),
+                (
+                    "ciphertext".to_string(),
+                    super::portable_binary_bytes_test_value(&[1, 2, 3]),
+                ),
+                (
+                    "nonce".to_string(),
+                    super::portable_binary_bytes_test_value(&[4; 12]),
+                ),
+                ("created_at".to_string(), json!("1")),
+                ("updated_at".to_string(), json!("2")),
+                ("key_id".to_string(), json!("transport:key")),
+                ("encryption_version".to_string(), json!("1")),
+                ("value_hash".to_string(), json!("hash")),
+            ])],
+        };
+
+        writer
+            .rebuild_current_database(&target, &[batch])
+            .await
+            .expect("write target");
+
+        let mut connection = open_trusted_writer(&target).await.expect("connect");
+        let ciphertext: Vec<u8> =
+            sqlx::query_scalar("SELECT ciphertext FROM secrets WHERE id = 'secret-1'")
+                .fetch_one(&mut connection)
+                .await
+                .expect("ciphertext");
+        connection.close().await.expect("close");
+        assert_eq!(ciphertext, vec![1, 2, 3]);
+    }
+}
+
+#[cfg(test)]
+fn portable_binary_bytes_test_value(bytes: &[u8]) -> Value {
+    super::transform::portable_binary_value(bytes)
 }

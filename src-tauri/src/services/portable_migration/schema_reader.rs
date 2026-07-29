@@ -19,7 +19,9 @@ use super::{
         PORTABLE_MIGRATION_SCHEMA_PROFILE,
     },
     limits::PortableMigrationLimitsV1,
-    transform::{transform_row, PortableRow, RowTransform, TransformOptions},
+    transform::{
+        portable_binary_value, transform_row, PortableRow, RowTransform, TransformOptions,
+    },
     validate::{
         open_read_only_sqlite, quote_identifier, validate_foreign_keys, validate_quick_check,
         PortableMigrationValidationError, PortableValidationResult,
@@ -176,7 +178,11 @@ impl PortableSchemaReader {
         let mut select_columns = Vec::with_capacity(catalog.columns.len());
         for column in catalog.columns {
             let quoted = quote_identifier(column)?;
-            select_columns.push(format!("CAST({quoted} AS TEXT)"));
+            if table_name == "secrets" && matches!(*column, "ciphertext" | "nonce") {
+                select_columns.push(quoted);
+            } else {
+                select_columns.push(format!("CAST({quoted} AS TEXT)"));
+            }
         }
         let sql = format!(
             "SELECT {} FROM {} ORDER BY rowid",
@@ -188,9 +194,17 @@ impl PortableSchemaReader {
         for sqlite_row in sqlite_rows {
             let mut row = BTreeMap::new();
             for (index, column) in catalog.columns.iter().enumerate() {
-                let value = match sqlite_row.try_get::<Option<String>, _>(index)? {
-                    Some(text) => Value::String(text),
-                    None => Value::Null,
+                let value = if table_name == "secrets" && matches!(*column, "ciphertext" | "nonce")
+                {
+                    match sqlite_row.try_get::<Option<Vec<u8>>, _>(index)? {
+                        Some(bytes) => portable_binary_value(&bytes),
+                        None => Value::Null,
+                    }
+                } else {
+                    match sqlite_row.try_get::<Option<String>, _>(index)? {
+                        Some(text) => Value::String(text),
+                        None => Value::Null,
+                    }
                 };
                 row.insert((*column).to_string(), value);
             }

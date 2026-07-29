@@ -7,6 +7,7 @@ pub(crate) mod connectivity_probe;
 pub(crate) mod credentials;
 pub(crate) mod data_directory;
 pub(crate) mod data_maintenance;
+pub(crate) mod data_migration;
 pub(crate) mod error;
 pub(crate) mod ids;
 pub(crate) mod monitoring;
