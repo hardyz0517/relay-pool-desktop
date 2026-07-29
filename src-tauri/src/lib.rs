@@ -33,6 +33,10 @@ use services::data_store::{
     relocation::apply_trusted_relocation,
     types::{DataStoreStartupState, RecoveryReason, StartupDecision},
 };
+use services::portable_migration::recovery::{
+    complete_portable_activation, recover_portable_activation_for_startup,
+    PortableActivationManualReason, PortableActivationStartup,
+};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -334,6 +338,42 @@ fn startup_has_recovery_evidence(
             .exists()
 }
 
+fn portable_recovery_reason(reason: PortableActivationManualReason) -> RecoveryReason {
+    match reason {
+        PortableActivationManualReason::KeyUnavailable => {
+            RecoveryReason::PortableMigrationKeyUnavailable
+        }
+        PortableActivationManualReason::JournalMalformed
+        | PortableActivationManualReason::UnsupportedJournal
+        | PortableActivationManualReason::PathRejected
+        | PortableActivationManualReason::MissingArtifact
+        | PortableActivationManualReason::IdentityMismatch
+        | PortableActivationManualReason::ReplacementFailed
+        | PortableActivationManualReason::NewActiveInvalid
+        | PortableActivationManualReason::RollbackFailed => {
+            RecoveryReason::PortableMigrationManualRecoveryRequired
+        }
+    }
+}
+
+fn portable_manual_startup_state(
+    default_data_dir: &Path,
+    reason: RecoveryReason,
+) -> DataStoreStartupState {
+    let mut startup_state = inspect_startup(default_data_dir).unwrap_or_else(|_| {
+        DataStoreStartupState::new(
+            StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::Unreadable,
+            },
+            Vec::new(),
+            default_data_dir.to_path_buf(),
+            None,
+        )
+    });
+    startup_state.decision = StartupDecision::NeedsRecovery { reason };
+    startup_state
+}
+
 struct StartupSecretMaterial {
     manager: Option<services::secrets::SecretManager>,
     first_run_key_id: Option<String>,
@@ -543,22 +583,94 @@ pub fn run() {
             let default_data_dir = app.path().app_data_dir().map_err(|error| {
                 format!("failed to resolve application data directory: {error}")
             })?;
-            let startup_state = inspect_startup(&default_data_dir)?;
-            let secret_material = initialize_secret_material_for_startup(
-                blocking_executor.clone(),
-                &app_config_dir,
-                &default_data_dir,
-                startup_state,
-            )?;
-            let mut secret_manager = secret_material.manager;
-            let first_run_key_id = secret_material.first_run_key_id;
+            let portable_activation = tauri::async_runtime::block_on(
+                recover_portable_activation_for_startup(
+                    &app_config_dir,
+                    &default_data_dir,
+                    blocking_executor.clone(),
+                ),
+            );
+            let mut portable_activation_completion: Option<(String, &'static str)> = None;
+            let mut pending_device_key_commit_id: Option<String> = None;
+            let (mut secret_manager, first_run_key_id, startup_state) = match portable_activation {
+                Ok(PortableActivationStartup::NoJournal) => {
+                    let startup_state = inspect_startup(&default_data_dir)?;
+                    let secret_material = initialize_secret_material_for_startup(
+                        blocking_executor.clone(),
+                        &app_config_dir,
+                        &default_data_dir,
+                        startup_state,
+                    )?;
+                    (
+                        secret_material.manager,
+                        secret_material.first_run_key_id,
+                        secret_material.startup_state,
+                    )
+                }
+                Ok(PortableActivationStartup::Activated {
+                    operation_id,
+                    target_key_id,
+                    ..
+                }) => {
+                    let startup_state = inspect_startup(&default_data_dir)?;
+                    let manager = tauri::async_runtime::block_on(
+                        services::secrets::SecretManager::load_by_key_id(
+                            blocking_executor.clone(),
+                            target_key_id.clone(),
+                        ),
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "failed to reload portable activation target key {:?}",
+                            error.kind()
+                        )
+                    })?;
+                    pending_device_key_commit_id = Some(target_key_id);
+                    portable_activation_completion = Some((operation_id, "activated"));
+                    (Some(manager), None, startup_state)
+                }
+                Ok(PortableActivationStartup::RolledBack { operation_id }) => {
+                    let startup_state = inspect_startup(&default_data_dir)?;
+                    let secret_material = initialize_secret_material_for_startup(
+                        blocking_executor.clone(),
+                        &app_config_dir,
+                        &default_data_dir,
+                        startup_state,
+                    )?;
+                    portable_activation_completion = Some((operation_id, "rolled_back"));
+                    (
+                        secret_material.manager,
+                        secret_material.first_run_key_id,
+                        secret_material.startup_state,
+                    )
+                }
+                Ok(PortableActivationStartup::ManualRecoveryRequired { reason, .. }) => (
+                    None,
+                    None,
+                    portable_manual_startup_state(
+                        &default_data_dir,
+                        portable_recovery_reason(reason),
+                    ),
+                ),
+                Err(error) => {
+                    eprintln!("Relay Pool Desktop portable activation requires recovery: {error}");
+                    (
+                        None,
+                        None,
+                        portable_manual_startup_state(
+                            &default_data_dir,
+                            RecoveryReason::PortableMigrationManualRecoveryRequired,
+                        ),
+                    )
+                }
+            };
             let prepared_data_store = match secret_manager.as_ref() {
                 Some(secret_manager) => prepare_data_store(
                     default_data_dir,
-                    secret_material.startup_state,
+                    startup_state,
                     &secret_manager.resolver(),
                 )?,
-                None => PreparedDataStore::Recovery(secret_material.startup_state),
+                None => PreparedDataStore::Recovery(startup_state),
             };
             let proxy_runtime = Arc::new(services::proxy::runtime::ProxyRuntimeState::default());
             let capture_session_store = services::capture::session::CaptureSessionStore::default();
@@ -571,7 +683,7 @@ pub fn run() {
                     let Some(secret_manager) = secret_manager.take() else {
                         return Err("ready data store requires device key material".into());
                     };
-                    let first_run_activation_error = if first_run_key_id.is_some() {
+                    let device_key_activation_error = if first_run_key_id.is_some() {
                         let commit_result = (|| {
                             let validated_journal =
                                 mark_first_run_database_validated(&app_config_dir)?;
@@ -587,10 +699,21 @@ pub fn run() {
                             Ok::<(), String>(())
                         })();
                         commit_result.err()
+                    } else if let Some(key_id) = pending_device_key_commit_id.take() {
+                        tauri::async_runtime::block_on(
+                            services::secrets::SecretManager::commit_key_id(
+                                blocking_executor.clone(),
+                                key_id,
+                            ),
+                        )
+                        .map_err(|error| {
+                            format!("failed to commit portable activation key: {:?}", error.kind())
+                        })
+                        .err()
                     } else {
                         None
                     };
-                    if let Some(error) = first_run_activation_error {
+                    if let Some(error) = device_key_activation_error {
                         eprintln!(
                             "Relay Pool Desktop first-run device key activation requires recovery: {error}"
                         );
@@ -730,6 +853,16 @@ pub fn run() {
                             })?;
                         app.state::<Arc<TrayBehaviorState>>()
                             .set(TrayBehavior::from_setting(&settings.tray_behavior));
+                        if let Some((operation_id, outcome)) =
+                            portable_activation_completion.take()
+                        {
+                            complete_portable_activation(&app_config_dir, &operation_id, outcome)
+                                .map_err(|error| {
+                                    format!(
+                                        "failed to complete portable activation receipt: {error}"
+                                    )
+                                })?;
+                        }
                         runtime_composition::register_work_runtime(
                             &persistence::upgrade_fault::NoUpgradeFaults,
                             app,
@@ -873,8 +1006,10 @@ mod tests {
 
     use super::{
         persistence::runtime::{PersistenceRuntime, RuntimeState},
-        DataStoreRuntimeOwner, InstallationLease, LeaseError, TrayBehavior,
+        portable_recovery_reason, DataStoreRuntimeOwner, InstallationLease, LeaseError,
+        RecoveryReason, TrayBehavior,
     };
+    use crate::services::portable_migration::recovery::PortableActivationManualReason;
 
     #[test]
     fn tray_behavior_maps_window_lifecycle_modes() {
@@ -960,5 +1095,17 @@ mod tests {
             .expect("lease remains released")
             .release()
             .expect("release verification lease");
+    }
+
+    #[test]
+    fn startup_activation_recovery_reason_preserves_key_unavailable_boundary() {
+        assert_eq!(
+            portable_recovery_reason(PortableActivationManualReason::KeyUnavailable),
+            RecoveryReason::PortableMigrationKeyUnavailable
+        );
+        assert_eq!(
+            portable_recovery_reason(PortableActivationManualReason::IdentityMismatch),
+            RecoveryReason::PortableMigrationManualRecoveryRequired
+        );
     }
 }

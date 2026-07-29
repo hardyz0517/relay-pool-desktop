@@ -63,13 +63,40 @@ impl SecretManager {
         Ok(Self::from_loaded_key(pending.id, pending.material))
     }
 
-    pub async fn commit_active(&self, blocking: BlockingExecutor) -> Result<(), DeviceKeyError> {
-        let key_id = self.resolver.active_key_id().as_str().to_string();
+    pub async fn load_by_key_id(
+        blocking: BlockingExecutor,
+        key_id: String,
+    ) -> Result<Self, DeviceKeyError> {
+        let loaded = blocking
+            .submit("device_key_load_by_id", None, None, None, move |_| {
+                let store = DeviceKeyStore::new(keychain::SystemCredentialBackend);
+                store
+                    .load_by_id(&key_id)
+                    .map_err(|error| BlockingExecutorError::JobFailed {
+                        code: error.kind().stable_code().to_string(),
+                    })
+            })
+            .map_err(|_| DeviceKeyError::new(device_key_store::DeviceKeyErrorKind::Unavailable))?
+            .result()
+            .await
+            .map_err(blocking_error_to_device_key_error)?;
+        Ok(Self::from_loaded_key(
+            loaded
+                .id
+                .unwrap_or_else(|| LEGACY_DEVICE_KEY_ID.to_string()),
+            loaded.material,
+        ))
+    }
+
+    pub async fn commit_key_id(
+        blocking: BlockingExecutor,
+        key_id: String,
+    ) -> Result<(), DeviceKeyError> {
         if key_id == LEGACY_DEVICE_KEY_ID {
             return Ok(());
         }
         blocking
-            .submit("device_key_commit_active", None, None, None, move |_| {
+            .submit("device_key_commit_key_id", None, None, None, move |_| {
                 let store = DeviceKeyStore::new(keychain::SystemCredentialBackend);
                 store
                     .commit_active(&key_id)
@@ -81,6 +108,11 @@ impl SecretManager {
             .result()
             .await
             .map_err(blocking_error_to_device_key_error)
+    }
+
+    pub async fn commit_active(&self, blocking: BlockingExecutor) -> Result<(), DeviceKeyError> {
+        let key_id = self.resolver.active_key_id().as_str().to_string();
+        Self::commit_key_id(blocking, key_id).await
     }
 
     pub(crate) fn resolver(&self) -> DeviceKeyResolver {

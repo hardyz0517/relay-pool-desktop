@@ -23,8 +23,8 @@ use crate::{
     },
     services::portable_migration::{
         activation_journal::{
-            write_prepared_journal, PortableActivationArtifact, PortableActivationJournal,
-            PortableActivationJournalError,
+            rollback_path_for_active, write_prepared_journal, PortableActivationArtifact,
+            PortableActivationJournal, PortableActivationJournalError,
         },
         age_envelope::{AgeEnvelopeError, AgeEnvelopeOptions},
         fault::{
@@ -177,8 +177,11 @@ impl DataMigrationImportService {
             return Err(DataMigrationImportError::ActiveIdentityChanged);
         }
 
+        let operation_id = uuid::Uuid::now_v7().to_string();
+        let rollback_path =
+            rollback_path_for_active(&request.import.active_database_path, &operation_id)?;
         let journal = PortableActivationJournal::prepared(
-            uuid::Uuid::now_v7().to_string(),
+            operation_id,
             import_mode_code(request.import.mode).to_string(),
             artifact.target_key_id.clone(),
             PortableActivationArtifact::from_identity(
@@ -189,6 +192,7 @@ impl DataMigrationImportService {
                 artifact.target_database_path.clone(),
                 &staged_identity,
             ),
+            PortableActivationArtifact::from_identity(rollback_path, &active_after),
             PortableActivationArtifact::from_identity(backup.backup_path.clone(), &backup.identity),
         )?;
         if let Err(error) = faults.check(PortableActivationStep::BeforeJournalPublish) {

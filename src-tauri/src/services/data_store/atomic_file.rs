@@ -88,6 +88,21 @@ pub(crate) trait AtomicJournalPort {
     ) -> Result<Vec<u8>, AtomicFileError>;
 }
 
+pub(crate) trait AtomicDatabaseReplacePort {
+    fn replace_with_rollback(
+        &self,
+        prepared_replacement: &Path,
+        active: &ApprovedLeaf,
+        rollback: &ApprovedLeaf,
+    ) -> Result<DatabaseReplaceEvidence, AtomicFileError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DatabaseReplaceEvidence {
+    pub(crate) active: PublishEvidence,
+    pub(crate) rollback: PublishEvidence,
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct LocalAtomicFileAdapter;
 
@@ -113,6 +128,17 @@ impl AtomicJournalPort for LocalAtomicFileAdapter {
         let evidence = publish_prepared(&prepared, target, PublishMode::ReplaceExisting)?;
         let readback = fs::read(&evidence.target)?;
         Ok(readback)
+    }
+}
+
+impl AtomicDatabaseReplacePort for LocalAtomicFileAdapter {
+    fn replace_with_rollback(
+        &self,
+        prepared_replacement: &Path,
+        active: &ApprovedLeaf,
+        rollback: &ApprovedLeaf,
+    ) -> Result<DatabaseReplaceEvidence, AtomicFileError> {
+        replace_database_with_rollback(prepared_replacement, active, rollback)
     }
 }
 
@@ -152,6 +178,47 @@ pub(crate) fn publish_prepared(
     Ok(PublishEvidence {
         identity: identity_for_path(&target_path)?,
         target: target_path,
+    })
+}
+
+pub(crate) fn replace_database_with_rollback(
+    prepared_replacement: &Path,
+    active: &ApprovedLeaf,
+    rollback: &ApprovedLeaf,
+) -> Result<DatabaseReplaceEvidence, AtomicFileError> {
+    let active_path = active.path();
+    let rollback_path = rollback.path();
+    if active.canonical_parent != rollback.canonical_parent {
+        return Err(AtomicFileError::PathRejected);
+    }
+    if prepared_replacement
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .as_ref()
+        != Some(&active.canonical_parent)
+    {
+        return Err(AtomicFileError::PathRejected);
+    }
+    if !active_path.is_file() || !prepared_replacement.is_file() {
+        return Err(AtomicFileError::Missing);
+    }
+    if rollback_path.exists() {
+        return Err(AtomicFileError::AlreadyExists);
+    }
+
+    sync_file(prepared_replacement)?;
+    sync_file(&active_path)?;
+    replace_existing_file_with_backup(prepared_replacement, &active_path, &rollback_path)?;
+    sync_parent(&active.parent)?;
+    Ok(DatabaseReplaceEvidence {
+        active: PublishEvidence {
+            identity: identity_for_path(&active_path)?,
+            target: active_path,
+        },
+        rollback: PublishEvidence {
+            identity: identity_for_path(&rollback_path)?,
+            target: rollback_path,
+        },
     })
 }
 
@@ -228,6 +295,54 @@ pub(crate) fn replace_existing_file(
     }
 }
 
+#[cfg(windows)]
+pub(crate) fn replace_existing_file_with_backup(
+    replacement: &Path,
+    destination: &Path,
+    backup: &Path,
+) -> Result<(), AtomicFileError> {
+    use std::{os::windows::ffi::OsStrExt, ptr};
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let replacement: Vec<u16> = replacement
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let backup: Vec<u16> = backup.as_os_str().encode_wide().chain(Some(0)).collect();
+    let ok = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            replacement.as_ptr(),
+            backup.as_ptr(),
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        Err(AtomicFileError::Io(io::Error::last_os_error()))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn replace_existing_file_with_backup(
+    replacement: &Path,
+    destination: &Path,
+    backup: &Path,
+) -> Result<(), AtomicFileError> {
+    fs::rename(destination, backup)?;
+    fs::rename(replacement, destination)?;
+    Ok(())
+}
+
 #[cfg(not(windows))]
 pub(crate) fn replace_existing_file(
     temporary: &Path,
@@ -253,7 +368,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        ApprovedLeaf, AtomicFilePublishPort, AtomicJournalPort, LocalAtomicFileAdapter, PublishMode,
+        ApprovedLeaf, AtomicDatabaseReplacePort, AtomicFilePublishPort, AtomicJournalPort,
+        LocalAtomicFileAdapter, PublishMode,
     };
 
     #[test]
@@ -292,6 +408,29 @@ mod tests {
 
         assert_eq!(std::fs::read(target.path()).expect("read"), b"new");
         assert_eq!(evidence.identity.length, 3);
+    }
+
+    #[test]
+    fn database_replace_preserves_previous_active_as_rollback() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let active = ApprovedLeaf::approve(root.path(), "active.sqlite3").expect("active");
+        let rollback = ApprovedLeaf::approve(root.path(), "rollback.sqlite3").expect("rollback");
+        std::fs::write(active.path(), b"old").expect("old");
+        let prepared = root.path().join("staged.sqlite3");
+        std::fs::write(&prepared, b"new").expect("new");
+
+        let evidence = LocalAtomicFileAdapter
+            .replace_with_rollback(&prepared, &active, &rollback)
+            .expect("replace");
+
+        assert_eq!(
+            std::fs::read(evidence.active.target).expect("active"),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(evidence.rollback.target).expect("rollback"),
+            b"old"
+        );
     }
 
     #[test]

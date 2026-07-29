@@ -122,6 +122,20 @@ where
         }
     }
 
+    pub(crate) fn load_by_id(&self, id: &str) -> Result<DeviceKey, DeviceKeyError> {
+        if !valid_key_id(id) {
+            return Err(DeviceKeyError::new(DeviceKeyErrorKind::Unsupported));
+        }
+        let encoded = self
+            .backend
+            .get_password(&device_key_username(id))
+            .map_err(device_key_error)?;
+        Ok(DeviceKey {
+            id: Some(id.to_string()),
+            material: decode_key(&encoded)?,
+        })
+    }
+
     pub(crate) fn create_pending(&self, id: &str) -> Result<PendingDeviceKey, DeviceKeyError> {
         if !valid_key_id(id) {
             return Err(DeviceKeyError::new(DeviceKeyErrorKind::Unsupported));
@@ -319,6 +333,26 @@ mod tests {
 
         assert_eq!(loaded.id.as_deref(), Some(id.as_str()));
         assert_eq!(loaded.material, key);
+    }
+
+    #[test]
+    fn load_by_id_reads_pending_key_without_switching_active_pointer() {
+        let id = DeviceKeyStore::<FakeBackend>::generate_key_id();
+        let key = [8_u8; 32];
+        let backend = FakeBackend::default().with_value(
+            &device_key_username(&id),
+            general_purpose::STANDARD.encode(key),
+        );
+        let store = DeviceKeyStore::new(backend);
+
+        let loaded = store.load_by_id(&id).expect("load by id");
+
+        assert_eq!(loaded.id.as_deref(), Some(id.as_str()));
+        assert_eq!(loaded.material, key);
+        assert!(matches!(
+            store.backend.get_password(ACTIVE_POINTER_USERNAME),
+            Err(error) if error.kind() == DeviceKeyErrorKind::NotFound
+        ));
     }
 
     #[test]

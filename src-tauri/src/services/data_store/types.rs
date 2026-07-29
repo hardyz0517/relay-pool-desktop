@@ -23,6 +23,8 @@ pub enum RecoveryReason {
     SystemCredentialCorrupt,
     SystemCredentialUnsupported,
     SystemCredentialInternal,
+    PortableMigrationManualRecoveryRequired,
+    PortableMigrationKeyUnavailable,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

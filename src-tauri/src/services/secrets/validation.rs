@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::persistence::{read_encrypted_secrets, StoredEncryptedSecret};
 
 use super::crypto::{decrypt_secret, EncryptedPayload};
+use super::{DeviceKeyResolver, CURRENT_SECRET_ENCRYPTION_VERSION};
 
 pub fn validate_database_secrets(path: &Path, data_key: &[u8; 32]) -> Result<(), String> {
     let records: Vec<StoredEncryptedSecret> =
@@ -23,6 +24,18 @@ pub fn validate_database_secrets(path: &Path, data_key: &[u8; 32]) -> Result<(),
         })?;
     }
     Ok(())
+}
+
+pub(crate) fn validate_database_secrets_with_resolver(
+    path: &Path,
+    resolver: &DeviceKeyResolver,
+    key_id: &str,
+) -> Result<(), String> {
+    resolver
+        .with_key(key_id, CURRENT_SECRET_ENCRYPTION_VERSION, |key| {
+            validate_database_secrets(path, key)
+        })
+        .map_err(|error| format!("database secret key access failed: {error}"))?
 }
 
 fn sanitized_row_identifier(id: &str) -> String {

@@ -19,13 +19,13 @@ const JOURNAL_VERSION: u32 = 1;
 const MAX_JOURNAL_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum PortableActivationPhase {
     Prepared,
-    ActiveReplaceStarted,
-    ActivePublished,
+    ActivationStarted,
+    ReplacementCommitted,
     ActivatedValidated,
-    RollbackReplaceStarted,
+    RollbackStarted,
     RolledBack,
     ManualRecoveryRequired,
     Completed,
@@ -64,6 +64,7 @@ pub(crate) struct PortableActivationPayload {
     pub(crate) target_device_key_id: String,
     pub(crate) active: PortableActivationArtifact,
     pub(crate) staged: PortableActivationArtifact,
+    pub(crate) rollback: PortableActivationArtifact,
     pub(crate) backup: PortableActivationArtifact,
     pub(crate) observed_rollback_file_id: Option<u128>,
 }
@@ -83,6 +84,7 @@ impl PortableActivationJournal {
         target_device_key_id: String,
         active: PortableActivationArtifact,
         staged: PortableActivationArtifact,
+        rollback: PortableActivationArtifact,
         backup: PortableActivationArtifact,
     ) -> Result<Self, PortableActivationJournalError> {
         validate_uuid_v7(&operation_id)?;
@@ -98,9 +100,23 @@ impl PortableActivationJournal {
             target_device_key_id,
             active,
             staged,
+            rollback,
             backup,
             observed_rollback_file_id: None,
         };
+        Self::from_payload(payload)
+    }
+
+    pub(crate) fn advance(
+        &self,
+        phase: PortableActivationPhase,
+        observed_rollback_file_id: Option<u128>,
+    ) -> Result<Self, PortableActivationJournalError> {
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let mut payload = self.payload.clone();
+        payload.phase = phase;
+        payload.updated_at = now;
+        payload.observed_rollback_file_id = observed_rollback_file_id;
         Self::from_payload(payload)
     }
 
@@ -154,6 +170,13 @@ pub(crate) fn journal_path(config_dir: &Path) -> PathBuf {
 }
 
 pub(crate) fn write_prepared_journal(
+    config_dir: &Path,
+    journal: &PortableActivationJournal,
+) -> Result<(), PortableActivationJournalError> {
+    write_journal(config_dir, journal)
+}
+
+pub(crate) fn write_journal(
     config_dir: &Path,
     journal: &PortableActivationJournal,
 ) -> Result<(), PortableActivationJournalError> {
@@ -219,19 +242,24 @@ fn validate_payload(
     validate_timestamp(&payload.updated_at)?;
     validate_artifact(&payload.active)?;
     validate_artifact(&payload.staged)?;
+    validate_artifact(&payload.rollback)?;
     validate_artifact(&payload.backup)?;
     match payload.phase {
-        PortableActivationPhase::Prepared
-        | PortableActivationPhase::ActiveReplaceStarted
-        | PortableActivationPhase::ActivePublished
-        | PortableActivationPhase::ActivatedValidated
-        | PortableActivationPhase::RollbackReplaceStarted
-        | PortableActivationPhase::Completed => {
+        PortableActivationPhase::Prepared | PortableActivationPhase::ActivationStarted => {
             if payload.observed_rollback_file_id.is_some() {
                 return Err(PortableActivationJournalError::InvalidPhaseShape);
             }
         }
-        PortableActivationPhase::RolledBack | PortableActivationPhase::ManualRecoveryRequired => {}
+        PortableActivationPhase::ReplacementCommitted
+        | PortableActivationPhase::ActivatedValidated
+        | PortableActivationPhase::RollbackStarted
+        | PortableActivationPhase::RolledBack
+        | PortableActivationPhase::Completed => {
+            if payload.observed_rollback_file_id.is_none() {
+                return Err(PortableActivationJournalError::InvalidPhaseShape);
+            }
+        }
+        PortableActivationPhase::ManualRecoveryRequired => {}
     }
     Ok(())
 }
@@ -277,6 +305,21 @@ fn validate_key_id(value: &str) -> Result<(), PortableActivationJournalError> {
         return Err(PortableActivationJournalError::InvalidValue);
     }
     Ok(())
+}
+
+pub(crate) fn rollback_path_for_active(
+    active_path: &Path,
+    operation_id: &str,
+) -> Result<PathBuf, PortableActivationJournalError> {
+    validate_uuid_v7(operation_id)?;
+    let parent = active_path
+        .parent()
+        .ok_or(PortableActivationJournalError::InvalidValue)?;
+    let stem = active_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or(PortableActivationJournalError::InvalidValue)?;
+    Ok(parent.join(format!("{stem}.portable-rollback-{operation_id}.sqlite3")))
 }
 
 fn is_sha256_hex(value: &str) -> bool {
@@ -359,6 +402,7 @@ mod tests {
     fn sample_journal(root: &Path) -> PortableActivationJournal {
         let active = artifact(root.join("relay-pool-desktop-v2.sqlite3"), b"active");
         let staged = artifact(root.join("staged.sqlite3"), b"staged");
+        let rollback = artifact(root.join("rollback.sqlite3"), b"active");
         let backup = artifact(root.join("backup.sqlite3"), b"backup");
         PortableActivationJournal::prepared(
             uuid::Uuid::now_v7().to_string(),
@@ -366,6 +410,7 @@ mod tests {
             "target-device-key".to_string(),
             active,
             staged,
+            rollback,
             backup,
         )
         .expect("journal")

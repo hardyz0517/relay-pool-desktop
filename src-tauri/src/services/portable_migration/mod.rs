@@ -6,6 +6,7 @@ pub(crate) mod format;
 pub(crate) mod inspection_registry;
 pub(crate) mod limits;
 pub(crate) mod path_tokens;
+pub(crate) mod recovery;
 pub(crate) mod schema_reader;
 pub(crate) mod snapshot;
 pub(crate) mod staging;
