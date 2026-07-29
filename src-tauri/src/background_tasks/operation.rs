@@ -47,6 +47,7 @@ impl OperationRegistryConfig {
 pub struct OperationRegistry {
     inner: Arc<Mutex<OperationRegistryInner>>,
     next_id: Arc<AtomicU64>,
+    admission_closed: Arc<AtomicBool>,
     config: OperationRegistryConfig,
 }
 
@@ -109,6 +110,7 @@ impl OperationRegistry {
         Self {
             inner: Arc::new(Mutex::new(OperationRegistryInner::default())),
             next_id: Arc::new(AtomicU64::new(1)),
+            admission_closed: Arc::new(AtomicBool::new(false)),
             config,
         }
     }
@@ -120,6 +122,9 @@ impl OperationRegistry {
     where
         F: FnOnce(OperationContext) -> BoxOperationFuture + Send + 'static,
     {
+        if self.admission_closed.load(Ordering::SeqCst) {
+            return Err(OperationRegistryError::AdmissionClosed);
+        }
         let id = OperationId(self.next_id.fetch_add(1, Ordering::SeqCst));
         let spec = RunningOperationSpec {
             kind: request.kind,
@@ -136,6 +141,9 @@ impl OperationRegistry {
         let commit_barrier = Arc::new(AtomicBool::new(false));
         {
             let mut inner = self.inner.lock().expect("operation registry mutex");
+            if self.admission_closed.load(Ordering::SeqCst) {
+                return Err(OperationRegistryError::AdmissionClosed);
+            }
             if inner.running_count >= self.config.max_running_global {
                 return Err(OperationRegistryError::Overloaded);
             }
@@ -198,6 +206,44 @@ impl OperationRegistry {
             slot.join = Some(join);
         }
         Ok(id)
+    }
+
+    pub async fn stop_admission_and_cancel(&self, wait: Duration) -> OperationDrainReport {
+        self.admission_closed.store(true, Ordering::SeqCst);
+        let active_ids = {
+            let inner = self.inner.lock().expect("operation registry mutex");
+            inner
+                .slots
+                .iter()
+                .filter_map(|(id, slot)| {
+                    matches!(
+                        slot.state,
+                        OperationState::Running | OperationState::Stopping
+                    )
+                    .then_some(*id)
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut report = OperationDrainReport {
+            cancelled: active_ids.clone(),
+            ..OperationDrainReport::default()
+        };
+        if active_ids.is_empty() {
+            return report;
+        }
+        let per_operation_wait = wait
+            .checked_div(active_ids.len().try_into().unwrap_or(u32::MAX))
+            .unwrap_or(wait)
+            .max(Duration::from_millis(1));
+        for id in active_ids {
+            match self.cancel(id, per_operation_wait).await {
+                Ok(OperationCancelOutcome::Stopped { .. })
+                | Ok(OperationCancelOutcome::AlreadyTerminal { .. }) => report.completed.push(id),
+                Ok(OperationCancelOutcome::StillStopping) => report.timed_out.push(id),
+                Err(_) => report.timed_out.push(id),
+            }
+        }
+        report
     }
 
     pub fn progress(
@@ -559,6 +605,13 @@ pub struct OperationSnapshot {
     pub terminal: Option<OperationTerminal>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OperationDrainReport {
+    pub cancelled: Vec<OperationId>,
+    pub completed: Vec<OperationId>,
+    pub timed_out: Vec<OperationId>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationCancelOutcome {
     Stopped { terminal: OperationTerminal },
@@ -598,6 +651,7 @@ pub enum OperationRegistryError {
     Expired,
     ProgressTooLarge { limit_bytes: usize },
     TerminalAlreadyRecorded,
+    AdmissionClosed,
 }
 
 impl std::fmt::Display for OperationRegistryError {
@@ -619,6 +673,7 @@ impl std::fmt::Display for OperationRegistryError {
             Self::TerminalAlreadyRecorded => {
                 formatter.write_str("operation terminal is already recorded")
             }
+            Self::AdmissionClosed => formatter.write_str("operation admission is closed"),
         }
     }
 }

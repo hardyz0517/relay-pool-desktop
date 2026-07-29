@@ -91,6 +91,14 @@ fn public_operation_registry_error(error: OperationRegistryError) -> error::Comm
             None,
         )
         .expect("operation expired error is a bounded public contract"),
+        OperationRegistryError::AdmissionClosed => error::CommandError::try_new(
+            error::CommandErrorCode::RuntimeUnavailable,
+            "The desktop runtime is preparing data maintenance and is not accepting new operations.",
+            true,
+            None,
+            None,
+        )
+        .expect("operation admission-closed error is a bounded public contract"),
         OperationRegistryError::InvalidSpec
         | OperationRegistryError::ProgressTooLarge { .. }
         | OperationRegistryError::TerminalAlreadyRecorded => error::CommandError::internal(None),

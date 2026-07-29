@@ -523,6 +523,7 @@ pub fn run() {
         .setup(|app| {
             app.manage(Arc::new(TrayBehaviorState::default()));
             app.manage(ExitCoordinator::new(Duration::from_secs(45)));
+            app.manage(application::data_maintenance::DataMaintenanceCoordinator::new());
             setup_tray(app)?;
             let work_runtime = app_composition::compose_work_runtime(
                 app_composition::WorkRuntimeConfig::architecture_budget(),

@@ -1,9 +1,9 @@
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -27,6 +27,7 @@ pub(crate) struct WriteCoordinatorSnapshot {
 pub(crate) struct WriteCoordinator {
     semaphore: Arc<Semaphore>,
     metrics: Arc<WriteCoordinatorMetrics>,
+    admission_closed: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Default)]
@@ -84,10 +85,14 @@ impl WriteCoordinator {
         Self {
             semaphore: Arc::new(Semaphore::new(1)),
             metrics: Arc::new(WriteCoordinatorMetrics::default()),
+            admission_closed: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    pub(crate) async fn acquire(&self) -> Result<OwnedSemaphorePermit, tokio::sync::AcquireError> {
+    pub(crate) async fn acquire(&self) -> Result<OwnedSemaphorePermit, WriterAdmissionError> {
+        if self.admission_closed.load(Ordering::SeqCst) {
+            return Err(WriterAdmissionError::Closed);
+        }
         let queue_depth = self
             .metrics
             .current_queue_depth
@@ -98,14 +103,40 @@ impl WriteCoordinator {
             .fetch_max(queue_depth, Ordering::Relaxed);
         let queued = QueuedWrite::new(Arc::clone(&self.metrics));
         let started = Instant::now();
-        let permit = self.semaphore.clone().acquire_owned().await?;
+        let permit = self
+            .semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| WriterAdmissionError::SemaphoreClosed)?;
         queued.acquired();
+        if self.admission_closed.load(Ordering::SeqCst) {
+            return Err(WriterAdmissionError::Closed);
+        }
         self.metrics.acquired_writes.fetch_add(1, Ordering::Relaxed);
         self.metrics.total_queue_wait_micros.fetch_add(
             started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
             Ordering::Relaxed,
         );
         Ok(permit)
+    }
+
+    pub(crate) fn close_admission(&self) {
+        self.admission_closed.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) async fn wait_for_drain(&self, timeout: Duration) -> Result<(), WriterDrainError> {
+        let started = Instant::now();
+        loop {
+            let version = self.persistence_version();
+            if version.active_write_sessions == 0 {
+                return Ok(());
+            }
+            if started.elapsed() >= timeout {
+                return Err(WriterDrainError::TimedOut);
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     pub(crate) fn record_session_started(&self) {
@@ -174,8 +205,20 @@ impl Clone for WriteCoordinator {
         Self {
             semaphore: self.semaphore.clone(),
             metrics: self.metrics.clone(),
+            admission_closed: self.admission_closed.clone(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriterAdmissionError {
+    Closed,
+    SemaphoreClosed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WriterDrainError {
+    TimedOut,
 }
 
 struct QueuedWrite {

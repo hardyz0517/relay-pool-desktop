@@ -129,6 +129,13 @@ impl ProxyRuntimeState {
         self.v2_prepare_for_update(timeout).await
     }
 
+    pub async fn drain_for_data_maintenance(
+        &self,
+        timeout: Duration,
+    ) -> Result<ProxyStatus, String> {
+        self.v2_prepare_for_update(timeout).await
+    }
+
     pub async fn cleanup_before_update(&self, default_port: u16) -> Result<ProxyStatus, String> {
         self.stop(default_port).await
     }

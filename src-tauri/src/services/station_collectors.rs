@@ -10,7 +10,7 @@ use crate::{
     application::{app_services::AppServices, collectors::CollectorService, pagination::PageLimit},
     background_tasks::{
         BlockingExecutor, BlockingExecutorError, TaskFailure, TaskId, TaskRunContext, TaskSpec,
-        TaskSupervisor,
+        TaskSupervisor, TaskSupervisorError,
     },
     outbound::AsyncOutboundClient,
     services::collectors::{
@@ -249,6 +249,19 @@ impl StationCollectorRunnerState {
     #[allow(dead_code)]
     pub fn stop(&self) {
         let _ = self.supervisor.cancel(&self.task_id);
+    }
+
+    pub async fn stop_and_join(&self, timeout: Duration) -> Result<(), String> {
+        match self.supervisor.cancel(&self.task_id) {
+            Ok(()) => {}
+            Err(TaskSupervisorError::NotRunning(_)) => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        }
+        tokio::time::timeout(timeout, self.supervisor.join_finished(&self.task_id))
+            .await
+            .map_err(|_| "Station collector runner shutdown timed out".to_string())?
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     pub(crate) fn start_v2(

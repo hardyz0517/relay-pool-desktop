@@ -22,6 +22,48 @@ pub struct CommandDescriptor {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandAdmissionClass {
+    Read,
+    Mutation,
+    MaintenanceRead,
+    MaintenanceActivity,
+    ActivationCommit,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn command_admission_class(command: &str) -> Option<CommandAdmissionClass> {
+    if !COMMANDS.iter().any(|descriptor| descriptor.name == command) {
+        return None;
+    }
+    Some(match command {
+        "get_operation_status"
+        | "app_status"
+        | "get_runtime_contract_info"
+        | "get_runtime_status"
+        | "get_data_store_startup_state"
+        | "refresh_data_store_candidates"
+        | "locate_data_store_candidate"
+        | "open_data_store_backup_dir"
+        | "export_data_store_diagnostic"
+        | "updater_network_config"
+        | "inspect_latest_update_manifest" => CommandAdmissionClass::Read,
+        name if command_name_is_read_like(name) => CommandAdmissionClass::Read,
+        _ => CommandAdmissionClass::Mutation,
+    })
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn command_name_is_read_like(command: &str) -> bool {
+    command.starts_with("get_")
+        || command.starts_with("list_")
+        || command.starts_with("load_")
+        || command.starts_with("resolve_")
+        || command.starts_with("simulate_")
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransportKind {
@@ -216,6 +258,7 @@ struct RegistryCommand<'a> {
     output_schema_hash: String,
     error_schema_hash: String,
     mutation_kind: &'static str,
+    admission_class: CommandAdmissionClass,
     transport_retry: bool,
     result_unknown: bool,
     runtime_validation: &'static str,
@@ -1366,6 +1409,8 @@ fn render_registry(contract_hash: &str, fixture_hash: &str) -> String {
                 output_schema_hash: sha256(contract.output),
                 error_schema_hash: sha256(contract.error),
                 mutation_kind: contract.mutation_kind,
+                admission_class: command_admission_class(command.name)
+                    .expect("registered command has admission class"),
                 transport_retry: contract.transport_retry,
                 result_unknown: contract.result_unknown,
                 runtime_validation: contract.runtime_validation,
@@ -1418,6 +1463,39 @@ mod tests {
         assert!(names.contains(&"get_settings"));
         assert!(names.contains(&"list_stations"));
         assert!(names.contains(&"get_runtime_contract_info"));
+    }
+
+    #[test]
+    fn every_registered_command_has_central_admission_metadata() {
+        for command in COMMANDS {
+            let admission = command_admission_class(command.name)
+                .unwrap_or_else(|| panic!("{} missing admission metadata", command.name));
+            let contract = command_contract(command.name);
+            if contract.mutation_kind == "read" {
+                assert_eq!(
+                    admission,
+                    CommandAdmissionClass::Read,
+                    "{} read command should not be blocked by mutation admission",
+                    command.name
+                );
+            } else {
+                assert_eq!(
+                    admission,
+                    CommandAdmissionClass::Mutation,
+                    "{} mutation command must pass through maintenance admission",
+                    command.name
+                );
+            }
+        }
+        assert_eq!(
+            command_admission_class("create_station"),
+            Some(CommandAdmissionClass::Mutation)
+        );
+        assert_eq!(
+            command_admission_class("list_stations"),
+            Some(CommandAdmissionClass::Read)
+        );
+        assert_eq!(command_admission_class("not_registered"), None);
     }
 
     #[test]

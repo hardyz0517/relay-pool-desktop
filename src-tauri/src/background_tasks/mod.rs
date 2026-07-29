@@ -13,9 +13,10 @@ pub use blocking::{
 pub use exit::{ExitCoordinator, ExitReason};
 pub use operation::{
     BoxOperationFuture, CancellationPolicy, OperationCancelOutcome, OperationContext,
-    OperationDetachOutcome, OperationFailureCode, OperationId, OperationOwner, OperationProgress,
-    OperationRegistry, OperationRegistryConfig, OperationRegistryError, OperationRegistryMetrics,
-    OperationSnapshot, OperationStartRequest, OperationState, OperationTerminal,
+    OperationDetachOutcome, OperationDrainReport, OperationFailureCode, OperationId,
+    OperationOwner, OperationProgress, OperationRegistry, OperationRegistryConfig,
+    OperationRegistryError, OperationRegistryMetrics, OperationSnapshot, OperationStartRequest,
+    OperationState, OperationTerminal,
 };
 pub use shutdown::{ShutdownError, ShutdownReport};
 pub use status::{RuntimeTaskStatus, RuntimeTaskSummary, TaskState, TaskStatusSnapshot};
