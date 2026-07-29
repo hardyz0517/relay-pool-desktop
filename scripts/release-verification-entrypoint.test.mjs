@@ -35,6 +35,10 @@ assert.ok(
   !steps.some((step) => String(step.run ?? "").includes("verify:release-version -- --require-tag")),
   "release workflow must not forward a literal -- to the release version script",
 );
+assert.ok(
+  !verifier.includes('"tauri:build", "--", "--target"'),
+  "shared verifier must not forward a literal -- to the Tauri build script",
+);
 assert.ok(actionIndex > prebundleIndex, "signed packaging must run only after shared prebundle verification");
 assert.ok(postbundleIndex > actionIndex, "final artifact scan must run after Tauri packaging");
 assert.equal(steps[actionIndex].with.tagName, "${{ github.ref_name }}");

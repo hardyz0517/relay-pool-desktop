@@ -116,7 +116,7 @@ try {
             if ($null -eq [Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")) {
                 throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD must be set for non-interactive release bundling; use an empty value for a passwordless key"
             }
-            Invoke-Checked "Signed Tauri bundle" $pnpm @("tauri:build", "--", "--target", "x86_64-pc-windows-msvc")
+            Invoke-Checked "Signed Tauri bundle" $pnpm @("tauri:build", "--target", "x86_64-pc-windows-msvc")
             Invoke-Checked "Final release bundle scan" $pnpm @("verify:release-bundle")
             Write-Provenance
         }
