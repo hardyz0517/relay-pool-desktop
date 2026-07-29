@@ -23,6 +23,7 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                     remote_key: Some(RemoteKeyCapabilityDescriptor {
                         supports_list: true,
                         supports_create: true,
+                        supports_delete: true,
                         supports_reveal: true,
                         supports_result_unknown_reconciliation: true,
                     }),
@@ -45,6 +46,7 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                     remote_key: Some(RemoteKeyCapabilityDescriptor {
                         supports_list: true,
                         supports_create: true,
+                        supports_delete: true,
                         supports_reveal: true,
                         supports_result_unknown_reconciliation: true,
                     }),

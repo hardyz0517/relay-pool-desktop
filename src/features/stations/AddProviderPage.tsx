@@ -20,10 +20,12 @@ export function AddProviderPage(props: AddProviderPageProps) {
   const {
     activeStationId,
     applyPreset,
+    cancelDeleteRemoteKey,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
     commonLoginProfiles,
     confirmDiscardChanges,
+    confirmDeleteRemoteKey,
     connectionTest,
     createRemoteDisabled,
     createRemoteOpen,
@@ -62,9 +64,11 @@ export function AddProviderPage(props: AddProviderPageProps) {
     remoteDiscoveryReason,
     remoteGroupOptions,
     remoteKeys,
+    remoteKeyPendingDelete,
     remoteListError,
     remoteLoading,
     remoteUnsupportedReason,
+    requestDeleteRemoteKey,
     requestExit,
     resetConnectionTest,
     saving,
@@ -159,6 +163,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
               onBindRemoteKey={(remoteKeyId, stationKeyId) =>
                 void handleBindRemoteKey(remoteKeyId, stationKeyId)
               }
+              onDeleteRemoteKey={requestDeleteRemoteKey}
               onLocalKeyToggle={(remoteKey, checked) =>
                 void handleRemoteLocalKeyToggle(remoteKey, checked)
               }
@@ -179,6 +184,20 @@ export function AddProviderPage(props: AddProviderPageProps) {
         saving={remoteLoading}
         onClose={closeCreateRemoteDialog}
         onSubmit={handleCreateRemoteKey}
+      />
+      <ConfirmDialog
+        open={Boolean(remoteKeyPendingDelete)}
+        title="删除远端 Key？"
+        description={
+          remoteKeyPendingDelete?.matchedStationKeyId
+            ? `将从远端删除 ${remoteKeyPendingDelete.remoteKeyName?.trim() || "这把 Key"}。已关联的本地 Station Key 会保留；只有远端对账确认 Key 已消失后，操作才会完成。`
+            : `将从远端删除 ${remoteKeyPendingDelete?.remoteKeyName?.trim() || "这把 Key"}。只有远端对账确认 Key 已消失后，操作才会完成。`
+        }
+        confirmLabel="删除远端 Key"
+        cancelLabel="取消"
+        confirming={remoteLoading}
+        onCancel={cancelDeleteRemoteKey}
+        onConfirm={() => void confirmDeleteRemoteKey()}
       />
       <ConfirmDialog
         open={discardConfirmOpen}

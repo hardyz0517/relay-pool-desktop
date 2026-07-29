@@ -11,8 +11,8 @@ use crate::models::{
     group_facts::UpdateStationKeyGroupBindingInput,
     remote_keys::{
         BindRemoteStationKeyInput, CreateLocalStationKeyFromRemoteResult,
-        CreateRemoteStationKeyInput, CreateRemoteStationKeyResult, RemoteKeyCapability,
-        RemoteKeyScanResult, RemoteStationKey,
+        CreateRemoteStationKeyInput, CreateRemoteStationKeyResult, DeleteRemoteStationKeyResult,
+        RemoteKeyCapability, RemoteKeyScanResult, RemoteStationKey,
     },
     shared_capabilities::{
         SaveStationKeyMode, SaveStationKeyWithDefaultsInput, SaveStationKeyWithDefaultsResult,
@@ -44,6 +44,7 @@ pub type RemoteStationKeyDto = RemoteStationKey;
 pub type RemoteKeyScanResultDto = RemoteKeyScanResult;
 pub type CreateRemoteStationKeyResultDto = CreateRemoteStationKeyResult;
 pub type CreateLocalStationKeyFromRemoteResultDto = CreateLocalStationKeyFromRemoteResult;
+pub type DeleteRemoteStationKeyResultDto = DeleteRemoteStationKeyResult;
 pub type StationCredentialsDto = StationCredentials;
 pub type CommonLoginProfileDto = CommonLoginProfile;
 pub type SaveStationKeyWithDefaultsResultDto = SaveStationKeyWithDefaultsResult;
@@ -887,6 +888,14 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         station_key: fixture_station_key(),
         message: "Fixture local key created.".into(),
     };
+    let deleted_remote = DeleteRemoteStationKeyResult {
+        station_id: "station-fixture".into(),
+        remote_key_id: "remote-key-fixture".into(),
+        already_absent: false,
+        matched_station_key_id: Some("station-key-fixture".into()),
+        keys: Vec::new(),
+        message: "Fixture remote key deleted.".into(),
+    };
     let scan = RemoteKeyScanResult {
         station_id: "station-fixture".into(),
         capability: fixture_remote_capability(),
@@ -1027,6 +1036,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command": "scan_remote_station_keys", "input": station_id.clone(), "output": scan}),
         serde_json::json!({"command": "create_remote_station_key", "input": create_remote, "output": created_remote}),
         serde_json::json!({"command": "create_local_station_key_from_remote", "input": remote_station_key.clone(), "output": created_local}),
+        serde_json::json!({"command": "delete_remote_station_key", "input": remote_station_key.clone(), "output": deleted_remote}),
         serde_json::json!({"command": "bind_remote_station_key", "input": checked_input(serde_json::json!({"remoteKeyId": "remote-key-fixture", "stationKeyId": "station-key-fixture"}), BindRemoteStationKeyInputDto::parse), "output": [remote_key.clone()]}),
         serde_json::json!({"command": "unbind_remote_station_key", "input": remote_station_key, "output": [remote_key]}),
         serde_json::json!({"command": "list_key_pool_items", "input": {}, "output": [key_pool_item.clone()]}),
@@ -1139,6 +1149,7 @@ fn fixture_remote_capability() -> RemoteKeyCapability {
         station_type: "newapi".into(),
         can_list_remote_keys: true,
         can_create_remote_key: true,
+        can_delete_remote_keys: true,
         can_read_groups: true,
         requires_manual_session: false,
         unsupported_reason: None,

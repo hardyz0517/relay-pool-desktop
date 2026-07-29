@@ -30,6 +30,7 @@ const generated = vi.hoisted(() => ({
   scanRemoteStationKeys: vi.fn(),
   createRemoteStationKey: vi.fn(),
   createLocalStationKeyFromRemote: vi.fn(),
+  deleteRemoteStationKey: vi.fn(),
   bindRemoteStationKey: vi.fn(),
   unbindRemoteStationKey: vi.fn(),
   getStationCredentials: vi.fn(),
@@ -65,6 +66,7 @@ import {
   createLocalStationKeyFromRemote,
   createRemoteStationKey,
   createStationKey,
+  deleteRemoteStationKey,
   deleteStationKey,
   getRemoteKeyCapability,
   getStationCredentials,
@@ -107,7 +109,7 @@ describe("station key ordinary generated transport cutover", () => {
     setActiveBackendClient(null);
   });
 
-  it("routes all twenty ordinary commands through generated wrappers", async () => {
+  it("routes all ordinary commands through generated wrappers", async () => {
     const stationId = "station-1";
     const keyId = "key-1";
     const remoteKeyId = "remote-1";
@@ -152,6 +154,7 @@ describe("station key ordinary generated transport cutover", () => {
       groupName: null,
     });
     await createLocalStationKeyFromRemote(remoteKeyId, stationId);
+    await deleteRemoteStationKey(remoteKeyId, stationId);
     await bindRemoteStationKey(remoteKeyId, keyId);
     await unbindRemoteStationKey(remoteKeyId, stationId);
     await getStationCredentials(stationId);
@@ -187,6 +190,7 @@ describe("station key ordinary generated transport cutover", () => {
     expect(generated.reorderStationKeys).toHaveBeenCalledWith({ stationId, keyIds: [keyId] });
     expect(generated.listKeyPoolItems).toHaveBeenCalledWith();
     expect(generated.createLocalStationKeyFromRemote).toHaveBeenCalledWith({ remoteKeyId, stationId });
+    expect(generated.deleteRemoteStationKey).toHaveBeenCalledWith({ remoteKeyId, stationId });
     expect(generated.bindRemoteStationKey).toHaveBeenCalledWith({ remoteKeyId, stationKeyId: keyId });
     expect(generated.clearStationCredentials).toHaveBeenCalledWith({ stationId });
   });

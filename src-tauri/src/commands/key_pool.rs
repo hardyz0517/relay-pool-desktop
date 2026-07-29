@@ -10,11 +10,12 @@ use crate::{
         station_keys::{
             BindRemoteStationKeyInputDto, CreateLocalStationKeyFromRemoteResultDto,
             CreateRemoteStationKeyInputDto, CreateRemoteStationKeyResultDto,
-            CreateStationKeyInputDto, KeyPoolItemDto, RemoteKeyCapabilityDto,
-            RemoteKeyScanResultDto, RemoteStationKeyDto, RemoteStationKeyInputDto,
-            ReorderKeyPoolInputDto, ReorderStationKeysInputDto, SaveStationKeyWithDefaultsInputDto,
-            SaveStationKeyWithDefaultsResultDto, StationIdInputDto, StationKeyDto,
-            StationKeyIdInputDto, UpdateStationKeyGroupBindingInputDto, UpdateStationKeyInputDto,
+            CreateStationKeyInputDto, DeleteRemoteStationKeyResultDto, KeyPoolItemDto,
+            RemoteKeyCapabilityDto, RemoteKeyScanResultDto, RemoteStationKeyDto,
+            RemoteStationKeyInputDto, ReorderKeyPoolInputDto, ReorderStationKeysInputDto,
+            SaveStationKeyWithDefaultsInputDto, SaveStationKeyWithDefaultsResultDto,
+            StationIdInputDto, StationKeyDto, StationKeyIdInputDto,
+            UpdateStationKeyGroupBindingInputDto, UpdateStationKeyInputDto,
         },
         EmptyInputDto,
     },
@@ -196,6 +197,21 @@ pub async fn create_local_station_key_from_remote(
         let input = RemoteStationKeyInputDto::parse(input)?;
         facade
             .create_local_station_key_from_remote(input.station_id, input.remote_key_id)
+            .await
+            .map_err(public_remote_key_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delete_remote_station_key(
+    facade: State<'_, RemoteKeysCommandFacade>,
+    input: Value,
+) -> Result<DeleteRemoteStationKeyResultDto, error::CommandError> {
+    correlation::in_command_scope("delete_remote_station_key", async {
+        let input = RemoteStationKeyInputDto::parse(input)?;
+        facade
+            .delete_remote_station_key(input.station_id, input.remote_key_id)
             .await
             .map_err(public_remote_key_error)
     })

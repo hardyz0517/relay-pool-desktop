@@ -36,6 +36,10 @@ export function createLocalStationKeyFromRemote(remoteKeyId: string, stationId: 
   return stationKeysClient().createLocalStationKeyFromRemote(remoteKeyId, stationId);
 }
 
+export function deleteRemoteStationKey(remoteKeyId: string, stationId: string) {
+  return stationKeysClient().deleteRemoteStationKey(remoteKeyId, stationId);
+}
+
 export function bindRemoteStationKey(remoteKeyId: string, stationKeyId: string) {
   return stationKeysClient().bindRemoteStationKey(remoteKeyId, stationKeyId);
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link2 } from "lucide-react";
-import { Button, SelectControl, StatusBadge, SwitchControl, type StatusTone } from "@/components/ui";
+import { Link2, Trash2 } from "lucide-react";
+import { Button, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone } from "@/components/ui";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import type { RemoteKeyMatchStatus, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
@@ -11,8 +11,11 @@ type RemoteKeyDiscoveryListProps = {
   localKeys: StationKey[];
   creditPerCny?: number;
   loading?: boolean;
+  readOnly?: boolean;
+  deleteDisabled?: boolean;
   localKeyIdsCreatedByRemote?: Record<string, string>;
   onBind: (remoteKeyId: string, stationKeyId: string) => void;
+  onDelete: (remoteKey: RemoteStationKey) => void;
   onLocalKeyToggle: (remoteKey: RemoteStationKey, checked: boolean) => void;
 };
 
@@ -30,14 +33,19 @@ const matchStatusTone: Record<RemoteKeyMatchStatus, StatusTone> = {
 
 const selectClassName =
   "h-7 min-w-[150px] max-w-[190px] px-2 text-xs shadow-none";
+const remoteKeyGridClassName =
+  "grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_15rem]";
 
 export function RemoteKeyDiscoveryList({
   keys,
   localKeys,
   creditPerCny = 1,
   loading = false,
+  readOnly = false,
+  deleteDisabled = false,
   localKeyIdsCreatedByRemote = {},
   onBind,
+  onDelete,
   onLocalKeyToggle,
 }: RemoteKeyDiscoveryListProps) {
   const [selectedLocalKeyIds, setSelectedLocalKeyIds] = useState<Record<string, string>>({});
@@ -81,8 +89,8 @@ export function RemoteKeyDiscoveryList({
   return (
     <div className="grid gap-2">
       <div className="overflow-x-auto">
-        <div className="min-w-[960px]">
-          <div className="grid h-7 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_minmax(13rem,1.1fr)] items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground">
+        <div className="min-w-[1000px]">
+          <div className={cn("grid h-7 items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground", remoteKeyGridClassName)}>
             <span>远端名称</span>
             <span>状态</span>
             <span>密钥</span>
@@ -90,7 +98,7 @@ export function RemoteKeyDiscoveryList({
             <span>倍率</span>
             <span>本地匹配</span>
             <span>作为本地秘钥</span>
-            <span className="text-right">绑定</span>
+            <span className="text-right">操作</span>
           </div>
 
           <div className="grid gap-1.5 py-2">
@@ -110,12 +118,12 @@ export function RemoteKeyDiscoveryList({
                       ? localKeys[0].id
                       : "";
               const canBind = key.matchStatus !== "matched";
-              const bindDisabled = loading || !effectiveSelectedLocalKeyId;
+              const bindDisabled = loading || readOnly || !effectiveSelectedLocalKeyId;
 
               return (
                 <div
                   key={key.id}
-                  className="grid min-h-9 grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_minmax(13rem,1.1fr)] items-center gap-2 rounded-[var(--surface-radius)] px-1 text-xs text-foreground"
+                  className={cn("grid min-h-9 items-center gap-2 rounded-[var(--surface-radius)] px-1 text-xs text-foreground", remoteKeyGridClassName)}
                 >
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
@@ -142,7 +150,7 @@ export function RemoteKeyDiscoveryList({
                     ariaLabel={`${key.remoteKeyName ?? "远端 Key"} 作为本地秘钥`}
                     checked={hasLocalKey}
                     className="h-7 w-11 border-0 bg-transparent p-0 shadow-none"
-                    disabled={loading}
+                    disabled={loading || readOnly}
                     showLabel={false}
                     onCheckedChange={() => onLocalKeyToggle(key, !hasLocalKey)}
                   />
@@ -154,7 +162,7 @@ export function RemoteKeyDiscoveryList({
                             <SelectControl
                               ariaLabel={`选择 ${key.remoteKeyName ?? "远端 Key"} 的本地 Key`}
                               className={selectClassName}
-                              disabled={loading}
+                              disabled={loading || readOnly}
                               menuClassName="text-xs"
                               options={localKeyOptions}
                               value={effectiveSelectedLocalKeyId}
@@ -189,6 +197,14 @@ export function RemoteKeyDiscoveryList({
                     ) : (
                       <span className="flex h-7 items-center text-success-foreground">已关联</span>
                     )}
+                    <IconButton
+                      className="h-7 w-7 shrink-0 text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"
+                      disabled={loading || readOnly || deleteDisabled}
+                      label={`删除远端 Key ${key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名"}`}
+                      onClick={() => onDelete(key)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </IconButton>
                   </div>
                 </div>
               );

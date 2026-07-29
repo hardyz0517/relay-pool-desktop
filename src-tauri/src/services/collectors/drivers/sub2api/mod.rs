@@ -17,10 +17,11 @@ use crate::{
         collectors::{
             contract::{
                 CollectorContext, CollectorDriver, CollectorTaskKind, CreateRemoteKeyRequest,
-                CreatedRemoteKeyOutput, CredentialSecretPurpose, DriverOutput, DriverOutputStatus,
-                ProviderAuthContext, ProviderKind, RedactedDiagnostics, RemoteKeyDriver,
-                RemoteKeyOutput, RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest,
-                RevealedRemoteKeyOutput, Sub2ApiLoginCredential, Sub2ApiStationKeyCredential,
+                CreatedRemoteKeyOutput, CredentialSecretPurpose, DeleteRemoteKeyRequest,
+                DeletedRemoteKeyOutput, DriverOutput, DriverOutputStatus, ProviderAuthContext,
+                ProviderKind, RedactedDiagnostics, RemoteKeyDriver, RemoteKeyOutput,
+                RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest, RevealedRemoteKeyOutput,
+                Sub2ApiLoginCredential, Sub2ApiStationKeyCredential,
             },
             evidence::{redact_text, EndpointEvidence, EndpointRole, EvidenceSet},
             facts::CollectorFacts,
@@ -96,7 +97,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                 return Err(failed(
                     failure_kind_from_endpoint_results(&[execution.redacted.clone()]),
                     EndpointRole::RemoteKeys,
-                    Some(vec![execution.evidence]),
+                    Some(execution.evidence),
                     "Sub2API remote-key list returned no canonical keys",
                 ));
             }
@@ -104,7 +105,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                 mapping::parse_remote_key_payload(&request.station.station_id, &execution.payload);
             Ok(RemoteKeyOutput {
                 keys,
-                evidence: vec![execution.evidence],
+                evidence: execution.evidence,
                 diagnostics: RedactedDiagnostics {
                     summary: Some(json!({"endpointResults": [execution.redacted]}).to_string()),
                     raw_json_redacted: Some(json!({"endpointResults": [execution.redacted]})),
@@ -130,7 +131,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                 return Err(failed(
                     failure_kind_from_endpoint_results(&[execution.redacted.clone()]),
                     EndpointRole::RemoteKeys,
-                    Some(vec![execution.evidence]),
+                    Some(execution.evidence),
                     "Sub2API remote-key reveal list request failed",
                 ));
             }
@@ -142,7 +143,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             Ok(RevealedRemoteKeyOutput {
                 remote_key,
                 full_key: RemoteKeySecret::new(full_key),
-                evidence: vec![execution.evidence],
+                evidence: execution.evidence,
                 diagnostics: RedactedDiagnostics {
                     summary: Some(json!({"revealed": true}).to_string()),
                     raw_json_redacted: Some(json!({"endpointResults": [execution.redacted]})),
@@ -206,10 +207,12 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                     &list.payload,
                 )? {
                     remote_key = listed_key;
+                    let mut evidence = vec![create.evidence];
+                    evidence.extend(list.evidence);
                     return Ok(CreatedRemoteKeyOutput {
                         remote_key,
                         full_key_once: RemoteKeySecret::new(full_key),
-                        evidence: vec![create.evidence, list.evidence],
+                        evidence,
                         diagnostics: RedactedDiagnostics {
                             summary: Some(
                                 json!({"created": true, "reconciledBy": "name"}).to_string(),
@@ -227,6 +230,141 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                 Some(create.evidence),
                 "Sub2API remote-key create completed but the full key could not be reconciled",
             ))
+        }
+        .boxed()
+    }
+
+    fn delete_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: DeleteRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<DeletedRemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = website_url_from_endpoints(&request.endpoints)?;
+            let auth = sub2api_auth(context)?;
+            let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
+            let initial =
+                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+            if !initial.ok {
+                return Err(failed(
+                    failure_kind_from_endpoint_results(&[initial.redacted.clone()]),
+                    EndpointRole::RemoteKeys,
+                    Some(initial.evidence),
+                    "Sub2API remote-key delete could not read the current key list",
+                ));
+            }
+            let Some(provider_key_id) = remote_key_provider_id_from_list_payload(
+                &request.station.station_id,
+                &request.remote_key_id,
+                &initial.payload,
+            )?
+            else {
+                return Ok(DeletedRemoteKeyOutput {
+                    keys: mapping::parse_remote_key_payload(
+                        &request.station.station_id,
+                        &initial.payload,
+                    ),
+                    already_absent: true,
+                    evidence: initial.evidence,
+                    diagnostics: RedactedDiagnostics {
+                        summary: Some(json!({"alreadyAbsent": true}).to_string()),
+                        raw_json_redacted: Some(json!({"endpointResults": [initial.redacted]})),
+                    },
+                });
+            };
+
+            let url =
+                build_management_url(&website_url, &format!("/api/v1/keys/{provider_key_id}"))
+                    .map_err(|error| invalid_request(redact_text(&error)))?;
+            let mut deletion = execute_bearer_json_once(
+                context,
+                EndpointRole::RemoteKeys,
+                &url,
+                &access_token,
+                None,
+                Method::DELETE,
+            )
+            .await;
+            if matches!(deletion.status, Some(401 | 403)) {
+                if let Some(login) = auth.login.as_ref() {
+                    if let Some(fresh) = login_access_token(context, &website_url, login).await? {
+                        access_token = fresh;
+                        deletion = execute_bearer_json_once(
+                            context,
+                            EndpointRole::RemoteKeys,
+                            &url,
+                            &access_token,
+                            None,
+                            Method::DELETE,
+                        )
+                        .await;
+                    }
+                }
+            }
+            let delete_accepted = deletion
+                .status
+                .is_some_and(|status| (200..300).contains(&status));
+            let delete_failure = if delete_accepted {
+                None
+            } else {
+                fatal_attempt_failure(&deletion, EndpointRole::RemoteKeys).or_else(|| {
+                    Some(failed(
+                        failure_kind_from_endpoint_results(&[json!({
+                            "status": deletion.status,
+                            "ok": false,
+                        })]),
+                        EndpointRole::RemoteKeys,
+                        Some(vec![deletion.evidence.clone()]),
+                        deletion
+                            .error_message
+                            .clone()
+                            .unwrap_or_else(|| "Sub2API remote-key delete failed".to_string()),
+                    ))
+                })
+            };
+
+            let reconciliation =
+                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await;
+            let remaining = match reconciliation {
+                Ok(output) if output.ok => output,
+                _ => {
+                    return Err(delete_failure.unwrap_or_else(|| {
+                        result_unknown(
+                            EndpointRole::RemoteKeys,
+                            Some(deletion.evidence.clone()),
+                            "Sub2API remote-key delete was accepted but could not be reconciled",
+                        )
+                    }));
+                }
+            };
+            let keys =
+                mapping::parse_remote_key_payload(&request.station.station_id, &remaining.payload);
+            if keys.iter().any(|key| key.id == request.remote_key_id) {
+                return Err(delete_failure.unwrap_or_else(|| {
+                    result_unknown(
+                        EndpointRole::RemoteKeys,
+                        Some(deletion.evidence.clone()),
+                        "Sub2API remote-key delete returned success but the key still exists",
+                    )
+                }));
+            }
+            Ok(DeletedRemoteKeyOutput {
+                keys,
+                already_absent: false,
+                evidence: {
+                    let mut evidence = initial.evidence;
+                    evidence.push(deletion.evidence);
+                    evidence.extend(remaining.evidence);
+                    evidence
+                },
+                diagnostics: RedactedDiagnostics {
+                    summary: Some(json!({"deleted": true, "reconciled": true}).to_string()),
+                    raw_json_redacted: Some(json!({
+                        "endpointResults": [initial.redacted, remaining.redacted]
+                    })),
+                },
+            })
         }
         .boxed()
     }
@@ -276,16 +414,113 @@ async fn fetch_remote_key_list(
     website_url: &str,
     auth: &Sub2ApiAuth,
     access_token: &mut String,
-) -> Result<JsonExecution, DriverFailure> {
-    execute_bearer_json_with_recovery(
-        context,
-        EndpointRole::RemoteKeys,
-        website_url,
-        "/api/v1/keys?page=1&page_size=100",
-        access_token,
-        auth.login.as_ref(),
-    )
-    .await
+) -> Result<RemoteKeyListExecution, DriverFailure> {
+    let mut requested_page = 1usize;
+    let mut all_items = Vec::new();
+    let mut evidence = Vec::new();
+    let mut page_diagnostics = Vec::new();
+
+    loop {
+        let path = format!("/api/v1/keys?page={requested_page}&page_size=100");
+        let execution = execute_bearer_json_with_recovery(
+            context,
+            EndpointRole::RemoteKeys,
+            website_url,
+            &path,
+            access_token,
+            auth.login.as_ref(),
+        )
+        .await?;
+        evidence.push(execution.evidence.clone());
+        page_diagnostics.push(execution.redacted.clone());
+        if !execution.ok {
+            return Ok(RemoteKeyListExecution {
+                payload: Value::Null,
+                ok: false,
+                redacted: execution.redacted,
+                evidence,
+            });
+        }
+
+        let endpoint = execution.evidence.clone();
+        let data = execution.payload.get("data").ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint.clone()),
+                "Sub2API remote-key pagination is missing data",
+            )
+        })?;
+        let items = data.get("items").and_then(Value::as_array).ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint.clone()),
+                "Sub2API remote-key pagination is missing items",
+            )
+        })?;
+        let page = required_pagination_usize(data, "page", &endpoint)?;
+        let page_size = required_pagination_usize(data, "page_size", &endpoint)?;
+        let total = required_pagination_usize(data, "total", &endpoint)?;
+        let pages = required_pagination_usize(data, "pages", &endpoint)?;
+        if page != requested_page || page_size == 0 || items.len() > page_size {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint),
+                "Sub2API remote-key pagination metadata is inconsistent",
+            ));
+        }
+        let expected_pages = if total == 0 {
+            0
+        } else {
+            total.div_ceil(page_size)
+        };
+        if pages != expected_pages || pages > 10_000 {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint),
+                "Sub2API remote-key pagination total is inconsistent",
+            ));
+        }
+        all_items.extend(items.iter().cloned());
+        if requested_page >= pages.max(1) {
+            if all_items.len() != total {
+                return Err(malformed(
+                    EndpointRole::RemoteKeys,
+                    evidence.last().cloned(),
+                    "Sub2API remote-key pagination returned a partial list",
+                ));
+            }
+            break;
+        }
+        requested_page += 1;
+    }
+
+    Ok(RemoteKeyListExecution {
+        payload: json!({ "data": { "items": all_items } }),
+        ok: true,
+        redacted: json!({ "pages": page_diagnostics }),
+        evidence,
+    })
+}
+
+fn required_pagination_usize(
+    data: &Value,
+    field: &str,
+    endpoint: &EndpointEvidence,
+) -> Result<usize, DriverFailure> {
+    data.get(field)
+        .and_then(|value| {
+            value
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .or_else(|| value.as_str()?.trim().parse::<usize>().ok())
+        })
+        .ok_or_else(|| {
+            malformed(
+                EndpointRole::RemoteKeys,
+                Some(endpoint.clone()),
+                format!("Sub2API remote-key pagination is missing {field}"),
+            )
+        })
 }
 
 async fn create_remote_key_once(
@@ -412,6 +647,27 @@ fn remote_key_secret_from_list_payload(
     Err(invalid_request(
         "Sub2API remote key no longer exists; reconcile before creating a local key",
     ))
+}
+
+fn remote_key_provider_id_from_list_payload(
+    station_id: &str,
+    remote_key_id: &str,
+    payload: &Value,
+) -> Result<Option<String>, DriverFailure> {
+    for (index, value) in mapping::remote_key_items(payload).into_iter().enumerate() {
+        let Some(remote_key) = mapping::remote_key_from_value(station_id, value, index) else {
+            continue;
+        };
+        if remote_key.id != remote_key_id {
+            continue;
+        }
+        return mapping::remote_key_provider_id(value)
+            .map(Some)
+            .ok_or_else(|| {
+                invalid_request("Sub2API remote key does not expose a deletable key id")
+            });
+    }
+    Ok(None)
 }
 
 fn remote_key_secret_by_name_from_list_payload(
@@ -858,6 +1114,14 @@ struct JsonExecution {
     ok: bool,
     redacted: Value,
     evidence: EndpointEvidence,
+}
+
+#[derive(Debug, Clone)]
+struct RemoteKeyListExecution {
+    payload: Value,
+    ok: bool,
+    redacted: Value,
+    evidence: Vec<EndpointEvidence>,
 }
 
 async fn execute_bearer_json_with_recovery(
@@ -1510,5 +1774,227 @@ fn driver_failure_kind_from_outbound(kind: &OutboundFailureKind) -> DriverFailur
         | OutboundFailureKind::RedirectLoop
         | OutboundFailureKind::RedirectLimitExceeded
         | OutboundFailureKind::RequestFailed => DriverFailureKind::Transport,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        outbound::{AsyncOutboundClient, AsyncOutboundClientConfig, ProxyPolicy, RequestBudget},
+        services::collectors::{
+            contract::{
+                CredentialScope, OpaqueCredentialHandle, ProviderEndpoints, StationIdentity,
+            },
+            drivers::newapi::test_support::{json_response, TestHttpServer},
+        },
+    };
+    use futures_util::FutureExt;
+    use serde_json::json;
+    use tokio_util::sync::CancellationToken;
+
+    struct TestSecretAccessor;
+
+    impl crate::services::collectors::contract::DriverSecretAccessor for TestSecretAccessor {
+        fn resolve_secret<'a>(
+            &'a self,
+            _handle: &'a OpaqueCredentialHandle,
+            _purpose: CredentialSecretPurpose,
+        ) -> BoxFuture<
+            'a,
+            Result<crate::services::collectors::contract::CredentialSecret, DriverFailure>,
+        > {
+            async move {
+                Ok(
+                    crate::services::collectors::contract::CredentialSecret::new(
+                        "sub2api-access-token",
+                    ),
+                )
+            }
+            .boxed()
+        }
+    }
+
+    fn test_station_identity() -> StationIdentity {
+        StationIdentity {
+            station_id: "station-1".to_string(),
+            endpoint_revision: 7,
+            provider: ProviderKind::Sub2Api,
+        }
+    }
+
+    fn test_credential() -> OpaqueCredentialHandle {
+        OpaqueCredentialHandle {
+            station_id: "station-1".to_string(),
+            credential_revision: 7,
+            scope: CredentialScope::LoginSession,
+        }
+    }
+
+    fn test_endpoints(base_url: &str) -> ProviderEndpoints {
+        ProviderEndpoints {
+            api_base_url: None,
+            website_url: Some(base_url.to_string()),
+        }
+    }
+
+    fn test_context<'a>(
+        base_url: &str,
+        secrets: &'a TestSecretAccessor,
+        outbound: &'a AsyncOutboundClient,
+    ) -> CollectorContext<'a> {
+        let access_token = test_credential();
+        CollectorContext {
+            station: test_station_identity(),
+            endpoints: test_endpoints(base_url),
+            credential: access_token.clone(),
+            auth: Some(ProviderAuthContext::Sub2Api {
+                station_keys: Vec::new(),
+                access_token: Some(access_token),
+                login: None,
+                credit_per_cny: 1.0,
+            }),
+            secrets,
+            outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_remote_key_uses_provider_id_and_reconciles_absence() {
+        let target_item = json!({
+            "id": "key-301",
+            "name": "relay-delete",
+            "key_masked": "sk-del**********f260",
+            "group_name": "VIP"
+        });
+        let remote_key_id = mapping::parse_remote_key_payload(
+            "station-1",
+            &json!({ "data": { "items": [target_item.clone()] } }),
+        )
+        .into_iter()
+        .next()
+        .expect("remote key")
+        .id;
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [{ "id": "key-100", "name": "keep" }],
+                        "total": 2, "page": 1, "page_size": 1, "pages": 2
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [target_item],
+                        "total": 2, "page": 2, "page_size": 1, "pages": 2
+                    }
+                }),
+            )),
+            Some(json_response(200, json!({ "success": true }))),
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [{ "id": "key-100", "name": "keep" }],
+                        "total": 1, "page": 1, "page_size": 1, "pages": 1
+                    }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+        let request = DeleteRemoteKeyRequest {
+            station: test_station_identity(),
+            endpoints: test_endpoints(&server.base_url),
+            credential: test_credential(),
+            remote_key_id,
+        };
+
+        let output = Sub2ApiRemoteKeyDriver
+            .delete_remote_key(&context, request)
+            .await
+            .expect("delete remote key");
+        let requests = server.finish();
+
+        assert!(!output.already_absent);
+        assert_eq!(output.keys.len(), 1);
+        assert_eq!(requests.len(), 4);
+        assert!(requests[0].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
+        assert!(requests[1].starts_with("GET /api/v1/keys?page=2&page_size=100 "));
+        assert!(requests[2].starts_with("DELETE /api/v1/keys/key-301 "));
+        assert!(requests[3].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
+        assert!(requests[2]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer sub2api-access-token"));
+    }
+
+    #[tokio::test]
+    async fn delete_remote_key_reports_unknown_when_reconciliation_still_contains_target() {
+        let item = json!({
+            "id": "key-302",
+            "name": "relay-still-present",
+            "key_masked": "sk-stl**********f260"
+        });
+        let list_payload = || {
+            json!({
+                "data": {
+                    "items": [item.clone()],
+                    "total": 1, "page": 1, "page_size": 100, "pages": 1
+                }
+            })
+        };
+        let remote_key_id = mapping::parse_remote_key_payload("station-1", &list_payload())
+            .into_iter()
+            .next()
+            .expect("remote key")
+            .id;
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(200, list_payload())),
+            Some(json_response(200, json!({ "success": true }))),
+            Some(json_response(200, list_payload())),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+        let request = DeleteRemoteKeyRequest {
+            station: test_station_identity(),
+            endpoints: test_endpoints(&server.base_url),
+            credential: test_credential(),
+            remote_key_id,
+        };
+
+        let result = Sub2ApiRemoteKeyDriver
+            .delete_remote_key(&context, request)
+            .await;
+        let error = match result {
+            Ok(_) => panic!("reconciliation should report an unknown result"),
+            Err(error) => error,
+        };
+        let requests = server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::ResultUnknown);
+        assert_eq!(requests.len(), 3);
+    }
+
+    #[test]
+    fn delete_remote_key_requires_a_provider_id_for_a_matching_discovery() {
+        let payload = json!({ "data": { "items": [{ "name": "name-only" }] } });
+        let remote_key_id = mapping::parse_remote_key_payload("station-1", &payload)[0]
+            .id
+            .clone();
+
+        let error = remote_key_provider_id_from_list_payload("station-1", &remote_key_id, &payload)
+            .unwrap_err();
+
+        assert_eq!(error.kind, DriverFailureKind::InvalidRequest);
     }
 }

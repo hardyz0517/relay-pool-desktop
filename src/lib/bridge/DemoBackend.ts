@@ -159,6 +159,8 @@ export class DemoBackend implements BackendClient {
     createRemoteStationKey: () => this.rejectUnsupported("station_keys.remote_key"),
     createLocalStationKeyFromRemote: (_remoteKeyId: string, _stationId: string) =>
       this.rejectUnsupported("station_keys.remote_key"),
+    deleteRemoteStationKey: (_remoteKeyId: string, _stationId: string) =>
+      this.rejectUnsupported("station_keys.remote_key"),
     bindRemoteStationKey: (_remoteKeyId: string, _stationKeyId: string) =>
       this.rejectUnsupported("station_keys.remote_key_binding"),
     unbindRemoteStationKey: (_remoteKeyId: string, _stationId: string) =>

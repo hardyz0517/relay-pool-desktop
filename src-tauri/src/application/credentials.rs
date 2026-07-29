@@ -1057,6 +1057,7 @@ impl CredentialService {
             station_type: station_type.clone(),
             can_list_remote_keys: supported,
             can_create_remote_key: supported,
+            can_delete_remote_keys: supported,
             can_read_groups: supported,
             requires_manual_session: supported,
             unsupported_reason: (!supported)

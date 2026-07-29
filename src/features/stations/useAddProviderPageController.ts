@@ -12,6 +12,7 @@ import {
   bindRemoteStationKey,
   createLocalStationKeyFromRemote,
   createRemoteStationKey,
+  deleteRemoteStationKey,
   deleteStationKey,
   getRemoteKeyCapability,
   getStationCredentials,
@@ -113,6 +114,7 @@ export function useAddProviderPageController({
   const [remoteCreatedLocalKeyIds, setRemoteCreatedLocalKeyIds] = useState<Record<string, string>>({});
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
+  const [remoteKeyPendingDelete, setRemoteKeyPendingDelete] = useState<RemoteStationKey | null>(null);
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [commonLoginProfiles, setCommonLoginProfiles] = useState<CommonLoginProfile[]>([]);
   const [passwordProfileLoading, setPasswordProfileLoading] = useState(false);
@@ -789,6 +791,48 @@ export function useAddProviderPageController({
     toast.success("已删除自动创建的本地 Key");
   }
 
+  function requestDeleteRemoteKey(remoteKey: RemoteStationKey) {
+    if (!activeStationId || remoteLoading || remoteCapability?.canDeleteRemoteKeys !== true) {
+      return;
+    }
+    setRemoteKeyPendingDelete(remoteKey);
+  }
+
+  function cancelDeleteRemoteKey() {
+    if (!remoteLoading) {
+      setRemoteKeyPendingDelete(null);
+    }
+  }
+
+  async function confirmDeleteRemoteKey() {
+    const remoteKey = remoteKeyPendingDelete;
+    if (!remoteKey || remoteLoading) {
+      return;
+    }
+
+    setRemoteLoading(true);
+    setError(null);
+    setRemoteListError(null);
+    try {
+      const result = await deleteRemoteStationKey(remoteKey.id, remoteKey.stationId);
+      setRemoteKeys(result.keys);
+      setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(result.keys, localStationKeys));
+      await invalidateProviderWorkspaceCaches();
+      toast.success(
+        result.alreadyAbsent ? "远端 Key 已不存在" : "远端 Key 已删除",
+        result.message || `${remoteKeyDisplayName(remoteKey)} 已从远端删除，本地 Key 保留。`,
+      );
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      setRemoteListError(message);
+      toast.error("删除远端 Key 失败", message);
+    } finally {
+      setRemoteKeyPendingDelete(null);
+      setRemoteLoading(false);
+    }
+  }
+
   function handleAddLocalKey() {
     setKeyRows((currentRows) => [
       ...currentRows,
@@ -877,10 +921,12 @@ export function useAddProviderPageController({
   return {
     activeStationId,
     applyPreset,
+    cancelDeleteRemoteKey,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
     commonLoginProfiles,
     confirmDiscardChanges,
+    confirmDeleteRemoteKey,
     connectionTest,
     createRemoteDisabled,
     createRemoteOpen,
@@ -918,9 +964,11 @@ export function useAddProviderPageController({
     remoteDiscoveryReason,
     remoteGroupOptions,
     remoteKeys,
+    remoteKeyPendingDelete,
     remoteListError,
     remoteLoading,
     remoteUnsupportedReason,
+    requestDeleteRemoteKey,
     requestExit,
     resetConnectionTest,
     saving,

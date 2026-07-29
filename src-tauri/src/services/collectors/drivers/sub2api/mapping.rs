@@ -604,6 +604,10 @@ pub(crate) fn remote_key_from_value(
     })
 }
 
+pub(crate) fn remote_key_provider_id(value: &Value) -> Option<String> {
+    string_field(value, &["id", "key_id", "keyId", "token_id", "tokenId"])
+}
+
 fn remote_key_identity<'a>(
     remote_key_id: Option<&'a str>,
     full_key: Option<&'a str>,

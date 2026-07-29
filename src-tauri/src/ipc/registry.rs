@@ -97,6 +97,7 @@ macro_rules! ipc_command_registry {
             scan_remote_station_keys => $crate::commands::key_pool::scan_remote_station_keys,
             create_remote_station_key => $crate::commands::key_pool::create_remote_station_key,
             create_local_station_key_from_remote => $crate::commands::key_pool::create_local_station_key_from_remote,
+            delete_remote_station_key => $crate::commands::key_pool::delete_remote_station_key,
             bind_remote_station_key => $crate::commands::key_pool::bind_remote_station_key,
             unbind_remote_station_key => $crate::commands::key_pool::unbind_remote_station_key,
             list_key_pool_items => $crate::commands::key_pool::list_key_pool_items,
@@ -353,6 +354,12 @@ fn command_contract(name: &str) -> CommandContract {
             "CreateLocalStationKeyFromRemoteResultDto",
             "non_idempotent",
             true,
+        ),
+        "delete_remote_station_key" => migrated_mutation(
+            "RemoteStationKeyInputDto",
+            "DeleteRemoteStationKeyResultDto",
+            "idempotent",
+            false,
         ),
         "bind_remote_station_key" => migrated_mutation(
             "BindRemoteStationKeyInputDto",
@@ -1320,6 +1327,14 @@ export function inspectLatestUpdateManifest(input: PublishedUpdateInspectionInpu
 }
 
 export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
+        )
+        .replace(
+            "export function bindRemoteStationKey(input: BindRemoteStationKeyInputDto)",
+            r#"export function deleteRemoteStationKey(input: RemoteStationKeyInputDto): Promise<DeleteRemoteStationKeyResultDto> {
+  return invokeCommand<DeleteRemoteStationKeyResultDto>("delete_remote_station_key", { input });
+}
+
+export function bindRemoteStationKey(input: BindRemoteStationKeyInputDto)"#,
         )
         .replace(
             r#"export function getRuntimeContractInfo(): Promise<RuntimeContractInfo> {

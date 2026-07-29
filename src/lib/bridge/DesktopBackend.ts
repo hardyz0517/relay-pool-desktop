@@ -18,6 +18,7 @@ import {
   createChannelMonitor as createChannelMonitorBinding,
   createChannelMonitorTemplate as createChannelMonitorTemplateBinding,
   createLocalStationKeyFromRemote as createLocalStationKeyFromRemoteBinding,
+  deleteRemoteStationKey as deleteRemoteStationKeyBinding,
   createNewDataStore as createNewDataStoreBinding,
   createRemoteStationKey as createRemoteStationKeyBinding,
   createStation as createStationBinding,
@@ -420,6 +421,8 @@ export class DesktopBackend implements BackendClient {
       createRemoteStationKeyBinding(input),
     createLocalStationKeyFromRemote: (remoteKeyId: string, stationId: string) =>
       createLocalStationKeyFromRemoteBinding({ remoteKeyId, stationId }),
+    deleteRemoteStationKey: (remoteKeyId: string, stationId: string) =>
+      deleteRemoteStationKeyBinding({ remoteKeyId, stationId }),
     bindRemoteStationKey: (remoteKeyId: string, stationKeyId: string) =>
       bindRemoteStationKeyBinding({ remoteKeyId, stationKeyId }),
     unbindRemoteStationKey: (remoteKeyId: string, stationId: string) =>

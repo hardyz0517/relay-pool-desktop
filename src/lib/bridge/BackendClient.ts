@@ -52,6 +52,7 @@ import type {
   CreateLocalStationKeyFromRemoteResult,
   CreateRemoteStationKeyInput,
   CreateRemoteStationKeyResult,
+  DeleteRemoteStationKeyResult,
   CreateStationKeyInput,
   KeyPoolItem,
   RemoteKeyCapability,
@@ -120,6 +121,10 @@ export type StationKeysDomainClient = {
     remoteKeyId: string,
     stationId: string,
   ): Promise<CreateLocalStationKeyFromRemoteResult>;
+  deleteRemoteStationKey(
+    remoteKeyId: string,
+    stationId: string,
+  ): Promise<DeleteRemoteStationKeyResult>;
   bindRemoteStationKey(remoteKeyId: string, stationKeyId: string): Promise<RemoteStationKey[]>;
   unbindRemoteStationKey(remoteKeyId: string, stationId: string): Promise<RemoteStationKey[]>;
   createStationKey(input: CreateStationKeyInput): Promise<StationKey>;

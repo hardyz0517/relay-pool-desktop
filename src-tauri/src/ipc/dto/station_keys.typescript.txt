@@ -137,6 +137,7 @@ export type RemoteKeyCapabilityDto = {
   stationType: string;
   canListRemoteKeys: boolean;
   canCreateRemoteKey: boolean;
+  canDeleteRemoteKeys: boolean;
   canReadGroups: boolean;
   requiresManualSession: boolean;
   unsupportedReason: string | null;
@@ -201,6 +202,15 @@ export type StationCredentialsDto = {
   tokenRefreshedAt: string | null;
   sessionSource: string;
   updatedAt: string | null;
+};
+
+export type DeleteRemoteStationKeyResultDto = {
+  stationId: string;
+  remoteKeyId: string;
+  alreadyAbsent: boolean;
+  matchedStationKeyId: string | null;
+  keys: RemoteStationKeyDto[];
+  message: string;
 };
 
 export type CommonLoginProfileDto = {

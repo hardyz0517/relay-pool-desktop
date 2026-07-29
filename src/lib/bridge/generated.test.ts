@@ -30,6 +30,7 @@ import {
   deleteChannelMonitorTemplate,
   deleteModelAlias,
   deletePricingRule,
+  deleteRemoteStationKey,
   deleteStationKey,
   deleteStation,
   detectStationInfo,
@@ -268,6 +269,7 @@ describe("generated settings/stations transport envelopes", () => {
     await getRemoteKeyCapability({ stationId });
     await listRemoteStationKeys({ stationId });
     await scanRemoteStationKeys({ stationId });
+    await deleteRemoteStationKey({ remoteKeyId, stationId });
     await bindRemoteStationKey({ remoteKeyId, stationKeyId: keyId });
     await unbindRemoteStationKey({ remoteKeyId, stationId });
     await listKeyPoolItems();
@@ -290,6 +292,7 @@ describe("generated settings/stations transport envelopes", () => {
       ["get_remote_key_capability", { input: { stationId } }],
       ["list_remote_station_keys", { input: { stationId } }],
       ["scan_remote_station_keys", { input: { stationId } }],
+      ["delete_remote_station_key", { input: { remoteKeyId, stationId } }],
       ["bind_remote_station_key", { input: { remoteKeyId, stationKeyId: keyId } }],
       ["unbind_remote_station_key", { input: { remoteKeyId, stationId } }],
       ["list_key_pool_items", { input: {} }],

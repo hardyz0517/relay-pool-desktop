@@ -202,6 +202,7 @@ export type RemoteKeyCapability = {
   stationType: string;
   canListRemoteKeys: boolean;
   canCreateRemoteKey: boolean;
+  canDeleteRemoteKeys: boolean;
   canReadGroups: boolean;
   requiresManualSession: boolean;
   unsupportedReason: string | null;
@@ -254,6 +255,15 @@ export type CreateRemoteStationKeyResult = {
 export type CreateLocalStationKeyFromRemoteResult = {
   remoteKey: RemoteStationKey;
   stationKey: StationKey;
+  message: string;
+};
+
+export type DeleteRemoteStationKeyResult = {
+  stationId: string;
+  remoteKeyId: string;
+  alreadyAbsent: boolean;
+  matchedStationKeyId: string | null;
+  keys: RemoteStationKey[];
   message: string;
 };
 

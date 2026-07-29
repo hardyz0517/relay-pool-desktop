@@ -9,8 +9,8 @@ use crate::{
         group_facts::{GroupRateRecord, StationGroupBinding},
         remote_keys::{
             CreateLocalStationKeyFromRemoteResult, CreateRemoteStationKeyInput,
-            CreateRemoteStationKeyResult, RemoteKeyCapability, RemoteKeyScanResult,
-            RemoteStationKey,
+            CreateRemoteStationKeyResult, DeleteRemoteStationKeyResult, RemoteKeyCapability,
+            RemoteKeyScanResult, RemoteStationKey,
         },
         station_keys::{StationKey, UpdateStationKeyInput},
     },
@@ -19,9 +19,9 @@ use crate::{
     services::collectors::{
         contract::{
             CollectorContext, CreateRemoteKeyRequest, CredentialScope, CredentialSecret,
-            CredentialSecretPurpose, DriverSecretAccessor, OpaqueCredentialHandle,
-            ProviderAuthContext, ProviderEndpoints, ProviderKind, RemoteKeyRequest,
-            RevealRemoteKeyRequest, StationIdentity, Sub2ApiLoginCredential,
+            CredentialSecretPurpose, DeleteRemoteKeyRequest, DriverSecretAccessor,
+            OpaqueCredentialHandle, ProviderAuthContext, ProviderEndpoints, ProviderKind,
+            RemoteKeyRequest, RevealRemoteKeyRequest, StationIdentity, Sub2ApiLoginCredential,
         },
         failure::{DriverFailure, DriverFailureKind},
         orchestration::ProviderRegistry,
@@ -73,6 +73,21 @@ pub(crate) struct PreparedRemoteKeySave {
     matched_existing: bool,
 }
 
+pub(crate) struct PreparedRemoteKeyDelete {
+    station_id: String,
+    expected_endpoint_revision: i64,
+    remote_key_id: String,
+    matched_station_key_id: Option<String>,
+    already_absent: bool,
+    keys: Vec<RemoteStationKey>,
+    station_key_updates: Vec<UpdateStationKeyInput>,
+}
+
+struct PreparedRemoteKeyLocalState {
+    group_bindings: Vec<StationGroupBinding>,
+    local_key_candidates: Vec<LocalStationKeyCandidate>,
+}
+
 pub(crate) struct PreparedNewApiRemoteKeyDriverContext {
     station_id: String,
     expected_endpoint_revision: i64,
@@ -83,6 +98,7 @@ pub(crate) struct PreparedNewApiRemoteKeyDriverContext {
     auth_context: ProviderAuthContext,
     secret_accessor: RemoteKeySecretAccessor,
     proxy: ProxyPolicy,
+    local_state: PreparedRemoteKeyLocalState,
 }
 
 struct RemoteKeySecretAccessor {
@@ -126,6 +142,7 @@ pub(crate) struct PreparedSub2ApiRemoteKeyDriverContext {
     auth_context: ProviderAuthContext,
     secret_accessor: RemoteKeySecretAccessor,
     proxy: ProxyPolicy,
+    local_state: PreparedRemoteKeyLocalState,
 }
 
 pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
@@ -144,6 +161,7 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
         station_type: "newapi".to_string(),
         can_list_remote_keys: true,
         can_create_remote_key: true,
+        can_delete_remote_keys: true,
         can_read_groups: true,
         requires_manual_session: true,
         unsupported_reason: None,
@@ -191,6 +209,8 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
         credential_revision: station.endpoint_revision,
         scope: CredentialScope::LoginSession,
     };
+    let local_state = prepare_remote_key_local_state(source, &station.id)
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
     Ok(Some(PreparedNewApiRemoteKeyDriverContext {
         station_id: station.id.clone(),
         expected_endpoint_revision: station.endpoint_revision,
@@ -218,6 +238,7 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
             }],
         },
         proxy,
+        local_state,
     }))
 }
 
@@ -237,6 +258,7 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
         station_type: "sub2api".to_string(),
         can_list_remote_keys: true,
         can_create_remote_key: true,
+        can_delete_remote_keys: true,
         can_read_groups: true,
         requires_manual_session: true,
         unsupported_reason: None,
@@ -316,6 +338,8 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
     );
     let proxy = proxy_policy_from_remote_key_config(proxy)
         .map_err(|_| RemoteKeyOperationError::Internal)?;
+    let local_state = prepare_remote_key_local_state(source, &station.id)
+        .map_err(|_| RemoteKeyOperationError::Internal)?;
 
     Ok(Some(PreparedSub2ApiRemoteKeyDriverContext {
         station_id: station.id.clone(),
@@ -339,11 +363,11 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
         },
         secret_accessor: RemoteKeySecretAccessor { records },
         proxy,
+        local_state,
     }))
 }
 
 pub(crate) async fn prepare_newapi_remote_key_scan_v2(
-    source: &dyn CollectorSourcePort,
     registry: &ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedNewApiRemoteKeyDriverContext,
@@ -365,14 +389,11 @@ pub(crate) async fn prepare_newapi_remote_key_scan_v2(
         )
         .await
         .map_err(remote_key_error_from_driver)?;
-    let (keys, station_key_updates) =
-        enrich_remote_key_discoveries_from_source(source, &prepared.station_id, output.keys)
-            .map_err(|_| RemoteKeyOperationError::Internal)?;
-    ensure_source_endpoint_revision(
-        source,
-        &prepared.station_id,
-        prepared.expected_endpoint_revision,
-    )?;
+    let (keys, station_key_updates) = enrich_remote_key_discoveries_from_parts(
+        &prepared.local_state.group_bindings,
+        &prepared.local_state.local_key_candidates,
+        output.keys,
+    );
     Ok(PreparedRemoteKeyScan::Discovered {
         station_id: prepared.station_id,
         expected_endpoint_revision: prepared.expected_endpoint_revision,
@@ -383,7 +404,6 @@ pub(crate) async fn prepare_newapi_remote_key_scan_v2(
 }
 
 pub(crate) async fn prepare_newapi_remote_key_creation_v2(
-    source: &dyn CollectorSourcePort,
     registry: &ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedNewApiRemoteKeyDriverContext,
@@ -410,8 +430,8 @@ pub(crate) async fn prepare_newapi_remote_key_creation_v2(
         )
         .await
         .map_err(remote_key_error_from_driver)?;
-    prepare_remote_key_save_from_source(
-        source,
+    prepare_remote_key_save(
+        &prepared.local_state,
         output.remote_key,
         output.full_key_once.into_plaintext(),
         "NewAPI remote key created.".to_string(),
@@ -421,7 +441,6 @@ pub(crate) async fn prepare_newapi_remote_key_creation_v2(
 }
 
 pub(crate) async fn prepare_newapi_local_key_from_remote_v2(
-    source: &dyn CollectorSourcePort,
     registry: &ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedNewApiRemoteKeyDriverContext,
@@ -445,8 +464,8 @@ pub(crate) async fn prepare_newapi_local_key_from_remote_v2(
         )
         .await
         .map_err(remote_key_error_from_driver)?;
-    prepare_remote_key_save_from_source(
-        source,
+    prepare_remote_key_save(
+        &prepared.local_state,
         output.remote_key,
         output.full_key.into_plaintext(),
         "NewAPI remote key synchronized locally.".to_string(),
@@ -455,8 +474,48 @@ pub(crate) async fn prepare_newapi_local_key_from_remote_v2(
     )
 }
 
+pub(crate) async fn prepare_newapi_remote_key_deletion_v2(
+    registry: &ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedNewApiRemoteKeyDriverContext,
+    remote_key_id: String,
+    matched_station_key_id: Option<String>,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedRemoteKeyDelete, RemoteKeyOperationError> {
+    let driver = registry
+        .remote_key(ProviderKind::NewApi)
+        .map_err(remote_key_error_from_driver)?;
+    let context = newapi_remote_key_context(&prepared, outbound, cancellation, correlation_id);
+    let output = driver
+        .delete_remote_key(
+            &context,
+            DeleteRemoteKeyRequest {
+                station: prepared.station.clone(),
+                endpoints: prepared.endpoints.clone(),
+                credential: prepared.credential_handle.clone(),
+                remote_key_id: remote_key_id.clone(),
+            },
+        )
+        .await
+        .map_err(remote_key_error_from_driver)?;
+    let (keys, station_key_updates) = enrich_remote_key_discoveries_from_parts(
+        &prepared.local_state.group_bindings,
+        &prepared.local_state.local_key_candidates,
+        output.keys,
+    );
+    Ok(PreparedRemoteKeyDelete {
+        station_id: prepared.station_id,
+        expected_endpoint_revision: prepared.expected_endpoint_revision,
+        remote_key_id,
+        matched_station_key_id,
+        already_absent: output.already_absent,
+        keys,
+        station_key_updates,
+    })
+}
+
 pub(crate) async fn prepare_sub2api_remote_key_scan_v2(
-    source: &dyn CollectorSourcePort,
     registry: &ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedSub2ApiRemoteKeyDriverContext,
@@ -478,14 +537,11 @@ pub(crate) async fn prepare_sub2api_remote_key_scan_v2(
         )
         .await
         .map_err(remote_key_error_from_driver)?;
-    let (keys, station_key_updates) =
-        enrich_remote_key_discoveries_from_source(source, &prepared.station_id, output.keys)
-            .map_err(|_| RemoteKeyOperationError::Internal)?;
-    ensure_source_endpoint_revision(
-        source,
-        &prepared.station_id,
-        prepared.expected_endpoint_revision,
-    )?;
+    let (keys, station_key_updates) = enrich_remote_key_discoveries_from_parts(
+        &prepared.local_state.group_bindings,
+        &prepared.local_state.local_key_candidates,
+        output.keys,
+    );
     Ok(PreparedRemoteKeyScan::Discovered {
         station_id: prepared.station_id,
         expected_endpoint_revision: prepared.expected_endpoint_revision,
@@ -496,7 +552,6 @@ pub(crate) async fn prepare_sub2api_remote_key_scan_v2(
 }
 
 pub(crate) async fn prepare_sub2api_remote_key_creation_v2(
-    source: &dyn CollectorSourcePort,
     registry: &ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedSub2ApiRemoteKeyDriverContext,
@@ -504,9 +559,9 @@ pub(crate) async fn prepare_sub2api_remote_key_creation_v2(
     cancellation: CancellationToken,
     correlation_id: Option<String>,
 ) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
-    let provider_group_id = remote_group_id_for_create(source, &input)
-        .map_err(|_| RemoteKeyOperationError::Internal)?
-        .or_else(|| input.group_id_hash.clone());
+    let provider_group_id =
+        remote_group_id_for_create(&prepared.local_state.group_bindings, &input)
+            .or_else(|| input.group_id_hash.clone());
     let driver = registry
         .remote_key(ProviderKind::Sub2Api)
         .map_err(remote_key_error_from_driver)?;
@@ -526,8 +581,8 @@ pub(crate) async fn prepare_sub2api_remote_key_creation_v2(
         )
         .await
         .map_err(remote_key_error_from_driver)?;
-    prepare_remote_key_save_from_source(
-        source,
+    prepare_remote_key_save(
+        &prepared.local_state,
         output.remote_key,
         output.full_key_once.into_plaintext(),
         "Sub2API remote key created.".to_string(),
@@ -537,7 +592,6 @@ pub(crate) async fn prepare_sub2api_remote_key_creation_v2(
 }
 
 pub(crate) async fn prepare_sub2api_local_key_from_remote_v2(
-    source: &dyn CollectorSourcePort,
     registry: &ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedSub2ApiRemoteKeyDriverContext,
@@ -561,14 +615,55 @@ pub(crate) async fn prepare_sub2api_local_key_from_remote_v2(
         )
         .await
         .map_err(remote_key_error_from_driver)?;
-    prepare_remote_key_save_from_source(
-        source,
+    prepare_remote_key_save(
+        &prepared.local_state,
         output.remote_key,
         output.full_key.into_plaintext(),
         "Sub2API remote key synchronized locally.".to_string(),
         false,
         prepared.expected_endpoint_revision,
     )
+}
+
+pub(crate) async fn prepare_sub2api_remote_key_deletion_v2(
+    registry: &ProviderRegistry,
+    outbound: &AsyncOutboundClient,
+    prepared: PreparedSub2ApiRemoteKeyDriverContext,
+    remote_key_id: String,
+    matched_station_key_id: Option<String>,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<PreparedRemoteKeyDelete, RemoteKeyOperationError> {
+    let driver = registry
+        .remote_key(ProviderKind::Sub2Api)
+        .map_err(remote_key_error_from_driver)?;
+    let context = sub2api_remote_key_context(&prepared, outbound, cancellation, correlation_id);
+    let output = driver
+        .delete_remote_key(
+            &context,
+            DeleteRemoteKeyRequest {
+                station: prepared.station.clone(),
+                endpoints: prepared.endpoints.clone(),
+                credential: prepared.credential_handle.clone(),
+                remote_key_id: remote_key_id.clone(),
+            },
+        )
+        .await
+        .map_err(remote_key_error_from_driver)?;
+    let (keys, station_key_updates) = enrich_remote_key_discoveries_from_parts(
+        &prepared.local_state.group_bindings,
+        &prepared.local_state.local_key_candidates,
+        output.keys,
+    );
+    Ok(PreparedRemoteKeyDelete {
+        station_id: prepared.station_id,
+        expected_endpoint_revision: prepared.expected_endpoint_revision,
+        remote_key_id,
+        matched_station_key_id,
+        already_absent: output.already_absent,
+        keys,
+        station_key_updates,
+    })
 }
 
 fn newapi_remote_key_context<'a>(
@@ -704,6 +799,40 @@ pub(crate) async fn finish_remote_key_scan_v2(
     }
 }
 
+pub(crate) fn preview_remote_key_scan_v2(
+    prepared: PreparedRemoteKeyScan,
+) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
+    match prepared {
+        PreparedRemoteKeyScan::Unsupported {
+            station_id,
+            capability,
+        } => Ok(RemoteKeyScanResult {
+            station_id,
+            capability: capability.clone(),
+            keys: Vec::new(),
+            synced_station_key_ids: Vec::new(),
+            message: capability.unsupported_reason.clone().unwrap_or_else(|| {
+                "This provider does not support remote key scanning.".to_string()
+            }),
+        }),
+        PreparedRemoteKeyScan::Discovered {
+            station_id,
+            capability,
+            keys,
+            ..
+        } => Ok(RemoteKeyScanResult {
+            station_id,
+            capability,
+            message: format!(
+                "Remote key scan completed with {} read-only results.",
+                keys.len()
+            ),
+            keys,
+            synced_station_key_ids: Vec::new(),
+        }),
+    }
+}
+
 pub(crate) async fn finish_remote_key_creation_v2(
     credentials: &CredentialService,
     prepared: PreparedRemoteKeySave,
@@ -749,6 +878,36 @@ pub(crate) async fn finish_local_key_from_remote_v2(
     })
 }
 
+pub(crate) async fn finish_remote_key_deletion_v2(
+    credentials: &CredentialService,
+    prepared: PreparedRemoteKeyDelete,
+) -> Result<DeleteRemoteStationKeyResult, RemoteKeyOperationError> {
+    let keys = credentials
+        .replace_remote_station_keys_and_metadata(
+            prepared.station_id.clone(),
+            prepared.expected_endpoint_revision,
+            prepared.keys,
+            prepared.station_key_updates,
+        )
+        .await
+        .map_err(RemoteKeyOperationError::Application)?;
+    let message = if prepared.already_absent {
+        "远端 Key 已不存在，本地发现记录已完成对账。"
+    } else if prepared.matched_station_key_id.is_some() {
+        "远端 Key 已删除，关联的本地 Station Key 已保留。"
+    } else {
+        "远端 Key 已删除。"
+    };
+    Ok(DeleteRemoteStationKeyResult {
+        station_id: prepared.station_id,
+        remote_key_id: prepared.remote_key_id,
+        already_absent: prepared.already_absent,
+        matched_station_key_id: prepared.matched_station_key_id,
+        keys,
+        message: message.to_string(),
+    })
+}
+
 fn remote_key_capability_from_source(
     source: &dyn CollectorSourcePort,
     station_id: String,
@@ -764,6 +923,7 @@ fn remote_key_capability_from_source(
             station_type: station.station_type.trim().to_string(),
             can_list_remote_keys: true,
             can_create_remote_key: true,
+            can_delete_remote_keys: true,
             can_read_groups: true,
             requires_manual_session: true,
             unsupported_reason: None,
@@ -773,6 +933,7 @@ fn remote_key_capability_from_source(
             station_type: station_type.clone(),
             can_list_remote_keys: true,
             can_create_remote_key: true,
+            can_delete_remote_keys: true,
             can_read_groups: true,
             requires_manual_session: true,
             unsupported_reason: None,
@@ -782,6 +943,7 @@ fn remote_key_capability_from_source(
             station_type: station_type.clone(),
             can_list_remote_keys: false,
             can_create_remote_key: false,
+            can_delete_remote_keys: false,
             can_read_groups: false,
             requires_manual_session: false,
             unsupported_reason: Some(format!(
@@ -825,8 +987,8 @@ fn proxy_policy_from_remote_key_config(
     }
 }
 
-fn prepare_remote_key_save_from_source(
-    source: &dyn CollectorSourcePort,
+fn prepare_remote_key_save(
+    local_state: &PreparedRemoteKeyLocalState,
     remote_key: RemoteStationKey,
     full_key: String,
     adapter_message: String,
@@ -836,24 +998,21 @@ fn prepare_remote_key_save_from_source(
     if full_key.trim().is_empty() {
         return Err(RemoteKeyOperationError::ExternalUnavailable);
     }
-    let station_id = remote_key.station_id.clone();
-    let bindings = source
-        .list_station_group_bindings(station_id.clone())
-        .map_err(|_| RemoteKeyOperationError::Internal)?;
-    let (mut remote_keys, mut station_key_updates) =
-        enrich_remote_key_discoveries_from_parts(source, &station_id, &bindings, vec![remote_key])
-            .map_err(|_| RemoteKeyOperationError::Internal)?;
+    let (mut remote_keys, mut station_key_updates) = enrich_remote_key_discoveries_from_parts(
+        &local_state.group_bindings,
+        &local_state.local_key_candidates,
+        vec![remote_key],
+    );
     let remote_key = remote_keys
         .pop()
         .ok_or(RemoteKeyOperationError::ExternalUnavailable)?;
     let matched_station_key_update = station_key_updates.pop();
     let matched_existing = matched_station_key_update.is_some();
     let new_group_binding_id = (!matched_existing)
-        .then(|| matching_group_binding(&remote_key, &bindings))
+        .then(|| matching_group_binding(&remote_key, &local_state.group_bindings))
         .flatten()
         .map(|binding| binding.id.clone())
         .filter(|id| !id.trim().is_empty());
-    ensure_source_endpoint_revision(source, &station_id, expected_endpoint_revision)?;
     Ok(PreparedRemoteKeySave {
         remote_key,
         expected_endpoint_revision,
@@ -866,27 +1025,26 @@ fn prepare_remote_key_save_from_source(
     })
 }
 
-fn enrich_remote_key_discoveries_from_source(
+fn prepare_remote_key_local_state(
     source: &dyn CollectorSourcePort,
     station_id: &str,
-    keys: Vec<RemoteStationKey>,
-) -> Result<(Vec<RemoteStationKey>, Vec<UpdateStationKeyInput>), String> {
-    let bindings = source.list_station_group_bindings(station_id.to_string())?;
-    enrich_remote_key_discoveries_from_parts(source, station_id, &bindings, keys)
+) -> Result<PreparedRemoteKeyLocalState, String> {
+    Ok(PreparedRemoteKeyLocalState {
+        group_bindings: source.list_station_group_bindings(station_id.to_string())?,
+        local_key_candidates: local_station_key_candidates_from_source(source, station_id)?,
+    })
 }
 
 fn enrich_remote_key_discoveries_from_parts(
-    source: &dyn CollectorSourcePort,
-    station_id: &str,
     bindings: &[StationGroupBinding],
+    local_candidates: &[LocalStationKeyCandidate],
     keys: Vec<RemoteStationKey>,
-) -> Result<(Vec<RemoteStationKey>, Vec<UpdateStationKeyInput>), String> {
-    let local_candidates = local_station_key_candidates_from_source(source, station_id)?;
+) -> (Vec<RemoteStationKey>, Vec<UpdateStationKeyInput>) {
     let mut updates = BTreeMap::<String, (f64, UpdateStationKeyInput)>::new();
     let mut enriched = Vec::with_capacity(keys.len());
     for mut key in keys {
         apply_group_metadata(&mut key, bindings, &[]);
-        if let Some((local_key, confidence)) = best_local_key_match(&key, &local_candidates) {
+        if let Some((local_key, confidence)) = best_local_key_match(&key, local_candidates) {
             if confidence >= 0.8 {
                 key.matched_station_key_id = Some(local_key.key.id.clone());
                 key.match_confidence = confidence;
@@ -907,10 +1065,10 @@ fn enrich_remote_key_discoveries_from_parts(
         }
         enriched.push(key);
     }
-    Ok((
+    (
         enriched,
         updates.into_values().map(|(_, update)| update).collect(),
-    ))
+    )
 }
 
 fn local_station_key_candidates_from_source(
@@ -1094,29 +1252,28 @@ fn matching_group_binding<'a>(
 }
 
 fn remote_group_id_for_create(
-    source: &dyn CollectorSourcePort,
+    bindings: &[StationGroupBinding],
     input: &CreateRemoteStationKeyInput,
-) -> Result<Option<String>, String> {
+) -> Option<String> {
     let Some(group_binding_id) = input
         .group_binding_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return Ok(None);
+        return None;
     };
 
-    let bindings = source.list_station_group_bindings(input.station_id.clone())?;
-    Ok(bindings
-        .into_iter()
+    bindings
+        .iter()
         .find(|binding| {
             binding.id == group_binding_id
                 && binding.binding_kind == "station_group"
                 && binding.binding_status != "disabled"
         })
-        .and_then(|binding| binding.group_id_hash)
+        .and_then(|binding| binding.group_id_hash.clone())
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty()))
+        .filter(|value| !value.is_empty())
 }
 
 fn latest_group_rate<'a>(

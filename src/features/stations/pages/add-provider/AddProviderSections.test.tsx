@@ -194,6 +194,7 @@ describe("AddProviderSections", () => {
           scanRemoteDisabled={false}
           onAddLocalKey={onAddLocalKey}
           onBindRemoteKey={vi.fn()}
+          onDeleteRemoteKey={vi.fn()}
           onLocalKeyToggle={vi.fn()}
           onOpenCreateRemoteKey={onOpenCreateRemoteKey}
           onRowsChange={vi.fn()}
@@ -219,6 +220,81 @@ describe("AddProviderSections", () => {
     expect(onScanRemoteKeys).toHaveBeenCalledOnce();
     expect(onOpenCreateRemoteKey).toHaveBeenCalledOnce();
     expect(onAddLocalKey).toHaveBeenCalledOnce();
+
+    await act(async () => root.unmount());
+  });
+
+  it("delegates a supported remote-key delete without deleting locally", async () => {
+    const onDeleteRemoteKey = vi.fn();
+    const remoteKey = {
+      id: "remote-1",
+      stationId: "station-1",
+      remoteKeyIdHash: "remote-hash",
+      remoteKeyName: "Remote fixture",
+      apiKeyMasked: "sk-fixture********test",
+      apiKeyFingerprint: null,
+      groupIdHash: null,
+      groupName: "default",
+      tierLabel: null,
+      rateMultiplier: 1,
+      rateSource: "newapi_tokens",
+      createdAt: null,
+      lastUsedAt: null,
+      rawSource: "newapi_tokens",
+      matchStatus: "unbound" as const,
+      matchedStationKeyId: null,
+      matchConfidence: 0,
+      collectedAt: "1700000000000",
+    };
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () =>
+      root.render(
+        <ProviderKeysSection
+          activeStationId="station-1"
+          createRemoteDisabled={false}
+          currentCreditPerCny={1}
+          disabled={false}
+          groupOptions={[]}
+          localKeyIdsCreatedByRemote={{}}
+          localKeys={[]}
+          remoteCapability={{
+            stationId: "station-1",
+            stationType: "newapi",
+            canListRemoteKeys: true,
+            canCreateRemoteKey: true,
+            canDeleteRemoteKeys: true,
+            canReadGroups: true,
+            requiresManualSession: true,
+            unsupportedReason: null,
+          }}
+          remoteCapabilityError={null}
+          remoteCapabilityUnavailableReason={null}
+          remoteDiscoveryReason={null}
+          remoteKeys={[remoteKey]}
+          remoteListError={null}
+          remoteLoading={false}
+          remoteUnsupportedReason={null}
+          rows={[]}
+          scanRemoteDisabled={false}
+          onAddLocalKey={vi.fn()}
+          onBindRemoteKey={vi.fn()}
+          onDeleteRemoteKey={onDeleteRemoteKey}
+          onLocalKeyToggle={vi.fn()}
+          onOpenCreateRemoteKey={vi.fn()}
+          onRowsChange={vi.fn()}
+          onScanRemoteKeys={vi.fn()}
+        />,
+      ),
+    );
+
+    const deleteButton = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="删除远端 Key Remote fixture"]',
+    )!;
+    await act(async () => deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(onDeleteRemoteKey).toHaveBeenCalledWith(remoteKey);
 
     await act(async () => root.unmount());
   });

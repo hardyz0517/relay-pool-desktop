@@ -381,6 +381,7 @@ type ProviderKeysSectionProps = {
   scanRemoteDisabled: boolean;
   onAddLocalKey: () => void;
   onBindRemoteKey: (remoteKeyId: string, stationKeyId: string) => void;
+  onDeleteRemoteKey: (remoteKey: RemoteStationKey) => void;
   onLocalKeyToggle: (remoteKey: RemoteStationKey, checked: boolean) => void;
   onOpenCreateRemoteKey: () => void;
   onRowsChange: (rows: StationKeyDraft[]) => void;
@@ -407,6 +408,7 @@ export function ProviderKeysSection({
   scanRemoteDisabled,
   onAddLocalKey,
   onBindRemoteKey,
+  onDeleteRemoteKey,
   onLocalKeyToggle,
   onOpenCreateRemoteKey,
   onRowsChange,
@@ -469,11 +471,13 @@ export function ProviderKeysSection({
             <>
               <RemoteKeyDiscoveryList
                 creditPerCny={currentCreditPerCny}
+                deleteDisabled={remoteCapability?.canDeleteRemoteKeys !== true}
                 keys={remoteKeys}
                 loading={remoteLoading}
                 localKeyIdsCreatedByRemote={localKeyIdsCreatedByRemote}
                 localKeys={localKeys}
                 onBind={onBindRemoteKey}
+                onDelete={onDeleteRemoteKey}
                 onLocalKeyToggle={onLocalKeyToggle}
               />
               {remoteListError && (

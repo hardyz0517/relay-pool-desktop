@@ -137,11 +137,13 @@ describe("add provider form model", () => {
     expect(draftRemoteCapability("sub2api")).toMatchObject({
       canListRemoteKeys: true,
       canCreateRemoteKey: true,
+      canDeleteRemoteKeys: true,
       canReadGroups: true,
     });
     expect(draftRemoteCapability("custom")).toMatchObject({
       canListRemoteKeys: false,
       canCreateRemoteKey: false,
+      canDeleteRemoteKeys: false,
       canReadGroups: false,
     });
   });

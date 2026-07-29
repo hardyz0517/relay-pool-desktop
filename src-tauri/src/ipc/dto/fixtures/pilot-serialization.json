@@ -583,6 +583,7 @@
       },
       "output": {
         "canCreateRemoteKey": true,
+        "canDeleteRemoteKeys": true,
         "canListRemoteKeys": true,
         "canReadGroups": true,
         "requiresManualSession": false,
@@ -627,6 +628,7 @@
       "output": {
         "capability": {
           "canCreateRemoteKey": true,
+          "canDeleteRemoteKeys": true,
           "canListRemoteKeys": true,
           "canReadGroups": true,
           "requiresManualSession": false,
@@ -781,6 +783,21 @@
           "tierLabel": null,
           "updatedAt": "2026-01-01T00:00:00Z"
         }
+      }
+    },
+    {
+      "command": "delete_remote_station_key",
+      "input": {
+        "remoteKeyId": "remote-key-fixture",
+        "stationId": "station-fixture"
+      },
+      "output": {
+        "alreadyAbsent": false,
+        "keys": [],
+        "matchedStationKeyId": "station-key-fixture",
+        "message": "Fixture remote key deleted.",
+        "remoteKeyId": "remote-key-fixture",
+        "stationId": "station-fixture"
       }
     },
     {

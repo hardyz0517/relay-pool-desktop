@@ -49,6 +49,7 @@ commands.allow = [
   "scan_remote_station_keys",
   "create_remote_station_key",
   "create_local_station_key_from_remote",
+  "delete_remote_station_key",
   "bind_remote_station_key",
   "unbind_remote_station_key",
   "list_key_pool_items",

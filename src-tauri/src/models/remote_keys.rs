@@ -7,6 +7,7 @@ pub struct RemoteKeyCapability {
     pub station_type: String,
     pub can_list_remote_keys: bool,
     pub can_create_remote_key: bool,
+    pub can_delete_remote_keys: bool,
     pub can_read_groups: bool,
     pub requires_manual_session: bool,
     pub unsupported_reason: Option<String>,
@@ -96,6 +97,17 @@ pub struct CreateRemoteStationKeyResult {
 pub struct CreateLocalStationKeyFromRemoteResult {
     pub remote_key: RemoteStationKey,
     pub station_key: crate::models::station_keys::StationKey,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteRemoteStationKeyResult {
+    pub station_id: String,
+    pub remote_key_id: String,
+    pub already_absent: bool,
+    pub matched_station_key_id: Option<String>,
+    pub keys: Vec<RemoteStationKey>,
     pub message: String,
 }
 

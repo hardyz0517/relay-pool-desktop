@@ -7,7 +7,7 @@ use crate::{
     background_tasks::{BlockingExecutor, BlockingExecutorError},
     models::remote_keys::{
         CreateLocalStationKeyFromRemoteResult, CreateRemoteStationKeyInput,
-        CreateRemoteStationKeyResult, RemoteKeyScanResult,
+        CreateRemoteStationKeyResult, DeleteRemoteStationKeyResult, RemoteKeyScanResult,
     },
     observability::correlation,
     outbound::AsyncOutboundClient,
@@ -65,9 +65,7 @@ impl RemoteKeysCommandFacade {
             })
             .await?;
         if let Some(prepared) = newapi_prepared {
-            let source = self.source();
             let prepared = remote_keys::prepare_newapi_remote_key_scan_v2(
-                &source,
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
@@ -90,9 +88,7 @@ impl RemoteKeysCommandFacade {
             })
             .await?;
         if let Some(prepared) = sub2api_prepared {
-            let source = self.source();
             let prepared = remote_keys::prepare_sub2api_remote_key_scan_v2(
-                &source,
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
@@ -125,9 +121,7 @@ impl RemoteKeysCommandFacade {
             })
             .await?;
         if let Some(prepared) = newapi_prepared {
-            let source = self.source();
             let prepared = remote_keys::prepare_newapi_remote_key_creation_v2(
-                &source,
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
@@ -149,9 +143,7 @@ impl RemoteKeysCommandFacade {
             })
             .await?;
         if let Some(prepared) = sub2api_prepared {
-            let source = self.source();
             let prepared = remote_keys::prepare_sub2api_remote_key_creation_v2(
-                &source,
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
@@ -184,9 +176,7 @@ impl RemoteKeysCommandFacade {
             })
             .await?;
         if let Some(prepared) = newapi_prepared {
-            let source = self.source();
             let prepared = remote_keys::prepare_newapi_local_key_from_remote_v2(
-                &source,
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
@@ -213,9 +203,7 @@ impl RemoteKeysCommandFacade {
             })
             .await?;
         if let Some(prepared) = sub2api_prepared {
-            let source = self.source();
             let prepared = remote_keys::prepare_sub2api_local_key_from_remote_v2(
-                &source,
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
@@ -231,6 +219,73 @@ impl RemoteKeysCommandFacade {
             .await;
         }
         let _ = (station_id, remote_key_id);
+        Err(RemoteKeyOperationError::Unsupported)
+    }
+
+    pub(crate) async fn delete_remote_station_key(
+        &self,
+        station_id: String,
+        remote_key_id: String,
+    ) -> Result<DeleteRemoteStationKeyResult, RemoteKeyOperationError> {
+        let matched_station_key_id = self
+            .credentials
+            .list_remote_station_keys(station_id.clone())
+            .await?
+            .into_iter()
+            .find(|key| key.id == remote_key_id)
+            .and_then(|key| key.matched_station_key_id);
+
+        let data_key = self.data_key;
+        let station_id_for_probe = station_id.clone();
+        let newapi_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_newapi_delete", move |source| {
+                remote_keys::prepare_newapi_remote_key_driver_context_v2(
+                    &source,
+                    &data_key,
+                    station_id_for_probe,
+                )
+            })
+            .await?;
+        if let Some(prepared) = newapi_prepared {
+            let prepared = remote_keys::prepare_newapi_remote_key_deletion_v2(
+                self.providers.as_ref(),
+                &self.outbound,
+                prepared,
+                remote_key_id,
+                matched_station_key_id,
+                tokio_util::sync::CancellationToken::new(),
+                current_correlation_id(),
+            )
+            .await?;
+            return remote_keys::finish_remote_key_deletion_v2(self.credentials.as_ref(), prepared)
+                .await;
+        }
+
+        let data_key = self.data_key;
+        let station_id_for_probe = station_id.clone();
+        let sub2api_prepared = self
+            .prepare_remote_key_context("remote_key_prepare_sub2api_delete", move |source| {
+                remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                    &source,
+                    &data_key,
+                    station_id_for_probe,
+                )
+            })
+            .await?;
+        if let Some(prepared) = sub2api_prepared {
+            let prepared = remote_keys::prepare_sub2api_remote_key_deletion_v2(
+                self.providers.as_ref(),
+                &self.outbound,
+                prepared,
+                remote_key_id,
+                matched_station_key_id,
+                tokio_util::sync::CancellationToken::new(),
+                current_correlation_id(),
+            )
+            .await?;
+            return remote_keys::finish_remote_key_deletion_v2(self.credentials.as_ref(), prepared)
+                .await;
+        }
         Err(RemoteKeyOperationError::Unsupported)
     }
 

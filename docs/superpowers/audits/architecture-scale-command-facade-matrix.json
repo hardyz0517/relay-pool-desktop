@@ -156,6 +156,7 @@
         "scan_remote_station_keys",
         "create_remote_station_key",
         "create_local_station_key_from_remote",
+        "delete_remote_station_key",
         "test_station_key_connectivity",
         "station credential/session capture and login commands"
       ]
@@ -183,6 +184,11 @@
         {
           "command": "create_local_station_key_from_remote",
           "use_case": "create_local_station_key_from_remote",
+          "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
+        },
+        {
+          "command": "delete_remote_station_key",
+          "use_case": "delete_remote_station_key",
           "dependencies": ["CollectorService", "CredentialService", "SettingsService"]
         }
       ],

@@ -19,9 +19,10 @@ use crate::{
                 AuthorizationDriver, AuthorizationOutput, AuthorizationRequest,
                 AuthorizationStatus, CollectorContext, CollectorDriver, CollectorTaskKind,
                 CreateRemoteKeyRequest, CreatedRemoteKeyOutput, CredentialSecretPurpose,
-                DriverOutput, DriverOutputStatus, ProviderAuthContext, ProviderKind,
-                RedactedDiagnostics, RemoteKeyDriver, RemoteKeyOutput, RemoteKeyRequest,
-                RemoteKeySecret, RevealRemoteKeyRequest, RevealedRemoteKeyOutput,
+                DeleteRemoteKeyRequest, DeletedRemoteKeyOutput, DriverOutput, DriverOutputStatus,
+                ProviderAuthContext, ProviderKind, RedactedDiagnostics, RemoteKeyDriver,
+                RemoteKeyOutput, RemoteKeyRequest, RemoteKeySecret, RevealRemoteKeyRequest,
+                RevealedRemoteKeyOutput,
             },
             evidence::{redact_text, redact_value, EndpointEvidence, EndpointRole, EvidenceSet},
             facts::CollectorFacts,
@@ -184,6 +185,77 @@ impl RemoteKeyDriver for NewApiRemoteKeyDriver {
                 None,
                 "NewAPI token create succeeded but reconciliation did not find the created token",
             ))
+        }
+        .boxed()
+    }
+
+    fn delete_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: DeleteRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<DeletedRemoteKeyOutput, DriverFailure>> {
+        async move {
+            validate_remote_key_request(context, &request.station, &request.endpoints)?;
+            let website_url = request_website_url(&request.endpoints)?;
+            let (items, mut evidence) = fetch_newapi_token_items(context, &website_url).await?;
+            let Some(token_id) = token_id_for_remote_key(
+                &request.station.station_id,
+                &request.remote_key_id,
+                &items,
+            )?
+            else {
+                return Ok(DeletedRemoteKeyOutput {
+                    keys: parse_remote_key_items(&request.station.station_id, &items),
+                    already_absent: true,
+                    evidence,
+                    diagnostics: RedactedDiagnostics {
+                        summary: Some(json!({"alreadyAbsent": true}).to_string()),
+                        raw_json_redacted: None,
+                    },
+                });
+            };
+
+            let delete_failure =
+                match delete_remote_key_once(context, &website_url, &token_id).await {
+                    Ok(endpoint) => {
+                        evidence.push(endpoint);
+                        None
+                    }
+                    Err(failure) => Some(failure),
+                };
+            let reconciliation = fetch_newapi_token_items(context, &website_url).await;
+            let (remaining_items, reconciliation_evidence) = match reconciliation {
+                Ok(output) => output,
+                Err(_) => {
+                    return Err(delete_failure.unwrap_or_else(|| {
+                        result_unknown(
+                            EndpointRole::RemoteKeys,
+                            evidence.last().cloned(),
+                            "NewAPI token delete was accepted but could not be reconciled",
+                        )
+                    }));
+                }
+            };
+            evidence.extend(reconciliation_evidence);
+            let keys = parse_remote_key_items(&request.station.station_id, &remaining_items);
+            if keys.iter().any(|key| key.id == request.remote_key_id) {
+                return Err(delete_failure.unwrap_or_else(|| {
+                    result_unknown(
+                        EndpointRole::RemoteKeys,
+                        evidence.last().cloned(),
+                        "NewAPI token delete returned success but the token still exists",
+                    )
+                }));
+            }
+            Ok(DeletedRemoteKeyOutput {
+                keys,
+                already_absent: false,
+                evidence,
+                diagnostics: RedactedDiagnostics {
+                    summary: Some(json!({"deleted": true, "reconciled": true}).to_string()),
+                    raw_json_redacted: None,
+                },
+            })
         }
         .boxed()
     }
@@ -575,6 +647,26 @@ async fn create_remote_key_once(
     Ok(endpoint)
 }
 
+async fn delete_remote_key_once(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    token_id: &str,
+) -> Result<EndpointEvidence, DriverFailure> {
+    let path = format!("/api/token/{token_id}");
+    execute_json_with_method(
+        context,
+        EndpointRole::RemoteKeys,
+        website_url,
+        &path,
+        Method::DELETE,
+        None,
+        OutboundRetryPolicy::Never,
+        true,
+    )
+    .await
+    .map(|(_, endpoint)| endpoint)
+}
+
 async fn reveal_full_key_for_token_value(
     context: &CollectorContext<'_>,
     website_url: &str,
@@ -719,6 +811,28 @@ fn remote_key_from_value(
         match_confidence: 0.0,
         collected_at: crate::services::time::now_millis_for_services().to_string(),
     })
+}
+
+fn token_id_for_remote_key(
+    station_id: &str,
+    remote_key_id: &str,
+    items: &[Value],
+) -> Result<Option<String>, DriverFailure> {
+    for (index, value) in items.iter().enumerate() {
+        let Some(remote_key) = remote_key_from_value(station_id, value, index) else {
+            continue;
+        };
+        if remote_key.id != remote_key_id {
+            continue;
+        }
+        return numeric_i64_field(value, &["id"])
+            .filter(|value| *value > 0)
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| {
+                invalid_request("NewAPI remote key does not expose a deletable token id")
+            });
+    }
+    Ok(None)
 }
 
 fn remote_key_identity<'a>(
@@ -1558,8 +1672,12 @@ async fn execute_json_with_method(
         Some(response.status.as_u16()),
         None,
     );
-    let payload = serde_json::from_slice::<Value>(&response.body)
-        .map_err(|error| malformed(role, Some(endpoint.clone()), error.to_string()))?;
+    let payload = if response.body.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice::<Value>(&response.body)
+            .map_err(|error| malformed(role, Some(endpoint.clone()), error.to_string()))?
+    };
     if !response.status.is_success() {
         return Err(http_failure(role, response.status, payload, endpoint));
     }
@@ -1911,6 +2029,15 @@ mod tests {
         }
     }
 
+    fn delete_remote_key_request(base_url: &str, remote_key_id: String) -> DeleteRemoteKeyRequest {
+        DeleteRemoteKeyRequest {
+            station: test_station_identity(),
+            endpoints: test_endpoints(base_url),
+            credential: test_credential(),
+            remote_key_id,
+        }
+    }
+
     async fn collect_balance_from_test_server(server: &TestHttpServer) -> DriverOutput {
         let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
         let secrets = TestSecretAccessor("newapi-access-token");
@@ -2063,6 +2190,126 @@ mod tests {
         assert!(requests[0]
             .to_ascii_lowercase()
             .contains("new-api-user: 42"));
+    }
+
+    #[tokio::test]
+    async fn delete_remote_key_resolves_provider_id_and_reconciles_absence() {
+        let item = json!({
+            "id": 301,
+            "name": "relay-delete",
+            "key": "sk-del**********f260",
+            "group": "vip"
+        });
+        let remote_key_id = remote_key_from_value("station-1", &item, 0)
+            .expect("remote key")
+            .id;
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "page": 1, "page_size": 100, "total": 1, "items": [item] }
+                }),
+            )),
+            Some(json_response(200, json!({ "success": true }))),
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "page": 1, "page_size": 100, "total": 0, "items": [] }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = NewApiRemoteKeyDriver
+            .delete_remote_key(
+                &context,
+                delete_remote_key_request(&server.base_url, remote_key_id),
+            )
+            .await
+            .expect("delete remote key");
+        let requests = server.finish();
+
+        assert!(!output.already_absent);
+        assert!(output.keys.is_empty());
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("GET /api/token/?p=1&page_size=100 "));
+        assert!(requests[1].starts_with("DELETE /api/token/301 "));
+        assert!(requests[2].starts_with("GET /api/token/?p=1&page_size=100 "));
+    }
+
+    #[tokio::test]
+    async fn delete_remote_key_is_idempotent_when_target_is_already_absent() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "success": true,
+                "data": { "page": 1, "page_size": 100, "total": 0, "items": [] }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = NewApiRemoteKeyDriver
+            .delete_remote_key(
+                &context,
+                delete_remote_key_request(&server.base_url, "missing-discovery-id".to_string()),
+            )
+            .await
+            .expect("already absent is success");
+        let requests = server.finish();
+
+        assert!(output.already_absent);
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/token/?p=1&page_size=100 "));
+    }
+
+    #[tokio::test]
+    async fn delete_remote_key_reports_unknown_when_reconciliation_still_contains_target() {
+        let item = json!({
+            "id": 302,
+            "name": "relay-still-present",
+            "key": "sk-stl**********f260"
+        });
+        let remote_key_id = remote_key_from_value("station-1", &item, 0)
+            .expect("remote key")
+            .id;
+        let list_response = || {
+            json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": { "page": 1, "page_size": 100, "total": 1, "items": [item.clone()] }
+                }),
+            )
+        };
+        let server = TestHttpServer::sequence(vec![
+            Some(list_response()),
+            Some(json_response(200, json!({ "success": true }))),
+            Some(list_response()),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let result = NewApiRemoteKeyDriver
+            .delete_remote_key(
+                &context,
+                delete_remote_key_request(&server.base_url, remote_key_id),
+            )
+            .await;
+        let error = match result {
+            Ok(_) => panic!("reconciliation should report an unknown result"),
+            Err(error) => error,
+        };
+        let requests = server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::ResultUnknown);
+        assert_eq!(requests.len(), 3);
     }
 
     #[tokio::test]
@@ -2494,7 +2741,7 @@ mod tests {
                 200,
                 json!({
                     "success": false,
-                    "message": "鏃堕棿璺ㄥ害涓嶈兘瓒呰繃 1 涓湀"
+                    "message": "时间跨度不能超过 1 个月"
                 }),
             )),
             Some(json_response(

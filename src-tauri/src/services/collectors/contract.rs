@@ -81,6 +81,7 @@ pub struct CollectorCapabilityDescriptor {
 pub struct RemoteKeyCapabilityDescriptor {
     pub supports_list: bool,
     pub supports_create: bool,
+    pub supports_delete: bool,
     pub supports_reveal: bool,
     pub supports_result_unknown_reconciliation: bool,
 }
@@ -245,6 +246,14 @@ pub struct RevealRemoteKeyRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct DeleteRemoteKeyRequest {
+    pub station: StationIdentity,
+    pub endpoints: ProviderEndpoints,
+    pub credential: OpaqueCredentialHandle,
+    pub remote_key_id: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct RemoteKeyOutput {
     pub keys: Vec<RemoteStationKey>,
     pub evidence: Vec<EndpointEvidence>,
@@ -261,6 +270,13 @@ pub struct RevealedRemoteKeyOutput {
 pub struct CreatedRemoteKeyOutput {
     pub remote_key: RemoteStationKey,
     pub full_key_once: RemoteKeySecret,
+    pub evidence: Vec<EndpointEvidence>,
+    pub diagnostics: RedactedDiagnostics,
+}
+
+pub struct DeletedRemoteKeyOutput {
+    pub keys: Vec<RemoteStationKey>,
+    pub already_absent: bool,
     pub evidence: Vec<EndpointEvidence>,
     pub diagnostics: RedactedDiagnostics,
 }
@@ -337,6 +353,12 @@ pub trait RemoteKeyDriver: Send + Sync {
         context: &'a CollectorContext<'a>,
         request: CreateRemoteKeyRequest,
     ) -> BoxFuture<'a, Result<CreatedRemoteKeyOutput, DriverFailure>>;
+
+    fn delete_remote_key<'a>(
+        &'a self,
+        context: &'a CollectorContext<'a>,
+        request: DeleteRemoteKeyRequest,
+    ) -> BoxFuture<'a, Result<DeletedRemoteKeyOutput, DriverFailure>>;
 }
 
 pub trait AuthorizationDriver: Send + Sync {
