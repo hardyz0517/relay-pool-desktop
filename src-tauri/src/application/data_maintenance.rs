@@ -191,6 +191,22 @@ impl DataMaintenanceCoordinator {
         proxy: Option<&ProxyRuntimeState>,
         deadline: Duration,
     ) -> Result<ActivationFreezeEvidence, DataMaintenanceError> {
+        let evidence = self
+            .freeze_dependencies_for_activation(lease, runtime, operations, runner, proxy, deadline)
+            .await?;
+        self.commit_activation_lease(lease)?;
+        Ok(evidence)
+    }
+
+    pub(crate) async fn freeze_dependencies_for_activation(
+        &self,
+        lease: &DataMaintenanceLease,
+        runtime: &PersistenceRuntime,
+        operations: &OperationRegistry,
+        runner: Option<&StationCollectorRunnerState>,
+        proxy: Option<&ProxyRuntimeState>,
+        deadline: Duration,
+    ) -> Result<ActivationFreezeEvidence, DataMaintenanceError> {
         if lease.activity != DataMaintenanceActivity::PrepareImport || !lease.active {
             return Err(DataMaintenanceError::InvalidTransition);
         }
@@ -215,9 +231,16 @@ impl DataMaintenanceCoordinator {
             .freeze_for_activation(deadline)
             .await
             .map_err(map_freeze_error)?;
+        Ok(evidence)
+    }
+
+    pub(crate) fn commit_activation_lease(
+        &self,
+        lease: &mut DataMaintenanceLease,
+    ) -> Result<(), DataMaintenanceError> {
         self.commit_activation(lease.lease_id)?;
         lease.active = false;
-        Ok(evidence)
+        Ok(())
     }
 }
 

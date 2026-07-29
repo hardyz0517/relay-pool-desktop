@@ -16,8 +16,21 @@ use crate::{
             PortableImportPrepareArtifact, PortableImportPrepareRequest,
         },
     },
+    background_tasks::OperationRegistry,
+    persistence::{
+        runtime::{ActivationFreezeEvidence, PersistenceRuntime},
+        validate_read_only_sqlite,
+    },
     services::portable_migration::{
+        activation_journal::{
+            write_prepared_journal, PortableActivationArtifact, PortableActivationJournal,
+            PortableActivationJournalError,
+        },
         age_envelope::{AgeEnvelopeError, AgeEnvelopeOptions},
+        fault::{
+            NoPortableActivationFaults, PortableActivationFault, PortableActivationFaults,
+            PortableActivationStep,
+        },
         inspection_registry::{
             ImportInspectionError, ImportInspectionHandle, ImportInspectionRegistry,
             ImportInspectionSummary, ImportPreparationLease,
@@ -28,6 +41,14 @@ use crate::{
         validate::PortableMigrationValidationError,
     },
     services::secrets::rekey::SecretRekeyError,
+    services::{
+        data_store::{
+            backup::backup_selected_database_async,
+            file_identity::{identity_for_path, FileIdentityError},
+        },
+        proxy::runtime::ProxyRuntimeState,
+        station_collectors::StationCollectorRunnerState,
+    },
 };
 
 const FAILURE_BACKOFF_THRESHOLD: u8 = 5;
@@ -78,6 +99,125 @@ impl DataMigrationImportService {
             .inspections
             .consume(&request.inspected_import_id, request.now)?;
         build_target_from_inspection(&import_lease, &request).await
+    }
+
+    pub(crate) async fn prepare_portable_import_for_activation(
+        &self,
+        request: PortableImportActivationPrepareRequest,
+        runtime: &PersistenceRuntime,
+        operations: &OperationRegistry,
+        runner: Option<&StationCollectorRunnerState>,
+        proxy: Option<&ProxyRuntimeState>,
+    ) -> Result<PortableImportActivationPrepareResult, DataMigrationImportError> {
+        self.prepare_portable_import_for_activation_with_faults(
+            request,
+            runtime,
+            operations,
+            runner,
+            proxy,
+            &NoPortableActivationFaults,
+        )
+        .await
+    }
+
+    async fn prepare_portable_import_for_activation_with_faults(
+        &self,
+        request: PortableImportActivationPrepareRequest,
+        runtime: &PersistenceRuntime,
+        operations: &OperationRegistry,
+        runner: Option<&StationCollectorRunnerState>,
+        proxy: Option<&ProxyRuntimeState>,
+        faults: &dyn PortableActivationFaults,
+    ) -> Result<PortableImportActivationPrepareResult, DataMigrationImportError> {
+        validate_import_mode(request.import.mode, &request.import.confirmation_text)?;
+        let mut lease = self
+            .maintenance
+            .begin(DataMaintenanceActivity::PrepareImport)?;
+        if request.import.mode == PortableImportMode::RestoreIntoEmpty {
+            ensure_restore_target_is_empty(&request.import.active_database_path).await?;
+        }
+        let import_lease = self
+            .inspections
+            .consume(&request.import.inspected_import_id, request.import.now)?;
+        let artifact = build_target_from_inspection(&import_lease, &request.import).await?;
+        validate_read_only_sqlite(&artifact.target_database_path)
+            .await
+            .map_err(DataMigrationImportError::Persistence)?;
+        let staged_identity = identity_for_path(&artifact.target_database_path)?;
+        if staged_identity.sha256 != artifact.target_sha256 {
+            return Err(DataMigrationImportError::ActiveIdentityChanged);
+        }
+        faults.check(PortableActivationStep::TargetValidated)?;
+
+        let backup = backup_selected_database_async(
+            &request.import.active_database_path,
+            &request.default_app_data_dir,
+        )
+        .await
+        .map_err(DataMigrationImportError::Backup)?;
+        faults.check(PortableActivationStep::BackupVerified)?;
+        faults.check(PortableActivationStep::BeforeFreeze)?;
+
+        let freeze = self
+            .maintenance
+            .freeze_dependencies_for_activation(
+                &lease,
+                runtime,
+                operations,
+                runner,
+                proxy,
+                request.freeze_deadline,
+            )
+            .await?;
+        let active_after = identity_for_path(&request.import.active_database_path)?;
+        let active_stable = identity_for_path(&request.import.active_database_path)?;
+        faults.check(PortableActivationStep::AfterFreeze)?;
+        if active_after != active_stable {
+            let _ = self.maintenance.commit_activation_lease(&mut lease);
+            return Err(DataMigrationImportError::ActiveIdentityChanged);
+        }
+
+        let journal = PortableActivationJournal::prepared(
+            uuid::Uuid::now_v7().to_string(),
+            import_mode_code(request.import.mode).to_string(),
+            artifact.target_key_id.clone(),
+            PortableActivationArtifact::from_identity(
+                request.import.active_database_path.clone(),
+                &active_after,
+            ),
+            PortableActivationArtifact::from_identity(
+                artifact.target_database_path.clone(),
+                &staged_identity,
+            ),
+            PortableActivationArtifact::from_identity(backup.backup_path.clone(), &backup.identity),
+        )?;
+        if let Err(error) = faults.check(PortableActivationStep::BeforeJournalPublish) {
+            let _ = self.maintenance.commit_activation_lease(&mut lease);
+            return Err(error.into());
+        }
+        let journal_write: Result<(), DataMigrationImportError> =
+            write_prepared_journal(&request.app_config_dir, &journal)
+                .map_err(DataMigrationImportError::from)
+                .and_then(|_| {
+                    faults
+                        .check(PortableActivationStep::AfterJournalPublish)
+                        .map_err(DataMigrationImportError::from)
+                });
+        match journal_write {
+            Ok(()) => {
+                self.maintenance.commit_activation_lease(&mut lease)?;
+                Ok(PortableImportActivationPrepareResult {
+                    restart_required: true,
+                    artifact,
+                    backup_path: backup.backup_path,
+                    freeze,
+                })
+            }
+            Err(error) => {
+                let _ = self.maintenance.commit_activation_lease(&mut lease);
+                Err(error.into())
+            }
+        }
     }
 
     async fn inspect_portable_package_with_options(
@@ -184,6 +324,29 @@ impl DataMigrationImportService {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PortableImportActivationPrepareRequest {
+    pub(crate) import: PortableImportPrepareRequest,
+    pub(crate) app_config_dir: PathBuf,
+    pub(crate) default_app_data_dir: PathBuf,
+    pub(crate) freeze_deadline: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PortableImportActivationPrepareResult {
+    pub(crate) restart_required: bool,
+    pub(crate) artifact: PortableImportPrepareArtifact,
+    pub(crate) backup_path: PathBuf,
+    pub(crate) freeze: ActivationFreezeEvidence,
+}
+
+fn import_mode_code(mode: PortableImportMode) -> &'static str {
+    match mode {
+        PortableImportMode::RestoreIntoEmpty => "restoreIntoEmpty",
+        PortableImportMode::ReplaceCurrent => "replaceCurrent",
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PortableImportInspectionRequest {
     pub(crate) import_token: PathTokenId,
@@ -221,6 +384,18 @@ pub(crate) enum DataMigrationImportError {
     RestoreTargetNotEmpty,
     #[error("data migration import inspection is temporarily blocked")]
     TemporarilyBlocked,
+    #[error("data migration verified backup failed")]
+    Backup(String),
+    #[error("data migration active database identity changed after backup")]
+    ActiveIdentityChanged,
+    #[error("data migration file identity failed")]
+    FileIdentity(#[from] FileIdentityError),
+    #[error("data migration activation journal failed")]
+    ActivationJournal(#[from] PortableActivationJournalError),
+    #[error("data migration persistence operation failed")]
+    Persistence(#[from] crate::persistence::error::PersistenceError),
+    #[error("data migration activation fault injected")]
+    ActivationFault(#[from] PortableActivationFault),
 }
 
 #[cfg(test)]
@@ -239,17 +414,22 @@ mod tests {
 
     use super::*;
     use crate::{
+        application::data_maintenance::DataMaintenanceState,
         application::data_migration::export_service::{
             DataMigrationExportService, PortableExportRequest,
         },
         application::data_migration::import_prepare::{
             PortableImportMode, PortableImportPrepareRequest, REPLACE_CURRENT_CONFIRMATION,
         },
+        background_tasks::{OperationRegistry, OperationRegistryConfig},
         models::secrets::canonical_secret_aad,
+        persistence::{error::PersistenceError, runtime::PersistenceRuntime},
         services::{
             data_store::file_identity::identity_for_path,
             portable_migration::{
+                activation_journal::{read_journal, PortableActivationPhase},
                 age_envelope::encrypt_framed_payload,
+                fault::{InjectPortableActivationFault, PortableActivationStep},
                 format::{
                     build_manifest_v1, PortableMigrationManifest, PortableMigrationManifestInput,
                     TransportKeyMaterial,
@@ -769,6 +949,150 @@ mod tests {
             .expect("exact confirmation allows replace preparation");
     }
 
+    #[tokio::test]
+    async fn activation_prepare_creates_verified_backup_freezes_runtime_and_writes_prepared_journal(
+    ) {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let active = directory.path().join("relay-pool-desktop-v2.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&active)
+            .await
+            .expect("runtime");
+        let package = valid_package(directory.path(), "move-passphrase").await;
+        let service = service();
+        let handle = inspect_package(&service, &package, directory.path()).await;
+        let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
+
+        let result = service
+            .prepare_portable_import_for_activation(
+                activation_request(
+                    &handle,
+                    &active,
+                    &directory.path().join("prepared-target.sqlite3"),
+                    directory.path(),
+                    PortableImportMode::RestoreIntoEmpty,
+                    "",
+                ),
+                &runtime,
+                &operations,
+                None,
+                None,
+            )
+            .await
+            .expect("activation prepared");
+
+        assert!(result.restart_required);
+        assert!(result.backup_path.is_file());
+        assert_eq!(result.freeze.database_path, active);
+        assert_eq!(
+            service.maintenance.state(),
+            DataMaintenanceState::ActivationPending
+        );
+        assert!(matches!(
+            runtime.handle().begin_write().await,
+            Err(PersistenceError::RuntimeUnavailable)
+        ));
+        let journal = read_journal(directory.path())
+            .expect("read journal")
+            .expect("journal");
+        assert_eq!(journal.payload.phase, PortableActivationPhase::Prepared);
+        assert_eq!(
+            journal.payload.active.sha256,
+            identity_for_path(&active).unwrap().sha256
+        );
+        assert_eq!(journal.payload.staged.sha256, result.artifact.target_sha256);
+        assert_eq!(
+            journal.payload.target_device_key_id,
+            result.artifact.target_key_id
+        );
+    }
+
+    #[tokio::test]
+    async fn activation_prepare_backup_failure_happens_before_freeze_and_journal() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let active = directory.path().join("active.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&active)
+            .await
+            .expect("runtime");
+        let package = valid_package(directory.path(), "move-passphrase").await;
+        let service = service();
+        let handle = inspect_package(&service, &package, directory.path()).await;
+        let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
+
+        let error = service
+            .prepare_portable_import_for_activation(
+                activation_request(
+                    &handle,
+                    &active,
+                    &directory.path().join("backup-fail-target.sqlite3"),
+                    directory.path(),
+                    PortableImportMode::RestoreIntoEmpty,
+                    "",
+                ),
+                &runtime,
+                &operations,
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, DataMigrationImportError::Backup(_)));
+        assert_eq!(service.maintenance.state(), DataMaintenanceState::Normal);
+        assert!(runtime.handle().begin_write().await.is_ok());
+        assert!(read_journal(directory.path())
+            .expect("read absent journal")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn activation_prepare_freeze_after_failure_keeps_process_rejecting_writes_until_restart()
+    {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let active = directory.path().join("relay-pool-desktop-v2.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&active)
+            .await
+            .expect("runtime");
+        let package = valid_package(directory.path(), "move-passphrase").await;
+        let service = service();
+        let handle = inspect_package(&service, &package, directory.path()).await;
+        let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
+
+        let error = service
+            .prepare_portable_import_for_activation_with_faults(
+                activation_request(
+                    &handle,
+                    &active,
+                    &directory.path().join("journal-fail-target.sqlite3"),
+                    directory.path(),
+                    PortableImportMode::RestoreIntoEmpty,
+                    "",
+                ),
+                &runtime,
+                &operations,
+                None,
+                None,
+                &InjectPortableActivationFault::at(PortableActivationStep::BeforeJournalPublish),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            DataMigrationImportError::ActivationFault(_)
+        ));
+        assert_eq!(
+            service.maintenance.state(),
+            DataMaintenanceState::ActivationPending
+        );
+        assert!(matches!(
+            runtime.handle().begin_write().await,
+            Err(PersistenceError::RuntimeUnavailable)
+        ));
+        assert!(read_journal(directory.path())
+            .expect("read absent journal")
+            .is_none());
+    }
+
     fn service() -> DataMigrationImportService {
         DataMigrationImportService::new(
             DataMaintenanceCoordinator::new(),
@@ -808,6 +1132,29 @@ mod tests {
             target_keys,
             target_updated_at: "1234567890".to_string(),
             now: Instant::now(),
+        }
+    }
+
+    fn activation_request(
+        handle: &ImportInspectionHandle,
+        active_database_path: &Path,
+        target_database_path: &Path,
+        root: &Path,
+        mode: PortableImportMode,
+        confirmation_text: &str,
+    ) -> PortableImportActivationPrepareRequest {
+        PortableImportActivationPrepareRequest {
+            import: prepare_request(
+                handle,
+                active_database_path,
+                target_database_path,
+                mode,
+                confirmation_text,
+                resolver("target-device-key", [13; 32]),
+            ),
+            app_config_dir: root.to_path_buf(),
+            default_app_data_dir: root.to_path_buf(),
+            freeze_deadline: Duration::from_secs(1),
         }
     }
 

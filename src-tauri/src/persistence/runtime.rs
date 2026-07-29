@@ -641,4 +641,39 @@ mod tests {
             Err(PersistenceError::RuntimeUnavailable)
         ));
     }
+
+    #[tokio::test]
+    async fn wal_freeze_checkpoints_and_removes_sqlite_sidecars() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let path = root.path().join("runtime.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("initialize runtime");
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wal_freeze_canary', '1', '1')",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("write canary");
+
+        let evidence = runtime
+            .freeze_for_activation(Duration::from_secs(1))
+            .await
+            .expect("freeze");
+
+        assert_eq!(evidence.database_path, path);
+        assert!(!evidence.wal_path.exists());
+        assert!(!evidence.shm_path.exists());
+        assert!(matches!(
+            runtime.begin_write().await,
+            Err(PersistenceError::RuntimeUnavailable)
+        ));
+    }
 }

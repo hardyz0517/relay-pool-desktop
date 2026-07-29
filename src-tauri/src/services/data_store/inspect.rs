@@ -18,10 +18,30 @@ pub(crate) fn inspect_candidate(
     path: &Path,
     role: CandidateRole,
 ) -> Result<InspectedDataStoreCandidate, String> {
-    inspect_with_quick_check(path, role, None)
+    tauri::async_runtime::block_on(inspect_candidate_async(path, role))
 }
 
+pub(crate) async fn inspect_candidate_async(
+    path: &Path,
+    role: CandidateRole,
+) -> Result<InspectedDataStoreCandidate, String> {
+    inspect_with_quick_check_async(path, role, None).await
+}
+
+#[cfg(test)]
 fn inspect_with_quick_check(
+    path: &Path,
+    role: CandidateRole,
+    quick_check_override: Option<String>,
+) -> Result<InspectedDataStoreCandidate, String> {
+    tauri::async_runtime::block_on(inspect_with_quick_check_async(
+        path,
+        role,
+        quick_check_override,
+    ))
+}
+
+async fn inspect_with_quick_check_async(
     path: &Path,
     role: CandidateRole,
     quick_check_override: Option<String>,
@@ -95,9 +115,9 @@ fn inspect_with_quick_check(
         ));
     }
 
-    let inspection: ReadOnlyDatabaseInspection =
-        tauri::async_runtime::block_on(inspect_relay_pool_database(path))
-            .map_err(|error| format!("failed to inspect candidate database: {error}"))?;
+    let inspection: ReadOnlyDatabaseInspection = inspect_relay_pool_database(path)
+        .await
+        .map_err(|error| format!("failed to inspect candidate database: {error}"))?;
     let health = match inspection.health {
         ReadOnlyDatabaseHealth::Healthy => CandidateHealth::Healthy,
         ReadOnlyDatabaseHealth::IntegrityFailed => CandidateHealth::IntegrityFailed,
