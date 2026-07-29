@@ -92,9 +92,7 @@ impl SettingsService {
     }
 
     pub(crate) async fn ensure_local_access_key(&self) -> Result<String, ApplicationError> {
-        let mut random = [0_u8; 32];
-        OsRng.fill_bytes(&mut random);
-        let generated = format!("sk-local-{}", URL_SAFE_NO_PAD.encode(random));
+        let generated = generate_local_access_key();
         let store = self.store;
         let now = self.now_ms_string();
         let vault = self.vault.clone();
@@ -221,6 +219,12 @@ impl SettingsService {
             .map(|projection| projection.clone())
             .map_err(|_| ApplicationError::Internal)
     }
+}
+
+pub(crate) fn generate_local_access_key() -> String {
+    let mut random = [0_u8; 32];
+    OsRng.fill_bytes(&mut random);
+    format!("sk-local-{}", URL_SAFE_NO_PAD.encode(random))
 }
 
 fn local_access_key_ref(ids: &dyn IdGenerator) -> SecretRef {

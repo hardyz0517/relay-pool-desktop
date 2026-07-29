@@ -1,0 +1,119 @@
+use std::path::Path;
+
+use sqlx::{Connection, Row};
+
+use crate::services::portable_migration::{
+    catalog::{migration_data_catalog, setting_policy},
+    validate::{open_read_only_sqlite, quote_identifier, PortableMigrationValidationError},
+};
+
+use super::import_service::DataMigrationImportError;
+
+pub(crate) async fn ensure_restore_target_is_empty(
+    active_database_path: &Path,
+) -> Result<(), DataMigrationImportError> {
+    let mut connection = open_read_only_sqlite(active_database_path).await?;
+
+    for table in migration_data_catalog()
+        .iter()
+        .filter(|table| table.counts_for_occupancy)
+    {
+        match table.name {
+            "settings" => ensure_known_settings_only(&mut connection).await?,
+            "secrets" => ensure_no_non_device_secret(&mut connection).await?,
+            "app_secret_bindings" => ensure_no_non_device_secret_binding(&mut connection).await?,
+            table_name => ensure_table_has_no_rows(&mut connection, table_name).await?,
+        }
+    }
+
+    connection
+        .close()
+        .await
+        .map_err(|_| PortableMigrationValidationError::Sql)?;
+    Ok(())
+}
+
+async fn ensure_known_settings_only(
+    connection: &mut sqlx::SqliteConnection,
+) -> Result<(), DataMigrationImportError> {
+    let rows = sqlx::query("SELECT key FROM settings")
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|_| PortableMigrationValidationError::Sql)?;
+    for row in rows {
+        let key: String = row.get("key");
+        if setting_policy(&key).is_none() {
+            return Err(DataMigrationImportError::RestoreTargetNotEmpty);
+        }
+    }
+    Ok(())
+}
+
+async fn ensure_no_non_device_secret(
+    connection: &mut sqlx::SqliteConnection,
+) -> Result<(), DataMigrationImportError> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM secrets
+        WHERE NOT (scope = 'settings' AND owner_id = 'local_key' AND kind = 'local_access_key')
+        "#,
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|_| PortableMigrationValidationError::Sql)?;
+    if count == 0 {
+        Ok(())
+    } else {
+        Err(DataMigrationImportError::RestoreTargetNotEmpty)
+    }
+}
+
+async fn ensure_no_non_device_secret_binding(
+    connection: &mut sqlx::SqliteConnection,
+) -> Result<(), DataMigrationImportError> {
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM app_secret_bindings
+        WHERE NOT (
+            binding_scope = 'settings'
+            AND binding_owner_id = 'local_key'
+            AND binding_kind = 'local_access_key'
+        )
+        "#,
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|_| PortableMigrationValidationError::Sql)?;
+    if count == 0 {
+        Ok(())
+    } else {
+        Err(DataMigrationImportError::RestoreTargetNotEmpty)
+    }
+}
+
+async fn ensure_table_has_no_rows(
+    connection: &mut sqlx::SqliteConnection,
+    table_name: &str,
+) -> Result<(), DataMigrationImportError> {
+    if occupancy_table_count(connection, table_name).await? == 0 {
+        Ok(())
+    } else {
+        Err(DataMigrationImportError::RestoreTargetNotEmpty)
+    }
+}
+
+async fn occupancy_table_count(
+    connection: &mut sqlx::SqliteConnection,
+    table_name: &str,
+) -> Result<usize, DataMigrationImportError> {
+    let sql = format!("SELECT COUNT(*) FROM {}", quote_identifier(table_name)?);
+    let count: i64 = sqlx::query_scalar(&sql)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|_| PortableMigrationValidationError::Sql)?;
+    usize::try_from(count).map_err(|_| {
+        DataMigrationImportError::Validation(PortableMigrationValidationError::UnsupportedSchema)
+    })
+}

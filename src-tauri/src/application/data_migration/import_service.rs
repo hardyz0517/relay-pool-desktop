@@ -8,17 +8,26 @@ use std::{
 use zeroize::Zeroizing;
 
 use crate::{
-    application::data_maintenance::{DataMaintenanceActivity, DataMaintenanceCoordinator},
+    application::{
+        data_maintenance::{DataMaintenanceActivity, DataMaintenanceCoordinator},
+        data_migration::import_occupancy::ensure_restore_target_is_empty,
+        data_migration::import_prepare::{
+            build_target_from_inspection, validate_import_mode, PortableImportMode,
+            PortableImportPrepareArtifact, PortableImportPrepareRequest,
+        },
+    },
     services::portable_migration::{
         age_envelope::{AgeEnvelopeError, AgeEnvelopeOptions},
         inspection_registry::{
-            ImportInspectionHandle, ImportInspectionRegistry, ImportInspectionSummary,
-            ImportPreparationLease,
+            ImportInspectionError, ImportInspectionHandle, ImportInspectionRegistry,
+            ImportInspectionSummary, ImportPreparationLease,
         },
         path_tokens::{PathTokenError, PathTokenId, PathTokenRegistry},
         schema_reader::ordered_import_tables_v1,
         staging::{stage_and_verify_import_package, PortablePackageStagingError},
+        validate::PortableMigrationValidationError,
     },
+    services::secrets::rekey::SecretRekeyError,
 };
 
 const FAILURE_BACKOFF_THRESHOLD: u8 = 5;
@@ -52,6 +61,23 @@ impl DataMigrationImportService {
     ) -> Result<ImportInspectionHandle, DataMigrationImportError> {
         self.inspect_portable_package_with_options(request, AgeEnvelopeOptions::CURRENT)
             .await
+    }
+
+    pub(crate) async fn prepare_portable_import(
+        &self,
+        request: PortableImportPrepareRequest,
+    ) -> Result<PortableImportPrepareArtifact, DataMigrationImportError> {
+        validate_import_mode(request.mode, &request.confirmation_text)?;
+        let _lease = self
+            .maintenance
+            .begin(DataMaintenanceActivity::PrepareImport)?;
+        if request.mode == PortableImportMode::RestoreIntoEmpty {
+            ensure_restore_target_is_empty(&request.active_database_path).await?;
+        }
+        let import_lease = self
+            .inspections
+            .consume(&request.inspected_import_id, request.now)?;
+        build_target_from_inspection(&import_lease, &request).await
     }
 
     async fn inspect_portable_package_with_options(
@@ -179,10 +205,20 @@ pub(crate) enum DataMigrationImportError {
     Maintenance(#[from] crate::application::data_maintenance::DataMaintenanceError),
     #[error("data migration import path token failed")]
     PathToken(#[from] PathTokenError),
+    #[error("data migration import inspection handle failed")]
+    Inspection(#[from] ImportInspectionError),
     #[error("data migration package staging failed")]
     Package(#[from] PortablePackageStagingError),
     #[error("data migration package envelope failed")]
     Envelope(#[from] AgeEnvelopeError),
+    #[error("data migration validation failed")]
+    Validation(#[from] PortableMigrationValidationError),
+    #[error("data migration secret rekey failed")]
+    SecretRekey(#[from] SecretRekeyError),
+    #[error("data migration import confirmation text is invalid")]
+    ConfirmationTextMismatch,
+    #[error("data migration restore target is not empty")]
+    RestoreTargetNotEmpty,
     #[error("data migration import inspection is temporarily blocked")]
     TemporarilyBlocked,
 }
@@ -206,6 +242,10 @@ mod tests {
         application::data_migration::export_service::{
             DataMigrationExportService, PortableExportRequest,
         },
+        application::data_migration::import_prepare::{
+            PortableImportMode, PortableImportPrepareRequest, REPLACE_CURRENT_CONFIRMATION,
+        },
+        models::secrets::canonical_secret_aad,
         services::{
             data_store::file_identity::identity_for_path,
             portable_migration::{
@@ -217,7 +257,12 @@ mod tests {
                 schema_reader::ordered_import_tables_v1,
                 validate::PortableMigrationValidationError,
             },
-            secrets::DeviceKeyResolver,
+            secrets::{
+                crypto::{decrypt_secret, encrypt_secret, EncryptedPayload},
+                rekey::TransportSecretKey,
+                DeviceKeyId, DeviceKeyResolver, SecretKeyMaterial,
+                CURRENT_SECRET_ENCRYPTION_VERSION,
+            },
         },
     };
 
@@ -494,6 +539,236 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn portable_import_target_rebuilds_restore_into_empty_with_target_key() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let active = directory.path().join("active.sqlite3");
+        let target = directory.path().join("target.sqlite3");
+        crate::persistence::migrations::initialize_v2_database(&active)
+            .await
+            .expect("active db");
+        let active_before = identity_for_path(&active).expect("active before");
+        let fixture = valid_package_with_station_secret(directory.path(), "move-passphrase").await;
+        let service = service();
+        let handle = inspect_package(&service, &fixture.package, directory.path()).await;
+        let target_keys = resolver("target-device-key", [13; 32]);
+
+        let artifact = service
+            .prepare_portable_import(prepare_request(
+                &handle,
+                &active,
+                &target,
+                PortableImportMode::RestoreIntoEmpty,
+                "",
+                target_keys,
+            ))
+            .await
+            .expect("prepare import");
+
+        assert_eq!(artifact.target_database_path, target);
+        assert_eq!(artifact.target_key_id, "target-device-key");
+        assert_eq!(artifact.rekey_report.included_rows, 1);
+        assert_eq!(artifact.row_counts.get("station_keys"), Some(&1));
+        assert_eq!(
+            identity_for_path(&active).expect("active after"),
+            active_before,
+            "prepare must not mutate the active database"
+        );
+        let mut connection = SqliteConnection::connect(&format!("sqlite:{}", target.display()))
+            .await
+            .expect("target connect");
+        let local_key: String =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key = 'local_key'")
+                .fetch_one(&mut connection)
+                .await
+                .expect("local key");
+        let start_on_launch: String = sqlx::query_scalar(
+            "SELECT value FROM settings WHERE key = 'local_proxy_start_on_launch'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("start setting");
+        let secret_key_id: String =
+            sqlx::query_scalar("SELECT key_id FROM secrets WHERE id = 'secret-1'")
+                .fetch_one(&mut connection)
+                .await
+                .expect("secret key id");
+        connection.close().await.expect("target close");
+
+        assert!(local_key.starts_with("sk-local-"));
+        assert_eq!(start_on_launch, "false");
+        assert_eq!(secret_key_id, "target-device-key");
+        assert!(!artifact.target_sha256.is_empty());
+    }
+
+    #[tokio::test]
+    async fn portable_import_three_keys_isolates_source_transport_and_target() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let active = directory.path().join("active.sqlite3");
+        let target = directory.path().join("target.sqlite3");
+        crate::persistence::migrations::initialize_v2_database(&active)
+            .await
+            .expect("active db");
+        let fixture = valid_package_with_station_secret(directory.path(), "move-passphrase").await;
+        let service = service();
+        let handle = inspect_package(&service, &fixture.package, directory.path()).await;
+        let target_keys = resolver("target-device-key", [13; 32]);
+
+        service
+            .prepare_portable_import(prepare_request(
+                &handle,
+                &active,
+                &target,
+                PortableImportMode::RestoreIntoEmpty,
+                "",
+                target_keys.clone(),
+            ))
+            .await
+            .expect("prepare import");
+
+        let payload = read_secret_payload(&target).await;
+        let aad = canonical_secret_aad(
+            "station_key",
+            "key-1",
+            "api_key",
+            CURRENT_SECRET_ENCRYPTION_VERSION,
+        );
+        let payload = EncryptedPayload { aad, ..payload };
+        target_keys
+            .with_active_key(|key| {
+                assert_eq!(
+                    decrypt_secret(key, &payload).expect("target decrypts"),
+                    fixture.plaintext
+                );
+            })
+            .expect("target key");
+        fixture
+            .source_key
+            .with_active_key(|key| assert!(decrypt_secret(key, &payload).is_err()))
+            .expect("source key");
+        fixture
+            .transport_key
+            .with_key(|key| assert!(decrypt_secret(key, &payload).is_err()))
+            .expect("transport key");
+    }
+
+    #[tokio::test]
+    async fn migration_occupancy_rejects_non_empty_user_tables_unknown_settings_and_drafts() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let fixture = valid_package(directory.path(), "move-passphrase").await;
+
+        let unknown_setting = directory.path().join("unknown-setting.sqlite3");
+        crate::persistence::migrations::initialize_v2_database(&unknown_setting)
+            .await
+            .expect("active db");
+        execute_sql(
+            &unknown_setting,
+            "INSERT INTO settings (key, value, updated_at) VALUES ('future_setting', '1', '1')",
+        )
+        .await;
+        assert_restore_occupancy_rejected(directory.path(), &fixture, &unknown_setting).await;
+
+        let provider_draft = directory.path().join("provider-draft.sqlite3");
+        crate::persistence::migrations::initialize_v2_database(&provider_draft)
+            .await
+            .expect("active db");
+        execute_sql(
+            &provider_draft,
+            r#"
+            INSERT INTO provider_drafts (
+                id, revision, state, payload_schema_version, payload_json,
+                commit_key, created_at, updated_at, expires_at
+            ) VALUES ('draft-1', 1, 'active', 1, '{}', 'commit-1', '1', '1', '2')
+            "#,
+        )
+        .await;
+        assert_restore_occupancy_rejected(directory.path(), &fixture, &provider_draft).await;
+
+        let non_device_secret = directory.path().join("non-device-secret.sqlite3");
+        crate::persistence::migrations::initialize_v2_database(&non_device_secret)
+            .await
+            .expect("active db");
+        execute_sql(
+            &non_device_secret,
+            r#"
+            INSERT INTO secrets (
+                id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                created_at, updated_at, key_id, encryption_version, value_hash
+            ) VALUES (
+                'secret-x', 'station_key', 'key-x', 'api_key', 'sk-...xxxx',
+                X'01', X'02030405060708090A0B0C0D', '1', '1', 'key-x', 1, 'hash'
+            )
+            "#,
+        )
+        .await;
+        assert_restore_occupancy_rejected(directory.path(), &fixture, &non_device_secret).await;
+
+        let station_data = directory.path().join("station-data.sqlite3");
+        crate::persistence::migrations::initialize_v2_database(&station_data)
+            .await
+            .expect("active db");
+        execute_sql(
+            &station_data,
+            r#"
+            INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url, created_at, updated_at
+            ) VALUES ('station-x', 'Station X', 'openai', 'https://example.test', 'https://api.example.test', '1', '1')
+            "#,
+        )
+        .await;
+        assert_restore_occupancy_rejected(directory.path(), &fixture, &station_data).await;
+    }
+
+    #[tokio::test]
+    async fn portable_import_target_replace_current_requires_exact_confirmation_text() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let active = directory.path().join("active.sqlite3");
+        crate::persistence::migrations::initialize_v2_database(&active)
+            .await
+            .expect("active db");
+        execute_sql(
+            &active,
+            r#"
+            INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url, created_at, updated_at
+            ) VALUES ('station-x', 'Station X', 'openai', 'https://example.test', 'https://api.example.test', '1', '1')
+            "#,
+        )
+        .await;
+        let package = valid_package(directory.path(), "move-passphrase").await;
+        let service = service();
+        let handle = inspect_package(&service, &package, directory.path()).await;
+        let target_keys = resolver("target-device-key", [13; 32]);
+
+        let padded = service
+            .prepare_portable_import(prepare_request(
+                &handle,
+                &active,
+                &directory.path().join("padded.sqlite3"),
+                PortableImportMode::ReplaceCurrent,
+                " 替换当前数据 ",
+                target_keys.clone(),
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            padded,
+            DataMigrationImportError::ConfirmationTextMismatch
+        ));
+
+        service
+            .prepare_portable_import(prepare_request(
+                &handle,
+                &active,
+                &directory.path().join("replace.sqlite3"),
+                PortableImportMode::ReplaceCurrent,
+                REPLACE_CURRENT_CONFIRMATION,
+                target_keys,
+            ))
+            .await
+            .expect("exact confirmation allows replace preparation");
+    }
+
     fn service() -> DataMigrationImportService {
         DataMigrationImportService::new(
             DataMaintenanceCoordinator::new(),
@@ -516,7 +791,110 @@ mod tests {
         }
     }
 
+    fn prepare_request(
+        handle: &ImportInspectionHandle,
+        active_database_path: &Path,
+        target_database_path: &Path,
+        mode: PortableImportMode,
+        confirmation_text: &str,
+        target_keys: DeviceKeyResolver,
+    ) -> PortableImportPrepareRequest {
+        PortableImportPrepareRequest {
+            inspected_import_id: handle.id.clone(),
+            active_database_path: active_database_path.to_path_buf(),
+            target_database_path: target_database_path.to_path_buf(),
+            mode,
+            confirmation_text: confirmation_text.to_string(),
+            target_keys,
+            target_updated_at: "1234567890".to_string(),
+            now: Instant::now(),
+        }
+    }
+
+    async fn inspect_package(
+        service: &DataMigrationImportService,
+        package: &Path,
+        directory: &Path,
+    ) -> ImportInspectionHandle {
+        let token = service
+            .path_tokens
+            .approve_import_path(package, Instant::now())
+            .expect("token");
+        service
+            .inspect_portable_package_with_options(
+                request(
+                    token.id,
+                    directory.join(format!("scratch-{}", uuid::Uuid::now_v7())),
+                    "move-passphrase",
+                ),
+                AgeEnvelopeOptions::TEST_FAST,
+            )
+            .await
+            .expect("inspection")
+    }
+
+    async fn assert_restore_occupancy_rejected(
+        directory: &Path,
+        package: &Path,
+        active_database_path: &Path,
+    ) {
+        let service = service();
+        let handle = inspect_package(&service, package, directory).await;
+        let error = service
+            .prepare_portable_import(prepare_request(
+                &handle,
+                active_database_path,
+                &directory.join(format!("target-{}.sqlite3", uuid::Uuid::now_v7())),
+                PortableImportMode::RestoreIntoEmpty,
+                "",
+                resolver("target-device-key", [13; 32]),
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DataMigrationImportError::RestoreTargetNotEmpty
+        ));
+    }
+
     async fn valid_package(directory: &Path, passphrase: &str) -> PathBuf {
+        valid_package_fixture(directory, passphrase, None)
+            .await
+            .package
+    }
+
+    async fn valid_package_with_station_secret(
+        directory: &Path,
+        passphrase: &str,
+    ) -> PortablePackageFixture {
+        valid_package_fixture(
+            directory,
+            passphrase,
+            Some(SecretFixture {
+                source_key: resolver("source-device-key", [7; 32]),
+                plaintext: "sk-p8-test-secret-value-0001".to_string(),
+            }),
+        )
+        .await
+    }
+
+    struct PortablePackageFixture {
+        package: PathBuf,
+        source_key: DeviceKeyResolver,
+        transport_key: TransportSecretKey,
+        plaintext: String,
+    }
+
+    struct SecretFixture {
+        source_key: DeviceKeyResolver,
+        plaintext: String,
+    }
+
+    async fn valid_package_fixture(
+        directory: &Path,
+        passphrase: &str,
+        secret_fixture: Option<SecretFixture>,
+    ) -> PortablePackageFixture {
         let source = directory.join(format!("source-{}.sqlite3", uuid::Uuid::now_v7()));
         let package = directory.join(format!("portable-{}.rpd-move", uuid::Uuid::now_v7()));
         let portable = directory.join(format!("portable-{}.sqlite3", uuid::Uuid::now_v7()));
@@ -524,10 +902,20 @@ mod tests {
         crate::persistence::migrations::initialize_v2_database(&source)
             .await
             .expect("source db");
-        let service = DataMigrationExportService::new(
-            DataMaintenanceCoordinator::new(),
-            DeviceKeyResolver::for_test([7_u8; 32]),
-        );
+        let (source_key, plaintext) = match secret_fixture {
+            Some(secret_fixture) => {
+                insert_station_secret(
+                    &source,
+                    &secret_fixture.source_key,
+                    &secret_fixture.plaintext,
+                )
+                .await;
+                (secret_fixture.source_key, secret_fixture.plaintext)
+            }
+            None => (DeviceKeyResolver::for_test([7_u8; 32]), String::new()),
+        };
+        let service =
+            DataMigrationExportService::new(DataMaintenanceCoordinator::new(), source_key.clone());
         let artifact = service
             .export_portable_sqlite(
                 PortableExportRequest {
@@ -580,7 +968,107 @@ mod tests {
         )
         .expect("encrypt valid package");
         file.flush().expect("flush package");
-        package
+        PortablePackageFixture {
+            package,
+            source_key,
+            transport_key: artifact.transport_key,
+            plaintext,
+        }
+    }
+
+    async fn insert_station_secret(source: &Path, source_key: &DeviceKeyResolver, plaintext: &str) {
+        let encrypted = source_key
+            .with_active_key(|key| {
+                encrypt_secret(
+                    key,
+                    plaintext,
+                    &canonical_secret_aad(
+                        "station_key",
+                        "key-1",
+                        "api_key",
+                        CURRENT_SECRET_ENCRYPTION_VERSION,
+                    ),
+                )
+                .expect("encrypt fixture secret")
+            })
+            .expect("source key");
+        let ciphertext = general_purpose::STANDARD
+            .decode(encrypted.ciphertext)
+            .expect("ciphertext");
+        let nonce = general_purpose::STANDARD
+            .decode(encrypted.nonce)
+            .expect("nonce");
+        let mut connection = SqliteConnection::connect(&format!("sqlite:{}", source.display()))
+            .await
+            .expect("connect source");
+        sqlx::query(
+            r#"
+            INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url, created_at, updated_at
+            ) VALUES ('station-1', 'Station 1', 'openai', 'https://example.test', 'https://api.example.test', '1', '1')
+            "#,
+        )
+        .execute(&mut connection)
+        .await
+        .expect("station");
+        sqlx::query(
+            r#"
+            INSERT INTO secrets (
+                id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                created_at, updated_at, key_id, encryption_version, value_hash
+            ) VALUES (
+                'secret-1', 'station_key', 'key-1', 'api_key', 'sk-...0001',
+                ?1, ?2, '1', '1', ?3, ?4, ?5
+            )
+            "#,
+        )
+        .bind(ciphertext)
+        .bind(nonce)
+        .bind(source_key.active_key_id().as_str())
+        .bind(i64::from(CURRENT_SECRET_ENCRYPTION_VERSION))
+        .bind(encrypted.value_hash)
+        .execute(&mut connection)
+        .await
+        .expect("secret");
+        sqlx::query(
+            r#"
+            INSERT INTO station_keys (
+                id, station_id, name, api_key_secret_id, created_at, updated_at
+            ) VALUES ('key-1', 'station-1', 'Default Key', 'secret-1', '1', '1')
+            "#,
+        )
+        .execute(&mut connection)
+        .await
+        .expect("station key");
+        connection.close().await.expect("close source");
+    }
+
+    async fn read_secret_payload(target: &Path) -> EncryptedPayload {
+        let mut connection = SqliteConnection::connect(&format!("sqlite:{}", target.display()))
+            .await
+            .expect("target connect");
+        let row =
+            sqlx::query("SELECT ciphertext, nonce, value_hash FROM secrets WHERE id = 'secret-1'")
+                .fetch_one(&mut connection)
+                .await
+                .expect("secret");
+        connection.close().await.expect("target close");
+        let ciphertext: Vec<u8> = row.get("ciphertext");
+        let nonce: Vec<u8> = row.get("nonce");
+        EncryptedPayload {
+            ciphertext: general_purpose::STANDARD.encode(ciphertext),
+            nonce: general_purpose::STANDARD.encode(nonce),
+            aad: String::new(),
+            value_hash: row.get("value_hash"),
+        }
+    }
+
+    fn resolver(key_id: &str, material: [u8; 32]) -> DeviceKeyResolver {
+        DeviceKeyResolver::active(
+            DeviceKeyId::new(key_id),
+            SecretKeyMaterial::from_bytes(material),
+            CURRENT_SECRET_ENCRYPTION_VERSION,
+        )
     }
 
     fn encrypted_package_from_bytes(
