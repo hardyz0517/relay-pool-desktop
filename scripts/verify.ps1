@@ -105,8 +105,16 @@ try {
         Invoke-Checked "Release version contract" $pnpm @("verify:release-version", "--require-tag")
         Invoke-Checked "Locked Rust release build" cargo @("build", "--release", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--target", "x86_64-pc-windows-msvc")
         if ($ReleasePhase -eq "all") {
-            foreach ($name in @("TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD")) {
-                if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "$name is required for release bundling" }
+            $privateKey = [Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY")
+            $privateKeyPath = [Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY_PATH")
+            if ([string]::IsNullOrWhiteSpace($privateKey) -and [string]::IsNullOrWhiteSpace($privateKeyPath)) {
+                throw "TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH is required for release bundling"
+            }
+            if (-not [string]::IsNullOrWhiteSpace($privateKeyPath) -and -not (Test-Path -LiteralPath $privateKeyPath -PathType Leaf)) {
+                throw "TAURI_SIGNING_PRIVATE_KEY_PATH does not point to a file"
+            }
+            if ($null -eq [Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")) {
+                throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD must be set for non-interactive release bundling; use an empty value for a passwordless key"
             }
             Invoke-Checked "Signed Tauri bundle" $pnpm @("tauri:build", "--", "--target", "x86_64-pc-windows-msvc")
             Invoke-Checked "Final release bundle scan" $pnpm @("verify:release-bundle")

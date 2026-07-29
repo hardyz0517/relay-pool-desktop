@@ -9,7 +9,7 @@ const steps = workflow.jobs.release.steps;
 const actionIndex = steps.findIndex((step) => String(step.uses ?? "").startsWith("tauri-apps/tauri-action@"));
 const prebundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase prebundle"));
 const postbundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase postbundle"));
-const tagCheckIndex = steps.findIndex((step) => String(step.run ?? "").includes("verify:release-version -- --require-tag"));
+const tagCheckIndex = steps.findIndex((step) => String(step.run ?? "").includes("verify:release-version --require-tag"));
 
 assert.equal(pkg.scripts["test:contracts"], "node scripts/run-contract-tests.mjs");
 assert.equal(pkg.scripts["verify:release-version"], "node scripts/verify-release-version.mjs");
@@ -31,6 +31,10 @@ for (const required of [
 }
 
 assert.ok(tagCheckIndex >= 0 && prebundleIndex > tagCheckIndex, "tag/source mismatch must fail before full prebundle verification");
+assert.ok(
+  !steps.some((step) => String(step.run ?? "").includes("verify:release-version -- --require-tag")),
+  "release workflow must not forward a literal -- to the release version script",
+);
 assert.ok(actionIndex > prebundleIndex, "signed packaging must run only after shared prebundle verification");
 assert.ok(postbundleIndex > actionIndex, "final artifact scan must run after Tauri packaging");
 assert.equal(steps[actionIndex].with.tagName, "${{ github.ref_name }}");
