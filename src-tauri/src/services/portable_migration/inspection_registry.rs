@@ -5,6 +5,8 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    fs,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -13,7 +15,10 @@ use rand::{rngs::OsRng, RngCore};
 
 use crate::services::{
     data_store::file_identity::FileIdentity,
-    portable_migration::format::{PortableMigrationManifest, TransportKeyMaterial},
+    portable_migration::{
+        format::{PortableMigrationManifest, TransportKeyMaterial},
+        schema_reader::PortableReaderKind,
+    },
 };
 
 const INSPECTION_TTL: Duration = Duration::from_secs(10 * 60);
@@ -176,17 +181,34 @@ pub(crate) struct ImportInspectionHandle {
 #[derive(Debug)]
 pub(crate) struct ImportPreparationLease {
     pub(crate) source_identity: FileIdentity,
+    pub(crate) staging_path: PathBuf,
     pub(crate) staging_identity: FileIdentity,
+    pub(crate) reader_kind: PortableReaderKind,
     pub(crate) manifest: PortableMigrationManifest,
     pub(crate) sqlite_sha256: [u8; 32],
     pub(crate) transport_key: TransportKeyMaterial,
 }
 
+impl Drop for ImportPreparationLease {
+    fn drop(&mut self) {
+        if !is_import_staging_sqlite(&self.staging_path) {
+            return;
+        }
+        let _ = fs::remove_file(&self.staging_path);
+        if let Some(parent) = self.staging_path.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImportInspectionSummary {
     pub(crate) export_id: String,
+    pub(crate) created_at: String,
+    pub(crate) source_app_version: String,
     pub(crate) source_platform: String,
     pub(crate) included_categories: Vec<String>,
+    pub(crate) include_history: bool,
     pub(crate) record_counts: Vec<(String, u64)>,
     pub(crate) sqlite_size_bytes: u64,
 }
@@ -248,6 +270,19 @@ fn gc_locked(inner: &mut ImportInspectionRegistryInner, now: Instant, ttl: Durat
         inner.entries.remove(&id);
     }
     inner.order.retain(|id| inner.entries.contains_key(id));
+}
+
+fn is_import_staging_sqlite(path: &std::path::Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if file_name != "portable.sqlite3" {
+        return false;
+    }
+    path.parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("portable-import-inspection-"))
 }
 
 #[cfg(test)]
@@ -323,17 +358,60 @@ mod tests {
         let now = Instant::now();
         let handle = registry.register(lease([9; 32]), summary("safe"), now);
 
-        let value = serde_json::to_value(format!("{:?}", registry.summary(&handle.id, now)))
-            .expect("serialize debug string");
+        let debug = format!("{:?}", registry.summary(&handle.id, now));
 
-        assert!(!value.to_string().contains('9'));
+        assert!(!debug.contains("TransportKeyMaterial"));
+        assert!(!debug.contains("transport_key"));
+    }
+
+    #[test]
+    fn expired_preparation_lease_removes_only_owned_staging_file() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let operation_dir = directory.path().join(format!(
+            "portable-import-inspection-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir(&operation_dir).expect("operation dir");
+        let staging_path = operation_dir.join("portable.sqlite3");
+        std::fs::write(&staging_path, b"staged").expect("staged file");
+
+        let registry = ImportInspectionRegistry::with_config(ImportInspectionRegistryConfig {
+            ttl: Duration::from_secs(1),
+            max_entries: 2,
+        });
+        let now = Instant::now();
+        let handle = registry.register(
+            lease_with_path([4; 32], staging_path.clone()),
+            summary("cleanup"),
+            now,
+        );
+
+        assert_eq!(
+            registry
+                .consume(&handle.id, now + Duration::from_secs(1))
+                .unwrap_err(),
+            ImportInspectionError::Expired
+        );
+        assert!(!staging_path.exists());
+        assert!(!operation_dir.exists());
+
+        let unrelated_path = directory.path().join("active.sqlite3");
+        std::fs::write(&unrelated_path, b"active").expect("unrelated file");
+        drop(lease_with_path([5; 32], unrelated_path.clone()));
+        assert!(unrelated_path.exists());
     }
 
     fn lease(key: [u8; 32]) -> ImportPreparationLease {
+        lease_with_path(key, std::path::PathBuf::from("staging.sqlite3"))
+    }
+
+    fn lease_with_path(key: [u8; 32], staging_path: PathBuf) -> ImportPreparationLease {
         let manifest = manifest_struct("018f7f9a-1111-7000-8000-000000000001");
         ImportPreparationLease {
             source_identity: identity("source"),
+            staging_path,
             staging_identity: identity("staging"),
+            reader_kind: PortableReaderKind::V1EncryptedSecrets,
             manifest,
             sqlite_sha256: [5; 32],
             transport_key: TransportKeyMaterial::from_bytes(key),
@@ -343,8 +421,11 @@ mod tests {
     fn summary(export_id_suffix: &str) -> ImportInspectionSummary {
         ImportInspectionSummary {
             export_id: export_id_suffix.to_string(),
+            created_at: "2026-07-29T00:00:00Z".to_string(),
+            source_app_version: "0.3.3".to_string(),
             source_platform: "windows".to_string(),
             included_categories: vec!["core_data".to_string()],
+            include_history: false,
             record_counts: vec![("stations".to_string(), 1)],
             sqlite_size_bytes: 64,
         }

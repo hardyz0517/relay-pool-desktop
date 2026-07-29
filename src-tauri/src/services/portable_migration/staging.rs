@@ -8,9 +8,10 @@ use std::{
 
 use crate::services::{
     data_store::atomic_file::{
-        create_new_file, ApprovedLeaf, AtomicFileError, AtomicFilePublishPort, PublishEvidence,
-        PublishMode,
+        create_new_file, sync_parent, ApprovedLeaf, AtomicFileError, AtomicFilePublishPort,
+        PublishEvidence, PublishMode,
     },
+    data_store::file_identity::{identity_for_path, FileIdentity},
     secrets::{
         rekey::{
             BufferedSecretRekeyWriter, SecretRekeyPolicy, SecretRekeyService, TransportSecretKey,
@@ -25,7 +26,10 @@ use super::{
         AgeEnvelopeOptions,
     },
     format::{ParsedPortablePayloadInfo, PortableMigrationManifest, TransportKeyMaterial},
-    schema_reader::{ordered_import_tables_v1, PortableSchemaReader},
+    schema_reader::{
+        ordered_import_tables_v1, PortableMigrationCompatibilityRegistry, PortableReaderKind,
+        PortableSchemaReader, ReaderCompatibilityError,
+    },
     transform::{encrypted_secret_from_portable_row, TransformOptions},
     validate::{validate_closed_sqlite_database, PortableMigrationValidationError},
 };
@@ -36,6 +40,8 @@ pub(crate) enum PortablePackageStagingError {
     Envelope(#[from] AgeEnvelopeError),
     #[error("portable migration package validation failed")]
     Validation(#[from] PortableMigrationValidationError),
+    #[error("portable migration package compatibility failed")]
+    Compatibility(#[from] ReaderCompatibilityError),
     #[error("portable migration package secret self-test failed")]
     SecretSelfTest,
     #[error("portable migration package atomic publish failed")]
@@ -52,6 +58,17 @@ pub(crate) type PortablePackageStagingResult<T> = Result<T, PortablePackageStagi
 pub(crate) struct PortablePackageSelfTestReport {
     pub(crate) manifest: PortableMigrationManifest,
     pub(crate) sqlite_sha256: [u8; 32],
+    pub(crate) row_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Debug)]
+pub(crate) struct StagedImportPackage {
+    pub(crate) staging_path: PathBuf,
+    pub(crate) staging_identity: FileIdentity,
+    pub(crate) reader_kind: PortableReaderKind,
+    pub(crate) manifest: PortableMigrationManifest,
+    pub(crate) sqlite_sha256: [u8; 32],
+    pub(crate) transport_key: TransportKeyMaterial,
     pub(crate) row_counts: BTreeMap<String, u64>,
 }
 
@@ -163,6 +180,79 @@ pub(crate) async fn self_test_encrypted_package(
         (Ok(report), Ok(())) => Ok(report),
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+pub(crate) async fn stage_and_verify_import_package<R: Read>(
+    package_reader: R,
+    scratch_directory: &Path,
+    passphrase: &str,
+    expected_record_count_keys: &[&str],
+    options: AgeEnvelopeOptions,
+) -> PortablePackageStagingResult<StagedImportPackage> {
+    fs::create_dir_all(scratch_directory).map_err(|_| PortablePackageStagingError::Io)?;
+    let operation_dir = scratch_directory.join(format!(
+        "portable-import-inspection-{}",
+        uuid::Uuid::now_v7()
+    ));
+    fs::create_dir(&operation_dir).map_err(|_| PortablePackageStagingError::Io)?;
+    let partial_path = operation_dir.join("portable.sqlite3.partial");
+    let staging_path = operation_dir.join("portable.sqlite3");
+
+    let result = async {
+        let mut partial = create_new_file(&partial_path)?;
+        let parsed = decrypt_framed_payload_to_writer(
+            package_reader,
+            passphrase,
+            expected_record_count_keys,
+            options,
+            &mut partial,
+        )?;
+        partial
+            .sync_all()
+            .map_err(|_| PortablePackageStagingError::Io)?;
+        drop(partial);
+        fs::rename(&partial_path, &staging_path).map_err(|_| PortablePackageStagingError::Io)?;
+        sync_parent(&operation_dir)?;
+
+        let reader_kind = PortableMigrationCompatibilityRegistry.select_reader(&parsed.manifest)?;
+        validate_closed_sqlite_database(&staging_path).await?;
+        let include_history = parsed
+            .manifest
+            .included_categories
+            .iter()
+            .any(|category| category == "history");
+        let row_counts = read_and_verify_rows(
+            &staging_path,
+            &parsed.manifest.record_counts,
+            include_history,
+        )
+        .await?;
+        verify_secret_rows_decrypt_with_transport_key(&staging_path, &parsed).await?;
+        let staging_identity = identity_for_path(&staging_path).map_err(|_| {
+            PortablePackageStagingError::Validation(PortableMigrationValidationError::OpenFailed)
+        })?;
+
+        Ok(StagedImportPackage {
+            staging_path: staging_path.clone(),
+            staging_identity,
+            reader_kind,
+            manifest: parsed.manifest,
+            sqlite_sha256: parsed.sqlite_sha256,
+            transport_key: parsed.transport_key,
+            row_counts,
+        })
+    }
+    .await;
+
+    match result {
+        Ok(staged) => Ok(staged),
+        Err(error) => {
+            let _ = remove_file_if_exists(&partial_path);
+            let _ = remove_file_if_exists(&staging_path);
+            let _ = fs::remove_dir(&operation_dir);
+            Err(error)
+        }
     }
 }
 
