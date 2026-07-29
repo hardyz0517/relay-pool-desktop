@@ -17,7 +17,7 @@ import type {
   PortableMigrationOperation,
 } from "@/lib/types/dataMigration";
 import { REPLACE_CURRENT_CONFIRMATION } from "@/lib/types/dataMigration";
-import { defaultIncludeHistory, validatePassphrase } from "./migrationViewModel";
+import { defaultIncludeHistory, validatePassphrase } from "@/lib/dataMigrationViewModel";
 
 const LAST_OPERATION_KEY = "relay-pool-portable-migration:last-operation-id";
 

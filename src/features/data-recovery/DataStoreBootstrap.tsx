@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
 import { getDataStoreStartupState, restartApp } from "@/lib/api/dataRecovery";
 import { getPortableImportRecoveryState } from "@/lib/api/dataMigration";
+import { describeRecoveryState } from "@/lib/dataMigrationViewModel";
 import { errorMessage } from "@/lib/errorMessage";
 import type { DataStoreStartupView } from "@/lib/types/dataRecovery";
 import type { PortableImportRecoveryState } from "@/lib/types/dataMigration";
-import { MigrationMaintenanceScreen } from "@/features/settings/data-migration/MigrationMaintenanceScreen";
-import { describeRecoveryState } from "@/features/settings/data-migration/migrationViewModel";
 import { DataRecoveryScreen } from "./DataRecoveryScreen";
+import { MigrationMaintenanceScreen } from "./MigrationMaintenanceScreen";
 
 type BootstrapStatus =
   | { kind: "loading" }

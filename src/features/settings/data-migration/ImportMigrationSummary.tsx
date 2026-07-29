@@ -1,5 +1,5 @@
 import type { PortableMigrationOperation } from "@/lib/types/dataMigration";
-import { operationProgressLabel, terminalLabel } from "./migrationViewModel";
+import { operationProgressLabel, terminalLabel } from "@/lib/dataMigrationViewModel";
 
 type ImportMigrationSummaryProps = {
   operation: PortableMigrationOperation | null;

@@ -1,6 +1,6 @@
 import { Button, Card } from "@/components/ui";
 import type { PortableImportRecoveryState } from "@/lib/types/dataMigration";
-import { describeRecoveryState } from "./migrationViewModel";
+import { describeRecoveryState } from "@/lib/dataMigrationViewModel";
 
 type MigrationMaintenanceScreenProps = {
   state: PortableImportRecoveryState;

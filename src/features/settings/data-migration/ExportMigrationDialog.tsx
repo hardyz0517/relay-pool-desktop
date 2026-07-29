@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Button, Dialog } from "@/components/ui";
 import type { PortableMigrationCapability } from "@/lib/types/dataMigration";
-import { defaultIncludeHistory, validatePassphrase } from "./migrationViewModel";
+import { defaultIncludeHistory, validatePassphrase } from "@/lib/dataMigrationViewModel";
 import type { ExportMigrationDraft } from "./useDataMigrationController";
 
 type ExportMigrationDialogProps = {

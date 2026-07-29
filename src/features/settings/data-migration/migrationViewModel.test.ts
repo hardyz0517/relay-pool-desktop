@@ -8,7 +8,7 @@ import {
   describeRecoveryState,
   operationProgressLabel,
   validatePassphrase,
-} from "./migrationViewModel";
+} from "@/lib/dataMigrationViewModel";
 import type { PortableMigrationCapability } from "@/lib/types/dataMigration";
 
 describe("migrationViewModel", () => {
