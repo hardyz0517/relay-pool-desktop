@@ -16,8 +16,8 @@ use super::{
     schema_reader::ordered_import_tables_v1,
     transform::{portable_binary_bytes, scan_for_sensitive_residue, PortableRow},
     validate::{
-        quote_identifier, validate_closed_sqlite_database, PortableMigrationValidationError,
-        PortableValidationResult,
+        open_read_only_sqlite, quote_identifier, validate_closed_sqlite_database,
+        PortableMigrationValidationError, PortableValidationResult,
     },
 };
 use crate::services::data_store::atomic_file::{
@@ -104,6 +104,24 @@ impl TrustedTargetWriter {
     }
 }
 
+pub(crate) async fn validate_rebuilt_target_database(
+    path: &Path,
+    target_key_id: &str,
+    transport_key_id: &str,
+) -> PortableValidationResult<BTreeMap<String, usize>> {
+    let mut connection = open_read_only_sqlite(path).await?;
+    let mut row_counts = BTreeMap::new();
+    for table_name in ordered_import_tables_v1() {
+        row_counts.insert(
+            table_name.to_string(),
+            rebuilt_table_count(&mut connection, table_name).await?,
+        );
+    }
+    ensure_rebuilt_secrets_use_target_key(&mut connection, target_key_id, transport_key_id).await?;
+    connection.close().await?;
+    Ok(row_counts)
+}
+
 async fn open_trusted_writer(path: &Path) -> PortableValidationResult<SqliteConnection> {
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -117,6 +135,32 @@ async fn open_trusted_writer(path: &Path) -> PortableValidationResult<SqliteConn
         .execute(&mut connection)
         .await?;
     Ok(connection)
+}
+
+async fn rebuilt_table_count(
+    connection: &mut SqliteConnection,
+    table_name: &str,
+) -> PortableValidationResult<usize> {
+    let sql = format!("SELECT COUNT(*) FROM {}", quote_identifier(table_name)?);
+    let count: i64 = sqlx::query_scalar(&sql).fetch_one(&mut *connection).await?;
+    usize::try_from(count).map_err(|_| PortableMigrationValidationError::UnsupportedSchema)
+}
+
+async fn ensure_rebuilt_secrets_use_target_key(
+    connection: &mut SqliteConnection,
+    target_key_id: &str,
+    transport_key_id: &str,
+) -> PortableValidationResult<()> {
+    let rows = sqlx::query("SELECT key_id FROM secrets")
+        .fetch_all(&mut *connection)
+        .await?;
+    for row in rows {
+        let key_id: String = row.get("key_id");
+        if key_id != target_key_id || key_id == transport_key_id {
+            return Err(PortableMigrationValidationError::UnsupportedSchema);
+        }
+    }
+    Ok(())
 }
 
 fn validate_row(table_name: &str, row: &PortableRow) -> PortableValidationResult<()> {

@@ -327,7 +327,6 @@ mod application {
 }
 
 use std::{
-    collections::BTreeSet,
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -355,10 +354,8 @@ use models::{
 };
 use persistence::{
     runtime::PersistenceRuntime,
-    schema_compatibility::BinaryCompatibility,
     stores::change_store::{ChangeCursor, ChangeStore},
 };
-use semver::Version;
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
@@ -790,16 +787,14 @@ impl Fixture {
         }
         std::fs::create_dir_all(&root).expect("fixture directory");
         let path = root.join("relay-pool-v2.sqlite3");
+        persistence::migrations::initialize_v2_database(&path)
+            .await
+            .expect("migrate fixture");
         let mut connection = SqliteConnectOptions::new()
             .filename(&path)
-            .create_if_missing(true)
             .connect()
             .await
             .expect("connect fixture");
-        persistence::migrations::migrator()
-            .run(&mut connection)
-            .await
-            .expect("migrate fixture");
         sqlx::query(
             "INSERT INTO stations (
                 id, name, station_type, website_url, api_base_url,
@@ -824,9 +819,12 @@ impl Fixture {
     }
 
     async fn runtime(&self) -> PersistenceRuntime {
-        PersistenceRuntime::open(&self.path, binary_8())
-            .await
-            .expect("open runtime")
+        PersistenceRuntime::open(
+            &self.path,
+            persistence::migrations::current_binary_compatibility(),
+        )
+        .await
+        .expect("open runtime")
     }
 
     async fn execute(&self, sql: &str) {
@@ -862,15 +860,5 @@ impl Fixture {
         let value = row.get(0);
         connection.close().await.expect("close fixture");
         value
-    }
-}
-
-fn binary_8() -> BinaryCompatibility {
-    let schema_version = persistence::migrations::current_schema_version();
-    BinaryCompatibility {
-        app_version: Version::new(0, 3, 1),
-        database_generation: 2,
-        readable_schema: 1..=schema_version,
-        writable_schema: BTreeSet::from([schema_version]),
     }
 }

@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 use crate::{
     application::{
         data_maintenance::{DataMaintenanceActivity, DataMaintenanceCoordinator},
-        data_migration::import_occupancy::ensure_restore_target_is_empty,
+        data_migration::errors::DataMigrationImportError,
         data_migration::import_prepare::{
             build_target_from_inspection, validate_import_mode, PortableImportMode,
             PortableImportPrepareArtifact, PortableImportPrepareRequest,
@@ -24,28 +24,21 @@ use crate::{
     services::portable_migration::{
         activation_journal::{
             rollback_path_for_active, write_prepared_journal, PortableActivationArtifact,
-            PortableActivationJournal, PortableActivationJournalError,
+            PortableActivationJournal,
         },
-        age_envelope::{AgeEnvelopeError, AgeEnvelopeOptions},
-        fault::{
-            NoPortableActivationFaults, PortableActivationFault, PortableActivationFaults,
-            PortableActivationStep,
-        },
+        age_envelope::AgeEnvelopeOptions,
+        fault::{NoPortableActivationFaults, PortableActivationFaults, PortableActivationStep},
         inspection_registry::{
-            ImportInspectionError, ImportInspectionHandle, ImportInspectionRegistry,
-            ImportInspectionSummary, ImportPreparationLease,
+            ImportInspectionHandle, ImportInspectionRegistry, ImportInspectionSummary,
+            ImportPreparationLease,
         },
-        path_tokens::{PathTokenError, PathTokenId, PathTokenRegistry},
+        occupancy::ensure_restore_target_is_empty,
+        path_tokens::{PathTokenId, PathTokenRegistry},
         schema_reader::ordered_import_tables_v1,
-        staging::{stage_and_verify_import_package, PortablePackageStagingError},
-        validate::PortableMigrationValidationError,
+        staging::stage_and_verify_import_package,
     },
-    services::secrets::rekey::SecretRekeyError,
     services::{
-        data_store::{
-            backup::backup_selected_database_async,
-            file_identity::{identity_for_path, FileIdentityError},
-        },
+        data_store::{backup::backup_selected_database_async, file_identity::identity_for_path},
         proxy::runtime::ProxyRuntimeState,
         station_collectors::StationCollectorRunnerState,
     },
@@ -366,42 +359,6 @@ struct ImportFailureState {
     blocked_until: Option<Instant>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum DataMigrationImportError {
-    #[error("data migration maintenance coordinator rejected inspection")]
-    Maintenance(#[from] crate::application::data_maintenance::DataMaintenanceError),
-    #[error("data migration import path token failed")]
-    PathToken(#[from] PathTokenError),
-    #[error("data migration import inspection handle failed")]
-    Inspection(#[from] ImportInspectionError),
-    #[error("data migration package staging failed")]
-    Package(#[from] PortablePackageStagingError),
-    #[error("data migration package envelope failed")]
-    Envelope(#[from] AgeEnvelopeError),
-    #[error("data migration validation failed")]
-    Validation(#[from] PortableMigrationValidationError),
-    #[error("data migration secret rekey failed")]
-    SecretRekey(#[from] SecretRekeyError),
-    #[error("data migration import confirmation text is invalid")]
-    ConfirmationTextMismatch,
-    #[error("data migration restore target is not empty")]
-    RestoreTargetNotEmpty,
-    #[error("data migration import inspection is temporarily blocked")]
-    TemporarilyBlocked,
-    #[error("data migration verified backup failed")]
-    Backup(String),
-    #[error("data migration active database identity changed after backup")]
-    ActiveIdentityChanged,
-    #[error("data migration file identity failed")]
-    FileIdentity(#[from] FileIdentityError),
-    #[error("data migration activation journal failed")]
-    ActivationJournal(#[from] PortableActivationJournalError),
-    #[error("data migration persistence operation failed")]
-    Persistence(#[from] crate::persistence::error::PersistenceError),
-    #[error("data migration activation fault injected")]
-    ActivationFault(#[from] PortableActivationFault),
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -438,7 +395,9 @@ mod tests {
                     build_manifest_v1, PortableMigrationManifest, PortableMigrationManifestInput,
                     TransportKeyMaterial,
                 },
+                path_tokens::PathTokenError,
                 schema_reader::ordered_import_tables_v1,
+                staging::PortablePackageStagingError,
                 validate::PortableMigrationValidationError,
             },
             secrets::{

@@ -852,13 +852,10 @@ fn cooldown_until_with_threshold(
 
 #[cfg(test)]
 mod v2_tests {
-    use std::collections::BTreeSet;
-
-    use semver::Version;
-    use sqlx::{sqlite::SqlitePoolOptions, Row};
+    use sqlx::Row;
 
     use crate::persistence::{
-        migrations::migrator,
+        migrations::initialize_v2_database,
         runtime::PersistenceRuntime,
         schema_compatibility::BinaryCompatibility,
         stores::request_log_write::{
@@ -870,27 +867,15 @@ mod v2_tests {
     use super::RequestLogStore;
 
     fn binary() -> BinaryCompatibility {
-        BinaryCompatibility {
-            app_version: Version::new(0, 3, 1),
-            database_generation: 2,
-            readable_schema: 1..=9,
-            writable_schema: BTreeSet::from([9]),
-        }
+        crate::persistence::migrations::current_binary_compatibility()
     }
 
     async fn runtime() -> PersistenceRuntime {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool.sqlite3");
-        let options = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
+        initialize_v2_database(&path)
             .await
-            .expect("pool");
-        migrator().run(&pool).await.expect("migrations");
-        pool.close().await;
+            .expect("initialize database");
         // Keep the directory alive for the lifetime of the test runtime.
         std::mem::forget(root);
         PersistenceRuntime::open(&path, binary())

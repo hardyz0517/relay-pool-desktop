@@ -46,8 +46,8 @@ for (const [table, columns] of actualTables) {
 
 assert.match(
   catalogSource,
-  /does not add or expand monitoring-status behavior/,
-  "catalog must keep existing channel monitor table classification separate from new monitoring-status behavior",
+  /carries configuration only, never runtime fields/,
+  "catalog must keep existing channel monitor table classification limited to configuration data",
 );
 
 console.log(`portable migration catalog covers ${actualTables.size} tables`);

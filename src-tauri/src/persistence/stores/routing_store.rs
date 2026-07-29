@@ -628,7 +628,8 @@ async fn load_runtime_secrets(
     let rows = sqlx::query(
         r#"
         SELECT k.id, sec.id, sec.scope, sec.owner_id, sec.kind,
-               sec.masked_value, sec.ciphertext, sec.nonce
+               sec.masked_value, sec.ciphertext, sec.nonce,
+               sec.encryption_version
         FROM station_keys k
         JOIN stations s ON s.id = k.station_id
         JOIN secrets sec ON sec.id = k.api_key_secret_id
@@ -652,6 +653,7 @@ async fn load_runtime_secrets(
                     masked_value: row.get(5),
                     ciphertext: row.get(6),
                     nonce: row.get(7),
+                    encryption_version: row.get::<i64, _>(8) as u16,
                 },
             )
         })

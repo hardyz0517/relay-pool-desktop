@@ -172,10 +172,10 @@ pub(crate) fn validate_schema_snapshot(actual: &[(&str, &[&str])]) -> Result<(),
         .map(|(name, _)| *name)
         .collect::<BTreeSet<_>>();
 
-    for name in actual_names.difference(&declared_names) {
+    if let Some(name) = actual_names.difference(&declared_names).next() {
         return Err(CatalogError::MissingTablePolicy((*name).to_string()));
     }
-    for name in declared_names.difference(&actual_names) {
+    if let Some(name) = declared_names.difference(&actual_names).next() {
         return Err(CatalogError::UnexpectedTable((*name).to_string()));
     }
     for (name, columns) in actual {
@@ -192,13 +192,13 @@ pub(crate) fn validate_table_columns(
         table_catalog(table).ok_or_else(|| CatalogError::MissingTablePolicy(table.to_string()))?;
     let declared = catalog.columns.iter().copied().collect::<BTreeSet<_>>();
     let actual = actual_columns.iter().copied().collect::<BTreeSet<_>>();
-    for column in actual.difference(&declared) {
+    if let Some(column) = actual.difference(&declared).next() {
         return Err(CatalogError::MissingColumnPolicy {
             table: table.to_string(),
             column: (*column).to_string(),
         });
     }
-    for column in declared.difference(&actual) {
+    if let Some(column) = declared.difference(&actual).next() {
         return Err(CatalogError::UnexpectedColumn {
             table: table.to_string(),
             column: (*column).to_string(),
@@ -1103,7 +1103,7 @@ const APP_SECRET_BINDING_RULES: &[FieldRule] = &[FieldRule {
 }];
 
 // Existing channel monitor tables are declared here only to classify the current
-// database schema. Portable migration does not add or expand monitoring-status behavior.
+// database schema. Portable migration carries configuration only, never runtime fields.
 const TABLES: &[TableCatalog] = &[
     table(
         "persistence_schema_compatibility",
@@ -1413,7 +1413,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_matches_required_policy_matrix_without_monitoring_status_expansion() {
+    fn catalog_matches_required_policy_matrix_for_configuration_and_runtime_boundaries() {
         assert_eq!(
             table_catalog("provider_drafts").unwrap().policy,
             TablePolicy::Exclude

@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -36,7 +35,6 @@ use crate::{
     persistence::{self, runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility},
 };
 use chrono::{TimeZone, Utc};
-use semver::Version;
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -269,7 +267,7 @@ async fn credential_secret_replacement_commits_ciphertext_and_reference_atomical
 
     assert_eq!(saved.secret_ref.owner_id, "key-1");
     assert_eq!(saved.secret_ref.kind, "api_key");
-    assert_eq!(vault.last_aad(), "station_key:key-1:api_key");
+    assert_eq!(vault.last_aad(), "station_key:key-1:api_key:v1");
     assert_eq!(fixture.secret_rows().await, 1);
     assert!(!fixture.any_text_contains("sk-test-canary").await);
     assert!(!fixture.any_blob_contains(b"sk-test-canary").await);
@@ -916,17 +914,9 @@ struct V2Fixture {
 impl V2Fixture {
     async fn create() -> Self {
         let path = temp_db_path("differential");
-        let mut connection = SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true)
-            .connect()
+        persistence::migrations::initialize_v2_database(&path)
             .await
-            .expect("connect fixture");
-        persistence::migrations::migrator()
-            .run(&mut connection)
-            .await
-            .expect("run migrations");
-        connection.close().await.expect("close fixture");
+            .expect("initialize fixture");
         Self { path }
     }
 
@@ -1115,12 +1105,7 @@ impl V2Fixture {
 }
 
 fn binary_031() -> BinaryCompatibility {
-    BinaryCompatibility {
-        app_version: Version::new(0, 3, 1),
-        database_generation: 2,
-        readable_schema: 1..=9,
-        writable_schema: BTreeSet::from([9]),
-    }
+    persistence::migrations::current_binary_compatibility()
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {

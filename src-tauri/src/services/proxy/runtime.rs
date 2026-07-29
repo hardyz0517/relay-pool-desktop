@@ -982,7 +982,7 @@ mod tests {
         let body: serde_json::Value = response.json().await.expect("chat json");
         runtime.stop(started.port).await.unwrap();
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["id"], "chatcmpl-v2");
         upstream.wait_for_requests(1);
         let logs = fixture.request_logs().await;

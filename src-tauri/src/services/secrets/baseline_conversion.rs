@@ -205,6 +205,7 @@ fn create_baseline_conversion_journal(
         .ok_or_else(|| "active database path has no valid file name".to_string())?;
     let attempt_id = UpgradeAttemptId::parse(&uuid::Uuid::now_v7().hyphenated().to_string())
         .map_err(|error| error.to_string())?;
+    stabilize_sqlite_identity(active_path)?;
     let source_candidate_identity = sha256_file(active_path).map_err(redacted_journal_error)?;
     let journal = BaselineConversionJournal::prepared(
         attempt_id,
@@ -319,6 +320,7 @@ fn execute_baseline_backup_verified(
         &candidate_path,
     )?;
     apply_migrations_and_finalize(&candidate_path, resolver)?;
+    stabilize_sqlite_identity(&candidate_path)?;
     let candidate_sha = sha256_file(&candidate_path).map_err(redacted_journal_error)?;
     let next = journal
         .advance(
@@ -1134,6 +1136,28 @@ fn remove_database_artifacts(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn stabilize_sqlite_identity(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Err("baseline database is missing".to_string());
+    }
+    block_on(async {
+        let mut connection = connect_connection(path, false).await?;
+        let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(&mut connection)
+            .await
+            .map_err(|error| format!("failed to checkpoint baseline database WAL: {error}"))?;
+        let busy: i64 = row.get(0);
+        connection.close().await.map_err(|error| {
+            format!("failed to close baseline database after checkpoint: {error}")
+        })?;
+        if busy != 0 {
+            return Err("baseline database WAL checkpoint reported busy readers".to_string());
+        }
+        Ok::<_, String>(())
+    })?;
+    remove_sqlite_sidecars(path)
+}
+
 fn remove_file_with_short_retry(path: &Path) -> Result<(), std::io::Error> {
     const ATTEMPTS: usize = 20;
     for attempt in 0..ATTEMPTS {
@@ -1185,6 +1209,7 @@ fn assert_active_identity(
     active_path: &Path,
     journal: &BaselineConversionJournal,
 ) -> Result<(), String> {
+    stabilize_sqlite_identity(active_path)?;
     let actual = sha256_file(active_path).map_err(redacted_journal_error)?;
     if actual != journal.payload().source_candidate_identity {
         return Err(
@@ -1209,6 +1234,7 @@ fn assert_candidate_identity(
     candidate_path: &Path,
     journal: &BaselineConversionJournal,
 ) -> Result<(), String> {
+    stabilize_sqlite_identity(candidate_path)?;
     let actual = sha256_file(candidate_path).map_err(redacted_journal_error)?;
     if Some(&actual) != journal.payload().candidate_sha256.as_ref() {
         return Err("encrypted-secret baseline candidate identity mismatch".to_string());

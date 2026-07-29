@@ -9,7 +9,6 @@ use std::{
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{Connection, Row};
 
 use crate::{
     application::settings::generate_local_access_key,
@@ -17,12 +16,14 @@ use crate::{
         portable_migration::{
             inspection_registry::{ImportInspectionId, ImportPreparationLease},
             schema_reader::{ordered_import_tables_v1, PortableReaderKind, PortableSchemaReader},
-            target_writer::{TrustedTableBatch, TrustedTargetWriter},
+            target_writer::{
+                validate_rebuilt_target_database, TrustedTableBatch, TrustedTargetWriter,
+            },
             transform::{
                 encrypted_secret_from_portable_row, portable_row_from_encrypted_secret,
                 PortableRow, TransformOptions,
             },
-            validate::{open_read_only_sqlite, quote_identifier, PortableMigrationValidationError},
+            validate::PortableMigrationValidationError,
         },
         secrets::{
             rekey::{
@@ -34,7 +35,7 @@ use crate::{
     },
 };
 
-use super::import_service::DataMigrationImportError;
+use super::errors::DataMigrationImportError;
 
 pub(crate) const REPLACE_CURRENT_CONFIRMATION: &str = "替换当前数据";
 
@@ -127,9 +128,9 @@ pub(crate) async fn build_target_from_inspection(
             .rebuild_current_database(&request.target_database_path, &batches)
             .await?;
 
-        let row_counts = validate_target_database(
+        let row_counts = validate_rebuilt_target_database(
             &request.target_database_path,
-            &request.target_keys,
+            request.target_keys.active_key_id().as_str(),
             transport_key.key_id(),
         )
         .await?;
@@ -233,62 +234,6 @@ fn rekey_secret_rows(
         })
         .collect();
     Ok((rows, report))
-}
-
-async fn validate_target_database(
-    path: &Path,
-    target_keys: &DeviceKeyResolver,
-    transport_key_id: &str,
-) -> Result<BTreeMap<String, usize>, DataMigrationImportError> {
-    let mut connection = open_read_only_sqlite(path).await?;
-    let mut row_counts = BTreeMap::new();
-    for table_name in ordered_import_tables_v1() {
-        row_counts.insert(
-            table_name.to_string(),
-            table_count(&mut connection, table_name).await?,
-        );
-    }
-    ensure_all_secrets_use_target_key(&mut connection, target_keys, transport_key_id).await?;
-    connection
-        .close()
-        .await
-        .map_err(|_| PortableMigrationValidationError::Sql)?;
-    Ok(row_counts)
-}
-
-async fn table_count(
-    connection: &mut sqlx::SqliteConnection,
-    table_name: &str,
-) -> Result<usize, DataMigrationImportError> {
-    let sql = format!("SELECT COUNT(*) FROM {}", quote_identifier(table_name)?);
-    let count: i64 = sqlx::query_scalar(&sql)
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(|_| PortableMigrationValidationError::Sql)?;
-    usize::try_from(count).map_err(|_| {
-        DataMigrationImportError::Validation(PortableMigrationValidationError::UnsupportedSchema)
-    })
-}
-
-async fn ensure_all_secrets_use_target_key(
-    connection: &mut sqlx::SqliteConnection,
-    target_keys: &DeviceKeyResolver,
-    transport_key_id: &str,
-) -> Result<(), DataMigrationImportError> {
-    let rows = sqlx::query("SELECT key_id FROM secrets")
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(|_| PortableMigrationValidationError::Sql)?;
-    let target_key_id = target_keys.active_key_id().as_str();
-    for row in rows {
-        let key_id: String = row.get("key_id");
-        if key_id != target_key_id || key_id == transport_key_id {
-            return Err(DataMigrationImportError::Validation(
-                PortableMigrationValidationError::UnsupportedSchema,
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn file_sha256_hex(path: &Path) -> Result<String, DataMigrationImportError> {

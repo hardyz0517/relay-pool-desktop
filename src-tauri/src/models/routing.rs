@@ -391,6 +391,7 @@ pub struct RuntimeRoutingSecret {
     pub masked_value: String,
     pub ciphertext: Vec<u8>,
     pub nonce: Vec<u8>,
+    pub encryption_version: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

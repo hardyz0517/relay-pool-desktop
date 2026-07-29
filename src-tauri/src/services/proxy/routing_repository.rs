@@ -3,6 +3,7 @@ use crate::{
     models::{
         pricing::BalanceSnapshot,
         routing::{RoutingProxyDefaults, RuntimeRoutingCandidate, RuntimeRoutingSettings},
+        secrets::canonical_secret_aad,
     },
     services::{
         outbound::resolve_proxy_config,
@@ -183,7 +184,12 @@ fn runtime_candidate_api_key(
                 &EncryptedPayload {
                     ciphertext: general_purpose::STANDARD.encode(&secret.ciphertext),
                     nonce: general_purpose::STANDARD.encode(&secret.nonce),
-                    aad: format!("{}:{}:{}", secret.scope, secret.owner_id, secret.kind),
+                    aad: canonical_secret_aad(
+                        &secret.scope,
+                        &secret.owner_id,
+                        &secret.kind,
+                        secret.encryption_version,
+                    ),
                     value_hash: String::new(),
                 },
             )
