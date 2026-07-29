@@ -1226,12 +1226,14 @@ fn rate_event(
         request_log_id: None,
         old_value_json: Some(
             json!({
+                "groupName": transition.group_name,
                 "effectiveRateMultiplier": transition.old_effective_rate_multiplier
             })
             .to_string(),
         ),
         new_value_json: Some(
             json!({
+                "groupName": transition.group_name,
                 "effectiveRateMultiplier": transition.new_effective_rate_multiplier
             })
             .to_string(),
@@ -1375,6 +1377,30 @@ mod tests {
         fn next_id(&self) -> String {
             format!("capture-test-{}", self.0.fetch_add(1, Ordering::Relaxed))
         }
+    }
+
+    #[test]
+    fn rate_event_persists_group_name_for_stable_presentation() {
+        let ids = SequenceIds::default();
+        let transition = RateTransition {
+            group_binding_id: "binding-1".to_string(),
+            group_name: "stable-group".to_string(),
+            old_effective_rate_multiplier: Some(0.2),
+            new_effective_rate_multiplier: Some(0.18),
+        };
+
+        let event = rate_event(&ids, "station-1", &transition, "1700000000000");
+        let old_value: serde_json::Value =
+            serde_json::from_str(event.old_value_json.as_deref().expect("old rate value"))
+                .expect("valid old rate value");
+        let new_value: serde_json::Value =
+            serde_json::from_str(event.new_value_json.as_deref().expect("new rate value"))
+                .expect("valid new rate value");
+
+        assert_eq!(event.event_type, "group_rate_changed");
+        assert_eq!(event.object_type, "station_group_binding");
+        assert_eq!(old_value["groupName"], "stable-group");
+        assert_eq!(new_value["groupName"], "stable-group");
     }
 
     fn capture_request(station_id: &str, endpoint_revision: i64) -> CaptureSnapshotRequest {

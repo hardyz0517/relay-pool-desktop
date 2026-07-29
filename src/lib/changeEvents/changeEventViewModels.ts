@@ -35,6 +35,7 @@ export const eventTypeLabels: Record<string, string> = {
   group_added: "分组新增",
   group_missing: "分组不可见",
   rate_changed: "倍率变化",
+  group_rate_changed: "分组倍率变化",
   price_changed: "价格变化",
   price_expired: "价格过期",
   model_added: "模型新增",
@@ -53,6 +54,7 @@ export const objectTypeLabels: Record<string, string> = {
   station: "中转站",
   station_key: "密钥",
   group_binding: "分组",
+  station_group_binding: "分组",
   pricing_rule: "价格",
   routing_rule: "路由规则",
   request_log: "请求",
@@ -229,7 +231,7 @@ export function buildChangeEventListItem(
     diff: buildGenericDiff(oldValue, newValue),
   };
 
-  if (event.eventType === "rate_changed") {
+  if (event.eventType === "rate_changed" || event.eventType === "group_rate_changed") {
     const groupName = readString(newValue, "groupName") ?? readString(oldValue, "groupName") ?? extractGroupName(event.message);
     const before = effectiveChangeMultiplier(event, readMultiplier(oldValue), options);
     const after = effectiveChangeMultiplier(event, readMultiplier(newValue), options);
@@ -602,6 +604,10 @@ function extractGroupName(message: string) {
   const rateMatch = message.match(/^分组\s+(.+?)\s+倍率发生变化/);
   if (rateMatch?.[1]) {
     return rateMatch[1].trim();
+  }
+  const v2RateMatch = message.match(/^Group\s+(.+?)\s+rate changed$/i);
+  if (v2RateMatch?.[1]) {
+    return v2RateMatch[1].trim();
   }
   const addedMatch = message.match(/分组\s+(.+)$/);
   return addedMatch?.[1]?.trim() ?? null;

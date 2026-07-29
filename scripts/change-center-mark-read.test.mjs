@@ -193,6 +193,40 @@ const rateChange = buildChangeEventListItem(
 );
 assert.equal(rateChange.title, "中转站 倍率站 的分组 plus 倍率从 0.7 倍变为 0.9 倍");
 assert.deepEqual(rateChange.diff, { label: "倍率", before: "0.7 倍", after: "0.9 倍" });
+const v2RateChange = buildChangeEventListItem(
+  changeEvent("v2-rate-change", "read", {
+    severity: "warning",
+    eventType: "group_rate_changed",
+    title: "Group rate changed",
+    message: "Group 泰康专用 rate changed",
+    objectType: "station_group_binding",
+    objectId: "group-binding-1",
+    stationId: "station-pokexiao",
+    source: "collector",
+    oldValueJson: JSON.stringify({ effectiveRateMultiplier: 0.2 }),
+    newValueJson: JSON.stringify({ effectiveRateMultiplier: 0.18 }),
+  }),
+  { stationNamesById: new Map([["station-pokexiao", "pokexiao"]]) },
+);
+assert.equal(v2RateChange.title, "中转站 pokexiao 的分组 泰康专用 倍率从 0.2 倍变为 0.18 倍");
+assert.equal(v2RateChange.kindLabel, "分组倍率变化");
+assert.equal(v2RateChange.objectLabel, "分组");
+assert.equal(v2RateChange.metaLabel, "采集 / 分组");
+assert.deepEqual(v2RateChange.diff, { label: "倍率", before: "0.2 倍", after: "0.18 倍" });
+
+const structuredV2RateChange = buildChangeEventListItem(
+  changeEvent("structured-v2-rate-change", "unread", {
+    eventType: "group_rate_changed",
+    message: "future message wording that should not be parsed",
+    objectType: "station_group_binding",
+    stationId: "station-pokexiao",
+    oldValueJson: JSON.stringify({ groupName: "稳定组", effectiveRateMultiplier: 0.1 }),
+    newValueJson: JSON.stringify({ groupName: "稳定组", effectiveRateMultiplier: 0.12 }),
+  }),
+  { stationNamesById: new Map([["station-pokexiao", "pokexiao"]]) },
+);
+assert.equal(structuredV2RateChange.title, "中转站 pokexiao 的分组 稳定组 倍率从 0.1 倍变为 0.12 倍");
+
 const repeatedRateChange = buildChangeEventListItem(
   changeEvent("rate-change-repeat", "unread", {
     eventType: "rate_changed",
@@ -358,7 +392,7 @@ const changeCenterSource = await readFile("src/features/changes/ChangeCenterPage
 const requestLogTableSource = await readFile("src/features/logs/RequestLogTable.tsx", "utf8");
 const paginationSource = await readFile("src/components/ui/Pagination.tsx", "utf8");
 const appShellSource = await readFile("src/components/shell/AppShell.tsx", "utf8");
-const tauriCommandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
+const tauriCommandsSource = await readFile("src-tauri/src/commands/change_events.rs", "utf8");
 const tauriRegistrySource = await readFile("src-tauri/src/ipc/registry.rs", "utf8");
 const changeServiceSource = await readFile("src-tauri/src/application/changes.rs", "utf8");
 const changeStoreSource = await readFile(
