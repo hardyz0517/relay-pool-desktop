@@ -31,6 +31,13 @@ const localArtifacts = [
   "probe.sqlite3.upgrade-attempt.tmp-shm",
   "upgrade-report-2026-07-22.json",
   "diagnostic-report-2026-07-22.json",
+  "relay-pool-data.rpd-move",
+  ".relay-pool-data.rpd-move.018f7f9a-1111-7000-8000-000000000001.partial",
+  "migration-staging/imports/018f7f9a-1111-7000-8000-000000000001/portable.sqlite3",
+  "migration-staging/imports/018f7f9a-1111-7000-8000-000000000001/portable.sqlite3.partial",
+  ".relay-pool-import-staging/018f7f9a-1111-7000-8000-000000000001/target.sqlite3",
+  "portable-migration-activation-journal.json",
+  "portable-migration-activation-journal.json.partial",
 ];
 
 const localBuildArtifacts = [
