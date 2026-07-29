@@ -1,0 +1,6 @@
+/.gitattributes text eol=lf
+src/lib/bridge/generated.ts -text whitespace=cr-at-eol
+src/lib/bridge/contract.ts -text whitespace=cr-at-eol
+src-tauri/generated/command-registry.json -text whitespace=cr-at-eol
+src-tauri/src/ipc/dto/*.typescript.txt -text whitespace=cr-at-eol
+src-tauri/src/ipc/dto/fixtures/pilot-serialization.json -text whitespace=cr-at-eol
