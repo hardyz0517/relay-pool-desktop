@@ -17,6 +17,12 @@ pub enum RecoveryReason {
     OpenOrMigrationFailed,
     PendingRelocation,
     UpgradeRecoveryRequired,
+    SystemCredentialMissing,
+    SystemCredentialUnavailable,
+    SystemCredentialPermissionDenied,
+    SystemCredentialCorrupt,
+    SystemCredentialUnsupported,
+    SystemCredentialInternal,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

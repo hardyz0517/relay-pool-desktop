@@ -27,6 +27,7 @@ const contracts = [
   ["node", ["scripts/local-proxy-v2-boundary.test.mjs"]],
   ["node", ["scripts/request-lifecycle-architecture.test.mjs"]],
   ["node", ["scripts/portable-migration-baseline.test.mjs"]],
+  ["node", ["scripts/device-key-startup-boundary.test.mjs"]],
 ];
 
 for (const [command, args] of contracts) {

@@ -336,6 +336,12 @@ function isDecisionForMode(value: unknown, mode: DataStoreStartupView["mode"]): 
       "unsupportedLegacySchema",
       "incompatibleSchema",
       "upgradeRecoveryRequired",
+      "systemCredentialMissing",
+      "systemCredentialUnavailable",
+      "systemCredentialPermissionDenied",
+      "systemCredentialCorrupt",
+      "systemCredentialUnsupported",
+      "systemCredentialInternal",
       "relocationUpgradeConflict",
       "generationReopenFailed",
     ].includes(String(value.reason));

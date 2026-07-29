@@ -131,6 +131,30 @@ function describeRecoveryReason(reason: RecoveryReason) {
       title: "数据库升级需要恢复",
       description: "检测到未完成的 generation 升级。应用已依据升级日志停止启动，请保留数据文件并执行允许的恢复动作。",
     },
+    systemCredentialMissing: {
+      title: "本机加密密钥缺失",
+      description: "系统凭据中没有找到当前数据所需的本机密钥。为避免创建错误的新密钥，应用已停止业务启动。",
+    },
+    systemCredentialUnavailable: {
+      title: "系统凭据暂时不可用",
+      description: "当前无法访问 Windows 系统凭据。请确认系统凭据服务、用户会话和权限状态后再重试。",
+    },
+    systemCredentialPermissionDenied: {
+      title: "系统凭据访问被拒绝",
+      description: "Windows 拒绝访问保存本机加密密钥的凭据项。应用不会继续打开或迁移数据库。",
+    },
+    systemCredentialCorrupt: {
+      title: "本机加密密钥记录异常",
+      description: "系统凭据中的密钥记录格式不完整或不一致。请保留现场并导出诊断，避免覆盖原始数据。",
+    },
+    systemCredentialUnsupported: {
+      title: "系统凭据环境不受支持",
+      description: "当前系统凭据后端不满足 Relay Pool 的安全存储要求，因此不会创建或打开本地数据库。",
+    },
+    systemCredentialInternal: {
+      title: "系统凭据处理失败",
+      description: "处理本机加密密钥时遇到内部错误。应用已进入恢复模式，避免继续写入。",
+    },
     relocationUpgradeConflict: {
       title: "检测到两个未完成的数据操作",
       description: "数据目录迁移与 generation 升级状态同时存在。应用不会自动选择或合并状态，需要先导出诊断并人工处理。",

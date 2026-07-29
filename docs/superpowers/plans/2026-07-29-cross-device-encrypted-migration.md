@@ -213,7 +213,7 @@ git commit -m "refactor: centralize durable file replacement"
 
 - [ ] **Step 3: 调整 setup 所有分支的 lease 生命周期**
 
-包括 ready、first-run、upgrade/recovery 和错误 UI 分支；lease 由 `DataStoreRuntimeOwner` 持有到 runtime 关闭。只有已证明的 first-run 可把 key `NotFound` 转成 create；其他 key error/missing 分支不得注册代理、collector/monitor runner 或 writable persistence。
+包括 ready、first-run、upgrade/recovery 和错误 UI 分支；lease 由 `DataStoreRuntimeOwner` 持有到 runtime 关闭。只有已证明的 first-run 可把 key `NotFound` 转成 create；其他 key error/missing 分支不得注册代理、后台业务写入入口或 writable persistence。
 
 - [ ] **Step 4: 验证与提交**
 
@@ -368,8 +368,6 @@ git commit -m "feat: convert databases to encrypted secret baseline"
 - Modify: `src-tauri/src/ipc/registry.rs`
 - Modify: `src-tauri/src/services/proxy/runtime.rs`
 - Modify: `src-tauri/src/services/station_collectors.rs`
-- Modify: `src-tauri/src/services/channel_monitors/mod.rs`
-- Modify: `src-tauri/src/services/channel_monitors/probe.rs`
 
 - [ ] **Step 1: 写纯状态机和并发 RED tests**
 
@@ -390,7 +388,7 @@ cargo test --manifest-path src-tauri/Cargo.toml data_maintenance -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml persistence::runtime_lifecycle -- --nocapture
 pnpm.cmd run architecture:commands
 cargo check --manifest-path src-tauri/Cargo.toml
-git add -- src-tauri/src/application/data_maintenance.rs src-tauri/src/application/mod.rs src-tauri/src/background_tasks/operation.rs src-tauri/src/persistence/runtime.rs src-tauri/src/persistence/runtime_lifecycle.rs src-tauri/src/persistence/write_coordinator.rs src-tauri/src/ipc/registry.rs src-tauri/src/services/proxy/runtime.rs src-tauri/src/services/station_collectors.rs src-tauri/src/services/channel_monitors/mod.rs src-tauri/src/services/channel_monitors/probe.rs src-tauri/src/lib.rs
+git add -- src-tauri/src/application/data_maintenance.rs src-tauri/src/application/mod.rs src-tauri/src/background_tasks/operation.rs src-tauri/src/persistence/runtime.rs src-tauri/src/persistence/runtime_lifecycle.rs src-tauri/src/persistence/write_coordinator.rs src-tauri/src/ipc/registry.rs src-tauri/src/services/proxy/runtime.rs src-tauri/src/services/station_collectors.rs src-tauri/src/lib.rs
 git commit -m "feat: coordinate exclusive data maintenance"
 ```
 

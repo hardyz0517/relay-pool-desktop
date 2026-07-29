@@ -19,7 +19,7 @@ use std::time::Duration;
 
 pub use services::data_store::installation_lease::{InstallationLease, LeaseError};
 
-use crate::background_tasks::{ExitCoordinator, ExitReason};
+use crate::background_tasks::{BlockingExecutor, ExitCoordinator, ExitReason};
 use services::data_store::{
     inspect_startup,
     relocation::apply_trusted_relocation,
@@ -212,9 +212,9 @@ enum DataStoreShutdownError {
 
 fn prepare_data_store(
     default_data_dir: PathBuf,
+    mut startup_state: DataStoreStartupState,
     data_key: [u8; 32],
 ) -> Result<PreparedDataStore, String> {
-    let mut startup_state = inspect_startup(&default_data_dir)?;
     if let Some(intent) = startup_state.relocation_intent.clone() {
         match apply_trusted_relocation(&default_data_dir, &intent) {
             Ok(_) => {
@@ -299,6 +299,164 @@ fn prepare_data_store(
     }
 }
 
+fn recovery_reason_for_device_key_error(
+    error: services::secrets::device_key_store::DeviceKeyErrorKind,
+) -> RecoveryReason {
+    use services::secrets::device_key_store::DeviceKeyErrorKind;
+    match error {
+        DeviceKeyErrorKind::NotFound => RecoveryReason::SystemCredentialMissing,
+        DeviceKeyErrorKind::Unavailable => RecoveryReason::SystemCredentialUnavailable,
+        DeviceKeyErrorKind::PermissionDenied => RecoveryReason::SystemCredentialPermissionDenied,
+        DeviceKeyErrorKind::Corrupt => RecoveryReason::SystemCredentialCorrupt,
+        DeviceKeyErrorKind::Unsupported => RecoveryReason::SystemCredentialUnsupported,
+        DeviceKeyErrorKind::Internal => RecoveryReason::SystemCredentialInternal,
+    }
+}
+
+fn startup_has_recovery_evidence(
+    default_data_dir: &Path,
+    startup_state: &DataStoreStartupState,
+) -> bool {
+    !startup_state.candidates.is_empty()
+        || default_data_dir
+            .join(persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE)
+            .exists()
+        || default_data_dir
+            .join("portable-migration-activation-journal.json")
+            .exists()
+}
+
+struct StartupSecretMaterial {
+    manager: Option<services::secrets::SecretManager>,
+    first_run_key_id: Option<String>,
+    startup_state: DataStoreStartupState,
+}
+
+fn initialize_secret_material_for_startup(
+    blocking_executor: BlockingExecutor,
+    app_config_dir: &Path,
+    default_data_dir: &Path,
+    mut startup_state: DataStoreStartupState,
+) -> Result<StartupSecretMaterial, String> {
+    match startup_state.decision.clone() {
+        StartupDecision::FirstRun { .. }
+            if !startup_has_recovery_evidence(default_data_dir, &startup_state) =>
+        {
+            let key_id = services::secrets::device_key_store::DeviceKeyStore::<
+                services::secrets::keychain::SystemCredentialBackend,
+            >::generate_key_id();
+            let candidate_identity = format!("first-run:{}", default_data_dir.display());
+            let planned = services::secrets::device_key_journal::DeviceKeyJournal::new(
+                services::secrets::device_key_journal::DeviceKeyJournalPhase::Planned,
+                key_id.clone(),
+                candidate_identity,
+            );
+            services::secrets::device_key_journal::write_journal(app_config_dir, &planned)
+                .map_err(|error| {
+                    format!("failed to write device key bootstrap journal: {error}")
+                })?;
+            match tauri::async_runtime::block_on(
+                services::secrets::SecretManager::create_pending_for_first_run(
+                    blocking_executor,
+                    key_id.clone(),
+                ),
+            ) {
+                Ok(manager) => {
+                    let key_created = planned.advance(
+                        services::secrets::device_key_journal::DeviceKeyJournalPhase::KeyCreated,
+                    );
+                    services::secrets::device_key_journal::write_journal(
+                        app_config_dir,
+                        &key_created,
+                    )
+                    .map_err(|error| {
+                        format!("failed to update device key bootstrap journal: {error}")
+                    })?;
+                    Ok(StartupSecretMaterial {
+                        manager: Some(manager),
+                        first_run_key_id: Some(key_id),
+                        startup_state,
+                    })
+                }
+                Err(error) => {
+                    startup_state.decision = StartupDecision::NeedsRecovery {
+                        reason: recovery_reason_for_device_key_error(error.kind()),
+                    };
+                    Ok(StartupSecretMaterial {
+                        manager: None,
+                        first_run_key_id: None,
+                        startup_state,
+                    })
+                }
+            }
+        }
+        StartupDecision::FirstRun { .. } => {
+            startup_state.decision = StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::SystemCredentialMissing,
+            };
+            Ok(StartupSecretMaterial {
+                manager: None,
+                first_run_key_id: None,
+                startup_state,
+            })
+        }
+        StartupDecision::Ready { .. }
+        | StartupDecision::NeedsRecovery { .. }
+        | StartupDecision::Conflict { .. } => {
+            match tauri::async_runtime::block_on(services::secrets::SecretManager::load_existing(
+                blocking_executor,
+            )) {
+                Ok(manager) => Ok(StartupSecretMaterial {
+                    manager: Some(manager),
+                    first_run_key_id: None,
+                    startup_state,
+                }),
+                Err(error) => {
+                    startup_state.decision = StartupDecision::NeedsRecovery {
+                        reason: recovery_reason_for_device_key_error(error.kind()),
+                    };
+                    Ok(StartupSecretMaterial {
+                        manager: None,
+                        first_run_key_id: None,
+                        startup_state,
+                    })
+                }
+            }
+        }
+    }
+}
+
+fn mark_first_run_database_validated(
+    app_config_dir: &Path,
+) -> Result<Option<services::secrets::device_key_journal::DeviceKeyJournal>, String> {
+    let Some(journal) = services::secrets::device_key_journal::read_journal(app_config_dir)
+        .map_err(|error| format!("failed to read device key bootstrap journal: {error}"))?
+    else {
+        return Ok(None);
+    };
+    let database_validated = journal
+        .advance(services::secrets::device_key_journal::DeviceKeyJournalPhase::DatabaseValidated);
+    services::secrets::device_key_journal::write_journal(app_config_dir, &database_validated)
+        .map_err(|error| format!("failed to update device key bootstrap journal: {error}"))?;
+    Ok(Some(database_validated))
+}
+
+fn mark_first_run_active_committed(
+    app_config_dir: &Path,
+    journal: &services::secrets::device_key_journal::DeviceKeyJournal,
+) -> Result<(), String> {
+    let active_committed = journal
+        .advance(services::secrets::device_key_journal::DeviceKeyJournalPhase::ActiveCommitted);
+    services::secrets::device_key_journal::write_journal(app_config_dir, &active_committed)
+        .map_err(|error| format!("failed to update device key bootstrap journal: {error}"))?;
+    let completed = active_committed
+        .advance(services::secrets::device_key_journal::DeviceKeyJournalPhase::Completed);
+    services::secrets::device_key_journal::write_journal(app_config_dir, &completed)
+        .map_err(|error| format!("failed to complete device key bootstrap journal: {error}"))?;
+    services::secrets::device_key_journal::remove_journal(app_config_dir)
+        .map_err(|error| format!("failed to remove device key bootstrap journal: {error}"))
+}
+
 async fn drain_application_shutdown(app: tauri::AppHandle) {
     if let Some(runner) = app.try_state::<services::channel_monitors::ChannelMonitorRunnerState>() {
         runner.stop();
@@ -368,9 +526,6 @@ pub fn run() {
                     .map_err(|error| format!("failed to compose provider registry: {error}"))?,
             );
             let blocking_executor = work_runtime.blocking.clone();
-            let secret_manager = tauri::async_runtime::block_on(
-                services::secrets::SecretManager::initialize(blocking_executor.clone()),
-            )?;
             let app_config_dir = app.path().app_config_dir().map_err(|error| {
                 format!("failed to resolve application config directory: {error}")
             })?;
@@ -379,199 +534,269 @@ pub fn run() {
             let default_data_dir = app.path().app_data_dir().map_err(|error| {
                 format!("failed to resolve application data directory: {error}")
             })?;
-            let prepared_data_store =
-                prepare_data_store(default_data_dir, *secret_manager.data_key())?;
-            app.manage(secret_manager);
+            let startup_state = inspect_startup(&default_data_dir)?;
+            let secret_material = initialize_secret_material_for_startup(
+                blocking_executor.clone(),
+                &app_config_dir,
+                &default_data_dir,
+                startup_state,
+            )?;
+            let mut secret_manager = secret_material.manager;
+            let first_run_key_id = secret_material.first_run_key_id;
+            let prepared_data_store = match secret_manager.as_ref() {
+                Some(secret_manager) => prepare_data_store(
+                    default_data_dir,
+                    secret_material.startup_state,
+                    *secret_manager.data_key(),
+                )?,
+                None => PreparedDataStore::Recovery(secret_material.startup_state),
+            };
             let proxy_runtime = Arc::new(services::proxy::runtime::ProxyRuntimeState::default());
             let capture_session_store = services::capture::session::CaptureSessionStore::default();
             let runtime_owner = match prepared_data_store {
                 PreparedDataStore::Ready {
                     runtime,
                     database_path,
-                    startup_state,
+                    mut startup_state,
                 } => {
-                    let data_key = *app.state::<services::secrets::SecretManager>().data_key();
-                    let active_data_dir = database_path
-                        .parent()
-                        .ok_or_else(|| {
-                            format!(
-                                "generation 2 database has no parent directory: {}",
-                                database_path.display()
+                    let Some(secret_manager) = secret_manager.take() else {
+                        return Err("ready data store requires device key material".into());
+                    };
+                    let first_run_activation_error = if first_run_key_id.is_some() {
+                        let commit_result = (|| {
+                            let validated_journal =
+                                mark_first_run_database_validated(&app_config_dir)?;
+                            tauri::async_runtime::block_on(
+                                secret_manager.commit_active(blocking_executor.clone()),
                             )
-                        })?
-                        .to_path_buf();
-                    let data_directory_port = Arc::new(
-                        services::data_store::data_directory_port::FileDataDirectoryPort::new(
-                            startup_state.default_data_dir().to_path_buf(),
-                            active_data_dir.clone(),
-                        ),
-                    );
-                    let outbound_client = work_runtime.outbound.clone();
-                    let supervisor_handle = work_runtime.supervisor.clone();
-                    let app_services = app_composition::compose_app_services(
-                        runtime.handle(),
-                        data_key,
-                        active_data_dir.display().to_string(),
-                        None,
-                        data_directory_port,
-                        blocking_executor.clone(),
-                    );
-                    let settings_stations_command_facade =
-                        app_composition::compose_settings_stations_command_facade(
-                            &app_services,
-                            Arc::clone(app.state::<Arc<TrayBehaviorState>>().inner()),
+                            .map_err(|error| {
+                                format!("failed to commit active device key: {:?}", error.kind())
+                            })?;
+                            if let Some(journal) = validated_journal.as_ref() {
+                                mark_first_run_active_committed(&app_config_dir, journal)?;
+                            }
+                            Ok::<(), String>(())
+                        })();
+                        commit_result.err()
+                    } else {
+                        None
+                    };
+                    if let Some(error) = first_run_activation_error {
+                        eprintln!(
+                            "Relay Pool Desktop first-run device key activation requires recovery: {error}"
                         );
-                    let key_pool_command_facade =
-                        app_composition::compose_key_pool_command_facade(&app_services);
-                    let remote_keys_command_facade =
-                        app_composition::compose_remote_keys_command_facade(
-                            &app_services,
-                            blocking_executor.clone(),
-                            outbound_client.clone(),
-                            Arc::clone(&provider_registry),
+                        if let Err(close_error) = tauri::async_runtime::block_on(runtime.close()) {
+                            eprintln!(
+                                "failed to close runtime after device key activation error: {close_error}"
+                            );
+                        }
+                        startup_state.decision = StartupDecision::NeedsRecovery {
+                            reason: RecoveryReason::SystemCredentialInternal,
+                        };
+                        app.manage(secret_manager);
+                        app.manage(startup_state);
+                        DataStoreRuntimeOwner::new(None, installation_lease)
+                    } else {
+                        let data_key = *secret_manager.data_key();
+                        app.manage(secret_manager);
+                        let active_data_dir = database_path
+                            .parent()
+                            .ok_or_else(|| {
+                                format!(
+                                    "generation 2 database has no parent directory: {}",
+                                    database_path.display()
+                                )
+                            })?
+                            .to_path_buf();
+                        let data_directory_port = Arc::new(
+                            services::data_store::data_directory_port::FileDataDirectoryPort::new(
+                                startup_state.default_data_dir().to_path_buf(),
+                                active_data_dir.clone(),
+                            ),
+                        );
+                        let outbound_client = work_runtime.outbound.clone();
+                        let supervisor_handle = work_runtime.supervisor.clone();
+                        let app_services = app_composition::compose_app_services(
+                            runtime.handle(),
                             data_key,
-                        );
-                    let routing_command_facade = app_composition::compose_routing_command_facade(
-                        &app_services,
-                        outbound_client.clone(),
-                    );
-                    let request_logs_command_facade =
-                        app_composition::compose_request_logs_command_facade(&app_services);
-                    let channel_monitor_runner_port = services::channel_monitors::v2_runner_port(
-                        &app_services,
-                        outbound_client.clone(),
-                    );
-                    let channel_monitoring_command_facade =
-                        app_composition::compose_channel_monitoring_command_facade(
-                            &app_services,
-                            Arc::clone(&channel_monitor_runner_port),
-                        );
-                    let channel_status_command_facade =
-                        app_composition::compose_channel_status_command_facade(&app_services);
-                    let collector_metadata_command_facade =
-                        app_composition::compose_collector_metadata_command_facade(&app_services);
-                    let station_collection_command_facade =
-                        app_composition::compose_station_collection_command_facade(
-                            &app_services,
-                            blocking_executor.clone(),
-                            outbound_client.clone(),
-                            Arc::clone(&provider_registry),
-                            data_key,
-                        );
-                    let station_key_connectivity_command_facade =
-                        app_composition::compose_station_key_connectivity_command_facade(
-                            &app_services,
-                            outbound_client.clone(),
-                        );
-                    let capture_command_facade = app_composition::compose_capture_command_facade(
-                        &app_services,
-                        capture_session_store.clone(),
-                        outbound_client.clone(),
-                        Arc::clone(&provider_registry),
-                    );
-                    let pricing_command_facade =
-                        app_composition::compose_pricing_command_facade(&app_services);
-                    let change_events_command_facade =
-                        app_composition::compose_change_events_command_facade(&app_services);
-                    let credentials_command_facade =
-                        app_composition::compose_credentials_command_facade(&app_services);
-                    let data_directory_command_facade =
-                        app_composition::compose_data_directory_command_facade(
-                            &app_services,
+                            active_data_dir.display().to_string(),
+                            None,
+                            data_directory_port,
                             blocking_executor.clone(),
                         );
-                    let local_proxy_command_facade =
-                        app_composition::compose_local_proxy_command_facade(
-                            &app_services,
-                            Arc::clone(&proxy_runtime),
-                            data_key,
-                        );
-                    tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
+                        let settings_stations_command_facade =
+                            app_composition::compose_settings_stations_command_facade(
+                                &app_services,
+                                Arc::clone(app.state::<Arc<TrayBehaviorState>>().inner()),
+                            );
+                        let key_pool_command_facade =
+                            app_composition::compose_key_pool_command_facade(&app_services);
+                        let remote_keys_command_facade =
+                            app_composition::compose_remote_keys_command_facade(
+                                &app_services,
+                                blocking_executor.clone(),
+                                outbound_client.clone(),
+                                Arc::clone(&provider_registry),
+                                data_key,
+                            );
+                        let routing_command_facade =
+                            app_composition::compose_routing_command_facade(
+                                &app_services,
+                                outbound_client.clone(),
+                            );
+                        let request_logs_command_facade =
+                            app_composition::compose_request_logs_command_facade(&app_services);
+                        let channel_monitor_runner_port =
+                            services::channel_monitors::v2_runner_port(
+                                &app_services,
+                                outbound_client.clone(),
+                            );
+                        let channel_monitoring_command_facade =
+                            app_composition::compose_channel_monitoring_command_facade(
+                                &app_services,
+                                Arc::clone(&channel_monitor_runner_port),
+                            );
+                        let channel_status_command_facade =
+                            app_composition::compose_channel_status_command_facade(&app_services);
+                        let collector_metadata_command_facade =
+                            app_composition::compose_collector_metadata_command_facade(
+                                &app_services,
+                            );
+                        let station_collection_command_facade =
+                            app_composition::compose_station_collection_command_facade(
+                                &app_services,
+                                blocking_executor.clone(),
+                                outbound_client.clone(),
+                                Arc::clone(&provider_registry),
+                                data_key,
+                            );
+                        let station_key_connectivity_command_facade =
+                            app_composition::compose_station_key_connectivity_command_facade(
+                                &app_services,
+                                outbound_client.clone(),
+                            );
+                        let capture_command_facade =
+                            app_composition::compose_capture_command_facade(
+                                &app_services,
+                                capture_session_store.clone(),
+                                outbound_client.clone(),
+                                Arc::clone(&provider_registry),
+                            );
+                        let pricing_command_facade =
+                            app_composition::compose_pricing_command_facade(&app_services);
+                        let change_events_command_facade =
+                            app_composition::compose_change_events_command_facade(&app_services);
+                        let credentials_command_facade =
+                            app_composition::compose_credentials_command_facade(&app_services);
+                        let data_directory_command_facade =
+                            app_composition::compose_data_directory_command_facade(
+                                &app_services,
+                                blocking_executor.clone(),
+                            );
+                        let local_proxy_command_facade =
+                            app_composition::compose_local_proxy_command_facade(
+                                &app_services,
+                                Arc::clone(&proxy_runtime),
+                                data_key,
+                            );
+                        tauri::async_runtime::block_on(
+                            app_services.settings.repair_legacy_settings(),
+                        )
                         .map_err(|error| {
                             format!("failed to repair legacy application settings: {error}")
                         })?;
-                    tauri::async_runtime::block_on(app_services.settings.ensure_local_access_key())
+                        tauri::async_runtime::block_on(
+                            app_services.settings.ensure_local_access_key(),
+                        )
                         .map_err(|error| {
                             format!("failed to initialize the local proxy access key: {error}")
                         })?;
-                    tauri::async_runtime::block_on(
-                        app_services.pricing.ensure_builtin_model_base_prices(),
-                    )
-                    .map_err(|error| {
-                        format!("failed to initialize built-in model prices: {error}")
-                    })?;
-                    let settings = tauri::async_runtime::block_on(app_services.settings.load())
-                        .map_err(|error| format!("failed to load application settings: {error}"))?;
-                    app.state::<Arc<TrayBehaviorState>>()
-                        .set(TrayBehavior::from_setting(&settings.tray_behavior));
-                    runtime_composition::register_work_runtime(
-                        &persistence::upgrade_fault::NoUpgradeFaults,
-                        app,
-                        work_runtime,
-                    )
-                    .map_err(|error| format!("failed to register work runtime: {error}"))?;
-                    let channel_monitor_runner =
-                        services::channel_monitors::ChannelMonitorRunnerState::start_v2(
-                            supervisor_handle.clone(),
-                            channel_monitor_runner_port,
+                        tauri::async_runtime::block_on(
+                            app_services.pricing.ensure_builtin_model_base_prices(),
                         )
                         .map_err(|error| {
-                            format!("failed to start channel monitor runner: {error}")
+                            format!("failed to initialize built-in model prices: {error}")
                         })?;
-                    let station_collector_runner =
-                        services::station_collectors::StationCollectorRunnerState::start_v2(
-                            supervisor_handle,
-                            services::station_collectors::v2_runner_port(
-                                &app_services,
-                                blocking_executor,
-                                outbound_client,
-                                provider_registry,
-                                data_key,
+                        let settings = tauri::async_runtime::block_on(app_services.settings.load())
+                            .map_err(|error| {
+                                format!("failed to load application settings: {error}")
+                            })?;
+                        app.state::<Arc<TrayBehaviorState>>()
+                            .set(TrayBehavior::from_setting(&settings.tray_behavior));
+                        runtime_composition::register_work_runtime(
+                            &persistence::upgrade_fault::NoUpgradeFaults,
+                            app,
+                            work_runtime,
+                        )
+                        .map_err(|error| format!("failed to register work runtime: {error}"))?;
+                        let channel_monitor_runner =
+                            services::channel_monitors::ChannelMonitorRunnerState::start_v2(
+                                supervisor_handle.clone(),
+                                channel_monitor_runner_port,
+                            )
+                            .map_err(|error| {
+                                format!("failed to start channel monitor runner: {error}")
+                            })?;
+                        let station_collector_runner =
+                            services::station_collectors::StationCollectorRunnerState::start_v2(
+                                supervisor_handle,
+                                services::station_collectors::v2_runner_port(
+                                    &app_services,
+                                    blocking_executor,
+                                    outbound_client,
+                                    provider_registry,
+                                    data_key,
+                                ),
+                            )
+                            .map_err(|error| {
+                                format!("failed to start station collector runner: {error}")
+                            })?;
+                        println!(
+                            "Relay Pool Desktop database initialized at {}",
+                            database_path.display()
+                        );
+                        let runtime_owner = DataStoreRuntimeOwner::new(
+                            Some(Arc::clone(&runtime)),
+                            installation_lease,
+                        );
+                        runtime_composition::register_ready_services_with_command_facades(
+                            &persistence::upgrade_fault::NoUpgradeFaults,
+                            app,
+                            runtime_composition::ReadyServiceBundleWithCommandFacades::new(
+                                startup_state,
+                                runtime,
+                                app_services,
+                                settings_stations_command_facade,
+                                key_pool_command_facade,
+                                remote_keys_command_facade,
+                                routing_command_facade,
+                                request_logs_command_facade,
+                                channel_monitoring_command_facade,
+                                channel_status_command_facade,
+                                collector_metadata_command_facade,
+                                station_collection_command_facade,
+                                station_key_connectivity_command_facade,
+                                capture_command_facade,
+                                pricing_command_facade,
+                                change_events_command_facade,
+                                credentials_command_facade,
+                                data_directory_command_facade,
+                                local_proxy_command_facade,
+                                channel_monitor_runner,
+                                station_collector_runner,
                             ),
                         )
                         .map_err(|error| {
-                            format!("failed to start station collector runner: {error}")
+                            format!("failed to register ready runtime services: {error}")
                         })?;
-                    println!(
-                        "Relay Pool Desktop database initialized at {}",
-                        database_path.display()
-                    );
-                    let runtime_owner =
-                        DataStoreRuntimeOwner::new(Some(Arc::clone(&runtime)), installation_lease);
-                    runtime_composition::register_ready_services_with_command_facades(
-                        &persistence::upgrade_fault::NoUpgradeFaults,
-                        app,
-                        runtime_composition::ReadyServiceBundleWithCommandFacades::new(
-                            startup_state,
-                            runtime,
-                            app_services,
-                            settings_stations_command_facade,
-                            key_pool_command_facade,
-                            remote_keys_command_facade,
-                            routing_command_facade,
-                            request_logs_command_facade,
-                            channel_monitoring_command_facade,
-                            channel_status_command_facade,
-                            collector_metadata_command_facade,
-                            station_collection_command_facade,
-                            station_key_connectivity_command_facade,
-                            capture_command_facade,
-                            pricing_command_facade,
-                            change_events_command_facade,
-                            credentials_command_facade,
-                            data_directory_command_facade,
-                            local_proxy_command_facade,
-                            channel_monitor_runner,
-                            station_collector_runner,
-                        ),
-                    )
-                    .map_err(|error| {
-                        format!("failed to register ready runtime services: {error}")
-                    })?;
-                    runtime_owner
+                        runtime_owner
+                    }
                 }
                 PreparedDataStore::Recovery(startup_state) => {
                     println!("Relay Pool Desktop started in data recovery mode");
+                    if let Some(secret_manager) = secret_manager.take() {
+                        app.manage(secret_manager);
+                    }
                     app.manage(startup_state);
                     DataStoreRuntimeOwner::new(None, installation_lease)
                 }
