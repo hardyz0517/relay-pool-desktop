@@ -7,6 +7,7 @@ pub mod group_categories;
 pub mod health;
 pub mod logs;
 pub mod outbound;
+pub(crate) mod portable_migration;
 pub mod pricing;
 pub(crate) mod pricing_catalog;
 pub mod proxy;
