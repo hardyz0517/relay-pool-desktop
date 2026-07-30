@@ -40,3 +40,8 @@ Task 5 clarification:
 
 - The current codebase does not yet have a dedicated collector model evidence writer; it has manual `station_key_capabilities` rows plus legacy runtime capability reads. Task 5 therefore freezes the canonical evidence/projector contract and provider-neutral adapter signals without inventing a second persistence owner.
 - The scoped capability evidence writer is introduced when production request/monitoring outcomes are converted into typed `CapabilityEffect` in Task 18/19. New writer code must consume the Task 5 evidence contract instead of writing route allow booleans.
+
+Task 6 clarification:
+
+- Status Monitoring V2 has already frozen `HealthTransitionService`, `HealthObservationStore`, and monitoring write-path ownership for durable Station Key health. Task 6 must not duplicate those reducers with another nullable health row, event bus, or migration unless a new scoped durable target is actually persisted.
+- The missing routing upgrade piece is the pure `HealthProjector` plus a narrow runtime health projection port: durable hard rejects remain authoritative, ordinary runtime suppression is revision-bound and clearable after matching durable recovery, and stale runtime overlay is recorded as lag instead of rolling durable truth back.
