@@ -3,12 +3,12 @@ import { readdir, readFile } from "node:fs/promises";
 
 const migrationNames = await readdir("src-tauri/src/persistence/migrations");
 assert.ok(
-  migrationNames.includes("0016_encrypted_secret_baseline.sql"),
-  "0016 encrypted-secret baseline migration must exist after confirming the migration number is free",
+  migrationNames.includes("0017_encrypted_secret_baseline.sql"),
+  "0017 encrypted-secret baseline migration must exist after the mainline schema 16 monitor defaults migration",
 );
 
 const migration = await readFile(
-  "src-tauri/src/persistence/migrations/0016_encrypted_secret_baseline.sql",
+  "src-tauri/src/persistence/migrations/0017_encrypted_secret_baseline.sql",
   "utf8",
 );
 const baseline = await readFile("src-tauri/src/services/secrets/baseline_conversion.rs", "utf8");
@@ -29,8 +29,8 @@ assert.ok(
   migration.includes("ALTER TABLE secrets ADD COLUMN key_id TEXT") &&
     migration.includes("ALTER TABLE secrets ADD COLUMN encryption_version INTEGER") &&
     migration.includes("CREATE TABLE app_secret_bindings") &&
-    !migration.includes("SET schema_version = 16"),
-  "0016 should add transitional structure without directly activating the encrypted-secret profile",
+    !migration.includes("SET schema_version = 17"),
+  "0017 should add transitional structure without directly activating the encrypted-secret profile",
 );
 
 assert.ok(
@@ -78,7 +78,7 @@ assert.ok(
 
 assert.ok(
   !runtime.includes("crate::services::secrets") &&
-    migrations.includes("readable_schema: 1..=16") &&
-    migrations.includes("writable_schema: BTreeSet::from([16])"),
+    migrations.includes("readable_schema: 1..=17") &&
+    migrations.includes("writable_schema: BTreeSet::from([17])"),
   "persistence runtime must stay service-independent while the current binary only opens the encrypted-secret baseline as writable",
 );

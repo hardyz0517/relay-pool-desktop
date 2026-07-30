@@ -29,7 +29,7 @@
 
 ## 实施前锁定
 
-当前基线必须在 Task 0 重新确认：database generation `2`，writable schema、应用表数量和最新 migration 均以当时 registry 为准。状态监控与后续主干迁移合并后 `0009_provider_drafts.sql` 到 `0015_monitor_probe_timeout_defaults.sql` 已被占用；安全基线 migration 应选下一个空闲编号（当前为 `0016_encrypted_secret_baseline.sql`），并同步更新本计划执行记录、fixture 和 compatibility 常量，禁止覆盖已有 migration。
+当前基线必须在 Task 0 重新确认：database generation `2`，writable schema、应用表数量和最新 migration 均以当时 registry 为准。状态监控与后续主干迁移合并后 `0009_provider_drafts.sql` 到 `0016_monitor_sub2api_latency_defaults.sql` 已被占用；安全基线 migration 应选下一个空闲编号（当前为 `0017_encrypted_secret_baseline.sql`），并同步更新本计划执行记录、fixture 和 compatibility 常量，禁止覆盖已有 migration。
 
 当前 `src-tauri/src/lib.rs` 的启动顺序是 SecretManager 先于 installation lease；Task 2 必须先修。当前 composition 仍在多处复制 `[u8; 32]`；Task 3 必须逐步收口，不能在迁移功能旁继续保留第二条裸 key 路径。
 
@@ -307,7 +307,7 @@ git commit -m "feat: add reusable secret rekey service"
 
 **Files:**
 
-- Create after preflight confirms free: `src-tauri/src/persistence/migrations/0016_encrypted_secret_baseline.sql`
+- Create after preflight confirms free: `src-tauri/src/persistence/migrations/0017_encrypted_secret_baseline.sql`
 - Create: `src-tauri/src/services/secrets/baseline_conversion.rs`
 - Modify: `src-tauri/src/persistence/migrations.rs`
 - Modify: `src-tauri/src/persistence/runtime.rs`
@@ -351,7 +351,7 @@ cargo test --manifest-path src-tauri/Cargo.toml baseline_conversion -- --nocaptu
 cargo test --manifest-path src-tauri/Cargo.toml persistence::upgrade -- --nocapture
 cargo test --manifest-path src-tauri/Cargo.toml services::data_store -- --nocapture
 cargo check --manifest-path src-tauri/Cargo.toml
-git add -- src-tauri/src/persistence/migrations/0016_encrypted_secret_baseline.sql src-tauri/src/services/secrets/baseline_conversion.rs src-tauri/src/persistence/migrations.rs src-tauri/src/persistence/runtime.rs src-tauri/src/persistence/upgrade_journal.rs src-tauri/src/persistence/upgrade_recovery_plan.rs src-tauri/src/persistence/upgrade_recovery_executor.rs src-tauri/src/services/data_store/generation_upgrade.rs src-tauri/src/services/data_store/backup.rs src-tauri/src/services/secrets/validation.rs src-tauri/src/application/settings.rs src-tauri/src/models/settings.rs src-tauri/src/persistence/stores/settings_store.rs src-tauri/src/persistence/stores/credential_store.rs src-tauri/src/lib.rs scripts/encrypted-secret-baseline.test.mjs scripts/settings-local-access-key.test.mjs scripts/run-contract-tests.mjs
+git add -- src-tauri/src/persistence/migrations/0017_encrypted_secret_baseline.sql src-tauri/src/services/secrets/baseline_conversion.rs src-tauri/src/persistence/migrations.rs src-tauri/src/persistence/runtime.rs src-tauri/src/persistence/upgrade_journal.rs src-tauri/src/persistence/upgrade_recovery_plan.rs src-tauri/src/persistence/upgrade_recovery_executor.rs src-tauri/src/services/data_store/generation_upgrade.rs src-tauri/src/services/data_store/backup.rs src-tauri/src/services/secrets/validation.rs src-tauri/src/application/settings.rs src-tauri/src/models/settings.rs src-tauri/src/persistence/stores/settings_store.rs src-tauri/src/persistence/stores/credential_store.rs src-tauri/src/lib.rs scripts/encrypted-secret-baseline.test.mjs scripts/settings-local-access-key.test.mjs scripts/run-contract-tests.mjs
 git commit -m "feat: convert databases to encrypted secret baseline"
 ```
 

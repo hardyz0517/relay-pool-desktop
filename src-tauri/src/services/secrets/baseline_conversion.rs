@@ -34,8 +34,8 @@ use crate::{
 
 use super::{crypto, DeviceKeyId, DeviceKeyResolver, SecretKeyMaterial};
 
-pub(crate) const PRE_BASELINE_SCHEMA_VERSION: i64 = 15;
-pub(crate) const ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION: i64 = 16;
+pub(crate) const PRE_BASELINE_SCHEMA_VERSION: i64 = 16;
+pub(crate) const ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION: i64 = 17;
 pub(crate) const ENCRYPTED_SECRET_SCHEMA_PROFILE: &str = "encrypted-secrets-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1387,7 +1387,7 @@ mod tests {
                 &active,
                 "SELECT schema_version FROM persistence_schema_compatibility"
             ),
-            16
+            17
         );
         assert_eq!(query_i64(&active, "SELECT COUNT(*) FROM secrets WHERE key_id = 'device-key-v1' AND encryption_version = 1"), 3);
         assert_eq!(
@@ -1474,7 +1474,7 @@ mod tests {
                 &active,
                 "SELECT schema_version FROM persistence_schema_compatibility"
             ),
-            15
+            16
         );
         assert_eq!(
             query_string(
@@ -1542,7 +1542,7 @@ mod tests {
                 &active,
                 "SELECT schema_version FROM persistence_schema_compatibility"
             ),
-            16
+            17
         );
         let backup_path = report.backup_path.expect("backup retained");
         assert!(backup_path.is_file());

@@ -54,10 +54,10 @@ pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), Persistenc
     sqlx::query!(
         r#"
         UPDATE persistence_schema_compatibility
-        SET schema_version = 16,
+        SET schema_version = 17,
             min_reader_app_version = '0.3.3',
             min_writer_app_version = '0.3.3',
-            updated_by_migration = 16,
+            updated_by_migration = 17,
             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
         WHERE singleton_key = 1
         "#,
@@ -119,8 +119,8 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=16,
-        writable_schema: BTreeSet::from([16]),
+        readable_schema: 1..=17,
+        writable_schema: BTreeSet::from([17]),
     }
 }
 

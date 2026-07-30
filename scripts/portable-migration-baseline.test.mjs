@@ -32,8 +32,8 @@ function runMigrations() {
     "schema 9 provider drafts migration must be present before portable migration work",
   );
   assert(
-    migrations.includes("0016_encrypted_secret_baseline.sql"),
-    "schema 16 encrypted-secret baseline migration must be present after the current mainline schema",
+    migrations.includes("0017_encrypted_secret_baseline.sql"),
+    "schema 17 encrypted-secret baseline migration must be present after the current mainline schema",
   );
   for (const migration of migrations) {
     db.exec(fs.readFileSync(path.join(migrationDirectory(), migration), "utf8"));
@@ -98,11 +98,11 @@ const unexpectedSpecOnly = catalogTables.filter((table) => !actualSet.has(table)
 
 assert(compatibility.generation === 2, `database generation must be 2, got ${compatibility.generation}`);
 assert(
-  compatibility.schemaVersion === 15,
-  `raw migrations must leave schema compatibility at pre-baseline 15 until the encrypted-secret finalizer runs, got ${compatibility.schemaVersion}`,
+  compatibility.schemaVersion === 16,
+  `raw migrations must leave schema compatibility at pre-baseline 16 until the encrypted-secret finalizer runs, got ${compatibility.schemaVersion}`,
 );
 assert(binary.generation === 2, `binary database generation must be 2, got ${binary.generation}`);
-assert(binary.writableSchema === 16, `binary writable schema must be 16, got ${binary.writableSchema}`);
+assert(binary.writableSchema === 17, `binary writable schema must be 17, got ${binary.writableSchema}`);
 assert(actualTables.length === 37, `expected 37 current schema tables, got ${actualTables.length}: ${actualTables.join(", ")}`);
 assert(missingFromSpec.length === 0, `spec catalog matrix is missing current tables: ${missingFromSpec.join(", ")}`);
 assert(

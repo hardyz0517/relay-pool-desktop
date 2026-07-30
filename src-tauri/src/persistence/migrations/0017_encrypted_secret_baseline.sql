@@ -17,4 +17,4 @@ CREATE INDEX idx_app_secret_bindings_secret_id ON app_secret_bindings(secret_id)
 
 -- Intentionally do not update persistence_schema_compatibility here.
 -- Application-level baseline conversion must re-encrypt and validate all
--- secret-bearing rows before committing schema_version = 16.
+-- secret-bearing rows before committing schema_version = 17.

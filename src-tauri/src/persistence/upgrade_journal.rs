@@ -8,8 +8,8 @@ const GENERATION_1: u32 = 1;
 const LEGACY_BACKUP_FILE: &str = "relay-pool-desktop.sqlite3";
 const V2_FINAL_FILE: &str = "relay-pool-desktop-v2.sqlite3";
 const ENCRYPTED_SECRET_BASELINE_KIND: &str = "encryptedSecretBaseline";
-const ENCRYPTED_SECRET_BASELINE_SOURCE_SCHEMA: i64 = 15;
-const ENCRYPTED_SECRET_BASELINE_TARGET_SCHEMA: i64 = 16;
+const ENCRYPTED_SECRET_BASELINE_SOURCE_SCHEMA: i64 = 16;
+const ENCRYPTED_SECRET_BASELINE_TARGET_SCHEMA: i64 = 17;
 const ENCRYPTED_SECRET_BASELINE_PROFILE: &str = "encrypted-secrets-v1";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
