@@ -8,7 +8,8 @@ import { loadChannelMonitoringWorkspace, loadChannelStatusWorkspace } from "./ch
 describe("channel query backend cutover", () => {
   const channels = {
     loadChannelMonitoringWorkspace: vi.fn(async () => ({
-      monitorSummaries: [],
+      monitors: [],
+      statusWorkspace: {} as never,
       stations: [],
       keyPoolItems: [],
       templates: [],

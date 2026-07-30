@@ -43,6 +43,7 @@ export type TrendCellView = {
   modelLabel: string;
   timeLabel: string;
   availabilityLabel: string;
+  httpStatus: number | null;
   latencyLabel: string;
   latencyMs: number | null;
   startMs: number | null;
@@ -71,6 +72,8 @@ export type ChannelStatusRowView = {
   availabilityLabel: string;
   latencyMs: number | null;
   latencyLabel: string;
+  endpointPingMs: number | null;
+  endpointPingLabel: string;
   lastCheckedAtMs: number | null;
   lastCheckedLabel: string;
   recentTrend: TrendCellView[];
@@ -176,6 +179,8 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     availabilityLabel: formatAvailability(availabilityPercent),
     latencyMs: latest?.latencyMs ?? null,
     latencyLabel: formatLatency(latest?.latencyMs ?? null),
+    endpointPingMs: row.target.endpointPing?.latencyMs ?? null,
+    endpointPingLabel: formatLatency(row.target.endpointPing?.latencyMs ?? null),
     lastCheckedAtMs: selected.latestCheckedAtMs,
     lastCheckedLabel: formatTime(selected.latestCheckedAtMs),
     recentTrend: buildTrend(row, "recent"),
@@ -217,11 +222,11 @@ export function availabilityTone(value: number | null): AvailabilityTone {
 export function statusLabel(tone: StatusTone) {
   switch (tone) {
     case "available":
-      return "可用";
+      return "正常";
     case "degraded":
       return "降级";
     case "unavailable":
-      return "不可用";
+      return "错误";
     case "skipped":
       return "跳过";
     case "running":
@@ -277,7 +282,12 @@ function formatTrendTime(value: number | null | undefined) {
 
 function recentPointToCell(point: ChannelStatusRecentPoint, index: number, primaryModel: string): TrendCellView {
   const tone = outcomeToTrendTone(point.outcome);
-  const availabilityLabel = outcomeLabel(point.outcome);
+  const availabilityLabel = outcomeLabelWithUnavailableDetail(
+    point.outcome,
+    point.httpStatus,
+    point.terminalReason,
+    point.failureKind,
+  );
   const timeLabel = formatTrendTime(point.checkedAtMs);
   const latencyLabel = formatLatency(point.latencyMs);
   const modelLabel = point.effectiveModel ?? primaryModel;
@@ -288,7 +298,7 @@ function recentPointToCell(point: ChannelStatusRecentPoint, index: number, prima
     title: [
       `模型：${modelLabel}`,
       `时间：${timeLabel}`,
-      `可用：${availabilityLabel}`,
+      `状态：${availabilityLabel}`,
       `延迟：${latencyLabel}`,
       `尝试：${point.attemptCount}`,
       point.failureKind ? `失败分类：${point.failureKind}` : null,
@@ -297,6 +307,7 @@ function recentPointToCell(point: ChannelStatusRecentPoint, index: number, prima
     modelLabel,
     timeLabel,
     availabilityLabel,
+    httpStatus: point.httpStatus,
     latencyLabel,
     latencyMs: point.latencyMs,
     startMs: point.checkedAtMs,
@@ -320,10 +331,10 @@ function bucketToCell(bucket: ChannelStatusBucket, modelLabel: string): TrendCel
     title: [
       `模型：${modelLabel}`,
       `时间：${timeLabel}`,
-      `可用：${availabilityLabel}`,
+      `状态：${availabilityLabel}`,
       `延迟：${latencyLabel}`,
-      `样本：${bucket.counts.total} · 可用 ${bucket.counts.available} · 降级 ${bucket.counts.degraded} · 不可用 ${bucket.counts.unavailable} · 跳过 ${bucket.counts.skipped}`,
-      `可用率：${formatAvailability(bpsToPercent(bucket.effectiveAvailabilityBps))}`,
+      `样本：${bucket.counts.total} · 正常 ${bucket.counts.available} · 降级 ${bucket.counts.degraded} · 错误 ${bucket.counts.unavailable} · 跳过 ${bucket.counts.skipped}`,
+      `可用性：${formatAvailability(bpsToPercent(bucket.effectiveAvailabilityBps))}`,
       `P50/P95：${formatLatency(bucket.p50LatencyMs)} / ${formatLatency(bucket.p95LatencyMs)}`,
       failureCounts ? `失败分类：${failureCounts}` : null,
       bucket.corrupt ? "汇总数据异常" : null,
@@ -331,6 +342,7 @@ function bucketToCell(bucket: ChannelStatusBucket, modelLabel: string): TrendCel
     modelLabel,
     timeLabel,
     availabilityLabel,
+    httpStatus: null,
     latencyLabel,
     latencyMs: bucket.p50LatencyMs,
     startMs: bucket.startMs,
@@ -355,14 +367,68 @@ function outcomeToTrendTone(outcome: ChannelStatusOutcome): TrendCellTone {
   return "missing";
 }
 
+const MAX_UNAVAILABLE_DETAIL_LENGTH = 64;
+
+function outcomeLabelWithUnavailableDetail(
+  outcome: ChannelStatusOutcome,
+  httpStatus: number | null,
+  terminalReason: string | null,
+  failureKind: string | null,
+) {
+  const label = outcomeLabel(outcome);
+  if (outcome !== "unavailable") {
+    return label;
+  }
+  const detail = httpStatusLabel(httpStatus)
+    ?? httpStatusFromReason(terminalReason)
+    ?? namedErrorCodeFromReason(terminalReason)
+    ?? compactUnavailableReason(terminalReason)
+    ?? compactUnavailableReason(failureKind);
+  return detail ? `${label} (${detail})` : label;
+}
+
+function httpStatusLabel(value: number | null) {
+  if (value === null || !Number.isInteger(value) || value < 100 || value > 599) {
+    return null;
+  }
+  return String(value);
+}
+
+function httpStatusFromReason(value: string | null) {
+  const match = value?.match(/\b([1-5][0-9]{2})\b/);
+  return match?.[1] ?? null;
+}
+
+function namedErrorCodeFromReason(value: string | null) {
+  const match = value?.match(/["']?\b(?:error[_ -]?code|code)\b["']?\s*[:=]\s*["']?([A-Za-z0-9_.-]{2,64})/i);
+  return compactUnavailableReason(match?.[1] ?? null);
+}
+
+function compactUnavailableReason(value: string | null | undefined) {
+  const normalized = redactSensitiveReason(value?.trim().replace(/\s+/g, " ") ?? "");
+  if (!normalized) {
+    return null;
+  }
+  return normalized.length > MAX_UNAVAILABLE_DETAIL_LENGTH
+    ? `${normalized.slice(0, MAX_UNAVAILABLE_DETAIL_LENGTH - 3)}...`
+    : normalized;
+}
+
+function redactSensitiveReason(value: string) {
+  return value
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "sk-***")
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._-]{8,}/gi, "$1***")
+    .replace(/\b((?:api[_-]?key|token|cookie)=)[^\s&]+/gi, "$1***");
+}
+
 function outcomeLabel(outcome: ChannelStatusOutcome) {
   switch (outcome) {
     case "available":
-      return "可用";
+      return "正常";
     case "degraded":
       return "降级";
     case "unavailable":
-      return "不可用";
+      return "错误";
     case "skipped":
       return "跳过";
     default:
@@ -373,11 +439,11 @@ function outcomeLabel(outcome: ChannelStatusOutcome) {
 function bucketStateLabel(state: ChannelStatusBucket["state"]) {
   switch (state) {
     case "available":
-      return "可用";
+      return "正常";
     case "degraded":
       return "降级";
     case "unavailable":
-      return "不可用";
+      return "错误";
     case "skipped_only":
       return "仅跳过";
     case "dirty":

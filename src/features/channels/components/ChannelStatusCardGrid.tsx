@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Clock3, Eye, Play, Square, Timer } from "lucide-react";
+import { Eye, Gauge, Play, Square, Timer } from "lucide-react";
 import { Sub2ApiPlatformIcon } from "@/components/group/Sub2ApiPlatformIcon";
 import { EmptyState, IconButton, StatusBadge } from "@/components/ui";
 import { groupVisualClassNames } from "@/lib/groupVisualStyles";
@@ -42,7 +42,7 @@ export function ChannelStatusCardGrid({
     return (
       <EmptyState
         title={loading ? "正在读取状态监控" : "暂无状态监控卡片"}
-        description="创建或启用监控后，卡片视图会显示每个 Key 的当前状态、可用率、延迟和趋势。"
+        description="创建或启用监控后，卡片视图会显示每个 Key 的当前状态、可用性、延迟和趋势。"
       />
     );
   }
@@ -124,14 +124,14 @@ function ChannelStatusCard({
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <MetricTile icon={<Timer className="h-3.5 w-3.5" />} label="对话延迟" value={row.latencyLabel} />
-        <MetricTile icon={<Clock3 className="h-3.5 w-3.5" />} label="最近探测" value={row.lastCheckedLabel} />
+        <MetricTile icon={<Timer className="h-3.5 w-3.5" />} label="模型延迟" value={row.latencyLabel} />
+        <MetricTile icon={<Gauge className="h-3.5 w-3.5" />} label="端点 Ping" value={row.endpointPingLabel} />
       </div>
 
       <div className="mt-3 border-t border-border pt-3">
         <div className="flex items-end justify-between gap-3">
           <div className="min-w-0 pb-0.5 text-xs font-medium text-muted-foreground">
-            <div>可用率</div>
+            <div>可用性</div>
           </div>
           <div
             className={cn("shrink-0 text-3xl font-semibold leading-8 tracking-normal", availabilityClassName)}

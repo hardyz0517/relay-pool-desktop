@@ -99,62 +99,6 @@ export type UpdateChannelMonitorInput = CreateChannelMonitorInput & {
   id: string;
 };
 
-export type ChannelMonitorRun = {
-  id: string;
-  monitorId: string;
-  templateId: string;
-  stationId: string;
-  stationKeyId: string | null;
-  status: ChannelMonitorRunStatus;
-  startedAt: string;
-  finishedAt: string | null;
-  durationMs: number | null;
-  httpStatus: number | null;
-  latencyMs: number | null;
-  responseModel: string | null;
-  fallbackModel: string | null;
-  errorMessage: string | null;
-  createdAt: string;
-};
-
-export type ChannelMonitorRunsLoadStatus = "ok" | "failed";
-
-export type ChannelMonitorSummary = {
-  monitor: ChannelMonitor;
-  recentRuns: ChannelMonitorRun[];
-  runsLoadStatus: ChannelMonitorRunsLoadStatus;
-  latestRun: ChannelMonitorRun | null;
-};
-
-export type ChannelStatusTimelinePoint = {
-  status: ChannelMonitorRunStatus;
-  latencyMs: number | null;
-  endpointPingMs: number | null;
-  checkedAt: string;
-};
-
-export type ChannelStatusWindowSummary = {
-  window: "recent" | "24h" | "7d";
-  totalCount: number;
-  successCount: number;
-  failureCount: number;
-  warningCount: number;
-  availabilityPercent: number | null;
-  avgLatencyMs: number | null;
-  avgEndpointPingMs: number | null;
-  lastCheckedAt: string | null;
-  latestStatus: ChannelMonitorRunStatus | null;
-  latestErrorMessage: string | null;
-  timeline: ChannelStatusTimelinePoint[];
-};
-
-export type ChannelStatusSummary = {
-  monitor: ChannelMonitor;
-  recent: ChannelStatusWindowSummary;
-  last24h: ChannelStatusWindowSummary;
-  last7d: ChannelStatusWindowSummary;
-};
-
 export type ChannelStatusWorkspaceWindow = "recent" | "last24h" | "last7d" | "last30d";
 export type ChannelStatusSortField = "monitor_name" | "latest_checked_at" | "availability" | "latency" | "status";
 export type ChannelStatusSortDirection = "asc" | "desc";
@@ -253,6 +197,13 @@ export type ChannelStatusTarget = {
   stationKeyName: string | null;
   groupName: string | null;
   effectiveGroupCategory: string | null;
+  endpointPing: ChannelStatusEndpointPing | null;
+};
+
+export type ChannelStatusEndpointPing = {
+  status: string;
+  latencyMs: number | null;
+  checkedAtMs: number | null;
 };
 
 export type ChannelStatusLatestResult = {
@@ -261,6 +212,7 @@ export type ChannelStatusLatestResult = {
   outcome: ChannelStatusOutcome;
   failureKind: string | null;
   terminalReason: string | null;
+  httpStatus: number | null;
   latencyMs: number | null;
   finishedAtMs: number | null;
   semanticConfidence: string;
@@ -284,6 +236,7 @@ export type ChannelStatusRecentPoint = {
   outcome: ChannelStatusOutcome;
   failureKind: string | null;
   terminalReason: string | null;
+  httpStatus: number | null;
   latencyMs: number | null;
   checkedAtMs: number | null;
   usedFallback: boolean;

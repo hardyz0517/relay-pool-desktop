@@ -461,24 +461,6 @@ export function resolveRemoteCreatedLocalKeyIds(
   );
 }
 
-export function bindableLocalKeysForRemote(
-  remoteKeyId: string,
-  remoteKeys: RemoteStationKey[],
-  localKeys: StationKey[],
-) {
-  const localKeyOwners = new Map(
-    remoteKeys.flatMap((remoteKey) =>
-      remoteKey.matchedStationKeyId
-        ? [[remoteKey.matchedStationKeyId, remoteKey.id] as const]
-        : [],
-    ),
-  );
-  return localKeys.filter((localKey) => {
-    const owner = localKeyOwners.get(localKey.id);
-    return owner === undefined || owner === remoteKeyId;
-  });
-}
-
 export function isRemoteCreatedLocalKey(remoteKey: RemoteStationKey, localKey: StationKey) {
   return (
     localKey.note === remoteLocalKeyNote(remoteKey) ||

@@ -4,7 +4,6 @@ import type { StationKeyDraft, StationKeyGroupOption } from "../../components/St
 import type { StationGroupBinding } from "@/lib/types/groupFacts";
 import type { RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import {
-  bindableLocalKeysForRemote,
   collectRemoteGroupOptions,
   dedupeGroupRows,
   groupBindingsToDrafts,
@@ -214,22 +213,6 @@ describe("add provider key/group model", () => {
         [legacyLocal],
       ),
     ).toEqual({});
-  });
-
-  it("offers only unclaimed local keys when binding a remote key", () => {
-    const remotes = [
-      remoteKey({ id: "remote-1", matchedStationKeyId: "local-1", matchStatus: "matched" }),
-      remoteKey({ id: "remote-2", matchedStationKeyId: null }),
-    ];
-    const locals = [stationKey({ id: "local-1" }), stationKey({ id: "local-2" })];
-
-    expect(bindableLocalKeysForRemote("remote-2", remotes, locals).map((key) => key.id)).toEqual([
-      "local-2",
-    ]);
-    expect(bindableLocalKeysForRemote("remote-1", remotes, locals).map((key) => key.id)).toEqual([
-      "local-1",
-      "local-2",
-    ]);
   });
 
   it("builds an update payload without read-only station key fields", () => {

@@ -9,9 +9,7 @@ import {
   InspectorPanel,
   PropertyList,
   PropertyRow,
-  SegmentedControl,
   StatusBadge,
-  Toolbar,
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -39,8 +37,6 @@ import {
   statusFallback,
 } from "./requestLogViewModels";
 
-type LogFilter = "all" | "failed" | "fallback";
-
 export function LogsPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -56,25 +52,14 @@ export function LogsPage() {
   const loading = logsQuery.isPending && logsQuery.data === undefined;
   const error = logsQuery.error ? readError(logsQuery.error) : null;
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<LogFilter>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [clearing, setClearing] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
-  const filteredLogs = useMemo(() => {
-    if (filter === "failed") {
-      return logs.filter((log) => log.status === "failed");
-    }
-    if (filter === "fallback") {
-      return logs.filter((log) => log.fallbackCount > 0 || log.status === "fallback");
-    }
-    return logs;
-  }, [filter, logs]);
-
   const pageInfo = useMemo(
-    () => paginateRequestLogs(filteredLogs, page, pageSize),
-    [filteredLogs, page, pageSize],
+    () => paginateRequestLogs(logs, page, pageSize),
+    [logs, page, pageSize],
   );
   const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? pageInfo.logs[0] ?? null;
   const keyById = useMemo(() => new Map(keys.map((key) => [key.id, key] as const)), [keys]);
@@ -114,12 +99,6 @@ export function LogsPage() {
     }
   }
 
-  function handleFilterChange(value: string) {
-    setFilter(value as LogFilter);
-    setPage(1);
-    setSelectedId(null);
-  }
-
   function handlePageSizeChange(value: number) {
     setPageSize(value);
     setPage(1);
@@ -127,41 +106,29 @@ export function LogsPage() {
   }
 
   return (
-    <PageScaffold title="使用记录">
+    <PageScaffold
+      title="使用记录"
+      actions={
+        <>
+          <Button variant="outline" onClick={() => void refreshLogs(true)}>
+            <RefreshCw className="h-4 w-4" />
+            刷新
+          </Button>
+          <Button variant="danger" onClick={handleClear}>
+            <Trash2 className="h-4 w-4" />
+            清空
+          </Button>
+        </>
+      }
+    >
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="min-w-0">
           <div
-            data-testid="request-log-toolbar-surface"
+            data-testid="request-log-table-surface"
             className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
           >
-            <Toolbar>
-              <SegmentedControl
-                value={filter}
-                onChange={handleFilterChange}
-                options={[
-                  { value: "all", label: "全部" },
-                  { value: "failed", label: "失败" },
-                  { value: "fallback", label: "兜底" },
-                ]}
-              />
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => void refreshLogs(true)}>
-                  <RefreshCw className="h-4 w-4" />
-                  刷新
-                </Button>
-                <Button variant="danger" onClick={handleClear}>
-                  <Trash2 className="h-4 w-4" />
-                  清空
-                </Button>
-              </div>
-            </Toolbar>
-          </div>
-          <div
-            data-testid="request-log-table-surface"
-            className="mt-3 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
-          >
             {error && <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
-            {filteredLogs.length === 0 ? (
+            {logs.length === 0 ? (
               <EmptyState
                 title={loading ? "正在读取使用记录" : "暂无使用记录"}
                 description="启动本地代理并从外部工具发起请求后，这里会出现记录。"
@@ -175,7 +142,7 @@ export function LogsPage() {
               />
             )}
           </div>
-          {filteredLogs.length > 0 && (
+          {logs.length > 0 && (
             <RequestLogPagination
               pageInfo={pageInfo}
               pageSize={pageSize}

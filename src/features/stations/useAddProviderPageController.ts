@@ -9,7 +9,6 @@ import {
   listCommonLoginOptions,
 } from "@/lib/api/settings";
 import {
-  bindRemoteStationKey,
   createLocalStationKeyFromRemote,
   createRemoteStationKey,
   deleteRemoteStationKey,
@@ -19,7 +18,6 @@ import {
   listRemoteStationKeys,
   listStationKeys,
   scanRemoteStationKeys,
-  unbindRemoteStationKey,
   updateStationCredentials,
   updateStationKey,
 } from "@/lib/api/stationKeys";
@@ -730,30 +728,6 @@ export function useAddProviderPageController({
     }
   }
 
-  async function handleBindRemoteKey(remoteKeyId: string, stationKeyId: string) {
-    if (!activeStationId) {
-      toast.info("草稿不支持修改远端或正式 Key 绑定");
-      return;
-    }
-    setRemoteLoading(true);
-    setError(null);
-    try {
-      const keys = await bindRemoteStationKey(remoteKeyId, stationKeyId);
-      const nextRemoteKeys = keys.filter((key) => key.stationId === activeStationId);
-      setRemoteKeys(nextRemoteKeys);
-      setRemoteCreatedLocalKeyIds(
-        resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, localStationKeys),
-      );
-      toast.success("远端 Key 已绑定");
-    } catch (requestError) {
-      const message = readError(requestError);
-      setError(message);
-      toast.error("绑定远端 Key 失败", message);
-    } finally {
-      setRemoteLoading(false);
-    }
-  }
-
   async function handleImportRemoteKey(remoteKey: RemoteStationKey) {
     if (!activeStationId) {
       toast.info("草稿阶段只能查看远端 Key");
@@ -767,31 +741,6 @@ export function useAddProviderPageController({
       const message = readError(requestError);
       setError(message);
       toast.error("导入本地 Key 失败", message);
-    } finally {
-      setRemoteLoading(false);
-    }
-  }
-
-  async function handleUnbindRemoteKey(remoteKey: RemoteStationKey) {
-    if (!activeStationId || remoteLoading) {
-      return;
-    }
-    setRemoteLoading(true);
-    setError(null);
-    try {
-      const nextRemoteKeys = (await unbindRemoteStationKey(remoteKey.id, activeStationId)).filter(
-        (key) => key.stationId === activeStationId,
-      );
-      setRemoteKeys(nextRemoteKeys);
-      setRemoteCreatedLocalKeyIds(
-        resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, localStationKeys),
-      );
-      await invalidateProviderWorkspaceCaches();
-      toast.success("本地关联已解除", "Key 池中的本地 Key 保持不变。");
-    } catch (requestError) {
-      const message = readError(requestError);
-      setError(message);
-      toast.error("解除本地关联失败", message);
     } finally {
       setRemoteLoading(false);
     }
@@ -836,10 +785,10 @@ export function useAddProviderPageController({
     await updateStationKey(stationKeyToUpdateInput(result.stationKey, {
       rateMultiplier: effectiveRateMultiplierForCredit(remoteKey.rateMultiplier, currentCreditPerCny),
     }));
-    const nextRemoteKeys = (await bindRemoteStationKey(remoteKey.id, result.stationKey.id)).filter(
-      (key) => key.stationId === targetStationId,
-    );
-    const nextLocalKeys = await refreshLocalStationKeyState(targetStationId);
+    const [nextRemoteKeys, nextLocalKeys] = await Promise.all([
+      listRemoteStationKeys(targetStationId),
+      refreshLocalStationKeyState(targetStationId),
+    ]);
     await invalidateProviderWorkspaceCaches();
     setRemoteKeys(nextRemoteKeys);
     setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
@@ -1028,7 +977,6 @@ export function useAddProviderPageController({
     groupRows,
     handleAddGroup,
     handleAddLocalKey,
-    handleBindRemoteKey,
     handleCommonEmailSelect,
     handleCommonPasswordSelect,
     handleCreateRemoteKey,
@@ -1069,6 +1017,5 @@ export function useAddProviderPageController({
     testingConnection,
     startingAuthorization,
     handleCopyWebsiteUrl,
-    handleUnbindRemoteKey,
   };
 }

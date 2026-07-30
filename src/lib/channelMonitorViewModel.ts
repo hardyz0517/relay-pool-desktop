@@ -61,6 +61,8 @@ type StationKeyMonitorTemplatePreference = {
 export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4.1-mini";
 export const DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID = "builtin-openai-responses-low-token";
 export const STATION_KEY_MONITOR_NOTE = "由密钥池监控开关创建";
+const DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS = 30_000;
+const DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS = 45_000;
 
 export const targetTypeOptions: Array<{ value: ChannelMonitorTargetType; label: string }> = [
   { value: "station_key", label: "单个密钥" },
@@ -157,8 +159,8 @@ export function createStationKeyMonitorInput(
     healthWritebackMode: "observe_only",
     healthFailureThreshold: 2,
     healthRecoveryThreshold: 2,
-    attemptTimeoutMs: 10_000,
-    executionTimeoutMs: 30_000,
+    attemptTimeoutMs: DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS,
+    executionTimeoutMs: DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS,
     intervalSeconds: 300,
     jitterSeconds: 15,
     timeoutSeconds: 30,
@@ -229,8 +231,8 @@ export function createEmptyMonitorDraft(
     jitterSeconds: "30",
     primaryModel: "",
     fallbackModels: [],
-    attemptTimeoutMs: "10000",
-    executionTimeoutMs: "30000",
+    attemptTimeoutMs: String(DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS),
+    executionTimeoutMs: String(DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS),
     retryMaxAttemptsPerModel: "1",
     retryInitialBackoffMs: "200",
     retryMaxBackoffMs: "2000",

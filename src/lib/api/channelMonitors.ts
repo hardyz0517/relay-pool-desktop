@@ -1,5 +1,4 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
-import type { ChannelMonitorSummaryOptions } from "@/lib/bridge/BackendClient";
 import type {
   CreateChannelMonitorInput,
   CreateChannelMonitorTemplateInput,
@@ -10,18 +9,8 @@ import type {
   UpdateChannelMonitorTemplateInput,
 } from "@/lib/types/channelMonitors";
 
-export type { ChannelMonitorSummaryOptions } from "@/lib/bridge/BackendClient";
-
 export function listChannelMonitors() {
   return getActiveBackendClient().channels.listChannelMonitors();
-}
-
-export function listChannelMonitorSummaries(options: ChannelMonitorSummaryOptions = {}) {
-  return getActiveBackendClient().channels.listChannelMonitorSummaries(options);
-}
-
-export function listChannelStatusSummaries() {
-  return getActiveBackendClient().channels.listChannelStatusSummaries();
 }
 
 export function createChannelMonitor(input: CreateChannelMonitorInput) {
@@ -62,10 +51,6 @@ export function listChannelMonitorAttempts(input: ChannelMonitorAttemptHistoryIn
 
 export function listMonitoringCapabilities() {
   return getActiveBackendClient().channels.listMonitoringCapabilities();
-}
-
-export function listChannelMonitorRuns(monitorId: string) {
-  return getActiveBackendClient().channels.listChannelMonitorRuns(monitorId);
 }
 
 export function listChannelMonitorTemplates() {

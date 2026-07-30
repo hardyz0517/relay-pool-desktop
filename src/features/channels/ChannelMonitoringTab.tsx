@@ -13,8 +13,12 @@ import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { channelMonitoringQueryOptions, monitoringCapabilitiesQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
-import { toTimestampMillis } from "@/lib/time";
-import type { ChannelMonitor, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
+import type {
+  ChannelMonitor,
+  ChannelStatusLatestResult,
+  ChannelStatusOutcome,
+  CreateChannelMonitorInput,
+} from "@/lib/types/channelMonitors";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import { profileLabel, protocolLabel } from "@/lib/channelMonitorDisplay";
@@ -46,21 +50,13 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
   const workspaceQuery = useActivityQuery(channelMonitoringQueryOptions());
   const capabilitiesQuery = useActivityQuery(monitoringCapabilitiesQueryOptions());
   const workspace = workspaceQuery.data;
-  const monitorSummaries = workspace?.monitorSummaries ?? [];
-  const monitors = useMemo(
-    () => monitorSummaries.map((summary) => summary.monitor),
-    [monitorSummaries],
-  );
+  const monitors = workspace?.monitors ?? [];
   const stations = workspace?.stations ?? [];
   const keys = workspace?.keyPoolItems ?? [];
   const templates = workspace?.templates ?? [];
-  const runsByMonitor = useMemo(
-    () => new Map(monitorSummaries.map((summary) => [summary.monitor.id, summary.recentRuns] as const)),
-    [monitorSummaries],
-  );
-  const runLoadFailedIds = useMemo(
-    () => new Set(monitorSummaries.filter((summary) => summary.runsLoadStatus === "failed").map((summary) => summary.monitor.id)),
-    [monitorSummaries],
+  const latestStatusByMonitor = useMemo(
+    () => buildLatestStatusByMonitor(workspace?.statusWorkspace.rows ?? []),
+    [workspace?.statusWorkspace.rows],
   );
   const loading = workspaceQuery.isPending && workspace === undefined;
   const [saving, setSaving] = useState(false);
@@ -75,17 +71,17 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
   const summary = useMemo(() => {
     const enabledCount = monitors.filter((monitor) => monitor.enabled).length;
     const stationTargetCount = monitors.filter((monitor) => monitor.targetType === "station").length;
-    const latestRuns = monitors
-      .map((monitor) => getLatestRun(runsByMonitor.get(monitor.id) ?? []))
-      .filter((run): run is ChannelMonitorRun => Boolean(run));
-    const attentionCount = latestRuns.filter((run) => run.status === "warning" || run.status === "failed").length + runLoadFailedIds.size;
+    const attentionCount = monitors.filter((monitor) => {
+      const outcome = latestStatusByMonitor.get(monitor.id)?.outcome;
+      return outcome === "degraded" || outcome === "unavailable" || outcome === "skipped";
+    }).length;
     return {
       total: monitors.length,
       enabledCount,
       stationTargetCount,
       attentionCount,
     };
-  }, [monitors, runLoadFailedIds, runsByMonitor]);
+  }, [latestStatusByMonitor, monitors]);
 
   async function refresh(showSuccess = false) {
     setError(null);
@@ -264,8 +260,8 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
         <MonitorList
           actionState={actionState}
           keys={keys}
+          latestStatusByMonitor={latestStatusByMonitor}
           monitors={monitors}
-          runsByMonitor={runsByMonitor}
           stations={stations}
           onDelete={handleDelete}
           onDuplicate={handleDuplicate}
@@ -290,8 +286,8 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
 function MonitorList({
   actionState,
   keys,
+  latestStatusByMonitor,
   monitors,
-  runsByMonitor,
   stations,
   onDelete,
   onDuplicate,
@@ -300,8 +296,8 @@ function MonitorList({
 }: {
   actionState: ActionState;
   keys: KeyPoolItem[];
+  latestStatusByMonitor: Map<string, ChannelStatusLatestResult>;
   monitors: ChannelMonitor[];
-  runsByMonitor: Map<string, ChannelMonitorRun[]>;
   stations: Station[];
   onDelete: (monitor: ChannelMonitor) => void;
   onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
@@ -324,7 +320,7 @@ function MonitorList({
             actionState={actionState}
             keys={keys}
             monitor={monitor}
-            runs={runsByMonitor.get(monitor.id) ?? []}
+            latestStatus={latestStatusByMonitor.get(monitor.id) ?? null}
             stations={stations}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
@@ -341,7 +337,7 @@ function MonitorRow({
   actionState,
   keys,
   monitor,
-  runs,
+  latestStatus,
   stations,
   onDelete,
   onDuplicate,
@@ -351,7 +347,7 @@ function MonitorRow({
   actionState: ActionState;
   keys: KeyPoolItem[];
   monitor: ChannelMonitor;
-  runs: ChannelMonitorRun[];
+  latestStatus: ChannelStatusLatestResult | null;
   stations: Station[];
   onDelete: (monitor: ChannelMonitor) => void;
   onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
@@ -364,8 +360,7 @@ function MonitorRow({
   const modelLabel = monitor.primaryModel.trim() || "未设置";
   const targetLabel = formatTargetLabel(monitor.targetType, monitor.stationId, monitor.stationKeyId, stations, keys);
   const intervalLabel = formatInterval(monitor.intervalSeconds, monitor.jitterSeconds);
-  const latestRun = getLatestRun(runs);
-  const primaryModelStatus = getPrimaryModelStatusView(latestRun, modelLabel);
+  const primaryModelStatus = getPrimaryModelStatusView(latestStatus, modelLabel);
   return (
     <>
       <div className={`hidden lg:grid ${monitorGridClassName} group min-h-[62px] px-3 py-2.5 text-left text-[13px] text-foreground transition-colors hover:bg-surface-subtle`}>
@@ -559,21 +554,23 @@ type PrimaryModelStatusView = {
   tone: "healthy" | "warning" | "error" | "info";
 };
 
-function getPrimaryModelStatusView(run: ChannelMonitorRun | null, primaryModel: string): PrimaryModelStatusView {
-  if (!run) {
+function getPrimaryModelStatusView(
+  latest: ChannelStatusLatestResult | null,
+  primaryModel: string,
+): PrimaryModelStatusView {
+  if (!latest) {
     return { label: "未运行", tone: "info" };
   }
-  if (run.status === "failed" || run.status === "skipped") {
+  if (latest.outcome === "unavailable" || latest.outcome === "skipped") {
     return { label: "失败", tone: "error" };
   }
-  if (run.status === "warning") {
+  if (latest.outcome === "degraded" || latest.outcome === "missing") {
     return { label: "降级", tone: "warning" };
   }
   const normalizedPrimary = normalizeModelName(primaryModel);
-  const responseModel = normalizeModelName(run.responseModel);
-  const fallbackModel = normalizeModelName(run.fallbackModel);
-  const usedDifferentModel = Boolean(fallbackModel && fallbackModel !== normalizedPrimary) ||
-    Boolean(responseModel && responseModel !== normalizedPrimary);
+  const effectiveModel = normalizeModelName(latest.effectiveModel);
+  const usedDifferentModel = latest.usedFallback ||
+    Boolean(effectiveModel && effectiveModel !== normalizedPrimary);
   return usedDifferentModel ? { label: "降级", tone: "warning" } : { label: "正常", tone: "healthy" };
 }
 
@@ -602,10 +599,35 @@ function SummaryPill({
   );
 }
 
-function getLatestRun(runs: ChannelMonitorRun[]) {
-  return [...runs].sort((a, b) => toTime(b.startedAt) - toTime(a.startedAt))[0] ?? null;
+function buildLatestStatusByMonitor(
+  rows: Array<{ monitor: { id: string }; latest: ChannelStatusLatestResult | null }>,
+) {
+  const statuses = new Map<string, ChannelStatusLatestResult>();
+  for (const row of rows) {
+    if (!row.latest) {
+      continue;
+    }
+    const current = statuses.get(row.monitor.id);
+    if (!current || compareLatestStatus(row.latest, current) > 0) {
+      statuses.set(row.monitor.id, row.latest);
+    }
+  }
+  return statuses;
 }
 
-function toTime(value: string) {
-  return toTimestampMillis(value);
+function compareLatestStatus(left: ChannelStatusLatestResult, right: ChannelStatusLatestResult) {
+  const severity = (outcome: ChannelStatusOutcome) => {
+    switch (outcome) {
+      case "unavailable": return 5;
+      case "degraded": return 4;
+      case "skipped": return 3;
+      case "available": return 2;
+      case "missing": return 1;
+    }
+  };
+  const severityDifference = severity(left.outcome) - severity(right.outcome);
+  if (severityDifference !== 0) {
+    return severityDifference;
+  }
+  return (left.finishedAtMs ?? 0) - (right.finishedAtMs ?? 0);
 }

@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { CircleMinus, Download, Link2, Trash2, Unlink } from "lucide-react";
-import { IconButton, SelectControl, StatusBadge, type StatusTone } from "@/components/ui";
+import { useMemo } from "react";
+import { CircleMinus, Download, Trash2 } from "lucide-react";
+import { IconButton, StatusBadge } from "@/components/ui";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
-import type { RemoteKeyMatchStatus, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
+import type { RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import { formatMultiplier } from "@/lib/groupOptionViewModels";
-import { bindableLocalKeysForRemote } from "../pages/add-provider/keyGroupModel";
 
 type RemoteKeyDiscoveryListProps = {
   keys: RemoteStationKey[];
@@ -15,27 +14,10 @@ type RemoteKeyDiscoveryListProps = {
   readOnly?: boolean;
   deleteDisabled?: boolean;
   localKeyIdsCreatedByRemote?: Record<string, string>;
-  onBind: (remoteKeyId: string, stationKeyId: string) => void;
   onDelete: (remoteKey: RemoteStationKey) => void;
   onDeleteImportedLocalKey: (remoteKey: RemoteStationKey) => void;
   onImport: (remoteKey: RemoteStationKey) => void;
-  onUnbind: (remoteKey: RemoteStationKey) => void;
 };
-
-const matchStatusLabel: Record<RemoteKeyMatchStatus, string> = {
-  matched: "已匹配",
-  possible: "可能匹配",
-  unbound: "未绑定",
-};
-
-const matchStatusTone: Record<RemoteKeyMatchStatus, StatusTone> = {
-  matched: "healthy",
-  possible: "warning",
-  unbound: "disabled",
-};
-
-const selectClassName =
-  "h-7 min-w-0 w-full px-2 text-xs shadow-none";
 const remoteKeyGridClassName =
   "grid-cols-[minmax(7rem,1.2fr)_5.5rem_minmax(7rem,0.8fr)_6rem_4.5rem_9rem_6rem_7rem]";
 
@@ -47,29 +29,14 @@ export function RemoteKeyDiscoveryList({
   readOnly = false,
   deleteDisabled = false,
   localKeyIdsCreatedByRemote = {},
-  onBind,
   onDelete,
   onDeleteImportedLocalKey,
   onImport,
-  onUnbind,
 }: RemoteKeyDiscoveryListProps) {
-  const [selectedLocalKeyIds, setSelectedLocalKeyIds] = useState<Record<string, string>>({});
-
   const localKeyById = useMemo(
     () => new Map(localKeys.map((key) => [key.id, key] as const)),
     [localKeys],
   );
-  useEffect(() => {
-    setSelectedLocalKeyIds((current) => {
-      const nextEntries = Object.entries(current).filter(([, selectedId]) =>
-        localKeyById.has(selectedId),
-      );
-      if (nextEntries.length === Object.keys(current).length) {
-        return current;
-      }
-      return Object.fromEntries(nextEntries);
-    });
-  }, [localKeyById]);
 
   if (loading && keys.length === 0) {
     return <RemoteKeyEmptyState>正在获取远端 Key...</RemoteKeyEmptyState>;
@@ -100,37 +67,11 @@ export function RemoteKeyDiscoveryList({
                 ? localKeyById.get(key.matchedStationKeyId) ?? null
                 : null;
               const isMatched = key.matchStatus === "matched" && Boolean(matchedLocalKey);
-              const effectiveMatchStatus: RemoteKeyMatchStatus = isMatched
-                ? "matched"
-                : key.matchStatus === "possible"
-                  ? "possible"
-                  : "unbound";
+              const identityVerified = Boolean(key.apiKeyFingerprint);
               const remoteCreatedLocalKeyId = localKeyIdsCreatedByRemote[key.id] ?? null;
               const hasImportedLocalKey = Boolean(
                 remoteCreatedLocalKeyId && localKeyById.has(remoteCreatedLocalKeyId),
               );
-              const hasLocalKeyRelation = Boolean(key.matchedStationKeyId);
-              const bindableLocalKeys = bindableLocalKeysForRemote(key.id, keys, localKeys);
-              const localKeyOptions = [
-                { value: "", label: "选择本地 Key", disabled: true },
-                ...bindableLocalKeys.map((localKey) => ({
-                  value: localKey.id,
-                  label: localKey.name,
-                  description: localKey.apiKeyMasked,
-                })),
-              ];
-              const selectedLocalKeyId = selectedLocalKeyIds[key.id];
-              const effectiveSelectedLocalKeyId =
-                selectedLocalKeyId && localKeyById.has(selectedLocalKeyId)
-                  ? selectedLocalKeyId
-                  : remoteCreatedLocalKeyId && localKeyById.has(remoteCreatedLocalKeyId)
-                    ? remoteCreatedLocalKeyId
-                  : key.matchedStationKeyId && localKeyById.has(key.matchedStationKeyId)
-                    ? key.matchedStationKeyId
-                    : bindableLocalKeys.length === 1
-                      ? bindableLocalKeys[0].id
-                      : "";
-              const bindDisabled = loading || readOnly || !effectiveSelectedLocalKeyId;
 
               return (
                 <div
@@ -140,8 +81,11 @@ export function RemoteKeyDiscoveryList({
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
                   </span>
-                  <StatusBadge tone={matchStatusTone[effectiveMatchStatus]} className="h-5 px-1.5 text-[11px]">
-                    {matchStatusLabel[effectiveMatchStatus]}
+                  <StatusBadge
+                    tone={isMatched ? "healthy" : identityVerified ? "disabled" : "warning"}
+                    className="h-5 px-1.5 text-[11px]"
+                  >
+                    {isMatched ? "已匹配" : identityVerified ? "无匹配" : "未验证"}
                   </StatusBadge>
                   <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
                     {key.apiKeyMasked || key.apiKeyFingerprint || "未提供"}
@@ -155,43 +99,9 @@ export function RemoteKeyDiscoveryList({
                       <span className="min-w-0 flex-1 truncate text-center text-foreground">
                         {matchedLocalKey.name}
                       </span>
-                    ) : bindableLocalKeys.length > 0 ? (
-                      <>
-                        {bindableLocalKeys.length > 1 ? (
-                          <SelectControl
-                            ariaLabel={`选择 ${key.remoteKeyName ?? "远端 Key"} 的本地 Key`}
-                            className={selectClassName}
-                            disabled={loading || readOnly}
-                            menuClassName="text-xs"
-                            options={localKeyOptions}
-                            value={effectiveSelectedLocalKeyId}
-                            onChange={(stationKeyId) =>
-                              setSelectedLocalKeyIds((current) => ({
-                                ...current,
-                                [key.id]: stationKeyId,
-                              }))
-                            }
-                          />
-                        ) : (
-                          <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                            {bindableLocalKeys[0].name}
-                          </span>
-                        )}
-                        <IconButton
-                          className="h-7 w-7 shrink-0 text-muted-foreground"
-                          disabled={bindDisabled}
-                          label={`绑定 ${key.remoteKeyName ?? "远端 Key"} 到本地 Key`}
-                          onClick={() =>
-                            effectiveSelectedLocalKeyId &&
-                            onBind(key.id, effectiveSelectedLocalKeyId)
-                          }
-                        >
-                          <Link2 className="h-3.5 w-3.5" />
-                        </IconButton>
-                      </>
                     ) : (
                       <span className="w-full truncate text-center text-muted-foreground">
-                        {localKeys.length > 0 ? "无可用本地 Key" : "暂无本地 Key"}
+                        {identityVerified ? "无对应本地 Key" : "无法校验密钥"}
                       </span>
                     )}
                   </div>
@@ -199,9 +109,7 @@ export function RemoteKeyDiscoveryList({
                     {hasImportedLocalKey ? (
                       <StatusBadge tone="healthy" className="h-5 px-1.5 text-[11px]">已导入</StatusBadge>
                     ) : isMatched ? (
-                      <StatusBadge tone="info" className="h-5 px-1.5 text-[11px]">已关联</StatusBadge>
-                    ) : hasLocalKeyRelation ? (
-                      <StatusBadge tone="warning" className="h-5 px-1.5 text-[11px]">待确认</StatusBadge>
+                      <StatusBadge tone="info" className="h-5 px-1.5 text-[11px]">已存在</StatusBadge>
                     ) : (
                       <IconButton
                         className="h-7 w-7 text-muted-foreground"
@@ -214,16 +122,6 @@ export function RemoteKeyDiscoveryList({
                     )}
                   </div>
                   <div className="flex min-w-0 justify-center gap-0.5">
-                    {key.matchedStationKeyId && (
-                      <IconButton
-                        className="h-7 w-7 text-muted-foreground"
-                        disabled={loading || readOnly}
-                        label={`解除 ${key.remoteKeyName ?? "远端 Key"} 的本地关联`}
-                        onClick={() => onUnbind(key)}
-                      >
-                        <Unlink className="h-3.5 w-3.5" />
-                      </IconButton>
-                    )}
                     {hasImportedLocalKey && (
                       <IconButton
                         className="h-7 w-7 text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"

@@ -13,11 +13,8 @@ import {
   getChannelMonitorExecution,
   listChannelMonitorAttempts,
   listChannelMonitorExecutions,
-  listChannelMonitorRuns,
-  listChannelMonitorSummaries,
   listChannelMonitorTemplates,
   listChannelMonitors,
-  listChannelStatusSummaries,
   listMonitoringCapabilities,
   runChannelMonitorNow,
   updateChannelMonitor,
@@ -27,8 +24,6 @@ import {
 describe("channel monitor backend cutover", () => {
   const channels = {
     listChannelMonitors: vi.fn(async () => []),
-    listChannelMonitorSummaries: vi.fn(async () => []),
-    listChannelStatusSummaries: vi.fn(async () => []),
     createChannelMonitor: vi.fn(async (input) => ({ id: "monitor-1", createdAt: "now", updatedAt: "now", ...input })),
     updateChannelMonitor: vi.fn(async (input) => ({ createdAt: "now", updatedAt: "now", ...input })),
     deleteChannelMonitor: vi.fn(async () => undefined),
@@ -68,7 +63,6 @@ describe("channel monitor backend cutover", () => {
     })),
     listChannelMonitorAttempts: vi.fn(async () => ({ items: [], nextCursor: null })),
     listMonitoringCapabilities: vi.fn(async () => ({ protocols: [], profiles: [] })),
-    listChannelMonitorRuns: vi.fn(async () => []),
     listChannelMonitorTemplates: vi.fn(async () => []),
     createChannelMonitorTemplate: vi.fn(async (input) => ({
       id: "template-1",
@@ -140,8 +134,6 @@ describe("channel monitor backend cutover", () => {
     } as const;
 
     await listChannelMonitors();
-    await listChannelMonitorSummaries({ runLimit: 5, runSince: "2026-07-22T00:00:00.000Z" });
-    await listChannelStatusSummaries();
     await createChannelMonitor(monitorInput);
     await updateChannelMonitor({ ...monitorInput, id: "monitor-1" });
     await deleteChannelMonitor("monitor-1");
@@ -151,7 +143,6 @@ describe("channel monitor backend cutover", () => {
     await getChannelMonitorExecution("execution-1");
     await listChannelMonitorAttempts({ executionId: "execution-1", limit: 20 });
     await listMonitoringCapabilities();
-    await listChannelMonitorRuns("monitor-1");
     await listChannelMonitorTemplates();
     await createChannelMonitorTemplate(templateInput);
     await updateChannelMonitorTemplate({ ...templateInput, id: "template-1" });
@@ -159,11 +150,6 @@ describe("channel monitor backend cutover", () => {
     await deleteChannelMonitorTemplate("template-1");
 
     expect(channels.listChannelMonitors).toHaveBeenCalledTimes(1);
-    expect(channels.listChannelMonitorSummaries).toHaveBeenCalledWith({
-      runLimit: 5,
-      runSince: "2026-07-22T00:00:00.000Z",
-    });
-    expect(channels.listChannelStatusSummaries).toHaveBeenCalledTimes(1);
     expect(channels.createChannelMonitor).toHaveBeenCalledWith(monitorInput);
     expect(channels.updateChannelMonitor).toHaveBeenCalledWith({ ...monitorInput, id: "monitor-1" });
     expect(channels.deleteChannelMonitor).toHaveBeenCalledWith("monitor-1");
@@ -173,7 +159,6 @@ describe("channel monitor backend cutover", () => {
     expect(channels.getChannelMonitorExecution).toHaveBeenCalledWith("execution-1");
     expect(channels.listChannelMonitorAttempts).toHaveBeenCalledWith({ executionId: "execution-1", limit: 20 });
     expect(channels.listMonitoringCapabilities).toHaveBeenCalledTimes(1);
-    expect(channels.listChannelMonitorRuns).toHaveBeenCalledWith("monitor-1");
     expect(channels.listChannelMonitorTemplates).toHaveBeenCalledTimes(1);
     expect(channels.createChannelMonitorTemplate).toHaveBeenCalledWith(templateInput);
     expect(channels.updateChannelMonitorTemplate).toHaveBeenCalledWith({ ...templateInput, id: "template-1" });

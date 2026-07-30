@@ -217,14 +217,12 @@ describe("AddProviderSections", () => {
           rows={[]}
           scanRemoteDisabled={false}
           onAddLocalKey={onAddLocalKey}
-          onBindRemoteKey={vi.fn()}
           onDeleteImportedLocalKey={vi.fn()}
           onDeleteRemoteKey={vi.fn()}
           onImportRemoteKey={vi.fn()}
           onOpenCreateRemoteKey={onOpenCreateRemoteKey}
           onRowsChange={vi.fn()}
           onScanRemoteKeys={onScanRemoteKeys}
-          onUnbindRemoteKey={vi.fn()}
         />,
       ),
     );
@@ -305,14 +303,12 @@ describe("AddProviderSections", () => {
           rows={[]}
           scanRemoteDisabled={false}
           onAddLocalKey={vi.fn()}
-          onBindRemoteKey={vi.fn()}
           onDeleteImportedLocalKey={vi.fn()}
           onDeleteRemoteKey={onDeleteRemoteKey}
           onImportRemoteKey={vi.fn()}
           onOpenCreateRemoteKey={vi.fn()}
           onRowsChange={vi.fn()}
           onScanRemoteKeys={vi.fn()}
-          onUnbindRemoteKey={vi.fn()}
         />,
       ),
     );
@@ -334,7 +330,7 @@ describe("AddProviderSections", () => {
       remoteKeyIdHash: "remote-hash",
       remoteKeyName: "Matched remote",
       apiKeyMasked: "sk-fixture********test",
-      apiKeyFingerprint: null,
+      apiKeyFingerprint: "fingerprint-1",
       groupIdHash: null,
       groupName: "default",
       tierLabel: null,
@@ -384,11 +380,9 @@ describe("AddProviderSections", () => {
         <RemoteKeyDiscoveryList
           keys={[matchedRemoteKey]}
           localKeys={[]}
-          onBind={vi.fn()}
           onDelete={vi.fn()}
           onDeleteImportedLocalKey={vi.fn()}
           onImport={vi.fn()}
-          onUnbind={vi.fn()}
         />,
       ),
     );
@@ -401,31 +395,30 @@ describe("AddProviderSections", () => {
     expect(layoutClassNames).not.toContain("min-w-[1000px]");
     expect(host.textContent).not.toContain("已匹配");
     expect(host.textContent).not.toContain("已关联");
-    expect(host.textContent).toContain("未绑定");
+    expect(host.textContent).toContain("无匹配");
     expect(host.textContent).toContain("Key 池");
-    expect(host.textContent).toContain("待确认");
-    expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).toBeNull();
+    expect(host.textContent).toContain("无对应本地 Key");
+    expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).not.toBeNull();
 
     await act(async () =>
       root.render(
         <RemoteKeyDiscoveryList
           keys={[matchedRemoteKey]}
           localKeys={[localKey]}
-          onBind={vi.fn()}
           onDelete={vi.fn()}
           onDeleteImportedLocalKey={vi.fn()}
           onImport={vi.fn()}
-          onUnbind={vi.fn()}
         />,
       ),
     );
     expect(host.textContent).toContain("已匹配");
     expect(host.textContent).toContain("Matched local");
-    expect(host.textContent).toContain("已关联");
+    expect(host.textContent).toContain("已存在");
     expect(
       [...host.querySelectorAll("div")].flatMap((element) => [...element.classList]),
     ).toContain("min-w-[840px]");
-    expect(host.querySelector('button[aria-label="解除 Matched remote 的本地关联"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label*="绑定"]')).toBeNull();
+    expect(host.querySelector('button[aria-label*="解除"]')).toBeNull();
 
     await act(async () =>
       root.render(
@@ -433,11 +426,9 @@ describe("AddProviderSections", () => {
           keys={[matchedRemoteKey]}
           localKeys={[localKey]}
           localKeyIdsCreatedByRemote={{ [matchedRemoteKey.id]: localKey.id }}
-          onBind={vi.fn()}
           onDelete={vi.fn()}
           onDeleteImportedLocalKey={vi.fn()}
           onImport={vi.fn()}
-          onUnbind={vi.fn()}
         />,
       ),
     );

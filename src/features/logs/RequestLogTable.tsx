@@ -37,22 +37,21 @@ type RequestLogPaginationProps = {
 
 export function RequestLogTable({ rows, keyById, selectedId, onSelect }: RequestLogTableProps) {
   const columns = useMemo<DataTableColumn<RequestLog>[]>(() => [
-    { key: "key", header: "密钥", className: "w-44", render: (row) => formatKeyName(row, keyById) },
-    { key: "model", header: "模型", className: "w-36", render: (row) => row.model ?? "未识别" },
-    { key: "reasoning", header: "推理强度", className: "w-24", render: (row) => reasoningEffortLabel(row.reasoningEffort) },
-    { key: "endpoint", header: "端点", className: "w-40", render: (row) => row.path },
-    { key: "group", header: "分组", className: "w-32", render: (row) => <LogMetaTag value={formatGroupName(row, keyById)} /> },
-    { key: "type", header: "类型", className: "w-20", render: (row) => <LogMetaTag value={row.stream ? "流式" : "同步"} /> },
-    { key: "billing", header: "计费模式", className: "w-24", render: (row) => <LogMetaTag value={billingModeLabel(row.billingMode)} /> },
-    { key: "tokens", header: "Token", className: "w-36", render: (row) => <TokenUsageCell log={row} /> },
+    { key: "key", header: "密钥", render: (row) => formatKeyName(row, keyById) },
+    { key: "model", header: "模型", render: (row) => row.model ?? "未识别" },
+    { key: "reasoning", header: "推理强度", render: (row) => reasoningEffortLabel(row.reasoningEffort) },
+    { key: "endpoint", header: "端点", render: (row) => row.path },
+    { key: "group", header: "分组", render: (row) => <LogMetaTag value={formatGroupName(row, keyById)} /> },
+    { key: "type", header: "类型", render: (row) => <LogMetaTag value={row.stream ? "流式" : "同步"} /> },
+    { key: "billing", header: "计费模式", render: (row) => <LogMetaTag value={billingModeLabel(row.billingMode)} /> },
+    { key: "tokens", header: "Token", render: (row) => <TokenUsageCell log={row} /> },
     {
       key: "cost",
       header: "费用",
-      className: "w-32",
       render: (row) => <span className="font-medium text-success-foreground">{formatRequestCost(row)}</span>,
     },
-    { key: "latency", header: "延迟", className: "w-28", render: (row) => <LatencyCell log={row} /> },
-    { key: "time", header: "时间", className: "w-44", render: (row) => formatLogTime(row.startedAt, true) },
+    { key: "latency", header: "延迟", render: (row) => <LatencyCell log={row} /> },
+    { key: "time", header: "时间", render: (row) => formatLogTime(row.startedAt, true) },
   ], [keyById]);
 
   return (
@@ -65,7 +64,7 @@ export function RequestLogTable({ rows, keyById, selectedId, onSelect }: Request
           selectedKey={selectedId ?? undefined}
           onRowClick={(row) => onSelect(row.id)}
           headerVariant="plain"
-          className="rounded-none border-0 shadow-none"
+          className="rounded-none border-0 shadow-none [&_table]:table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis"
         />
       </div>
     </div>

@@ -52,11 +52,11 @@ export function ChannelStatusTable({
       <div className="overflow-x-auto">
         <table className="min-w-[1080px] w-full table-fixed border-collapse bg-surface text-left text-sm">
           <colgroup>
-            <col className="w-[16%]" />
-            <col className="w-[11%]" />
+            <col className="w-[18%]" />
             <col className="w-[9%]" />
-            <col className="w-[8%]" />
-            <col className="w-[10%]" />
+            <col className="w-[9%]" />
+            <col className="w-[9%]" />
+            <col className="w-[9%]" />
             <col className="w-[40%]" />
             <col className="w-[6%]" />
           </colgroup>
@@ -65,7 +65,7 @@ export function ChannelStatusTable({
               <HeaderCell>密钥 / 站点</HeaderCell>
               <HeaderCell>模型</HeaderCell>
               <HeaderCell>当前状态</HeaderCell>
-              <HeaderCell className="text-right">可用率</HeaderCell>
+              <HeaderCell>可用性</HeaderCell>
               <HeaderCell>最近探测</HeaderCell>
               <HeaderCell>趋势</HeaderCell>
               <HeaderCell className="text-right">操作</HeaderCell>
@@ -112,13 +112,8 @@ export function ChannelStatusTable({
                         </span>
                       )}
                     </div>
-                    {row.currentReason && (
-                      <div className="mt-1 truncate text-xs text-muted-foreground" title={row.currentReason}>
-                        {row.currentReason}
-                      </div>
-                    )}
                   </BodyCell>
-                  <BodyCell className="text-right">
+                  <BodyCell>
                     <div className={cn("font-semibold", availabilityToneClass(availabilityTone(row.availabilityPercent)))}>
                       {row.availabilityLabel}
                     </div>

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ChannelStatusRow } from "@/lib/types/channelMonitors";
+import { ChannelStatusCardGrid } from "./components/ChannelStatusCardGrid";
 import {
   availabilityTone,
   buildRowView,
   buildTrend,
   createChannelStatusWorkspaceInput,
+  statusLabel,
 } from "./channelStatusViewModel";
 
 describe("channel status V2 view model", () => {
@@ -17,6 +21,11 @@ describe("channel status V2 view model", () => {
     [75, "success"],
   ] as const)("maps availability %s to %s", (value, tone) => {
     expect(availabilityTone(value)).toBe(tone);
+  });
+
+  it("uses normal and error as the user-facing health terms", () => {
+    expect(statusLabel("available")).toBe("正常");
+    expect(statusLabel("unavailable")).toBe("错误");
   });
 
   it("creates a bounded stable workspace input from UI state", () => {
@@ -46,10 +55,37 @@ describe("channel status V2 view model", () => {
 
   it("maps newest-first recent points to an oldest-first display timeline", () => {
     const row = fixtureRow();
+    row.recent[0].httpStatus = 503;
+    row.recent[0].terminalReason = "server overloaded";
     const trend = buildTrend(row, "recent");
 
     expect(trend).toHaveLength(2);
     expect(trend.map((cell) => cell.tone)).toEqual(["available", "unavailable"]);
+    expect(trend[0].availabilityLabel).toBe("正常");
+    expect(trend[1].availabilityLabel).toMatch(/^错误/);
+    expect(trend[1].availabilityLabel).toMatch(/\(503\)$/);
+  });
+
+  it("falls back to terminal reason status codes for legacy unavailable points", () => {
+    const row = fixtureRow();
+    row.recent[0].httpStatus = null;
+    row.recent[0].terminalReason = "HTTP 429";
+
+    expect(buildTrend(row, "recent")[1].availabilityLabel).toMatch(/\(429\)$/);
+  });
+
+  it("shows named error codes and reasons for unavailable points", () => {
+    const row = fixtureRow();
+    row.recent[0].httpStatus = null;
+    row.recent[0].terminalReason = "error_code=insufficient_quota";
+    expect(buildTrend(row, "recent")[1].availabilityLabel).toMatch(/\(insufficient_quota\)$/);
+
+    row.recent[0].terminalReason = "request timed out after 10000ms";
+    expect(buildTrend(row, "recent")[1].availabilityLabel).toContain("(request timed out after 10000ms)");
+
+    row.recent[0].terminalReason = null;
+    row.recent[0].failureKind = "network";
+    expect(buildTrend(row, "recent")[1].availabilityLabel).toMatch(/\(network\)$/);
   });
 
   it("maps backend buckets directly and preserves missing buckets", () => {
@@ -68,6 +104,28 @@ describe("channel status V2 view model", () => {
     expect(view.groupName).toBe("plus");
     expect(view.visualPlatform).toBe("openai");
     expect(view.availabilityPercent).toBe(92.5);
+    expect(view.latencyLabel).toBe("321 ms");
+    expect(view.endpointPingLabel).toBe("48 ms");
+  });
+
+  it("renders model latency and endpoint ping as the two card metrics", () => {
+    const view = buildRowView(fixtureRow(), "recent");
+    const markup = renderToStaticMarkup(createElement(ChannelStatusCardGrid, {
+      rows: [view],
+      loading: false,
+      actionPending: false,
+      onRunNow: () => undefined,
+      onCancel: () => undefined,
+      onOpenExecution: () => undefined,
+    }));
+
+    expect(markup).toContain("模型延迟");
+    expect(markup).toContain("321 ms");
+    expect(markup).toContain("端点 Ping");
+    expect(markup).toContain("48 ms");
+    expect(markup).toContain("可用性");
+    expect(markup).not.toContain("正常率");
+    expect(markup).not.toContain("最近探测");
   });
 
   it.each([
@@ -108,6 +166,11 @@ function fixtureRow(): ChannelStatusRow {
       stationKeyName: "Key A",
       groupName: "plus",
       effectiveGroupCategory: "gpt",
+      endpointPing: {
+        status: "success",
+        latencyMs: 48,
+        checkedAtMs: 1_700_000_000_000,
+      },
     },
     latest: {
       targetResultId: "target-1",
@@ -115,6 +178,7 @@ function fixtureRow(): ChannelStatusRow {
       outcome: "degraded",
       failureKind: "fallback_used",
       terminalReason: "primary timed out",
+      httpStatus: 200,
       latencyMs: 321,
       finishedAtMs: 1_700_000_000_000,
       semanticConfidence: "validated",
@@ -130,6 +194,7 @@ function fixtureRow(): ChannelStatusRow {
         outcome: "unavailable",
         failureKind: "auth",
         terminalReason: "401",
+        httpStatus: 401,
         latencyMs: null,
         checkedAtMs: 1_700_000_060_000,
         usedFallback: false,
@@ -143,6 +208,7 @@ function fixtureRow(): ChannelStatusRow {
         outcome: "available",
         failureKind: null,
         terminalReason: null,
+        httpStatus: 200,
         latencyMs: 120,
         checkedAtMs: 1_700_000_000_000,
         usedFallback: false,

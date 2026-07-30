@@ -41,7 +41,6 @@ export function AddProviderPage(props: AddProviderPageProps) {
     groupRows,
     handleAddGroup,
     handleAddLocalKey,
-    handleBindRemoteKey,
     handleCommonEmailSelect,
     handleCommonPasswordSelect,
     handleCopyWebsiteUrl,
@@ -49,7 +48,6 @@ export function AddProviderPage(props: AddProviderPageProps) {
     handleGroupRowsChange,
     handleImportRemoteKey,
     handleOpenCreateRemoteKey,
-    handleUnbindRemoteKey,
     handleScanRemoteKeys,
     handleStartManualAuthorization,
     handleStationTypeChange,
@@ -168,16 +166,12 @@ export function AddProviderPage(props: AddProviderPageProps) {
               rows={keyRows}
               scanRemoteDisabled={scanRemoteDisabled}
               onAddLocalKey={handleAddLocalKey}
-              onBindRemoteKey={(remoteKeyId, stationKeyId) =>
-                void handleBindRemoteKey(remoteKeyId, stationKeyId)
-              }
               onDeleteImportedLocalKey={requestDeleteImportedLocalKey}
               onDeleteRemoteKey={requestDeleteRemoteKey}
               onImportRemoteKey={(remoteKey) => void handleImportRemoteKey(remoteKey)}
               onOpenCreateRemoteKey={() => void handleOpenCreateRemoteKey()}
               onRowsChange={setKeyRows}
               onScanRemoteKeys={() => void handleScanRemoteKeys()}
-              onUnbindRemoteKey={(remoteKey) => void handleUnbindRemoteKey(remoteKey)}
             />
           </div>
 

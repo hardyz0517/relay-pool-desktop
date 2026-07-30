@@ -109,9 +109,9 @@ function ExecutionSummary({ execution }: { execution: ChannelMonitorExecutionSum
 
       <div className="mt-3 grid gap-2 rounded-[8px] border border-border bg-surface-subtle p-2 text-xs md:grid-cols-5">
         <CountPill label="目标" value={execution.targetCount} />
-        <CountPill label="可用" value={execution.availableCount} tone="healthy" />
+        <CountPill label="正常" value={execution.availableCount} tone="healthy" />
         <CountPill label="降级" value={execution.degradedCount} tone="warning" />
-        <CountPill label="不可用" value={execution.unavailableCount} tone="error" />
+        <CountPill label="错误" value={execution.unavailableCount} tone="error" />
         <CountPill label="跳过" value={execution.skippedCount} tone="disabled" />
       </div>
     </section>
@@ -311,9 +311,9 @@ function triggerKindLabel(value: string | null | undefined) {
 
 function outcomeLabel(value: string | null | undefined) {
   const labels: Record<string, string> = {
-    available: "可用",
+    available: "正常",
     degraded: "降级",
-    unavailable: "不可用",
+    unavailable: "错误",
     skipped: "跳过",
     missing: "无数据",
   };
@@ -374,9 +374,9 @@ function healthWritebackReasonLabel(value: string) {
   const labels: Record<string, string> = {
     no_transition: "状态无变化",
     threshold_not_met: "未达到阈值",
-    unavailable: "不可用",
+    unavailable: "错误",
     degraded: "降级",
-    available: "可用",
+    available: "正常",
   };
   return labels[value] ?? value;
 }
