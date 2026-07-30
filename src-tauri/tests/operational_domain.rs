@@ -4,9 +4,9 @@ mod operational;
 use operational::{
     BalanceFacts, BalanceScope, CapabilityDimension, CapabilityEvidence, CapabilityVerdict,
     CurrencyCode, EndpointFacts, EndpointHealthFact, EndpointHealthTarget, EndpointId, EndpointRef,
-    EndpointRevision, EvidenceCoverage, EvidenceFreshness, EvidenceSource, FactProvenance,
-    HealthFact, HealthState, ModelHealthFact, ModelHealthTarget, ModelName, Money, MoneyAmount,
-    OutboundPolicyRef, PriceConfidence, PricingUnit, RateMultiplier, RecordRevision,
+    EndpointRevision, EvidenceConfidence, EvidenceCoverage, EvidenceFreshness, EvidenceSource,
+    FactProvenance, HealthFact, HealthState, ModelHealthFact, ModelHealthTarget, ModelName, Money,
+    MoneyAmount, OutboundPolicyRef, PriceConfidence, PricingUnit, RateMultiplier, RecordRevision,
     RequestCostBasis, RequestModelCapabilityAssessment, RequestPricingAssessment, SanitizedOrigin,
     StationAccountHealthFact, StationAccountHealthTarget, StationAccountRef, StationId,
     StationKeyCapabilityFacts, StationKeyHealthFact, StationKeyHealthTarget, StationKeyId,
@@ -54,6 +54,8 @@ fn validated_primitives_reject_invalid_values() {
     assert!(RateMultiplier::new(0.0).is_err());
     assert!(RateMultiplier::new(f64::NEG_INFINITY).is_err());
     assert!(PriceConfidence::new(1.1).is_err());
+    assert!(EvidenceConfidence::new(f64::NAN).is_err());
+    assert!(EvidenceConfidence::new(1.1).is_err());
 }
 
 #[test]
@@ -102,7 +104,10 @@ fn health_targets_are_typed_by_scope_not_collapsed_to_bool() {
         provenance(),
     );
     let model_health: ModelHealthFact = HealthFact::new(
-        ModelHealthTarget::new(station_key_id(), ModelName::new("gpt-4.1").expect("valid model")),
+        ModelHealthTarget::new(
+            station_key_id(),
+            ModelName::new("gpt-4.1").expect("valid model"),
+        ),
         HealthState::Unknown,
         provenance(),
     );
@@ -117,9 +122,10 @@ fn health_targets_are_typed_by_scope_not_collapsed_to_bool() {
 fn endpoint_facts_store_only_safe_target_references() {
     assert!(SanitizedOrigin::from_endpoint_url("https://user:pass@example.com/v1").is_err());
 
-    let origin =
-        SanitizedOrigin::from_endpoint_url("https://api.example.com:8443/v1/chat?debug=leak-canary")
-            .expect("sanitized origin");
+    let origin = SanitizedOrigin::from_endpoint_url(
+        "https://api.example.com:8443/v1/chat?debug=leak-canary",
+    )
+    .expect("sanitized origin");
     assert_eq!(origin.as_str(), "https://api.example.com:8443");
 
     let endpoint = EndpointFacts::new(
@@ -203,7 +209,10 @@ fn station_key_operational_facts_exclude_request_specific_model_and_pricing_verd
     );
 
     assert_eq!(facts.station_key_id().as_str(), "key-a");
-    assert_eq!(facts.endpoint().sanitized_origin().as_str(), "https://api.example.com");
+    assert_eq!(
+        facts.endpoint().sanitized_origin().as_str(),
+        "https://api.example.com"
+    );
 
     let model_assessment = RequestModelCapabilityAssessment::new(
         ModelName::new("gpt-4.1").expect("model"),
@@ -220,5 +229,8 @@ fn station_key_operational_facts_exclude_request_specific_model_and_pricing_verd
     );
 
     assert_eq!(model_assessment.verdict(), CapabilityVerdict::Supported);
-    assert_eq!(pricing_assessment.basis(), RequestCostBasis::MultiplierProxy);
+    assert_eq!(
+        pricing_assessment.basis(),
+        RequestCostBasis::MultiplierProxy
+    );
 }

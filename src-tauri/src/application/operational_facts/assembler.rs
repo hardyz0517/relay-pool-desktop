@@ -13,7 +13,7 @@ pub(crate) const MAX_OPERATIONAL_CANDIDATES: usize = 1024;
 
 static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum OperationalFactAssemblyError {
     CandidateLimitExceeded { actual: usize, limit: usize },
     InvalidFact(OperationalValidationError),
@@ -23,7 +23,10 @@ impl fmt::Display for OperationalFactAssemblyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CandidateLimitExceeded { actual, limit } => {
-                write!(formatter, "operational candidate count {actual} exceeds limit {limit}")
+                write!(
+                    formatter,
+                    "operational candidate count {actual} exceeds limit {limit}"
+                )
             }
             Self::InvalidFact(error) => write!(formatter, "{error}"),
         }
@@ -167,10 +170,7 @@ pub(crate) struct CredentialAvailabilityFact {
 }
 
 impl CredentialAvailabilityFact {
-    pub(crate) fn new(
-        available: bool,
-        record_revision: RecordRevision,
-    ) -> Self {
+    pub(crate) fn new(available: bool, record_revision: RecordRevision) -> Self {
         Self {
             available,
             record_revision,

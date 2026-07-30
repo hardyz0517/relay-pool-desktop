@@ -27,7 +27,9 @@ pub use identity::{
     OperationalValidationError, OutboundPolicyRef, RecordRevision, SanitizedOrigin,
     StationAccountRef, StationId, StationKeyId, UnixMillis,
 };
-pub use provenance::{EvidenceCoverage, EvidenceFreshness, EvidenceSource, FactProvenance};
+pub use provenance::{
+    EvidenceConfidence, EvidenceCoverage, EvidenceFreshness, EvidenceSource, FactProvenance,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StationKeyOperationalFacts {

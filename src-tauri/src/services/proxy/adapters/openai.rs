@@ -1,5 +1,10 @@
 use serde_json::{json, Value};
 
+use super::capability::{
+    AdapterCapabilityFeature, AdapterCapabilityProtocol, AdapterCapabilitySignal,
+    AdapterCapabilitySubject, AdapterCapabilityVerdict,
+};
+
 pub fn generate_response_id(prefix: &str) -> String {
     format!(
         "{prefix}-{}",
@@ -48,4 +53,30 @@ pub fn wrap_chat_response_as_responses(value: Value, fallback_model: Option<&str
         "output_text": content,
         "usage": usage,
     })
+}
+
+#[allow(dead_code)]
+pub(crate) fn chat_completions_capability_signals() -> Vec<AdapterCapabilitySignal> {
+    vec![
+        AdapterCapabilitySignal::structural(
+            AdapterCapabilitySubject::Protocol(AdapterCapabilityProtocol::ChatCompletions),
+            AdapterCapabilityVerdict::Supported,
+            "chat_completions_wire_protocol",
+        ),
+        AdapterCapabilitySignal::structural(
+            AdapterCapabilitySubject::Protocol(AdapterCapabilityProtocol::Responses),
+            AdapterCapabilityVerdict::Unsupported,
+            "chat_adapter_does_not_execute_responses_protocol",
+        ),
+        AdapterCapabilitySignal::structural(
+            AdapterCapabilitySubject::Feature(AdapterCapabilityFeature::Stream),
+            AdapterCapabilityVerdict::Supported,
+            "chat_streaming_supported_by_wire_protocol",
+        ),
+        AdapterCapabilitySignal::structural(
+            AdapterCapabilitySubject::Feature(AdapterCapabilityFeature::Tools),
+            AdapterCapabilityVerdict::Supported,
+            "chat_tools_are_openai_compatible",
+        ),
+    ]
 }

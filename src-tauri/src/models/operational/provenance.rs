@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::identity::{EvidenceHash, RecordRevision, UnixMillis};
+use super::identity::{EvidenceHash, OperationalValidationError, RecordRevision, UnixMillis};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceCoverage {
@@ -15,6 +15,25 @@ pub enum EvidenceFreshness {
     Stale,
     Expired,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct EvidenceConfidence(f64);
+
+impl EvidenceConfidence {
+    pub fn new(value: f64) -> Result<Self, OperationalValidationError> {
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return Err(OperationalValidationError::InvalidConfidence {
+                field: "evidence",
+                value,
+            });
+        }
+        Ok(Self(value))
+    }
+
+    pub fn get(self) -> f64 {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

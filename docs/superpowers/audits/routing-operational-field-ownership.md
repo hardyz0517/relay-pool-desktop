@@ -15,7 +15,7 @@ This ledger defines one intended semantic owner for each routing operational fie
 | Multiplier | scheduler multiplier module, pricing rule fallback, frontend group matcher | Group/multiplier projector with provenance/freshness | eligibility, CostFirst multiplier proxy, UI explanation | Task 4/7/12 |
 | Pricing | `PricingService`, `RouteCandidateEconomics`, frontend `pricingFacts.ts` | PricingProjector and CostCalculator | route economics assessment, attempt settlement, pricing UI | Task 7/19/23 |
 | Balance | balance snapshots, candidate economics, dashboard summaries | Balance projector | eligibility, route workspace, dashboard/key summaries | Task 4/9 |
-| Capability | station_key_capabilities, collector model evidence, HTTP failures | Capability projector and scoped capability evidence writer | planner, monitoring, operational detail | Task 5/18/19 |
+| Capability | station_key_capabilities, future collector model inventory evidence, HTTP failures | Capability projector and scoped capability evidence writer | planner, monitoring, operational detail | Task 5/18/19 |
 | Key health | station_key_health, proxy failure classifier, monitoring writeback | HealthTransitionService/Store | HealthProjector, UI status, routing eligibility | Task 6/18/19 |
 | Endpoint health | endpoint ping target, monitor execution, request failure target | Endpoint health facts and HealthProjector | routing eligibility, monitoring status, station detail | Task 6/18/19 |
 | Account health | provider account observations | AccountStateReducer or explicit evidence gap | UI evidence and future capacity constraints | Task 6/18 |
@@ -35,3 +35,8 @@ Rules:
 - Monitoring and routing may share typed facts and narrow ports; neither may import the other's candidate/read DTO as its truth source.
 - Raw collector JSON, credentials, full endpoint URLs, request headers, and prompt/response payloads are never route candidate fields.
 - Historical request facts stay historical; current pricing or health must not rewrite old decisions.
+
+Task 5 clarification:
+
+- The current codebase does not yet have a dedicated collector model evidence writer; it has manual `station_key_capabilities` rows plus legacy runtime capability reads. Task 5 therefore freezes the canonical evidence/projector contract and provider-neutral adapter signals without inventing a second persistence owner.
+- The scoped capability evidence writer is introduced when production request/monitoring outcomes are converted into typed `CapabilityEffect` in Task 18/19. New writer code must consume the Task 5 evidence contract instead of writing route allow booleans.

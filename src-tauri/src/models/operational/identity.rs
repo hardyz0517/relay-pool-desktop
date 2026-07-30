@@ -3,11 +3,12 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OperationalValidationError {
     EmptyId { field: &'static str },
     InvalidRevision { field: &'static str, value: i64 },
     InvalidTimestamp { field: &'static str, value: i64 },
+    InvalidConfidence { field: &'static str, value: f64 },
     InvalidEndpointOrigin { reason: &'static str },
 }
 
@@ -19,7 +20,16 @@ impl fmt::Display for OperationalValidationError {
                 write!(formatter, "{field} revision must be positive, got {value}")
             }
             Self::InvalidTimestamp { field, value } => {
-                write!(formatter, "{field} timestamp must be non-negative, got {value}")
+                write!(
+                    formatter,
+                    "{field} timestamp must be non-negative, got {value}"
+                )
+            }
+            Self::InvalidConfidence { field, value } => {
+                write!(
+                    formatter,
+                    "{field} confidence must be finite between 0 and 1, got {value}"
+                )
             }
             Self::InvalidEndpointOrigin { reason } => write!(formatter, "{reason}"),
         }
@@ -162,9 +172,10 @@ pub struct SanitizedOrigin(String);
 
 impl SanitizedOrigin {
     pub fn from_endpoint_url(value: &str) -> Result<Self, OperationalValidationError> {
-        let url = Url::parse(value).map_err(|_| OperationalValidationError::InvalidEndpointOrigin {
-            reason: "endpoint origin must be an absolute HTTP(S) URL",
-        })?;
+        let url =
+            Url::parse(value).map_err(|_| OperationalValidationError::InvalidEndpointOrigin {
+                reason: "endpoint origin must be an absolute HTTP(S) URL",
+            })?;
         if !matches!(url.scheme(), "http" | "https") {
             return Err(OperationalValidationError::InvalidEndpointOrigin {
                 reason: "endpoint origin scheme must be http or https",
@@ -181,7 +192,11 @@ impl SanitizedOrigin {
             });
         }
 
-        let mut origin = format!("{}://{}", url.scheme(), url.host_str().expect("checked host"));
+        let mut origin = format!(
+            "{}://{}",
+            url.scheme(),
+            url.host_str().expect("checked host")
+        );
         if let Some(port) = url.port() {
             origin.push(':');
             origin.push_str(&port.to_string());
