@@ -1,8 +1,7 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -12,11 +11,20 @@ use super::{
     upgrade_fault::{
         AtomicStep, TombstoneStep, UpgradeFailpoint, UpgradeFaultInjector, UpgradeInjectedFailure,
     },
-    upgrade_journal::{Sha256Digest, UpgradeAttemptId, UpgradeJournal},
+    upgrade_journal::{
+        BaselineConversionJournal, BaselineConversionPhase, Sha256Digest, UpgradeAttemptId,
+        UpgradeJournal,
+    },
     upgrade_recovery_plan::{
         BackupState, JournalState, LegacySourceState, ObservedUpgradeState, RecoveryHaltReason,
         RecoveryPlan, RecoveryPlanner,
     },
+};
+
+use crate::services::data_store::atomic_file::{
+    create_new_file, replace_existing_file as atomic_replace_existing_file,
+    sync_file as atomic_sync_file, sync_parent as atomic_sync_parent, unique_sibling,
+    AtomicFileError,
 };
 
 pub(crate) const UPGRADE_JOURNAL_FILE: &str = "persistence-upgrade-journal.json";
@@ -28,6 +36,19 @@ const SQLITE_HEADER: &[u8] = b"SQLite format 3\0";
 pub(crate) struct ObservedJournal {
     pub(crate) state: JournalState,
     pub(crate) journal: Option<UpgradeJournal>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BaselineConversionJournalState {
+    Missing,
+    Invalid,
+    Valid(BaselineConversionPhase),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ObservedBaselineConversionJournal {
+    pub(crate) state: BaselineConversionJournalState,
+    pub(crate) journal: Option<BaselineConversionJournal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,18 +278,18 @@ pub(crate) fn replace_legacy_with_tombstone_with_faults(
 
     faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::BeforeWrite))?;
     let temporary = unique_sibling(legacy_path, "tombstone");
-    write_new(&temporary, &bytes)?;
+    write_new_prepared(&temporary, &bytes)?;
     faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::BeforeFileSync))?;
-    sync_file(&temporary)?;
+    sync_prepared_file(&temporary)?;
     faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::BeforeReplace))?;
-    if let Err(error) = replace_existing_file(&temporary, legacy_path) {
+    if let Err(error) = replace_existing_prepared(&temporary, legacy_path) {
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
     faults.check(UpgradeFailpoint::Tombstone(
         TombstoneStep::AfterReplaceBeforeParentSync,
     ))?;
-    sync_parent(parent)?;
+    sync_parent_durably(parent)?;
     faults.check(UpgradeFailpoint::Tombstone(TombstoneStep::AfterDurableSync))?;
 
     for suffix in ["-wal", "-shm"] {
@@ -276,7 +297,7 @@ pub(crate) fn replace_legacy_with_tombstone_with_faults(
         sidecar.push(suffix);
         let sidecar = PathBuf::from(sidecar);
         match fs::remove_file(&sidecar) {
-            Ok(()) => sync_parent(parent)?,
+            Ok(()) => sync_parent_durably(parent)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(UpgradeExecutionError::Io(UpgradeIoOperation::RemoveSidecar)),
         }
@@ -350,6 +371,16 @@ pub(crate) fn write_journal_atomically_with_faults(
     })
 }
 
+pub(crate) fn write_baseline_conversion_journal_atomically(
+    journal_path: &Path,
+    journal: &BaselineConversionJournal,
+) -> Result<(), UpgradeExecutionError> {
+    let bytes = journal
+        .to_canonical_json()
+        .map_err(|_| UpgradeExecutionError::JournalInvalid)?;
+    write_same_directory_atomically_with(journal_path, &bytes, |_| Ok(()))
+}
+
 pub(crate) fn observe_journal(journal_path: &Path) -> ObservedJournal {
     let bytes = match fs::read(journal_path) {
         Ok(bytes) => bytes,
@@ -373,6 +404,36 @@ pub(crate) fn observe_journal(journal_path: &Path) -> ObservedJournal {
         },
         Err(_) => ObservedJournal {
             state: JournalState::Invalid,
+            journal: None,
+        },
+    }
+}
+
+pub(crate) fn observe_baseline_conversion_journal(
+    journal_path: &Path,
+) -> ObservedBaselineConversionJournal {
+    let bytes = match fs::read(journal_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ObservedBaselineConversionJournal {
+                state: BaselineConversionJournalState::Missing,
+                journal: None,
+            }
+        }
+        Err(_) => {
+            return ObservedBaselineConversionJournal {
+                state: BaselineConversionJournalState::Invalid,
+                journal: None,
+            }
+        }
+    };
+    match BaselineConversionJournal::from_json(&bytes) {
+        Ok(journal) => ObservedBaselineConversionJournal {
+            state: BaselineConversionJournalState::Valid(journal.payload().phase),
+            journal: Some(journal),
+        },
+        Err(_) => ObservedBaselineConversionJournal {
+            state: BaselineConversionJournalState::Invalid,
             journal: None,
         },
     }
@@ -419,14 +480,14 @@ pub(crate) fn publish_v2_candidate_with_faults(
     }
     faults.check(UpgradeFailpoint::Activation(AtomicStep::BeforeWrite))?;
     faults.check(UpgradeFailpoint::Activation(AtomicStep::BeforeFileSync))?;
-    sync_file(temporary_path)?;
+    sync_prepared_file(temporary_path)?;
     faults.check(UpgradeFailpoint::Activation(AtomicStep::BeforeReplace))?;
     fs::rename(temporary_path, final_path)
         .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Replace))?;
     faults.check(UpgradeFailpoint::Activation(
         AtomicStep::AfterReplaceBeforeParentSync,
     ))?;
-    sync_parent(
+    sync_parent_durably(
         final_path
             .parent()
             .ok_or(UpgradeExecutionError::RecoveryPreconditionChanged)?,
@@ -449,7 +510,7 @@ pub(crate) fn remove_file_and_sync_parent_with_faults(
     faults.check(UpgradeFailpoint::JournalCleanup(
         AtomicStep::AfterReplaceBeforeParentSync,
     ))?;
-    sync_parent(parent)?;
+    sync_parent_durably(parent)?;
     faults.check(UpgradeFailpoint::JournalCleanup(
         AtomicStep::AfterDurableSync,
     ))?;
@@ -539,12 +600,12 @@ fn write_same_directory_atomically_with(
         .ok_or(UpgradeExecutionError::RecoveryPreconditionChanged)?;
     check(AtomicStep::BeforeWrite)?;
     let temporary = unique_sibling(final_path, "write");
-    write_new(&temporary, bytes)?;
+    write_new_prepared(&temporary, bytes)?;
     check(AtomicStep::BeforeFileSync)?;
-    sync_file(&temporary)?;
+    sync_prepared_file(&temporary)?;
     check(AtomicStep::BeforeReplace)?;
     let replace_result = if final_path.exists() {
-        replace_existing_file(&temporary, final_path)
+        replace_existing_prepared(&temporary, final_path)
     } else {
         fs::rename(&temporary, final_path)
             .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Replace))
@@ -554,90 +615,54 @@ fn write_same_directory_atomically_with(
         return Err(error);
     }
     check(AtomicStep::AfterReplaceBeforeParentSync)?;
-    sync_parent(parent)?;
+    sync_parent_durably(parent)?;
     check(AtomicStep::AfterDurableSync)
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), UpgradeExecutionError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::CreateTemporary))?;
+fn write_new_prepared(path: &Path, bytes: &[u8]) -> Result<(), UpgradeExecutionError> {
+    let mut file = create_new_file(path)
+        .map_err(|error| map_atomic_error(error, UpgradeIoOperation::CreateTemporary))?;
     file.write_all(bytes)
         .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Write))
 }
 
-fn sync_file(path: &Path) -> Result<(), UpgradeExecutionError> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Read))?
-        .sync_all()
-        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::SyncFile))
+fn sync_prepared_file(path: &Path) -> Result<(), UpgradeExecutionError> {
+    atomic_sync_file(path).map_err(|error| map_atomic_error(error, UpgradeIoOperation::SyncFile))
 }
 
-fn unique_sibling(path: &Path, operation: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    path.with_extension(format!("{operation}-{}-{unique}.tmp", std::process::id()))
-}
-
-#[cfg(windows)]
-fn replace_existing_file(
+fn replace_existing_prepared(
     temporary: &Path,
     destination: &Path,
 ) -> Result<(), UpgradeExecutionError> {
-    use std::{os::windows::ffi::OsStrExt, ptr};
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+    atomic_replace_existing_file(temporary, destination)
+        .map_err(|error| map_atomic_error(error, UpgradeIoOperation::Replace))
+}
 
-    let destination: Vec<u16> = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let temporary: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
-    let ok = unsafe {
-        ReplaceFileW(
-            destination.as_ptr(),
-            temporary.as_ptr(),
-            ptr::null(),
-            0,
-            ptr::null_mut(),
-            ptr::null_mut(),
-        )
-    };
-    if ok == 0 {
-        Err(UpgradeExecutionError::Io(UpgradeIoOperation::Replace))
-    } else {
-        Ok(())
+fn sync_parent_durably(parent: &Path) -> Result<(), UpgradeExecutionError> {
+    atomic_sync_parent(parent).map_err(|error| {
+        #[cfg(not(windows))]
+        {
+            map_atomic_error(error, UpgradeIoOperation::SyncParent)
+        }
+        #[cfg(windows)]
+        {
+            map_atomic_error(error, UpgradeIoOperation::Replace)
+        }
+    })
+}
+
+fn map_atomic_error(
+    error: AtomicFileError,
+    operation: UpgradeIoOperation,
+) -> UpgradeExecutionError {
+    match error {
+        AtomicFileError::PathRejected
+        | AtomicFileError::AlreadyExists
+        | AtomicFileError::Missing => UpgradeExecutionError::RecoveryPreconditionChanged,
+        AtomicFileError::Io(_) | AtomicFileError::Identity(_) => {
+            UpgradeExecutionError::Io(operation)
+        }
     }
-}
-
-#[cfg(not(windows))]
-fn replace_existing_file(
-    temporary: &Path,
-    destination: &Path,
-) -> Result<(), UpgradeExecutionError> {
-    fs::rename(temporary, destination)
-        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Replace))
-}
-
-#[cfg(not(windows))]
-fn sync_parent(parent: &Path) -> Result<(), UpgradeExecutionError> {
-    File::open(parent)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::SyncParent))
-}
-
-#[cfg(windows)]
-fn sync_parent(_parent: &Path) -> Result<(), UpgradeExecutionError> {
-    // Windows has no supported directory fsync. ReplaceFileW provides the durable atomic
-    // replacement primitive here; each temporary file is flushed before it is published.
-    Ok(())
 }
 
 fn digest_bytes(bytes: &[u8]) -> Sha256Digest {

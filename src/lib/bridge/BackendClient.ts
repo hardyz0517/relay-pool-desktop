@@ -78,6 +78,19 @@ import type {
 import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { ActivationResult, DataStoreCandidate, DataStoreStartupView } from "@/lib/types/dataRecovery";
+import type {
+  InspectPortableImportInput,
+  PortableExportResult,
+  PortableImportInspection,
+  PortableImportPrepareResult,
+  PortableImportRecoveryState,
+  PortableMigrationCapability,
+  PortableMigrationOperation,
+  PortableMigrationOperationStarted,
+  PortablePathToken,
+  PreparePortableImportInput,
+  StartPortableExportInput,
+} from "@/lib/types/dataMigration";
 import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { RuntimeStatus } from "@/lib/types/runtimeStatus";
@@ -205,6 +218,20 @@ export type DataRecoveryDomainClient = {
   restartApp(): Promise<void>;
   openDataStoreBackupDir(): Promise<void>;
   exportDataStoreDiagnostic(): Promise<string | null>;
+};
+
+export type DataMigrationDomainClient = {
+  getPortableMigrationCapability(): Promise<PortableMigrationCapability>;
+  choosePortableExportPath(): Promise<PortablePathToken | null>;
+  startPortableExport(input: StartPortableExportInput): Promise<PortableMigrationOperationStarted>;
+  getPortableExportResult(resourceId: string): Promise<PortableExportResult>;
+  choosePortableImportFile(): Promise<PortablePathToken | null>;
+  startPortableImportInspection(input: InspectPortableImportInput): Promise<PortableMigrationOperationStarted>;
+  getPortableImportInspection(resourceId: string): Promise<PortableImportInspection>;
+  startPortableImportPrepare(input: PreparePortableImportInput): Promise<PortableMigrationOperationStarted>;
+  getPortableImportPrepareResult(resourceId: string): Promise<PortableImportPrepareResult>;
+  getPortableMigrationOperation(operationId: string): Promise<PortableMigrationOperation>;
+  getPortableImportRecoveryState(): Promise<PortableImportRecoveryState>;
 };
 
 export type EconomicsDomainClient = {
@@ -335,6 +362,7 @@ export type BackendClient = {
   readonly proxy: ProxyDomainClient;
   readonly localRouting: LocalRoutingDomainClient;
   readonly dataRecovery: DataRecoveryDomainClient;
+  readonly dataMigration: DataMigrationDomainClient;
   readonly economics: EconomicsDomainClient;
   readonly groupFacts: GroupFactsDomainClient;
   readonly pricing: PricingDomainClient;

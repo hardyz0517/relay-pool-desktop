@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE persistence_schema_compatibility\n        SET schema_version = 17,\n            min_reader_app_version = '0.3.3',\n            min_writer_app_version = '0.3.3',\n            updated_by_migration = 17,\n            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\n        WHERE singleton_key = 1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "0dfb77992ad84c2566dc9949b2874512f06e608bb47bdbb6661612a11846de82"
+}

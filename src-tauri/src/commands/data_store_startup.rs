@@ -162,11 +162,16 @@ pub async fn activate_data_store_candidate(
             .into());
         }
 
-        if crate::services::data_store::generation_upgrade::commit_explicit_generation_two_recovery(
-            state.default_data_dir(),
-            &canonical_path,
-            *secrets.data_key(),
-        )? {
+        if secrets
+            .with_active_key(|key_bytes| {
+                crate::services::data_store::generation_upgrade::commit_explicit_generation_two_recovery(
+                    state.default_data_dir(),
+                    &canonical_path,
+                    *key_bytes,
+                )
+            })
+            .map_err(|error| error.to_string())??
+        {
             return Ok(ActivationResult {
                 restart_required: true,
             });
@@ -181,7 +186,9 @@ pub async fn activate_data_store_candidate(
                 .to_string()
                 .into());
         }
-        validate_database_secrets(&canonical_path, secrets.data_key())?;
+        secrets
+            .with_active_key(|key_bytes| validate_database_secrets(&canonical_path, key_bytes))
+            .map_err(|error| error.to_string())??;
         backup_selected_database(&canonical_path, state.default_data_dir())?;
 
         let active_data_dir = canonical_path

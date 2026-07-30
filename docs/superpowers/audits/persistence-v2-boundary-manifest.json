@@ -106,6 +106,11 @@
     },
     {
       "from": "app_composition",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
       "to": "services::secrets::vault",
       "temporary": false
     },
@@ -440,6 +445,11 @@
       "temporary": false
     },
     {
+      "from": "application::command_facades::local_proxy",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
       "from": "application::command_facades::remote_keys",
       "to": "background_tasks",
       "temporary": false
@@ -532,6 +542,156 @@
     {
       "from": "application::data_directory",
       "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::credentials",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "application::credentials",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "application::data_maintenance",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::data_maintenance",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "application::data_maintenance",
+      "to": "services::station_collectors",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "application::data_maintenance",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "application::data_migration::registry",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "ipc::dto::data_migration",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::data_store::atomic_file",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::data_store::backup",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::data_store::file_identity",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::activation_journal",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::age_envelope",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::fault",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::format",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::inspection_registry",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::limits",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::occupancy",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::path_tokens",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::schema_reader",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::snapshot",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::staging",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::target_writer",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::transform",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::portable_migration::validate",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::secrets::rekey",
+      "temporary": false
+    },
+    {
+      "from": "application::data_migration",
+      "to": "services::station_collectors",
       "temporary": false
     },
     {
@@ -787,6 +947,26 @@
     {
       "from": "commands",
       "to": "services::updater",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_migration",
+      "to": "application::data_migration",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_migration",
+      "to": "application::data_migration::registry",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_migration",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::data_migration",
+      "to": "ipc::dto::data_migration",
       "temporary": false
     },
     {
@@ -1205,6 +1385,21 @@
       "temporary": false
     },
     {
+      "from": "ipc::dto::data_migration",
+      "to": "application::data_migration::registry",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::data_migration",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::data_migration",
+      "to": "services::portable_migration::limits",
+      "temporary": false
+    },
+    {
       "from": "ipc::dto::change_logs",
       "to": "models::change_events",
       "temporary": false
@@ -1451,12 +1646,27 @@
     },
     {
       "from": "lib",
+      "to": "application::data_maintenance",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "application::data_migration",
+      "temporary": false
+    },
+    {
+      "from": "lib",
       "to": "background_tasks",
       "temporary": false
     },
     {
       "from": "lib",
       "to": "commands::data_store_startup",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "models::secrets",
       "temporary": false
     },
     {
@@ -1472,6 +1682,11 @@
     {
       "from": "lib",
       "to": "persistence::upgrade_fault",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "persistence::upgrade_recovery_executor",
       "temporary": false
     },
     {
@@ -1531,7 +1746,32 @@
     },
     {
       "from": "lib",
+      "to": "services::portable_migration::recovery",
+      "temporary": false
+    },
+    {
+      "from": "lib",
       "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::secrets::device_key_journal",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::secrets::device_key_store",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::secrets::keychain",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::secrets::rekey",
       "temporary": false
     },
     {
@@ -1651,6 +1891,11 @@
     },
     {
       "from": "persistence",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
       "to": "models::station_keys",
       "temporary": false
     },
@@ -1666,7 +1911,17 @@
     },
     {
       "from": "persistence",
+      "to": "persistence::migrations",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
       "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "persistence",
+      "to": "persistence::schema_compatibility",
       "temporary": false
     },
     {
@@ -1690,6 +1945,11 @@
       "temporary": false
     },
     {
+      "from": "persistence",
+      "to": "services::data_store::atomic_file",
+      "temporary": false
+    },
+    {
       "from": "persistence::stores::credential_store",
       "to": "models::secrets",
       "temporary": false
@@ -1707,6 +1967,11 @@
     {
       "from": "persistence::stores::settings_store",
       "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::settings_store",
+      "to": "persistence::stores::credential_store",
       "temporary": false
     },
     {
@@ -2096,7 +2361,17 @@
     },
     {
       "from": "services::data_store",
+      "to": "services::data_store::atomic_file",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
       "to": "services::data_store::config",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::data_store::file_identity",
       "temporary": false
     },
     {
@@ -2112,6 +2387,16 @@
     {
       "from": "services::data_store",
       "to": "services::data_store::types",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::secrets::baseline_conversion",
       "temporary": false
     },
     {
@@ -2155,6 +2440,91 @@
       "temporary": false
     },
     {
+      "from": "services::portable_migration",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "persistence::error",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "persistence::migrations",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::data_store::atomic_file",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::data_store::file_identity",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::portable_migration::activation_journal",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::portable_migration::age_envelope",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::portable_migration::format",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::portable_migration::limits",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::portable_migration::schema_reader",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::portable_migration::transform",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::portable_migration::validate",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::secrets",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::secrets::rekey",
+      "temporary": false
+    },
+    {
+      "from": "services::portable_migration",
+      "to": "services::secrets::validation",
+      "temporary": false
+    },
+    {
       "from": "services::proxy",
       "to": "application::app_services",
       "temporary": false
@@ -2192,6 +2562,11 @@
     {
       "from": "services::proxy",
       "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy",
+      "to": "models::secrets",
       "temporary": false
     },
     {
@@ -2412,6 +2787,51 @@
     {
       "from": "services::secrets",
       "to": "persistence",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::migrations",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::schema_compatibility",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::upgrade_fault",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::upgrade_journal",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::upgrade_recovery_executor",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "services::data_store::atomic_file",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "services::data_store::backup",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "services::secrets::device_key_store",
       "temporary": false
     },
     {

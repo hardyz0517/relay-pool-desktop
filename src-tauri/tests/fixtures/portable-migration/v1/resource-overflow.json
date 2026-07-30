@@ -1,0 +1,1 @@
+{"case":"resource-overflow","regularFieldBytes":"max_regular_field_bytes + 1","jsonDepth":"max_json_depth + 1","expected":"limit_exceeded","canary":"RPD_TEST_RESOURCE_OVERFLOW_ONLY"}

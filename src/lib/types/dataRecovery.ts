@@ -35,6 +35,12 @@ export type RecoveryReason =
   | "unsupportedLegacySchema"
   | "incompatibleSchema"
   | "upgradeRecoveryRequired"
+  | "systemCredentialMissing"
+  | "systemCredentialUnavailable"
+  | "systemCredentialPermissionDenied"
+  | "systemCredentialCorrupt"
+  | "systemCredentialUnsupported"
+  | "systemCredentialInternal"
   | "relocationUpgradeConflict"
   | "generationReopenFailed";
 

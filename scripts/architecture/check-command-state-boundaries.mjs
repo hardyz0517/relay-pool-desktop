@@ -80,7 +80,21 @@ runMain(() => {
     const exposedMethods = new Set(
       [...facadeSource.matchAll(/pub\(crate\)\s+async\s+fn\s+([a-z][a-z0-9_]*)\s*\(/g)].map((match) => match[1]),
     );
-    const expectedMethods = new Set(facade.commands.map((entry) => entry.use_case));
+    const supportMethods = facade.support_methods ?? [];
+    assert(
+      Array.isArray(supportMethods),
+      `${facade.state_type}.support_methods must be an array when provided`,
+    );
+    for (const method of supportMethods) {
+      assert(
+        typeof method === "string" && /^[a-z][a-z0-9_]*$/.test(method),
+        `${facade.state_type}.support_methods entries must be snake_case strings`,
+      );
+    }
+    const expectedMethods = new Set([
+      ...facade.commands.map((entry) => entry.use_case),
+      ...supportMethods,
+    ]);
     for (const method of expectedMethods) {
       assert(exposedMethods.has(method), `${facade.state_type} is missing use-case method ${method}`);
     }

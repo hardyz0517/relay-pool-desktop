@@ -9,7 +9,8 @@ use serde::Serialize;
 use crate::services::data_store::{
     config::DatabaseGeneration,
     types::{
-        CandidateHealth, CandidateRole, DataStoreCandidate, DataStoreStartupState, StartupDecision,
+        CandidateHealth, CandidateRole, DataStoreCandidate, DataStoreStartupState, RecoveryReason,
+        StartupDecision,
     },
 };
 
@@ -126,7 +127,7 @@ pub(crate) fn startup_view(state: &DataStoreStartupState) -> DataStoreStartupVie
             ),
             app_version: env!("CARGO_PKG_VERSION"),
         }),
-        capabilities: capabilities_for(mode),
+        capabilities: capabilities_for(mode, &state.decision),
         decision: decision_view(&state.decision),
         candidates: state.candidates.iter().map(candidate_view).collect(),
     }
@@ -184,15 +185,60 @@ pub(crate) fn is_action_allowed(mode: RecoveryRuntimeMode, action: RecoveryActio
     }
 }
 
-fn capabilities_for(mode: RecoveryRuntimeMode) -> DataRecoveryCapabilities {
+fn capabilities_for(
+    mode: RecoveryRuntimeMode,
+    decision: &StartupDecision,
+) -> DataRecoveryCapabilities {
     DataRecoveryCapabilities {
-        can_backup: is_action_allowed(mode, RecoveryAction::Backup),
-        can_export_diagnostic: is_action_allowed(mode, RecoveryAction::ExportDiagnostic),
-        can_check_for_updates: is_action_allowed(mode, RecoveryAction::CheckForUpdates),
-        can_locate_candidate: is_action_allowed(mode, RecoveryAction::LocateCandidate),
-        can_activate_candidate: is_action_allowed(mode, RecoveryAction::ActivateCandidate),
-        can_create_data_store: is_action_allowed(mode, RecoveryAction::CreateDataStore),
+        can_backup: is_recovery_action_allowed(mode, decision, RecoveryAction::Backup),
+        can_export_diagnostic: is_recovery_action_allowed(
+            mode,
+            decision,
+            RecoveryAction::ExportDiagnostic,
+        ),
+        can_check_for_updates: is_recovery_action_allowed(
+            mode,
+            decision,
+            RecoveryAction::CheckForUpdates,
+        ),
+        can_locate_candidate: is_recovery_action_allowed(
+            mode,
+            decision,
+            RecoveryAction::LocateCandidate,
+        ),
+        can_activate_candidate: is_recovery_action_allowed(
+            mode,
+            decision,
+            RecoveryAction::ActivateCandidate,
+        ),
+        can_create_data_store: is_recovery_action_allowed(
+            mode,
+            decision,
+            RecoveryAction::CreateDataStore,
+        ),
     }
+}
+
+fn is_recovery_action_allowed(
+    mode: RecoveryRuntimeMode,
+    decision: &StartupDecision,
+    action: RecoveryAction,
+) -> bool {
+    if matches!(
+        decision,
+        StartupDecision::NeedsRecovery {
+            reason: RecoveryReason::PortableMigrationManualRecoveryRequired
+                | RecoveryReason::PortableMigrationKeyUnavailable
+        }
+    ) {
+        return matches!(
+            action,
+            RecoveryAction::Backup
+                | RecoveryAction::ExportDiagnostic
+                | RecoveryAction::CheckForUpdates
+        );
+    }
+    is_action_allowed(mode, action)
 }
 
 fn decision_view(decision: &StartupDecision) -> StartupDecisionView {
@@ -221,7 +267,7 @@ mod tests {
         config::DatabaseGeneration,
         types::{
             CandidateHealth, CandidateRole, DataStoreCandidate, DataStoreStartupState,
-            StartupDecision,
+            RecoveryReason, StartupDecision,
         },
     };
 
@@ -312,5 +358,25 @@ mod tests {
             serde_json::json!(["candidate-v1", "candidate-v2"])
         );
         assert!(conflict.get("candidate_ids").is_none());
+    }
+
+    #[test]
+    fn portable_manual_recovery_does_not_allow_generic_candidate_activation_or_create() {
+        let state = DataStoreStartupState::new(
+            StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::PortableMigrationManualRecoveryRequired,
+            },
+            Vec::new(),
+            std::path::PathBuf::from("data"),
+            None,
+        );
+
+        let view = startup_view(&state);
+
+        assert!(view.capabilities.can_backup);
+        assert!(view.capabilities.can_export_diagnostic);
+        assert!(!view.capabilities.can_locate_candidate);
+        assert!(!view.capabilities.can_activate_candidate);
+        assert!(!view.capabilities.can_create_data_store);
     }
 }

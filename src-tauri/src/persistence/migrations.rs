@@ -51,13 +51,19 @@ pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), Persistenc
     }
     let pool = migration_pool_create(path).await?;
     migrator().run(&pool).await?;
-    let compatibility = load_schema_compatibility(&pool).await?;
-    let schema_version = applied_schema_version(&pool).await?;
-    decide_open_mode(
-        &current_binary_compatibility(),
-        &compatibility,
-        schema_version,
-    )?;
+    sqlx::query!(
+        r#"
+        UPDATE persistence_schema_compatibility
+        SET schema_version = 17,
+            min_reader_app_version = '0.3.3',
+            min_writer_app_version = '0.3.3',
+            updated_by_migration = 17,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE singleton_key = 1
+        "#,
+    )
+    .execute(&pool)
+    .await?;
     pool.close().await;
     Ok(())
 }
@@ -113,8 +119,8 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=15,
-        writable_schema: BTreeSet::from([15]),
+        readable_schema: 1..=17,
+        writable_schema: BTreeSet::from([17]),
     }
 }
 
@@ -176,7 +182,7 @@ fn schema_upgrade_backup_path(
 mod tests {
     use std::borrow::Cow;
 
-    use sqlx::{migrate::Migrator, Row};
+    use sqlx::{migrate::Migrator, query, Row};
 
     use super::*;
     use crate::persistence::runtime::PersistenceRuntime;
@@ -268,7 +274,7 @@ mod tests {
         let pool = migration_pool_existing(&path)
             .await
             .expect("migration pool");
-        sqlx::query(
+        query(
             "INSERT INTO stations (
                 id, name, station_type, website_url, api_base_url, created_at, updated_at
              ) VALUES ('station-1', 'Station', 'sub2api', 'https://example.test',
@@ -277,7 +283,7 @@ mod tests {
         .execute(&pool)
         .await
         .expect("insert station");
-        sqlx::query(
+        query(
             "INSERT INTO station_keys (id, station_id, note)
              VALUES ('local-1', 'station-1', '由远端发现开关自动创建：remote-owned')",
         )
@@ -287,7 +293,7 @@ mod tests {
         for (id, confidence, collected_at) in
             [("remote-other", 1.0, "3"), ("remote-owned", 0.9, "2")]
         {
-            sqlx::query(
+            query(
                 "INSERT INTO remote_station_keys (
                     id, station_id, remote_key_id_hash, raw_source, match_status,
                     matched_station_key_id, match_confidence, collected_at, updated_at
@@ -323,7 +329,7 @@ mod tests {
         .await
         .expect("repaired duplicate");
         assert_eq!(repaired, ("unbound".to_string(), None, 0.0));
-        let duplicate = sqlx::query(
+        let duplicate = query(
             "UPDATE remote_station_keys
              SET matched_station_key_id = 'local-1', match_status = 'matched'
              WHERE id = 'remote-other'",
@@ -345,7 +351,7 @@ mod tests {
         let pool = migration_pool_existing(&path)
             .await
             .expect("migration pool");
-        sqlx::query(
+        query(
             "INSERT INTO stations (
                 id, name, station_type, website_url, api_base_url, created_at, updated_at
              ) VALUES (
@@ -365,7 +371,7 @@ mod tests {
             ("grok-v1", "grok_cli_compat", 1),
             ("codex-future", "codex_cli_compat", 3),
         ] {
-            sqlx::query(
+            query(
                 "INSERT INTO channel_monitors (
                     id, name, target_type, station_id, template_id,
                     interval_seconds, timeout_seconds, created_at, updated_at,
@@ -432,7 +438,7 @@ mod tests {
 
     async fn database_schema_version(path: &Path) -> i64 {
         let pool = migration_pool_existing(path).await.expect("open database");
-        let row = sqlx::query(
+        let row = query(
             "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
         )
         .fetch_one(&pool)
@@ -445,7 +451,7 @@ mod tests {
 
     async fn write_migration_canary(path: &Path) {
         let pool = migration_pool_existing(path).await.expect("open database");
-        sqlx::query(
+        query(
             "INSERT INTO settings (key, value, updated_at) VALUES ('schema-upgrade-canary', 'preserved', '1')",
         )
         .execute(&pool)
@@ -456,7 +462,7 @@ mod tests {
 
     async fn read_migration_canary(path: &Path) -> String {
         let pool = migration_pool_existing(path).await.expect("open database");
-        let row = sqlx::query("SELECT value FROM settings WHERE key = 'schema-upgrade-canary'")
+        let row = query("SELECT value FROM settings WHERE key = 'schema-upgrade-canary'")
             .fetch_one(&pool)
             .await
             .expect("read canary");

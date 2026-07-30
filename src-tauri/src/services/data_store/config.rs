@@ -8,6 +8,11 @@ use serde_json::Value;
 
 use crate::persistence::upgrade_fault::{AtomicStep, UpgradeFailpoint, UpgradeFaultInjector};
 
+use crate::services::data_store::atomic_file::{
+    create_new_file, replace_existing_file as atomic_replace_existing_file, sync_parent,
+    unique_sibling, AtomicFileError,
+};
+
 const INSTALLATION_MARKER_FILE: &str = "installation.marker";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,7 +58,12 @@ pub fn create_installation_marker(default_data_dir: &Path) -> Result<(), String>
         .map_err(|error| format!("无法创建安装标记 {}: {error}", marker_path.display()))?;
     file.sync_all()
         .map_err(|error| format!("无法同步安装标记 {}: {error}", marker_path.display()))?;
-    sync_parent_dir(default_data_dir)
+    sync_parent(default_data_dir).map_err(|error| {
+        format!(
+            "failed to sync installation marker directory {}: {error}",
+            default_data_dir.display()
+        )
+    })
 }
 
 fn read_optional_path(value: &Value, field: &str) -> Option<PathBuf> {
@@ -76,11 +86,11 @@ fn write_config_inner(
         .ok_or_else(|| format!("数据目录配置路径 {} 没有父目录", config_path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("无法创建数据目录配置目录 {}: {error}", parent.display()))?;
-    let temp_path = temp_config_path(config_path);
+    let temp_path = unique_sibling(config_path, "config");
     let raw = serde_json::to_vec_pretty(config)
         .map_err(|error| format!("序列化数据目录配置失败: {error}"))?;
     {
-        let mut file = File::create(&temp_path)
+        let mut file = create_new_file(&temp_path)
             .map_err(|error| format!("无法创建临时配置 {}: {error}", temp_path.display()))?;
         use std::io::Write;
         file.write_all(&raw)
@@ -92,7 +102,12 @@ fn write_config_inner(
         return Err("injected replace failure".to_string());
     }
     replace_config_file(&temp_path, config_path)?;
-    sync_parent_dir(parent)
+    sync_parent(parent).map_err(|error| {
+        format!(
+            "failed to sync config directory {}: {error}",
+            parent.display()
+        )
+    })
 }
 
 fn write_config_v3_inner(
@@ -109,12 +124,12 @@ fn write_config_v3_inner(
             parent.display()
         )
     })?;
-    let temp_path = temp_config_path(config_path);
+    let temp_path = unique_sibling(config_path, "config");
     let raw = serde_json::to_vec_pretty(config)
         .map_err(|error| format!("failed to serialize V3 config: {error}"))?;
     check(AtomicStep::BeforeWrite)?;
     {
-        let mut file = File::create(&temp_path).map_err(|error| {
+        let mut file = create_new_file(&temp_path).map_err(|error| {
             format!(
                 "failed to create temporary config {}: {error}",
                 temp_path.display()
@@ -138,7 +153,12 @@ fn write_config_v3_inner(
     check(AtomicStep::BeforeReplace)?;
     replace_config_file(&temp_path, config_path)?;
     check(AtomicStep::AfterReplaceBeforeParentSync)?;
-    sync_parent_dir(parent)?;
+    sync_parent(parent).map_err(|error| {
+        format!(
+            "failed to sync config directory {}: {error}",
+            parent.display()
+        )
+    })?;
     check(AtomicStep::AfterDurableSync)
 }
 
@@ -178,79 +198,25 @@ fn read_config_strict(config_path: &Path) -> Result<Option<DataDirConfigV2>, Str
     }
 }
 
-fn temp_config_path(config_path: &Path) -> PathBuf {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    config_path.with_extension(format!("tmp-{}-{unique}", std::process::id()))
-}
-
 fn replace_config_file(temp_path: &Path, config_path: &Path) -> Result<(), String> {
     if !config_path.exists() {
         return fs::rename(temp_path, config_path)
             .map_err(|error| format!("无法创建数据目录配置 {}: {error}", config_path.display()));
     }
-    replace_existing_file(temp_path, config_path)
-}
-
-#[cfg(windows)]
-fn replace_existing_file(temp_path: &Path, config_path: &Path) -> Result<(), String> {
-    use std::ptr;
-    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
-
-    let replaced = wide_null(config_path.as_os_str());
-    let replacement = wide_null(temp_path.as_os_str());
-    let ok = unsafe {
-        ReplaceFileW(
-            replaced.as_ptr(),
-            replacement.as_ptr(),
-            ptr::null(),
-            0,
-            ptr::null_mut(),
-            ptr::null_mut(),
-        )
-    };
-    if ok == 0 {
-        return Err(format!(
+    atomic_replace_existing_file(temp_path, config_path).map_err(|error| {
+        format!(
             "无法替换数据目录配置 {}: {}",
             config_path.display(),
-            std::io::Error::last_os_error()
-        ));
+            atomic_error_label(&error)
+        )
+    })
+}
+
+fn atomic_error_label(error: &AtomicFileError) -> String {
+    match error {
+        AtomicFileError::Io(error) => error.to_string(),
+        other => other.to_string(),
     }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn wide_null(value: &std::ffi::OsStr) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-
-    value.encode_wide().chain(Some(0)).collect()
-}
-
-#[cfg(not(windows))]
-fn replace_existing_file(temp_path: &Path, config_path: &Path) -> Result<(), String> {
-    fs::rename(temp_path, config_path)
-        .map_err(|error| format!("无法替换数据目录配置 {}: {error}", config_path.display()))
-}
-
-#[cfg(not(windows))]
-fn sync_parent_dir(parent: &Path) -> Result<(), String> {
-    File::open(parent)
-        .and_then(|file| file.sync_all())
-        .map_err(|error| {
-            format!(
-                "failed to sync config directory {}: {error}",
-                parent.display()
-            )
-        })
-}
-
-#[cfg(windows)]
-fn sync_parent_dir(_parent: &Path) -> Result<(), String> {
-    // Windows has no supported directory fsync. ReplaceFileW is used when replacing an
-    // existing config, and every temporary file is flushed before publication.
-    Ok(())
 }
 
 /// The only database generations understood by this binary.

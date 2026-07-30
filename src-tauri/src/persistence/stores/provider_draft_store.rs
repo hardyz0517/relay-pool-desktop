@@ -187,13 +187,17 @@ impl ProviderDraftStore {
         sqlx::query(
             r#"
             INSERT INTO secrets (
-                id, scope, owner_id, kind, masked_value, ciphertext, nonce, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                key_id, encryption_version, value_hash, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
             ON CONFLICT(scope, owner_id, kind) DO UPDATE SET
                 id = excluded.id,
                 masked_value = excluded.masked_value,
                 ciphertext = excluded.ciphertext,
                 nonce = excluded.nonce,
+                key_id = excluded.key_id,
+                encryption_version = excluded.encryption_version,
+                value_hash = excluded.value_hash,
                 updated_at = excluded.updated_at
             "#,
         )
@@ -204,6 +208,9 @@ impl ProviderDraftStore {
         .bind(secret.masked_value)
         .bind(secret.ciphertext)
         .bind(secret.nonce)
+        .bind(secret.key_id)
+        .bind(i64::from(secret.encryption_version))
+        .bind(secret.value_hash)
         .bind(secret.now)
         .execute(write.connection())
         .await?;
@@ -257,7 +264,8 @@ impl ProviderDraftStore {
     ) -> Result<Option<StoredEncryptedSecret>, PersistenceError> {
         let row = sqlx::query(
             r#"
-            SELECT id, scope, owner_id, kind, masked_value, ciphertext, nonce
+            SELECT id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                   key_id, encryption_version, value_hash
             FROM secrets
             WHERE scope = ?1 AND owner_id = ?2 AND kind = ?3
             "#,
@@ -433,6 +441,9 @@ fn row_to_stored_secret(row: sqlx::sqlite::SqliteRow) -> StoredEncryptedSecret {
         masked_value: row.get("masked_value"),
         ciphertext: row.get("ciphertext"),
         nonce: row.get("nonce"),
+        key_id: row.get("key_id"),
+        encryption_version: row.get::<i64, _>("encryption_version") as u16,
+        value_hash: row.get("value_hash"),
     }
 }
 

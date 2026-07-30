@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -36,7 +35,6 @@ use crate::{
     persistence::{self, runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility},
 };
 use chrono::{TimeZone, Utc};
-use semver::Version;
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -269,7 +267,7 @@ async fn credential_secret_replacement_commits_ciphertext_and_reference_atomical
 
     assert_eq!(saved.secret_ref.owner_id, "key-1");
     assert_eq!(saved.secret_ref.kind, "api_key");
-    assert_eq!(vault.last_aad(), "station_key:key-1:api_key");
+    assert_eq!(vault.last_aad(), "station_key:key-1:api_key:v1");
     assert_eq!(fixture.secret_rows().await, 1);
     assert!(!fixture.any_text_contains("sk-test-canary").await);
     assert!(!fixture.any_blob_contains(b"sk-test-canary").await);
@@ -1058,12 +1056,17 @@ impl CredentialVault for DeterministicCredentialVault {
             ciphertext,
             nonce: self.key[..12].to_vec(),
             masked_value: mask_secret_bytes(plaintext.as_bytes()),
+            key_id: "deterministic-test-key".to_string(),
+            encryption_version: crate::services::secrets::CURRENT_SECRET_ENCRYPTION_VERSION,
+            value_hash: "deterministic-value-hash".to_string(),
         })
     }
 
     fn decrypt(
         &self,
         aad: &str,
+        _key_id: &str,
+        _encryption_version: u16,
         encrypted: &EncryptedSecret,
     ) -> Result<SecretBytes, CredentialError> {
         *self.last_aad.lock().expect("last aad") = Some(aad.to_string());
@@ -1092,17 +1095,9 @@ struct V2Fixture {
 impl V2Fixture {
     async fn create() -> Self {
         let path = temp_db_path("differential");
-        let mut connection = SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true)
-            .connect()
+        persistence::migrations::initialize_v2_database(&path)
             .await
-            .expect("connect fixture");
-        persistence::migrations::migrator()
-            .run(&mut connection)
-            .await
-            .expect("run migrations");
-        connection.close().await.expect("close fixture");
+            .expect("initialize fixture");
         Self { path }
     }
 
@@ -1118,6 +1113,8 @@ impl V2Fixture {
         SettingsService::new(
             self.runtime().await.handle(),
             Arc::new(FixedClock),
+            Arc::new(SequenceIds::new(vec!["settings-local-key-secret"])),
+            Arc::new(DeterministicCredentialVault::new([3; 32])),
             "fixture-data-dir".to_string(),
             None,
         )
@@ -1289,12 +1286,7 @@ impl V2Fixture {
 }
 
 fn binary_031() -> BinaryCompatibility {
-    BinaryCompatibility {
-        app_version: Version::new(0, 3, 3),
-        database_generation: 2,
-        readable_schema: 1..=15,
-        writable_schema: BTreeSet::from([15]),
-    }
+    persistence::migrations::current_binary_compatibility()
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {

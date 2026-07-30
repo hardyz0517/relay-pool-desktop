@@ -12,9 +12,23 @@ import {
 
 const REQUIRED = new Map([
   ["npm", ["react", "vite", "@tauri-apps/api", "@tanstack/react-query", "typescript", "eslint", "@eslint/js", "typescript-eslint", "yaml"]],
-  ["cargo", ["tauri", "tokio", "reqwest", "axum", "sqlx", "syn"]],
+  ["cargo", ["tauri", "tokio", "reqwest", "axum", "sqlx", "syn", "age", "hmac"]],
   ["tool", ["node", "pnpm", "rust"]],
 ]);
+
+function cargoLockPackages() {
+  const lockfile = fs.readFileSync(path.join(repoRoot, "src-tauri/Cargo.lock"), "utf8");
+  const packages = new Map();
+  for (const section of lockfile.split(/\r?\n\[\[package\]\]\r?\n/).slice(1)) {
+    const name = section.match(/^name = "([^"]+)"/m)?.[1];
+    const version = section.match(/^version = "([^"]+)"/m)?.[1];
+    if (!name || !version) continue;
+    const versions = packages.get(name) ?? [];
+    versions.push(version);
+    packages.set(name, versions);
+  }
+  return packages;
+}
 
 function resolvedVersions() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
@@ -27,12 +41,7 @@ function resolvedVersions() {
   const npm = new Map(Object.entries({ ...(npmRoot.dependencies ?? {}), ...(npmRoot.devDependencies ?? {}) })
     .map(([name, value]) => [name, value.version]));
 
-  const cargo = JSON.parse(command(
-    "cargo",
-    ["metadata", "--locked", "--format-version", "1", "--manifest-path", "src-tauri/Cargo.toml"],
-    { maxBuffer: 64 * 1024 * 1024 },
-  ));
-  const cargoPackages = new Map(cargo.packages.map((pkg) => [pkg.name, pkg.version]));
+  const cargoPackages = cargoLockPackages();
   const tools = new Map([
     ["node", process.versions.node],
     ["pnpm", packageJson.packageManager?.split("@").at(-1)],
@@ -111,7 +120,11 @@ runMain(() => {
       assert(entry.qualified_versions.includes(entry.ci_version), "tool:node ci_version must be qualified");
       for (const [workflow, version] of workflowNodes) assert(version === entry.ci_version, `${workflow} Node ${version} != ledger ci_version ${entry.ci_version}`);
     } else {
-      assert(recorded === String(resolved).replace(/^v/, ""), `${ecosystem}:${name} ledger version ${recorded} != resolved ${resolved}`);
+      const resolvedVersions = Array.isArray(resolved) ? resolved : [String(resolved)];
+      assert(
+        resolvedVersions.map((version) => String(version).replace(/^v/, "")).includes(recorded),
+        `${ecosystem}:${name} ledger version ${recorded} is not in resolved versions ${resolvedVersions.join(", ")}`,
+      );
     }
     if (/^upgrade$/i.test(entry.decision)) {
       const prerequisite = entry.prerequisite_shard;

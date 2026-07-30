@@ -129,6 +129,13 @@ impl ProxyRuntimeState {
         self.v2_prepare_for_update(timeout).await
     }
 
+    pub async fn drain_for_data_maintenance(
+        &self,
+        timeout: Duration,
+    ) -> Result<ProxyStatus, String> {
+        self.v2_prepare_for_update(timeout).await
+    }
+
     pub async fn cleanup_before_update(&self, default_port: u16) -> Result<ProxyStatus, String> {
         self.stop(default_port).await
     }
@@ -975,7 +982,7 @@ mod tests {
         let body: serde_json::Value = response.json().await.expect("chat json");
         runtime.stop(started.port).await.unwrap();
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["id"], "chatcmpl-v2");
         upstream.wait_for_requests(1);
         let logs = fixture.request_logs().await;

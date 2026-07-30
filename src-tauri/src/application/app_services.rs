@@ -52,6 +52,8 @@ impl AppServices {
         let settings = Arc::new(SettingsService::new(
             runtime.clone(),
             clock.clone(),
+            ids.clone(),
+            credential_vault.clone(),
             data_dir,
             pending_data_dir,
         ));

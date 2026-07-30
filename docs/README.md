@@ -17,6 +17,10 @@
 - [`proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md`](proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md)：跨设备加密迁移 Draft。
 - [`proposals/STATUS_MONITORING_REFACTOR_SPEC.md`](proposals/STATUS_MONITORING_REFACTOR_SPEC.md)：状态监控 V2 架构和实现参考。
 
+## 跨设备加密迁移发布状态
+
+跨设备数据搬家 capability 已允许进入 `codex/cross-device-encrypted-migration` 集成分支；发布晋级仍必须基于目标 release revision 完成两机 smoke、签名包门禁和 artifact/canary 审计。默认导出、本机备份和同机 data-dir relocation 都不是 `.rpd-move` 跨设备迁移包。
+
 ## 状态监控 V2 记录
 
 - [`superpowers/plans/2026-07-29-status-monitoring-refactor.md`](superpowers/plans/2026-07-29-status-monitoring-refactor.md)：状态监控 V2 全流程重构计划。

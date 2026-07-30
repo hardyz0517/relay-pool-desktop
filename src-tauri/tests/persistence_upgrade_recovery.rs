@@ -1,3 +1,29 @@
+mod services {
+    pub(crate) mod data_store {
+        #[allow(
+            dead_code,
+            reason = "included only to satisfy production module paths in this focused recovery harness"
+        )]
+        pub(crate) mod file_identity {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/services/data_store/file_identity.rs"
+            ));
+        }
+
+        #[allow(
+            dead_code,
+            reason = "included only to satisfy production module paths in this focused recovery harness"
+        )]
+        pub(crate) mod atomic_file {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/services/data_store/atomic_file.rs"
+            ));
+        }
+    }
+}
+
 mod persistence {
     pub(crate) mod upgrade_fault {
         include!(concat!(

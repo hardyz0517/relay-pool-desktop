@@ -7,13 +7,14 @@ use crate::{
         lifecycle::ports::RequestLifecycleStore,
         routing_repository::{RoutingRepository, V2RoutingRepository},
     },
+    services::secrets::DeviceKeyResolver,
 };
 
 use super::runtime::{ProxyRuntimeState, ProxyStartConfig};
 
 pub(crate) async fn start_from_v2_persisted_settings(
     services: &AppServices,
-    data_key: [u8; 32],
+    device_keys: DeviceKeyResolver,
     proxy: &ProxyRuntimeState,
 ) -> Result<ProxyStatus, String> {
     let settings = services
@@ -29,7 +30,7 @@ pub(crate) async fn start_from_v2_persisted_settings(
     proxy
         .start(config_from_v2_services(
             services,
-            data_key,
+            device_keys,
             local_access_key,
             settings.local_proxy_port,
         ))
@@ -38,13 +39,13 @@ pub(crate) async fn start_from_v2_persisted_settings(
 
 pub(crate) fn config_from_v2_services(
     services: &AppServices,
-    data_key: [u8; 32],
+    device_keys: DeviceKeyResolver,
     local_access_key: String,
     port: u16,
 ) -> ProxyStartConfig {
     let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
         services.routing.as_ref().clone(),
-        data_key,
+        device_keys,
     ));
     let lifecycle_store: Arc<dyn RequestLifecycleStore> = services.request_finalization.clone();
     ProxyStartConfig::new_v2(routing_repository, lifecycle_store, local_access_key, port)
@@ -66,10 +67,13 @@ mod tests {
         update_proxy_port(&fixture.services, port).await;
         let runtime = ProxyRuntimeState::for_tests();
 
-        let status =
-            start_from_v2_persisted_settings(&fixture.services, fixture.data_key, &runtime)
-                .await
-                .expect("start proxy");
+        let status = start_from_v2_persisted_settings(
+            &fixture.services,
+            fixture.device_keys.clone(),
+            &runtime,
+        )
+        .await
+        .expect("start proxy");
 
         assert!(status.running);
         assert_eq!(status.port, port);

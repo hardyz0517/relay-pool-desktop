@@ -12,6 +12,8 @@ import {
   clearCaptureSession as clearCaptureSessionBinding,
   cancelChannelMonitorExecution as cancelChannelMonitorExecutionBinding,
   chooseDataDir as chooseDataDirBinding,
+  choosePortableExportPath as choosePortableExportPathBinding,
+  choosePortableImportFile as choosePortableImportFileBinding,
   closeCaptureSession as closeCaptureSessionBinding,
   clearStationCredentials as clearStationCredentialsBinding,
   deleteCommonLoginEmail as deleteCommonLoginEmailBinding,
@@ -49,6 +51,12 @@ import {
   getRemoteKeyCapability as getRemoteKeyCapabilityBinding,
   getDataStoreStartupState as getDataStoreStartupStateBinding,
   getLocalAccessKey as getLocalAccessKeyBinding,
+  getPortableExportResult as getPortableExportResultBinding,
+  getPortableImportInspection as getPortableImportInspectionBinding,
+  getPortableImportPrepareResult as getPortableImportPrepareResultBinding,
+  getPortableImportRecoveryState as getPortableImportRecoveryStateBinding,
+  getPortableMigrationCapability as getPortableMigrationCapabilityBinding,
+  getPortableMigrationOperation as getPortableMigrationOperationBinding,
   getRuntimeContractInfo,
   getRuntimeStatus as getRuntimeStatusBinding,
   getSettings as getSettingsBinding,
@@ -135,6 +143,9 @@ import {
   startCaptureSession as startCaptureSessionBinding,
   startProviderDraftAuthorization as startProviderDraftAuthorizationBinding,
   startLocalProxy as startLocalProxyBinding,
+  startPortableExport as startPortableExportBinding,
+  startPortableImportInspection as startPortableImportInspectionBinding,
+  startPortableImportPrepare as startPortableImportPrepareBinding,
   testStationLogin as testStationLoginBinding,
   testStationLoginInput as testStationLoginInputBinding,
   stopLocalProxy as stopLocalProxyBinding,
@@ -272,6 +283,24 @@ export class DesktopBackend implements BackendClient {
     restartApp: () => relaunch(),
     openDataStoreBackupDir: () => openDataStoreBackupDirBinding(),
     exportDataStoreDiagnostic: () => exportDataStoreDiagnosticBinding(),
+  };
+  readonly dataMigration = {
+    getPortableMigrationCapability: () => getPortableMigrationCapabilityBinding(),
+    choosePortableExportPath: () => choosePortableExportPathBinding(),
+    startPortableExport: (input: Parameters<BackendClient["dataMigration"]["startPortableExport"]>[0]) =>
+      startPortableExportBinding(input),
+    getPortableExportResult: (resourceId: string) => getPortableExportResultBinding({ resourceId }),
+    choosePortableImportFile: () => choosePortableImportFileBinding(),
+    startPortableImportInspection: (
+      input: Parameters<BackendClient["dataMigration"]["startPortableImportInspection"]>[0],
+    ) => startPortableImportInspectionBinding(input),
+    getPortableImportInspection: (resourceId: string) => getPortableImportInspectionBinding({ resourceId }),
+    startPortableImportPrepare: (
+      input: Parameters<BackendClient["dataMigration"]["startPortableImportPrepare"]>[0],
+    ) => startPortableImportPrepareBinding(input),
+    getPortableImportPrepareResult: (resourceId: string) => getPortableImportPrepareResultBinding({ resourceId }),
+    getPortableMigrationOperation: (operationId: string) => getPortableMigrationOperationBinding({ operationId }),
+    getPortableImportRecoveryState: () => getPortableImportRecoveryStateBinding(),
   };
   readonly updater = {
     currentAppVersion: () => getVersion(),

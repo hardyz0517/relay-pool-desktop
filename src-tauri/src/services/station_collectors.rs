@@ -13,7 +13,7 @@ use crate::{
     },
     background_tasks::{
         BlockingExecutor, BlockingExecutorError, TaskFailure, TaskId, TaskRunContext, TaskSpec,
-        TaskSupervisor,
+        TaskSupervisor, TaskSupervisorError,
     },
     observability::correlation,
     outbound::AsyncOutboundClient,
@@ -37,7 +37,6 @@ pub(crate) fn v2_runner_port(
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
-    data_key: [u8; 32],
 ) -> Arc<dyn StationCollectorRunnerPort> {
     let source: Arc<dyn CollectorSourcePort> = Arc::new(V2CollectorSourceAdapter::new(
         services.collectors.clone(),
@@ -47,7 +46,7 @@ pub(crate) fn v2_runner_port(
     let apply: Arc<dyn CollectorApplyPort> =
         Arc::new(V2CollectorApplyAdapter::new((*services.collectors).clone()));
     let tasks: Arc<dyn StationCollectorTaskPort> = Arc::new(V2StationCollectorTaskAdapter::new(
-        source, apply, blocking, outbound, providers, data_key,
+        source, apply, blocking, outbound, providers,
     ));
     Arc::new(V2StationCollectorRunnerAdapter::new(
         services.collectors.clone(),
@@ -79,7 +78,6 @@ pub(crate) struct V2StationCollectorTaskAdapter {
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
-    data_key: [u8; 32],
 }
 
 impl V2StationCollectorTaskAdapter {
@@ -89,7 +87,6 @@ impl V2StationCollectorTaskAdapter {
         blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<collectors::orchestration::ProviderRegistry>,
-        data_key: [u8; 32],
     ) -> Self {
         Self {
             source,
@@ -97,7 +94,6 @@ impl V2StationCollectorTaskAdapter {
             blocking,
             outbound,
             providers,
-            data_key,
         }
     }
 }
@@ -115,7 +111,6 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
         let blocking = self.blocking.clone();
         let outbound = self.outbound.clone();
         let providers = self.providers.clone();
-        let data_key = self.data_key;
         Box::pin(async move {
             let operation_id = Some(format!("{}:{}", context.task_id, context.run_id));
             let prepare = blocking
@@ -127,7 +122,6 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                     move |_| {
                         Ok(collectors::prepare_station_task_route_v2(
                             source.as_ref(),
-                            &data_key,
                             station_id,
                             task,
                         ))
@@ -290,6 +284,19 @@ impl StationCollectorRunnerState {
     #[allow(dead_code)]
     pub fn stop(&self) {
         let _ = self.supervisor.cancel(&self.task_id);
+    }
+
+    pub async fn stop_and_join(&self, timeout: Duration) -> Result<(), String> {
+        match self.supervisor.cancel(&self.task_id) {
+            Ok(()) => {}
+            Err(TaskSupervisorError::NotRunning(_)) => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        }
+        tokio::time::timeout(timeout, self.supervisor.join_finished(&self.task_id))
+            .await
+            .map_err(|_| "Station collector runner shutdown timed out".to_string())?
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     pub(crate) fn start_v2(

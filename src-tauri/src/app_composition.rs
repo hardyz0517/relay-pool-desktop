@@ -30,7 +30,7 @@ use crate::{
         monitoring::runner::MonitoringRunner,
         pricing_catalog::StaticBuiltinModelBasePriceCatalog,
         proxy::runtime::ProxyRuntimeState,
-        secrets::vault::DataKeyVault,
+        secrets::{vault::DataKeyVault, DeviceKeyResolver},
     },
     TrayBehaviorState,
 };
@@ -98,7 +98,7 @@ pub(crate) fn compose_provider_registry() -> Result<ProviderRegistry, ProviderRe
 
 pub(crate) fn compose_app_services(
     runtime: PersistenceHandle,
-    data_key: [u8; 32],
+    device_keys: DeviceKeyResolver,
     data_dir: String,
     pending_data_dir: Option<String>,
     data_directory_port: Arc<dyn DataDirectoryPort>,
@@ -110,7 +110,7 @@ pub(crate) fn compose_app_services(
         pending_data_dir,
         data_directory_port,
         blocking,
-        Arc::new(DataKeyVault::new(data_key)),
+        Arc::new(DataKeyVault::new(device_keys)),
         Arc::new(StaticBuiltinModelBasePriceCatalog),
     )
 }
@@ -135,7 +135,6 @@ pub(crate) fn compose_remote_keys_command_facade(
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
-    data_key: [u8; 32],
 ) -> RemoteKeysCommandFacade {
     RemoteKeysCommandFacade::new(
         Arc::clone(&services.collectors),
@@ -144,7 +143,6 @@ pub(crate) fn compose_remote_keys_command_facade(
         blocking,
         outbound,
         providers,
-        data_key,
     )
 }
 
@@ -185,7 +183,6 @@ pub(crate) fn compose_station_collection_command_facade(
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
-    data_key: [u8; 32],
 ) -> StationCollectionCommandFacade {
     StationCollectionCommandFacade::new(
         Arc::clone(&services.collectors),
@@ -194,7 +191,6 @@ pub(crate) fn compose_station_collection_command_facade(
         blocking,
         outbound,
         providers,
-        data_key,
     )
 }
 
@@ -353,7 +349,6 @@ pub(crate) fn compose_provider_draft_command_facade(
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
-    data_key: [u8; 32],
 ) -> ProviderDraftCommandFacade {
     ProviderDraftCommandFacade::new(
         Arc::clone(&services.provider_drafts),
@@ -361,7 +356,6 @@ pub(crate) fn compose_provider_draft_command_facade(
         blocking,
         outbound,
         providers,
-        data_key,
     )
 }
 
@@ -391,7 +385,7 @@ pub(crate) fn compose_data_directory_command_facade(
 pub(crate) fn compose_local_proxy_command_facade(
     services: &AppServices,
     proxy: Arc<ProxyRuntimeState>,
-    data_key: [u8; 32],
+    device_keys: DeviceKeyResolver,
 ) -> LocalProxyCommandFacade {
     LocalProxyCommandFacade::new(
         Arc::clone(&services.settings),
@@ -399,6 +393,6 @@ pub(crate) fn compose_local_proxy_command_facade(
         Arc::clone(&services.request_logs),
         Arc::clone(&services.request_finalization),
         proxy,
-        data_key,
+        device_keys,
     )
 }

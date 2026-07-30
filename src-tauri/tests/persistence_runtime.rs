@@ -330,17 +330,9 @@ struct V2Fixture {
 impl V2Fixture {
     async fn create() -> Self {
         let path = temp_db_path("v2");
-        let mut connection = SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true)
-            .connect()
-            .await
-            .expect("connect fixture");
-        persistence::migrations::migrator()
-            .run(&mut connection)
+        persistence::migrations::initialize_v2_database(&path)
             .await
             .expect("migrate fixture");
-        connection.close().await.expect("close fixture");
         Self { path }
     }
 

@@ -41,7 +41,7 @@ async fn start_managed_if_requested(app: &AppHandle) -> Result<(), String> {
 
     let secrets = app.state::<SecretManager>();
     let proxy = app.state::<Arc<ProxyRuntimeState>>();
-    startup::start_from_v2_persisted_settings(services.inner(), *secrets.data_key(), proxy.inner())
+    startup::start_from_v2_persisted_settings(services.inner(), secrets.resolver(), proxy.inner())
         .await?;
     Ok(())
 }

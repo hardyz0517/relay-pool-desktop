@@ -1,8 +1,18 @@
+#[allow(
+    dead_code,
+    reason = "Task 1 extracts the reusable migration file port before later portable migration services depend on every primitive"
+)]
+pub(crate) mod atomic_file;
 pub mod backup;
 pub mod config;
 pub(crate) mod data_directory_port;
 pub mod decision;
 pub mod diagnostic;
+#[allow(
+    dead_code,
+    reason = "Task 1 extracts the reusable migration file identity primitive before later migration services consume it broadly"
+)]
+pub(crate) mod file_identity;
 pub(crate) mod generation_upgrade;
 pub mod inspect;
 pub mod installation_lease;

@@ -19,6 +19,14 @@ pub(crate) enum RuntimeTransitionError {
     Invalid,
     #[error("persistence runtime close failed")]
     CloseFailed,
+    #[error("persistence runtime did not become idle before maintenance deadline")]
+    MaintenanceIdleTimedOut,
+    #[error("persistence writes did not drain before maintenance deadline")]
+    MaintenanceWriteDrainTimedOut,
+    #[error("persistence WAL checkpoint failed during maintenance freeze")]
+    MaintenanceCheckpointFailed,
+    #[error("persistence SQLite sidecar is non-empty after maintenance freeze")]
+    MaintenanceSidecarNonEmpty,
 }
 
 #[derive(Debug)]

@@ -25,6 +25,8 @@ pub(crate) struct DecisionInput {
 pub(crate) enum StartupStep {
     Lease,
     ConfigInspection,
+    PortableActivationJournal,
+    PortableActivationRecovery,
     RecoveryPlanning,
     LegacyDetection,
     BackupImportValidation,
@@ -43,6 +45,8 @@ pub(crate) const fn startup_order() -> &'static [StartupStep] {
     &[
         StartupStep::Lease,
         StartupStep::ConfigInspection,
+        StartupStep::PortableActivationJournal,
+        StartupStep::PortableActivationRecovery,
         StartupStep::RecoveryPlanning,
         StartupStep::LegacyDetection,
         StartupStep::BackupImportValidation,
@@ -243,6 +247,18 @@ mod tests {
     #[test]
     fn startup_order_places_runtime_registration_after_v2_health() {
         let order = startup_order();
+        assert!(
+            order
+                .iter()
+                .position(|step| *step == StartupStep::PortableActivationRecovery)
+                < order.iter().position(|step| *step == StartupStep::V2Reopen)
+        );
+        assert!(
+            order
+                .iter()
+                .position(|step| *step == StartupStep::PortableActivationRecovery)
+                < order.iter().position(|step| *step == StartupStep::Proxy)
+        );
         assert!(
             order.iter().position(|step| *step == StartupStep::V2Reopen)
                 < order
