@@ -19,8 +19,10 @@
 | monitor request pricing evidence structs | deleted | none | deleted | 16/17 | old monitor request-log cost write path no longer exists |
 | `buildRecentOutcomes` / `healthToRecentOutcomes` UI trend synthesis | deleted | none | deleted | 15/16 | status trends come from backend buckets/target results |
 | `channel_monitor_runs` production write authority | deleted | none | one release observation cycle as read-only compatibility only | 18 follow-up | no production writer remains; remove table/reader after observation cycle |
-| `ChannelMonitorRun` DTO and `list_channel_monitor_runs` IPC | read-only compatibility | old monitor history view only | one release observation cycle | 18 follow-up | remove with `docs/superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md` |
-| `MonitoringStore::summary_runs` and legacy run helpers | read-only compatibility | legacy reader only | one release observation cycle | 18 follow-up | V2 execution/target/attempt history fully replaces support diagnostics |
+| `ChannelMonitorRun` DTO and `list_channel_monitor_runs` IPC | read-only compatibility | compatibility IPC only; product frontend has no consumer | one release observation cycle | 18 follow-up | remove with `docs/superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md` |
+| `MonitoringStore::summary_runs` and legacy summary/status helpers | deleted | none | deleted | 18 | V2 execution/target/attempt history fully replaces product and support diagnostics |
+| `LegacyMonitorRunStore::list_run_page` | isolated read-only compatibility | `list_channel_monitor_runs` IPC only | one release observation cycle | 18 follow-up | remove together with the legacy table and compatibility IPC |
+| `services/monitoring/runtime.rs` and `scheduler.rs` | test fixture only; absent from the production module tree | deterministic legacy contract tests only | until production-runner tests fully replace their remaining fixtures | follow-up | architecture gate prevents either module from re-entering production composition |
 
 ## Verification
 

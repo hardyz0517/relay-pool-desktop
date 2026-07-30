@@ -31,9 +31,10 @@ assert.ok(
 );
 
 assert.ok(
-  monitoringSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
+    monitoringSource.includes("useActivityQuery(channelMonitoringQueryOptions())") &&
     monitoringSource.includes("const workspace = workspaceQuery.data") &&
-    monitoringSource.includes("monitorSummaries.map((summary) => summary.monitor)") &&
+    monitoringSource.includes("const monitors = workspace?.monitors ?? []") &&
+    monitoringSource.includes("workspace?.statusWorkspace.rows ?? []") &&
     monitoringSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring })"),
   "channel monitoring tab should consume the canonical monitoring workspace query cache",
 );
@@ -61,12 +62,8 @@ assert.ok(
 );
 
 assert.ok(
-  statusSource.includes("useActivityQuery(channelStatusQueryOptions(5_000))") &&
-    statusSource.includes("const workspace = statusQuery.data") &&
-    statusSource.includes("workspace?.keyPoolItems ?? []") &&
-    statusSource.includes("workspace?.requestLogs ?? []") &&
-    statusSource.includes("workspace?.stationKeyHealth ?? []") &&
-    statusSource.includes("workspace?.channelStatusSummaries ?? []") &&
+  statusSource.includes("useChannelStatusController()") &&
+    statusSource.includes("controller.workspaceView.rows") &&
     !statusSource.includes('import { loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";') &&
     !statusSource.includes("setKeys(workspace.keyPoolItems)") &&
     !statusSource.includes("setLogs(workspace.requestLogs)") &&
@@ -85,7 +82,8 @@ assert.ok(
 );
 
 assert.ok(
-  !/Promise\.all\(\[\s*listChannelMonitorSummaries\(\),\s*listStations\(\),\s*listKeyPoolItems\(\),\s*listChannelMonitorTemplates\(\),?\s*\]\)/s.test(
+    !monitoringSource.includes("listChannelMonitorSummaries") &&
+    !/Promise\.all\(\[\s*listChannelMonitorSummaries\(\),\s*listStations\(\),\s*listKeyPoolItems\(\),\s*listChannelMonitorTemplates\(\),?\s*\]\)/s.test(
     monitoringSource,
   ) &&
     !/Promise\.all\(\[\s*listKeyPoolItems\(\),\s*listRequestLogs\(\),\s*listStationKeyHealth\(\),\s*listChannelMonitorSummaries\(\),?\s*\]\)/s.test(

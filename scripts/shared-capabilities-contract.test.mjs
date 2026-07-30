@@ -27,20 +27,14 @@ assert.ok(
   "groupFacts API should expose listStationGroupOptions",
 );
 assert.ok(
-  files.channelApi.includes("listChannelMonitorSummaries"),
-  "channelMonitors API should expose listChannelMonitorSummaries",
-);
-assert.ok(
   files.rustCommands.includes("save_station_key_with_defaults") &&
-    files.rustCommands.includes("list_station_group_options") &&
-    files.rustCommands.includes("list_channel_monitor_summaries"),
-  "Tauri commands should expose the three shared capabilities",
+    files.rustCommands.includes("list_station_group_options"),
+  "Tauri commands should expose the station-key shared capabilities",
 );
 assert.ok(
   files.rustLib.includes("commands::save_station_key_with_defaults") &&
-    files.rustLib.includes("commands::list_station_group_options") &&
-    files.rustLib.includes("commands::list_channel_monitor_summaries"),
-  "Tauri invoke handler should register the shared capability commands",
+    files.rustLib.includes("commands::list_station_group_options"),
+  "Tauri invoke handler should register the station-key shared capability commands",
 );
 
 for (const [name, source] of [
@@ -82,14 +76,14 @@ assert.ok(
 );
 
 assert.ok(
-  files.channelQueries.includes("listChannelMonitorSummaries") &&
-    files.channelMonitoring.includes("loadChannelMonitoringWorkspace"),
-  "ChannelMonitoringTab should load monitor summaries through the shared query service",
+  files.channelMonitoring.includes("statusWorkspace.rows") &&
+    !files.channelMonitoring.includes("recentRuns"),
+  "ChannelMonitoringTab should consume V2 status rows instead of legacy monitor runs",
 );
 assert.ok(
-  files.channelQueries.includes("listChannelMonitorSummaries") &&
-    files.channelStatus.includes("loadChannelStatusWorkspace"),
-  "ChannelStatusTab should load monitor summaries through the shared query service",
+  files.channelQueries.includes("loadChannelStatusWorkspace") &&
+    files.channelStatus.includes("useChannelStatusController"),
+  "ChannelStatusTab should consume the V2 status workspace",
 );
 assert.ok(
   !files.channelMonitoring.includes("listChannelMonitorRuns(monitor.id)") &&

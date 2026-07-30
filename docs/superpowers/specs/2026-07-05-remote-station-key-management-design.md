@@ -66,18 +66,15 @@ Use a normalized remote-key structure before touching local Station Keys:
 - `matchedStationKeyId`
 - `matchConfidence`
 
-`apiKeyFingerprint` is derived from a full key only when the remote API returns it. If the remote API only returns a masked key, matching falls back to visible prefix/suffix, group, name, and known local key metadata.
+`apiKeyFingerprint` is derived from a full key when the adapter can list or reveal it. The plaintext exists only long enough to compute the fingerprint and is never persisted or logged. A masked key, group, or name is display metadata only and must never establish a remote/local identity relationship.
 
 ### 5.3 Matching Rules
 
-Remote-to-local matching runs in this order:
+Remote-to-local matching requires equal full-key fingerprints. Stable remote ids preserve discovery identity and import provenance, but do not override a secret mismatch. Masked prefix/suffix, group, and name similarities never create a match.
 
-1. Full key fingerprint match when both sides can compute one.
-2. Stable remote key id hash match when the station exposes a stable key id and the local key was previously bound to it.
-3. Masked prefix/suffix match plus station id.
-4. Masked match plus group/name hints.
+The relationship is derived state rather than a user-editable binding. Users cannot manually bind or unbind arbitrary rows. Replacing a local Station Key secret invalidates its prior remote relationship in the same transaction; the next scan derives the new relationship from fingerprints.
 
-Only high-confidence matches update local Station Key facts automatically. Low-confidence matches are shown as possible matches and require user confirmation before binding.
+Remote discovery order follows the adapter response order. A full scan replaces the persisted order, while importing a local Key or updating match metadata preserves that order. A newly created remote Key is appended until the next full scan reconciles provider order.
 
 ### 5.4 Fact Synchronization
 
@@ -140,8 +137,9 @@ For existing keys, the API key input placeholder says the old key is retained wh
 Remote discovery rows are displayed separately from local editable rows. A discovered remote key can show:
 
 - `已匹配` with the local key name.
-- `可能匹配` with a confirmation action.
-- `未绑定` with actions to bind or save as a local key.
+- `无匹配` when the remote identity was verified but no local secret matches.
+- `未验证` when the adapter cannot obtain enough secret evidence.
+- An import action when the verified remote key does not exist locally.
 
 Scanning does not silently add these rows to the local editable key list.
 
@@ -165,7 +163,7 @@ The action is disabled with a clear reason when the adapter reports `canCreateRe
 - Unsupported remote key scan/create: disable the action and keep manual local key editing available.
 - Remote scan failure: keep the previous scan result visible with the last successful timestamp and current error.
 - Remote creation succeeds but local save fails: show the newly created full key once in a protected result panel and report the local save failure.
-- Low-confidence match: do not sync group/rate facts until the user confirms the match.
+- Missing fingerprint evidence: do not create a relationship or sync key facts from identity guesses.
 - Secret leakage: redact `authorization`, `cookie`, `set-cookie`, full API keys, access tokens, refresh tokens, and raw create responses in logs and snapshots.
 
 ## 9. Persistence

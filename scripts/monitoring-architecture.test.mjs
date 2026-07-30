@@ -35,6 +35,8 @@ const serviceBoundaryForbidden = [
 checkFiles(listExistingRustFiles(adapterRoot), serviceBoundaryForbidden);
 checkFiles(listExistingRustFiles(profileRoot), serviceBoundaryForbidden);
 checkProductionMonitorRunnerCutover(monitoringRunnerService);
+checkLegacyRunFrontendIsolation();
+checkLegacyRustFixtureIsolation();
 
 if (failures.length > 0) {
   console.error(failures.join("\n"));
@@ -69,7 +71,7 @@ function checkFiles(files, rules) {
 function checkProductionMonitorRunnerCutover(file) {
   if (!existsSync(file)) return;
   const source = readFileSync(file, "utf8");
-  const match = source.match(/pub\(crate\) fn compose_monitoring_runner[\s\S]*?\n\}\n/u);
+  const match = source.match(/pub\(crate\) fn compose_monitoring_runner[\s\S]*?\r?\n\}\r?\n/u);
   if (!match) {
     failures.push(`${file}: compose_monitoring_runner composition boundary is missing`);
     return;
@@ -98,4 +100,53 @@ function checkProductionMonitorRunnerCutover(file) {
   if (existsSync(join(root, "src-tauri", "src", "services", "channel_monitors", "mod.rs"))) {
     failures.push("legacy services/channel_monitors/mod.rs must not exist after production runner cutover");
   }
+}
+
+function checkLegacyRunFrontendIsolation() {
+  const roots = [
+    join(root, "src", "features"),
+    join(root, "src", "lib", "api"),
+    join(root, "src", "lib", "bridge"),
+    join(root, "src", "lib", "queries"),
+    join(root, "src", "lib", "query"),
+  ];
+  const allowed = new Set([
+    join(root, "src", "lib", "bridge", "generated.ts"),
+    join(root, "src", "lib", "bridge", "generated.test.ts"),
+  ]);
+  for (const dir of roots) {
+    for (const file of listSourceFiles(dir)) {
+      if (allowed.has(file) || file.endsWith(".test.ts") || file.endsWith(".test.tsx")) continue;
+      const source = readFileSync(file, "utf8");
+      if (source.includes("listChannelMonitorRuns") || source.includes("list_channel_monitor_runs")) {
+        failures.push(`${file}: product frontend must use Monitoring V2 execution history`);
+      }
+    }
+  }
+}
+
+function checkLegacyRustFixtureIsolation() {
+  const moduleFiles = [
+    [join(root, "src-tauri", "src", "services", "monitoring", "mod.rs"), ["runtime", "scheduler"]],
+    [join(root, "src-tauri", "src", "application", "monitoring", "mod.rs"), ["retention"]],
+    [join(root, "src-tauri", "src", "persistence", "stores", "monitoring", "mod.rs"), ["status_queries"]],
+  ];
+  for (const [file, modules] of moduleFiles) {
+    const source = readFileSync(file, "utf8");
+    for (const moduleName of modules) {
+      const declaration = new RegExp(`(?:pub(?:\\(crate\\))?\\s+)?mod\\s+${moduleName}\\s*;`, "u");
+      if (declaration.test(source)) {
+        failures.push(`${file}: legacy test fixture ${moduleName}.rs must not be in the production module tree`);
+      }
+    }
+  }
+}
+
+function listSourceFiles(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return listSourceFiles(path);
+    return entry.isFile() && /\.(?:ts|tsx)$/u.test(entry.name) ? [path] : [];
+  });
 }
