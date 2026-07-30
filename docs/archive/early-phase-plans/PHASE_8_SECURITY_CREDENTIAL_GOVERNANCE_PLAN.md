@@ -1,5 +1,7 @@
 # P8 Security and Credential Governance Plan
 
+> **归档说明：** 这是早期安全治理阶段快照。当前安全边界以 [`../../SECURITY_EXPORT_IMPORT.md`](../../SECURITY_EXPORT_IMPORT.md) 和当前实现为准。
+
 ## Goal
 
 P8 makes Relay Pool Desktop safe enough for long-term use with real Station Keys, station login credentials, captured session metadata, collector snapshots, request logs, route logs, and proxy errors.
@@ -8,7 +10,7 @@ P8 makes Relay Pool Desktop safe enough for long-term use with real Station Keys
 
 P8 introduces one SecretManager and one redaction boundary. Business modules keep owning their product behavior, but they no longer store, display, log, import, or export raw secrets directly.
 
-Import/export follows `docs/SECURITY_EXPORT_IMPORT.md`. P8 default exports never include raw secrets or encrypted secret payloads.
+Import/export follows [`../../SECURITY_EXPORT_IMPORT.md`](../../SECURITY_EXPORT_IMPORT.md). P8 default exports never include raw secrets or encrypted secret payloads.
 
 ## Sensitive Data
 

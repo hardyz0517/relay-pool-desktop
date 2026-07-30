@@ -23,6 +23,8 @@
   ·
   <a href='docs/PRODUCT_MODEL.md'>产品模型</a>
   ·
+  <a href='docs/README.md'>文档导航</a>
+  ·
   <a href='https://qm.qq.com/q/G1bJsrIbOG'>QQ 交流群</a>
 </p>
 
@@ -164,7 +166,7 @@ src-tauri/src/
   application/         持久化用例与应用服务
   persistence/         SQLx Store、migration、备份与恢复
   services/            采集、路由、代理、监控与凭据服务
-docs/                   产品模型、阶段设计、安全策略与研究资料
+docs/                   当前规范、工程记录、研究资料与历史归档
 scripts/                聚焦业务契约的回归检查脚本
 ```
 
@@ -192,9 +194,8 @@ Relay Pool Desktop 会在本机处理真实上游凭据。请勿提交 API Key�
 
 - [项目规划](docs/PROJECT_PLAN.md)
 - [产品模型](docs/PRODUCT_MODEL.md)
-- [本地代理设计](docs/PHASE_5_LOCAL_PROXY_PLAN.md)
-- [路由策略设计](docs/PHASE_6_ROUTING_POLICY_PLAN.md)
-- [安全与凭据治理](docs/PHASE_8_SECURITY_CREDENTIAL_GOVERNANCE_PLAN.md)
+- [安全导入导出策略](docs/SECURITY_EXPORT_IMPORT.md)
+- [文档导航与有效性说明](docs/README.md)
 
 ## 参与项目
 

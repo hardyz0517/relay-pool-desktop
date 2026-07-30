@@ -1,5 +1,7 @@
 # Phase 2.5 UI Reset
 
+> **归档说明：** 这是早期 UI 调整快照，不是当前实施计划。当前开发入口见 [`../../README.md`](../../README.md)。
+
 Phase 2.5 is a visual and interaction reset. It does not add new backend behavior. The goal is to keep Relay Pool Desktop as a local desktop tool while moving the content area away from a rigid enterprise dashboard and toward a softer Sub2API-style control console.
 
 ## Why Reset

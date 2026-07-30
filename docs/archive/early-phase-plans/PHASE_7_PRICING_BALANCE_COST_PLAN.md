@@ -1,5 +1,7 @@
 ﻿# P7 Pricing, Balance, and Cost Strategy Plan
 
+> **归档说明：** 这是早期价格与成本阶段快照，不是当前实施计划。当前开发入口见 [`../../README.md`](../../README.md)。
+
 ## Goal
 
 P7 upgrades Relay Pool Desktop from a capability and health router into a cost-aware router that can compare normalized prices, avoid low-balance stations, estimate request costs, and explain those decisions.
