@@ -66,6 +66,13 @@ impl StableEventCode {
         Ok(Self(value.to_string()))
     }
 
+    pub(crate) fn from_command_name(value: &str) -> Result<Self, StructuredEventError> {
+        if !is_command_name(value) {
+            return Err(StructuredEventError::InvalidStableCode);
+        }
+        Ok(Self(value.to_string()))
+    }
+
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -121,6 +128,14 @@ fn is_stable_token(value: &str) -> bool {
         && !lower.contains("token")
 }
 
+fn is_command_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_STABLE_CODE_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +185,34 @@ mod tests {
                     StructuredEventResult::Error,
                     None,
                 ),
+                Err(StructuredEventError::InvalidStableCode)
+            );
+        }
+    }
+
+    #[test]
+    fn ipc_command_names_allow_domain_terms_but_reject_values() {
+        for command in [
+            "upsert_common_login_password",
+            "refresh_access_token",
+            "finish_web_authorization_session",
+        ] {
+            assert_eq!(
+                StableEventCode::from_command_name(command)
+                    .expect("public command identifier")
+                    .as_str(),
+                command
+            );
+        }
+
+        for value in [
+            "https://example.test",
+            "command.password=value",
+            "MixedCase",
+            "command-name",
+        ] {
+            assert_eq!(
+                StableEventCode::from_command_name(value),
                 Err(StructuredEventError::InvalidStableCode)
             );
         }
