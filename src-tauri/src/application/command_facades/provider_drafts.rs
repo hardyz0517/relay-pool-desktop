@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
     application::{
@@ -127,23 +127,16 @@ impl ProviderDraftCommandFacade {
         let draft = self.drafts.get(draft_id.clone()).await?;
         let fingerprint = ProviderDraftService::runtime_fingerprint(&draft.payload);
         let finish_draft_id = draft_id.clone();
-        let source = self.source(draft_id.clone());
+        let source = self.snapshot_source(draft_id.clone()).await?;
         let data_key = self.data_key;
-        let prepared = self
-            .blocking
-            .submit(
-                "provider_draft_collection_prepare",
-                None,
-                current_correlation_id(),
-                None,
-                move |_| {
-                    Ok(collectors::prepare_station_collection_route_v2(
-                        &source, &data_key, draft_id, task,
-                    ))
-                },
-            )?
-            .result()
-            .await??;
+        let prepared = super::draft_jobs::prepare_collection_plan(
+            &self.blocking,
+            source,
+            data_key,
+            draft_id,
+            task,
+        )
+        .await??;
         let prepared = match prepared {
             collectors::PreparedStationCollectionRoute::Sub2Api(prepared) => {
                 collectors::finish_sub2api_collection_v2(
@@ -190,26 +183,15 @@ impl ProviderDraftCommandFacade {
         &self,
         draft_id: String,
     ) -> Result<RemoteKeyScanResult, ProviderDraftCommandError> {
-        let source = self.source(draft_id.clone());
+        let prepare_source = self.snapshot_source(draft_id.clone()).await?;
         let data_key = self.data_key;
-        let newapi = self
-            .blocking
-            .submit(
-                "provider_draft_remote_key_prepare_newapi",
-                None,
-                current_correlation_id(),
-                None,
-                {
-                    let draft_id = draft_id.clone();
-                    move |_| {
-                        Ok(remote_keys::prepare_newapi_remote_key_driver_context_v2(
-                            &source, &data_key, draft_id,
-                        ))
-                    }
-                },
-            )?
-            .result()
-            .await??;
+        let newapi = super::draft_jobs::prepare_newapi_key_scan_plan(
+            &self.blocking,
+            prepare_source,
+            data_key,
+            draft_id.clone(),
+        )
+        .await??;
         if let Some(prepared) = newapi {
             let prepared = remote_keys::prepare_newapi_remote_key_scan_v2(
                 self.providers.as_ref(),
@@ -222,26 +204,15 @@ impl ProviderDraftCommandFacade {
             return remote_keys::preview_remote_key_scan_v2(prepared).map_err(Into::into);
         }
 
-        let source = self.source(draft_id.clone());
+        let source = self.snapshot_source(draft_id.clone()).await?;
         let data_key = self.data_key;
-        let sub2api = self
-            .blocking
-            .submit(
-                "provider_draft_remote_key_prepare_sub2api",
-                None,
-                current_correlation_id(),
-                None,
-                {
-                    let draft_id = draft_id.clone();
-                    move |_| {
-                        Ok(remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                            &source, &data_key, draft_id,
-                        ))
-                    }
-                },
-            )?
-            .result()
-            .await??;
+        let sub2api = super::draft_jobs::prepare_sub2api_key_scan_plan(
+            &self.blocking,
+            source,
+            data_key,
+            draft_id.clone(),
+        )
+        .await??;
         if let Some(prepared) = sub2api {
             let prepared = remote_keys::prepare_sub2api_remote_key_scan_v2(
                 self.providers.as_ref(),
@@ -262,6 +233,142 @@ impl ProviderDraftCommandFacade {
             settings: Arc::clone(&self.settings),
             draft_id,
         }
+    }
+
+    async fn snapshot_source(
+        &self,
+        draft_id: String,
+    ) -> Result<DraftSnapshotCollectorSource, ApplicationError> {
+        let station = self.drafts.station_projection(&draft_id).await?;
+        let settings = self.settings.load().await.map_err(app_error);
+        let keys = self.drafts.list_keys(&draft_id).await.map_err(app_error);
+        let mut key_secrets = BTreeMap::new();
+        if let Ok(keys) = &keys {
+            for key in keys.iter().filter(|key| key.api_key_present) {
+                key_secrets.insert(
+                    key.id.clone(),
+                    self.drafts
+                        .key_secret(&draft_id, &key.id)
+                        .await
+                        .map_err(app_error),
+                );
+            }
+        }
+        let credentials = self
+            .drafts
+            .credentials_projection(&draft_id)
+            .await
+            .map_err(app_error);
+        let login_password = self
+            .drafts
+            .login_password(&draft_id)
+            .await
+            .map_err(app_error);
+        let session = self
+            .drafts
+            .resolve_session(&draft_id)
+            .await
+            .map_err(app_error);
+        let groups = self.drafts.list_groups(&draft_id).await.map_err(app_error);
+        Ok(DraftSnapshotCollectorSource {
+            station,
+            settings,
+            keys,
+            key_secrets,
+            credentials,
+            login_password,
+            session,
+            groups,
+        })
+    }
+}
+
+struct DraftSnapshotCollectorSource {
+    station: Station,
+    settings: Result<AppSettings, String>,
+    keys: Result<Vec<StationKey>, String>,
+    key_secrets: BTreeMap<String, Result<String, String>>,
+    credentials: Result<StationCredentials, String>,
+    login_password: Result<Option<String>, String>,
+    session: Result<ResolvedSession, String>,
+    groups: Result<Vec<StationGroupBinding>, String>,
+}
+
+impl CollectorSourcePort for DraftSnapshotCollectorSource {
+    fn station_for_collector(&self, _station_id: &str) -> Result<Station, String> {
+        Ok(self.station.clone())
+    }
+
+    fn get_settings(&self) -> Result<AppSettings, String> {
+        self.settings.clone()
+    }
+
+    fn list_station_keys(&self, _station_id: String) -> Result<Vec<StationKey>, String> {
+        self.keys.clone()
+    }
+
+    fn resolve_station_key_secret_with_data_key(
+        &self,
+        _data_key: &[u8; 32],
+        station_key_id: &str,
+    ) -> Result<String, String> {
+        self.key_secrets
+            .get(station_key_id)
+            .cloned()
+            .unwrap_or_else(|| Err("station key secret is not available".to_string()))
+    }
+
+    fn get_station_credentials(&self, _station_id: String) -> Result<StationCredentials, String> {
+        self.credentials.clone()
+    }
+
+    fn get_station_login_password_with_data_key(
+        &self,
+        _station_id: String,
+        _data_key: &[u8; 32],
+    ) -> Result<Option<String>, String> {
+        self.login_password.clone()
+    }
+
+    fn resolve_station_session_with_data_key(
+        &self,
+        _station_id: String,
+        _data_key: &[u8; 32],
+        _now_ms: i64,
+    ) -> Result<ResolvedSession, String> {
+        self.session.clone()
+    }
+
+    fn update_station_session_with_data_key(
+        &self,
+        _input: UpdateStationSessionInput,
+        _data_key: &[u8; 32],
+        _expected_revision: i64,
+    ) -> Result<StationCredentials, String> {
+        Err("draft snapshot source is read-only".to_string())
+    }
+
+    fn persist_station_session<'a>(
+        &'a self,
+        _input: PersistStationSessionInput,
+        _expected_revision: i64,
+    ) -> futures_util::future::BoxFuture<'a, Result<StationCredentials, String>> {
+        Box::pin(async { Err("draft snapshot source is read-only".to_string()) })
+    }
+
+    fn invalidate_station_session_credential(
+        &self,
+        _station_id: &str,
+        _kind: StationSessionCredentialKind,
+    ) -> Result<(), String> {
+        Err("draft snapshot source is read-only".to_string())
+    }
+
+    fn list_station_group_bindings(
+        &self,
+        _station_id: String,
+    ) -> Result<Vec<StationGroupBinding>, String> {
+        self.groups.clone()
     }
 }
 

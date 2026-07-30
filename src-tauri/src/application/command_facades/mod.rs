@@ -5,6 +5,7 @@ mod channel_status;
 mod collector_metadata;
 mod credentials;
 mod data_directory;
+mod draft_jobs;
 mod key_pool;
 mod local_proxy;
 mod pricing;
