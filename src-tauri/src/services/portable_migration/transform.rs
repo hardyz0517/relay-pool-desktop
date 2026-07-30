@@ -60,6 +60,8 @@ pub(crate) enum TransformError {
     LimitExceeded,
     #[error("portable migration canary scan found sensitive residue")]
     SensitiveResidue,
+    #[error("portable migration secret rekey output does not match the source rows")]
+    SecretRekeyOutputMismatch,
 }
 
 const PORTABLE_BINARY_PREFIX: &str = "base64:";

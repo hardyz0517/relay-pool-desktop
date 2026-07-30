@@ -32,7 +32,7 @@ use crate::{
             target_writer::{TrustedTableBatch, TrustedTargetWriter},
             transform::{
                 encrypted_secret_from_portable_row, portable_row_from_encrypted_secret,
-                PortableRow, TransformOptions,
+                PortableRow, TransformError, TransformOptions,
             },
             validate::PortableMigrationValidationError,
         },
@@ -497,12 +497,14 @@ impl DataMigrationExportService {
             .rows()
             .iter()
             .map(|secret| {
-                let template = templates
-                    .get(&secret.id)
-                    .expect("rekey writer preserves source secret IDs");
-                portable_row_from_encrypted_secret(template, secret)
+                let template = templates.get(&secret.id).ok_or(
+                    PortableMigrationValidationError::Transform(
+                        TransformError::SecretRekeyOutputMismatch,
+                    ),
+                )?;
+                Ok(portable_row_from_encrypted_secret(template, secret))
             })
-            .collect();
+            .collect::<Result<Vec<_>, PortableMigrationValidationError>>()?;
         Ok((rows, report))
     }
 }
