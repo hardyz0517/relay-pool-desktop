@@ -75,10 +75,13 @@ import {
   loadLocalRoutingWorkspace as loadLocalRoutingWorkspaceBinding,
   loadChannelStatusWorkspace as loadChannelStatusWorkspaceBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
+  loadRoutingRuntimeOverlay as loadRoutingRuntimeOverlayBinding,
+  loadRoutingWorkspaceSnapshot as loadRoutingWorkspaceSnapshotBinding,
   listModelAliases as listModelAliasesBinding,
   listMonitoringCapabilities as listMonitoringCapabilitiesBinding,
   listModelBasePrices as listModelBasePricesBinding,
   listPricingRules as listPricingRulesBinding,
+  listRecentRouteDecisions as listRecentRouteDecisionsBinding,
   listRemoteStationKeys as listRemoteStationKeysBinding,
   listStationEndpointHealth as listStationEndpointHealthBinding,
   listStationGroupBindings as listStationGroupBindingsBinding,
@@ -92,6 +95,8 @@ import {
   pingStationEndpoint as pingStationEndpointBinding,
   getProxyStatus as getProxyStatusBinding,
   getProviderDraft as getProviderDraftBinding,
+  getRequestDecisionTrace as getRequestDecisionTraceBinding,
+  getStationKeyOperationalDetail as getStationKeyOperationalDetailBinding,
   markChangeEventRead as markChangeEventReadBinding,
   markChangeEventsRead as markChangeEventsReadBinding,
   dismissChangeEvent as dismissChangeEventBinding,
@@ -381,6 +386,13 @@ export class DesktopBackend implements BackendClient {
       upsertModelAliasBinding(input),
     deleteModelAlias: (id: string) => deleteModelAliasBinding({ id }),
     listStationKeyHealth: () => listStationKeyHealthBinding(),
+    loadRoutingWorkspaceSnapshot: (input = {}) => loadRoutingWorkspaceSnapshotBinding(input),
+    loadRoutingRuntimeOverlay: () => loadRoutingRuntimeOverlayBinding(),
+    listRecentRouteDecisions: (input = {}) => listRecentRouteDecisionsBinding(input),
+    getStationKeyOperationalDetail: (stationKeyId: string) =>
+      getStationKeyOperationalDetailBinding({ stationKeyId }),
+    getRequestDecisionTrace: (requestLogId: string) =>
+      getRequestDecisionTraceBinding({ requestLogId }),
     getStationKeyHealth: (stationKeyId: string) => getStationKeyHealthBinding({ stationKeyId }),
     simulateRoute: (input: Parameters<BackendClient["routing"]["simulateRoute"]>[0]) =>
       simulateRouteBinding({

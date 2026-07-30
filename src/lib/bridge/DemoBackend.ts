@@ -143,6 +143,13 @@ export class DemoBackend implements BackendClient {
     upsertModelAlias: () => this.rejectUnsupported("routing"),
     deleteModelAlias: (_id: string) => this.rejectUnsupported("routing"),
     listStationKeyHealth: () => this.rejectUnsupported("routing"),
+    loadRoutingWorkspaceSnapshot: () => this.rejectUnsupported("routing.workspace_snapshot"),
+    loadRoutingRuntimeOverlay: () => this.rejectUnsupported("routing.runtime_overlay"),
+    listRecentRouteDecisions: () => this.rejectUnsupported("routing.route_decisions"),
+    getStationKeyOperationalDetail: (_stationKeyId: string) =>
+      this.rejectUnsupported("routing.operational_detail"),
+    getRequestDecisionTrace: (_requestLogId: string) =>
+      this.rejectUnsupported("routing.decision_trace"),
     getStationKeyHealth: (_stationKeyId: string) => this.rejectUnsupported("routing"),
     simulateRoute: () => this.rejectUnsupported("routing"),
   };

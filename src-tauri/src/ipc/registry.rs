@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "c394e7f643f1cec50272aadc7f3ef0f8b9b1b531f69501ccfa6414fee4bdfab5";
+    "53e294e7cf068b2c191bb41200f42b0625588c7aee1bca2a655c0eeb54b498a4";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -110,6 +110,11 @@ macro_rules! ipc_command_registry {
             delete_model_alias => $crate::commands::model_aliases::delete_model_alias,
             list_station_key_health => $crate::commands::routing_health::list_station_key_health,
             list_station_endpoint_health => $crate::commands::routing_health::list_station_endpoint_health,
+            load_routing_workspace_snapshot => $crate::commands::routing_health::load_routing_workspace_snapshot,
+            load_routing_runtime_overlay => $crate::commands::routing_health::load_routing_runtime_overlay,
+            list_recent_route_decisions => $crate::commands::routing_health::list_recent_route_decisions,
+            get_station_key_operational_detail => $crate::commands::routing_health::get_station_key_operational_detail,
+            get_request_decision_trace => $crate::commands::routing_health::get_request_decision_trace,
             list_channel_monitors => $crate::commands::channel_monitoring::list_channel_monitors,
             load_channel_status_workspace => $crate::commands::channel_status::load_channel_status_workspace,
             list_channel_monitor_executions => $crate::commands::channel_status::list_channel_monitor_executions,
@@ -667,6 +672,24 @@ fn command_contract(name: &str) -> CommandContract {
         "list_station_key_health" => migrated_read("EmptyInputDto", "Vec<StationKeyHealthDto>"),
         "list_station_endpoint_health" => {
             migrated_read("EmptyInputDto", "Vec<StationEndpointHealthDto>")
+        }
+        "load_routing_workspace_snapshot" => migrated_read(
+            "RoutingWorkspaceSnapshotInputDto",
+            "RoutingWorkspaceSnapshotDto",
+        ),
+        "load_routing_runtime_overlay" => {
+            migrated_read("EmptyInputDto", "RoutingRuntimeOverlayDto")
+        }
+        "list_recent_route_decisions" => migrated_read(
+            "RecentRouteDecisionsInputDto",
+            "RecentRouteDecisionsPageDto",
+        ),
+        "get_station_key_operational_detail" => migrated_read(
+            "StationKeyOperationalDetailInputDto",
+            "StationKeyOperationalDetailDto",
+        ),
+        "get_request_decision_trace" => {
+            migrated_read("RequestDecisionTraceInputDto", "RequestDecisionTraceDto")
         }
         "get_station_key_health" => {
             migrated_read("RoutingStationKeyIdInputDto", "StationKeyHealthDto")
@@ -1323,6 +1346,26 @@ export function listStationEndpointHealth(input: EmptyInputDto = {}): Promise<St
   return invokeCommand<StationEndpointHealthDto[]>("list_station_endpoint_health", { input });
 }
 
+export function loadRoutingWorkspaceSnapshot(input: RoutingWorkspaceSnapshotInputDto = {}): Promise<RoutingWorkspaceSnapshotDto> {
+  return invokeCommand<RoutingWorkspaceSnapshotDto>("load_routing_workspace_snapshot", { input });
+}
+
+export function loadRoutingRuntimeOverlay(input: EmptyInputDto = {}): Promise<RoutingRuntimeOverlayDto> {
+  return invokeCommand<RoutingRuntimeOverlayDto>("load_routing_runtime_overlay", { input });
+}
+
+export function listRecentRouteDecisions(input: RecentRouteDecisionsInputDto = {}): Promise<RecentRouteDecisionsPageDto> {
+  return invokeCommand<RecentRouteDecisionsPageDto>("list_recent_route_decisions", { input });
+}
+
+export function getStationKeyOperationalDetail(input: StationKeyOperationalDetailInputDto): Promise<StationKeyOperationalDetailDto> {
+  return invokeCommand<StationKeyOperationalDetailDto>("get_station_key_operational_detail", { input });
+}
+
+export function getRequestDecisionTrace(input: RequestDecisionTraceInputDto): Promise<RequestDecisionTraceDto> {
+  return invokeCommand<RequestDecisionTraceDto>("get_request_decision_trace", { input });
+}
+
 export function getStationKeyHealth(input: RoutingStationKeyIdInputDto): Promise<StationKeyHealthDto> {
   return invokeCommand<StationKeyHealthDto>("get_station_key_health", { input });
 }
@@ -1833,6 +1876,31 @@ mod tests {
                 "list_station_endpoint_health",
                 "EmptyInputDto",
                 "Vec<StationEndpointHealthDto>",
+            ),
+            (
+                "load_routing_workspace_snapshot",
+                "RoutingWorkspaceSnapshotInputDto",
+                "RoutingWorkspaceSnapshotDto",
+            ),
+            (
+                "load_routing_runtime_overlay",
+                "EmptyInputDto",
+                "RoutingRuntimeOverlayDto",
+            ),
+            (
+                "list_recent_route_decisions",
+                "RecentRouteDecisionsInputDto",
+                "RecentRouteDecisionsPageDto",
+            ),
+            (
+                "get_station_key_operational_detail",
+                "StationKeyOperationalDetailInputDto",
+                "StationKeyOperationalDetailDto",
+            ),
+            (
+                "get_request_decision_trace",
+                "RequestDecisionTraceInputDto",
+                "RequestDecisionTraceDto",
             ),
             (
                 "get_station_key_health",

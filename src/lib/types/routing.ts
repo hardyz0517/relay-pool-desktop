@@ -141,6 +141,9 @@ export type RouteCandidateExplanation = {
 };
 
 export type RouteSimulationResult = {
+  previewPolicyVersion: string;
+  capacityMode: string;
+  selectedCapacityAcquired: boolean;
   selectedStationKeyId: string | null;
   selectedStationId: string | null;
   mappedModel: string | null;
@@ -150,4 +153,153 @@ export type RouteSimulationResult = {
   schedulerErrorCode: string | null;
   candidates: RouteCandidateExplanation[];
   message: string;
+};
+
+export type RoutingWorkspaceSnapshotInput = {
+  limit?: number | null;
+  cursor?: string | null;
+};
+
+export type RoutingCapacityReadMode = "snapshot_only";
+export type RoutingReadModelStatus = "available" | "unavailable";
+
+export type RoutingCapabilitySummary = {
+  chatCompletions: boolean;
+  responses: boolean;
+  embeddings: boolean;
+  stream: boolean;
+  tools: boolean;
+  vision: boolean;
+  reasoning: boolean;
+};
+
+export type RoutingCandidateCapacitySnapshot = {
+  mode: RoutingCapacityReadMode;
+  maxConcurrency: number;
+  inFlight: number | null;
+  acquired: boolean;
+};
+
+export type RoutingCandidateSourceRefs = {
+  stationKeyId: string;
+  stationId: string;
+  endpointRevision: number;
+};
+
+export type RoutingWorkspaceCandidate = {
+  stationKeyId: string;
+  stationId: string;
+  stationName: string;
+  keyName: string;
+  endpointRevision: number;
+  priority: number;
+  schedulable: boolean;
+  healthState: string;
+  capabilitySummary: RoutingCapabilitySummary;
+  priceBasis: string;
+  balanceStatus: string | null;
+  capacity: RoutingCandidateCapacitySnapshot;
+  sourceRefs: RoutingCandidateSourceRefs;
+};
+
+export type RoutingReadPage = {
+  limit: number;
+  returned: number;
+  nextCursor: string | null;
+};
+
+export type RoutingWorkspaceSnapshot = {
+  readModelVersion: string;
+  generatedAtMs: number;
+  productionPolicy: RoutingPolicy;
+  previewPolicyVersion: string;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilter;
+  capacityMode: RoutingCapacityReadMode;
+  page: RoutingReadPage;
+  candidates: RoutingWorkspaceCandidate[];
+  readModelStatus: RoutingReadModelStatus;
+};
+
+export type RoutingRuntimeCandidateOverlay = {
+  stationKeyId: string;
+  stationId: string;
+  endpointRevision: number;
+  inFlight: number | null;
+  healthState: string;
+  cooldownUntil: string | null;
+};
+
+export type RoutingRuntimeOverlay = {
+  overlayVersion: string;
+  sampledAtMs: number;
+  revision: number;
+  candidates: RoutingRuntimeCandidateOverlay[];
+};
+
+export type RecentRouteDecisionsInput = {
+  limit?: number | null;
+  cursor?: string | null;
+};
+
+export type RouteDecisionSummary = {
+  requestLogId: string;
+  requestId: string | null;
+  createdAt: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  endpoint: string;
+  model: string | null;
+  status: string;
+  lifecycleStatus: string | null;
+  stationKeyId: string | null;
+  stationId: string | null;
+  routePolicy: string | null;
+  routeReason: string | null;
+  fallbackCount: number;
+  costStatus: string | null;
+  estimatedTotalCost: number | null;
+  costCurrency: string | null;
+};
+
+export type RecentRouteDecisionsPage = {
+  pageVersion: string;
+  decisions: RouteDecisionSummary[];
+  nextCursor: string | null;
+  readModelStatus: RoutingReadModelStatus;
+};
+
+export type OperationalDetailFact = {
+  scope: string;
+  name: string;
+  value: string;
+  source: string;
+  freshness: string;
+  reason: string | null;
+};
+
+export type StationKeyOperationalDetail = {
+  detailVersion: string;
+  stationKeyId: string;
+  stationId: string;
+  endpointRevision: number;
+  facts: OperationalDetailFact[];
+  lazyHistoryAvailable: boolean;
+  readModelStatus: RoutingReadModelStatus;
+};
+
+export type RequestDecisionTrace = {
+  traceVersion: string;
+  requestLogId: string;
+  status: "legacy_summary" | "trace_unavailable";
+  reason: string;
+  legacySummary: {
+    routePolicy: string | null;
+    routeReason: string | null;
+    stationKeyId: string | null;
+    stationId: string | null;
+    fallbackCount: number;
+  } | null;
+  planningRounds: unknown[];
 };

@@ -152,7 +152,11 @@ pub(crate) fn compose_routing_command_facade(
     services: &AppServices,
     outbound: AsyncOutboundClient,
 ) -> RoutingCommandFacade {
-    RoutingCommandFacade::new(Arc::clone(&services.routing), outbound)
+    RoutingCommandFacade::new(
+        Arc::clone(&services.routing),
+        Arc::clone(&services.request_logs),
+        outbound,
+    )
 }
 
 pub(crate) fn compose_request_logs_command_facade(

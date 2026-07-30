@@ -2512,6 +2512,161 @@
       ]
     },
     {
+      "command": "list_recent_route_decisions",
+      "input": {
+        "cursor": null,
+        "limit": 50
+      },
+      "output": {
+        "decisions": [
+          {
+            "costCurrency": "USD",
+            "costStatus": "estimated",
+            "createdAt": "1700000000000",
+            "durationMs": 100,
+            "endpoint": "/v1/chat/completions",
+            "estimatedTotalCost": 0.01,
+            "fallbackCount": 0,
+            "finishedAt": "1700000000100",
+            "lifecycleStatus": "completed",
+            "model": "fixture-model",
+            "requestId": "request-1",
+            "requestLogId": "request-log-1",
+            "routePolicy": "cost_stable_first",
+            "routeReason": "selected",
+            "startedAt": "1700000000000",
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "status": "success"
+          }
+        ],
+        "nextCursor": null,
+        "pageVersion": "recent_route_decisions_v1",
+        "readModelStatus": "available"
+      }
+    },
+    {
+      "command": "get_station_key_operational_detail",
+      "input": {
+        "stationKeyId": "key-1"
+      },
+      "output": {
+        "detailVersion": "station_key_operational_detail_v1",
+        "endpointRevision": 1,
+        "facts": [
+          {
+            "freshness": "1700000000000",
+            "name": "station_key_health",
+            "reason": null,
+            "scope": "health",
+            "source": "station_key_health.runtime_overlay",
+            "value": "ready"
+          }
+        ],
+        "lazyHistoryAvailable": true,
+        "readModelStatus": "available",
+        "stationId": "station-1",
+        "stationKeyId": "key-1"
+      }
+    },
+    {
+      "command": "get_request_decision_trace",
+      "input": {
+        "requestLogId": "request-log-1"
+      },
+      "output": {
+        "legacySummary": {
+          "fallbackCount": 0,
+          "routePolicy": "cost_stable_first",
+          "routeReason": "selected",
+          "stationId": "station-1",
+          "stationKeyId": "key-1"
+        },
+        "planningRounds": [],
+        "reason": "legacy_summary_only_before_cutover",
+        "requestLogId": "request-log-1",
+        "status": "legacy_summary",
+        "traceVersion": "request_decision_trace_v1"
+      }
+    },
+    {
+      "command": "load_routing_workspace_snapshot",
+      "input": {
+        "cursor": null,
+        "limit": 64
+      },
+      "output": {
+        "candidates": [
+          {
+            "balanceStatus": null,
+            "capabilitySummary": {
+              "chatCompletions": true,
+              "embeddings": false,
+              "reasoning": false,
+              "responses": true,
+              "stream": true,
+              "tools": false,
+              "vision": false
+            },
+            "capacity": {
+              "acquired": false,
+              "inFlight": 1,
+              "maxConcurrency": 8,
+              "mode": "snapshot_only"
+            },
+            "endpointRevision": 1,
+            "healthState": "ready",
+            "keyName": "Key",
+            "priceBasis": "unpriced",
+            "priority": 10,
+            "schedulable": true,
+            "sourceRefs": {
+              "endpointRevision": 1,
+              "stationId": "station-1",
+              "stationKeyId": "key-1"
+            },
+            "stationId": "station-1",
+            "stationKeyId": "key-1",
+            "stationName": "Station"
+          }
+        ],
+        "capacityMode": "snapshot_only",
+        "generatedAtMs": 1700000000000,
+        "maxRateMultiplier": 2.0,
+        "page": {
+          "limit": 64,
+          "nextCursor": null,
+          "returned": 1
+        },
+        "previewPolicyVersion": "hierarchical_v1_preview",
+        "productionPolicy": "cost_stable_first",
+        "readModelStatus": "available",
+        "readModelVersion": "routing_workspace_read_model_v1",
+        "routingGroupFilter": {
+          "group_type": "gpt"
+        }
+      }
+    },
+    {
+      "command": "load_routing_runtime_overlay",
+      "input": {},
+      "output": {
+        "candidates": [
+          {
+            "cooldownUntil": null,
+            "endpointRevision": 1,
+            "healthState": "ready",
+            "inFlight": 1,
+            "stationId": "station-1",
+            "stationKeyId": "key-1"
+          }
+        ],
+        "overlayVersion": "routing_runtime_overlay_v1",
+        "revision": 1,
+        "sampledAtMs": 1700000000000
+      }
+    },
+    {
       "command": "get_station_key_health",
       "input": {
         "stationKeyId": "key-1"
@@ -2548,14 +2703,17 @@
       },
       "output": {
         "candidates": [],
+        "capacityMode": "snapshot_only",
         "mappedModel": "fixture-model",
         "maxRateMultiplier": 2.0,
         "message": "Route simulation completed.",
         "policy": "cost_stable_first",
+        "previewPolicyVersion": "hierarchical_v1_preview",
         "routingGroupFilter": {
           "group_type": "gpt"
         },
         "schedulerErrorCode": null,
+        "selectedCapacityAcquired": false,
         "selectedStationId": "station-1",
         "selectedStationKeyId": "key-1"
       }

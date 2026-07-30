@@ -3,6 +3,15 @@ export type RouteEndpointKindDto = "models" | "chat_completions" | "responses" |
 export type PricingGroupTypeDto = "gpt" | "claude" | "gemini" | "grok" | "image_generation";
 export type RoutingGroupFilterDto = "all_groups" | "ungrouped_only" | { group_binding_id: string } | { group_id_hash: string } | { group_type: PricingGroupTypeDto };
 export type RoutingStationKeyIdInputDto = { stationKeyId: string };
+export type RoutingWorkspaceSnapshotInputDto = { limit?: number | null; cursor?: string | null };
+export type RecentRouteDecisionsInputDto = { limit?: number | null; cursor?: string | null };
+export type StationKeyOperationalDetailInputDto = { stationKeyId: string };
+export type RequestDecisionTraceInputDto = { requestLogId: string };
+export type RoutingCapacityReadModeDto = "snapshot_only";
+export type RoutingReadModelStatusDto = "available" | "unavailable";
+export type RouteDecisionReadModelStatusDto = "available" | "unavailable";
+export type OperationalDetailReadModelStatusDto = "available" | "unavailable";
+export type RequestDecisionTraceStatusDto = "legacy_summary" | "trace_unavailable";
 
 export type StationKeyCapabilitiesDto = {
   stationKeyId: string;
@@ -92,6 +101,9 @@ export type RouteCandidateExplanationDto = {
 };
 
 export type RouteSimulationResultDto = {
+  previewPolicyVersion: string;
+  capacityMode: string;
+  selectedCapacityAcquired: boolean;
   selectedStationKeyId: string | null;
   selectedStationId: string | null;
   mappedModel: string | null;
@@ -101,4 +113,142 @@ export type RouteSimulationResultDto = {
   schedulerErrorCode: string | null;
   candidates: RouteCandidateExplanationDto[];
   message: string;
+};
+
+export type RecentRouteDecisionSummaryDto = {
+  requestLogId: string;
+  requestId: string | null;
+  createdAt: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  endpoint: string;
+  model: string | null;
+  status: string;
+  lifecycleStatus: string | null;
+  stationKeyId: string | null;
+  stationId: string | null;
+  routePolicy: string | null;
+  routeReason: string | null;
+  fallbackCount: number;
+  costStatus: string | null;
+  estimatedTotalCost: number | null;
+  costCurrency: string | null;
+};
+
+export type RecentRouteDecisionsPageDto = {
+  pageVersion: string;
+  decisions: RecentRouteDecisionSummaryDto[];
+  nextCursor: string | null;
+  readModelStatus: RouteDecisionReadModelStatusDto;
+};
+
+export type OperationalDetailFactDto = {
+  scope: string;
+  name: string;
+  value: string;
+  source: string;
+  freshness: string;
+  reason: string | null;
+};
+
+export type StationKeyOperationalDetailDto = {
+  detailVersion: string;
+  stationKeyId: string;
+  stationId: string;
+  endpointRevision: number;
+  facts: OperationalDetailFactDto[];
+  lazyHistoryAvailable: boolean;
+  readModelStatus: OperationalDetailReadModelStatusDto;
+};
+
+export type LegacyDecisionSummaryDto = {
+  routePolicy: string | null;
+  routeReason: string | null;
+  stationKeyId: string | null;
+  stationId: string | null;
+  fallbackCount: number;
+};
+
+export type RequestDecisionTraceDto = {
+  traceVersion: string;
+  requestLogId: string;
+  status: RequestDecisionTraceStatusDto;
+  reason: string;
+  legacySummary: LegacyDecisionSummaryDto | null;
+  planningRounds: unknown[];
+};
+
+export type RoutingCapabilitySummaryDto = {
+  chatCompletions: boolean;
+  responses: boolean;
+  embeddings: boolean;
+  stream: boolean;
+  tools: boolean;
+  vision: boolean;
+  reasoning: boolean;
+};
+
+export type RoutingCandidateCapacitySnapshotDto = {
+  mode: RoutingCapacityReadModeDto;
+  maxConcurrency: number;
+  inFlight: number | null;
+  acquired: boolean;
+};
+
+export type RoutingCandidateSourceRefsDto = {
+  stationKeyId: string;
+  stationId: string;
+  endpointRevision: number;
+};
+
+export type RoutingWorkspaceCandidateDto = {
+  stationKeyId: string;
+  stationId: string;
+  stationName: string;
+  keyName: string;
+  endpointRevision: number;
+  priority: number;
+  schedulable: boolean;
+  healthState: string;
+  capabilitySummary: RoutingCapabilitySummaryDto;
+  priceBasis: string;
+  balanceStatus: string | null;
+  capacity: RoutingCandidateCapacitySnapshotDto;
+  sourceRefs: RoutingCandidateSourceRefsDto;
+};
+
+export type RoutingReadPageDto = {
+  limit: number;
+  returned: number;
+  nextCursor: string | null;
+};
+
+export type RoutingWorkspaceSnapshotDto = {
+  readModelVersion: string;
+  generatedAtMs: number;
+  productionPolicy: RoutingPolicyDto;
+  previewPolicyVersion: string;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilterDto;
+  capacityMode: RoutingCapacityReadModeDto;
+  page: RoutingReadPageDto;
+  candidates: RoutingWorkspaceCandidateDto[];
+  readModelStatus: RoutingReadModelStatusDto;
+};
+
+export type RoutingRuntimeCandidateOverlayDto = {
+  stationKeyId: string;
+  stationId: string;
+  endpointRevision: number;
+  inFlight: number | null;
+  healthState: string;
+  cooldownUntil: string | null;
+};
+
+export type RoutingRuntimeOverlayDto = {
+  overlayVersion: string;
+  sampledAtMs: number;
+  revision: number;
+  candidates: RoutingRuntimeCandidateOverlayDto[];
 };

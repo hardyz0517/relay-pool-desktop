@@ -496,6 +496,9 @@ pub struct RouteCandidateExplanation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteSimulationResult {
+    pub preview_policy_version: String,
+    pub capacity_mode: String,
+    pub selected_capacity_acquired: bool,
     pub selected_station_key_id: Option<String>,
     pub selected_station_id: Option<String>,
     pub mapped_model: Option<String>,

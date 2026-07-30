@@ -8,7 +8,21 @@ use crate::{
         },
         scheduler::SchedulerRuntimeState,
     },
-    application::{error::ApplicationError, health_transitions::HealthTransitionService},
+    application::{
+        error::ApplicationError,
+        health_transitions::HealthTransitionService,
+        queries::{
+            operational_detail::{
+                operational_detail_from_runtime_candidate, unavailable_operational_detail,
+                StationKeyOperationalDetail,
+            },
+            routing_runtime::{runtime_overlay_from_candidates, RoutingRuntimeOverlay},
+            routing_workspace::{
+                workspace_snapshot_from_runtime, RoutingWorkspaceSnapshot,
+                RoutingWorkspaceSnapshotInput, ROUTING_PREVIEW_POLICY_VERSION,
+            },
+        },
+    },
     models::{
         health::{
             HealthObservation, HealthObservationOutcome, HealthObservationSource,
@@ -62,6 +76,47 @@ impl RoutingService {
             .load_runtime_candidates(&mut read)
             .await
             .map_err(Into::into)
+    }
+
+    pub(crate) async fn load_routing_workspace_snapshot(
+        &self,
+        input: RoutingWorkspaceSnapshotInput,
+    ) -> Result<RoutingWorkspaceSnapshot, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        let settings = self.store.load_execution_settings(&mut read).await?;
+        let candidates = self.store.load_runtime_candidates(&mut read).await?;
+        Ok(workspace_snapshot_from_runtime(
+            &settings,
+            candidates,
+            input,
+            chrono::Utc::now().timestamp_millis(),
+        ))
+    }
+
+    pub(crate) async fn load_routing_runtime_overlay(
+        &self,
+    ) -> Result<RoutingRuntimeOverlay, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        let candidates = self.store.load_runtime_candidates(&mut read).await?;
+        Ok(runtime_overlay_from_candidates(
+            candidates,
+            chrono::Utc::now().timestamp_millis(),
+            1,
+            1024,
+        ))
+    }
+
+    pub(crate) async fn get_station_key_operational_detail(
+        &self,
+        station_key_id: String,
+    ) -> Result<StationKeyOperationalDetail, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        let candidates = self.store.load_runtime_candidates(&mut read).await?;
+        Ok(candidates
+            .into_iter()
+            .find(|candidate| candidate.station_key_id == station_key_id)
+            .map(operational_detail_from_runtime_candidate)
+            .unwrap_or_else(|| unavailable_operational_detail(station_key_id)))
     }
 
     pub(crate) async fn load_proxy_defaults(
@@ -365,6 +420,9 @@ impl RoutingService {
                 .unwrap_or_else(|| "Route simulation found no eligible route".to_string()),
         };
         Ok(RouteSimulationResult {
+            preview_policy_version: ROUTING_PREVIEW_POLICY_VERSION.to_string(),
+            capacity_mode: "snapshot_only".to_string(),
+            selected_capacity_acquired: false,
             selected_station_key_id,
             selected_station_id,
             mapped_model: selection.mapped_model,
