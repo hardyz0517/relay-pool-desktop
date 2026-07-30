@@ -28,7 +28,7 @@ use crate::{
         stations::StationService,
     },
     models::{
-        remote_keys::RemoteKeyMatchStatus,
+        remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
         settings::UpdateSettingsInput,
         station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
         stations::{CreateStationInput, UpdateStationInput},
@@ -451,8 +451,10 @@ async fn remote_key_binding_rejects_cross_station_keys() {
         .create_station_key(station_key_input(&second_station.id, "Second", "sk-b"))
         .await
         .expect("second key");
+    let mut remote_row = remote_key_row(&first_station.id, "remote-a");
+    remote_row.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint("sk-a");
     let remote = service
-        .upsert_remote_station_key(remote_key_row(&first_station.id, "remote-a"))
+        .upsert_remote_station_key(remote_row)
         .await
         .expect("remote key");
 
@@ -472,6 +474,185 @@ async fn remote_key_binding_rejects_cross_station_keys() {
         Some(first_key.id.as_str())
     );
     assert_eq!(bound[0].match_status, RemoteKeyMatchStatus::Matched);
+}
+
+#[tokio::test]
+async fn remote_key_relationship_follows_secret_identity_and_cannot_be_manually_unbound() {
+    let fixture = V2Fixture::create().await;
+    let station = fixture
+        .station_service(vec!["station-identity"])
+        .await
+        .create(station_input("RemoteIdentity"))
+        .await
+        .expect("station");
+    let service = fixture
+        .credential_service(
+            Arc::new(DeterministicCredentialVault::new([10; 32])),
+            vec![
+                "key-exact",
+                "secret-exact",
+                "key-other",
+                "secret-other",
+                "secret-updated",
+            ],
+        )
+        .await;
+    let exact_key = service
+        .create_station_key(station_key_input(&station.id, "Exact", "sk-exact"))
+        .await
+        .expect("exact key");
+    let other_key = service
+        .create_station_key(station_key_input(&station.id, "Other", "sk-other"))
+        .await
+        .expect("other key");
+    let mut remote_row = remote_key_row(&station.id, "remote-identity");
+    remote_row.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint("sk-exact");
+    let remote = service
+        .upsert_remote_station_key(remote_row)
+        .await
+        .expect("remote key");
+
+    let mismatch = service
+        .bind_remote_station_key(remote.id.clone(), other_key.id)
+        .await
+        .expect_err("a different secret must not bind");
+    assert!(matches!(
+        mismatch,
+        crate::application::error::ApplicationError::ConstraintViolation
+    ));
+
+    service
+        .bind_remote_station_key(remote.id.clone(), exact_key.id.clone())
+        .await
+        .expect("exact fingerprint binding");
+    let unbind = service
+        .unbind_remote_station_key(remote.id.clone(), station.id.clone())
+        .await
+        .expect_err("identity relationships cannot be manually unbound");
+    assert!(matches!(
+        unbind,
+        crate::application::error::ApplicationError::ConstraintViolation
+    ));
+    assert_eq!(
+        service
+            .list_remote_station_keys(station.id.clone())
+            .await
+            .expect("bound remote")[0]
+            .matched_station_key_id
+            .as_deref(),
+        Some(exact_key.id.as_str())
+    );
+
+    service
+        .update_station_key(UpdateStationKeyInput {
+            id: exact_key.id,
+            station_id: station.id.clone(),
+            name: exact_key.name,
+            api_key: Some("sk-changed".to_string()),
+            enabled: exact_key.enabled,
+            priority: exact_key.priority,
+            max_concurrency: exact_key.max_concurrency,
+            load_factor: exact_key.load_factor,
+            schedulable: exact_key.schedulable,
+            group_name: exact_key.group_name,
+            tier_label: exact_key.tier_label,
+            group_binding_id: exact_key.group_binding_id,
+            group_id_hash: exact_key.group_id_hash,
+            rate_multiplier: exact_key.rate_multiplier,
+            manual_rate_multiplier: None,
+            rate_source: exact_key.rate_source,
+            balance_scope: exact_key.balance_scope,
+            status: exact_key.status,
+            note: exact_key.note,
+        })
+        .await
+        .expect("replace local secret");
+    let remotes = service
+        .list_remote_station_keys(station.id)
+        .await
+        .expect("remote after secret replacement");
+    assert_eq!(remotes[0].match_status, RemoteKeyMatchStatus::Unbound);
+    assert!(remotes[0].matched_station_key_id.is_none());
+}
+
+#[tokio::test]
+async fn importing_remote_key_preserves_adapter_discovery_order() {
+    let fixture = V2Fixture::create().await;
+    let station = fixture
+        .station_service(vec!["station-discovery-order"])
+        .await
+        .create(station_input("RemoteDiscoveryOrder"))
+        .await
+        .expect("station");
+    let service = fixture
+        .credential_service(
+            Arc::new(DeterministicCredentialVault::new([11; 32])),
+            vec!["key-imported", "secret-imported"],
+        )
+        .await;
+    let remote_key = |id: &str, full_key: &str, collected_at: &str| RemoteStationKey {
+        id: id.to_string(),
+        station_id: station.id.clone(),
+        remote_key_id_hash: Some(format!("{id}-hash")),
+        remote_key_name: Some(id.to_string()),
+        api_key_masked: Some("sk-***mote".to_string()),
+        api_key_fingerprint: crate::services::remote_keys::api_key_fingerprint(full_key),
+        group_id_hash: None,
+        group_name: None,
+        tier_label: None,
+        rate_multiplier: None,
+        rate_source: None,
+        created_at: None,
+        last_used_at: None,
+        raw_source: "collector".to_string(),
+        match_status: RemoteKeyMatchStatus::Unbound,
+        matched_station_key_id: None,
+        match_confidence: 0.0,
+        collected_at: collected_at.to_string(),
+    };
+    let scanned = service
+        .replace_remote_station_keys_and_metadata(
+            station.id.clone(),
+            station.endpoint_revision,
+            vec![
+                remote_key("remote-first", "sk-first", "1"),
+                remote_key("remote-imported", "sk-imported", "2"),
+            ],
+            Vec::new(),
+        )
+        .await
+        .expect("replace remote discovery snapshot");
+    assert_eq!(
+        scanned
+            .iter()
+            .map(|key| key.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["remote-first", "remote-imported"]
+    );
+
+    service
+        .save_remote_station_key_with_local(
+            scanned[1].clone(),
+            station.endpoint_revision,
+            None,
+            None,
+            "sk-imported".to_string(),
+        )
+        .await
+        .expect("import second discovered key");
+    let after_import = service
+        .list_remote_station_keys(station.id)
+        .await
+        .expect("list remote keys after import");
+
+    assert_eq!(
+        after_import
+            .iter()
+            .map(|key| key.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["remote-first", "remote-imported"]
+    );
+    assert_eq!(after_import[1].match_status, RemoteKeyMatchStatus::Matched);
 }
 
 #[tokio::test]
@@ -1111,8 +1292,8 @@ fn binary_031() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=12,
-        writable_schema: BTreeSet::from([12]),
+        readable_schema: 1..=15,
+        writable_schema: BTreeSet::from([15]),
     }
 }
 

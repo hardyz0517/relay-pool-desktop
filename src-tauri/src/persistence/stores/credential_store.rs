@@ -752,6 +752,7 @@ impl CredentialStore {
         patch: StationKeyPatch,
     ) -> Result<StationKey, PersistenceError> {
         validate_station_key_fields(&patch.name, patch.max_concurrency)?;
+        let secret_changed = patch.encrypted_secret.is_some();
         let secret_id = if let Some(secret) = patch.encrypted_secret {
             Some(upsert_secret(write.connection(), &secret).await?)
         } else {
@@ -820,6 +821,22 @@ impl CredentialStore {
         .rows_affected();
         if updated == 0 {
             return Err(PersistenceError::NotFound);
+        }
+        if secret_changed {
+            sqlx::query(
+                r#"
+                UPDATE remote_station_keys
+                SET match_status = 'unbound',
+                    matched_station_key_id = NULL,
+                    match_confidence = 0.0,
+                    updated_at = ?1
+                WHERE matched_station_key_id = ?2
+                "#,
+            )
+            .bind(&patch.now)
+            .bind(&patch.id)
+            .execute(write.connection())
+            .await?;
         }
         station_key_by_id(write.connection(), &patch.id).await
     }
@@ -1022,9 +1039,15 @@ impl CredentialStore {
                 id, station_id, remote_key_id_hash, remote_key_name, api_key_masked,
                 api_key_fingerprint, group_id_hash, group_name, tier_label, rate_multiplier,
                 rate_source, created_at, last_used_at, raw_source, match_status,
-                matched_station_key_id, match_confidence, collected_at, updated_at
+                matched_station_key_id, match_confidence, discovery_order, collected_at, updated_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                'unbound', NULL, 0.0, ?15, ?16)
+                'unbound', NULL, 0.0,
+                COALESCE((
+                    SELECT MAX(discovery_order) + 1
+                    FROM remote_station_keys
+                    WHERE station_id = ?2
+                ), 0),
+                ?15, ?16)
             ON CONFLICT(station_id, remote_key_id_hash) DO UPDATE SET
                 remote_key_name = excluded.remote_key_name,
                 api_key_masked = excluded.api_key_masked,
@@ -1091,8 +1114,14 @@ impl CredentialStore {
             .bind(station_id)
             .execute(write.connection())
             .await?;
-        for key in keys {
-            insert_remote_station_key_snapshot(write.connection(), key, now).await?;
+        for (discovery_order, key) in keys.iter().enumerate() {
+            insert_remote_station_key_snapshot(
+                write.connection(),
+                key,
+                discovery_order as i64,
+                now,
+            )
+            .await?;
         }
         list_remote_station_keys(write.connection(), station_id).await
     }
@@ -1104,6 +1133,34 @@ impl CredentialStore {
         now: &str,
     ) -> Result<RemoteStationKey, PersistenceError> {
         validate_remote_station_key(write.connection(), &key.station_id, key).await?;
+        let discovery_order = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT discovery_order
+            FROM remote_station_keys
+            WHERE station_id = ?1
+              AND (id = ?2 OR (?3 IS NOT NULL AND remote_key_id_hash = ?3))
+            "#,
+        )
+        .bind(&key.station_id)
+        .bind(&key.id)
+        .bind(&key.remote_key_id_hash)
+        .fetch_optional(write.connection())
+        .await?;
+        let discovery_order = match discovery_order {
+            Some(discovery_order) => discovery_order,
+            None => {
+                sqlx::query_scalar::<_, i64>(
+                    r#"
+                SELECT COALESCE(MAX(discovery_order) + 1, 0)
+                FROM remote_station_keys
+                WHERE station_id = ?1
+                "#,
+                )
+                .bind(&key.station_id)
+                .fetch_one(write.connection())
+                .await?
+            }
+        };
         sqlx::query(
             r#"
             DELETE FROM remote_station_keys
@@ -1116,7 +1173,7 @@ impl CredentialStore {
         .bind(&key.remote_key_id_hash)
         .execute(write.connection())
         .await?;
-        insert_remote_station_key_snapshot(write.connection(), key, now).await?;
+        insert_remote_station_key_snapshot(write.connection(), key, discovery_order, now).await?;
         remote_station_key_by_id(write.connection(), &key.id).await
     }
 
@@ -1161,8 +1218,28 @@ impl CredentialStore {
         write: &mut WriteSession,
         remote_key_id: &str,
         station_key_id: &str,
+        local_key_fingerprint: &str,
         now: &str,
     ) -> Result<Vec<RemoteStationKey>, PersistenceError> {
+        let remote_fingerprint = sqlx::query_scalar::<_, Option<String>>(
+            r#"
+            SELECT remote.api_key_fingerprint
+            FROM remote_station_keys remote
+            JOIN station_keys local
+              ON local.id = ?2 AND local.station_id = remote.station_id
+            WHERE remote.id = ?1
+            "#,
+        )
+        .bind(remote_key_id)
+        .bind(station_key_id)
+        .fetch_optional(write.connection())
+        .await?;
+        let Some(remote_fingerprint) = remote_fingerprint else {
+            return Err(PersistenceError::NotFound);
+        };
+        if remote_fingerprint.as_deref() != Some(local_key_fingerprint) {
+            return Err(PersistenceError::ConstraintViolation);
+        }
         let occupied = sqlx::query_scalar::<_, i64>(
             r#"
             SELECT EXISTS(
@@ -1201,36 +1278,6 @@ impl CredentialStore {
         }
         let station_id = station_id_for_key(write.connection(), station_key_id).await?;
         list_remote_station_keys(write.connection(), &station_id).await
-    }
-
-    pub(crate) async fn unbind_remote_station_key(
-        &self,
-        write: &mut WriteSession,
-        remote_key_id: &str,
-        station_id: &str,
-        now: &str,
-    ) -> Result<Vec<RemoteStationKey>, PersistenceError> {
-        ensure_station_exists(write.connection(), station_id).await?;
-        let updated = sqlx::query(
-            r#"
-            UPDATE remote_station_keys
-            SET match_status = 'unbound',
-                matched_station_key_id = NULL,
-                match_confidence = 0.0,
-                updated_at = ?1
-            WHERE id = ?2 AND station_id = ?3
-            "#,
-        )
-        .bind(now)
-        .bind(remote_key_id)
-        .bind(station_id)
-        .execute(write.connection())
-        .await?
-        .rows_affected();
-        if updated == 0 {
-            return Err(PersistenceError::NotFound);
-        }
-        list_remote_station_keys(write.connection(), station_id).await
     }
 
     pub(crate) async fn station_key_capabilities(
@@ -1454,6 +1501,7 @@ async fn validate_remote_station_key(
 async fn insert_remote_station_key_snapshot(
     connection: &mut SqliteConnection,
     key: &RemoteStationKey,
+    discovery_order: i64,
     now: &str,
 ) -> Result<(), PersistenceError> {
     sqlx::query(
@@ -1462,9 +1510,9 @@ async fn insert_remote_station_key_snapshot(
             id, station_id, remote_key_id_hash, remote_key_name, api_key_masked,
             api_key_fingerprint, group_id_hash, group_name, tier_label, rate_multiplier,
             rate_source, created_at, last_used_at, raw_source, match_status,
-            matched_station_key_id, match_confidence, collected_at, updated_at
+            matched_station_key_id, match_confidence, discovery_order, collected_at, updated_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-            ?15, ?16, ?17, ?18, ?19)
+            ?15, ?16, ?17, ?18, ?19, ?20)
         "#,
     )
     .bind(&key.id)
@@ -1484,6 +1532,7 @@ async fn insert_remote_station_key_snapshot(
     .bind(key.match_status.as_str())
     .bind(&key.matched_station_key_id)
     .bind(key.match_confidence)
+    .bind(discovery_order)
     .bind(&key.collected_at)
     .bind(now)
     .execute(connection)
@@ -2175,7 +2224,7 @@ where
     E: Executor<'e, Database = Sqlite>,
 {
     let query =
-        remote_station_key_select("WHERE station_id = ?1 ORDER BY collected_at DESC, id ASC");
+        remote_station_key_select("WHERE station_id = ?1 ORDER BY discovery_order ASC, id ASC");
     let rows = sqlx::query(query.as_str())
         .bind(station_id)
         .fetch_all(executor)

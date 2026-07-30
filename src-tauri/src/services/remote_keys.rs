@@ -788,10 +788,18 @@ pub(crate) async fn finish_remote_key_scan_v2(
                 .iter()
                 .filter_map(|key| key.matched_station_key_id.clone())
                 .collect::<Vec<_>>();
+            let verified_count = keys
+                .iter()
+                .filter(|key| key.api_key_fingerprint.is_some())
+                .count();
             Ok(RemoteKeyScanResult {
                 station_id,
                 capability,
-                message: format!("远端 Key 扫描完成，已同步 {} 条发现。", keys.len()),
+                message: format!(
+                    "远端 Key 扫描完成：校验 {verified_count}/{} 条，识别 {} 个本地匹配。",
+                    keys.len(),
+                    synced_station_key_ids.len()
+                ),
                 keys,
                 synced_station_key_ids,
             })
@@ -1113,19 +1121,16 @@ fn local_station_key_candidates_from_source(
     Ok(keys
         .into_iter()
         .map(|key| {
-            let full_key = if key.api_key_present {
+            let fingerprint = if key.api_key_present {
                 source
                     .resolve_station_key_secret_with_data_key(&V2_UNUSED_DATA_KEY, &key.id)
                     .ok()
+                    .as_deref()
+                    .and_then(api_key_fingerprint)
             } else {
                 None
             };
-            let fingerprint = full_key.as_deref().and_then(api_key_fingerprint);
-            LocalStationKeyCandidate {
-                key,
-                full_key,
-                fingerprint,
-            }
+            LocalStationKeyCandidate { key, fingerprint }
         })
         .collect())
 }
@@ -1185,7 +1190,6 @@ fn remote_key_save_message(adapter_message: &str, matched_existing: bool) -> Str
 #[derive(Debug, Clone)]
 struct LocalStationKeyCandidate {
     key: StationKey,
-    full_key: Option<String>,
     fingerprint: Option<String>,
 }
 
@@ -1193,27 +1197,9 @@ fn local_key_match_confidence(
     remote_key: &RemoteStationKey,
     candidate: &LocalStationKeyCandidate,
 ) -> f64 {
-    let same_group = remote_key
-        .group_id_hash
-        .as_deref()
-        .zip(candidate.key.group_id_hash.as_deref())
-        .map(|(remote, local)| remote == local)
-        .unwrap_or(false)
-        || names_match(
-            remote_key.group_name.as_deref(),
-            candidate.key.group_name.as_deref(),
-        );
-    let same_name = names_match(
-        remote_key.remote_key_name.as_deref(),
-        Some(candidate.key.name.as_str()),
-    );
-    remote_key_confidence(
+    secret_fingerprint_match_confidence(
         remote_key.api_key_fingerprint.as_deref(),
         candidate.fingerprint.as_deref(),
-        remote_key.api_key_masked.as_deref(),
-        candidate.full_key.as_deref(),
-        same_group,
-        same_name,
     )
 }
 
@@ -1346,49 +1332,13 @@ pub fn api_key_fingerprint(value: &str) -> Option<String> {
     Some(format!("{:x}", hasher.finalize()))
 }
 
-pub fn visible_mask_parts(masked: &str) -> Option<(String, String)> {
-    let trimmed = masked.trim();
-    let (prefix, suffix) = trimmed
-        .split_once("****")
-        .or_else(|| trimmed.split_once("..."))?;
-    let prefix = prefix.trim().to_string();
-    let suffix = suffix.trim().to_string();
-    if prefix.len() < 3 || suffix.len() < 3 {
-        return None;
-    }
-    Some((prefix, suffix))
-}
-
-pub fn masked_key_matches_full(masked: &str, full_key: &str) -> bool {
-    visible_mask_parts(masked)
-        .map(|(prefix, suffix)| full_key.starts_with(&prefix) && full_key.ends_with(&suffix))
-        .unwrap_or(false)
-}
-
-pub fn remote_key_confidence(
+fn secret_fingerprint_match_confidence(
     remote_fingerprint: Option<&str>,
     local_fingerprint: Option<&str>,
-    remote_masked: Option<&str>,
-    local_full_key: Option<&str>,
-    same_group: bool,
-    same_name: bool,
 ) -> f64 {
-    if let Some(remote_fingerprint) = remote_fingerprint {
-        return if Some(remote_fingerprint) == local_fingerprint {
-            1.0
-        } else {
-            0.0
-        };
-    }
-    if let (Some(masked), Some(full_key)) = (remote_masked, local_full_key) {
-        if masked_key_matches_full(masked, full_key) {
-            return if same_group || same_name { 0.92 } else { 0.82 };
-        }
-    }
-    match (same_group, same_name) {
-        (true, true) => 0.72,
-        (true, false) | (false, true) => 0.55,
-        (false, false) => 0.0,
+    match (remote_fingerprint, local_fingerprint) {
+        (Some(remote), Some(local)) if remote == local => 1.0,
+        _ => 0.0,
     }
 }
 
@@ -1404,30 +1354,39 @@ mod tests {
     }
 
     #[test]
-    fn masked_key_matching_requires_meaningful_visible_parts() {
-        assert!(masked_key_matches_full(
-            "sk-live****cdef",
-            "sk-live-123-cdef",
-        ));
-        assert!(!masked_key_matches_full("sk****ef", "sk-live-123-cdef"));
-        assert!(!masked_key_matches_full("not-masked", "sk-live-123-cdef"));
+    fn matching_requires_equal_secret_fingerprints() {
+        assert_eq!(secret_fingerprint_match_confidence(None, None), 0.0);
+        let fingerprint = api_key_fingerprint("sk-live-123-cdef");
+        assert_eq!(
+            secret_fingerprint_match_confidence(fingerprint.as_deref(), fingerprint.as_deref()),
+            1.0,
+        );
+        assert_eq!(
+            secret_fingerprint_match_confidence(
+                fingerprint.as_deref(),
+                api_key_fingerprint("sk-other").as_deref(),
+            ),
+            0.0,
+        );
     }
 
     #[test]
-    fn confidence_never_accepts_name_and_group_only_as_a_secret_match() {
-        assert!(remote_key_confidence(None, None, None, None, true, true) < 0.8);
-        let fingerprint = api_key_fingerprint("sk-live-123-cdef");
+    fn matching_rejects_identical_masks_and_names_without_a_remote_fingerprint() {
+        let full_key = "sk-shared-123-tail".to_string();
+        let local = LocalStationKeyCandidate {
+            key: station_key_fixture("local-1"),
+            fingerprint: api_key_fingerprint(&full_key),
+        };
+        let remote = remote_key_fixture("remote-1", "sk-shared****tail");
+
+        let (keys, updates) = enrich_remote_key_discoveries_from_parts(&[], &[local], vec![remote]);
+
         assert_eq!(
-            remote_key_confidence(
-                fingerprint.as_deref(),
-                fingerprint.as_deref(),
-                None,
-                None,
-                false,
-                false,
-            ),
-            1.0,
+            keys[0].match_status,
+            crate::models::remote_keys::RemoteKeyMatchStatus::Unbound
         );
+        assert!(keys[0].matched_station_key_id.is_none());
+        assert!(updates.is_empty());
     }
 
     #[test]
@@ -1436,10 +1395,11 @@ mod tests {
         let local = LocalStationKeyCandidate {
             key: station_key_fixture("local-1"),
             fingerprint: api_key_fingerprint(&full_key),
-            full_key: Some(full_key),
         };
-        let remote_a = remote_key_fixture("remote-a", "sk-shared****tail");
-        let remote_b = remote_key_fixture("remote-b", "sk-shared****tail");
+        let mut remote_a = remote_key_fixture("remote-a", "sk-shared****tail");
+        remote_a.api_key_fingerprint = api_key_fingerprint(&full_key);
+        let mut remote_b = remote_key_fixture("remote-b", "sk-shared****tail");
+        remote_b.api_key_fingerprint = api_key_fingerprint(&full_key);
 
         let (keys, updates) =
             enrich_remote_key_discoveries_from_parts(&[], &[local], vec![remote_b, remote_a]);

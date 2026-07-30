@@ -113,8 +113,8 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=12,
-        writable_schema: BTreeSet::from([12]),
+        readable_schema: 1..=15,
+        writable_schema: BTreeSet::from([15]),
     }
 }
 
@@ -335,6 +335,81 @@ mod tests {
             "schema must reject a second local owner"
         );
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn profile_v2_upgrade_only_updates_outdated_builtin_cli_definitions() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 13).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        sqlx::query(
+            "INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url, created_at, updated_at
+             ) VALUES (
+                'profile-station', 'Profile Station', 'openai_compatible',
+                'https://example.test', 'https://example.test/v1', '1', '1'
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert station");
+
+        for (id, profile_id, profile_version) in [
+            ("standard-v1", "standard_api", 1_i64),
+            ("codex-v1", "codex_cli_compat", 1),
+            ("claude-v1", "claude_code_compat", 1),
+            ("gemini-v1", "gemini_cli_compat", 1),
+            ("grok-v1", "grok_cli_compat", 1),
+            ("codex-future", "codex_cli_compat", 3),
+        ] {
+            sqlx::query(
+                "INSERT INTO channel_monitors (
+                    id, name, target_type, station_id, template_id,
+                    interval_seconds, timeout_seconds, created_at, updated_at,
+                    client_profile_id, client_profile_version
+                 ) VALUES (
+                    ?1, ?1, 'station', 'profile-station',
+                    'builtin-openai-chat-low-token', 60, 30, '1', '1', ?2, ?3
+                 )",
+            )
+            .bind(id)
+            .bind(profile_id)
+            .bind(profile_version)
+            .execute(&pool)
+            .await
+            .expect("insert monitor definition");
+        }
+        pool.close().await;
+
+        upgrade_existing_v2_database(&path)
+            .await
+            .expect("upgrade schema");
+
+        let pool = migration_pool_existing(&path).await.expect("upgraded pool");
+        let versions: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT id, client_profile_version, schedule_revision
+             FROM channel_monitors
+             ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("read migrated profiles");
+        pool.close().await;
+
+        assert_eq!(
+            versions,
+            vec![
+                ("claude-v1".to_string(), 2, 2),
+                ("codex-future".to_string(), 3, 1),
+                ("codex-v1".to_string(), 2, 2),
+                ("gemini-v1".to_string(), 2, 2),
+                ("grok-v1".to_string(), 1, 1),
+                ("standard-v1".to_string(), 1, 1),
+            ]
+        );
     }
 
     async fn initialize_database_through(path: &Path, target_version: i64) {

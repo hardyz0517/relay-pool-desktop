@@ -3,9 +3,13 @@ pub(crate) mod parsers;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use futures_util::future::{BoxFuture, FutureExt};
+use futures_util::{
+    future::{BoxFuture, FutureExt},
+    stream::{self, StreamExt},
+};
 use http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use serde_json::{json, Value};
+use zeroize::Zeroize;
 
 use crate::{
     models::remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
@@ -94,9 +98,12 @@ impl RemoteKeyDriver for NewApiRemoteKeyDriver {
         async move {
             validate_remote_key_request(context, &request.station, &request.endpoints)?;
             let website_url = request_website_url(&request.endpoints)?;
-            let (items, evidence) = fetch_newapi_token_items(context, &website_url).await?;
+            let (items, mut evidence) = fetch_newapi_token_items(context, &website_url).await?;
+            let (keys, reveal_evidence) =
+                fingerprint_remote_key_items(context, &website_url, &items).await?;
+            evidence.extend(reveal_evidence);
             Ok(RemoteKeyOutput {
-                keys: parse_remote_key_items(&request.station.station_id, &items),
+                keys,
                 evidence,
                 diagnostics: RedactedDiagnostics {
                     summary: Some(json!({"tokenCount": items.len()}).to_string()),
@@ -720,6 +727,45 @@ async fn reveal_full_key_for_token_value(
     remote_key.api_key_masked = Some(crate::services::secrets::mask::mask_secret(&full_key));
     remote_key.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint(&full_key);
     Ok((remote_key, full_key, endpoint))
+}
+
+async fn fingerprint_remote_key_items(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    items: &[Value],
+) -> Result<(Vec<RemoteStationKey>, Vec<EndpointEvidence>), DriverFailure> {
+    let results = stream::iter(items.iter().cloned().enumerate().map(
+        |(index, value)| async move {
+            let parsed = remote_key_from_value(&context.station.station_id, &value, index)
+                .ok_or_else(|| {
+                    malformed(
+                        EndpointRole::RemoteKeys,
+                        None,
+                        "NewAPI remote-key response is missing a stable identity",
+                    )
+                })?;
+            if parsed.api_key_fingerprint.is_some() {
+                return Ok::<_, DriverFailure>((parsed, None));
+            }
+
+            let (revealed, mut full_key, evidence) =
+                reveal_full_key_for_token_value(context, website_url, &value, index).await?;
+            full_key.zeroize();
+            Ok((revealed, Some(evidence)))
+        },
+    ))
+    .buffered(4)
+    .collect::<Vec<_>>()
+    .await;
+
+    let mut keys = Vec::with_capacity(results.len());
+    let mut evidence = Vec::new();
+    for result in results {
+        let (key, key_evidence) = result?;
+        keys.push(key);
+        evidence.extend(key_evidence);
+    }
+    Ok((keys, evidence))
 }
 
 fn parse_remote_key_items(station_id: &str, items: &[Value]) -> Vec<RemoteStationKey> {
@@ -2116,7 +2162,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_remote_keys_paginates_newapi_tokens_without_full_secret() {
+    async fn list_remote_keys_paginates_and_fingerprints_every_token() {
         let server = TestHttpServer::sequence(vec![
             Some(json_response(
                 200,
@@ -2164,6 +2210,18 @@ mod tests {
                     }
                 }),
             )),
+            Some(json_response(
+                200,
+                json!({"success": true, "data": {"key": "sk-primary-secret-7890"}}),
+            )),
+            Some(json_response(
+                200,
+                json!({"success": true, "data": {"key": "sk-secondary-secret-4567"}}),
+            )),
+            Some(json_response(
+                200,
+                json!({"success": true, "data": {"key": "sk-third-secret-1234"}}),
+            )),
         ]);
         let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
         let secrets = TestSecretAccessor("newapi-access-token");
@@ -2177,19 +2235,66 @@ mod tests {
 
         assert_eq!(output.keys.len(), 3);
         assert_eq!(output.keys[0].remote_key_name.as_deref(), Some("primary"));
+        assert_eq!(output.keys[0].api_key_masked.as_deref(), Some("sk-...7890"));
         assert_eq!(
-            output.keys[0].api_key_masked.as_deref(),
-            Some("sk-abc**********7890")
+            output.keys[0].api_key_fingerprint,
+            crate::services::remote_keys::api_key_fingerprint("sk-primary-secret-7890")
         );
-        assert_eq!(output.keys[0].api_key_fingerprint, None);
+        assert!(!output.keys[0]
+            .api_key_masked
+            .as_deref()
+            .unwrap_or_default()
+            .contains("sk-primary-secret-7890"));
         assert_eq!(output.keys[0].group_name.as_deref(), Some("default"));
         assert_eq!(output.keys[0].raw_source, "newapi_tokens");
-        assert_eq!(output.evidence.len(), 2);
+        assert_eq!(output.evidence.len(), 5);
         assert!(requests[0].starts_with("GET /api/token/?p=1&page_size=100 "));
         assert!(requests[1].starts_with("GET /api/token/?p=2&page_size=100 "));
+        assert!(requests[2].starts_with("POST /api/token/101/key "));
+        assert!(requests[3].starts_with("POST /api/token/102/key "));
+        assert!(requests[4].starts_with("POST /api/token/103/key "));
         assert!(requests[0]
             .to_ascii_lowercase()
             .contains("new-api-user: 42"));
+    }
+
+    #[tokio::test]
+    async fn list_remote_keys_fails_when_a_token_cannot_be_fingerprinted() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "success": true,
+                    "data": {
+                        "page": 1,
+                        "page_size": 100,
+                        "total": 1,
+                        "items": [{
+                            "id": 101,
+                            "name": "primary",
+                            "key": "sk-abc**********7890"
+                        }]
+                    }
+                }),
+            )),
+            Some(json_response(
+                500,
+                json!({"success": false, "message": "reveal unavailable"}),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = NewApiRemoteKeyDriver
+            .list_remote_keys(&context, remote_key_request(&server.base_url))
+            .await
+            .expect_err("scan must not persist unverifiable identity guesses");
+        let requests = server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::ProviderUnavailable);
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].starts_with("POST /api/token/101/key "));
     }
 
     #[tokio::test]

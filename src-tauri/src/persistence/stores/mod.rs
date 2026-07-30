@@ -2,6 +2,7 @@ pub(crate) mod change_store;
 pub(crate) mod collector_store;
 pub(crate) mod credential_store;
 pub(crate) mod health_observation_store;
+pub(crate) mod legacy_monitor_run_store;
 pub(crate) mod monitoring;
 pub(crate) mod monitoring_store;
 pub(crate) mod pricing_store;

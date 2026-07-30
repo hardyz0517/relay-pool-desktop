@@ -1046,13 +1046,26 @@ impl CredentialService {
         remote_key_id: String,
         station_key_id: String,
     ) -> Result<Vec<RemoteStationKey>, ApplicationError> {
+        let secret = self
+            .resolve_station_key_secret(station_key_id.clone())
+            .await?;
+        let secret = std::str::from_utf8(secret.as_bytes())
+            .map_err(|_| ApplicationError::SecretValidationFailed)?;
+        let fingerprint = crate::services::remote_keys::api_key_fingerprint(secret)
+            .ok_or(ApplicationError::SecretValidationFailed)?;
         let store = self.store;
         let now = self.now_ms_string();
         self.runtime
             .write(|write| {
                 Box::pin(async move {
                     store
-                        .bind_remote_station_key(write, &remote_key_id, &station_key_id, &now)
+                        .bind_remote_station_key(
+                            write,
+                            &remote_key_id,
+                            &station_key_id,
+                            &fingerprint,
+                            &now,
+                        )
                         .await
                 })
             })
@@ -1098,18 +1111,8 @@ impl CredentialService {
         remote_key_id: String,
         station_id: String,
     ) -> Result<Vec<RemoteStationKey>, ApplicationError> {
-        let store = self.store;
-        let now = self.now_ms_string();
-        self.runtime
-            .write(|write| {
-                Box::pin(async move {
-                    store
-                        .unbind_remote_station_key(write, &remote_key_id, &station_id, &now)
-                        .await
-                })
-            })
-            .await
-            .map_err(Into::into)
+        let _ = (remote_key_id, station_id);
+        Err(ApplicationError::ConstraintViolation)
     }
 
     pub(crate) async fn get_station_key_capabilities(
@@ -1496,7 +1499,9 @@ mod tests {
                 remote_key_id_hash: Some("remote-hash-1".to_string()),
                 remote_key_name: Some("Remote key".to_string()),
                 api_key_masked: Some("sk-***".to_string()),
-                api_key_fingerprint: None,
+                api_key_fingerprint: crate::services::remote_keys::api_key_fingerprint(
+                    "sk-existing",
+                ),
                 group_id_hash: None,
                 group_name: None,
                 tier_label: None,

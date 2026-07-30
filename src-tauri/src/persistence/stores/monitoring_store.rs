@@ -2,9 +2,9 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::{
     models::channel_monitors::{
-        ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, ChannelMonitorRunCursor,
-        ChannelMonitorRunPage, CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
-        UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
+        ChannelMonitor, ChannelMonitorRequestTemplate, CreateChannelMonitorInput,
+        CreateChannelMonitorTemplateInput, UpdateChannelMonitorInput,
+        UpdateChannelMonitorTemplateInput,
     },
     persistence::{
         error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
@@ -39,22 +39,6 @@ pub(crate) struct NewMonitorRow {
 pub(crate) struct MonitorPatch {
     pub(crate) now: String,
     pub(crate) input: UpdateChannelMonitorInput,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ChannelWindowAggregate {
-    pub(crate) monitor_id: String,
-    pub(crate) total_count: i64,
-    pub(crate) success_count: i64,
-    pub(crate) failure_count: i64,
-    pub(crate) warning_count: i64,
-    pub(crate) avg_latency_ms: Option<i64>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ChannelStatusRunRow {
-    pub(crate) monitor_id: String,
-    pub(crate) run: ChannelMonitorRun,
 }
 
 impl MonitoringStore {
@@ -194,14 +178,6 @@ impl MonitoringStore {
         limit: u32,
     ) -> Result<Vec<ChannelMonitor>, PersistenceError> {
         list_monitors(read.connection(), limit).await
-    }
-
-    pub(crate) async fn get_monitor(
-        &self,
-        read: &mut ReadSession,
-        id: &str,
-    ) -> Result<ChannelMonitor, PersistenceError> {
-        monitor_by_id(read.connection(), id).await
     }
 
     pub(crate) async fn insert_monitor(
@@ -376,260 +352,6 @@ impl MonitoringStore {
         }
         Ok(())
     }
-
-    pub(crate) async fn due_monitors(
-        &self,
-        read: &mut ReadSession,
-        now_ms: i64,
-        limit: u32,
-    ) -> Result<Vec<ChannelMonitor>, PersistenceError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT id, name, target_type, station_id, station_key_id, template_id,
-                   enabled, interval_seconds, jitter_seconds, timeout_seconds,
-                   max_concurrency, consecutive_failure_threshold, fallback_models_json,
-                   protocol_kind, client_profile_id, client_profile_version, primary_model,
-                   fallback_models_v2_json, retry_max_attempts_per_model,
-                   retry_initial_backoff_ms, retry_max_backoff_ms, risk_daily_probe_budget,
-                   health_writeback_mode, health_failure_threshold, health_recovery_threshold,
-                   attempt_timeout_ms, execution_timeout_ms, schedule_revision,
-                   note, created_at, updated_at
-            FROM channel_monitors
-            WHERE enabled = 1
-              AND (next_run_at IS NULL OR CAST(next_run_at AS INTEGER) <= ?1)
-            ORDER BY COALESCE(CAST(next_run_at AS INTEGER), 0) ASC, id ASC
-            LIMIT ?2
-            "#,
-        )
-        .bind(now_ms)
-        .bind(i64::from(limit))
-        .fetch_all(read.connection())
-        .await?;
-        rows.into_iter().map(row_to_monitor).collect()
-    }
-
-    pub(crate) async fn list_run_page(
-        &self,
-        read: &mut ReadSession,
-        monitor_id: &str,
-        cursor: Option<&ChannelMonitorRunCursor>,
-        limit: u32,
-    ) -> Result<ChannelMonitorRunPage, PersistenceError> {
-        let fetch_limit = i64::from(limit) + 1;
-        let rows = if let Some(cursor) = cursor {
-            sqlx::query(
-                r#"
-                SELECT id, monitor_id, template_id, station_id, station_key_id,
-                       status, started_at, finished_at, duration_ms, http_status,
-                       latency_ms, response_model, fallback_model, error_message, created_at
-                FROM channel_monitor_runs INDEXED BY idx_channel_monitor_runs_monitor_started
-                WHERE monitor_id = ?1
-                  AND (
-                    CAST(started_at AS INTEGER) < ?2
-                    OR (CAST(started_at AS INTEGER) = ?2 AND id < ?3)
-                  )
-                ORDER BY CAST(started_at AS INTEGER) DESC, id DESC
-                LIMIT ?4
-                "#,
-            )
-            .bind(monitor_id)
-            .bind(cursor.started_at_ms)
-            .bind(&cursor.id)
-            .bind(fetch_limit)
-            .fetch_all(read.connection())
-            .await?
-        } else {
-            sqlx::query(
-                r#"
-                SELECT id, monitor_id, template_id, station_id, station_key_id,
-                       status, started_at, finished_at, duration_ms, http_status,
-                       latency_ms, response_model, fallback_model, error_message, created_at
-                FROM channel_monitor_runs INDEXED BY idx_channel_monitor_runs_monitor_started
-                WHERE monitor_id = ?1
-                ORDER BY CAST(started_at AS INTEGER) DESC, id DESC
-                LIMIT ?2
-                "#,
-            )
-            .bind(monitor_id)
-            .bind(fetch_limit)
-            .fetch_all(read.connection())
-            .await?
-        };
-        let mut items = rows.into_iter().map(row_to_run).collect::<Vec<_>>();
-        let has_more = items.len() > limit as usize;
-        items.truncate(limit as usize);
-        let next_cursor =
-            has_more
-                .then(|| items.last())
-                .flatten()
-                .map(|run| ChannelMonitorRunCursor {
-                    started_at_ms: parse_millis(&run.started_at).unwrap_or_default(),
-                    id: run.id.clone(),
-                });
-        Ok(ChannelMonitorRunPage { items, next_cursor })
-    }
-
-    pub(crate) async fn recent_status_runs(
-        &self,
-        read: &mut ReadSession,
-        monitor_limit: u32,
-        run_limit: u32,
-    ) -> Result<Vec<ChannelStatusRunRow>, PersistenceError> {
-        let rows = sqlx::query(
-            r#"
-            WITH bounded_monitors AS (
-                SELECT id
-                FROM channel_monitors INDEXED BY idx_channel_monitors_list
-                ORDER BY enabled DESC, created_at ASC, id ASC
-                LIMIT ?1
-            )
-            SELECT r.id, r.monitor_id, r.template_id, r.station_id, r.station_key_id,
-                   r.status, r.started_at, r.finished_at, r.duration_ms, r.http_status,
-                   r.latency_ms, r.response_model, r.fallback_model, r.error_message,
-                   r.created_at
-            FROM bounded_monitors m
-            JOIN channel_monitor_runs r ON r.id IN (
-                SELECT recent.id
-                FROM channel_monitor_runs recent INDEXED BY idx_channel_monitor_runs_monitor_started
-                WHERE recent.monitor_id = m.id
-                ORDER BY CAST(recent.started_at AS INTEGER) DESC, recent.id DESC
-                LIMIT ?2
-            )
-            ORDER BY r.monitor_id ASC, CAST(r.started_at AS INTEGER) DESC, r.id DESC
-            "#,
-        )
-        .bind(i64::from(monitor_limit))
-        .bind(i64::from(run_limit))
-        .fetch_all(read.connection())
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| ChannelStatusRunRow {
-                monitor_id: row.get("monitor_id"),
-                run: row_to_run(row),
-            })
-            .collect())
-    }
-
-    pub(crate) async fn summary_runs(
-        &self,
-        read: &mut ReadSession,
-        run_since_ms: Option<i64>,
-        monitor_limit: u32,
-        run_limit: u32,
-    ) -> Result<Vec<ChannelStatusRunRow>, PersistenceError> {
-        let rows = if let Some(run_since_ms) = run_since_ms {
-            sqlx::query(
-                r#"
-                WITH bounded_monitors AS (
-                    SELECT id
-                    FROM channel_monitors INDEXED BY idx_channel_monitors_list
-                    ORDER BY enabled DESC, created_at ASC, id ASC
-                    LIMIT ?1
-                )
-                SELECT r.id, r.monitor_id, r.template_id, r.station_id, r.station_key_id,
-                       r.status, r.started_at, r.finished_at, r.duration_ms, r.http_status,
-                       r.latency_ms, r.response_model, r.fallback_model, r.error_message,
-                       r.created_at
-                FROM bounded_monitors m
-                JOIN channel_monitor_runs r ON r.id IN (
-                    SELECT recent.id
-                    FROM channel_monitor_runs recent INDEXED BY idx_channel_monitor_runs_monitor_started
-                    WHERE recent.monitor_id = m.id
-                      AND CAST(recent.started_at AS INTEGER) >= ?3
-                    ORDER BY CAST(recent.started_at AS INTEGER) DESC, recent.id DESC
-                    LIMIT ?2
-                )
-                ORDER BY r.monitor_id ASC, CAST(r.started_at AS INTEGER) DESC, r.id DESC
-                "#,
-            )
-            .bind(i64::from(monitor_limit))
-            .bind(i64::from(run_limit))
-            .bind(run_since_ms)
-            .fetch_all(read.connection())
-            .await?
-        } else {
-            sqlx::query(
-                r#"
-                WITH bounded_monitors AS (
-                    SELECT id
-                    FROM channel_monitors INDEXED BY idx_channel_monitors_list
-                    ORDER BY enabled DESC, created_at ASC, id ASC
-                    LIMIT ?1
-                )
-                SELECT r.id, r.monitor_id, r.template_id, r.station_id, r.station_key_id,
-                       r.status, r.started_at, r.finished_at, r.duration_ms, r.http_status,
-                       r.latency_ms, r.response_model, r.fallback_model, r.error_message,
-                       r.created_at
-                FROM bounded_monitors m
-                JOIN channel_monitor_runs r ON r.id IN (
-                    SELECT recent.id
-                    FROM channel_monitor_runs recent INDEXED BY idx_channel_monitor_runs_monitor_started
-                    WHERE recent.monitor_id = m.id
-                    ORDER BY CAST(recent.started_at AS INTEGER) DESC, recent.id DESC
-                    LIMIT ?2
-                )
-                ORDER BY r.monitor_id ASC, CAST(r.started_at AS INTEGER) DESC, r.id DESC
-                "#,
-            )
-            .bind(i64::from(monitor_limit))
-            .bind(i64::from(run_limit))
-            .fetch_all(read.connection())
-            .await?
-        };
-        Ok(rows
-            .into_iter()
-            .map(|row| ChannelStatusRunRow {
-                monitor_id: row.get("monitor_id"),
-                run: row_to_run(row),
-            })
-            .collect())
-    }
-
-    pub(crate) async fn window_aggregates(
-        &self,
-        read: &mut ReadSession,
-        since_ms: i64,
-        monitor_limit: u32,
-    ) -> Result<Vec<ChannelWindowAggregate>, PersistenceError> {
-        let rows = sqlx::query(
-            r#"
-            WITH bounded_monitors AS (
-                SELECT id
-                FROM channel_monitors INDEXED BY idx_channel_monitors_list
-                ORDER BY enabled DESC, created_at ASC, id ASC
-                LIMIT ?1
-            )
-            SELECT m.id AS monitor_id,
-                   COUNT(r.id) AS total_count,
-                   COALESCE(SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
-                   COALESCE(SUM(CASE WHEN r.status = 'failed' THEN 1 ELSE 0 END), 0) AS failure_count,
-                   COALESCE(SUM(CASE WHEN r.status IN ('warning', 'skipped') THEN 1 ELSE 0 END), 0) AS warning_count,
-                   CAST(AVG(COALESCE(r.latency_ms, r.duration_ms)) AS INTEGER) AS avg_latency_ms
-            FROM bounded_monitors m
-            LEFT JOIN channel_monitor_runs r
-              ON r.monitor_id = m.id
-             AND CAST(r.started_at AS INTEGER) >= ?2
-            GROUP BY m.id
-            ORDER BY m.id ASC
-            "#,
-        )
-        .bind(i64::from(monitor_limit))
-        .bind(since_ms)
-        .fetch_all(read.connection())
-        .await?;
-        Ok(rows
-            .into_iter()
-            .map(|row| ChannelWindowAggregate {
-                monitor_id: row.get("monitor_id"),
-                total_count: row.get("total_count"),
-                success_count: row.get("success_count"),
-                failure_count: row.get("failure_count"),
-                warning_count: row.get("warning_count"),
-                avg_latency_ms: row.get("avg_latency_ms"),
-            })
-            .collect())
-    }
 }
 
 async fn list_monitors(
@@ -699,24 +421,6 @@ async fn monitor_by_id(
     row.map(row_to_monitor)
         .transpose()?
         .ok_or(PersistenceError::NotFound)
-}
-
-async fn run_by_id(
-    connection: &mut SqliteConnection,
-    id: &str,
-) -> Result<ChannelMonitorRun, PersistenceError> {
-    let row = sqlx::query(
-        r#"
-        SELECT id, monitor_id, template_id, station_id, station_key_id,
-               status, started_at, finished_at, duration_ms, http_status,
-               latency_ms, response_model, fallback_model, error_message, created_at
-        FROM channel_monitor_runs WHERE id = ?1
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(connection)
-    .await?;
-    row.map(row_to_run).ok_or(PersistenceError::NotFound)
 }
 
 async fn validate_monitor_input(
@@ -905,26 +609,6 @@ fn row_to_monitor(row: sqlx::sqlite::SqliteRow) -> Result<ChannelMonitor, Persis
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     })
-}
-
-fn row_to_run(row: sqlx::sqlite::SqliteRow) -> ChannelMonitorRun {
-    ChannelMonitorRun {
-        id: row.get("id"),
-        monitor_id: row.get("monitor_id"),
-        template_id: row.get("template_id"),
-        station_id: row.get("station_id"),
-        station_key_id: row.get("station_key_id"),
-        status: row.get("status"),
-        started_at: row.get("started_at"),
-        finished_at: row.get("finished_at"),
-        duration_ms: row.get("duration_ms"),
-        http_status: row.get("http_status"),
-        latency_ms: row.get("latency_ms"),
-        response_model: row.get("response_model"),
-        fallback_model: row.get("fallback_model"),
-        error_message: row.get("error_message"),
-        created_at: row.get("created_at"),
-    }
 }
 
 fn serialize_fallback_models(values: &[String]) -> Result<String, PersistenceError> {

@@ -480,8 +480,8 @@ mod v2_tests {
         BinaryCompatibility {
             app_version: Version::new(0, 3, 3),
             database_generation: 2,
-            readable_schema: 1..=12,
-            writable_schema: BTreeSet::from([12]),
+            readable_schema: 1..=15,
+            writable_schema: BTreeSet::from([15]),
         }
     }
 
