@@ -46,8 +46,10 @@ assert.ok(!/services::portable_migration|sqlx|keyring|age::|std::process|Command
 assert.ok(commandSource.includes("State<'_, PortableMigrationCommandFacade>"), "portable migration IPC commands must inject only the command facade state");
 
 const facadeSource = read("src-tauri/src/application/data_migration/mod.rs");
-assert.ok(!/SECURITY_POLICY_APPROVED:\s*bool\s*=\s*true/.test(facadeSource), "portable migration capability must remain disabled until the security policy is approved");
-assert.ok(/SECURITY_POLICY_APPROVED:\s*bool\s*=\s*false/.test(facadeSource), "portable migration feature gate must fail closed in this task");
+const securityPolicy = read("docs/SECURITY_EXPORT_IMPORT.md");
+assert.ok(/SECURITY_POLICY_APPROVED:\s*bool\s*=\s*true/.test(facadeSource), "portable migration capability must be enabled only after explicit security approval");
+assert.ok(securityPolicy.includes("Security approval: approved by the repository owner on 2026-07-30 for the codex/cross-device-encrypted-migration branch."), "portable migration approval record must be documented before enabling the feature gate");
+assert.ok(securityPolicy.includes("Release promotion still requires the two-machine smoke checklist"), "portable migration release qualification must remain separate from approval");
 
 const readerFiles = [
   "src-tauri/src/services/portable_migration/schema_reader.rs",

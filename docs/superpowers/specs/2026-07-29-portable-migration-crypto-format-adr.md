@@ -1,6 +1,6 @@
 # Portable Migration Crypto Format ADR
 
-Status: Accepted for implementation behind a disabled feature gate
+Status: Accepted for implementation; branch capability approved
 
 Date: 2026-07-29
 
@@ -8,7 +8,7 @@ Related specification: [`../../proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.m
 
 ## Context
 
-Relay Pool Desktop needs a Windows-first cross-device migration package that can move encrypted local data to a different Windows user and machine without exporting the source device key. The current security policy still blocks portable secret migration until the export/import policy is formally updated, so this ADR only qualifies the implementation contract and dependency choices. Product capability remains disabled.
+Relay Pool Desktop needs a Windows-first cross-device migration package that can move encrypted local data to a different Windows user and machine without exporting the source device key. The implementation contract and dependency choices are qualified by this ADR. On 2026-07-30, the repository owner approved enabling the capability on the `codex/cross-device-encrypted-migration` branch; release promotion still requires the smoke checklist and signed bundle evidence for the exact release revision.
 
 ## Decision
 
@@ -54,11 +54,11 @@ The production adapter will centralize the accepted maximum in `PortableMigratio
 
 ## Security Gate
 
-Until `docs/SECURITY_EXPORT_IMPORT.md` is formally updated and approved, portable secret migration capability must report disabled with `security_policy_not_approved`, and all start commands must fail closed with a stable `feature_unavailable` public error.
+Until `docs/SECURITY_EXPORT_IMPORT.md` is formally updated and approved, portable secret migration capability must report disabled with `security_policy_not_approved`, and all start commands must fail closed with a stable `feature_unavailable` public error. After approval, the capability may be enabled only when platform and local data-store preconditions are also satisfied.
 
 Default export semantics remain unchanged: default exports do not include raw secrets or encrypted ciphertext.
 
-The current release policy is intentionally not approved. `SECURITY_POLICY_APPROVED` must remain `false` until the approval record and two-machine smoke evidence are attached to the release qualification. Documentation updates alone do not authorize enabling the capability.
+The `codex/cross-device-encrypted-migration` branch has an explicit owner approval record dated 2026-07-30, so `SECURITY_POLICY_APPROVED` may be set to `true` on that branch. Approval enables the branch capability; it does not by itself satisfy release qualification, signed bundling, or two-machine smoke evidence.
 
 ## Release Qualification
 
@@ -71,4 +71,4 @@ Before the first release that enables portable migration, the same source revisi
 
 ## Rollback
 
-If `age 0.12.1` is later found unsuitable, roll back to this branch point by removing the direct `age`, `hmac`, and `static_assertions` additions, deleting the age envelope adapter and tests introduced after Task 0, and keeping the feature gate disabled. No released `.rpd-move` reader obligation starts until the feature is enabled by policy and shipped.
+If `age 0.12.1` is later found unsuitable, roll back to this branch point by removing the direct `age`, `hmac`, and `static_assertions` additions, deleting the age envelope adapter and tests introduced after Task 0, and disabling the feature gate. The released `.rpd-move` reader obligation starts only after a release ships with the approved capability enabled.

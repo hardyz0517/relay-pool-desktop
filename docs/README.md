@@ -13,6 +13,6 @@ This directory contains the current product, architecture, security, and release
 
 ## Portable migration release status
 
-Portable migration is not currently approved for release. The code path must remain behind the disabled security gate until the security policy is formally approved and the smoke checklist is completed for the exact release revision.
+Portable migration is approved for the `codex/cross-device-encrypted-migration` branch capability. Release promotion still requires the smoke checklist, signed bundle gate, and artifact/canary audit for the exact release revision.
 
 Default exports and local backups are not portable migration packages. Do not put real `.rpd-move` packages, SQLite databases, secrets, logs, or screenshots containing secrets into the repository.

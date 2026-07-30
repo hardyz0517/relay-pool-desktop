@@ -50,9 +50,9 @@ pub async fn start_portable_export(
     input: Value,
 ) -> Result<PortableMigrationOperationStartedDto, error::CommandError> {
     correlation::in_command_scope("start_portable_export", async {
-        let _input = StartPortableExportInputDto::parse(input)?;
+        let input = StartPortableExportInputDto::parse(input)?;
         facade
-            .start_disabled()
+            .start_portable_export(input)
             .map_err(public_portable_migration_error)
     })
     .await
@@ -64,9 +64,9 @@ pub async fn get_portable_export_result(
     input: Value,
 ) -> Result<PortableExportResultDto, error::CommandError> {
     correlation::in_command_scope("get_portable_export_result", async {
-        let _input = PortableMigrationResultInputDto::parse(input)?;
+        let input = PortableMigrationResultInputDto::parse(input)?;
         facade
-            .result_disabled()
+            .get_portable_export_result(input.resource_id)
             .map_err(public_portable_migration_error)
     })
     .await
@@ -92,9 +92,9 @@ pub async fn start_portable_import_inspection(
     input: Value,
 ) -> Result<PortableMigrationOperationStartedDto, error::CommandError> {
     correlation::in_command_scope("start_portable_import_inspection", async {
-        let _input = InspectPortableImportInputDto::parse(input)?;
+        let input = InspectPortableImportInputDto::parse(input)?;
         facade
-            .start_disabled()
+            .start_portable_import_inspection(input)
             .map_err(public_portable_migration_error)
     })
     .await
@@ -106,9 +106,9 @@ pub async fn get_portable_import_inspection(
     input: Value,
 ) -> Result<PortableImportInspectionDto, error::CommandError> {
     correlation::in_command_scope("get_portable_import_inspection", async {
-        let _input = PortableMigrationResultInputDto::parse(input)?;
+        let input = PortableMigrationResultInputDto::parse(input)?;
         facade
-            .result_disabled()
+            .get_portable_import_inspection(input.resource_id)
             .map_err(public_portable_migration_error)
     })
     .await
@@ -120,9 +120,9 @@ pub async fn start_portable_import_prepare(
     input: Value,
 ) -> Result<PortableMigrationOperationStartedDto, error::CommandError> {
     correlation::in_command_scope("start_portable_import_prepare", async {
-        let _input = PreparePortableImportInputDto::parse(input)?;
+        let input = PreparePortableImportInputDto::parse(input)?;
         facade
-            .start_disabled()
+            .start_portable_import_prepare(input)
             .map_err(public_portable_migration_error)
     })
     .await
@@ -134,9 +134,9 @@ pub async fn get_portable_import_prepare_result(
     input: Value,
 ) -> Result<PortableImportPrepareResultDto, error::CommandError> {
     correlation::in_command_scope("get_portable_import_prepare_result", async {
-        let _input = PortableMigrationResultInputDto::parse(input)?;
+        let input = PortableMigrationResultInputDto::parse(input)?;
         facade
-            .result_disabled()
+            .get_portable_import_prepare_result(input.resource_id)
             .map_err(public_portable_migration_error)
     })
     .await
@@ -237,5 +237,24 @@ pub(crate) fn public_portable_migration_error(
                 error::CommandError::internal(None)
             }
         },
+        PortableMigrationCommandError::ReadyServicesUnavailable => error::CommandError::try_new(
+            error::CommandErrorCode::DataStoreUnavailable,
+            "Portable migration is unavailable until the data store is ready.",
+            true,
+            None,
+            None,
+        )
+        .expect("portable migration ready-services error is bounded"),
+        PortableMigrationCommandError::Export(_) | PortableMigrationCommandError::Import(_) => {
+            error::CommandError::from_work(error::WorkFailure::Internal)
+        }
+        PortableMigrationCommandError::IdempotencyConflict => error::CommandError::try_new(
+            error::CommandErrorCode::Conflict,
+            "A portable migration idempotency key is already bound to different input.",
+            false,
+            None,
+            None,
+        )
+        .expect("portable migration idempotency conflict error is bounded"),
     }
 }

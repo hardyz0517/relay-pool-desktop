@@ -7,9 +7,9 @@ This policy separates four data movement modes that are easy to confuse but have
 3. Same-device relocation: moving the application data directory while keeping the same protected local key material.
 4. Portable migration: an explicit, password-protected package intended for a different Windows user or computer.
 
-Portable migration is implemented only behind a disabled security gate in the current source tree. It must not be exposed in a release until a formal security policy review approves the capability and the release qualification checklist is completed.
+Portable migration is implemented behind an explicit security gate in the current source tree. It may be enabled only after a formal security approval record exists. Release promotion still requires the release qualification checklist for the exact source revision.
 
-Encrypted secret export is not part of P8. The disabled portable migration implementation does not change this default policy.
+Encrypted secret export is not part of P8. The approved portable migration implementation is a separate explicit flow and does not change the default export policy.
 
 ## Default Export
 
@@ -44,12 +44,13 @@ Same-device relocation is allowed only when the Windows user profile and protect
 
 Portable migration, when approved, must be an explicit user action that creates a `.rpd-move` package protected by a migration password. The package must not export the source device key. The importer rebuilds data under the target device key after authenticated decryption and validation.
 
-Current release state:
+Current branch state:
 
-- `SECURITY_POLICY_APPROVED` remains `false`.
-- Capability discovery must report the portable migration feature as disabled with `security_policy_not_approved`.
-- Export/import start commands must fail closed with the stable public error `feature_unavailable`.
-- No release may claim portable migration support until the security approval record and smoke checklist evidence exist for the same source revision.
+- Security approval: approved by the repository owner on 2026-07-30 for the codex/cross-device-encrypted-migration branch.
+- `SECURITY_POLICY_APPROVED` is intentionally set to `true` on the approved branch.
+- Capability discovery may report portable migration as enabled when the platform and local data-store preconditions are also satisfied.
+- Release promotion still requires the two-machine smoke checklist, signed bundle gate, and artifact/canary audit evidence for the same source revision.
+- No release may claim portable migration support until the smoke checklist evidence and release bundle evidence exist for the same source revision.
 
 User-facing constraints:
 

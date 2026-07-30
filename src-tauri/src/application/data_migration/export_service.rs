@@ -180,6 +180,22 @@ impl DataMigrationExportService {
             request,
             cancellation,
             AgeEnvelopeOptions::CURRENT,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn export_portable_package_with_export_id(
+        &self,
+        request: PortablePackageExportRequest,
+        export_id: String,
+        cancellation: Option<&CancellationToken>,
+    ) -> DataMigrationResult<PortablePackageExportArtifact> {
+        self.export_portable_package_with_options(
+            request,
+            cancellation,
+            AgeEnvelopeOptions::CURRENT,
+            Some(export_id),
         )
         .await
     }
@@ -189,6 +205,7 @@ impl DataMigrationExportService {
         request: PortablePackageExportRequest,
         cancellation: Option<&CancellationToken>,
         age_options: AgeEnvelopeOptions,
+        export_id: Option<String>,
     ) -> DataMigrationResult<PortablePackageExportArtifact> {
         if request.passphrase.as_str() != request.passphrase_confirmation.as_str() {
             return Err(DataMigrationError::PassphraseConfirmationMismatch);
@@ -229,7 +246,7 @@ impl DataMigrationExportService {
         fs::create_dir_all(&request.working_directory)
             .map_err(|_| DataMigrationError::CleanupFailed)?;
 
-        let export_id = uuid::Uuid::now_v7().to_string();
+        let export_id = export_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
         let portable_sqlite_path =
             unique_portable_sqlite_path(&request.working_directory, &export_id);
         let sqlite_artifact_result = self
@@ -715,6 +732,7 @@ mod tests {
                 package_request(source, package.clone(), working, false, "move-passphrase"),
                 None,
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .expect("package export");
@@ -782,6 +800,7 @@ mod tests {
                 },
                 None,
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .unwrap_err();
@@ -815,6 +834,7 @@ mod tests {
                 ),
                 None,
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .unwrap_err();

@@ -176,6 +176,15 @@ impl PathTokenRegistry {
         })
     }
 
+    pub(crate) fn consume_import_value(
+        &self,
+        value: &str,
+        now: Instant,
+    ) -> Result<ImportPathLease, PathTokenError> {
+        let token = self.import_token_by_value(value, now)?;
+        self.consume_import(&token, now)
+    }
+
     pub(crate) fn consume_export(
         &self,
         token: &PathTokenId,
@@ -208,6 +217,47 @@ impl PathTokenRegistry {
             target_state: entry.target_state.clone(),
             mode: entry.mode,
         })
+    }
+
+    pub(crate) fn consume_export_value(
+        &self,
+        value: &str,
+        now: Instant,
+    ) -> Result<ExportPathLease, PathTokenError> {
+        let token = self.export_token_by_value(value, now)?;
+        self.consume_export(&token, now)
+    }
+
+    pub(crate) fn import_token_by_value(
+        &self,
+        value: &str,
+        now: Instant,
+    ) -> Result<PathTokenId, PathTokenError> {
+        let mut inner = self.inner.lock().expect("path token registry mutex");
+        gc_bucket(&mut inner.import, now, self.config.ttl);
+        inner
+            .import
+            .entries
+            .keys()
+            .find(|token| token.as_str() == value)
+            .cloned()
+            .ok_or(PathTokenError::NotFound)
+    }
+
+    pub(crate) fn export_token_by_value(
+        &self,
+        value: &str,
+        now: Instant,
+    ) -> Result<PathTokenId, PathTokenError> {
+        let mut inner = self.inner.lock().expect("path token registry mutex");
+        gc_bucket(&mut inner.export, now, self.config.ttl);
+        inner
+            .export
+            .entries
+            .keys()
+            .find(|token| token.as_str() == value)
+            .cloned()
+            .ok_or(PathTokenError::NotFound)
     }
 
     pub(crate) fn gc(&self, now: Instant) {

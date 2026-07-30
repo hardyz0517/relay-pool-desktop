@@ -52,10 +52,11 @@ assert.ok(
   !verifier.includes('"tauri:build", "--", "--target"'),
   "shared verifier must not forward a literal -- to the Tauri build script",
 );
-assert.match(portableMigrationFacade, /SECURITY_POLICY_APPROVED:\s*bool\s*=\s*false/, "portable migration must remain disabled without policy approval");
-assert.match(securityPolicy, /feature_unavailable/, "security policy must document fail-closed public error while disabled");
+assert.match(portableMigrationFacade, /SECURITY_POLICY_APPROVED:\s*bool\s*=\s*true/, "portable migration must be enabled only with a documented security approval");
+assert.match(securityPolicy, /Security approval: approved by the repository owner on 2026-07-30/, "security policy must document the approval record before enabling portable migration");
+assert.match(securityPolicy, /Release promotion still requires the two-machine smoke checklist/, "security policy must keep approval separate from release qualification");
 assert.match(securityPolicy, /A lost migration password is unrecoverable/, "security policy must document unrecoverable migration passwords");
-assert.match(portableMigrationAdr, /Documentation updates alone do not authorize enabling the capability/, "ADR must keep approval separate from documentation updates");
+assert.match(portableMigrationAdr, /Approval enables the branch capability; it does not by itself satisfy release qualification/, "ADR must keep approval separate from release qualification");
 assert.match(portableMigrationChecklist, /Windows 10\/11 virtual machines/, "smoke checklist must require two-machine Windows qualification");
 assert.match(portableMigrationChecklist, /run-portable-migration-performance\.ps1/, "smoke checklist must record the portable migration performance harness");
 assert.ok(actionIndex > prebundleIndex, "signed packaging must run only after shared prebundle verification");

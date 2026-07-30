@@ -62,6 +62,34 @@ impl ImportInspectionRegistry {
         summary: ImportInspectionSummary,
         now: Instant,
     ) -> ImportInspectionHandle {
+        let id = {
+            let inner = self.inner.lock().expect("inspection registry mutex");
+            ImportInspectionId::new(inner.process_nonce)
+        };
+        self.register_with_id(id, lease, summary, now)
+    }
+
+    pub(crate) fn register_with_value(
+        &self,
+        value: String,
+        lease: ImportPreparationLease,
+        summary: ImportInspectionSummary,
+        now: Instant,
+    ) -> ImportInspectionHandle {
+        let id = {
+            let inner = self.inner.lock().expect("inspection registry mutex");
+            ImportInspectionId::with_value(inner.process_nonce, value)
+        };
+        self.register_with_id(id, lease, summary, now)
+    }
+
+    fn register_with_id(
+        &self,
+        id: ImportInspectionId,
+        lease: ImportPreparationLease,
+        summary: ImportInspectionSummary,
+        now: Instant,
+    ) -> ImportInspectionHandle {
         let mut inner = self.inner.lock().expect("inspection registry mutex");
         gc_locked(&mut inner, now, self.config.ttl);
         while inner.entries.len() >= self.config.max_entries {
@@ -71,7 +99,6 @@ impl ImportInspectionRegistry {
                 break;
             }
         }
-        let id = ImportInspectionId::new(inner.process_nonce);
         inner.entries.insert(
             id.clone(),
             ImportInspectionEntry {
@@ -126,6 +153,21 @@ impl ImportInspectionRegistry {
             return Err(ImportInspectionError::Expired);
         }
         Ok(entry.summary.clone())
+    }
+
+    pub(crate) fn id_for_value(
+        &self,
+        value: &str,
+        now: Instant,
+    ) -> Result<ImportInspectionId, ImportInspectionError> {
+        let mut inner = self.inner.lock().expect("inspection registry mutex");
+        gc_locked(&mut inner, now, self.config.ttl);
+        inner
+            .entries
+            .keys()
+            .find(|id| id.as_str() == value)
+            .cloned()
+            .ok_or(ImportInspectionError::NotFound)
     }
 
     pub(crate) fn gc(&self, now: Instant) {
@@ -225,6 +267,17 @@ impl ImportInspectionId {
             process_nonce,
             value: uuid::Uuid::now_v7().to_string(),
         }
+    }
+
+    fn with_value(process_nonce: [u8; 16], value: String) -> Self {
+        Self {
+            process_nonce,
+            value,
+        }
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.value
     }
 
     #[cfg(test)]

@@ -761,6 +761,16 @@ pub fn run() {
                             data_directory_port,
                             blocking_executor.clone(),
                         );
+                        app.state::<application::data_migration::PortableMigrationCommandFacade>()
+                            .configure_ready_services(
+                                app.state::<application::data_maintenance::DataMaintenanceCoordinator>()
+                                    .inner()
+                                    .clone(),
+                                database_path.clone(),
+                                device_keys.clone(),
+                                Arc::clone(&runtime),
+                                Some(Arc::clone(&proxy_runtime)),
+                            );
                         let settings_stations_command_facade =
                             app_composition::compose_settings_stations_command_facade(
                                 &app_services,

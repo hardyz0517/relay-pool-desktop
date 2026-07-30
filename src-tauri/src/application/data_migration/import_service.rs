@@ -73,8 +73,21 @@ impl DataMigrationImportService {
         &self,
         request: PortableImportInspectionRequest,
     ) -> Result<ImportInspectionHandle, DataMigrationImportError> {
-        self.inspect_portable_package_with_options(request, AgeEnvelopeOptions::CURRENT)
+        self.inspect_portable_package_with_options(request, AgeEnvelopeOptions::CURRENT, None)
             .await
+    }
+
+    pub(crate) async fn inspect_portable_package_with_inspection_id(
+        &self,
+        request: PortableImportInspectionRequest,
+        inspection_id: String,
+    ) -> Result<ImportInspectionHandle, DataMigrationImportError> {
+        self.inspect_portable_package_with_options(
+            request,
+            AgeEnvelopeOptions::CURRENT,
+            Some(inspection_id),
+        )
+        .await
     }
 
     pub(crate) async fn prepare_portable_import(
@@ -109,6 +122,28 @@ impl DataMigrationImportService {
             runner,
             proxy,
             &NoPortableActivationFaults,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn prepare_portable_import_for_activation_with_import_id(
+        &self,
+        request: PortableImportActivationPrepareRequest,
+        import_id: String,
+        runtime: &PersistenceRuntime,
+        operations: &OperationRegistry,
+        runner: Option<&StationCollectorRunnerState>,
+        proxy: Option<&ProxyRuntimeState>,
+    ) -> Result<PortableImportActivationPrepareResult, DataMigrationImportError> {
+        self.prepare_portable_import_for_activation_with_faults(
+            request,
+            runtime,
+            operations,
+            runner,
+            proxy,
+            &NoPortableActivationFaults,
+            Some(import_id),
         )
         .await
     }
@@ -121,6 +156,7 @@ impl DataMigrationImportService {
         runner: Option<&StationCollectorRunnerState>,
         proxy: Option<&ProxyRuntimeState>,
         faults: &dyn PortableActivationFaults,
+        import_id: Option<String>,
     ) -> Result<PortableImportActivationPrepareResult, DataMigrationImportError> {
         validate_import_mode(request.import.mode, &request.import.confirmation_text)?;
         let mut lease = self
@@ -170,7 +206,7 @@ impl DataMigrationImportService {
             return Err(DataMigrationImportError::ActiveIdentityChanged);
         }
 
-        let operation_id = uuid::Uuid::now_v7().to_string();
+        let operation_id = import_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
         let rollback_path =
             rollback_path_for_active(&request.import.active_database_path, &operation_id)?;
         let journal = PortableActivationJournal::prepared(
@@ -221,9 +257,10 @@ impl DataMigrationImportService {
         &self,
         request: PortableImportInspectionRequest,
         options: AgeEnvelopeOptions,
+        inspection_id: Option<String>,
     ) -> Result<ImportInspectionHandle, DataMigrationImportError> {
         self.ensure_not_backing_off(&request.rate_limit_key, request.now)?;
-        let result = self.inspect_once(&request, options).await;
+        let result = self.inspect_once(&request, options, inspection_id).await;
         match result {
             Ok(handle) => {
                 self.record_success(&request.rate_limit_key);
@@ -240,6 +277,7 @@ impl DataMigrationImportService {
         &self,
         request: &PortableImportInspectionRequest,
         options: AgeEnvelopeOptions,
+        inspection_id: Option<String>,
     ) -> Result<ImportInspectionHandle, DataMigrationImportError> {
         let _lease = self
             .maintenance
@@ -282,7 +320,12 @@ impl DataMigrationImportService {
             sqlite_sha256: staged.sqlite_sha256,
             transport_key: staged.transport_key,
         };
-        Ok(self.inspections.register(preparation, summary, request.now))
+        Ok(match inspection_id {
+            Some(id) => self
+                .inspections
+                .register_with_value(id, preparation, summary, request.now),
+            None => self.inspections.register(preparation, summary, request.now),
+        })
     }
 
     fn ensure_not_backing_off(
@@ -432,6 +475,7 @@ mod tests {
                     "move-passphrase",
                 ),
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .expect("inspection");
@@ -480,6 +524,7 @@ mod tests {
                     "wrong",
                 ),
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .unwrap_err();
@@ -504,6 +549,7 @@ mod tests {
                     "right-passphrase",
                 ),
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .unwrap_err();
@@ -528,6 +574,7 @@ mod tests {
                             "p",
                         ),
                         AgeEnvelopeOptions::TEST_FAST,
+                        None,
                     )
                     .await
                     .unwrap_err();
@@ -545,6 +592,7 @@ mod tests {
                             "p",
                         ),
                         AgeEnvelopeOptions::TEST_FAST,
+                        None,
                     )
                     .await
                     .unwrap_err();
@@ -587,6 +635,7 @@ mod tests {
                     "passphrase",
                 ),
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .unwrap_err();
@@ -623,6 +672,7 @@ mod tests {
                     "passphrase",
                 ),
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .unwrap_err();
@@ -655,6 +705,7 @@ mod tests {
                         "p",
                     ),
                     AgeEnvelopeOptions::TEST_FAST,
+                    None,
                 )
                 .await
                 .expect_err("bad package rejected");
@@ -673,6 +724,7 @@ mod tests {
                     "passphrase",
                 ),
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .unwrap_err();
@@ -1035,6 +1087,7 @@ mod tests {
                 None,
                 None,
                 &InjectPortableActivationFault::at(PortableActivationStep::BeforeJournalPublish),
+                None,
             )
             .await
             .unwrap_err();
@@ -1138,6 +1191,7 @@ mod tests {
                     "move-passphrase",
                 ),
                 AgeEnvelopeOptions::TEST_FAST,
+                None,
             )
             .await
             .expect("inspection")

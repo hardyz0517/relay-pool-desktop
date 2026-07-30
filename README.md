@@ -184,7 +184,7 @@ Relay Pool Desktop 会在本机处理真实上游凭据。请勿提交 API Key�
 
 详细边界见 [Security Export and Import Policy](docs/SECURITY_EXPORT_IMPORT.md)。
 
-跨设备数据搬家（portable migration）目前只作为已实现但默认禁用的安全门禁能力存在：在正式安全政策评审和两机发布资格完成前，应用不得向用户开放 `.rpd-move` 导出 / 导入入口。默认导出、本机备份和同机数据目录迁移仍不是跨设备恢复方案。
+跨设备数据搬家（portable migration）已在 `codex/cross-device-encrypted-migration` 升级分支获得安全批准并开启 capability；正式合并/发布前仍需要完成两机 smoke、签名包门禁和 artifact/canary 审计。默认导出、本机备份和同机数据目录迁移仍不是跨设备恢复方案。
 
 ## 路线图
 
