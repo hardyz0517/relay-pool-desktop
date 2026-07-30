@@ -22,5 +22,13 @@ runMain(() => {
   run("check-tauri-security.mjs", ["--root", "scripts/architecture/fixtures/gates/red-security-main"], false);
   run("check-build-entries.mjs", ["--root", "scripts/architecture/fixtures/gates/red-build"], false);
   run("check-artifact-policy.mjs", ["--fixtures"], true);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/pass"], true);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-monitoring-routing-dto"], false);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-routing-kernel-io"], false);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-frontend-truth"], false);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-credential-serialize"], false);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-test-only-scheduler"], false);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-hierarchical-weights"], false);
+  run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-unregistered-boundary-symbol"], false);
   console.log("Architecture bypass fixtures passed");
 });

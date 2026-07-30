@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "production_forbidden_symbols": [
+    {
+      "symbol": "monitoring imports RuntimeRoutingCandidate",
+      "paths": ["src-tauri/src/services/monitoring/runner.rs"],
+      "reason": "fixture temporary adapter",
+      "delete_by_task": 24
+    }
+  ],
+  "boundary_symbols": [
+    {
+      "id": "fixture.allowed",
+      "owner": "fixture",
+      "consumer": "fixture gate",
+      "deletion_status": "permanent"
+    }
+  ]
+}

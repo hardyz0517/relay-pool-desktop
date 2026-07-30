@@ -1,0 +1,3 @@
+export function buildPricingGroupCandidates() {
+  return [];
+}

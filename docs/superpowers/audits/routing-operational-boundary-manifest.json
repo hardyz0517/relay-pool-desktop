@@ -58,6 +58,19 @@
       "forbidden_dependencies": ["authoritative_pricing_matching", "authoritative_capability_reducer", "credential_values", "raw_url_query"]
     }
   ],
+  "architecture_gate": {
+    "script": "scripts/routing-operational-architecture.test.mjs",
+    "fixture_root": "scripts/fixtures/routing-operational-architecture",
+    "scope": "routing operational ownership, forbidden dependencies, temporary legacy registration, frontend truth, credential-bearing DTOs, and boundary symbols"
+  },
+  "boundary_symbols": [
+    {
+      "id": "routing_operational_manifest",
+      "owner": "Task 1 architecture gate",
+      "consumer": "scripts/routing-operational-architecture.test.mjs",
+      "deletion_status": "permanent_gate_metadata"
+    }
+  ],
   "production_forbidden_symbols": [
     {
       "symbol": "acquired_simulated",
@@ -72,20 +85,30 @@
       "reason": "routing/UI facts must not carry full endpoint URL"
     },
     {
-      "symbol": "RuntimeRoutingCandidate.api_key/api_key_secret",
-      "paths": ["src-tauri/src/models/routing.rs"],
+      "symbol": "credential-bearing route DTOs api_key/api_key_secret",
+      "paths": [
+        "src-tauri/src/application/routing_engine/routing_types.rs",
+        "src-tauri/src/models/routing.rs"
+      ],
       "delete_by_task": 17,
-      "reason": "credential must resolve only after selected route and revision fence"
+      "reason": "credential must resolve only after selected route, capacity lease, and revision fence"
     },
     {
       "symbol": "scheduler report_result/bind_session #[cfg(test)] production-equivalent facade",
-      "paths": ["src-tauri/src/application/routing_engine/scheduler/mod.rs"],
+      "paths": [
+        "src-tauri/src/application/routing_engine/scheduler/affinity.rs",
+        "src-tauri/src/application/routing_engine/scheduler/metrics.rs",
+        "src-tauri/src/application/routing_engine/scheduler/mod.rs"
+      ],
       "delete_by_task": 22,
       "reason": "production feedback, metrics, and affinity must use fixed outcome consumers"
     },
     {
       "symbol": "frontend pricing/group matcher",
-      "paths": ["src/lib/projections/pricingFacts.ts"],
+      "paths": [
+        "src/lib/projections/pricingFacts.ts",
+        "src/lib/projections/groupFacts.ts"
+      ],
       "delete_by_task": 24,
       "reason": "pricing/group semantics must come from backend projectors"
     },
