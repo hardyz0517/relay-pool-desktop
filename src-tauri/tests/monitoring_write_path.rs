@@ -402,9 +402,9 @@ fn probe_plan(trigger_kind: TriggerKind) -> ProbePlan {
         schedule_policy: SchedulePolicy {
             interval_seconds: 300,
             jitter_seconds: 0,
-            execution_timeout_ms: 30_000,
-            attempt_timeout_ms: 10_000,
-            slow_latency_threshold_ms: 5_000,
+            execution_timeout_ms: 60_000,
+            attempt_timeout_ms: 45_000,
+            slow_latency_threshold_ms: 6_000,
         },
         retry_policy: RetryPolicy::default(),
         risk_policy: RiskPolicy::default(),

@@ -197,7 +197,8 @@ where
                 self.clock.advance_ms(transport_result.latency_ms);
                 let finished_at_ms = self.clock.now_ms();
                 let slow_success = transport_result.outcome == ProbeOutcome::Available
-                    && transport_result.latency_ms > plan.schedule_policy.slow_latency_threshold_ms;
+                    && transport_result.latency_ms
+                        >= plan.schedule_policy.slow_latency_threshold_ms;
                 let attempt = RecordedAttempt {
                     execution_id: execution_id.to_string(),
                     station_key_id: target.station_key_id.clone(),

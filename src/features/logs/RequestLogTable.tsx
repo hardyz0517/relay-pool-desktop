@@ -13,6 +13,8 @@ import {
   formatRequestTokenCount,
   latencyBreakdown,
   reasoningEffortLabel,
+  requestLatencyTone,
+  type RequestLatencyTone,
 } from "./requestLogViewModels";
 
 type RequestLogTableProps = {
@@ -151,17 +153,38 @@ function TokenUsageCell({ log }: { log: RequestLog }) {
 }
 
 function LatencyCell({ log }: { log: RequestLog }) {
+  const tone = requestLatencyTone(log);
   return (
     <div className="flex min-h-[36px] items-center gap-2.5 text-xs leading-4">
-      <span className="h-9 w-1 shrink-0 rounded-full bg-success-foreground" aria-hidden="true" />
+      <span className={`h-9 w-1 shrink-0 rounded-full ${latencyToneBarClass(tone)}`} aria-hidden="true" />
       <div className="grid min-w-[74px] gap-0.5">
         {latencyBreakdown(log).map((row) => (
-          <div key={row.label} className="flex items-center justify-between gap-2 whitespace-nowrap">
+          <div
+            key={row.label}
+            className="flex items-center justify-between gap-2 whitespace-nowrap"
+            title={row.title}
+          >
             <span className="text-muted-foreground">{row.label}</span>
-            <span className="font-medium text-success-foreground">{row.value}</span>
+            <span className={`font-medium ${latencyToneTextClass(row.tone)}`}>{row.value}</span>
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function latencyToneBarClass(tone: RequestLatencyTone) {
+  if (tone === "critical") return "bg-danger-foreground";
+  if (tone === "warning") return "bg-warning-foreground";
+  if (tone === "notice") return "bg-info-foreground";
+  if (tone === "muted") return "bg-muted-foreground/40";
+  return "bg-success-foreground";
+}
+
+function latencyToneTextClass(tone: RequestLatencyTone) {
+  if (tone === "critical") return "text-danger-foreground";
+  if (tone === "warning") return "text-warning-foreground";
+  if (tone === "notice") return "text-info-foreground";
+  if (tone === "muted") return "text-muted-foreground";
+  return "text-success-foreground";
 }

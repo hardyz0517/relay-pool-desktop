@@ -1,11 +1,11 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Eye, Gauge, Play, Square, Timer } from "lucide-react";
 import { Sub2ApiPlatformIcon } from "@/components/group/Sub2ApiPlatformIcon";
 import { EmptyState, IconButton, StatusBadge } from "@/components/ui";
 import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { cn } from "@/lib/utils";
 import {
-  availabilityTone,
+  availabilityHue,
   type ChannelStatusRowView,
   type StatusTone,
 } from "../channelStatusViewModel";
@@ -48,7 +48,7 @@ export function ChannelStatusCardGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 justify-start gap-3 sm:grid-cols-[repeat(auto-fill,minmax(320px,360px))]">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
       {rows.map((row) => (
         <ChannelStatusCard
           key={row.rowKey}
@@ -79,7 +79,7 @@ function ChannelStatusCard({
   onOpenExecution,
 }: ChannelStatusCardProps) {
   const executionId = row.runningExecutionId ?? row.latestExecutionId;
-  const availabilityClassName = availabilityToneClass(availabilityTone(row.availabilityPercent));
+  const availabilityHueValue = availabilityHue(row.availabilityPercent);
   const platformClassNames = groupVisualClassNames[row.visualPlatform];
 
   return (
@@ -134,7 +134,13 @@ function ChannelStatusCard({
             <div>可用性</div>
           </div>
           <div
-            className={cn("shrink-0 text-3xl font-semibold leading-8 tracking-normal", availabilityClassName)}
+            className={cn(
+              "shrink-0 text-3xl font-semibold leading-8 tracking-normal",
+              availabilityHueValue === null ? "text-muted-foreground" : "text-channel-availability",
+            )}
+            style={availabilityHueValue === null
+              ? undefined
+              : ({ "--channel-availability-hue": availabilityHueValue } as CSSProperties)}
           >
             {row.availabilityLabel}
           </div>
@@ -200,11 +206,4 @@ function MetricTile({ icon, label, value }: { icon: ReactNode; label: string; va
       </div>
     </div>
   );
-}
-
-function availabilityToneClass(tone: ReturnType<typeof availabilityTone>) {
-  if (tone === "success") return "text-channel-health-emphasis";
-  if (tone === "warning") return "text-warning-foreground";
-  if (tone === "danger") return "text-danger-foreground";
-  return "text-muted-foreground";
 }

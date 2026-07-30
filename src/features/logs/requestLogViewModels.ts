@@ -2,9 +2,20 @@ import { parseTimestampLikeDate } from "@/lib/time";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 
+export type RequestLatencyTone = "normal" | "notice" | "warning" | "critical" | "muted";
+export type RequestLatencyMetricKind = "first_token" | "total";
+
 export const requestLogFieldLabels = {
   reasoningEffort: "推理强度",
 } as const;
+
+const latencyToneSeverity: Record<RequestLatencyTone, number> = {
+  muted: 0,
+  normal: 1,
+  notice: 2,
+  warning: 3,
+  critical: 4,
+};
 
 const reasoningLabels: Record<string, string> = {
   none: "None",
@@ -90,9 +101,55 @@ export function tokenBreakdown(log: RequestLog) {
 
 export function latencyBreakdown(log: RequestLog) {
   return [
-    { label: "首字", value: formatDuration(log.firstTokenMs) },
-    { label: "总耗时", value: formatDuration(log.durationMs) },
+    {
+      label: "首字",
+      value: formatDuration(log.firstTokenMs),
+      tone: latencyTone(log.firstTokenMs, "first_token"),
+      title: latencyToneTitle(log.firstTokenMs, "first_token"),
+    },
+    {
+      label: "总耗时",
+      value: formatDuration(log.durationMs),
+      tone: latencyTone(log.durationMs, "total"),
+      title: latencyToneTitle(log.durationMs, "total"),
+    },
   ];
+}
+
+export function requestLatencyTone(log: RequestLog): RequestLatencyTone {
+  return maxLatencyTone([
+    latencyTone(log.firstTokenMs, "first_token"),
+    latencyTone(log.durationMs, "total"),
+  ]);
+}
+
+export function latencyTone(value: number | null, kind: RequestLatencyMetricKind): RequestLatencyTone {
+  if (value == null) return "muted";
+  if (kind === "first_token") {
+    if (value >= 60_000) return "critical";
+    if (value >= 30_000) return "warning";
+    if (value >= 10_000) return "notice";
+    return "normal";
+  }
+  if (value >= 300_000) return "critical";
+  if (value >= 180_000) return "warning";
+  if (value >= 60_000) return "notice";
+  return "normal";
+}
+
+function latencyToneTitle(value: number | null, kind: RequestLatencyMetricKind) {
+  if (value == null) return "未记录";
+  if (kind === "first_token") {
+    return "首字延迟分档：<10s 正常，10-30s 偏慢，30-60s 慢，≥60s 严重";
+  }
+  return "总耗时分档：<60s 正常，60-180s 偏慢，180-300s 慢，≥300s 严重";
+}
+
+function maxLatencyTone(tones: RequestLatencyTone[]) {
+  return tones.reduce<RequestLatencyTone>(
+    (current, tone) => latencyToneSeverity[tone] > latencyToneSeverity[current] ? tone : current,
+    "muted",
+  );
 }
 
 export function requestTraceRows(log: RequestLog) {

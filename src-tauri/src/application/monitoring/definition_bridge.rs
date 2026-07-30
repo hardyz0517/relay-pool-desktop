@@ -4,7 +4,7 @@ use crate::{
         monitoring::{
             ClientProfileId, ClientProfileRef, DefinitionRevision, HealthPolicy,
             HealthWritebackMode, ProtocolKind, RetryPolicy, RiskPolicy, SchedulePolicy,
-            TargetScope,
+            TargetScope, DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS,
         },
         proxy::UpstreamApiFormat,
         routing::RuntimeRoutingCandidate,
@@ -60,7 +60,7 @@ pub(crate) fn planning_snapshot_from_config(
             row.jitter_seconds,
             row.execution_timeout_ms,
             row.attempt_timeout_ms,
-            5_000,
+            DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS as i64,
         )
         .map_err(|_| ApplicationError::ConstraintViolation)?,
         retry_policy: RetryPolicy::new(

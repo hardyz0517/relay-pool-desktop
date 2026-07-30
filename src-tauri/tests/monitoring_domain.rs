@@ -19,7 +19,11 @@ mod monitoring {
         MonitorTargetResult, ProbeAttempt,
     };
     pub use outcome::{FailureKind, ProbeOutcome, ProtocolKind, SemanticConfidence};
-    pub use policy::{HealthPolicy, HealthWritebackMode, RetryPolicy, RiskPolicy, SchedulePolicy};
+    pub use policy::{
+        HealthPolicy, HealthWritebackMode, RetryPolicy, RiskPolicy, SchedulePolicy,
+        DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS, DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS,
+        DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS,
+    };
 }
 
 use monitoring::{
@@ -27,7 +31,8 @@ use monitoring::{
     DefinitionRevision, ExecutionSummary, FailureKind, HealthPolicy, HealthWritebackMode,
     MonitorDefinition, MonitorDefinitionDraft, MonitorExecutionStatus, MonitorTargetResult,
     ProbeAttempt, ProbeOutcome, ProtocolKind, RetryPolicy, RiskPolicy, SchedulePolicy,
-    SemanticConfidence, TargetScopeKind,
+    SemanticConfidence, TargetScopeKind, DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS,
+    DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS, DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS,
 };
 
 fn profile(id: ClientProfileId) -> ClientProfileRef {
@@ -35,7 +40,14 @@ fn profile(id: ClientProfileId) -> ClientProfileRef {
 }
 
 fn schedule() -> SchedulePolicy {
-    SchedulePolicy::new(300, 30, 30_000, 10_000, 5_000).expect("schedule")
+    SchedulePolicy::new(
+        300,
+        30,
+        DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS as i64,
+        DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS as i64,
+        DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS as i64,
+    )
+    .expect("schedule")
 }
 
 fn draft() -> MonitorDefinitionDraft {
@@ -133,6 +145,14 @@ fn schedule_and_retry_policies_reject_negative_or_out_of_bounds_values() {
     assert!(RetryPolicy::new(0, 200, 2_000).is_err());
     assert!(RetryPolicy::new(4, 200, 2_000).is_err());
     assert!(RetryPolicy::new(1, 2_000, 200).is_err());
+}
+
+#[test]
+fn schedule_default_matches_sub2api_monitor_latency_policy() {
+    let schedule = SchedulePolicy::default();
+    assert_eq!(schedule.attempt_timeout_ms, 45_000);
+    assert_eq!(schedule.execution_timeout_ms, 60_000);
+    assert_eq!(schedule.slow_latency_threshold_ms, 6_000);
 }
 
 #[test]

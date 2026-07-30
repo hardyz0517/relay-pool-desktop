@@ -61,8 +61,8 @@ type StationKeyMonitorTemplatePreference = {
 export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4.1-mini";
 export const DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID = "builtin-openai-responses-low-token";
 export const STATION_KEY_MONITOR_NOTE = "由密钥池监控开关创建";
-const DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS = 30_000;
-const DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS = 45_000;
+const DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS = 45_000;
+const DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS = 60_000;
 
 export const targetTypeOptions: Array<{ value: ChannelMonitorTargetType; label: string }> = [
   { value: "station_key", label: "单个密钥" },

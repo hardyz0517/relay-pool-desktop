@@ -95,8 +95,23 @@ assert.ok(
 
 assert.ok(
   tableSource.includes("bg-success-foreground") &&
+    tableSource.includes("bg-info-foreground") &&
+    tableSource.includes("bg-warning-foreground") &&
+    tableSource.includes("bg-danger-foreground") &&
     /h-9[^\"]*w-1|w-1[^\"]*h-9/.test(tableSource),
-  "request log latency cell should include a stable teal vertical timing bar",
+  "request log latency cell should include a stable Sub2API-style severity timing bar",
+);
+
+assert.ok(
+  viewModelSource.includes('RequestLatencyMetricKind = "first_token" | "total"') &&
+    viewModelSource.includes("value >= 60_000") &&
+    viewModelSource.includes("value >= 30_000") &&
+    viewModelSource.includes("value >= 10_000") &&
+    viewModelSource.includes("value >= 300_000") &&
+    viewModelSource.includes("value >= 180_000") &&
+    tableSource.includes("requestLatencyTone(log)") &&
+    tableSource.includes("latencyToneTextClass(row.tone)"),
+  "request log latency health should follow Sub2API first-token and total-duration thresholds",
 );
 
 assert.equal(
