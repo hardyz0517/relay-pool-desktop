@@ -1,11 +1,11 @@
 import { Eye, Play, Square } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Sub2ApiPlatformIcon } from "@/components/group/Sub2ApiPlatformIcon";
 import { EmptyState, IconButton, StatusBadge } from "@/components/ui";
 import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { cn } from "@/lib/utils";
 import {
-  availabilityTone,
+  availabilityHue,
   type ChannelStatusRowView,
   type StatusTone,
 } from "../channelStatusViewModel";
@@ -114,7 +114,13 @@ export function ChannelStatusTable({
                     </div>
                   </BodyCell>
                   <BodyCell>
-                    <div className={cn("font-semibold", availabilityToneClass(availabilityTone(row.availabilityPercent)))}>
+                    <div
+                      className={cn(
+                        "font-semibold",
+                        row.availabilityPercent === null ? "text-muted-foreground" : "text-channel-availability",
+                      )}
+                      style={availabilityColorStyle(row.availabilityPercent)}
+                    >
                       {row.availabilityLabel}
                     </div>
                   </BodyCell>
@@ -177,9 +183,9 @@ function BodyCell({
   return <td className={cn("border-b border-border px-3 py-2.5 align-middle", className)}>{children}</td>;
 }
 
-function availabilityToneClass(tone: ReturnType<typeof availabilityTone>) {
-  if (tone === "success") return "text-success-foreground";
-  if (tone === "warning") return "text-warning-foreground";
-  if (tone === "danger") return "text-danger-foreground";
-  return "text-muted-foreground";
+function availabilityColorStyle(value: number | null): CSSProperties | undefined {
+  const hue = availabilityHue(value);
+  return hue === null
+    ? undefined
+    : ({ "--channel-availability-hue": hue } as CSSProperties);
 }

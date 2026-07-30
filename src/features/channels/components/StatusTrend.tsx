@@ -4,12 +4,12 @@ import type { TrendCellTone, TrendCellView } from "../channelStatusViewModel";
 
 const trendToneClassName: Record<TrendCellTone, string> = {
   available: "bg-channel-health-bar",
-  degraded: "bg-warning-foreground/70",
-  unavailable: "bg-danger-foreground/75",
-  skipped: "bg-info-foreground/35",
-  missing: "bg-muted-foreground/25",
-  dirty: "bg-warning-foreground/45",
-  corrupt: "bg-danger-solid",
+  degraded: "bg-channel-health-degraded-bar",
+  unavailable: "bg-channel-health-danger-bar",
+  skipped: "bg-channel-health-empty-bar",
+  missing: "bg-channel-health-empty-bar",
+  dirty: "bg-channel-health-degraded-bar",
+  corrupt: "bg-channel-health-danger-bar",
 };
 
 type StatusTrendProps = {

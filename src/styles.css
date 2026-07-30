@@ -37,6 +37,9 @@
   --channel-health-foreground: 160 84% 39%;
   --channel-health-emphasis: 142 71% 45%;
   --channel-health-bar: 160 84% 39%;
+  --channel-health-degraded-bar: 38 92% 50%;
+  --channel-health-danger-bar: 0 84% 60%;
+  --channel-health-empty-bar: 216 12% 84%;
   --on-solid: 0 0% 100%;
   --primary: 211 100% 42%;
   --primary-solid: 211 100% 42%;
@@ -93,6 +96,9 @@
   --channel-health-foreground: 160 76% 72%;
   --channel-health-emphasis: 142 70% 58%;
   --channel-health-bar: 160 70% 45%;
+  --channel-health-degraded-bar: 38 92% 50%;
+  --channel-health-danger-bar: 0 84% 60%;
+  --channel-health-empty-bar: 220 6% 32%;
   --on-solid: 0 0% 100%;
   --primary: 211 95% 70%;
   --primary-solid: 211 85% 45%;
@@ -124,6 +130,22 @@
 
 * {
   box-sizing: border-box;
+}
+
+.text-channel-availability {
+  color: hsl(var(--channel-availability-hue) 72% 42%);
+}
+
+.bg-channel-health-degraded-bar {
+  background-color: hsl(var(--channel-health-degraded-bar));
+}
+
+.bg-channel-health-danger-bar {
+  background-color: hsl(var(--channel-health-danger-bar));
+}
+
+.bg-channel-health-empty-bar {
+  background-color: hsl(var(--channel-health-empty-bar));
 }
 
 html,

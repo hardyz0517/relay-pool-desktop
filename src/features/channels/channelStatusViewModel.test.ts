@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ChannelStatusRow } from "@/lib/types/channelMonitors";
 import { ChannelStatusCardGrid } from "./components/ChannelStatusCardGrid";
 import {
-  availabilityTone,
+  availabilityHue,
   buildRowView,
   buildTrend,
   createChannelStatusWorkspaceInput,
@@ -14,13 +14,15 @@ import {
 
 describe("channel status V2 view model", () => {
   it.each([
-    [null, "muted"],
-    [49.9, "danger"],
-    [50, "warning"],
-    [74.9, "warning"],
-    [75, "success"],
-  ] as const)("maps availability %s to %s", (value, tone) => {
-    expect(availabilityTone(value)).toBe(tone);
+    [null, null],
+    [-1, 0],
+    [0, 0],
+    [50, 60],
+    [75, 90],
+    [100, 120],
+    [101, 120],
+  ] as const)("maps availability %s to hue %s", (value, hue) => {
+    expect(availabilityHue(value)).toBe(hue);
   });
 
   it("uses normal and error as the user-facing health terms", () => {
@@ -126,6 +128,9 @@ describe("channel status V2 view model", () => {
     expect(markup).toContain("可用性");
     expect(markup).not.toContain("正常率");
     expect(markup).not.toContain("最近探测");
+    expect(markup).toContain("md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4");
+    expect(markup).toContain("flex w-full min-w-0 items-end gap-[2px]");
+    expect(markup).toContain("h-5");
   });
 
   it.each([

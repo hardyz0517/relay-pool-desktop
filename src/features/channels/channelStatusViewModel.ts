@@ -13,7 +13,6 @@ import { protocolLabel } from "@/lib/channelMonitorDisplay";
 
 export type ChannelWindow = ChannelStatusWorkspaceWindow;
 
-export type AvailabilityTone = "muted" | "danger" | "warning" | "success";
 export type StatusTone = "available" | "degraded" | "unavailable" | "skipped" | "missing" | "running" | "disabled";
 export type TrendCellTone = "available" | "degraded" | "unavailable" | "skipped" | "missing" | "dirty" | "corrupt";
 
@@ -206,17 +205,11 @@ export function buildTrend(row: ChannelStatusRow, window: ChannelWindow): TrendC
   return row.dailyBuckets.map((bucket) => bucketToCell(bucket, modelLabel));
 }
 
-export function availabilityTone(value: number | null): AvailabilityTone {
-  if (value === null) {
-    return "muted";
+export function availabilityHue(value: number | null): number | null {
+  if (value === null || Number.isNaN(value)) {
+    return null;
   }
-  if (value < 50) {
-    return "danger";
-  }
-  if (value < 75) {
-    return "warning";
-  }
-  return "success";
+  return Math.max(0, Math.min(100, value)) * 1.2;
 }
 
 export function statusLabel(tone: StatusTone) {
