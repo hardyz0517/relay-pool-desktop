@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "status": "task0_frozen",
+  "captured_at": "2026-07-30",
+  "branch": "codex/routing-operational-upgrade",
+  "commit": "ef2d3815726c4734e77ff44a5ff3ecf26a6173b9",
+  "source_documents": [
+    "AGENTS.md",
+    "docs/README.md",
+    "docs/PROJECT_PLAN.md",
+    "docs/PRODUCT_MODEL.md",
+    "docs/SECURITY_EXPORT_IMPORT.md",
+    "docs/superpowers/specs/2026-07-30-routing-operational-unification-upgrade-spec.md",
+    "docs/superpowers/plans/2026-07-30-routing-operational-unification-upgrade.md",
+    "docs/superpowers/audits/status-monitoring-qualification.md",
+    "docs/superpowers/audits/request-lifecycle-baseline.md",
+    "docs/superpowers/audits/persistence-v2-boundary-manifest.json"
+  ],
+  "dependency_layers": [
+    {
+      "layer": "canonical_facts",
+      "allowed_dependencies": ["models", "persistence_read_models", "provenance"],
+      "forbidden_dependencies": ["frontend", "tauri_dto", "reqwest", "secret_manager", "runtime_registry"]
+    },
+    {
+      "layer": "projectors",
+      "allowed_dependencies": ["canonical_facts", "pure_domain_types"],
+      "forbidden_dependencies": ["sqlx", "reqwest", "tauri", "secret_manager", "runtime_registry"]
+    },
+    {
+      "layer": "routing_engine",
+      "allowed_dependencies": ["projectors", "immutable_request_facts", "runtime_overlay_snapshot"],
+      "forbidden_dependencies": ["sqlx", "reqwest", "secret_manager", "frontend_dto", "monitoring_dto"]
+    },
+    {
+      "layer": "capacity_controller",
+      "allowed_dependencies": ["route_plan", "runtime_capacity_registry", "retry_budget", "wait_queue"],
+      "forbidden_dependencies": ["pricing_projector", "collector", "frontend", "durable_health_store_direct_writes"]
+    },
+    {
+      "layer": "execution_target_resolver",
+      "allowed_dependencies": ["selected_route", "credential_store", "endpoint_store", "outbound_policy"],
+      "forbidden_dependencies": ["serialize", "debug_secret_values", "ui_dto", "decision_trace_public_fields"]
+    },
+    {
+      "layer": "outcome_finalization",
+      "allowed_dependencies": ["request_lifecycle_writer", "effect_plan", "cost_calculator", "health_transition_service"],
+      "forbidden_dependencies": ["generic_event_bus", "frontend_state", "legacy_scheduler_feedback_facade"]
+    },
+    {
+      "layer": "backend_read_models",
+      "allowed_dependencies": ["canonical_facts", "projectors", "decision_store", "runtime_overlay_read_port"],
+      "forbidden_dependencies": ["frontend_authoritative_matcher", "raw_collector_json_as_truth", "secret_values"]
+    },
+    {
+      "layer": "frontend",
+      "allowed_dependencies": ["ipc_read_models", "stable_command_contracts"],
+      "forbidden_dependencies": ["authoritative_pricing_matching", "authoritative_capability_reducer", "credential_values", "raw_url_query"]
+    }
+  ],
+  "production_forbidden_symbols": [
+    {
+      "symbol": "acquired_simulated",
+      "paths": ["src-tauri/src/application/routing_engine/scheduler/mod.rs"],
+      "delete_by_task": 22,
+      "reason": "SelectedRoute must require a real capacity lease"
+    },
+    {
+      "symbol": "RuntimeRoutingCandidate.upstream_base_url",
+      "paths": ["src-tauri/src/models/routing.rs"],
+      "delete_by_task": 25,
+      "reason": "routing/UI facts must not carry full endpoint URL"
+    },
+    {
+      "symbol": "RuntimeRoutingCandidate.api_key/api_key_secret",
+      "paths": ["src-tauri/src/models/routing.rs"],
+      "delete_by_task": 17,
+      "reason": "credential must resolve only after selected route and revision fence"
+    },
+    {
+      "symbol": "scheduler report_result/bind_session #[cfg(test)] production-equivalent facade",
+      "paths": ["src-tauri/src/application/routing_engine/scheduler/mod.rs"],
+      "delete_by_task": 22,
+      "reason": "production feedback, metrics, and affinity must use fixed outcome consumers"
+    },
+    {
+      "symbol": "frontend pricing/group matcher",
+      "paths": ["src/lib/projections/pricingFacts.ts"],
+      "delete_by_task": 24,
+      "reason": "pricing/group semantics must come from backend projectors"
+    },
+    {
+      "symbol": "monitoring imports RuntimeRoutingCandidate",
+      "paths": [
+        "src-tauri/src/services/monitoring/runner.rs",
+        "src-tauri/src/services/monitoring/orchestrator_transport.rs",
+        "src-tauri/src/application/monitoring/definition_bridge.rs"
+      ],
+      "delete_by_task": 24,
+      "reason": "monitoring and routing must share operational facts, not candidate DTO"
+    }
+  ],
+  "temporary_allowed_exceptions": [
+    {
+      "id": "debug_legacy_runtime",
+      "owner_task": 28,
+      "scope": "process-start full legacy proxy owner only",
+      "forbidden_uses": ["ui_setting", "request_dynamic_fallback", "mixed_new_old_components", "default_v2_truth"]
+    },
+    {
+      "id": "legacy_policy_values_until_migration",
+      "owner_task": 10,
+      "scope": "configuration readiness and pre-migration release",
+      "forbidden_uses": ["silent_hierarchical_mapping", "default_multiplier_1", "unbounded_ceiling"]
+    }
+  ],
+  "external_reference_boundary": {
+    "rule": "architecture and behavior principles only; no copied core implementation",
+    "references": [
+      {
+        "project": "Wei-Shaw/sub2api",
+        "commit": "5a6143097db142b72a6fc848c214e97214470bdd",
+        "license": "LGPL-3.0"
+      },
+      {
+        "project": "ding113/claude-code-hub",
+        "commit": "595a7d988a91c730ed63a791b4a92acb5a0e9c41",
+        "license": "MIT"
+      },
+      {
+        "project": "BerriAI/litellm",
+        "commit": "71b825a7f0549fd9a297f7926fc5990c11323d92",
+        "license": "MIT outside enterprise tree at reviewed LICENSE"
+      },
+      {
+        "project": "envoyproxy/envoy",
+        "commit": "7b7415d2609f5ecdc27ee0f351542fc842c1bf14",
+        "license": "Apache-2.0"
+      },
+      {
+        "project": "haproxy/haproxy",
+        "commit": "9afec06e0eb477e29b7eeaf9eb8b5039ca4a470a",
+        "license": "GPL-2.0-family license file"
+      }
+    ]
+  }
+}

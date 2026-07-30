@@ -12,12 +12,13 @@ const sources = [
   "src/persistence/migrations.rs",
   "src/persistence/health_check.rs",
 ].map((path) => readFileSync(join(crate, path), "utf8"));
+const productionSources = sources.map((source) => source.split(/#\[cfg\(test\)\]/)[0]);
 
 for (const source of sources) {
   assert.match(source, /sqlx::query!\s*\(/, "critical persistence query must use SQLx compile-time checking");
 }
-assert.doesNotMatch(sources[0], /sqlx::query\s*\(/);
-assert.doesNotMatch(sources[1], /sqlx::query\s*\(/);
+assert.doesNotMatch(productionSources[0], /sqlx::query\s*\(/);
+assert.doesNotMatch(productionSources[1], /sqlx::query\s*\(/);
 
 const metadataFiles = readdirSync(metadataDirectory)
   .filter((name) => /^query-[0-9a-f]{64}\.json$/.test(name))

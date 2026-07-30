@@ -91,8 +91,12 @@ assert.match(permissionText, /identifier\s*=\s*"record-capture-event"/);
 const captureAllowedCommands = readTomlArray(permissionText, "commands.allow");
 assert.deepEqual(
   captureAllowedCommands,
-  ["record_capture_event", "finish_web_authorization_session"],
-  "capture windows should only be able to record sanitized events and finish verified web authorization",
+  [
+    "record_capture_event",
+    "finish_web_authorization_session",
+    "finish_provider_draft_authorization_session",
+  ],
+  "capture windows should only be able to record sanitized events and finish verified authorization flows",
 );
 
 const buildScript = fs.readFileSync(path.join(repoRoot, "src-tauri", "build.rs"), "utf8");

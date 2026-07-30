@@ -3,7 +3,7 @@
 状态：Task 0 completed baseline, implementation not started
 日期：2026-07-29
 分支：`codex/status-monitoring-refactor`
-工作区：`E:\Dev\Projects\relay-pool-desktop-status-monitoring-refactor`
+工作区：`<redacted local status-monitoring worktree>`
 基线提交：`87280a4e1ac836870cbb1b69b7d5d4cfb613cad4` (`feat: add reliable remote key deletion`)
 
 ## 1. 工作区状态
@@ -91,7 +91,7 @@ Task 0 结论：当前基线可复现且为绿基线。后续 RED 测试如果�
 
 ## 6. 用户横向 UI 截图观察
 
-截图路径：`C:\Users\Hardy\AppData\Local\Temp\codex-clipboard-cf78721d-19c9-492d-8669-02731af017d7.png`
+截图路径：`<redacted local clipboard screenshot>`
 
 结构观察：
 
