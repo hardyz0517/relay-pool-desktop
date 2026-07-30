@@ -4,11 +4,14 @@ import type { StationKeyDraft, StationKeyGroupOption } from "../../components/St
 import type { StationGroupBinding } from "@/lib/types/groupFacts";
 import type { RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import {
+  bindableLocalKeysForRemote,
   collectRemoteGroupOptions,
   dedupeGroupRows,
   groupBindingsToDrafts,
+  legacyRemoteLocalKeyNote,
   remoteLocalKeyNote,
   resolveRemoteCreatedLocalKeyIds,
+  stationKeyToUpdateInput,
   validateGroupRows,
   validateKeyRows,
 } from "./keyGroupModel";
@@ -184,5 +187,80 @@ describe("add provider key/group model", () => {
       selectableForRemoteKey: true,
     });
     expect(resolveRemoteCreatedLocalKeyIds([remote], [localKey])).toEqual({ "remote-1": "local-1" });
+  });
+
+  it("recognizes legacy switch-created keys only when they still match the remote key", () => {
+    const matchedRemote = remoteKey({
+      matchStatus: "matched",
+      matchedStationKeyId: "legacy-local",
+    });
+    const legacyLocal = stationKey({
+      id: "legacy-local",
+      note: legacyRemoteLocalKeyNote,
+    });
+
+    expect(resolveRemoteCreatedLocalKeyIds([matchedRemote], [legacyLocal])).toEqual({
+      "remote-1": "legacy-local",
+    });
+    expect(
+      resolveRemoteCreatedLocalKeyIds(
+        [matchedRemote],
+        [stationKey({ id: "legacy-local", note: "手工创建" })],
+      ),
+    ).toEqual({});
+    expect(
+      resolveRemoteCreatedLocalKeyIds(
+        [remoteKey({ matchedStationKeyId: null })],
+        [legacyLocal],
+      ),
+    ).toEqual({});
+  });
+
+  it("offers only unclaimed local keys when binding a remote key", () => {
+    const remotes = [
+      remoteKey({ id: "remote-1", matchedStationKeyId: "local-1", matchStatus: "matched" }),
+      remoteKey({ id: "remote-2", matchedStationKeyId: null }),
+    ];
+    const locals = [stationKey({ id: "local-1" }), stationKey({ id: "local-2" })];
+
+    expect(bindableLocalKeysForRemote("remote-2", remotes, locals).map((key) => key.id)).toEqual([
+      "local-2",
+    ]);
+    expect(bindableLocalKeysForRemote("remote-1", remotes, locals).map((key) => key.id)).toEqual([
+      "local-1",
+      "local-2",
+    ]);
+  });
+
+  it("builds an update payload without read-only station key fields", () => {
+    const input = stationKeyToUpdateInput(stationKey(), {
+      rateMultiplier: 2,
+      note: "created from remote key",
+    });
+
+    expect(input).toEqual({
+      id: "key-1",
+      stationId: "station-1",
+      name: "Default Key",
+      apiKey: null,
+      enabled: true,
+      priority: 0,
+      maxConcurrency: 4,
+      loadFactor: null,
+      schedulable: true,
+      groupBindingId: null,
+      groupIdHash: null,
+      groupName: null,
+      tierLabel: null,
+      rateMultiplier: 2,
+      manualRateMultiplier: null,
+      rateSource: null,
+      balanceScope: null,
+      status: "unchecked",
+      note: "created from remote key",
+    });
+    expect(input).not.toHaveProperty("apiKeyMasked");
+    expect(input).not.toHaveProperty("createdAt");
+    expect(input).not.toHaveProperty("updatedAt");
   });
 });

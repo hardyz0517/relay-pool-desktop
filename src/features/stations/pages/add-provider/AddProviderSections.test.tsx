@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { providerPresets } from "../../providerPresets";
+import { RemoteKeyDiscoveryList } from "../../components/RemoteKeyDiscoveryList";
 import { createDefaultProviderForm } from "./formModel";
 import {
   ProviderConnectionSection,
@@ -217,11 +218,13 @@ describe("AddProviderSections", () => {
           scanRemoteDisabled={false}
           onAddLocalKey={onAddLocalKey}
           onBindRemoteKey={vi.fn()}
+          onDeleteImportedLocalKey={vi.fn()}
           onDeleteRemoteKey={vi.fn()}
-          onLocalKeyToggle={vi.fn()}
+          onImportRemoteKey={vi.fn()}
           onOpenCreateRemoteKey={onOpenCreateRemoteKey}
           onRowsChange={vi.fn()}
           onScanRemoteKeys={onScanRemoteKeys}
+          onUnbindRemoteKey={vi.fn()}
         />,
       ),
     );
@@ -303,11 +306,13 @@ describe("AddProviderSections", () => {
           scanRemoteDisabled={false}
           onAddLocalKey={vi.fn()}
           onBindRemoteKey={vi.fn()}
+          onDeleteImportedLocalKey={vi.fn()}
           onDeleteRemoteKey={onDeleteRemoteKey}
-          onLocalKeyToggle={vi.fn()}
+          onImportRemoteKey={vi.fn()}
           onOpenCreateRemoteKey={vi.fn()}
           onRowsChange={vi.fn()}
           onScanRemoteKeys={vi.fn()}
+          onUnbindRemoteKey={vi.fn()}
         />,
       ),
     );
@@ -318,6 +323,126 @@ describe("AddProviderSections", () => {
     await act(async () => deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
     expect(onDeleteRemoteKey).toHaveBeenCalledWith(remoteKey);
+
+    await act(async () => root.unmount());
+  });
+
+  it("normalizes stale matches and exposes explicit key-pool actions", async () => {
+    const matchedRemoteKey = {
+      id: "remote-matched",
+      stationId: "station-1",
+      remoteKeyIdHash: "remote-hash",
+      remoteKeyName: "Matched remote",
+      apiKeyMasked: "sk-fixture********test",
+      apiKeyFingerprint: null,
+      groupIdHash: null,
+      groupName: "default",
+      tierLabel: null,
+      rateMultiplier: 1,
+      rateSource: "newapi_tokens",
+      createdAt: null,
+      lastUsedAt: null,
+      rawSource: "newapi_tokens",
+      matchStatus: "matched" as const,
+      matchedStationKeyId: "key-1",
+      matchConfidence: 1,
+      collectedAt: "1700000000000",
+    };
+    const localKey = {
+      id: "key-1",
+      stationId: "station-1",
+      name: "Matched local",
+      apiKeyMasked: "sk-local********test",
+      apiKeyPresent: true,
+      enabled: true,
+      priority: 0,
+      maxConcurrency: 3,
+      loadFactor: null,
+      schedulable: true,
+      groupBindingId: null,
+      groupIdHash: null,
+      groupName: null,
+      tierLabel: null,
+      rateMultiplier: 1,
+      manualRateMultiplier: null,
+      manualRateUpdatedAt: null,
+      rateSource: null,
+      rateCollectedAt: null,
+      balanceScope: null,
+      status: "unchecked" as const,
+      lastCheckedAt: null,
+      lastUsedAt: null,
+      note: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () =>
+      root.render(
+        <RemoteKeyDiscoveryList
+          keys={[matchedRemoteKey]}
+          localKeys={[]}
+          onBind={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteImportedLocalKey={vi.fn()}
+          onImport={vi.fn()}
+          onUnbind={vi.fn()}
+        />,
+      ),
+    );
+
+    const layoutClassNames = [...host.querySelectorAll("div")].flatMap((element) => [
+      ...element.classList,
+    ]);
+    expect(layoutClassNames).toContain("min-w-[840px]");
+    expect(layoutClassNames).not.toContain("min-w-[820px]");
+    expect(layoutClassNames).not.toContain("min-w-[1000px]");
+    expect(host.textContent).not.toContain("已匹配");
+    expect(host.textContent).not.toContain("已关联");
+    expect(host.textContent).toContain("未绑定");
+    expect(host.textContent).toContain("Key 池");
+    expect(host.textContent).toContain("待确认");
+    expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).toBeNull();
+
+    await act(async () =>
+      root.render(
+        <RemoteKeyDiscoveryList
+          keys={[matchedRemoteKey]}
+          localKeys={[localKey]}
+          onBind={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteImportedLocalKey={vi.fn()}
+          onImport={vi.fn()}
+          onUnbind={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("已匹配");
+    expect(host.textContent).toContain("Matched local");
+    expect(host.textContent).toContain("已关联");
+    expect(
+      [...host.querySelectorAll("div")].flatMap((element) => [...element.classList]),
+    ).toContain("min-w-[840px]");
+    expect(host.querySelector('button[aria-label="解除 Matched remote 的本地关联"]')).not.toBeNull();
+
+    await act(async () =>
+      root.render(
+        <RemoteKeyDiscoveryList
+          keys={[matchedRemoteKey]}
+          localKeys={[localKey]}
+          localKeyIdsCreatedByRemote={{ [matchedRemoteKey.id]: localKey.id }}
+          onBind={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteImportedLocalKey={vi.fn()}
+          onImport={vi.fn()}
+          onUnbind={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("已导入");
+    expect(host.querySelector('button[aria-label="从 Key 池移除 Matched remote"]')).not.toBeNull();
 
     await act(async () => root.unmount());
   });

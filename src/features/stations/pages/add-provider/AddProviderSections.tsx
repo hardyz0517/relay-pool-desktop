@@ -382,11 +382,13 @@ type ProviderKeysSectionProps = {
   scanRemoteDisabled: boolean;
   onAddLocalKey: () => void;
   onBindRemoteKey: (remoteKeyId: string, stationKeyId: string) => void;
+  onDeleteImportedLocalKey: (remoteKey: RemoteStationKey) => void;
   onDeleteRemoteKey: (remoteKey: RemoteStationKey) => void;
-  onLocalKeyToggle: (remoteKey: RemoteStationKey, checked: boolean) => void;
+  onImportRemoteKey: (remoteKey: RemoteStationKey) => void;
   onOpenCreateRemoteKey: () => void;
   onRowsChange: (rows: StationKeyDraft[]) => void;
   onScanRemoteKeys: () => void;
+  onUnbindRemoteKey: (remoteKey: RemoteStationKey) => void;
 };
 
 export function ProviderKeysSection({
@@ -410,11 +412,13 @@ export function ProviderKeysSection({
   scanRemoteDisabled,
   onAddLocalKey,
   onBindRemoteKey,
+  onDeleteImportedLocalKey,
   onDeleteRemoteKey,
-  onLocalKeyToggle,
+  onImportRemoteKey,
   onOpenCreateRemoteKey,
   onRowsChange,
   onScanRemoteKeys,
+  onUnbindRemoteKey,
 }: ProviderKeysSectionProps) {
   return (
     <SectionCard
@@ -481,7 +485,9 @@ export function ProviderKeysSection({
                 localKeys={localKeys}
                 onBind={onBindRemoteKey}
                 onDelete={onDeleteRemoteKey}
-                onLocalKeyToggle={onLocalKeyToggle}
+                onDeleteImportedLocalKey={onDeleteImportedLocalKey}
+                onImport={onImportRemoteKey}
+                onUnbind={onUnbindRemoteKey}
               />
               {remoteListError && (
                 <div className="rounded-[var(--surface-radius)] border border-dashed border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">

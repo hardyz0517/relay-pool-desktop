@@ -54,6 +54,7 @@ import {
 import type { DialogMode } from "./pages/stations/StationDialogs";
 
 type StationAction = "collect" | "balance" | "authorize";
+const BALANCE_BACKGROUND_SYNC_INTERVAL_MS = 30_000;
 
 export type StationsPageControllerOptions = {
   onEditProvider?: (stationId: string) => void;
@@ -97,7 +98,7 @@ export function useStationsPageController({
 
   const stationsQuery = useActivityQuery(stationsQueryOptions());
   const balancesQuery = useActivityQuery(
-    currentStationBalanceSnapshotsQueryOptions(),
+    currentStationBalanceSnapshotsQueryOptions(BALANCE_BACKGROUND_SYNC_INTERVAL_MS),
   );
   const changesQuery = useActivityQuery(changeEventsQueryOptions(false));
   const stations = stationsQuery.data ?? [];

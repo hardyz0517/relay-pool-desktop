@@ -208,6 +208,56 @@ describe("station key ordinary generated transport cutover", () => {
       { onEvent },
     );
   });
+
+  it("strips output-only fields before updating a station key", async () => {
+    const input = {
+      id: "key-1",
+      stationId: "station-1",
+      name: "Fixture key",
+      apiKey: null,
+      enabled: true,
+      priority: 0,
+      maxConcurrency: 4,
+      loadFactor: null,
+      schedulable: true,
+      groupBindingId: null,
+      groupIdHash: null,
+      groupName: null,
+      tierLabel: null,
+      rateMultiplier: 2,
+      rateSource: "remote_scan",
+      balanceScope: "station_key",
+      status: "unchecked" as const,
+      note: "created from remote key",
+      apiKeyMasked: "masked-output-only",
+      apiKeyPresent: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+
+    await updateStationKey(input);
+
+    expect(generated.updateStationKey).toHaveBeenCalledWith({
+      id: "key-1",
+      stationId: "station-1",
+      name: "Fixture key",
+      apiKey: null,
+      enabled: true,
+      priority: 0,
+      maxConcurrency: 4,
+      loadFactor: null,
+      schedulable: true,
+      groupBindingId: null,
+      groupIdHash: null,
+      groupName: null,
+      tierLabel: null,
+      rateMultiplier: 2,
+      rateSource: "remote_scan",
+      balanceScope: "station_key",
+      status: "unchecked",
+      note: "created from remote key",
+    });
+  });
 });
 
 describe("station key demo backend unsupported cutover", () => {

@@ -20,11 +20,13 @@ export function AddProviderPage(props: AddProviderPageProps) {
   const {
     activeStationId,
     applyPreset,
+    cancelDeleteImportedLocalKey,
     cancelDeleteRemoteKey,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
     commonLoginOptions,
     confirmDiscardChanges,
+    confirmDeleteImportedLocalKey,
     confirmDeleteRemoteKey,
     connectionTest,
     createRemoteDisabled,
@@ -45,8 +47,9 @@ export function AddProviderPage(props: AddProviderPageProps) {
     handleCopyWebsiteUrl,
     handleCreateRemoteKey,
     handleGroupRowsChange,
+    handleImportRemoteKey,
     handleOpenCreateRemoteKey,
-    handleRemoteLocalKeyToggle,
+    handleUnbindRemoteKey,
     handleScanRemoteKeys,
     handleStartManualAuthorization,
     handleStationTypeChange,
@@ -54,6 +57,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     handleSyncRemoteGroups,
     handleTestConnection,
     keyRows,
+    importedLocalKeyPendingDelete,
     loading,
     passwordProfileLoading,
     providerDraftId,
@@ -70,6 +74,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     remoteLoading,
     remoteUnsupportedReason,
     requestDeleteRemoteKey,
+    requestDeleteImportedLocalKey,
     requestExit,
     resetConnectionTest,
     saving,
@@ -166,13 +171,13 @@ export function AddProviderPage(props: AddProviderPageProps) {
               onBindRemoteKey={(remoteKeyId, stationKeyId) =>
                 void handleBindRemoteKey(remoteKeyId, stationKeyId)
               }
+              onDeleteImportedLocalKey={requestDeleteImportedLocalKey}
               onDeleteRemoteKey={requestDeleteRemoteKey}
-              onLocalKeyToggle={(remoteKey, checked) =>
-                void handleRemoteLocalKeyToggle(remoteKey, checked)
-              }
+              onImportRemoteKey={(remoteKey) => void handleImportRemoteKey(remoteKey)}
               onOpenCreateRemoteKey={() => void handleOpenCreateRemoteKey()}
               onRowsChange={setKeyRows}
               onScanRemoteKeys={() => void handleScanRemoteKeys()}
+              onUnbindRemoteKey={(remoteKey) => void handleUnbindRemoteKey(remoteKey)}
             />
           </div>
 
@@ -187,6 +192,16 @@ export function AddProviderPage(props: AddProviderPageProps) {
         saving={remoteLoading}
         onClose={closeCreateRemoteDialog}
         onSubmit={handleCreateRemoteKey}
+      />
+      <ConfirmDialog
+        open={Boolean(importedLocalKeyPendingDelete)}
+        title="从 Key 池移除本地 Key？"
+        description={`将删除由 ${importedLocalKeyPendingDelete?.remoteKey.remoteKeyName?.trim() || "这条远端记录"} 导入的本地 Station Key；如果仍有关联，也会一并解除。远端 Key 不会被删除。`}
+        confirmLabel="删除本地 Key"
+        cancelLabel="取消"
+        confirming={remoteLoading}
+        onCancel={cancelDeleteImportedLocalKey}
+        onConfirm={() => void confirmDeleteImportedLocalKey()}
       />
       <ConfirmDialog
         open={Boolean(remoteKeyPendingDelete)}

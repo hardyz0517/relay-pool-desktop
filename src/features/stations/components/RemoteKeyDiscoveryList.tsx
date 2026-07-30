@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link2, Trash2 } from "lucide-react";
-import { Button, IconButton, SelectControl, StatusBadge, SwitchControl, type StatusTone } from "@/components/ui";
+import { CircleMinus, Download, Link2, Trash2, Unlink } from "lucide-react";
+import { IconButton, SelectControl, StatusBadge, type StatusTone } from "@/components/ui";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import type { RemoteKeyMatchStatus, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import { formatMultiplier } from "@/lib/groupOptionViewModels";
+import { bindableLocalKeysForRemote } from "../pages/add-provider/keyGroupModel";
 
 type RemoteKeyDiscoveryListProps = {
   keys: RemoteStationKey[];
@@ -16,7 +17,9 @@ type RemoteKeyDiscoveryListProps = {
   localKeyIdsCreatedByRemote?: Record<string, string>;
   onBind: (remoteKeyId: string, stationKeyId: string) => void;
   onDelete: (remoteKey: RemoteStationKey) => void;
-  onLocalKeyToggle: (remoteKey: RemoteStationKey, checked: boolean) => void;
+  onDeleteImportedLocalKey: (remoteKey: RemoteStationKey) => void;
+  onImport: (remoteKey: RemoteStationKey) => void;
+  onUnbind: (remoteKey: RemoteStationKey) => void;
 };
 
 const matchStatusLabel: Record<RemoteKeyMatchStatus, string> = {
@@ -32,9 +35,9 @@ const matchStatusTone: Record<RemoteKeyMatchStatus, StatusTone> = {
 };
 
 const selectClassName =
-  "h-7 min-w-[150px] max-w-[190px] px-2 text-xs shadow-none";
+  "h-7 min-w-0 w-full px-2 text-xs shadow-none";
 const remoteKeyGridClassName =
-  "grid-cols-[minmax(8rem,1fr)_5.5rem_minmax(8rem,1fr)_minmax(7rem,0.8fr)_5rem_minmax(8rem,1fr)_6.5rem_15rem]";
+  "grid-cols-[minmax(7rem,1.2fr)_5.5rem_minmax(7rem,0.8fr)_6rem_4.5rem_9rem_6rem_7rem]";
 
 export function RemoteKeyDiscoveryList({
   keys,
@@ -46,7 +49,9 @@ export function RemoteKeyDiscoveryList({
   localKeyIdsCreatedByRemote = {},
   onBind,
   onDelete,
-  onLocalKeyToggle,
+  onDeleteImportedLocalKey,
+  onImport,
+  onUnbind,
 }: RemoteKeyDiscoveryListProps) {
   const [selectedLocalKeyIds, setSelectedLocalKeyIds] = useState<Record<string, string>>({});
 
@@ -54,18 +59,6 @@ export function RemoteKeyDiscoveryList({
     () => new Map(localKeys.map((key) => [key.id, key] as const)),
     [localKeys],
   );
-  const localKeyOptions = useMemo(
-    () => [
-      { value: "", label: "选择本地 Key", disabled: true },
-      ...localKeys.map((key) => ({
-        value: key.id,
-        label: key.name,
-        description: key.apiKeyMasked,
-      })),
-    ],
-    [localKeys],
-  );
-
   useEffect(() => {
     setSelectedLocalKeyIds((current) => {
       const nextEntries = Object.entries(current).filter(([, selectedId]) =>
@@ -89,16 +82,16 @@ export function RemoteKeyDiscoveryList({
   return (
     <div className="grid gap-2">
       <div className="overflow-x-auto">
-        <div className="min-w-[1000px]">
+        <div className="min-w-[840px]">
           <div className={cn("grid h-7 items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground", remoteKeyGridClassName)}>
             <span>远端名称</span>
             <span>状态</span>
             <span>密钥</span>
             <span>分组</span>
             <span>倍率</span>
-            <span>本地匹配</span>
-            <span>作为本地秘钥</span>
-            <span className="text-right">操作</span>
+            <span className="text-center">本地匹配</span>
+            <span className="text-center">Key 池</span>
+            <span className="text-center">操作</span>
           </div>
 
           <div className="grid gap-1.5 py-2">
@@ -106,18 +99,37 @@ export function RemoteKeyDiscoveryList({
               const matchedLocalKey = key.matchedStationKeyId
                 ? localKeyById.get(key.matchedStationKeyId) ?? null
                 : null;
+              const isMatched = key.matchStatus === "matched" && Boolean(matchedLocalKey);
+              const effectiveMatchStatus: RemoteKeyMatchStatus = isMatched
+                ? "matched"
+                : key.matchStatus === "possible"
+                  ? "possible"
+                  : "unbound";
               const remoteCreatedLocalKeyId = localKeyIdsCreatedByRemote[key.id] ?? null;
-              const hasLocalKey = Boolean(remoteCreatedLocalKeyId || matchedLocalKey);
+              const hasImportedLocalKey = Boolean(
+                remoteCreatedLocalKeyId && localKeyById.has(remoteCreatedLocalKeyId),
+              );
+              const hasLocalKeyRelation = Boolean(key.matchedStationKeyId);
+              const bindableLocalKeys = bindableLocalKeysForRemote(key.id, keys, localKeys);
+              const localKeyOptions = [
+                { value: "", label: "选择本地 Key", disabled: true },
+                ...bindableLocalKeys.map((localKey) => ({
+                  value: localKey.id,
+                  label: localKey.name,
+                  description: localKey.apiKeyMasked,
+                })),
+              ];
               const selectedLocalKeyId = selectedLocalKeyIds[key.id];
               const effectiveSelectedLocalKeyId =
                 selectedLocalKeyId && localKeyById.has(selectedLocalKeyId)
                   ? selectedLocalKeyId
+                  : remoteCreatedLocalKeyId && localKeyById.has(remoteCreatedLocalKeyId)
+                    ? remoteCreatedLocalKeyId
                   : key.matchedStationKeyId && localKeyById.has(key.matchedStationKeyId)
                     ? key.matchedStationKeyId
-                    : localKeys.length === 1
-                      ? localKeys[0].id
+                    : bindableLocalKeys.length === 1
+                      ? bindableLocalKeys[0].id
                       : "";
-              const canBind = key.matchStatus !== "matched";
               const bindDisabled = loading || readOnly || !effectiveSelectedLocalKeyId;
 
               return (
@@ -128,8 +140,8 @@ export function RemoteKeyDiscoveryList({
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
                   </span>
-                  <StatusBadge tone={matchStatusTone[key.matchStatus]} className="h-5 px-1.5 text-[11px]">
-                    {matchStatusLabel[key.matchStatus]}
+                  <StatusBadge tone={matchStatusTone[effectiveMatchStatus]} className="h-5 px-1.5 text-[11px]">
+                    {matchStatusLabel[effectiveMatchStatus]}
                   </StatusBadge>
                   <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
                     {key.apiKeyMasked || key.apiKeyFingerprint || "未提供"}
@@ -138,64 +150,89 @@ export function RemoteKeyDiscoveryList({
                   <span className="tabular-nums">
                     {formatRemoteKeyRate(key.rateMultiplier, creditPerCny)}
                   </span>
-                  <span
-                    className={cn(
-                      "min-w-0 truncate",
-                      matchedLocalKey ? "text-foreground" : "text-muted-foreground",
-                    )}
-                  >
-                    {matchedLocalKey ? matchedLocalKey.name : key.matchStatus === "possible" ? "待确认" : "未绑定"}
-                  </span>
-                  <SwitchControl
-                    ariaLabel={`${key.remoteKeyName ?? "远端 Key"} 作为本地秘钥`}
-                    checked={hasLocalKey}
-                    className="h-7 w-11 border-0 bg-transparent p-0 shadow-none"
-                    disabled={loading || readOnly}
-                    showLabel={false}
-                    onCheckedChange={() => onLocalKeyToggle(key, !hasLocalKey)}
-                  />
-                  <div className="flex min-w-0 justify-end gap-2">
-                    {canBind ? (
-                      localKeys.length > 0 ? (
-                        <>
-                          {localKeys.length > 1 ? (
-                            <SelectControl
-                              ariaLabel={`选择 ${key.remoteKeyName ?? "远端 Key"} 的本地 Key`}
-                              className={selectClassName}
-                              disabled={loading || readOnly}
-                              menuClassName="text-xs"
-                              options={localKeyOptions}
-                              value={effectiveSelectedLocalKeyId}
-                              onChange={(stationKeyId) =>
-                                setSelectedLocalKeyIds((current) => ({
-                                  ...current,
-                                  [key.id]: stationKeyId,
-                                }))
-                              }
-                            />
-                          ) : (
-                            <span className="flex h-7 min-w-0 items-center truncate text-muted-foreground">
-                              {localKeys[0].name}
-                            </span>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={bindDisabled}
-                            onClick={() =>
-                              effectiveSelectedLocalKeyId &&
-                              onBind(key.id, effectiveSelectedLocalKeyId)
+                  <div className="flex min-w-0 items-center gap-1">
+                    {isMatched && matchedLocalKey ? (
+                      <span className="min-w-0 flex-1 truncate text-center text-foreground">
+                        {matchedLocalKey.name}
+                      </span>
+                    ) : bindableLocalKeys.length > 0 ? (
+                      <>
+                        {bindableLocalKeys.length > 1 ? (
+                          <SelectControl
+                            ariaLabel={`选择 ${key.remoteKeyName ?? "远端 Key"} 的本地 Key`}
+                            className={selectClassName}
+                            disabled={loading || readOnly}
+                            menuClassName="text-xs"
+                            options={localKeyOptions}
+                            value={effectiveSelectedLocalKeyId}
+                            onChange={(stationKeyId) =>
+                              setSelectedLocalKeyIds((current) => ({
+                                ...current,
+                                [key.id]: stationKeyId,
+                              }))
                             }
-                          >
-                            <Link2 className="h-3.5 w-3.5" />
-                            绑定
-                          </Button>
-                        </>
-                      ) : (
-                        <span className="flex h-7 items-center text-muted-foreground">暂无本地 Key</span>
-                      )
+                          />
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                            {bindableLocalKeys[0].name}
+                          </span>
+                        )}
+                        <IconButton
+                          className="h-7 w-7 shrink-0 text-muted-foreground"
+                          disabled={bindDisabled}
+                          label={`绑定 ${key.remoteKeyName ?? "远端 Key"} 到本地 Key`}
+                          onClick={() =>
+                            effectiveSelectedLocalKeyId &&
+                            onBind(key.id, effectiveSelectedLocalKeyId)
+                          }
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                        </IconButton>
+                      </>
                     ) : (
-                      <span className="flex h-7 items-center text-success-foreground">已关联</span>
+                      <span className="w-full truncate text-center text-muted-foreground">
+                        {localKeys.length > 0 ? "无可用本地 Key" : "暂无本地 Key"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex min-w-0 justify-center">
+                    {hasImportedLocalKey ? (
+                      <StatusBadge tone="healthy" className="h-5 px-1.5 text-[11px]">已导入</StatusBadge>
+                    ) : isMatched ? (
+                      <StatusBadge tone="info" className="h-5 px-1.5 text-[11px]">已关联</StatusBadge>
+                    ) : hasLocalKeyRelation ? (
+                      <StatusBadge tone="warning" className="h-5 px-1.5 text-[11px]">待确认</StatusBadge>
+                    ) : (
+                      <IconButton
+                        className="h-7 w-7 text-muted-foreground"
+                        disabled={loading || readOnly}
+                        label={`导入 ${key.remoteKeyName ?? "远端 Key"} 到 Key 池`}
+                        onClick={() => onImport(key)}
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </IconButton>
+                    )}
+                  </div>
+                  <div className="flex min-w-0 justify-center gap-0.5">
+                    {key.matchedStationKeyId && (
+                      <IconButton
+                        className="h-7 w-7 text-muted-foreground"
+                        disabled={loading || readOnly}
+                        label={`解除 ${key.remoteKeyName ?? "远端 Key"} 的本地关联`}
+                        onClick={() => onUnbind(key)}
+                      >
+                        <Unlink className="h-3.5 w-3.5" />
+                      </IconButton>
+                    )}
+                    {hasImportedLocalKey && (
+                      <IconButton
+                        className="h-7 w-7 text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"
+                        disabled={loading || readOnly}
+                        label={`从 Key 池移除 ${key.remoteKeyName ?? "远端 Key"}`}
+                        onClick={() => onDeleteImportedLocalKey(key)}
+                      >
+                        <CircleMinus className="h-3.5 w-3.5" />
+                      </IconButton>
                     )}
                     <IconButton
                       className="h-7 w-7 shrink-0 text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"

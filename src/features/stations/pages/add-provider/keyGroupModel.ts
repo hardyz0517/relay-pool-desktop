@@ -7,7 +7,11 @@ import {
   type StationGroupBinding,
   type StationGroupOption,
 } from "@/lib/types/groupFacts";
-import type { RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
+import type {
+  RemoteStationKey,
+  StationKey,
+  UpdateStationKeyInput,
+} from "@/lib/types/stationKeys";
 import type { StationGroupDraft } from "../../components/StationGroupRowsEditor";
 import type { StationKeyDraft, StationKeyGroupOption } from "../../components/StationKeyRowsEditor";
 import {
@@ -17,6 +21,8 @@ import {
   formatMultiplier,
 } from "@/lib/groupOptionViewModels";
 import { remoteLocalKeyNotePrefix } from "./formModel";
+
+export const legacyRemoteLocalKeyNote = "由远端站点创建并同步。";
 
 export function keyToDraft(key: StationKey): StationKeyDraft {
   return {
@@ -31,6 +37,34 @@ export function keyToDraft(key: StationKey): StationKeyDraft {
     enabled: key.enabled,
     note: key.note ?? "",
     deleteRequested: false,
+  };
+}
+
+export function stationKeyToUpdateInput(
+  key: StationKey,
+  overrides: Partial<UpdateStationKeyInput> = {},
+): UpdateStationKeyInput {
+  return {
+    id: key.id,
+    stationId: key.stationId,
+    name: key.name,
+    apiKey: null,
+    enabled: key.enabled,
+    priority: key.priority,
+    maxConcurrency: key.maxConcurrency,
+    loadFactor: key.loadFactor,
+    schedulable: key.schedulable,
+    groupBindingId: key.groupBindingId,
+    groupIdHash: key.groupIdHash,
+    groupName: key.groupName,
+    tierLabel: key.tierLabel,
+    rateMultiplier: key.rateMultiplier,
+    manualRateMultiplier: key.manualRateMultiplier,
+    rateSource: key.rateSource,
+    balanceScope: key.balanceScope,
+    status: key.status,
+    note: key.note,
+    ...overrides,
   };
 }
 
@@ -412,18 +446,57 @@ export function resolveRemoteCreatedLocalKeyIds(
   remoteKeys: RemoteStationKey[],
   localKeys: StationKey[],
 ) {
+  const localKeysById = new Map(localKeys.map((key) => [key.id, key] as const));
   const localKeysByNote = new Map(
-    localKeys
-      .filter((key) => key.note?.startsWith(remoteLocalKeyNotePrefix))
-      .map((key) => [key.note, key.id] as const),
+    localKeys.flatMap((key) => (key.note ? [[key.note, key.id] as const] : [])),
   );
 
   return Object.fromEntries(
     remoteKeys.flatMap((remoteKey) => {
-      const localKeyId = localKeysByNote.get(remoteLocalKeyNote(remoteKey));
+      const localKeyId =
+        localKeysByNote.get(remoteLocalKeyNote(remoteKey)) ??
+        resolveLegacyRemoteCreatedLocalKeyId(remoteKey, localKeysById);
       return localKeyId ? [[remoteKey.id, localKeyId] as const] : [];
     }),
   );
+}
+
+export function bindableLocalKeysForRemote(
+  remoteKeyId: string,
+  remoteKeys: RemoteStationKey[],
+  localKeys: StationKey[],
+) {
+  const localKeyOwners = new Map(
+    remoteKeys.flatMap((remoteKey) =>
+      remoteKey.matchedStationKeyId
+        ? [[remoteKey.matchedStationKeyId, remoteKey.id] as const]
+        : [],
+    ),
+  );
+  return localKeys.filter((localKey) => {
+    const owner = localKeyOwners.get(localKey.id);
+    return owner === undefined || owner === remoteKeyId;
+  });
+}
+
+export function isRemoteCreatedLocalKey(remoteKey: RemoteStationKey, localKey: StationKey) {
+  return (
+    localKey.note === remoteLocalKeyNote(remoteKey) ||
+    (localKey.note === legacyRemoteLocalKeyNote && remoteKey.matchedStationKeyId === localKey.id)
+  );
+}
+
+function resolveLegacyRemoteCreatedLocalKeyId(
+  remoteKey: RemoteStationKey,
+  localKeysById: Map<string, StationKey>,
+) {
+  if (!remoteKey.matchedStationKeyId) {
+    return undefined;
+  }
+  const matchedLocalKey = localKeysById.get(remoteKey.matchedStationKeyId);
+  return matchedLocalKey && isRemoteCreatedLocalKey(remoteKey, matchedLocalKey)
+    ? matchedLocalKey.id
+    : undefined;
 }
 
 export function remoteKeyDisplayName(remoteKey: RemoteStationKey) {

@@ -70,14 +70,15 @@ import {
   groupDraftToOption,
   groupsMatch,
   keyToDraft,
+  isRemoteCreatedLocalKey,
   mergeGroupRowsWithSavedOptions,
   mergeKeyRowsWithSavedGroupOptions,
   mergeRemoteGroupOptions,
   normalizeCollectionIntervalMinutes,
   parseCreditPerCny,
   remoteKeyDisplayName,
-  remoteLocalKeyNote,
   resolveRemoteCreatedLocalKeyIds,
+  stationKeyToUpdateInput,
   syncRowsWithGroupRateOptions,
   validateGroupRows,
   validateKeyRows,
@@ -138,6 +139,10 @@ export function useAddProviderPageController({
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [remoteKeyPendingDelete, setRemoteKeyPendingDelete] = useState<RemoteStationKey | null>(null);
+  const [importedLocalKeyPendingDelete, setImportedLocalKeyPendingDelete] = useState<{
+    remoteKey: RemoteStationKey;
+    stationKeyId: string;
+  } | null>(null);
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
   const [commonLoginOptions, setCommonLoginOptions] = useState<CommonLoginOptions>({
     emails: [],
@@ -734,7 +739,11 @@ export function useAddProviderPageController({
     setError(null);
     try {
       const keys = await bindRemoteStationKey(remoteKeyId, stationKeyId);
-      setRemoteKeys(keys.filter((key) => key.stationId === activeStationId));
+      const nextRemoteKeys = keys.filter((key) => key.stationId === activeStationId);
+      setRemoteKeys(nextRemoteKeys);
+      setRemoteCreatedLocalKeyIds(
+        resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, localStationKeys),
+      );
       toast.success("远端 Key 已绑定");
     } catch (requestError) {
       const message = readError(requestError);
@@ -745,10 +754,7 @@ export function useAddProviderPageController({
     }
   }
 
-  async function handleRemoteLocalKeyToggle(
-    remoteKey: RemoteStationKey,
-    checked: boolean,
-  ) {
+  async function handleImportRemoteKey(remoteKey: RemoteStationKey) {
     if (!activeStationId) {
       toast.info("草稿阶段只能查看远端 Key");
       return;
@@ -756,24 +762,70 @@ export function useAddProviderPageController({
     setRemoteLoading(true);
     setError(null);
     try {
-      if (checked) {
-        await createLocalKeyFromRemote(remoteKey);
-      } else {
-        const createdLocalKeyId = remoteCreatedLocalKeyIds[remoteKey.id];
-        if (!createdLocalKeyId) {
-          toast.info("这条远端 Key 不是由开关创建的本地 Key，未删除");
-          return;
-        }
-        await deleteRemoteCreatedLocalKey(
-          remoteKey,
-          createdLocalKeyId,
-        );
-      }
+      await createLocalKeyFromRemote(remoteKey);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      toast.error(checked ? "创建本地 Key 失败" : "删除本地 Key 失败", message);
+      toast.error("导入本地 Key 失败", message);
     } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  async function handleUnbindRemoteKey(remoteKey: RemoteStationKey) {
+    if (!activeStationId || remoteLoading) {
+      return;
+    }
+    setRemoteLoading(true);
+    setError(null);
+    try {
+      const nextRemoteKeys = (await unbindRemoteStationKey(remoteKey.id, activeStationId)).filter(
+        (key) => key.stationId === activeStationId,
+      );
+      setRemoteKeys(nextRemoteKeys);
+      setRemoteCreatedLocalKeyIds(
+        resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, localStationKeys),
+      );
+      await invalidateProviderWorkspaceCaches();
+      toast.success("本地关联已解除", "Key 池中的本地 Key 保持不变。");
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("解除本地关联失败", message);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  function requestDeleteImportedLocalKey(remoteKey: RemoteStationKey) {
+    const stationKeyId = remoteCreatedLocalKeyIds[remoteKey.id];
+    if (!stationKeyId || remoteLoading) {
+      return;
+    }
+    setImportedLocalKeyPendingDelete({ remoteKey, stationKeyId });
+  }
+
+  function cancelDeleteImportedLocalKey() {
+    if (!remoteLoading) {
+      setImportedLocalKeyPendingDelete(null);
+    }
+  }
+
+  async function confirmDeleteImportedLocalKey() {
+    const pending = importedLocalKeyPendingDelete;
+    if (!pending || remoteLoading) {
+      return;
+    }
+    setRemoteLoading(true);
+    setError(null);
+    try {
+      await deleteRemoteCreatedLocalKey(pending.remoteKey, pending.stationKeyId);
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("删除导入的本地 Key 失败", message);
+    } finally {
+      setImportedLocalKeyPendingDelete(null);
       setRemoteLoading(false);
     }
   }
@@ -781,12 +833,9 @@ export function useAddProviderPageController({
   async function createLocalKeyFromRemote(remoteKey: RemoteStationKey) {
     const targetStationId = await ensureStationForRemoteKeyActions();
     const result = await createLocalStationKeyFromRemote(remoteKey.id, targetStationId);
-    await updateStationKey({
-      ...result.stationKey,
-      apiKey: null,
+    await updateStationKey(stationKeyToUpdateInput(result.stationKey, {
       rateMultiplier: effectiveRateMultiplierForCredit(remoteKey.rateMultiplier, currentCreditPerCny),
-      note: remoteLocalKeyNote(remoteKey),
-    });
+    }));
     const nextRemoteKeys = (await bindRemoteStationKey(remoteKey.id, result.stationKey.id)).filter(
       (key) => key.stationId === targetStationId,
     );
@@ -801,24 +850,20 @@ export function useAddProviderPageController({
     remoteKey: RemoteStationKey,
     expectedStationKeyId: string,
   ) {
-    if (remoteKey.matchedStationKeyId && remoteKey.matchedStationKeyId !== expectedStationKeyId) {
-      throw new Error("远端 Key 已匹配到其他本地 Key，未删除。");
-    }
-
     const expectedLocalKey = localStationKeys.find((key) => key.id === expectedStationKeyId);
-    if (expectedLocalKey?.note !== remoteLocalKeyNote(remoteKey)) {
-      throw new Error("这把本地 Key 不是开关自动创建的，未删除。");
+    if (!expectedLocalKey || !isRemoteCreatedLocalKey(remoteKey, expectedLocalKey)) {
+      throw new Error("这把本地 Key 不是由远端导入的，未删除。");
     }
 
-    const nextRemoteKeys = (await unbindRemoteStationKey(remoteKey.id, remoteKey.stationId)).filter(
-      (key) => key.stationId === remoteKey.stationId,
-    );
     await deleteStationKey(expectedStationKeyId);
-    const nextLocalKeys = await refreshLocalStationKeyState(remoteKey.stationId);
+    const [nextRemoteKeys, nextLocalKeys] = await Promise.all([
+      listRemoteStationKeys(remoteKey.stationId),
+      refreshLocalStationKeyState(remoteKey.stationId),
+    ]);
     await invalidateProviderWorkspaceCaches();
     setRemoteKeys(nextRemoteKeys);
     setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
-    toast.success("已删除自动创建的本地 Key");
+    toast.success("已删除导入的本地 Key");
   }
 
   function requestDeleteRemoteKey(remoteKey: RemoteStationKey) {
@@ -962,11 +1007,13 @@ export function useAddProviderPageController({
   return {
     activeStationId,
     applyPreset,
+    cancelDeleteImportedLocalKey,
     cancelDeleteRemoteKey,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
     commonLoginOptions,
     confirmDiscardChanges,
+    confirmDeleteImportedLocalKey,
     confirmDeleteRemoteKey,
     connectionTest,
     createRemoteDisabled,
@@ -987,7 +1034,7 @@ export function useAddProviderPageController({
     handleCreateRemoteKey,
     handleGroupRowsChange,
     handleOpenCreateRemoteKey,
-    handleRemoteLocalKeyToggle,
+    handleImportRemoteKey,
     handleScanRemoteKeys,
     handleStartManualAuthorization,
     handleStationTypeChange,
@@ -995,6 +1042,7 @@ export function useAddProviderPageController({
     handleSyncRemoteGroups,
     handleTestConnection,
     keyRows,
+    importedLocalKeyPendingDelete,
     loading,
     passwordProfileLoading,
     providerDraftId,
@@ -1011,6 +1059,7 @@ export function useAddProviderPageController({
     remoteLoading,
     remoteUnsupportedReason,
     requestDeleteRemoteKey,
+    requestDeleteImportedLocalKey,
     requestExit,
     resetConnectionTest,
     saving,
@@ -1020,5 +1069,6 @@ export function useAddProviderPageController({
     testingConnection,
     startingAuthorization,
     handleCopyWebsiteUrl,
+    handleUnbindRemoteKey,
   };
 }
