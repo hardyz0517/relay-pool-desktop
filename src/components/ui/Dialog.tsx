@@ -1,4 +1,4 @@
-import { useLayoutEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { Button } from "./button";
@@ -28,6 +28,40 @@ export function Dialog({
   className,
 }: DialogProps) {
   const interactionActive = useInteractionActivity();
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+
+    if (!open) {
+      if (!mounted) {
+        setVisible(false);
+        return;
+      }
+
+      setVisible(false);
+      closeTimerRef.current = window.setTimeout(() => {
+        setMounted(false);
+        closeTimerRef.current = null;
+      }, 200);
+      return;
+    }
+
+    setMounted(true);
+    const frameId = window.requestAnimationFrame(() => setVisible(true));
+    return () => window.cancelAnimationFrame(frameId);
+  }, [mounted, open]);
 
   useLayoutEffect(() => {
     if (!interactionActive && open) {
@@ -36,7 +70,7 @@ export function Dialog({
   }, [interactionActive, onClose, open]);
 
   useLayoutEffect(() => {
-    if (!open || !interactionActive) {
+    if (!mounted || !interactionActive) {
       return;
     }
 
@@ -52,9 +86,9 @@ export function Dialog({
         document.body.style.overflow = previousBodyOverflow;
       }
     };
-  }, [interactionActive, open]);
+  }, [interactionActive, mounted]);
 
-  if (!open || !interactionActive) {
+  if (!mounted || !interactionActive) {
     return null;
   }
 
@@ -62,11 +96,15 @@ export function Dialog({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/45 p-4 backdrop-blur-[1px]"
+      className={cn(
+        "fixed inset-0 z-50 flex items-center justify-center bg-transparent p-4 backdrop-blur-0 transition-[background-color,backdrop-filter] duration-200 ease-out",
+        visible && "bg-scrim/45 backdrop-blur-[1px]",
+      )}
     >
       <div
         className={cn(
-          "max-h-[calc(100vh-32px)] w-full max-w-[780px] overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-dialog",
+          "max-h-[calc(100vh-32px)] w-full max-w-[780px] overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-dialog transition-[opacity,transform] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
+          visible ? "translate-y-0 scale-100 opacity-100" : "translate-y-3 scale-[0.96] opacity-0",
           className,
         )}
       >

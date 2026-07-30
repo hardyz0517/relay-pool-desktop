@@ -7,6 +7,9 @@ import type {
   ChannelStatusWorkspaceInput,
   ChannelStatusWorkspaceWindow,
 } from "@/lib/types/channelMonitors";
+import { normalizeGroupCategory } from "@/lib/groupCategories";
+import { groupVisualMetaFor, type StationGroupVisualPlatform } from "@/lib/groupVisualMeta";
+import { protocolLabel } from "@/lib/channelMonitorDisplay";
 
 export type ChannelWindow = ChannelStatusWorkspaceWindow;
 
@@ -18,8 +21,6 @@ export type ChannelStatusFilters = {
   search: string;
   enabled: "all" | "enabled" | "disabled";
   outcome: "all" | ChannelStatusOutcome;
-  protocolKind: string;
-  clientProfileId: string;
 };
 
 export type ChannelStatusSortModel = {
@@ -39,6 +40,10 @@ export type TrendCellView = {
   tone: TrendCellTone;
   label: string;
   title: string;
+  modelLabel: string;
+  timeLabel: string;
+  availabilityLabel: string;
+  latencyLabel: string;
   latencyMs: number | null;
   startMs: number | null;
   endMs: number | null;
@@ -52,9 +57,10 @@ export type ChannelStatusRowView = {
   targetName: string;
   stationName: string;
   keyName: string | null;
+  groupName: string | null;
+  visualPlatform: StationGroupVisualPlatform;
+  visualPlatformLabel: string;
   enabled: boolean;
-  protocolLabel: string;
-  profileLabel: string;
   modelLabel: string;
   currentTone: StatusTone;
   currentLabel: string;
@@ -62,23 +68,18 @@ export type ChannelStatusRowView = {
   runningExecutionId: string | null;
   latestExecutionId: string | null;
   availabilityPercent: number | null;
-  strictAvailabilityPercent: number | null;
   availabilityLabel: string;
   latencyMs: number | null;
   latencyLabel: string;
   lastCheckedAtMs: number | null;
   lastCheckedLabel: string;
-  attemptsLabel: string;
-  fallbackLabel: string;
+  recentTrend: TrendCellView[];
   trend: TrendCellView[];
   dirty: boolean;
   corrupt: boolean;
 };
 
 export type ChannelStatusWorkspaceView = {
-  generatedAtLabel: string;
-  freshnessLabel: string;
-  aggregateLabel: string;
   rows: ChannelStatusRowView[];
 };
 
@@ -86,8 +87,6 @@ export const defaultChannelStatusFilters: ChannelStatusFilters = {
   search: "",
   enabled: "all",
   outcome: "all",
-  protocolKind: "",
-  clientProfileId: "",
 };
 
 export const defaultChannelStatusSort: ChannelStatusSortModel = {
@@ -107,8 +106,8 @@ export function createChannelStatusWorkspaceInput({
       search: blankToNull(filters.search),
       enabled: filters.enabled === "all" ? null : filters.enabled === "enabled",
       outcome: filters.outcome === "all" ? null : filters.outcome,
-      protocolKind: blankToNull(filters.protocolKind),
-      clientProfileId: blankToNull(filters.clientProfileId),
+      protocolKind: null,
+      clientProfileId: null,
       stationId: null,
     },
     sort: {
@@ -125,17 +124,11 @@ export function buildChannelStatusWorkspaceView(
 ): ChannelStatusWorkspaceView {
   if (!workspace) {
     return {
-      generatedAtLabel: "--",
-      freshnessLabel: "尚未加载",
-      aggregateLabel: "0 行",
       rows: [],
     };
   }
 
   return {
-    generatedAtLabel: formatTime(workspace.generatedAtMs),
-    freshnessLabel: formatFreshness(workspace),
-    aggregateLabel: `${workspace.aggregate.returnedRows}/${workspace.aggregate.totalRows} 行 · ${workspace.aggregate.runningRows} 运行中`,
     rows: workspace.rows.map((row) => buildRowView(row, workspace.window)),
   };
 }
@@ -151,7 +144,16 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
       : currentOutcome
     : "disabled";
   const availabilityPercent = bpsToPercent(selected.effectiveAvailabilityBps);
-  const strictAvailabilityPercent = bpsToPercent(selected.strictAvailabilityBps);
+  const groupEvidence = [
+    row.target.groupName,
+    row.monitor.primaryModel,
+    protocolLabel(row.monitor.protocolKind),
+  ].filter((value): value is string => Boolean(value)).join(" ");
+  const groupVisualMeta = groupVisualMetaFor(
+    groupEvidence,
+    null,
+    normalizeGroupCategory(row.target.effectiveGroupCategory),
+  );
 
   return {
     rowKey: row.rowKey,
@@ -160,9 +162,10 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     targetName: row.target.stationKeyName ?? row.target.stationName ?? row.monitor.name,
     stationName: row.target.stationName ?? row.target.stationId,
     keyName: row.target.stationKeyName,
+    groupName: row.target.groupName,
+    visualPlatform: groupVisualMeta.platform,
+    visualPlatformLabel: groupVisualMeta.label,
     enabled: row.monitor.enabled,
-    protocolLabel: normalizeProtocolLabel(row.monitor.protocolKind),
-    profileLabel: `${row.monitor.clientProfileId}@${row.monitor.clientProfileVersion}`,
     modelLabel: formatModelLabel(row.monitor.primaryModel, row.monitor.fallbackModels),
     currentTone,
     currentLabel: statusLabel(currentTone),
@@ -170,14 +173,12 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     runningExecutionId,
     latestExecutionId: latest?.executionId ?? null,
     availabilityPercent,
-    strictAvailabilityPercent,
     availabilityLabel: formatAvailability(availabilityPercent),
     latencyMs: latest?.latencyMs ?? null,
     latencyLabel: formatLatency(latest?.latencyMs ?? null),
     lastCheckedAtMs: selected.latestCheckedAtMs,
     lastCheckedLabel: formatTime(selected.latestCheckedAtMs),
-    attemptsLabel: latest ? `${latest.attemptCount} 次` : "--",
-    fallbackLabel: latest?.usedFallback ? `fallback · ${latest.effectiveModel ?? "未知模型"}` : latest?.effectiveModel ?? "primary",
+    recentTrend: buildTrend(row, "recent"),
     trend: buildTrend(row, window),
     dirty: selected.dirty || row.hourlyBuckets.some((bucket) => bucket.dirty) || row.dailyBuckets.some((bucket) => bucket.dirty),
     corrupt: selected.corrupt || row.hourlyBuckets.some((bucket) => bucket.corrupt) || row.dailyBuckets.some((bucket) => bucket.corrupt),
@@ -185,16 +186,19 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
 }
 
 export function buildTrend(row: ChannelStatusRow, window: ChannelWindow): TrendCellView[] {
+  const modelLabel = formatModelLabel(row.monitor.primaryModel, row.monitor.fallbackModels);
   if (window === "recent") {
-    return row.recent.map(recentPointToCell);
+    return [...row.recent].reverse().map((point, index) =>
+      recentPointToCell(point, index, row.monitor.primaryModel),
+    );
   }
   if (window === "last24h") {
-    return row.hourlyBuckets.map(bucketToCell);
+    return row.hourlyBuckets.map((bucket) => bucketToCell(bucket, modelLabel));
   }
   if (window === "last7d") {
-    return row.dailyBuckets.slice(-7).map(bucketToCell);
+    return row.dailyBuckets.slice(-7).map((bucket) => bucketToCell(bucket, modelLabel));
   }
-  return row.dailyBuckets.map(bucketToCell);
+  return row.dailyBuckets.map((bucket) => bucketToCell(bucket, modelLabel));
 }
 
 export function availabilityTone(value: number | null): AvailabilityTone {
@@ -253,20 +257,47 @@ export function formatTime(value: number | null | undefined) {
   });
 }
 
-function recentPointToCell(point: ChannelStatusRecentPoint, index: number): TrendCellView {
+function formatTrendTime(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).replace(/\//g, "-");
+}
+
+function recentPointToCell(point: ChannelStatusRecentPoint, index: number, primaryModel: string): TrendCellView {
   const tone = outcomeToTrendTone(point.outcome);
+  const availabilityLabel = outcomeLabel(point.outcome);
+  const timeLabel = formatTrendTime(point.checkedAtMs);
+  const latencyLabel = formatLatency(point.latencyMs);
+  const modelLabel = point.effectiveModel ?? primaryModel;
   return {
     id: point.targetResultId || `${point.executionId}-${index}`,
     tone,
-    label: outcomeLabel(point.outcome),
+    label: availabilityLabel,
     title: [
-      outcomeLabel(point.outcome),
-      `时间：${formatTime(point.checkedAtMs)}`,
-      `延迟：${formatLatency(point.latencyMs)}`,
+      `模型：${modelLabel}`,
+      `时间：${timeLabel}`,
+      `可用：${availabilityLabel}`,
+      `延迟：${latencyLabel}`,
       `尝试：${point.attemptCount}`,
       point.failureKind ? `失败分类：${point.failureKind}` : null,
       point.terminalReason ? `原因：${point.terminalReason}` : null,
     ].filter(Boolean).join("\n"),
+    modelLabel,
+    timeLabel,
+    availabilityLabel,
+    latencyLabel,
     latencyMs: point.latencyMs,
     startMs: point.checkedAtMs,
     endMs: point.checkedAtMs,
@@ -274,25 +305,33 @@ function recentPointToCell(point: ChannelStatusRecentPoint, index: number): Tren
   };
 }
 
-function bucketToCell(bucket: ChannelStatusBucket): TrendCellView {
-  const tone = bucket.corrupt ? "corrupt" : bucket.dirty ? "dirty" : bucketStateToTrendTone(bucket);
+function bucketToCell(bucket: ChannelStatusBucket, modelLabel: string): TrendCellView {
+  const tone = bucket.corrupt ? "corrupt" : bucketStateToTrendTone(bucket);
   const failureCounts = Object.entries(bucket.failureCounts)
     .map(([kind, count]) => `${kind}:${count}`)
     .join(", ");
+  const availabilityLabel = bucketStateLabel(bucket.state);
+  const timeLabel = `${formatTrendTime(bucket.startMs)} - ${formatTrendTime(bucket.endMs)}`;
+  const latencyLabel = formatLatency(bucket.p50LatencyMs);
   return {
     id: `${bucket.kind}-${bucket.startMs}`,
     tone,
-    label: bucketStateLabel(bucket.state),
+    label: availabilityLabel,
     title: [
-      `${formatTime(bucket.startMs)} - ${formatTime(bucket.endMs)}`,
-      `状态：${bucketStateLabel(bucket.state)}`,
+      `模型：${modelLabel}`,
+      `时间：${timeLabel}`,
+      `可用：${availabilityLabel}`,
+      `延迟：${latencyLabel}`,
       `样本：${bucket.counts.total} · 可用 ${bucket.counts.available} · 降级 ${bucket.counts.degraded} · 不可用 ${bucket.counts.unavailable} · 跳过 ${bucket.counts.skipped}`,
       `可用率：${formatAvailability(bpsToPercent(bucket.effectiveAvailabilityBps))}`,
       `P50/P95：${formatLatency(bucket.p50LatencyMs)} / ${formatLatency(bucket.p95LatencyMs)}`,
       failureCounts ? `失败分类：${failureCounts}` : null,
-      bucket.dirty ? "rollup 需要重建" : null,
-      bucket.corrupt ? "rollup 数据异常" : null,
+      bucket.corrupt ? "汇总数据异常" : null,
     ].filter(Boolean).join("\n"),
+    modelLabel,
+    timeLabel,
+    availabilityLabel,
+    latencyLabel,
     latencyMs: bucket.p50LatencyMs,
     startMs: bucket.startMs,
     endMs: bucket.endMs,
@@ -342,25 +381,10 @@ function bucketStateLabel(state: ChannelStatusBucket["state"]) {
     case "skipped_only":
       return "仅跳过";
     case "dirty":
-      return "待重建";
+      return "缺失";
     default:
       return "缺失";
   }
-}
-
-function statusSummaryLabel(outcome: ChannelStatusOutcome) {
-  return outcomeLabel(outcome);
-}
-
-function formatFreshness(workspace: ChannelStatusWorkspace) {
-  const parts = [
-    `最新 ${formatTime(workspace.freshness.newestResultAtMs)}`,
-    workspace.freshness.hasDirtyRollups ? "有待重建 rollup" : null,
-    workspace.freshness.hasCorruptRollups ? "有异常 rollup" : null,
-    workspace.freshness.runningExecutionCount > 0 ? `${workspace.freshness.runningExecutionCount} 个执行中` : null,
-    `当前窗口 ${statusSummaryLabel(workspace.aggregate.unavailableRows > 0 ? "unavailable" : workspace.aggregate.degradedRows > 0 ? "degraded" : workspace.aggregate.availableRows > 0 ? "available" : "missing")}`,
-  ];
-  return parts.filter(Boolean).join(" · ");
 }
 
 function formatModelLabel(primary: string, fallbacks: string[]) {
@@ -368,16 +392,6 @@ function formatModelLabel(primary: string, fallbacks: string[]) {
     return primary;
   }
   return `${primary} +${fallbacks.length}`;
-}
-
-function normalizeProtocolLabel(value: string) {
-  if (value === "openai_chat") return "OpenAI Chat";
-  if (value === "openai_responses") return "OpenAI Responses";
-  if (value === "anthropic_messages") return "Anthropic";
-  if (value === "gemini_native") return "Gemini";
-  if (value === "xai_grok") return "xAI/Grok";
-  if (value === "generic_openai") return "OpenAI-compatible";
-  return value;
 }
 
 function bpsToPercent(value: number | null) {

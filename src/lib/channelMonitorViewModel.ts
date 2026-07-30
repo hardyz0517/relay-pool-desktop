@@ -1,10 +1,14 @@
 import type { StatusTone } from "@/components/ui";
 import type {
   ChannelMonitor,
+  ChannelMonitorClientProfileId,
+  ChannelMonitorHealthWritebackMode,
+  ChannelMonitorProtocolKind,
   ChannelMonitorRequestTemplate,
   ChannelMonitorRunStatus,
   ChannelMonitorTargetType,
   CreateChannelMonitorInput,
+  MonitoringCapabilityCatalog,
 } from "@/lib/types/channelMonitors";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
@@ -18,13 +22,22 @@ export type ChannelMonitorDraft = {
   stationKeyId: string;
   templateId: string;
   enabled: boolean;
+  protocolKind: ChannelMonitorProtocolKind;
+  clientProfileId: ChannelMonitorClientProfileId;
+  clientProfileVersion: string;
   intervalSeconds: string;
   jitterSeconds: string;
-  timeoutSeconds: string;
-  maxConcurrency: string;
-  consecutiveFailureThreshold: string;
-  detectionModel: string;
-  extraFallbackModels: string[];
+  primaryModel: string;
+  fallbackModels: string[];
+  attemptTimeoutMs: string;
+  executionTimeoutMs: string;
+  retryMaxAttemptsPerModel: string;
+  retryInitialBackoffMs: string;
+  retryMaxBackoffMs: string;
+  riskDailyProbeBudget: string;
+  healthWritebackMode: ChannelMonitorHealthWritebackMode;
+  healthFailureThreshold: string;
+  healthRecoveryThreshold: string;
   note: string;
 };
 
@@ -36,6 +49,7 @@ export type RunStatusView = {
 type MonitorValidationContext = {
   templates: ChannelMonitorRequestTemplate[];
   keys: KeyPoolItem[];
+  capabilities: MonitoringCapabilityCatalog | undefined;
 };
 
 type StationKeyMonitorTemplatePreference = {
@@ -43,8 +57,6 @@ type StationKeyMonitorTemplatePreference = {
   stationUpstreamApiFormat?: string | null;
   capabilities?: Pick<StationKeyCapabilities, "supportsChatCompletions" | "supportsResponses"> | null;
 };
-
-export type ChannelMonitorProtocol = "chat_completions" | "responses";
 
 export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4.1-mini";
 export const DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID = "builtin-openai-responses-low-token";
@@ -96,19 +108,14 @@ export function preferredStationKeyMonitorTemplate(
     null;
 }
 
-export function protocolForMonitorTemplate(
-  templateId: string,
-  templates: Array<Pick<ChannelMonitorRequestTemplate, "id" | "endpointKind">>,
-): ChannelMonitorProtocol {
-  const endpointKind = templates.find((template) => template.id === templateId)?.endpointKind;
-  return endpointKind === "responses" ? "responses" : "chat_completions";
-}
-
-export function monitorTemplateOptionsForProtocol<T extends Pick<ChannelMonitorRequestTemplate, "endpointKind">>(
-  templates: T[],
-  protocol: ChannelMonitorProtocol,
+export function templateForMonitorProtocol(
+  templates: ChannelMonitorRequestTemplate[],
+  protocol: ChannelMonitorProtocolKind,
 ) {
-  return templates.filter((template) => template.endpointKind === protocol);
+  const endpointKind = protocol === "open_ai_responses" ? "responses" : "chat_completions";
+  return templates.find((template) => template.enabled && template.endpointKind === endpointKind)
+    ?? templates.find((template) => template.enabled)
+    ?? null;
 }
 
 export function selectStationKeyMonitorModel(
@@ -127,7 +134,7 @@ export function selectStationKeyMonitorModel(
 
 export function createStationKeyMonitorInput(
   key: Pick<KeyPoolItem, "id" | "stationId" | "name">,
-  template: Pick<ChannelMonitorRequestTemplate, "id">,
+  template: Pick<ChannelMonitorRequestTemplate, "id" | "endpointKind">,
   capabilities?: Pick<StationKeyCapabilities, "modelAllowlist" | "modelBlocklist" | "preferredModels"> | null,
   testedModel?: string | null,
 ): CreateChannelMonitorInput {
@@ -139,12 +146,25 @@ export function createStationKeyMonitorInput(
     stationKeyId: key.id,
     templateId: template.id,
     enabled: true,
+    protocolKind: template.endpointKind === "responses" ? "open_ai_responses" : "open_ai_chat",
+    clientProfileId: "standard_api",
+    clientProfileVersion: 1,
+    primaryModel: fallbackModel,
+    retryMaxAttemptsPerModel: 1,
+    retryInitialBackoffMs: 200,
+    retryMaxBackoffMs: 2_000,
+    riskDailyProbeBudget: 200,
+    healthWritebackMode: "observe_only",
+    healthFailureThreshold: 2,
+    healthRecoveryThreshold: 2,
+    attemptTimeoutMs: 10_000,
+    executionTimeoutMs: 30_000,
     intervalSeconds: 300,
     jitterSeconds: 15,
     timeoutSeconds: 30,
     maxConcurrency: 1,
     consecutiveFailureThreshold: 3,
-    fallbackModels: [fallbackModel],
+    fallbackModels: [],
     note: STATION_KEY_MONITOR_NOTE,
   };
 }
@@ -161,6 +181,19 @@ export function updateStationKeyMonitorEnabledInput(
     stationKeyId: monitor.stationKeyId,
     templateId: monitor.templateId,
     enabled,
+    protocolKind: monitor.protocolKind,
+    clientProfileId: monitor.clientProfileId,
+    clientProfileVersion: monitor.clientProfileVersion,
+    primaryModel: monitor.primaryModel,
+    retryMaxAttemptsPerModel: monitor.retryMaxAttemptsPerModel,
+    retryInitialBackoffMs: monitor.retryInitialBackoffMs,
+    retryMaxBackoffMs: monitor.retryMaxBackoffMs,
+    riskDailyProbeBudget: monitor.riskDailyProbeBudget,
+    healthWritebackMode: monitor.healthWritebackMode,
+    healthFailureThreshold: monitor.healthFailureThreshold,
+    healthRecoveryThreshold: monitor.healthRecoveryThreshold,
+    attemptTimeoutMs: monitor.attemptTimeoutMs,
+    executionTimeoutMs: monitor.executionTimeoutMs,
     intervalSeconds: monitor.intervalSeconds,
     jitterSeconds: monitor.jitterSeconds,
     timeoutSeconds: monitor.timeoutSeconds,
@@ -171,22 +204,40 @@ export function updateStationKeyMonitorEnabledInput(
   };
 }
 
-export function createEmptyMonitorDraft(stations: Station[] = [], templates: ChannelMonitorRequestTemplate[] = []): ChannelMonitorDraft {
+export function createEmptyMonitorDraft(
+  stations: Station[] = [],
+  templates: ChannelMonitorRequestTemplate[] = [],
+  capabilities?: MonitoringCapabilityCatalog,
+): ChannelMonitorDraft {
   const stationId = stations[0]?.id ?? "";
+  const firstTemplate = templates.find((template) => template.enabled);
+  const protocolKind: ChannelMonitorProtocolKind = firstTemplate?.endpointKind === "responses"
+    ? "open_ai_responses"
+    : "open_ai_chat";
+  const standardProfile = capabilities?.profiles.find((profile) => profile.id === "standard_api");
   return {
     name: "",
     targetType: "station_key",
     stationId,
     stationKeyId: "",
-    templateId: templates.find((template) => template.enabled)?.id ?? "",
+    templateId: firstTemplate?.id ?? "",
     enabled: true,
-    intervalSeconds: "60",
-    jitterSeconds: "0",
-    timeoutSeconds: "30",
-    maxConcurrency: "2",
-    consecutiveFailureThreshold: "3",
-    detectionModel: "",
-    extraFallbackModels: [],
+    protocolKind,
+    clientProfileId: "standard_api",
+    clientProfileVersion: String(standardProfile?.version ?? 1),
+    intervalSeconds: "300",
+    jitterSeconds: "30",
+    primaryModel: "",
+    fallbackModels: [],
+    attemptTimeoutMs: "10000",
+    executionTimeoutMs: "30000",
+    retryMaxAttemptsPerModel: "1",
+    retryInitialBackoffMs: "200",
+    retryMaxBackoffMs: "2000",
+    riskDailyProbeBudget: "200",
+    healthWritebackMode: "observe_only",
+    healthFailureThreshold: "2",
+    healthRecoveryThreshold: "2",
     note: "",
   };
 }
@@ -199,13 +250,22 @@ export function monitorToDraft(monitor: ChannelMonitor): ChannelMonitorDraft {
     stationKeyId: monitor.stationKeyId ?? "",
     templateId: monitor.templateId,
     enabled: monitor.enabled,
+    protocolKind: monitor.protocolKind,
+    clientProfileId: monitor.clientProfileId,
+    clientProfileVersion: String(monitor.clientProfileVersion),
     intervalSeconds: String(monitor.intervalSeconds),
     jitterSeconds: String(monitor.jitterSeconds),
-    timeoutSeconds: String(monitor.timeoutSeconds),
-    maxConcurrency: String(monitor.maxConcurrency),
-    consecutiveFailureThreshold: String(monitor.consecutiveFailureThreshold),
-    detectionModel: monitor.fallbackModels[0] ?? "",
-    extraFallbackModels: monitor.fallbackModels.slice(1),
+    primaryModel: monitor.primaryModel,
+    fallbackModels: [...monitor.fallbackModels],
+    attemptTimeoutMs: String(monitor.attemptTimeoutMs),
+    executionTimeoutMs: String(monitor.executionTimeoutMs),
+    retryMaxAttemptsPerModel: String(monitor.retryMaxAttemptsPerModel),
+    retryInitialBackoffMs: String(monitor.retryInitialBackoffMs),
+    retryMaxBackoffMs: String(monitor.retryMaxBackoffMs),
+    riskDailyProbeBudget: String(monitor.riskDailyProbeBudget),
+    healthWritebackMode: monitor.healthWritebackMode,
+    healthFailureThreshold: String(monitor.healthFailureThreshold),
+    healthRecoveryThreshold: String(monitor.healthRecoveryThreshold),
     note: monitor.note ?? "",
   };
 }
@@ -218,6 +278,19 @@ export function monitorToCreateInput(monitor: ChannelMonitor, name = `${monitor.
     stationKeyId: monitor.targetType === "station_key" ? monitor.stationKeyId : null,
     templateId: monitor.templateId,
     enabled: monitor.enabled,
+    protocolKind: monitor.protocolKind,
+    clientProfileId: monitor.clientProfileId,
+    clientProfileVersion: monitor.clientProfileVersion,
+    primaryModel: monitor.primaryModel,
+    retryMaxAttemptsPerModel: monitor.retryMaxAttemptsPerModel,
+    retryInitialBackoffMs: monitor.retryInitialBackoffMs,
+    retryMaxBackoffMs: monitor.retryMaxBackoffMs,
+    riskDailyProbeBudget: monitor.riskDailyProbeBudget,
+    healthWritebackMode: monitor.healthWritebackMode,
+    healthFailureThreshold: monitor.healthFailureThreshold,
+    healthRecoveryThreshold: monitor.healthRecoveryThreshold,
+    attemptTimeoutMs: monitor.attemptTimeoutMs,
+    executionTimeoutMs: monitor.executionTimeoutMs,
     intervalSeconds: monitor.intervalSeconds,
     jitterSeconds: monitor.jitterSeconds,
     timeoutSeconds: monitor.timeoutSeconds,
@@ -229,10 +302,11 @@ export function monitorToCreateInput(monitor: ChannelMonitor, name = `${monitor.
 }
 
 export function draftToMonitorInput(draft: ChannelMonitorDraft): CreateChannelMonitorInput {
-  const detectionModel = draft.detectionModel.trim();
-  const extraFallbackModels = draft.extraFallbackModels
+  const primaryModel = draft.primaryModel.trim();
+  const fallbackModels = draft.fallbackModels
     .map((model) => model.trim())
-    .filter((model) => model && model !== detectionModel);
+    .filter((model) => model && model !== primaryModel);
+  const executionTimeoutMs = toInteger(draft.executionTimeoutMs);
   return {
     name: draft.name.trim(),
     targetType: draft.targetType,
@@ -240,25 +314,44 @@ export function draftToMonitorInput(draft: ChannelMonitorDraft): CreateChannelMo
     stationKeyId: draft.targetType === "station_key" ? draft.stationKeyId : null,
     templateId: draft.templateId,
     enabled: draft.enabled,
+    protocolKind: draft.protocolKind,
+    clientProfileId: draft.clientProfileId,
+    clientProfileVersion: toInteger(draft.clientProfileVersion),
+    primaryModel,
+    retryMaxAttemptsPerModel: toInteger(draft.retryMaxAttemptsPerModel),
+    retryInitialBackoffMs: toInteger(draft.retryInitialBackoffMs),
+    retryMaxBackoffMs: toInteger(draft.retryMaxBackoffMs),
+    riskDailyProbeBudget: toInteger(draft.riskDailyProbeBudget),
+    healthWritebackMode: draft.healthWritebackMode,
+    healthFailureThreshold: toInteger(draft.healthFailureThreshold),
+    healthRecoveryThreshold: toInteger(draft.healthRecoveryThreshold),
+    attemptTimeoutMs: toInteger(draft.attemptTimeoutMs),
+    executionTimeoutMs,
     intervalSeconds: toInteger(draft.intervalSeconds),
     jitterSeconds: toInteger(draft.jitterSeconds),
-    timeoutSeconds: toInteger(draft.timeoutSeconds),
-    maxConcurrency: toInteger(draft.maxConcurrency),
-    consecutiveFailureThreshold: toInteger(draft.consecutiveFailureThreshold),
-    fallbackModels: [detectionModel, ...extraFallbackModels],
+    timeoutSeconds: Math.max(5, Math.min(120, Math.ceil(executionTimeoutMs / 1_000))),
+    maxConcurrency: draft.targetType === "station" ? 2 : 1,
+    consecutiveFailureThreshold: toInteger(draft.healthFailureThreshold),
+    fallbackModels,
     note: draft.note.trim() ? draft.note.trim() : null,
   };
 }
 
 export function validateMonitorDraft(
   draft: ChannelMonitorDraft,
-  { templates, keys }: MonitorValidationContext,
+  { templates, keys, capabilities }: MonitorValidationContext,
 ): string | null {
   const intervalSeconds = parseInteger(draft.intervalSeconds);
   const jitterSeconds = parseInteger(draft.jitterSeconds);
-  const timeoutSeconds = parseInteger(draft.timeoutSeconds);
-  const maxConcurrency = parseInteger(draft.maxConcurrency);
-  const consecutiveFailureThreshold = parseInteger(draft.consecutiveFailureThreshold);
+  const clientProfileVersion = parseInteger(draft.clientProfileVersion);
+  const retryMaxAttemptsPerModel = parseInteger(draft.retryMaxAttemptsPerModel);
+  const retryInitialBackoffMs = parseInteger(draft.retryInitialBackoffMs);
+  const retryMaxBackoffMs = parseInteger(draft.retryMaxBackoffMs);
+  const riskDailyProbeBudget = parseInteger(draft.riskDailyProbeBudget);
+  const healthFailureThreshold = parseInteger(draft.healthFailureThreshold);
+  const healthRecoveryThreshold = parseInteger(draft.healthRecoveryThreshold);
+  const attemptTimeoutMs = parseInteger(draft.attemptTimeoutMs);
+  const executionTimeoutMs = parseInteger(draft.executionTimeoutMs);
 
   if (!draft.name.trim()) {
     return "请输入监控名称";
@@ -291,8 +384,31 @@ export function validateMonitorDraft(
   if (!selectedTemplate.enabled) {
     return "所选请求模板已停用，请选择启用模板";
   }
-  if (!draft.detectionModel.trim()) {
+  if (!draft.primaryModel.trim()) {
     return "请输入检测模型";
+  }
+  if (draft.fallbackModels.filter((model) => model.trim()).length > 3) {
+    return "最多配置 3 个回退模型";
+  }
+  const normalizedModels = [draft.primaryModel, ...draft.fallbackModels]
+    .map((model) => model.trim().toLowerCase())
+    .filter(Boolean);
+  if (new Set(normalizedModels).size !== normalizedModels.length) {
+    return "主模型和回退模型不能重复";
+  }
+  const selectedProtocol = capabilities?.protocols.find((protocol) => protocol.id === draft.protocolKind);
+  if (!selectedProtocol || !selectedProtocol.enabled) {
+    return capabilities ? "请选择可用的请求协议" : "正在加载监控能力";
+  }
+  const selectedProfile = capabilities?.profiles.find((profile) => profile.id === draft.clientProfileId);
+  if (!selectedProfile || !selectedProfile.enabled) {
+    return capabilities ? "请选择可用的请求 Profile" : "正在加载监控能力";
+  }
+  if (!selectedProfile.supportedProtocols.includes(draft.protocolKind)) {
+    return "请求 Profile 不支持当前协议";
+  }
+  if (clientProfileVersion !== selectedProfile.version) {
+    return "请求 Profile 版本已变化，请重新选择";
   }
   if (!isInRange(intervalSeconds, 15, 3600)) {
     return "检测间隔需在 15 到 3600 秒之间";
@@ -303,15 +419,13 @@ export function validateMonitorDraft(
   if (intervalSeconds !== null && jitterSeconds !== null && intervalSeconds - jitterSeconds < 15) {
     return "检测间隔减去抖动至少需要 15 秒";
   }
-  if (!isInRange(timeoutSeconds, 5, 120)) {
-    return "超时时间需在 5 到 120 秒之间";
-  }
-  if (draft.targetType === "station" && !isInRange(maxConcurrency, 1, 10)) {
-    return "中转站目标的最大并发需在 1 到 10 之间";
-  }
-  if (!isInRange(consecutiveFailureThreshold, 1, 20)) {
-    return "连续失败阈值需在 1 到 20 之间";
-  }
+  if (!isInRange(attemptTimeoutMs, 1_000, 120_000)) return "单次请求超时需在 1000 到 120000 毫秒之间";
+  if (!isInRange(executionTimeoutMs, 1_000, 300_000) || (attemptTimeoutMs ?? 0) >= (executionTimeoutMs ?? 0)) return "任务超时必须大于单次请求超时";
+  if (!isInRange(retryMaxAttemptsPerModel, 1, 3)) return "每个模型尝试次数需在 1 到 3 之间";
+  if (!isInRange(retryInitialBackoffMs, 0, 60_000) || !isInRange(retryMaxBackoffMs, 0, 60_000) || (retryMaxBackoffMs ?? 0) < (retryInitialBackoffMs ?? 0)) return "重试退避范围无效";
+  if (!isInRange(riskDailyProbeBudget, 1, 10_000)) return "每日探测预算需在 1 到 10000 之间";
+  if (!isInRange(healthFailureThreshold, 1, 20) || !isInRange(healthRecoveryThreshold, 1, 20)) return "健康阈值需在 1 到 20 之间";
+  if (draft.healthWritebackMode === "authoritative" && draft.clientProfileId !== "standard_api") return "权威健康写回只能使用标准 API Profile";
   return null;
 }
 

@@ -26,8 +26,6 @@ describe("channel status V2 view model", () => {
         search: "  key-a  ",
         enabled: "enabled",
         outcome: "degraded",
-        protocolKind: "openai_chat",
-        clientProfileId: "codex_cli_compat",
       },
       sort: { field: "availability", direction: "asc" },
     })).toEqual({
@@ -37,8 +35,8 @@ describe("channel status V2 view model", () => {
         enabled: true,
         outcome: "degraded",
         stationId: null,
-        protocolKind: "openai_chat",
-        clientProfileId: "codex_cli_compat",
+        protocolKind: null,
+        clientProfileId: null,
       },
       sort: { field: "availability", direction: "asc" },
       cursor: null,
@@ -46,7 +44,7 @@ describe("channel status V2 view model", () => {
     });
   });
 
-  it("maps recent points directly without padding or generated outcomes", () => {
+  it("maps newest-first recent points to an oldest-first display timeline", () => {
     const row = fixtureRow();
     const trend = buildTrend(row, "recent");
 
@@ -67,9 +65,22 @@ describe("channel status V2 view model", () => {
     const view = buildRowView(row, "last24h");
 
     expect(view.currentLabel).toBe("降级");
+    expect(view.groupName).toBe("plus");
+    expect(view.visualPlatform).toBe("openai");
     expect(view.availabilityPercent).toBe(92.5);
-    expect(view.attemptsLabel).toBe("2 次");
-    expect(view.fallbackLabel).toContain("fallback");
+  });
+
+  it.each([
+    ["gpt", "openai"],
+    ["claude", "anthropic"],
+    ["gemini", "gemini"],
+    ["grok", "grok"],
+    ["image_generation", "image"],
+  ] as const)("maps the tested key group category %s to the %s mark", (category, platform) => {
+    const row = fixtureRow();
+    row.target.effectiveGroupCategory = category;
+
+    expect(buildRowView(row, "recent").visualPlatform).toBe(platform);
   });
 });
 
@@ -81,7 +92,7 @@ function fixtureRow(): ChannelStatusRow {
       name: "OpenAI monitor",
       targetType: "station_key",
       enabled: true,
-      protocolKind: "openai_chat",
+      protocolKind: "open_ai_chat",
       clientProfileId: "standard_api",
       clientProfileVersion: 1,
       primaryModel: "gpt-4.1-mini",
@@ -95,6 +106,8 @@ function fixtureRow(): ChannelStatusRow {
       stationName: "Station A",
       stationKeyId: "key-1",
       stationKeyName: "Key A",
+      groupName: "plus",
+      effectiveGroupCategory: "gpt",
     },
     latest: {
       targetResultId: "target-1",
@@ -112,19 +125,6 @@ function fixtureRow(): ChannelStatusRow {
     running: null,
     recent: [
       {
-        targetResultId: "target-recent-1",
-        executionId: "execution-recent-1",
-        outcome: "available",
-        failureKind: null,
-        terminalReason: null,
-        latencyMs: 120,
-        checkedAtMs: 1_700_000_000_000,
-        usedFallback: false,
-        semanticConfidence: "validated",
-        attemptCount: 1,
-        effectiveModel: "gpt-4.1-mini",
-      },
-      {
         targetResultId: "target-recent-2",
         executionId: "execution-recent-2",
         outcome: "unavailable",
@@ -136,6 +136,19 @@ function fixtureRow(): ChannelStatusRow {
         semanticConfidence: "validated",
         attemptCount: 1,
         effectiveModel: null,
+      },
+      {
+        targetResultId: "target-recent-1",
+        executionId: "execution-recent-1",
+        outcome: "available",
+        failureKind: null,
+        terminalReason: null,
+        latencyMs: 120,
+        checkedAtMs: 1_700_000_000_000,
+        usedFallback: false,
+        semanticConfidence: "validated",
+        attemptCount: 1,
+        effectiveModel: "gpt-4.1-mini",
       },
     ],
     hourlyBuckets: [

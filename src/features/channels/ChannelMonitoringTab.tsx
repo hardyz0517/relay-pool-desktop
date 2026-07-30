@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, Edit3, LayoutTemplate, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Copy, Edit3, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
@@ -11,14 +11,14 @@ import {
 } from "@/lib/api/channelMonitors";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
-import { channelMonitoringQueryOptions } from "@/lib/query/resourceQueries";
+import { channelMonitoringQueryOptions, monitoringCapabilitiesQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { toTimestampMillis } from "@/lib/time";
-import type { ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
+import type { ChannelMonitor, ChannelMonitorRun, CreateChannelMonitorInput } from "@/lib/types/channelMonitors";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
+import { profileLabel, protocolLabel } from "@/lib/channelMonitorDisplay";
 import { ChannelMonitorForm } from "./ChannelMonitorForm";
-import { ChannelMonitorTemplateManager } from "./ChannelMonitorTemplateManager";
 import {
   formatInterval,
   formatTargetLabel,
@@ -44,6 +44,7 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
   const toast = useToast();
   const queryClient = useQueryClient();
   const workspaceQuery = useActivityQuery(channelMonitoringQueryOptions());
+  const capabilitiesQuery = useActivityQuery(monitoringCapabilitiesQueryOptions());
   const workspace = workspaceQuery.data;
   const monitorSummaries = workspace?.monitorSummaries ?? [];
   const monitors = useMemo(
@@ -66,10 +67,10 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
   const [actionState, setActionState] = useState<ActionState>(null);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
-  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const [editingMonitor, setEditingMonitor] = useState<ChannelMonitor | null>(null);
   const [pendingDeleteMonitor, setPendingDeleteMonitor] = useState<ChannelMonitor | null>(null);
   const displayError = error ?? (workspaceQuery.error ? readError(workspaceQuery.error) : null);
+  const capabilitiesError = capabilitiesQuery.error ? readError(capabilitiesQuery.error) : null;
 
   const summary = useMemo(() => {
     const enabledCount = monitors.filter((monitor) => monitor.enabled).length;
@@ -155,7 +156,18 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
   }
 
   async function handleDuplicate(monitor: ChannelMonitor) {
-    const validationError = validateMonitorDraft(monitorToDraft(monitor), { templates, keys });
+    if (!capabilitiesQuery.data) {
+      toast.error(
+        "复制监控失败",
+        capabilitiesError ?? "监控能力仍在加载，请稍后重试",
+      );
+      return;
+    }
+    const validationError = validateMonitorDraft(monitorToDraft(monitor), {
+      templates,
+      keys,
+      capabilities: capabilitiesQuery.data,
+    });
     if (validationError) {
       toast.error("复制监控失败", validationError);
       return;
@@ -198,13 +210,15 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
   if (formOpen) {
     return (
       <ChannelMonitorForm
-        open={formOpen}
         monitor={editingMonitor}
         stations={stations}
         keys={keys}
         templates={templates}
+        capabilities={capabilitiesQuery.data}
+        capabilitiesError={capabilitiesError}
         saving={saving}
         onClose={closeForm}
+        onRetryCapabilities={() => void capabilitiesQuery.refetch()}
         onSubmit={handleSave}
       />
     );
@@ -223,10 +237,6 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
           <Button variant="secondary" onClick={() => void refresh(true)} disabled={loading}>
             <RefreshCw className="h-4 w-4" />
             刷新
-          </Button>
-          <Button variant="outline" onClick={() => setTemplateManagerOpen(true)}>
-            <LayoutTemplate className="h-4 w-4" />
-            模板管理
           </Button>
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
@@ -264,12 +274,6 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
         />
       )}
 
-      <ChannelMonitorTemplateManager
-        open={templateManagerOpen}
-        templates={templates}
-        onClose={() => setTemplateManagerOpen(false)}
-        onChanged={() => refresh()}
-      />
       <ConfirmDialog
         open={pendingDeleteMonitor !== null}
         title="删除渠道监控"
@@ -357,7 +361,7 @@ function MonitorRow({
   const running = actionState?.monitorId === monitor.id && actionState.kind === "run";
   const duplicating = actionState?.monitorId === monitor.id && actionState.kind === "duplicate";
   const deleting = actionState?.monitorId === monitor.id && actionState.kind === "delete";
-  const modelLabel = monitor.fallbackModels[0]?.trim() || "未设置";
+  const modelLabel = monitor.primaryModel.trim() || "未设置";
   const targetLabel = formatTargetLabel(monitor.targetType, monitor.stationId, monitor.stationKeyId, stations, keys);
   const intervalLabel = formatInterval(monitor.intervalSeconds, monitor.jitterSeconds);
   const latestRun = getLatestRun(runs);
@@ -374,7 +378,11 @@ function MonitorRow({
           {targetLabel}
         </div>
 
-        <PrimaryModelCell modelLabel={modelLabel} status={primaryModelStatus} />
+        <PrimaryModelCell
+          modelLabel={modelLabel}
+          requestLabel={`${protocolLabel(monitor.protocolKind)} · ${profileLabel(monitor.clientProfileId)}`}
+          status={primaryModelStatus}
+        />
 
         <div className="flex min-w-0 flex-col items-center gap-1">
           <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"}>
@@ -407,6 +415,7 @@ function MonitorRow({
               {primaryModelStatus.label}
             </StatusBadge>
           </MonitorCardField>
+          <MonitorCardField label="请求方式" value={`${protocolLabel(monitor.protocolKind)} · ${profileLabel(monitor.clientProfileId)}`} />
           <MonitorCardField label="调度" value={intervalLabel}>
             <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"} className="ml-2">
               {monitor.enabled ? "启用" : "停用"}
@@ -491,15 +500,20 @@ function MonitorDesktopActions({
 
 function PrimaryModelCell({
   modelLabel,
+  requestLabel,
   status,
 }: {
   modelLabel: string;
+  requestLabel: string;
   status: PrimaryModelStatusView;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
-      <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+    <div className="min-w-0">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 truncate text-foreground">{modelLabel}</span>
+        <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+      </div>
+      <div className="mt-0.5 truncate text-xs text-muted-foreground">{requestLabel}</div>
     </div>
   );
 }

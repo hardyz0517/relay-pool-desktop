@@ -1,34 +1,30 @@
 import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { readError } from "@/lib/errors";
-import { monitoringCapabilitiesQueryOptions } from "@/lib/query/resourceQueries";
-import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import { ChannelStatusCardGrid } from "./components/ChannelStatusCardGrid";
 import { ChannelStatusTable } from "./components/ChannelStatusTable";
-import { ChannelStatusToolbar } from "./components/ChannelStatusToolbar";
-import { MonitorDefinitionDialog } from "./components/MonitorDefinitionDialog";
+import {
+  ChannelStatusToolbar,
+  type ChannelStatusViewMode,
+} from "./components/ChannelStatusToolbar";
 import { MonitorExecutionDrawer } from "./components/MonitorExecutionDrawer";
 import { useChannelStatusController } from "./useChannelStatusController";
 
 export function ChannelStatusTab() {
   const controller = useChannelStatusController();
-  const capabilitiesQuery = useActivityQuery(monitoringCapabilitiesQueryOptions());
-  const [definitionDialogOpen, setDefinitionDialogOpen] = useState(false);
-  const error = controller.statusQuery.error ? readError(controller.statusQuery.error) : null;
+  const [viewMode, setViewMode] = useState<ChannelStatusViewMode>("table");
+  const rawError = controller.statusQuery.error ? readError(controller.statusQuery.error) : null;
+  const error = rawError === "The desktop operation failed."
+    ? "状态数据读取失败，请刷新重试。"
+    : rawError;
 
   return (
     <div className="space-y-3">
       <ChannelStatusToolbar
         controller={controller}
-        capabilities={capabilitiesQuery.data}
-        onCreateMonitor={() => setDefinitionDialogOpen(true)}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
       />
-
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
-        <div>
-          {controller.workspaceView.aggregateLabel} · 生成于 {controller.workspaceView.generatedAtLabel}
-        </div>
-        <div>{controller.workspaceView.freshnessLabel}</div>
-      </div>
 
       {error && (
         <div className="flex items-start gap-2 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
@@ -40,24 +36,29 @@ export function ChannelStatusTab() {
         </div>
       )}
 
-      <ChannelStatusTable
-        rows={controller.workspaceView.rows}
-        loading={controller.statusQuery.isPending}
-        actionPending={controller.isRunningAction}
-        onRunNow={controller.runNow}
-        onCancel={controller.cancel}
-        onOpenExecution={controller.setSelectedExecutionId}
-      />
+      {viewMode === "cards" ? (
+        <ChannelStatusCardGrid
+          rows={controller.workspaceView.rows}
+          loading={controller.statusQuery.isPending}
+          actionPending={controller.isRunningAction}
+          onRunNow={controller.runNow}
+          onCancel={controller.cancel}
+          onOpenExecution={controller.setSelectedExecutionId}
+        />
+      ) : (
+        <ChannelStatusTable
+          rows={controller.workspaceView.rows}
+          loading={controller.statusQuery.isPending}
+          actionPending={controller.isRunningAction}
+          onRunNow={controller.runNow}
+          onCancel={controller.cancel}
+          onOpenExecution={controller.setSelectedExecutionId}
+        />
+      )}
 
       <MonitorExecutionDrawer
         executionId={controller.selectedExecutionId}
         onClose={() => controller.setSelectedExecutionId(null)}
-      />
-
-      <MonitorDefinitionDialog
-        open={definitionDialogOpen}
-        capabilities={capabilitiesQuery.data}
-        onClose={() => setDefinitionDialogOpen(false)}
       />
     </div>
   );

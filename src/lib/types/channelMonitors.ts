@@ -1,4 +1,7 @@
 export type ChannelMonitorTargetType = "station_key" | "station";
+export type ChannelMonitorProtocolKind = "open_ai_chat" | "open_ai_responses" | "anthropic_messages" | "gemini_native" | "xai_grok" | "generic_open_ai";
+export type ChannelMonitorClientProfileId = "standard_api" | "codex_cli_compat" | "claude_code_compat" | "gemini_cli_compat" | "grok_cli_compat";
+export type ChannelMonitorHealthWritebackMode = "disabled" | "observe_only" | "authoritative";
 
 export type ChannelMonitorRunStatus = "success" | "warning" | "failed" | "skipped";
 
@@ -38,6 +41,20 @@ export type ChannelMonitor = {
   stationKeyId: string | null;
   templateId: string;
   enabled: boolean;
+  protocolKind: ChannelMonitorProtocolKind;
+  clientProfileId: ChannelMonitorClientProfileId;
+  clientProfileVersion: number;
+  primaryModel: string;
+  retryMaxAttemptsPerModel: number;
+  retryInitialBackoffMs: number;
+  retryMaxBackoffMs: number;
+  riskDailyProbeBudget: number;
+  healthWritebackMode: ChannelMonitorHealthWritebackMode;
+  healthFailureThreshold: number;
+  healthRecoveryThreshold: number;
+  attemptTimeoutMs: number;
+  executionTimeoutMs: number;
+  scheduleRevision: number;
   intervalSeconds: number;
   jitterSeconds: number;
   timeoutSeconds: number;
@@ -56,6 +73,19 @@ export type CreateChannelMonitorInput = {
   stationKeyId: string | null;
   templateId: string;
   enabled: boolean;
+  protocolKind: ChannelMonitorProtocolKind;
+  clientProfileId: ChannelMonitorClientProfileId;
+  clientProfileVersion: number;
+  primaryModel: string;
+  retryMaxAttemptsPerModel: number;
+  retryInitialBackoffMs: number;
+  retryMaxBackoffMs: number;
+  riskDailyProbeBudget: number;
+  healthWritebackMode: ChannelMonitorHealthWritebackMode;
+  healthFailureThreshold: number;
+  healthRecoveryThreshold: number;
+  attemptTimeoutMs: number;
+  executionTimeoutMs: number;
   intervalSeconds: number;
   jitterSeconds: number;
   timeoutSeconds: number;
@@ -221,6 +251,8 @@ export type ChannelStatusTarget = {
   stationName: string | null;
   stationKeyId: string | null;
   stationKeyName: string | null;
+  groupName: string | null;
+  effectiveGroupCategory: string | null;
 };
 
 export type ChannelStatusLatestResult = {

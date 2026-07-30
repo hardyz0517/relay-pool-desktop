@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   cancelChannelMonitorExecution,
@@ -24,16 +24,24 @@ import {
   type ChannelStatusRowView,
   type ChannelStatusSortModel,
 } from "./channelStatusViewModel";
+import {
+  readChannelStatusWindow,
+  writeChannelStatusWindow,
+} from "./channelStatusWindowStorage";
 
 export type ChannelStatusController = ReturnType<typeof useChannelStatusController>;
 
 export function useChannelStatusController() {
   const queryClient = useQueryClient();
-  const [window, setWindow] = useState<ChannelStatusWorkspaceWindow>("last24h");
+  const [window, setWindowState] = useState<ChannelStatusWorkspaceWindow>(readChannelStatusWindow);
   const [filters, setFilters] = useState<ChannelStatusFilters>(defaultChannelStatusFilters);
   const [sort, setSort] = useState<ChannelStatusSortModel>(defaultChannelStatusSort);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
   const triggerRequestIds = useRef(new Map<string, string>());
+  const setWindow = useCallback((value: ChannelStatusWorkspaceWindow) => {
+    setWindowState(value);
+    writeChannelStatusWindow(value);
+  }, []);
 
   const workspaceInput = useMemo(
     () => createChannelStatusWorkspaceInput({ window, filters, sort }),
@@ -81,12 +89,6 @@ export function useChannelStatusController() {
     },
     setOutcome(value: "all" | ChannelStatusOutcome) {
       setFilters((current) => ({ ...current, outcome: value }));
-    },
-    setProtocolKind(value: string) {
-      setFilters((current) => ({ ...current, protocolKind: value }));
-    },
-    setClientProfileId(value: string) {
-      setFilters((current) => ({ ...current, clientProfileId: value }));
     },
     sort,
     setSort,

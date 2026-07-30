@@ -446,8 +446,7 @@ export class DesktopBackend implements BackendClient {
 
       return { monitorSummaries, stations, keyPoolItems, templates };
     },
-    loadChannelStatusWorkspace: (input = {}) =>
-      loadChannelStatusWorkspaceBinding(input) as ReturnType<BackendClient["channels"]["loadChannelStatusWorkspace"]>,
+    loadChannelStatusWorkspace: (input = {}) => loadChannelStatusWorkspaceBinding(input),
   };
   readonly stationKeys = {
     listStationKeys: (stationId: string) => listStationKeysBinding({ stationId }),
@@ -560,10 +559,24 @@ function normalizeUpdateStationKeyInput(
   input: Parameters<BackendClient["stationKeys"]["updateStationKey"]>[0],
 ): UpdateStationKeyInputDto {
   const normalized: UpdateStationKeyInputDto = {
-    ...input,
+    id: input.id,
+    stationId: input.stationId,
+    name: input.name,
+    apiKey: input.apiKey,
+    enabled: input.enabled,
+    priority: input.priority,
     maxConcurrency: input.maxConcurrency ?? 3,
     loadFactor: input.loadFactor ?? null,
     schedulable: input.schedulable ?? true,
+    groupName: input.groupName,
+    tierLabel: input.tierLabel,
+    groupBindingId: input.groupBindingId ?? null,
+    groupIdHash: input.groupIdHash ?? null,
+    rateMultiplier: input.rateMultiplier ?? null,
+    rateSource: input.rateSource ?? null,
+    balanceScope: input.balanceScope ?? null,
+    status: input.status,
+    note: input.note,
   };
   if ("manualRateMultiplier" in input) {
     normalized.manualRateMultiplier = input.manualRateMultiplier ?? null;
