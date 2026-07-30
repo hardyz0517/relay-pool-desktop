@@ -27,6 +27,7 @@ use crate::{
             budgets::MonitoringBudgetRepository,
             definitions::{MonitorDefinitionConfigRow, MonitoringDefinitionRepository},
             executions::{ExecutionSummaryRow, MonitoringExecutionRepository},
+            retention::MonitoringRetentionRepository,
         },
         stores::monitoring_store::{
             ChannelStatusRunRow, MonitorPatch, MonitorTemplatePatch, MonitoringStore,
@@ -360,6 +361,25 @@ impl MonitoringService {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn repair_pending_monitoring_rollups(
+        &self,
+        limit: u32,
+    ) -> Result<u32, ApplicationError> {
+        let retention = MonitoringRetentionRepository;
+        let now_ms = self.now_ms();
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    retention
+                        .repair_dirty_ranges(write.connection(), limit, now_ms)
+                        .await
+                        .map(|outcome| outcome.repaired_ranges)
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn reserve_monitoring_probe_budget(
         &self,
         monitor_id: &str,
@@ -611,6 +631,20 @@ mod tests {
             station_key_id: None,
             template_id: "template-a".into(),
             enabled: true,
+            protocol_kind: "open_ai_chat".into(),
+            client_profile_id: "standard_api".into(),
+            client_profile_version: 1,
+            primary_model: "fixture-model".into(),
+            retry_max_attempts_per_model: 1,
+            retry_initial_backoff_ms: 200,
+            retry_max_backoff_ms: 2_000,
+            risk_daily_probe_budget: 200,
+            health_writeback_mode: "observe_only".into(),
+            health_failure_threshold: 2,
+            health_recovery_threshold: 2,
+            attempt_timeout_ms: 10_000,
+            execution_timeout_ms: 30_000,
+            schedule_revision: 1,
             interval_seconds: 60,
             jitter_seconds: 0,
             timeout_seconds: 30,

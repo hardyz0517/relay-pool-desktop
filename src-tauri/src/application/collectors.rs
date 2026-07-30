@@ -233,14 +233,21 @@ impl CollectorService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn due_stations(
+    pub(crate) async fn due_stations_for_task(
         &self,
+        task_type: &str,
+        interval_minutes: u16,
         limit: crate::application::pagination::PageLimit,
     ) -> Result<Vec<Station>, ApplicationError> {
+        if !matches!(task_type, "balance" | "groups" | "models") || interval_minutes == 0 {
+            return Err(ApplicationError::ConstraintViolation);
+        }
         let mut read = self.runtime.begin_read().await?;
         self.stations
-            .due_collectors(
+            .due_collector_task(
                 &mut read,
+                task_type,
+                interval_minutes,
                 self.clock.now_utc().timestamp_millis(),
                 limit.get(),
             )
@@ -1663,6 +1670,92 @@ mod tests {
             "latest snapshot aggregate should use station/created index, got:\n{details}"
         );
         drop(read);
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn due_station_tasks_use_the_requested_global_interval() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("collector-schedule.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(CreateStationInput {
+                name: "Scheduled Balance".to_string(),
+                station_type: "newapi".to_string(),
+                website_url: "https://schedule.example.test".to_string(),
+                api_base_url: "https://schedule.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 99,
+                note: None,
+            })
+            .await
+            .expect("station");
+
+        collectors
+            .apply_result(CollectorApplyRequest {
+                run_key: "scheduled-balance-run".to_string(),
+                station_id: station.id.clone(),
+                endpoint_revision: station.endpoint_revision,
+                parent_run_id: None,
+                adapter: "newapi".to_string(),
+                task_type: "balance".to_string(),
+                status: "success".to_string(),
+                facts: CanonicalCollectorFacts::default(),
+                summary_json: json!({ "balance": null }),
+                normalized_json: json!({ "balance": null }),
+                raw_json_redacted: None,
+                error_code: None,
+                error_message: None,
+                endpoint_count: 1,
+                success_count: 1,
+                failure_count: 0,
+                manual_action_required: false,
+                next_due_at: None,
+            })
+            .await
+            .expect("collector apply");
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE collector_task_state SET updated_at = '1699999760000' \
+                         WHERE task_type = 'balance'",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("age task state by four minutes");
+
+        let limit = PageLimit::new(10).expect("limit");
+        assert!(collectors
+            .due_stations_for_task("balance", 5, limit)
+            .await
+            .expect("five minute schedule")
+            .is_empty());
+        assert_eq!(
+            collectors
+                .due_stations_for_task("balance", 3, limit)
+                .await
+                .expect("three minute schedule")
+                .into_iter()
+                .map(|station| station.id)
+                .collect::<Vec<_>>(),
+            vec![station.id]
+        );
         runtime.close().await.expect("close persistence runtime");
     }
 

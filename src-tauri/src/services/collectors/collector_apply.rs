@@ -1,5 +1,3 @@
-use sha2::{Digest, Sha256};
-
 use crate::{
     application::{
         collectors::{
@@ -8,6 +6,7 @@ use crate::{
         },
         error::ApplicationError,
     },
+    observability::correlation,
     services::collectors::{facts::CollectedBalanceFact, output::AdapterOutput},
 };
 
@@ -65,12 +64,12 @@ pub(crate) async fn apply_station_output_v2(
     if station_id.trim().is_empty() || endpoint_revision < 1 {
         return Err(ApplicationError::ConstraintViolation);
     }
-    let run_key = stable_run_key(
+    let run_key = run_key_for_current_intent(
         &station_id,
         endpoint_revision,
         &output,
         parent_run_id.as_deref(),
-    )?;
+    );
     apply_adapter_output(
         port,
         run_key,
@@ -366,33 +365,19 @@ fn shared_optional_text_value<'a>(
     values.all(|value| value == Some(first)).then_some(first)
 }
 
-fn stable_run_key(
+fn run_key_for_current_intent(
     station_id: &str,
     endpoint_revision: i64,
     output: &AdapterOutput,
     parent_run_id: Option<&str>,
-) -> Result<String, ApplicationError> {
-    let canonical = serde_json::json!({
-        "stationId": station_id,
-        "endpointRevision": endpoint_revision,
-        "parentRunId": parent_run_id,
-        "adapter": output.adapter,
-        "task": output.task.as_str(),
-        "status": output.status,
-        "summary": output.summary_json,
-        "normalized": output.normalized_json,
-        "errorCode": output.error_code,
-    });
-    let bytes = serde_json::to_vec(&canonical).map_err(|_| ApplicationError::Internal)?;
-    let digest = Sha256::digest(bytes);
-    let suffix = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    Ok(format!(
-        "collector:{station_id}:{endpoint_revision}:{}:{suffix}",
+) -> String {
+    let intent_id = correlation::current_id_string()
+        .unwrap_or_else(|| uuid::Uuid::now_v7().simple().to_string());
+    let parent_scope = parent_run_id.unwrap_or("root");
+    format!(
+        "collector:{station_id}:{endpoint_revision}:{}:{parent_scope}:{intent_id}",
         output.task.as_str()
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -415,17 +400,55 @@ mod tests {
     }
 
     #[test]
-    fn run_key_is_deterministic_and_scoped_to_revision_and_task() {
+    fn run_key_is_fresh_without_an_active_work_intent() {
         let first =
-            stable_run_key("station-1", 4, &output(CollectorTask::Balance), None).expect("run key");
-        let repeat =
-            stable_run_key("station-1", 4, &output(CollectorTask::Balance), None).expect("run key");
-        let other_revision =
-            stable_run_key("station-1", 5, &output(CollectorTask::Balance), None).expect("run key");
-        let other_task =
-            stable_run_key("station-1", 4, &output(CollectorTask::Groups), None).expect("run key");
+            run_key_for_current_intent("station-1", 4, &output(CollectorTask::Balance), None);
+        let second =
+            run_key_for_current_intent("station-1", 4, &output(CollectorTask::Balance), None);
+
+        assert_ne!(first, second);
+    }
+
+    #[tokio::test]
+    async fn run_key_is_stable_only_within_the_same_command_intent() {
+        let (first, repeat, other_revision, other_task) =
+            correlation::in_command_scope("collect_station_task", async {
+                (
+                    run_key_for_current_intent(
+                        "station-1",
+                        4,
+                        &output(CollectorTask::Balance),
+                        None,
+                    ),
+                    run_key_for_current_intent(
+                        "station-1",
+                        4,
+                        &output(CollectorTask::Balance),
+                        None,
+                    ),
+                    run_key_for_current_intent(
+                        "station-1",
+                        5,
+                        &output(CollectorTask::Balance),
+                        None,
+                    ),
+                    run_key_for_current_intent(
+                        "station-1",
+                        4,
+                        &output(CollectorTask::Groups),
+                        None,
+                    ),
+                )
+            })
+            .await;
+        let next_click = correlation::in_command_scope("collect_station_task", async {
+            run_key_for_current_intent("station-1", 4, &output(CollectorTask::Balance), None)
+        })
+        .await;
+
         assert_eq!(first, repeat);
         assert_ne!(first, other_revision);
         assert_ne!(first, other_task);
+        assert_ne!(first, next_click);
     }
 }

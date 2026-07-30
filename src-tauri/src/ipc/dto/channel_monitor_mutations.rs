@@ -19,7 +19,7 @@ const MAX_METHOD_BYTES: usize = 16;
 const MAX_PATH_BYTES: usize = 2_048;
 const MAX_REQUEST_BODY_BYTES: usize = 65_536;
 const MAX_NOTE_BYTES: usize = 4_096;
-const MAX_FALLBACK_MODELS: usize = 64;
+const MAX_FALLBACK_MODELS: usize = 3;
 const MAX_MODEL_BYTES: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +34,89 @@ impl ChannelMonitorTargetTypeInputDto {
         match self {
             Self::StationKey => "station_key",
             Self::Station => "station",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorProtocolKindInputDto {
+    OpenAiChat,
+    OpenAiResponses,
+    AnthropicMessages,
+    GeminiNative,
+    XaiGrok,
+    GenericOpenAi,
+}
+
+impl MonitorProtocolKindInputDto {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiChat => "open_ai_chat",
+            Self::OpenAiResponses => "open_ai_responses",
+            Self::AnthropicMessages => "anthropic_messages",
+            Self::GeminiNative => "gemini_native",
+            Self::XaiGrok => "xai_grok",
+            Self::GenericOpenAi => "generic_open_ai",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorClientProfileIdInputDto {
+    StandardApi,
+    CodexCliCompat,
+    ClaudeCodeCompat,
+    GeminiCliCompat,
+    GrokCliCompat,
+}
+
+impl MonitorClientProfileIdInputDto {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::StandardApi => "standard_api",
+            Self::CodexCliCompat => "codex_cli_compat",
+            Self::ClaudeCodeCompat => "claude_code_compat",
+            Self::GeminiCliCompat => "gemini_cli_compat",
+            Self::GrokCliCompat => "grok_cli_compat",
+        }
+    }
+
+    fn supports(self, protocol: MonitorProtocolKindInputDto) -> bool {
+        match self {
+            Self::StandardApi => true,
+            Self::CodexCliCompat => matches!(
+                protocol,
+                MonitorProtocolKindInputDto::OpenAiChat
+                    | MonitorProtocolKindInputDto::OpenAiResponses
+                    | MonitorProtocolKindInputDto::GenericOpenAi
+            ),
+            Self::ClaudeCodeCompat => {
+                matches!(protocol, MonitorProtocolKindInputDto::AnthropicMessages)
+            }
+            Self::GeminiCliCompat => {
+                matches!(protocol, MonitorProtocolKindInputDto::GeminiNative)
+            }
+            Self::GrokCliCompat => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitorHealthWritebackModeInputDto {
+    Disabled,
+    ObserveOnly,
+    Authoritative,
+}
+
+impl MonitorHealthWritebackModeInputDto {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::ObserveOnly => "observe_only",
+            Self::Authoritative => "authoritative",
         }
     }
 }
@@ -61,6 +144,19 @@ pub struct CreateChannelMonitorInputDto {
     pub station_key_id: Option<String>,
     pub template_id: String,
     pub enabled: bool,
+    pub protocol_kind: MonitorProtocolKindInputDto,
+    pub client_profile_id: MonitorClientProfileIdInputDto,
+    pub client_profile_version: i64,
+    pub primary_model: String,
+    pub retry_max_attempts_per_model: i64,
+    pub retry_initial_backoff_ms: i64,
+    pub retry_max_backoff_ms: i64,
+    pub risk_daily_probe_budget: i64,
+    pub health_writeback_mode: MonitorHealthWritebackModeInputDto,
+    pub health_failure_threshold: i64,
+    pub health_recovery_threshold: i64,
+    pub attempt_timeout_ms: i64,
+    pub execution_timeout_ms: i64,
     pub interval_seconds: i64,
     pub jitter_seconds: i64,
     pub timeout_seconds: i64,
@@ -85,6 +181,19 @@ impl CreateChannelMonitorInputDto {
             station_key_id: self.station_key_id,
             template_id: self.template_id,
             enabled: self.enabled,
+            protocol_kind: self.protocol_kind.as_str().to_owned(),
+            client_profile_id: self.client_profile_id.as_str().to_owned(),
+            client_profile_version: self.client_profile_version,
+            primary_model: self.primary_model.trim().to_owned(),
+            retry_max_attempts_per_model: self.retry_max_attempts_per_model,
+            retry_initial_backoff_ms: self.retry_initial_backoff_ms,
+            retry_max_backoff_ms: self.retry_max_backoff_ms,
+            risk_daily_probe_budget: self.risk_daily_probe_budget,
+            health_writeback_mode: self.health_writeback_mode.as_str().to_owned(),
+            health_failure_threshold: self.health_failure_threshold,
+            health_recovery_threshold: self.health_recovery_threshold,
+            attempt_timeout_ms: self.attempt_timeout_ms,
+            execution_timeout_ms: self.execution_timeout_ms,
             interval_seconds: self.interval_seconds,
             jitter_seconds: self.jitter_seconds,
             timeout_seconds: self.timeout_seconds,
@@ -102,6 +211,19 @@ impl CreateChannelMonitorInputDto {
             &self.station_id,
             self.station_key_id.as_deref(),
             &self.template_id,
+            self.protocol_kind,
+            self.client_profile_id,
+            self.client_profile_version,
+            &self.primary_model,
+            self.retry_max_attempts_per_model,
+            self.retry_initial_backoff_ms,
+            self.retry_max_backoff_ms,
+            self.risk_daily_probe_budget,
+            self.health_writeback_mode,
+            self.health_failure_threshold,
+            self.health_recovery_threshold,
+            self.attempt_timeout_ms,
+            self.execution_timeout_ms,
             self.interval_seconds,
             self.jitter_seconds,
             self.timeout_seconds,
@@ -123,6 +245,19 @@ pub struct UpdateChannelMonitorInputDto {
     pub station_key_id: Option<String>,
     pub template_id: String,
     pub enabled: bool,
+    pub protocol_kind: MonitorProtocolKindInputDto,
+    pub client_profile_id: MonitorClientProfileIdInputDto,
+    pub client_profile_version: i64,
+    pub primary_model: String,
+    pub retry_max_attempts_per_model: i64,
+    pub retry_initial_backoff_ms: i64,
+    pub retry_max_backoff_ms: i64,
+    pub risk_daily_probe_budget: i64,
+    pub health_writeback_mode: MonitorHealthWritebackModeInputDto,
+    pub health_failure_threshold: i64,
+    pub health_recovery_threshold: i64,
+    pub attempt_timeout_ms: i64,
+    pub execution_timeout_ms: i64,
     pub interval_seconds: i64,
     pub jitter_seconds: i64,
     pub timeout_seconds: i64,
@@ -149,6 +284,19 @@ impl UpdateChannelMonitorInputDto {
             station_key_id: self.station_key_id,
             template_id: self.template_id,
             enabled: self.enabled,
+            protocol_kind: self.protocol_kind.as_str().to_owned(),
+            client_profile_id: self.client_profile_id.as_str().to_owned(),
+            client_profile_version: self.client_profile_version,
+            primary_model: self.primary_model.trim().to_owned(),
+            retry_max_attempts_per_model: self.retry_max_attempts_per_model,
+            retry_initial_backoff_ms: self.retry_initial_backoff_ms,
+            retry_max_backoff_ms: self.retry_max_backoff_ms,
+            risk_daily_probe_budget: self.risk_daily_probe_budget,
+            health_writeback_mode: self.health_writeback_mode.as_str().to_owned(),
+            health_failure_threshold: self.health_failure_threshold,
+            health_recovery_threshold: self.health_recovery_threshold,
+            attempt_timeout_ms: self.attempt_timeout_ms,
+            execution_timeout_ms: self.execution_timeout_ms,
             interval_seconds: self.interval_seconds,
             jitter_seconds: self.jitter_seconds,
             timeout_seconds: self.timeout_seconds,
@@ -166,6 +314,19 @@ impl UpdateChannelMonitorInputDto {
             &self.station_id,
             self.station_key_id.as_deref(),
             &self.template_id,
+            self.protocol_kind,
+            self.client_profile_id,
+            self.client_profile_version,
+            &self.primary_model,
+            self.retry_max_attempts_per_model,
+            self.retry_initial_backoff_ms,
+            self.retry_max_backoff_ms,
+            self.risk_daily_probe_budget,
+            self.health_writeback_mode,
+            self.health_failure_threshold,
+            self.health_recovery_threshold,
+            self.attempt_timeout_ms,
+            self.execution_timeout_ms,
             self.interval_seconds,
             self.jitter_seconds,
             self.timeout_seconds,
@@ -273,6 +434,19 @@ fn validate_monitor_fields(
     station_id: &str,
     station_key_id: Option<&str>,
     template_id: &str,
+    protocol_kind: MonitorProtocolKindInputDto,
+    client_profile_id: MonitorClientProfileIdInputDto,
+    client_profile_version: i64,
+    primary_model: &str,
+    retry_max_attempts_per_model: i64,
+    retry_initial_backoff_ms: i64,
+    retry_max_backoff_ms: i64,
+    risk_daily_probe_budget: i64,
+    health_writeback_mode: MonitorHealthWritebackModeInputDto,
+    health_failure_threshold: i64,
+    health_recovery_threshold: i64,
+    attempt_timeout_ms: i64,
+    execution_timeout_ms: i64,
     interval_seconds: i64,
     jitter_seconds: i64,
     timeout_seconds: i64,
@@ -284,6 +458,33 @@ fn validate_monitor_fields(
     validate_text("name", name, MAX_NAME_BYTES, false)?;
     validate_id("stationId", station_id)?;
     validate_id("templateId", template_id)?;
+    validate_text("primaryModel", primary_model, MAX_MODEL_BYTES, false)?;
+    validate_range(
+        "clientProfileVersion",
+        client_profile_version,
+        1,
+        i64::from(u32::MAX),
+    )?;
+    if !client_profile_id.supports(protocol_kind) {
+        return Err(invalid_input(
+            "clientProfileId",
+            "incompatible_profile",
+            "The client profile does not support the selected protocol.",
+        ));
+    }
+    if matches!(
+        health_writeback_mode,
+        MonitorHealthWritebackModeInputDto::Authoritative
+    ) && !matches!(
+        client_profile_id,
+        MonitorClientProfileIdInputDto::StandardApi
+    ) {
+        return Err(invalid_input(
+            "healthWritebackMode",
+            "untrusted_profile",
+            "Authoritative health writeback requires the standard API profile.",
+        ));
+    }
     match (target_type, station_key_id) {
         (ChannelMonitorTargetTypeInputDto::Station, None) => {}
         (ChannelMonitorTargetTypeInputDto::StationKey, Some(id)) => {
@@ -309,7 +510,44 @@ fn validate_monitor_fields(
     validate_range("timeoutSeconds", timeout_seconds, 5, 120)?;
     validate_range("maxConcurrency", max_concurrency, 1, 16)?;
     validate_range("consecutiveFailureThreshold", failure_threshold, 1, 20)?;
+    validate_range(
+        "retryMaxAttemptsPerModel",
+        retry_max_attempts_per_model,
+        1,
+        3,
+    )?;
+    validate_range("retryInitialBackoffMs", retry_initial_backoff_ms, 0, 60_000)?;
+    validate_range("retryMaxBackoffMs", retry_max_backoff_ms, 0, 60_000)?;
+    if retry_max_backoff_ms < retry_initial_backoff_ms {
+        return Err(invalid_input(
+            "retryMaxBackoffMs",
+            "invalid_backoff",
+            "The maximum retry backoff is smaller than the initial backoff.",
+        ));
+    }
+    validate_range("riskDailyProbeBudget", risk_daily_probe_budget, 1, 10_000)?;
+    validate_range("healthFailureThreshold", health_failure_threshold, 1, 20)?;
+    validate_range("healthRecoveryThreshold", health_recovery_threshold, 1, 20)?;
+    validate_range("attemptTimeoutMs", attempt_timeout_ms, 1_000, 120_000)?;
+    validate_range("executionTimeoutMs", execution_timeout_ms, 1_000, 300_000)?;
+    if attempt_timeout_ms >= execution_timeout_ms {
+        return Err(invalid_input(
+            "executionTimeoutMs",
+            "invalid_timeout",
+            "The execution timeout must be greater than the attempt timeout.",
+        ));
+    }
     validate_models(fallback_models)?;
+    if fallback_models
+        .iter()
+        .any(|model| model.trim() == primary_model.trim())
+    {
+        return Err(invalid_input(
+            "fallbackModels",
+            "duplicates_primary",
+            "A fallback model duplicates the primary model.",
+        ));
+    }
     validate_optional_note(note)?;
     Ok(())
 }
@@ -487,10 +725,12 @@ pub const CHANNEL_MONITOR_MUTATIONS_TYPE: TypeDescriptor = TypeDescriptor {
 #[cfg(test)]
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
     let monitor_input = fixture_monitor_input();
+    let mut monitor_update = monitor_input.clone();
+    monitor_update["id"] = serde_json::json!("monitor-1");
     let template_input = fixture_template_input();
     vec![
         serde_json::json!({"command":"create_channel_monitor","input":monitor_input,"output":fixture_monitor()}),
-        serde_json::json!({"command":"update_channel_monitor","input":{"id":"monitor-1","name":"Fixture monitor","targetType":"station_key","stationId":"station-1","stationKeyId":"key-1","templateId":"template-1","enabled":true,"intervalSeconds":60,"jitterSeconds":5,"timeoutSeconds":15,"maxConcurrency":1,"consecutiveFailureThreshold":3,"fallbackModels":["fixture-model"],"note":null},"output":fixture_monitor()}),
+        serde_json::json!({"command":"update_channel_monitor","input":monitor_update,"output":fixture_monitor()}),
         serde_json::json!({"command":"delete_channel_monitor","input":{"id":"monitor-1"},"output":null}),
         serde_json::json!({"command":"create_channel_monitor_template","input":template_input,"output":fixture_template()}),
         serde_json::json!({"command":"update_channel_monitor_template","input":{"id":"template-1","name":"Fixture template","endpointKind":"chat_completions","method":"POST","path":"/v1/chat/completions","requestBodyJson":"{}","enabled":true,"note":null},"output":fixture_template()}),
@@ -501,7 +741,17 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
 
 #[cfg(test)]
 fn fixture_monitor_input() -> Value {
-    serde_json::json!({"name":"Fixture monitor","targetType":"station_key","stationId":"station-1","stationKeyId":"key-1","templateId":"template-1","enabled":true,"intervalSeconds":60,"jitterSeconds":5,"timeoutSeconds":15,"maxConcurrency":1,"consecutiveFailureThreshold":3,"fallbackModels":["fixture-model"],"note":null})
+    serde_json::json!({
+        "name":"Fixture monitor","targetType":"station_key","stationId":"station-1",
+        "stationKeyId":"key-1","templateId":"template-1","enabled":true,
+        "protocolKind":"open_ai_chat","clientProfileId":"standard_api","clientProfileVersion":1,
+        "primaryModel":"fixture-model","retryMaxAttemptsPerModel":1,
+        "retryInitialBackoffMs":200,"retryMaxBackoffMs":2000,"riskDailyProbeBudget":200,
+        "healthWritebackMode":"observe_only","healthFailureThreshold":2,"healthRecoveryThreshold":2,
+        "attemptTimeoutMs":10000,"executionTimeoutMs":30000,"intervalSeconds":60,"jitterSeconds":5,
+        "timeoutSeconds":30,"maxConcurrency":1,"consecutiveFailureThreshold":2,
+        "fallbackModels":["fixture-fallback"],"note":null
+    })
 }
 
 #[cfg(test)]
@@ -519,12 +769,26 @@ fn fixture_monitor() -> ChannelMonitor {
         station_key_id: Some("key-1".into()),
         template_id: "template-1".into(),
         enabled: true,
+        protocol_kind: "open_ai_chat".into(),
+        client_profile_id: "standard_api".into(),
+        client_profile_version: 1,
+        primary_model: "fixture-model".into(),
+        retry_max_attempts_per_model: 1,
+        retry_initial_backoff_ms: 200,
+        retry_max_backoff_ms: 2_000,
+        risk_daily_probe_budget: 200,
+        health_writeback_mode: "observe_only".into(),
+        health_failure_threshold: 2,
+        health_recovery_threshold: 2,
+        attempt_timeout_ms: 10_000,
+        execution_timeout_ms: 30_000,
+        schedule_revision: 1,
         interval_seconds: 60,
         jitter_seconds: 5,
         timeout_seconds: 15,
         max_concurrency: 1,
-        consecutive_failure_threshold: 3,
-        fallback_models: vec!["fixture-model".into()],
+        consecutive_failure_threshold: 2,
+        fallback_models: vec!["fixture-fallback".into()],
         note: None,
         created_at: "1700000000000".into(),
         updated_at: "1700000000000".into(),
@@ -555,12 +819,35 @@ mod tests {
 
     #[test]
     fn monitor_inputs_reject_unknown_fields_target_mismatches_and_invalid_ranges() {
+        let base = fixture_monitor_input();
+        let mut target_mismatch = base.clone();
+        target_mismatch["targetType"] = serde_json::json!("station");
+        let mut missing_key = base.clone();
+        missing_key["stationKeyId"] = Value::Null;
+        let mut invalid_jitter = base.clone();
+        invalid_jitter["intervalSeconds"] = serde_json::json!(15);
+        invalid_jitter["jitterSeconds"] = serde_json::json!(1);
+        let mut duplicate_model = base.clone();
+        duplicate_model["fallbackModels"] = serde_json::json!(["fixture-model"]);
+        let mut incompatible_profile = base.clone();
+        incompatible_profile["clientProfileId"] = serde_json::json!("claude_code_compat");
+        let mut untrusted_writeback = base.clone();
+        untrusted_writeback["clientProfileId"] = serde_json::json!("codex_cli_compat");
+        untrusted_writeback["healthWritebackMode"] = serde_json::json!("authoritative");
+        let mut invalid_timeout = base.clone();
+        invalid_timeout["executionTimeoutMs"] = serde_json::json!(10_000);
+        let mut unknown = base;
+        unknown["unexpected"] = serde_json::json!(true);
+
         for value in [
-            serde_json::json!({"name":"Fixture","targetType":"station","stationId":"station-1","stationKeyId":"key-1","templateId":"template-1","enabled":true,"intervalSeconds":60,"jitterSeconds":5,"timeoutSeconds":15,"maxConcurrency":1,"consecutiveFailureThreshold":3,"fallbackModels":[],"note":null}),
-            serde_json::json!({"name":"Fixture","targetType":"station_key","stationId":"station-1","stationKeyId":null,"templateId":"template-1","enabled":true,"intervalSeconds":60,"jitterSeconds":5,"timeoutSeconds":15,"maxConcurrency":1,"consecutiveFailureThreshold":3,"fallbackModels":[],"note":null}),
-            serde_json::json!({"name":"Fixture","targetType":"station","stationId":"station-1","stationKeyId":null,"templateId":"template-1","enabled":true,"intervalSeconds":15,"jitterSeconds":1,"timeoutSeconds":15,"maxConcurrency":1,"consecutiveFailureThreshold":3,"fallbackModels":[],"note":null}),
-            serde_json::json!({"name":"Fixture","targetType":"station","stationId":"station-1","stationKeyId":null,"templateId":"template-1","enabled":true,"intervalSeconds":60,"jitterSeconds":5,"timeoutSeconds":15,"maxConcurrency":1,"consecutiveFailureThreshold":3,"fallbackModels":["same","same"],"note":null}),
-            serde_json::json!({"name":"Fixture","targetType":"station","stationId":"station-1","stationKeyId":null,"templateId":"template-1","enabled":true,"intervalSeconds":60,"jitterSeconds":5,"timeoutSeconds":15,"maxConcurrency":1,"consecutiveFailureThreshold":3,"fallbackModels":[],"note":null,"unexpected":true}),
+            target_mismatch,
+            missing_key,
+            invalid_jitter,
+            duplicate_model,
+            incompatible_profile,
+            untrusted_writeback,
+            invalid_timeout,
+            unknown,
         ] {
             assert_eq!(
                 CreateChannelMonitorInputDto::parse(value)

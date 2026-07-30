@@ -112,6 +112,10 @@ impl MonitoringExecutionCommitter {
                 .await?;
         }
 
+        self.retention
+            .repair_dirty_ranges(&mut *connection, 1_000, finished_at_ms)
+            .await?;
+
         self.executions
             .finalize_execution_and_advance_schedule(
                 &mut *connection,

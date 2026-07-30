@@ -7,11 +7,15 @@ use std::{
 use futures_util::future::BoxFuture;
 
 use crate::{
-    application::{app_services::AppServices, collectors::CollectorService, pagination::PageLimit},
+    application::{
+        app_services::AppServices, collectors::CollectorService, pagination::PageLimit,
+        settings::SettingsService,
+    },
     background_tasks::{
         BlockingExecutor, BlockingExecutorError, TaskFailure, TaskId, TaskRunContext, TaskSpec,
         TaskSupervisor,
     },
+    observability::correlation,
     outbound::AsyncOutboundClient,
     services::collectors::{
         self,
@@ -47,6 +51,7 @@ pub(crate) fn v2_runner_port(
     ));
     Arc::new(V2StationCollectorRunnerAdapter::new(
         services.collectors.clone(),
+        services.settings.clone(),
         tasks,
     ))
 }
@@ -66,17 +71,6 @@ pub(crate) struct StationCollectorTaskContext {
     run_id: u64,
     correlation_id: String,
     cancellation_token: tokio_util::sync::CancellationToken,
-}
-
-impl From<&TaskRunContext> for StationCollectorTaskContext {
-    fn from(context: &TaskRunContext) -> Self {
-        Self {
-            task_id: context.task_id.clone(),
-            run_id: context.run_id.0,
-            correlation_id: context.correlation_id.clone(),
-            cancellation_token: context.cancellation_token.clone(),
-        }
-    }
 }
 
 pub(crate) struct V2StationCollectorTaskAdapter {
@@ -116,6 +110,7 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
         context: StationCollectorTaskContext,
     ) -> BoxFuture<'static, Result<(), String>> {
         let source = self.source.clone();
+        let finish_source = self.source.clone();
         let apply = self.apply.clone();
         let blocking = self.blocking.clone();
         let outbound = self.outbound.clone();
@@ -175,6 +170,7 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                 }
                 collectors::PreparedStationTaskRoute::NewApi(prepared) => {
                     collectors::finish_newapi_task_v2(
+                        finish_source.as_ref(),
                         providers.as_ref(),
                         &outbound,
                         prepared,
@@ -199,7 +195,10 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
 }
 
 pub(crate) trait StationCollectorRunnerPort: Send + Sync + 'static {
-    fn due_station_ids(&self, limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>>;
+    fn due_station_collections(
+        &self,
+        limit: u32,
+    ) -> BoxFuture<'static, Result<Vec<ScheduledStationCollection>, String>>;
 
     fn collect_task(
         &self,
@@ -209,30 +208,66 @@ pub(crate) trait StationCollectorRunnerPort: Send + Sync + 'static {
     ) -> BoxFuture<'static, Result<(), String>>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScheduledStationCollection {
+    station_id: String,
+    tasks: Vec<CollectorTask>,
+}
+
 pub(crate) struct V2StationCollectorRunnerAdapter {
     collectors: Arc<CollectorService>,
+    settings: Arc<SettingsService>,
     tasks: Arc<dyn StationCollectorTaskPort>,
 }
 
 impl V2StationCollectorRunnerAdapter {
     pub(crate) fn new(
         collectors: Arc<CollectorService>,
+        settings: Arc<SettingsService>,
         tasks: Arc<dyn StationCollectorTaskPort>,
     ) -> Self {
-        Self { collectors, tasks }
+        Self {
+            collectors,
+            settings,
+            tasks,
+        }
+    }
+}
+
+impl StationCollectorTaskContext {
+    fn for_scheduled_task(context: &TaskRunContext, correlation_id: String) -> Self {
+        Self {
+            task_id: context.task_id.clone(),
+            run_id: context.run_id.0,
+            correlation_id,
+            cancellation_token: context.cancellation_token.clone(),
+        }
     }
 }
 
 impl StationCollectorRunnerPort for V2StationCollectorRunnerAdapter {
-    fn due_station_ids(&self, limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+    fn due_station_collections(
+        &self,
+        limit: u32,
+    ) -> BoxFuture<'static, Result<Vec<ScheduledStationCollection>, String>> {
         let collectors = self.collectors.clone();
+        let settings = self.settings.clone();
         Box::pin(async move {
             let limit = PageLimit::new(limit).map_err(|error| error.to_string())?;
-            collectors
-                .due_stations(limit)
+            let settings = settings.load().await.map_err(|error| error.to_string())?;
+            let balance_stations = collectors
+                .due_stations_for_task("balance", settings.balance_interval_minutes, limit)
                 .await
-                .map(|stations| stations.into_iter().map(|station| station.id).collect())
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string())?;
+            let group_stations = collectors
+                .due_stations_for_task("groups", settings.group_rate_interval_minutes, limit)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(merge_due_station_collections(
+                balance_stations.into_iter().map(|station| station.id),
+                group_stations.into_iter().map(|station| station.id),
+                limit.get() as usize,
+            ))
         })
     }
 
@@ -304,16 +339,19 @@ async fn run_due_station_collections_once_v2(
     port: &dyn StationCollectorRunnerPort,
     context: &TaskRunContext,
 ) {
-    match port.due_station_ids(256).await {
-        Ok(station_ids) => {
-            for station_id in station_ids {
+    match port.due_station_collections(256).await {
+        Ok(collections) => {
+            for collection in collections {
                 if context.cancellation_token.is_cancelled() {
                     break;
                 }
                 if let Err(error) =
-                    run_station_collection_guarded_v2(port, &station_id, context).await
+                    run_station_collection_guarded_v2(port, &collection, context).await
                 {
-                    eprintln!("Station collector runner failed for {station_id}: {error}");
+                    eprintln!(
+                        "Station collector runner failed for {}: {error}",
+                        collection.station_id
+                    );
                 }
             }
         }
@@ -325,22 +363,32 @@ async fn run_due_station_collections_once_v2(
 
 async fn run_station_collection_guarded_v2(
     port: &dyn StationCollectorRunnerPort,
-    station_id: &str,
+    collection: &ScheduledStationCollection,
     context: &TaskRunContext,
 ) -> Result<(), String> {
-    let _guard = StationCollectorRunGuard::try_start(station_id)?;
-    let task_context = StationCollectorTaskContext::from(context);
-    let balance_result = port
-        .collect_task(
-            station_id.to_string(),
-            CollectorTask::Balance,
-            task_context.clone(),
+    let _guard = StationCollectorRunGuard::try_start(&collection.station_id)?;
+    let mut failures = Vec::new();
+    for task in &collection.tasks {
+        let task_correlation_id = correlation::CorrelationId::new();
+        let task_context = StationCollectorTaskContext::for_scheduled_task(
+            context,
+            task_correlation_id.as_str().to_string(),
+        );
+        let result = correlation::in_scope(
+            "station.collector.task",
+            task_correlation_id,
+            port.collect_task(collection.station_id.clone(), *task, task_context),
         )
         .await;
-    let groups_result = port
-        .collect_task(station_id.to_string(), CollectorTask::Groups, task_context)
-        .await;
-    combine_collection_results(balance_result, groups_result)
+        if let Err(error) = result {
+            failures.push(format!("{} collection failed: {error}", task.as_str()));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 impl Drop for StationCollectorRunnerState {
@@ -349,18 +397,37 @@ impl Drop for StationCollectorRunnerState {
     }
 }
 
-fn combine_collection_results(
-    balance_result: Result<(), String>,
-    groups_result: Result<(), String>,
-) -> Result<(), String> {
-    match (balance_result, groups_result) {
-        (Ok(_), Ok(_)) => Ok(()),
-        (Err(balance_error), Ok(_)) => Err(balance_error),
-        (Ok(_), Err(groups_error)) => Err(groups_error),
-        (Err(balance_error), Err(groups_error)) => Err(format!(
-            "balance collection failed: {balance_error}; group collection failed: {groups_error}"
-        )),
+fn merge_due_station_collections(
+    balance_station_ids: impl IntoIterator<Item = String>,
+    group_station_ids: impl IntoIterator<Item = String>,
+    limit: usize,
+) -> Vec<ScheduledStationCollection> {
+    let mut collections = Vec::<ScheduledStationCollection>::new();
+    for (task, station_ids) in [
+        (
+            CollectorTask::Balance,
+            balance_station_ids.into_iter().collect::<Vec<_>>(),
+        ),
+        (
+            CollectorTask::Groups,
+            group_station_ids.into_iter().collect::<Vec<_>>(),
+        ),
+    ] {
+        for station_id in station_ids {
+            if let Some(collection) = collections
+                .iter_mut()
+                .find(|collection| collection.station_id == station_id)
+            {
+                collection.tasks.push(task);
+            } else if collections.len() < limit {
+                collections.push(ScheduledStationCollection {
+                    station_id,
+                    tasks: vec![task],
+                });
+            }
+        }
     }
+    collections
 }
 
 fn blocking_executor_error_message(error: BlockingExecutorError) -> String {
@@ -432,24 +499,23 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     #[test]
-    fn combines_balance_and_group_collection_errors_without_losing_partial_failure() {
+    fn merges_due_balance_and_group_tasks_without_exceeding_station_limit() {
         assert_eq!(
-            combine_collection_results(Ok(()), Err("groups failed".to_string())),
-            Err("groups failed".to_string())
-        );
-        assert_eq!(
-            combine_collection_results(Err("balance failed".to_string()), Ok(())),
-            Err("balance failed".to_string())
-        );
-        assert_eq!(
-            combine_collection_results(
-                Err("balance failed".to_string()),
-                Err("groups failed".to_string())
+            merge_due_station_collections(
+                ["station-1".to_string(), "station-2".to_string()],
+                ["station-1".to_string(), "station-3".to_string()],
+                2,
             ),
-            Err(
-                "balance collection failed: balance failed; group collection failed: groups failed"
-                    .to_string()
-            )
+            vec![
+                ScheduledStationCollection {
+                    station_id: "station-1".to_string(),
+                    tasks: vec![CollectorTask::Balance, CollectorTask::Groups],
+                },
+                ScheduledStationCollection {
+                    station_id: "station-2".to_string(),
+                    tasks: vec![CollectorTask::Balance],
+                },
+            ]
         );
     }
 
@@ -458,9 +524,16 @@ mod tests {
         let port = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
         let context = test_run_context();
 
-        run_station_collection_guarded_v2(&port, "station-1", &context)
-            .await
-            .expect("guarded run succeeds");
+        run_station_collection_guarded_v2(
+            &port,
+            &scheduled_collection(
+                "station-1",
+                &[CollectorTask::Balance, CollectorTask::Groups],
+            ),
+            &context,
+        )
+        .await
+        .expect("guarded run succeeds");
 
         assert_eq!(
             port.calls(),
@@ -469,6 +542,12 @@ mod tests {
                 ("station-1".to_string(), CollectorTask::Groups),
             ]
         );
+        let correlation_ids = port.correlation_ids();
+        assert_eq!(correlation_ids.len(), 2);
+        assert_ne!(correlation_ids[0], correlation_ids[1]);
+        assert!(correlation_ids
+            .iter()
+            .all(|correlation_id| correlation_id != "test-correlation"));
     }
 
     #[tokio::test]
@@ -476,9 +555,20 @@ mod tests {
         let port = RecordingRunnerPort::new(vec![Err("balance failed".to_string()), Ok(())]);
         let context = test_run_context();
 
-        let result = run_station_collection_guarded_v2(&port, "station-2", &context).await;
+        let result = run_station_collection_guarded_v2(
+            &port,
+            &scheduled_collection(
+                "station-2",
+                &[CollectorTask::Balance, CollectorTask::Groups],
+            ),
+            &context,
+        )
+        .await;
 
-        assert_eq!(result, Err("balance failed".to_string()));
+        assert_eq!(
+            result,
+            Err("balance collection failed: balance failed".to_string())
+        );
         assert_eq!(
             port.calls(),
             vec![
@@ -498,15 +588,23 @@ mod tests {
         );
         let running = tokio::spawn(async move {
             let context = test_run_context();
-            run_station_collection_guarded_v2(&port, "station-guarded", &context).await
+            run_station_collection_guarded_v2(
+                &port,
+                &scheduled_collection("station-guarded", &[CollectorTask::Balance]),
+                &context,
+            )
+            .await
         });
         notify_started.notified().await;
 
         let duplicate = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
         let duplicate_context = test_run_context();
-        let duplicate_result =
-            run_station_collection_guarded_v2(&duplicate, "station-guarded", &duplicate_context)
-                .await;
+        let duplicate_result = run_station_collection_guarded_v2(
+            &duplicate,
+            &scheduled_collection("station-guarded", &[CollectorTask::Balance]),
+            &duplicate_context,
+        )
+        .await;
         assert_eq!(
             duplicate_result,
             Err("Station collector is already running".to_string())
@@ -523,16 +621,27 @@ mod tests {
         let after_release_context = test_run_context();
         run_station_collection_guarded_v2(
             &after_release,
-            "station-guarded",
+            &scheduled_collection("station-guarded", &[CollectorTask::Balance]),
             &after_release_context,
         )
         .await
         .expect("guard is released after first run");
-        assert_eq!(after_release.calls().len(), 2);
+        assert_eq!(after_release.calls().len(), 1);
+    }
+
+    fn scheduled_collection(
+        station_id: &str,
+        tasks: &[CollectorTask],
+    ) -> ScheduledStationCollection {
+        ScheduledStationCollection {
+            station_id: station_id.to_string(),
+            tasks: tasks.to_vec(),
+        }
     }
 
     struct RecordingRunnerPort {
         calls: Arc<Mutex<Vec<(String, CollectorTask)>>>,
+        correlation_ids: Arc<Mutex<Vec<String>>>,
         results: Arc<Mutex<Vec<Result<(), String>>>>,
     }
 
@@ -540,6 +649,7 @@ mod tests {
         fn new(results: Vec<Result<(), String>>) -> Self {
             Self {
                 calls: Arc::new(Mutex::new(Vec::new())),
+                correlation_ids: Arc::new(Mutex::new(Vec::new())),
                 results: Arc::new(Mutex::new(results)),
             }
         }
@@ -547,10 +657,20 @@ mod tests {
         fn calls(&self) -> Vec<(String, CollectorTask)> {
             self.calls.lock().expect("calls").clone()
         }
+
+        fn correlation_ids(&self) -> Vec<String> {
+            self.correlation_ids
+                .lock()
+                .expect("correlation ids")
+                .clone()
+        }
     }
 
     impl StationCollectorRunnerPort for RecordingRunnerPort {
-        fn due_station_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+        fn due_station_collections(
+            &self,
+            _limit: u32,
+        ) -> BoxFuture<'static, Result<Vec<ScheduledStationCollection>, String>> {
             Box::pin(async { Ok(Vec::new()) })
         }
 
@@ -558,9 +678,13 @@ mod tests {
             &self,
             station_id: String,
             task: CollectorTask,
-            _context: StationCollectorTaskContext,
+            context: StationCollectorTaskContext,
         ) -> BoxFuture<'static, Result<(), String>> {
             self.calls.lock().expect("calls").push((station_id, task));
+            self.correlation_ids
+                .lock()
+                .expect("correlation ids")
+                .push(context.correlation_id);
             let result = self.results.lock().expect("results").remove(0);
             Box::pin(async move { result })
         }
@@ -586,7 +710,10 @@ mod tests {
     }
 
     impl StationCollectorRunnerPort for BlockingFirstTaskRunnerPort {
-        fn due_station_ids(&self, _limit: u32) -> BoxFuture<'static, Result<Vec<String>, String>> {
+        fn due_station_collections(
+            &self,
+            _limit: u32,
+        ) -> BoxFuture<'static, Result<Vec<ScheduledStationCollection>, String>> {
             Box::pin(async { Ok(Vec::new()) })
         }
 

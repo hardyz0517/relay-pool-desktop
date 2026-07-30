@@ -246,8 +246,10 @@ fn request_body(protocol_kind: ProtocolKind, model: &str, prompt: &str, stream: 
     let value = match protocol_kind {
         ProtocolKind::OpenAiResponses => json!({
             "model": model,
+            "instructions": "Follow the input exactly.",
             "input": prompt,
             "max_output_tokens": 16,
+            "store": false,
             "stream": stream
         }),
         ProtocolKind::AnthropicMessages => json!({
@@ -342,5 +344,30 @@ fn failure_output(
             output_bytes: 0,
             error_summary,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::request_body;
+    use crate::models::monitoring::ProtocolKind;
+
+    #[test]
+    fn responses_probe_uses_minimal_explicit_instructions_without_storage() {
+        let body = request_body(
+            ProtocolKind::OpenAiResponses,
+            "gpt-5.5",
+            "Reply exactly RP_ANSWER=42",
+            true,
+        );
+        let value: Value = serde_json::from_slice(&body).expect("valid request JSON");
+
+        assert_eq!(value["instructions"], "Follow the input exactly.");
+        assert_eq!(value["store"], false);
+        assert_eq!(value["max_output_tokens"], 16);
+        assert_eq!(value["stream"], true);
+        assert_eq!(value["input"], "Reply exactly RP_ANSWER=42");
     }
 }

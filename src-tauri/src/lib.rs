@@ -516,6 +516,14 @@ pub fn run() {
                     .map_err(|error| {
                         format!("failed to recover interrupted monitor executions: {error}")
                     })?;
+                    tauri::async_runtime::block_on(
+                        app_services
+                            .monitoring
+                            .repair_pending_monitoring_rollups(1_000),
+                    )
+                    .map_err(|error| {
+                        format!("failed to repair pending monitor rollups: {error}")
+                    })?;
                     let settings = tauri::async_runtime::block_on(app_services.settings.load())
                         .map_err(|error| format!("failed to load application settings: {error}"))?;
                     app.state::<Arc<TrayBehaviorState>>()

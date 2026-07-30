@@ -211,6 +211,8 @@ pub struct ChannelStatusTarget {
     pub station_name: Option<String>,
     pub station_key_id: Option<String>,
     pub station_key_name: Option<String>,
+    pub group_name: Option<String>,
+    pub effective_group_category: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

@@ -504,12 +504,11 @@ mod services {
 
     pub mod collectors {
         pub trait CollectorSourcePort {
-            fn persist_station_session_with_data_key(
-                &self,
+            fn persist_station_session<'a>(
+                &'a self,
                 input: crate::models::credentials::PersistStationSessionInput,
-                data_key: &[u8; 32],
                 expected_endpoint_revision: i64,
-            ) -> Result<(), String>;
+            ) -> futures_util::future::BoxFuture<'a, Result<(), String>>;
         }
 
         pub mod facts {

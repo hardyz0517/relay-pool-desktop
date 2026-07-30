@@ -185,6 +185,8 @@ impl MonitoringRetentionRepository {
         range_end_ms: i64,
         now_ms: i64,
     ) -> Result<u32, PersistenceError> {
+        let query_start_ms = floor_ms(range_start_ms, 3_600_000);
+        let query_end_ms = ceil_ms(range_end_ms, 86_400_000);
         let rows = sqlx::query(
             r#"
             SELECT station_key_id, finished_at_ms, terminal_outcome, terminal_failure_kind, latency_ms
@@ -199,8 +201,8 @@ impl MonitoringRetentionRepository {
         )
         .bind(monitor_id)
         .bind(station_key_id)
-        .bind(range_start_ms)
-        .bind(range_end_ms)
+        .bind(query_start_ms)
+        .bind(query_end_ms)
         .fetch_all(&mut *connection)
         .await?;
 
@@ -452,4 +454,8 @@ impl RollupAggregate {
 
 fn floor_ms(value: i64, unit_ms: i64) -> i64 {
     value.div_euclid(unit_ms) * unit_ms
+}
+
+fn ceil_ms(value: i64, unit_ms: i64) -> i64 {
+    floor_ms(value.saturating_sub(1), unit_ms).saturating_add(unit_ms)
 }

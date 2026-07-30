@@ -1,9 +1,18 @@
 export type ChannelMonitorTargetTypeInputDto = "station_key" | "station";
+export type MonitorProtocolKindInputDto = "open_ai_chat" | "open_ai_responses" | "anthropic_messages" | "gemini_native" | "xai_grok" | "generic_open_ai";
+export type MonitorClientProfileIdInputDto = "standard_api" | "codex_cli_compat" | "claude_code_compat" | "gemini_cli_compat" | "grok_cli_compat";
+export type MonitorHealthWritebackModeInputDto = "disabled" | "observe_only" | "authoritative";
 export type ChannelMonitorMutationIdInputDto = { id: string };
 
 export type CreateChannelMonitorInputDto = {
   name: string; targetType: ChannelMonitorTargetTypeInputDto; stationId: string;
   stationKeyId: string | null; templateId: string; enabled: boolean; intervalSeconds: number;
+  protocolKind: MonitorProtocolKindInputDto; clientProfileId: MonitorClientProfileIdInputDto;
+  clientProfileVersion: number; primaryModel: string;
+  retryMaxAttemptsPerModel: number; retryInitialBackoffMs: number; retryMaxBackoffMs: number;
+  riskDailyProbeBudget: number; healthWritebackMode: MonitorHealthWritebackModeInputDto;
+  healthFailureThreshold: number; healthRecoveryThreshold: number;
+  attemptTimeoutMs: number; executionTimeoutMs: number;
   jitterSeconds: number; timeoutSeconds: number; maxConcurrency: number;
   consecutiveFailureThreshold: number; fallbackModels: string[]; note: string | null;
 };

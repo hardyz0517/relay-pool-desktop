@@ -135,6 +135,8 @@ impl ChannelStatusReadModelQuery {
                         station_name: base.station_name,
                         station_key_id: base.station_key_id,
                         station_key_name: base.station_key_name,
+                        group_name: base.group_name,
+                        effective_group_category: base.effective_group_category,
                     },
                     latest,
                     running,
@@ -391,6 +393,8 @@ struct BaseStatusRow {
     station_name: Option<String>,
     station_key_id: Option<String>,
     station_key_name: Option<String>,
+    group_name: Option<String>,
+    effective_group_category: Option<String>,
     enabled: bool,
     protocol_kind: String,
     client_profile_id: String,
@@ -516,6 +520,8 @@ async fn load_base_rows(
             s.name AS station_name,
             sk.id AS station_key_id,
             sk.name AS station_key_name,
+            COALESCE(gb.group_name, sk.group_name) AS group_name,
+            COALESCE(gb.group_category_override, gb.inferred_group_category) AS effective_group_category,
             m.enabled,
             m.protocol_kind,
             m.client_profile_id,
@@ -532,6 +538,7 @@ async fn load_base_rows(
             (m.target_type = 'station_key' AND sk.id = m.station_key_id)
             OR (m.target_type = 'station' AND sk.station_id = m.station_id)
           )
+        LEFT JOIN station_group_bindings gb ON gb.id = sk.group_binding_id
         WHERE 1 = 1
         "#,
     );
@@ -585,6 +592,8 @@ async fn load_base_rows(
                 station_name: row.get("station_name"),
                 station_key_id: row.get("station_key_id"),
                 station_key_name: row.get("station_key_name"),
+                group_name: row.get("group_name"),
+                effective_group_category: row.get("effective_group_category"),
                 enabled: row.get::<i64, _>("enabled") != 0,
                 protocol_kind: row.get("protocol_kind"),
                 client_profile_id: row.get("client_profile_id"),
@@ -912,14 +921,10 @@ async fn load_dirty_ranges(
 }
 
 fn push_scoped_values<'a>(query: &mut QueryBuilder<'a, Sqlite>, row_keys: &'a [RowKey]) {
-    let mut separated = query.separated(", ");
-    for (monitor_id, station_key_id) in row_keys {
-        separated.push("(");
-        separated.push_bind(monitor_id);
-        separated.push(", ");
-        separated.push_bind(station_key_id);
-        separated.push(")");
-    }
+    query.push_values(row_keys, |mut row, (monitor_id, station_key_id)| {
+        row.push_bind(monitor_id);
+        row.push_bind(station_key_id);
+    });
 }
 
 fn build_buckets(
@@ -1314,5 +1319,109 @@ fn select_tail<T>(items: &[T], count: usize) -> &[T] {
         items
     } else {
         &items[items.len() - count..]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::*;
+    use crate::persistence::runtime::PersistenceRuntime;
+
+    struct FixedClock;
+
+    impl Clock for FixedClock {
+        fn now_utc(&self) -> chrono::DateTime<Utc> {
+            Utc.timestamp_millis_opt(1_700_000_000_000)
+                .single()
+                .expect("timestamp")
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_loads_when_a_monitor_produces_scoped_queries() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("status-workspace.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO stations (
+                            id, name, station_type, website_url, api_base_url,
+                            created_at, updated_at
+                        ) VALUES (
+                            'station-1', 'Station', 'openai-compatible',
+                            'https://example.test', 'https://example.test/v1', '1', '1'
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO station_keys (
+                            id, station_id, name, group_name, group_binding_id,
+                            created_at, updated_at
+                        ) VALUES (
+                            'key-1', 'station-1', 'Key', 'plus', 'binding-1', '1', '1'
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO station_group_bindings (
+                            id, station_id, station_key_id, binding_kind,
+                            group_key_hash, group_name, binding_status,
+                            inferred_group_category, confidence, created_at, updated_at
+                        ) VALUES (
+                            'binding-1', 'station-1', 'key-1', 'key_binding',
+                            'group-hash-1', 'plus', 'bound', 'gpt', 1.0, '1', '1'
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO channel_monitors (
+                            id, name, target_type, station_id, station_key_id,
+                            template_id, interval_seconds, timeout_seconds,
+                            created_at, updated_at
+                        ) VALUES (
+                            'monitor-1', 'Monitor', 'station_key', 'station-1', 'key-1',
+                            'builtin-openai-chat-low-token', 300, 30, '1', '1'
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("seed monitor");
+
+        let query = ChannelStatusReadModelQuery::new(runtime.handle(), Arc::new(FixedClock));
+        let workspace = query
+            .load_workspace(ChannelStatusWorkspaceInput::default())
+            .await
+            .expect("load workspace");
+
+        assert_eq!(workspace.rows.len(), 1);
+        assert_eq!(workspace.rows[0].row_key, "monitor-1|key-1");
+        assert_eq!(workspace.rows[0].target.group_name.as_deref(), Some("plus"));
+        assert_eq!(
+            workspace.rows[0].target.effective_group_category.as_deref(),
+            Some("gpt")
+        );
+        assert_eq!(workspace.aggregate.total_rows, 1);
+        runtime.close().await.expect("close runtime");
     }
 }

@@ -91,12 +91,11 @@ pub(crate) trait CollectorSourcePort: Send + Sync {
         data_key: &[u8; 32],
         expected_revision: i64,
     ) -> Result<StationCredentials, String>;
-    fn persist_station_session_with_data_key(
-        &self,
+    fn persist_station_session<'a>(
+        &'a self,
         input: PersistStationSessionInput,
-        data_key: &[u8; 32],
         expected_revision: i64,
-    ) -> Result<StationCredentials, String>;
+    ) -> BoxFuture<'a, Result<StationCredentials, String>>;
     fn invalidate_station_session_credential(
         &self,
         station_id: &str,
@@ -202,17 +201,19 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
         .map_err(application_error)
     }
 
-    fn persist_station_session_with_data_key(
-        &self,
+    fn persist_station_session<'a>(
+        &'a self,
         input: PersistStationSessionInput,
-        _data_key: &[u8; 32],
         expected_revision: i64,
-    ) -> Result<StationCredentials, String> {
-        tauri::async_runtime::block_on(
-            self.credentials
-                .persist_station_session_if_revision(input, expected_revision),
-        )
-        .map_err(application_error)
+    ) -> BoxFuture<'a, Result<StationCredentials, String>> {
+        let credentials = Arc::clone(&self.credentials);
+        async move {
+            credentials
+                .persist_station_session_if_revision(input, expected_revision)
+                .await
+                .map_err(application_error)
+        }
+        .boxed()
     }
 
     fn invalidate_station_session_credential(
@@ -305,6 +306,12 @@ pub(crate) struct PreparedNewApiDriverCollection {
     credential_handle: contract::OpaqueCredentialHandle,
     auth_context: Option<contract::ProviderAuthContext>,
     secret_accessor: StaticSecretAccessor,
+    password_login: Option<PreparedNewApiPasswordLogin>,
+}
+
+struct PreparedNewApiPasswordLogin {
+    username: String,
+    password: String,
 }
 
 pub(crate) enum PreparedSub2ApiCollection {
@@ -719,7 +726,7 @@ fn prepare_newapi_collection_v2(
     let needs_auth = driver_tasks
         .iter()
         .any(|task| *task != CollectorTask::Detect);
-    let (auth_context, secret_purpose, secret) = if needs_auth {
+    let (auth_context, secret_purpose, secret, password_login) = if needs_auth {
         match drivers::newapi::auth::prepare_collector_auth_context(
             source,
             data_key,
@@ -742,31 +749,51 @@ fn prepare_newapi_collection_v2(
                     }),
                     secret_purpose,
                     auth.secret,
+                    None,
                 )
             }
             Err(error) => {
-                let message = crate::services::secrets::mask::redact_text(&error);
-                let outputs = driver_tasks
-                    .into_iter()
-                    .map(|child_task| {
-                        manual_required_output_for_adapter(
-                            "newapi",
-                            child_task,
-                            "manual_session_required",
-                            &message,
-                        )
-                    })
-                    .collect();
-                return Ok(PreparedNewApiCollection::Immediate(
-                    PreparedStationCollection {
-                        station_id,
-                        endpoint_revision: station.endpoint_revision,
-                        adapter: "newapi".to_string(),
-                        task,
-                        outputs,
-                        enabled_key_count,
-                    },
-                ));
+                let credentials = source
+                    .get_station_credentials(station_id.clone())
+                    .map_err(|_| ApplicationError::Internal)?;
+                let password = source
+                    .get_station_login_password_with_data_key(station_id.clone(), data_key)
+                    .map_err(|_| ApplicationError::Internal)?;
+                if let Some(password_login) = prepare_newapi_password_login(
+                    credentials.login_username,
+                    credentials.password_present,
+                    password,
+                ) {
+                    (
+                        None,
+                        contract::CredentialSecretPurpose::SessionCookie,
+                        String::new(),
+                        Some(password_login),
+                    )
+                } else {
+                    let message = crate::services::secrets::mask::redact_text(&error);
+                    let outputs = driver_tasks
+                        .into_iter()
+                        .map(|child_task| {
+                            manual_required_output_for_adapter(
+                                "newapi",
+                                child_task,
+                                "manual_session_required",
+                                &message,
+                            )
+                        })
+                        .collect();
+                    return Ok(PreparedNewApiCollection::Immediate(
+                        PreparedStationCollection {
+                            station_id,
+                            endpoint_revision: station.endpoint_revision,
+                            adapter: "newapi".to_string(),
+                            task,
+                            outputs,
+                            enabled_key_count,
+                        },
+                    ));
+                }
             }
         }
     } else {
@@ -774,6 +801,7 @@ fn prepare_newapi_collection_v2(
             None,
             contract::CredentialSecretPurpose::AuthorizationHeader,
             String::new(),
+            None,
         )
     };
     let settings = source
@@ -808,8 +836,22 @@ fn prepare_newapi_collection_v2(
                 purpose: secret_purpose,
                 secret,
             },
+            password_login,
         },
     ))
+}
+
+fn prepare_newapi_password_login(
+    username: Option<String>,
+    password_present: bool,
+    password: Option<String>,
+) -> Option<PreparedNewApiPasswordLogin> {
+    if !has_login_credentials(&username, password_present) {
+        return None;
+    }
+    let username = username?.trim().to_string();
+    let password = password.filter(|value| !value.trim().is_empty())?;
+    Some(PreparedNewApiPasswordLogin { username, password })
 }
 
 pub(crate) async fn finish_openai_compatible_collection_v2(
@@ -984,6 +1026,7 @@ pub(crate) async fn finish_openai_compatible_task_v2(
 }
 
 pub(crate) async fn finish_newapi_collection_v2(
+    source: &dyn CollectorSourcePort,
     registry: &orchestration::ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedNewApiCollection,
@@ -992,7 +1035,57 @@ pub(crate) async fn finish_newapi_collection_v2(
 ) -> Result<PreparedStationCollection, ApplicationError> {
     match prepared {
         PreparedNewApiCollection::Immediate(prepared) => Ok(prepared),
-        PreparedNewApiCollection::Driver(prepared) => {
+        PreparedNewApiCollection::Driver(mut prepared) => {
+            if let Some(login) = prepared.password_login.take() {
+                let attempt = login_probe::probe_login(
+                    outbound,
+                    "newapi",
+                    &prepared.website_url,
+                    &login.username,
+                    &login.password,
+                    prepared.proxy.clone(),
+                    cancellation_token.clone(),
+                    correlation_id.clone(),
+                )
+                .await;
+                let session = match attempt {
+                    Ok(attempt) => attempt.newapi_session,
+                    Err(error) => {
+                        return Ok(newapi_manual_required_collection(
+                            prepared,
+                            &crate::services::secrets::mask::redact_text(&error),
+                        ));
+                    }
+                };
+                let Some(session) = session else {
+                    return Ok(newapi_manual_required_collection(
+                        prepared,
+                        "NewAPI password login requires manual authorization",
+                    ));
+                };
+                source
+                    .persist_station_session(
+                        PersistStationSessionInput {
+                            station_id: prepared.station_id.clone(),
+                            access_token: None,
+                            refresh_token: None,
+                            cookie: Some(session.cookie.clone()),
+                            newapi_user_id: Some(session.user_id.clone()),
+                            token_expires_at: None,
+                            session_expires_at: None,
+                            session_source: "password_login".to_string(),
+                        },
+                        prepared.endpoint_revision,
+                    )
+                    .await
+                    .map_err(|_| ApplicationError::Internal)?;
+                prepared.auth_context = Some(contract::ProviderAuthContext::NewApi {
+                    user_id: session.user_id,
+                    secret_purpose: contract::CredentialSecretPurpose::SessionCookie,
+                });
+                prepared.secret_accessor.purpose = contract::CredentialSecretPurpose::SessionCookie;
+                prepared.secret_accessor.secret = session.cookie;
+            }
             let driver = registry
                 .collector(contract::ProviderKind::NewApi)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
@@ -1048,7 +1141,35 @@ pub(crate) async fn finish_newapi_collection_v2(
     }
 }
 
+fn newapi_manual_required_collection(
+    prepared: PreparedNewApiDriverCollection,
+    message: &str,
+) -> PreparedStationCollection {
+    let message = crate::services::secrets::mask::redact_text(message);
+    let outputs = prepared
+        .driver_tasks
+        .into_iter()
+        .map(|child_task| {
+            manual_required_output_for_adapter(
+                "newapi",
+                child_task,
+                "manual_session_required",
+                &message,
+            )
+        })
+        .collect();
+    PreparedStationCollection {
+        station_id: prepared.station_id,
+        endpoint_revision: prepared.endpoint_revision,
+        adapter: "newapi".to_string(),
+        task: prepared.task,
+        outputs,
+        enabled_key_count: prepared.enabled_key_count,
+    }
+}
+
 pub(crate) async fn finish_newapi_task_v2(
+    source: &dyn CollectorSourcePort,
     registry: &orchestration::ProviderRegistry,
     outbound: &AsyncOutboundClient,
     prepared: PreparedNewApiCollection,
@@ -1056,6 +1177,7 @@ pub(crate) async fn finish_newapi_task_v2(
     correlation_id: Option<String>,
 ) -> Result<(String, i64, AdapterOutput), ApplicationError> {
     let prepared = finish_newapi_collection_v2(
+        source,
         registry,
         outbound,
         prepared,
@@ -1231,7 +1353,6 @@ pub(crate) fn prepare_station_login_probe_v2(
 
 pub(crate) async fn finish_station_login_probe_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     outbound: &AsyncOutboundClient,
     prepared: PreparedStationLoginProbe,
     cancellation_token: CancellationToken,
@@ -1271,7 +1392,7 @@ pub(crate) async fn finish_station_login_probe_v2(
 
     if let Some(session) = attempt.newapi_session.clone() {
         source
-            .persist_station_session_with_data_key(
+            .persist_station_session(
                 PersistStationSessionInput {
                     station_id: prepared.station.id.clone(),
                     access_token: None,
@@ -1282,9 +1403,9 @@ pub(crate) async fn finish_station_login_probe_v2(
                     session_expires_at: None,
                     session_source: "password_login".to_string(),
                 },
-                data_key,
                 prepared.station.endpoint_revision,
             )
+            .await
             .map_err(|_| ApplicationError::Internal)?;
     }
 
@@ -1962,6 +2083,29 @@ mod tests {
             &Some("user@example.com".to_string()),
             true,
         ));
+    }
+
+    #[test]
+    fn newapi_collection_can_fall_back_to_saved_password_login() {
+        let login = prepare_newapi_password_login(
+            Some("  user@example.com  ".to_string()),
+            true,
+            Some("saved-password".to_string()),
+        )
+        .expect("saved login credentials should be usable");
+
+        assert_eq!(login.username, "user@example.com");
+        assert_eq!(login.password, "saved-password");
+        assert!(
+            prepare_newapi_password_login(Some("user@example.com".to_string()), true, None,)
+                .is_none()
+        );
+        assert!(prepare_newapi_password_login(
+            Some("user@example.com".to_string()),
+            false,
+            Some("saved-password".to_string()),
+        )
+        .is_none());
     }
 
     #[test]

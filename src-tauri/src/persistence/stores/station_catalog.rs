@@ -44,9 +44,11 @@ impl StationCatalogStore {
         station_by_id(read.connection(), station_id).await
     }
 
-    pub(crate) async fn due_collectors(
+    pub(crate) async fn due_collector_task(
         &self,
         read: &mut ReadSession,
+        task_type: &str,
+        interval_minutes: u16,
         now_ms: i64,
         limit: u32,
     ) -> Result<Vec<Station>, PersistenceError> {
@@ -57,28 +59,25 @@ impl StationCatalogStore {
                    (SELECT COUNT(*) FROM station_keys WHERE station_keys.station_id = stations.id) AS key_count,
                    enabled, priority, credit_per_cny, balance_raw, balance_cny,
                    low_balance_threshold_cny, collection_interval_minutes, status, latency_ms,
-                   last_checked_at, last_pricing_fetched_at, note, created_at, updated_at,
+                   last_checked_at, last_pricing_fetched_at, note, created_at,
+                   stations.updated_at AS updated_at,
                    (SELECT masked_value FROM secrets WHERE secrets.id = stations.api_key_secret_id) AS api_key_masked,
                    api_key_secret_id, collector_proxy_mode, collector_proxy_url
             FROM stations
+            LEFT JOIN collector_task_state
+              ON collector_task_state.station_id = stations.id
+             AND collector_task_state.task_type = ?1
             WHERE enabled = 1
               AND (
-                   (
-                    CASE
-                        WHEN last_checked_at IS NULL AND last_pricing_fetched_at IS NULL THEN 0
-                        WHEN last_checked_at IS NULL THEN CAST(last_pricing_fetched_at AS INTEGER)
-                        WHEN last_pricing_fetched_at IS NULL THEN CAST(last_checked_at AS INTEGER)
-                        WHEN CAST(last_checked_at AS INTEGER) >= CAST(last_pricing_fetched_at AS INTEGER)
-                            THEN CAST(last_checked_at AS INTEGER)
-                        ELSE CAST(last_pricing_fetched_at AS INTEGER)
-                    END
-                   ) + (collection_interval_minutes * 60000) <= ?1
-                   OR (last_checked_at IS NULL AND last_pricing_fetched_at IS NULL)
+                   collector_task_state.updated_at IS NULL
+                   OR CAST(collector_task_state.updated_at AS INTEGER) + (?2 * 60000) <= ?3
               )
             ORDER BY priority ASC, created_at ASC, id ASC
-            LIMIT ?2
+            LIMIT ?4
             "#,
         )
+        .bind(task_type)
+        .bind(i64::from(interval_minutes))
         .bind(now_ms)
         .bind(i64::from(limit))
         .fetch_all(read.connection())

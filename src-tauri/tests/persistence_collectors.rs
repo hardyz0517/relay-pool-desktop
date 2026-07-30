@@ -478,7 +478,10 @@ async fn collector_queries_and_adjacent_store_contracts_share_the_v2_runtime() {
         .await
         .expect("collector apply");
     let limit = PageLimit::new(10).expect("page limit");
-    let _due = collector.due_stations(limit).await.expect("due stations");
+    let _due = collector
+        .due_stations_for_task("balance", 5, limit)
+        .await
+        .expect("due balance stations");
     assert_eq!(
         collector
             .list_station_snapshots("station-1", limit)

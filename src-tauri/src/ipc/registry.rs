@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "81047e568a7d7505c54301877ac792a996d7236838010dc6d5b860d86b74feb3";
+    "3dba6bea86aebfe0af99571ac22016d4f1b1992bc3392281511d3271761949e6";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -571,9 +571,10 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
-        "load_channel_status_workspace" => {
-            migrated_read("EmptyInputDto", "ChannelStatusWorkspaceDto")
-        }
+        "load_channel_status_workspace" => migrated_read(
+            "ChannelStatusWorkspaceInputDto",
+            "ChannelStatusWorkspaceDto",
+        ),
         "list_channel_monitor_executions" => migrated_read(
             "ChannelMonitorExecutionListInputDto",
             "ChannelMonitorExecutionPageDto",
@@ -583,7 +584,7 @@ fn command_contract(name: &str) -> CommandContract {
             "ChannelMonitorExecutionDetailDto",
         ),
         "list_channel_monitor_attempts" => migrated_read(
-            "ChannelMonitorAttemptListInputDto",
+            "ChannelMonitorAttemptHistoryInputDto",
             "ChannelMonitorAttemptPageDto",
         ),
         "list_monitoring_capabilities" => {
@@ -1240,7 +1241,7 @@ export function getChannelMonitorExecution(input: ChannelMonitorExecutionIdInput
   return invokeCommand<ChannelMonitorExecutionDetailDto>("get_channel_monitor_execution", { input });
 }
 
-export function listChannelMonitorAttempts(input: ChannelMonitorAttemptListInputDto): Promise<ChannelMonitorAttemptPageDto> {
+export function listChannelMonitorAttempts(input: ChannelMonitorAttemptHistoryInputDto): Promise<ChannelMonitorAttemptPageDto> {
   return invokeCommand<ChannelMonitorAttemptPageDto>("list_channel_monitor_attempts", { input });
 }
 
@@ -1783,7 +1784,7 @@ mod tests {
     #[test]
     fn channel_monitor_operations_have_closed_schemas_and_frozen_semantics() {
         let workspace = command_contract("load_channel_status_workspace");
-        assert_eq!(workspace.input, "EmptyInputDto");
+        assert_eq!(workspace.input, "ChannelStatusWorkspaceInputDto");
         assert_eq!(workspace.output, "ChannelStatusWorkspaceDto");
         assert_eq!(workspace.mutation_kind, "read");
         assert_eq!(workspace.runtime_validation, "rust_dto_pre_application");

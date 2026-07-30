@@ -35,6 +35,7 @@ export type ChannelStatusMonitorDto = {
 
 export type ChannelStatusTargetDto = {
   stationId: string; stationName: string | null; stationKeyId: string | null; stationKeyName: string | null;
+  groupName: string | null; effectiveGroupCategory: string | null;
 };
 
 export type ChannelStatusLatestResultDto = {

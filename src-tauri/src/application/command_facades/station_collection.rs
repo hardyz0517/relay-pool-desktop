@@ -100,7 +100,9 @@ impl StationCollectionCommandFacade {
                 .map_err(StationCollectionCommandError::Prepare)?
             }
             collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
+                let source = self.source();
                 collectors::finish_newapi_collection_v2(
+                    &source,
                     self.providers.as_ref(),
                     &self.outbound,
                     prepared,
@@ -141,7 +143,6 @@ impl StationCollectionCommandFacade {
         let source = self.source();
         let prepared = collectors::finish_station_login_probe_v2(
             &source,
-            &self.data_key,
             &self.outbound,
             prepared,
             tokio_util::sync::CancellationToken::new(),

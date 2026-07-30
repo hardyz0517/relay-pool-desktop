@@ -126,6 +126,7 @@ impl ProviderDraftCommandFacade {
     ) -> Result<ProviderDraftPreview, ProviderDraftCommandError> {
         let draft = self.drafts.get(draft_id.clone()).await?;
         let fingerprint = ProviderDraftService::runtime_fingerprint(&draft.payload);
+        let finish_draft_id = draft_id.clone();
         let source = self.source(draft_id.clone());
         let data_key = self.data_key;
         let prepared = self
@@ -165,7 +166,9 @@ impl ProviderDraftCommandFacade {
                 .await?
             }
             collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
+                let source = self.source(finish_draft_id);
                 collectors::finish_newapi_collection_v2(
+                    &source,
                     self.providers.as_ref(),
                     &self.outbound,
                     prepared,
@@ -324,14 +327,18 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
             .map_err(app_error)
     }
 
-    fn persist_station_session_with_data_key(
-        &self,
+    fn persist_station_session<'a>(
+        &'a self,
         input: PersistStationSessionInput,
-        _data_key: &[u8; 32],
         expected_revision: i64,
-    ) -> Result<StationCredentials, String> {
-        tauri::async_runtime::block_on(self.drafts.persist_session(input, expected_revision))
-            .map_err(app_error)
+    ) -> futures_util::future::BoxFuture<'a, Result<StationCredentials, String>> {
+        let drafts = Arc::clone(&self.drafts);
+        Box::pin(async move {
+            drafts
+                .persist_session(input, expected_revision)
+                .await
+                .map_err(app_error)
+        })
     }
 
     fn invalidate_station_session_credential(

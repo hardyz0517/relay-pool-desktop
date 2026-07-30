@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -1041,29 +1041,63 @@ fn enrich_remote_key_discoveries_from_parts(
     keys: Vec<RemoteStationKey>,
 ) -> (Vec<RemoteStationKey>, Vec<UpdateStationKeyInput>) {
     let mut updates = BTreeMap::<String, (f64, UpdateStationKeyInput)>::new();
-    let mut enriched = Vec::with_capacity(keys.len());
-    for mut key in keys {
-        apply_group_metadata(&mut key, bindings, &[]);
-        if let Some((local_key, confidence)) = best_local_key_match(&key, local_candidates) {
-            if confidence >= 0.8 {
-                key.matched_station_key_id = Some(local_key.key.id.clone());
-                key.match_confidence = confidence;
-                key.match_status = if confidence >= 0.9 {
-                    crate::models::remote_keys::RemoteKeyMatchStatus::Matched
-                } else {
-                    crate::models::remote_keys::RemoteKeyMatchStatus::Possible
-                };
-                let update = station_key_metadata_update(&local_key.key, &key, bindings);
-                let replace = updates
-                    .get(&local_key.key.id)
-                    .map(|(current, _)| confidence > *current)
-                    .unwrap_or(true);
-                if replace {
-                    updates.insert(local_key.key.id.clone(), (confidence, update));
-                }
-            }
+    let mut enriched = keys;
+    for key in &mut enriched {
+        apply_group_metadata(key, bindings, &[]);
+        key.matched_station_key_id = None;
+        key.match_confidence = 0.0;
+        key.match_status = crate::models::remote_keys::RemoteKeyMatchStatus::Unbound;
+    }
+
+    let mut candidates = enriched
+        .iter()
+        .enumerate()
+        .flat_map(|(remote_index, remote_key)| {
+            local_candidates
+                .iter()
+                .enumerate()
+                .filter_map(move |(local_index, local_key)| {
+                    let confidence = local_key_match_confidence(remote_key, local_key);
+                    (confidence >= 0.8).then_some((remote_index, local_index, confidence))
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .2
+            .partial_cmp(&left.2)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| enriched[left.0].id.cmp(&enriched[right.0].id))
+            .then_with(|| {
+                local_candidates[left.1]
+                    .key
+                    .id
+                    .cmp(&local_candidates[right.1].key.id)
+            })
+    });
+
+    let mut assigned_remote_keys = BTreeSet::new();
+    let mut assigned_local_keys = BTreeSet::new();
+    for (remote_index, local_index, confidence) in candidates {
+        if !assigned_remote_keys.insert(remote_index) || !assigned_local_keys.insert(local_index) {
+            continue;
         }
-        enriched.push(key);
+        let remote_key = &mut enriched[remote_index];
+        let local_key = &local_candidates[local_index];
+        remote_key.matched_station_key_id = Some(local_key.key.id.clone());
+        remote_key.match_confidence = confidence;
+        remote_key.match_status = if confidence >= 0.9 {
+            crate::models::remote_keys::RemoteKeyMatchStatus::Matched
+        } else {
+            crate::models::remote_keys::RemoteKeyMatchStatus::Possible
+        };
+        updates.insert(
+            local_key.key.id.clone(),
+            (
+                confidence,
+                station_key_metadata_update(&local_key.key, remote_key, bindings),
+            ),
+        );
     }
     (
         enriched,
@@ -1155,43 +1189,32 @@ struct LocalStationKeyCandidate {
     fingerprint: Option<String>,
 }
 
-fn best_local_key_match<'a>(
+fn local_key_match_confidence(
     remote_key: &RemoteStationKey,
-    local_candidates: &'a [LocalStationKeyCandidate],
-) -> Option<(&'a LocalStationKeyCandidate, f64)> {
-    local_candidates
-        .iter()
-        .map(|candidate| {
-            let same_group = remote_key
-                .group_id_hash
-                .as_deref()
-                .zip(candidate.key.group_id_hash.as_deref())
-                .map(|(remote, local)| remote == local)
-                .unwrap_or(false)
-                || names_match(
-                    remote_key.group_name.as_deref(),
-                    candidate.key.group_name.as_deref(),
-                );
-            let same_name = names_match(
-                remote_key.remote_key_name.as_deref(),
-                Some(candidate.key.name.as_str()),
-            );
-            let confidence = remote_key_confidence(
-                remote_key.api_key_fingerprint.as_deref(),
-                candidate.fingerprint.as_deref(),
-                remote_key.api_key_masked.as_deref(),
-                candidate.full_key.as_deref(),
-                same_group,
-                same_name,
-            );
-            (candidate, confidence)
-        })
-        .max_by(|left, right| {
-            left.1
-                .partial_cmp(&right.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .filter(|(_, confidence)| *confidence > 0.0)
+    candidate: &LocalStationKeyCandidate,
+) -> f64 {
+    let same_group = remote_key
+        .group_id_hash
+        .as_deref()
+        .zip(candidate.key.group_id_hash.as_deref())
+        .map(|(remote, local)| remote == local)
+        .unwrap_or(false)
+        || names_match(
+            remote_key.group_name.as_deref(),
+            candidate.key.group_name.as_deref(),
+        );
+    let same_name = names_match(
+        remote_key.remote_key_name.as_deref(),
+        Some(candidate.key.name.as_str()),
+    );
+    remote_key_confidence(
+        remote_key.api_key_fingerprint.as_deref(),
+        candidate.fingerprint.as_deref(),
+        remote_key.api_key_masked.as_deref(),
+        candidate.full_key.as_deref(),
+        same_group,
+        same_name,
+    )
 }
 
 fn apply_group_metadata(
@@ -1405,5 +1428,87 @@ mod tests {
             ),
             1.0,
         );
+    }
+
+    #[test]
+    fn discovery_assigns_each_local_key_to_at_most_one_remote_key() {
+        let full_key = "sk-shared-123-tail".to_string();
+        let local = LocalStationKeyCandidate {
+            key: station_key_fixture("local-1"),
+            fingerprint: api_key_fingerprint(&full_key),
+            full_key: Some(full_key),
+        };
+        let remote_a = remote_key_fixture("remote-a", "sk-shared****tail");
+        let remote_b = remote_key_fixture("remote-b", "sk-shared****tail");
+
+        let (keys, updates) =
+            enrich_remote_key_discoveries_from_parts(&[], &[local], vec![remote_b, remote_a]);
+        let matched = keys
+            .iter()
+            .filter(|key| key.matched_station_key_id.as_deref() == Some("local-1"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].id, "remote-a");
+        assert_eq!(updates.len(), 1);
+        assert!(keys.iter().any(|key| {
+            key.id == "remote-b"
+                && key.match_status == crate::models::remote_keys::RemoteKeyMatchStatus::Unbound
+                && key.matched_station_key_id.is_none()
+        }));
+    }
+
+    fn station_key_fixture(id: &str) -> StationKey {
+        StationKey {
+            id: id.to_string(),
+            station_id: "station-1".to_string(),
+            name: "Shared".to_string(),
+            api_key_masked: "sk-***".to_string(),
+            api_key_present: true,
+            enabled: true,
+            priority: 0,
+            max_concurrency: 1,
+            load_factor: None,
+            schedulable: true,
+            group_name: None,
+            tier_label: None,
+            group_binding_id: None,
+            group_id_hash: None,
+            rate_multiplier: None,
+            manual_rate_multiplier: None,
+            manual_rate_updated_at: None,
+            rate_source: None,
+            rate_collected_at: None,
+            balance_scope: None,
+            status: "unchecked".to_string(),
+            last_checked_at: None,
+            last_used_at: None,
+            note: None,
+            created_at: "1".to_string(),
+            updated_at: "1".to_string(),
+        }
+    }
+
+    fn remote_key_fixture(id: &str, masked: &str) -> RemoteStationKey {
+        RemoteStationKey {
+            id: id.to_string(),
+            station_id: "station-1".to_string(),
+            remote_key_id_hash: Some(id.to_string()),
+            remote_key_name: Some("Shared".to_string()),
+            api_key_masked: Some(masked.to_string()),
+            api_key_fingerprint: None,
+            group_id_hash: None,
+            group_name: None,
+            tier_label: None,
+            rate_multiplier: None,
+            rate_source: None,
+            created_at: None,
+            last_used_at: None,
+            raw_source: "fixture".to_string(),
+            match_status: crate::models::remote_keys::RemoteKeyMatchStatus::Unbound,
+            matched_station_key_id: None,
+            match_confidence: 0.0,
+            collected_at: "1".to_string(),
+        }
     }
 }

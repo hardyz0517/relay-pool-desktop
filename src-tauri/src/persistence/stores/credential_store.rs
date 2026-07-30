@@ -1076,8 +1076,16 @@ impl CredentialStore {
         now: &str,
     ) -> Result<Vec<RemoteStationKey>, PersistenceError> {
         ensure_station_exists(write.connection(), station_id).await?;
+        let mut matched_station_key_ids = std::collections::HashSet::new();
         for key in keys {
             validate_remote_station_key(write.connection(), station_id, key).await?;
+            if key
+                .matched_station_key_id
+                .as_ref()
+                .is_some_and(|id| !matched_station_key_ids.insert(id.clone()))
+            {
+                return Err(PersistenceError::ConstraintViolation);
+            }
         }
         sqlx::query("DELETE FROM remote_station_keys WHERE station_id = ?1")
             .bind(station_id)
@@ -1112,6 +1120,33 @@ impl CredentialStore {
         remote_station_key_by_id(write.connection(), &key.id).await
     }
 
+    pub(crate) async fn ensure_remote_station_key_has_no_local_relation(
+        &self,
+        write: &mut WriteSession,
+        key: &RemoteStationKey,
+    ) -> Result<(), PersistenceError> {
+        let occupied = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM remote_station_keys
+                WHERE station_id = ?1
+                  AND (id = ?2 OR (?3 IS NOT NULL AND remote_key_id_hash = ?3))
+                  AND matched_station_key_id IS NOT NULL
+            )
+            "#,
+        )
+        .bind(&key.station_id)
+        .bind(&key.id)
+        .bind(&key.remote_key_id_hash)
+        .fetch_one(write.connection())
+        .await?;
+        if occupied != 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn list_remote_station_keys(
         &self,
         read: &mut ReadSession,
@@ -1128,6 +1163,22 @@ impl CredentialStore {
         station_key_id: &str,
         now: &str,
     ) -> Result<Vec<RemoteStationKey>, PersistenceError> {
+        let occupied = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT EXISTS(
+                SELECT 1
+                FROM remote_station_keys
+                WHERE matched_station_key_id = ?1 AND id <> ?2
+            )
+            "#,
+        )
+        .bind(station_key_id)
+        .bind(remote_key_id)
+        .fetch_one(write.connection())
+        .await?;
+        if occupied != 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
         let updated = sqlx::query(
             r#"
             UPDATE remote_station_keys
@@ -2149,6 +2200,13 @@ fn row_to_remote_station_key(
     row: sqlx::sqlite::SqliteRow,
 ) -> Result<RemoteStationKey, PersistenceError> {
     let match_status: String = row.get("match_status");
+    let matched_station_key_id = row.get("matched_station_key_id");
+    let match_confidence = row.get("match_confidence");
+    let (match_status, matched_station_key_id, match_confidence) = normalize_remote_key_match(
+        RemoteKeyMatchStatus::from_str(&match_status),
+        matched_station_key_id,
+        match_confidence,
+    );
     Ok(RemoteStationKey {
         id: row.get("id"),
         station_id: row.get("station_id"),
@@ -2164,11 +2222,22 @@ fn row_to_remote_station_key(
         created_at: row.get("created_at"),
         last_used_at: row.get("last_used_at"),
         raw_source: row.get("raw_source"),
-        match_status: RemoteKeyMatchStatus::from_str(&match_status),
-        matched_station_key_id: row.get("matched_station_key_id"),
-        match_confidence: row.get("match_confidence"),
+        match_status,
+        matched_station_key_id,
+        match_confidence,
         collected_at: row.get("collected_at"),
     })
+}
+
+fn normalize_remote_key_match(
+    match_status: RemoteKeyMatchStatus,
+    matched_station_key_id: Option<String>,
+    match_confidence: f64,
+) -> (RemoteKeyMatchStatus, Option<String>, f64) {
+    if matches!(match_status, RemoteKeyMatchStatus::Matched) && matched_station_key_id.is_none() {
+        return (RemoteKeyMatchStatus::Unbound, None, 0.0);
+    }
+    (match_status, matched_station_key_id, match_confidence)
 }
 
 async fn station_key_capabilities<'e, E>(
@@ -2325,4 +2394,29 @@ fn bool_to_i64(value: bool) -> i64 {
 
 fn i64_to_bool(value: i64) -> bool {
     value != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_local_key_cannot_remain_matched() {
+        assert_eq!(
+            normalize_remote_key_match(RemoteKeyMatchStatus::Matched, None, 1.0),
+            (RemoteKeyMatchStatus::Unbound, None, 0.0)
+        );
+        assert_eq!(
+            normalize_remote_key_match(
+                RemoteKeyMatchStatus::Matched,
+                Some("local-key-1".to_string()),
+                1.0,
+            ),
+            (
+                RemoteKeyMatchStatus::Matched,
+                Some("local-key-1".to_string()),
+                1.0,
+            )
+        );
+    }
 }

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     application::{
-        collectors::CollectorService, credentials::CredentialService, settings::SettingsService,
+        collectors::CollectorService, credentials::CredentialService, error::ApplicationError,
+        settings::SettingsService,
     },
     background_tasks::{BlockingExecutor, BlockingExecutorError},
     models::remote_keys::{
@@ -164,6 +165,18 @@ impl RemoteKeysCommandFacade {
         station_id: String,
         remote_key_id: String,
     ) -> Result<CreateLocalStationKeyFromRemoteResult, RemoteKeyOperationError> {
+        if self
+            .credentials
+            .list_remote_station_keys(station_id.clone())
+            .await?
+            .into_iter()
+            .find(|key| key.id == remote_key_id)
+            .is_some_and(|key| key.matched_station_key_id.is_some())
+        {
+            return Err(RemoteKeyOperationError::Application(
+                ApplicationError::ConstraintViolation,
+            ));
+        }
         let data_key = self.data_key;
         let station_id_for_probe = station_id.clone();
         let newapi_prepared = self

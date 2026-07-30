@@ -264,6 +264,68 @@ async fn rollup_repair_is_idempotent_merges_dirty_ranges_and_keeps_skipped_out_o
 }
 
 #[tokio::test]
+async fn rollup_repair_rebuilds_complete_buckets_for_narrow_dirty_ranges() {
+    let mut connection = ready_connection().await;
+    let retention = MonitoringRetentionRepository;
+    let statuses = MonitoringStatusQueryRepository;
+    seed_target_result(
+        &mut connection,
+        "execution-a",
+        "target-a",
+        3_600_000 + 10,
+        "available",
+        None,
+        Some(100),
+    )
+    .await;
+    seed_target_result(
+        &mut connection,
+        "execution-b",
+        "target-b",
+        3_600_000 + 1_000,
+        "unavailable",
+        Some("timeout"),
+        Some(200),
+    )
+    .await;
+
+    retention
+        .mark_dirty_range(
+            &mut connection,
+            "dirty-single-result",
+            "monitor-1",
+            Some("key-1"),
+            3_600_000 + 1_000,
+            3_600_000 + 1_001,
+            "target_result_committed",
+            10,
+        )
+        .await
+        .expect("dirty single result");
+    retention
+        .repair_dirty_ranges(&mut connection, 10, 99_000)
+        .await
+        .expect("repair single result");
+
+    let buckets = statuses
+        .bucket_rollups(
+            &mut connection,
+            "monitor-1",
+            Some("key-1"),
+            "hour",
+            3_600_000,
+            7_200_000,
+        )
+        .await
+        .expect("bucket rollups");
+    assert_eq!(buckets.len(), 1);
+    assert_eq!(buckets[0].total_count, 2);
+    assert_eq!(buckets[0].available_count, 1);
+    assert_eq!(buckets[0].unavailable_count, 1);
+    assert_eq!(buckets[0].failure_counts.get("timeout"), Some(&1));
+}
+
+#[tokio::test]
 async fn corrupt_failure_counts_mark_dirty_and_do_not_return_damaged_counts() {
     let mut connection = ready_connection().await;
     let retention = MonitoringRetentionRepository;

@@ -113,8 +113,8 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=10,
-        writable_schema: BTreeSet::from([10]),
+        readable_schema: 1..=12,
+        writable_schema: BTreeSet::from([12]),
     }
 }
 
@@ -182,6 +182,38 @@ mod tests {
     use crate::persistence::runtime::PersistenceRuntime;
 
     #[tokio::test]
+    async fn current_schema_seeds_builtin_monitor_templates_idempotently() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_v2_database(&path)
+            .await
+            .expect("initialize database");
+
+        let pool = migration_pool_existing(&path).await.expect("open database");
+        migrator().run(&pool).await.expect("rerun migrations");
+        let templates: Vec<(String, i64, i64)> = sqlx::query_as(
+            r#"
+            SELECT id, enabled, built_in
+            FROM channel_monitor_request_templates
+            WHERE id IN (
+                'builtin-openai-chat-low-token',
+                'builtin-openai-responses-low-token'
+            )
+            ORDER BY id
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("list builtin templates");
+        pool.close().await;
+
+        assert_eq!(templates.len(), 2);
+        assert!(templates
+            .iter()
+            .all(|(_, enabled, built_in)| *enabled == 1 && *built_in == 1));
+    }
+
+    #[tokio::test]
     async fn existing_schema_is_backed_up_and_migrated_to_current() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");
@@ -226,6 +258,83 @@ mod tests {
             None
         );
         assert!(!root.path().join("backups").exists());
+    }
+
+    #[tokio::test]
+    async fn remote_key_upgrade_repairs_duplicate_local_owners_before_enforcing_uniqueness() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 10).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        sqlx::query(
+            "INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url, created_at, updated_at
+             ) VALUES ('station-1', 'Station', 'sub2api', 'https://example.test',
+                       'https://example.test/v1', '1', '1')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert station");
+        sqlx::query(
+            "INSERT INTO station_keys (id, station_id, note)
+             VALUES ('local-1', 'station-1', '由远端发现开关自动创建：remote-owned')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert station key");
+        for (id, confidence, collected_at) in
+            [("remote-other", 1.0, "3"), ("remote-owned", 0.9, "2")]
+        {
+            sqlx::query(
+                "INSERT INTO remote_station_keys (
+                    id, station_id, remote_key_id_hash, raw_source, match_status,
+                    matched_station_key_id, match_confidence, collected_at, updated_at
+                 ) VALUES (?1, 'station-1', ?1, 'fixture', 'matched',
+                           'local-1', ?2, ?3, ?3)",
+            )
+            .bind(id)
+            .bind(confidence)
+            .bind(collected_at)
+            .execute(&pool)
+            .await
+            .expect("insert duplicate remote match");
+        }
+        pool.close().await;
+
+        upgrade_existing_v2_database(&path)
+            .await
+            .expect("upgrade schema");
+
+        let pool = migration_pool_existing(&path).await.expect("upgraded pool");
+        let owner: String = sqlx::query_scalar(
+            "SELECT id FROM remote_station_keys WHERE matched_station_key_id = 'local-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("one local owner");
+        assert_eq!(owner, "remote-owned");
+        let repaired: (String, Option<String>, f64) = sqlx::query_as(
+            "SELECT match_status, matched_station_key_id, match_confidence
+             FROM remote_station_keys WHERE id = 'remote-other'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("repaired duplicate");
+        assert_eq!(repaired, ("unbound".to_string(), None, 0.0));
+        let duplicate = sqlx::query(
+            "UPDATE remote_station_keys
+             SET matched_station_key_id = 'local-1', match_status = 'matched'
+             WHERE id = 'remote-other'",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            duplicate.is_err(),
+            "schema must reject a second local owner"
+        );
+        pool.close().await;
     }
 
     async fn initialize_database_through(path: &Path, target_version: i64) {

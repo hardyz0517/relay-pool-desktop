@@ -999,7 +999,7 @@ impl CredentialService {
                 manual_rate_updated_at: None,
                 rate_source: remote_key.rate_source.clone(),
                 balance_scope: None,
-                note: Some("由远端站点创建并同步。".to_string()),
+                note: Some(remote_local_key_note(&remote_key.id)),
                 now: now.clone(),
             })
         };
@@ -1012,6 +1012,9 @@ impl CredentialService {
                             &remote_key.station_id,
                             expected_endpoint_revision,
                         )
+                        .await?;
+                    store
+                        .ensure_remote_station_key_has_no_local_relation(write, &remote_key)
                         .await?;
                     let created = matches!(&prepared, PreparedRemoteLocalKey::Create(_));
                     let station_key = match prepared {
@@ -1404,6 +1407,10 @@ fn encrypted_secret_row(
     }
 }
 
+fn remote_local_key_note(remote_key_id: &str) -> String {
+    format!("由远端发现开关自动创建：{remote_key_id}")
+}
+
 pub(crate) fn secret_aad(scope: &str, owner_id: &str, kind: &str) -> String {
     format!("{scope}:{owner_id}:{kind}")
 }
@@ -1412,11 +1419,132 @@ pub(crate) fn secret_aad(scope: &str, owner_id: &str, kind: &str) -> String {
 mod tests {
     use super::*;
     use crate::{
-        application::{clock::SystemClock, ids::UuidV7Generator},
+        application::{clock::SystemClock, ids::UuidV7Generator, stations::StationService},
         models::credentials::{UpsertCommonLoginEmailInput, UpsertCommonLoginPasswordInput},
+        models::stations::CreateStationInput,
         persistence::runtime::PersistenceRuntime,
         services::secrets::vault::DataKeyVault,
     };
+
+    #[test]
+    fn remote_local_key_note_keeps_the_remote_record_owner() {
+        assert_eq!(
+            remote_local_key_note("remote-key-1"),
+            "由远端发现开关自动创建：remote-key-1"
+        );
+    }
+
+    #[tokio::test]
+    async fn importing_an_already_related_remote_key_does_not_create_another_local_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let database_path = temp.path().join("remote-key-import-ownership.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&database_path)
+            .await
+            .expect("runtime");
+        let clock = Arc::new(SystemClock);
+        let ids = Arc::new(UuidV7Generator);
+        let station_service = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let credential_service = CredentialService::new(
+            runtime.handle(),
+            Arc::new(DataKeyVault::new([31; 32])),
+            clock,
+            ids,
+        );
+        let station = station_service
+            .create(CreateStationInput {
+                name: "Remote import fixture".to_string(),
+                station_type: "newapi".to_string(),
+                website_url: "https://example.com".to_string(),
+                api_base_url: "https://example.com/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "direct".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("create station");
+        let local_key = credential_service
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "Existing local key".to_string(),
+                api_key: "sk-existing".to_string(),
+                enabled: true,
+                priority: None,
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .await
+            .expect("create local key");
+        let discovered = credential_service
+            .upsert_remote_station_key(NewRemoteStationKeyRow {
+                id: "remote-key-1".to_string(),
+                station_id: station.id.clone(),
+                remote_key_id_hash: Some("remote-hash-1".to_string()),
+                remote_key_name: Some("Remote key".to_string()),
+                api_key_masked: Some("sk-***".to_string()),
+                api_key_fingerprint: None,
+                group_id_hash: None,
+                group_name: None,
+                tier_label: None,
+                rate_multiplier: None,
+                rate_source: None,
+                created_at: None,
+                last_used_at: None,
+                raw_source: "test".to_string(),
+                collected_at: "1".to_string(),
+                now: "1".to_string(),
+            })
+            .await
+            .expect("save remote discovery");
+        credential_service
+            .bind_remote_station_key(discovered.id.clone(), local_key.id.clone())
+            .await
+            .expect("bind existing local key");
+
+        let error = credential_service
+            .save_remote_station_key_with_local(
+                discovered,
+                station.endpoint_revision,
+                None,
+                None,
+                "sk-duplicate".to_string(),
+            )
+            .await
+            .expect_err("a related remote key must not create another local key");
+
+        assert!(matches!(error, ApplicationError::ConstraintViolation));
+        let local_keys = credential_service
+            .list_station_keys(station.id.clone())
+            .await
+            .expect("list local keys");
+        assert_eq!(local_keys.len(), 1);
+        let remote_keys = credential_service
+            .list_remote_station_keys(station.id)
+            .await
+            .expect("list remote keys");
+        assert_eq!(
+            remote_keys[0].matched_station_key_id.as_deref(),
+            Some(local_key.id.as_str())
+        );
+
+        drop(credential_service);
+        drop(station_service);
+        runtime.close().await.expect("close runtime");
+    }
 
     #[tokio::test]
     async fn common_login_options_are_independent_and_passwords_stay_encrypted() {
