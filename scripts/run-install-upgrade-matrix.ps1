@@ -1,8 +1,25 @@
 param(
-  [string]$OldInstaller = (Join-Path $env:USERPROFILE "Downloads\Relay.Pool.Desktop_0.3.2_x64-setup.exe"),
-  [string]$NewInstaller = "src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis\Relay Pool Desktop_0.3.3_x64-setup.exe",
-  [string]$InstallDir = (Join-Path $env:TEMP "RelayPoolInstallMatrix\Relay Pool Desktop"),
-  [string]$OutputPath = "output\architecture-scale\qualification\release\install-upgrade-matrix-v0.3.3-2026-07-29-summary.json"
+  [Parameter(Mandatory = $true)]
+  [ValidateNotNullOrEmpty()]
+  [string]$OldInstaller,
+
+  [Parameter(Mandatory = $true)]
+  [ValidateNotNullOrEmpty()]
+  [string]$NewInstaller,
+
+  [Parameter(Mandatory = $true)]
+  [ValidateNotNullOrEmpty()]
+  [string]$OldVersion,
+
+  [Parameter(Mandatory = $true)]
+  [ValidateNotNullOrEmpty()]
+  [string]$NewVersion,
+
+  [Parameter(Mandatory = $true)]
+  [ValidateNotNullOrEmpty()]
+  [string]$OutputPath,
+
+  [string]$InstallDir = (Join-Path $env:TEMP "RelayPoolInstallMatrix\Relay Pool Desktop")
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,12 +33,20 @@ $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $outputFullPath = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputPath))
 $outputDir = Split-Path -Parent $outputFullPath
 $rawDir = Join-Path $outputDir ("install-upgrade-matrix-raw-" + $stamp)
-$oldInstallerFull = [System.IO.Path]::GetFullPath($OldInstaller)
-$newInstallerFull = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $NewInstaller))
 $installRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $InstallDir))
 $installDirFull = [System.IO.Path]::GetFullPath($InstallDir)
 $preserved = @()
 $results = New-Object System.Collections.Generic.List[object]
+
+function Resolve-ExplicitPath([string]$Path) {
+  if ([System.IO.Path]::IsPathRooted($Path)) {
+    return [System.IO.Path]::GetFullPath($Path)
+  }
+  return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
+}
+
+$oldInstallerFull = Resolve-ExplicitPath $OldInstaller
+$newInstallerFull = Resolve-ExplicitPath $NewInstaller
 
 function Add-Result([string]$Name, [string]$Status, [hashtable]$Details) {
   $results.Add([pscustomobject]@{
@@ -272,6 +297,8 @@ try {
   Add-Result "preflight" "pass" @{
     oldInstaller = $oldInstallerFull
     newInstaller = $newInstallerFull
+    oldVersion = $OldVersion
+    newVersion = $NewVersion
     installDir = $installDirFull
     oldInstallerExists = (Test-Path -LiteralPath $oldInstallerFull)
     newInstallerExists = (Test-Path -LiteralPath $newInstallerFull)
@@ -280,14 +307,14 @@ try {
 
   Move-AppDataAside
   Uninstall-CurrentPackage "remove-existing-install-or-orphan-state"
-  Install-Package "fresh-install-v0.3.3" $newInstallerFull "0.3.3"
-  Start-And-ProbeApp "fresh-startup-offline-single-instance-close-probe-v0.3.3"
+  Install-Package "fresh-install-candidate" $newInstallerFull $NewVersion
+  Start-And-ProbeApp "fresh-startup-offline-single-instance-close-probe-candidate"
 
-  Uninstall-CurrentPackage "remove-fresh-v0.3.3"
-  Install-Package "install-supported-baseline-v0.3.2" $oldInstallerFull "0.3.2"
-  Start-And-ProbeApp "supported-baseline-startup-v0.3.2"
-  Install-Package "upgrade-v0.3.2-to-v0.3.3" $newInstallerFull "0.3.3"
-  Start-And-ProbeApp "post-upgrade-startup-single-instance-close-probe-v0.3.3"
+  Uninstall-CurrentPackage "remove-fresh-candidate"
+  Install-Package "install-supported-baseline" $oldInstallerFull $OldVersion
+  Start-And-ProbeApp "supported-baseline-startup"
+  Install-Package "upgrade-baseline-to-candidate" $newInstallerFull $NewVersion
+  Start-And-ProbeApp "post-upgrade-startup-single-instance-close-probe-candidate"
 } catch {
   $overallStatus = "fail"
   $errorMessage = $_.Exception.Message
@@ -307,6 +334,16 @@ try {
     outputPath = $outputFullPath
     rawDir = $rawDir
     installDir = $installDirFull
+    baseline = [ordered]@{
+      version = $OldVersion
+      installer = $oldInstallerFull
+      installerSha256 = if (Test-Path -LiteralPath $oldInstallerFull) { (Get-FileHash -LiteralPath $oldInstallerFull -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+    }
+    candidate = [ordered]@{
+      version = $NewVersion
+      installer = $newInstallerFull
+      installerSha256 = if (Test-Path -LiteralPath $newInstallerFull) { (Get-FileHash -LiteralPath $newInstallerFull -Algorithm SHA256).Hash.ToLowerInvariant() } else { $null }
+    }
     finalInstalledSnapshot = $finalSnapshot
     results = $resultArray
     limitations = @(

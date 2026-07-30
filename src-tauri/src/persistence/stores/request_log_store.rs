@@ -221,7 +221,7 @@ async fn update_request_terminal(
     .bind(stream)
     .bind(record.annotations.selected_station_key_id.as_deref())
     .bind(record.annotations.selected_station_id.as_deref())
-    .bind(record.annotations.upstream_base_url.as_deref())
+    .bind(Option::<&str>::None)
     .bind(record.annotations.route_policy.as_deref())
     .bind(record.annotations.route_reason.as_deref())
     .bind(record.annotations.rejected_candidates_json.as_deref())
@@ -749,10 +749,7 @@ mod v2_tests {
             row.get::<Option<String>, _>(3).as_deref(),
             Some("station-1")
         );
-        assert_eq!(
-            row.get::<Option<String>, _>(4).as_deref(),
-            Some("https://station.test/v1")
-        );
+        assert_eq!(row.get::<Option<String>, _>(4), None);
         assert_eq!(
             row.get::<Option<String>, _>(5).as_deref(),
             Some("stable_first")

@@ -1251,7 +1251,7 @@
           "status": "success",
           "stream": false,
           "totalTokens": 15,
-          "upstreamBaseUrl": "https://provider.invalid/v1",
+          "upstreamBaseUrl": null,
           "upstreamHeadersMs": 20
         }
       ]

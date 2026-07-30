@@ -303,7 +303,7 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
             stream: annotations.stream,
             selected_station_key_id: annotations.selected_station_key_id,
             selected_station_id: annotations.selected_station_id,
-            upstream_base_url: annotations.upstream_base_url,
+            upstream_base_url: None,
             route_policy: annotations.route_policy,
             route_reason: annotations.route_reason,
             rejected_candidates_json: annotations.rejected_candidates_json,
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn request_terminal_mapping_preserves_annotations_and_delivery_failure() {
+    fn request_terminal_mapping_preserves_safe_annotations_and_redacts_upstream_base_url() {
         let annotations = RequestLogAnnotations {
             model: Some("gpt-test".to_string()),
             stream: true,
@@ -491,6 +491,7 @@ mod tests {
         );
         assert_eq!(write.annotations.total_tokens, Some(24));
         assert_eq!(write.annotations.first_token_ms, Some(17));
+        assert_eq!(write.annotations.upstream_base_url, None);
     }
 
     #[test]

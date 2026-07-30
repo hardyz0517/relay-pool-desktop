@@ -1658,6 +1658,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "19771ee0d795b287d69a12d753458f2692fae938d97317a5359b8fc0155736a9"
+    "serialization_fixture_hash": "14a21f686bea62b8cda2bd52cdc44456630dbbc242801dbcf06fdd016a4e504a"
   }
 }
