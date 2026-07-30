@@ -3,6 +3,7 @@
 
 pub(crate) mod assembler;
 pub(crate) mod balance_projector;
+pub(crate) mod candidate_projector;
 pub(crate) mod capability_projector;
 pub(crate) mod group_projector;
 pub(crate) mod health_projector;

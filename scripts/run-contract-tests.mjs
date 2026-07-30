@@ -28,6 +28,7 @@ const contracts = [
   ["node", ["scripts/request-lifecycle-architecture.test.mjs"]],
   ["node", ["scripts/monitoring-architecture.test.mjs"]],
   ["node", ["scripts/routing-operational-architecture.test.mjs"]],
+  ["node", ["scripts/routing-dto-completeness.test.mjs"]],
 ];
 
 for (const [command, args] of contracts) {

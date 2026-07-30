@@ -6,6 +6,9 @@ use crate::models::routing::{
 };
 use serde::Serialize;
 
+#[allow(unused_imports)]
+pub(crate) use crate::application::operational_facts::candidate_projector::RouteCandidateProjection;
+
 #[derive(Debug, Clone)]
 pub(crate) struct RouteCandidate {
     pub(crate) station_key_id: String,

@@ -1,3 +1,4 @@
+pub(crate) mod request;
 pub(crate) mod router;
 pub(crate) mod routing_failure;
 pub(crate) mod routing_health;
