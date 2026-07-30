@@ -85,8 +85,8 @@ assert.equal(createdMonitor.clientProfileId, "standard_api");
 assert.equal(createdMonitor.primaryModel, "gpt-4.1-mini");
 assert.deepEqual(createdMonitor.fallbackModels, []);
 assert.equal(createdMonitor.healthWritebackMode, "observe_only");
-assert.equal(createdMonitor.attemptTimeoutMs, 30_000);
-assert.equal(createdMonitor.executionTimeoutMs, 45_000);
+assert.equal(createdMonitor.attemptTimeoutMs, 45_000);
+assert.equal(createdMonitor.executionTimeoutMs, 60_000);
 
 assert.equal(
   createStationKeyMonitorInput(key, template, capabilities, "codex-auto-review").primaryModel,

@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS: u64 = 60_000;
+pub const DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS: u64 = 45_000;
+pub const DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS: u64 = 6_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetryPolicy {
     pub max_attempts_per_model: u8,
@@ -182,9 +186,9 @@ impl Default for SchedulePolicy {
         Self {
             interval_seconds: 300,
             jitter_seconds: 30,
-            execution_timeout_ms: 30_000,
-            attempt_timeout_ms: 10_000,
-            slow_latency_threshold_ms: 5_000,
+            execution_timeout_ms: DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS,
+            attempt_timeout_ms: DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS,
+            slow_latency_threshold_ms: DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS,
         }
     }
 }

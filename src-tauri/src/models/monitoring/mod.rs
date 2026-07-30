@@ -15,7 +15,11 @@ pub use execution::{
     MonitorTargetResult, ProbeAttempt, TriggerKind,
 };
 pub use outcome::{FailureKind, ProbeOutcome, ProtocolKind, SemanticConfidence};
-pub use policy::{HealthPolicy, HealthWritebackMode, RetryPolicy, RiskPolicy, SchedulePolicy};
+pub use policy::{
+    HealthPolicy, HealthWritebackMode, RetryPolicy, RiskPolicy, SchedulePolicy,
+    DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS, DEFAULT_MONITOR_EXECUTION_TIMEOUT_MS,
+    DEFAULT_MONITOR_SLOW_LATENCY_THRESHOLD_MS,
+};
 pub use read_model::{
     CancelChannelMonitorExecutionInput, CancelChannelMonitorExecutionReceipt,
     ChannelMonitorAttemptCursor, ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,

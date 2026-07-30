@@ -296,6 +296,95 @@ async fn monitor_timeout_migration_only_upgrades_legacy_key_pool_defaults() {
     assert_eq!(custom.get::<i64, _>("execution_timeout_ms"), 40_000);
 }
 
+#[tokio::test]
+async fn monitor_sub2api_latency_migration_only_upgrades_key_pool_defaults() {
+    let mut connection = migrate_to_v15().await;
+    seed_station(&mut connection).await;
+    sqlx::query(
+        r#"
+        INSERT INTO channel_monitor_request_templates (
+            id, name, endpoint_kind, method, path, request_body_json,
+            enabled, built_in, created_at, updated_at
+        ) VALUES ('template-timeout', 'Responses', 'responses', 'POST', '/v1/responses', '{}', 1, 0, '1', '1')
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("template");
+
+    for (id, note, attempt_timeout_ms, execution_timeout_ms) in [
+        ("key-pool-default", "由密钥池监控开关创建", 30_000, 45_000),
+        ("custom-budget", "由密钥池监控开关创建", 30_000, 50_000),
+        ("manual-monitor", "手动创建", 30_000, 45_000),
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO channel_monitors (
+                id, name, target_type, station_id, station_key_id, template_id,
+                enabled, interval_seconds, jitter_seconds, timeout_seconds,
+                max_concurrency, consecutive_failure_threshold, fallback_models_json,
+                next_run_at, created_at, updated_at, note,
+                attempt_timeout_ms, execution_timeout_ms
+            ) VALUES (?1, ?1, 'station_key', 'station-1', 'key-1', 'template-timeout',
+                      1, 300, 15, 45, 1, 3, '[]', '1', '1', '1',
+                      ?2, ?3, ?4)
+            "#,
+        )
+        .bind(id)
+        .bind(note)
+        .bind(attempt_timeout_ms)
+        .bind(execution_timeout_ms)
+        .execute(&mut connection)
+        .await
+        .expect("monitor");
+    }
+
+    sqlx::raw_sql(include_str!(
+        "../src/persistence/migrations/0016_monitor_sub2api_latency_defaults.sql"
+    ))
+    .execute(&mut connection)
+    .await
+    .expect("migration 0016");
+
+    let key_pool = sqlx::query(
+        "SELECT attempt_timeout_ms, execution_timeout_ms FROM channel_monitors WHERE id = 'key-pool-default'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("key pool monitor");
+    assert_eq!(key_pool.get::<i64, _>("attempt_timeout_ms"), 45_000);
+    assert_eq!(key_pool.get::<i64, _>("execution_timeout_ms"), 60_000);
+
+    let custom = sqlx::query(
+        "SELECT attempt_timeout_ms, execution_timeout_ms FROM channel_monitors WHERE id = 'custom-budget'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("custom monitor");
+    assert_eq!(custom.get::<i64, _>("attempt_timeout_ms"), 30_000);
+    assert_eq!(custom.get::<i64, _>("execution_timeout_ms"), 50_000);
+
+    let manual = sqlx::query(
+        "SELECT attempt_timeout_ms, execution_timeout_ms FROM channel_monitors WHERE id = 'manual-monitor'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("manual monitor");
+    assert_eq!(manual.get::<i64, _>("attempt_timeout_ms"), 30_000);
+    assert_eq!(manual.get::<i64, _>("execution_timeout_ms"), 45_000);
+}
+
+async fn migrate_to_v15() -> SqliteConnection {
+    let mut connection = migrate_to_v14().await;
+    sqlx::raw_sql(include_str!(
+        "../src/persistence/migrations/0015_monitor_probe_timeout_defaults.sql"
+    ))
+    .execute(&mut connection)
+    .await
+    .expect("migration 0015");
+    connection
+}
+
 async fn migrate_to_v14() -> SqliteConnection {
     let mut connection = migrate_to_v10().await;
     for migration in [

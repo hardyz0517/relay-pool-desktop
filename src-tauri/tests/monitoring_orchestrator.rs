@@ -289,7 +289,7 @@ async fn slow_success_is_degraded_and_attempt_uses_its_own_deadline() {
     let mut orchestrator = harness(transport);
     let mut request = default_request(vec![target("key-a", Some(ProtocolKind::OpenAiResponses))]);
     request.snapshot.schedule_policy =
-        SchedulePolicy::new(300, 0, 45_000, 30_000, 5_000).expect("schedule");
+        SchedulePolicy::new(300, 0, 60_000, 45_000, 6_000).expect("schedule");
 
     orchestrator
         .request_execution(request)
@@ -298,7 +298,7 @@ async fn slow_success_is_degraded_and_attempt_uses_its_own_deadline() {
     let (_, _, recorder, transport) = orchestrator.into_parts();
 
     assert_eq!(transport.requests.len(), 1);
-    assert_eq!(transport.requests[0].deadline_at_ms, 31_000);
+    assert_eq!(transport.requests[0].deadline_at_ms, 46_000);
     assert_eq!(recorder.attempts[0].outcome, ProbeOutcome::Degraded);
     assert_eq!(
         recorder.attempts[0].failure_kind,
@@ -311,6 +311,42 @@ async fn slow_success_is_degraded_and_attempt_uses_its_own_deadline() {
     );
     assert_eq!(recorder.summaries[0].degraded_count, 1);
     assert_eq!(recorder.summaries[0].unavailable_count, 0);
+}
+
+#[tokio::test]
+async fn sub2api_slow_latency_boundary_degrades_at_six_seconds() {
+    let mut just_fast_transport = FakeTransport::default();
+    just_fast_transport.push_for_key("key-a", ProbeTransportResult::available(5_999));
+    let mut just_fast = harness(just_fast_transport);
+    let mut request = default_request(vec![target("key-a", Some(ProtocolKind::OpenAiResponses))]);
+    request.snapshot.schedule_policy =
+        SchedulePolicy::new(300, 0, 60_000, 45_000, 6_000).expect("schedule");
+
+    just_fast
+        .request_execution(request.clone())
+        .await
+        .expect("just fast execution");
+    let (_, _, recorder, _) = just_fast.into_parts();
+    assert_eq!(recorder.attempts[0].outcome, ProbeOutcome::Available);
+    assert_eq!(
+        recorder.targets[0].terminal_outcome,
+        ProbeOutcome::Available
+    );
+
+    let mut boundary_transport = FakeTransport::default();
+    boundary_transport.push_for_key("key-a", ProbeTransportResult::available(6_000));
+    let mut boundary = harness(boundary_transport);
+    boundary
+        .request_execution(request)
+        .await
+        .expect("boundary execution");
+    let (_, _, recorder, _) = boundary.into_parts();
+    assert_eq!(recorder.attempts[0].outcome, ProbeOutcome::Degraded);
+    assert_eq!(
+        recorder.attempts[0].failure_kind,
+        Some(FailureKind::SlowLatency)
+    );
+    assert_eq!(recorder.targets[0].terminal_outcome, ProbeOutcome::Degraded);
 }
 
 #[tokio::test]
@@ -582,7 +618,7 @@ fn snapshot(protocol_selection: ProtocolSelection) -> MonitorPlanningSnapshot {
         client_profile: ClientProfileRef::new(ClientProfileId::StandardApi, 1).expect("profile"),
         primary_model: "gpt-primary".to_string(),
         fallback_models: vec!["gpt-fallback".to_string()],
-        schedule_policy: SchedulePolicy::new(300, 0, 30_000, 10_000, 5_000).expect("schedule"),
+        schedule_policy: SchedulePolicy::new(300, 0, 60_000, 45_000, 6_000).expect("schedule"),
         retry_policy: RetryPolicy::new(2, 200, 2_000).expect("retry"),
         risk_policy: RiskPolicy::new(100).expect("risk"),
         health_policy: HealthPolicy::new(HealthWritebackMode::ObserveOnly, 2, 2).expect("health"),
