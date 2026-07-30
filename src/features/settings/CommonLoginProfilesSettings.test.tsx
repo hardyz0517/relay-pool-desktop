@@ -2,23 +2,27 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CommonLoginProfile } from "@/lib/types/settings";
+import type { CommonLoginOptions } from "@/lib/types/settings";
 import { CommonLoginProfilesSettings } from "./CommonLoginProfilesSettings";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mocks = vi.hoisted(() => ({
-  deleteProfile: vi.fn(),
-  listProfiles: vi.fn(),
+  deleteEmail: vi.fn(),
+  deletePassword: vi.fn(),
+  listOptions: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
-  upsertProfile: vi.fn(),
+  upsertEmail: vi.fn(),
+  upsertPassword: vi.fn(),
 }));
 
 vi.mock("@/lib/api/settings", () => ({
-  deleteCommonLoginProfile: mocks.deleteProfile,
-  listCommonLoginProfiles: mocks.listProfiles,
-  upsertCommonLoginProfile: mocks.upsertProfile,
+  deleteCommonLoginEmail: mocks.deleteEmail,
+  deleteCommonLoginPassword: mocks.deletePassword,
+  listCommonLoginOptions: mocks.listOptions,
+  upsertCommonLoginEmail: mocks.upsertEmail,
+  upsertCommonLoginPassword: mocks.upsertPassword,
 }));
 
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -32,11 +36,9 @@ vi.mock("@/components/ui", async (importOriginal) => {
   };
 });
 
-const existingProfile: CommonLoginProfile = {
-  id: "profile-1",
-  email: "shared@example.com",
-  passwordPresent: true,
-  passwordMasked: "sha...word",
+const existingOptions: CommonLoginOptions = {
+  emails: [{ id: "email-1", email: "shared@example.com" }],
+  passwords: [{ id: "password-1", passwordMasked: "sha...word" }],
 };
 
 let host: HTMLDivElement;
@@ -46,11 +48,13 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  mocks.deleteProfile.mockReset().mockResolvedValue(undefined);
-  mocks.listProfiles.mockReset().mockResolvedValue([]);
+  mocks.deleteEmail.mockReset().mockResolvedValue(undefined);
+  mocks.deletePassword.mockReset().mockResolvedValue(undefined);
+  mocks.listOptions.mockReset().mockResolvedValue({ emails: [], passwords: [] });
   mocks.toastError.mockReset();
   mocks.toastSuccess.mockReset();
-  mocks.upsertProfile.mockReset();
+  mocks.upsertEmail.mockReset();
+  mocks.upsertPassword.mockReset();
 });
 
 async function renderSettings() {
@@ -70,90 +74,90 @@ function setInputValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function buttonWithText(text: string) {
-  return [...document.body.querySelectorAll<HTMLButtonElement>("button")]
-    .find((button) => button.textContent?.includes(text))!;
+function optionGroup(title: string) {
+  const heading = [...host.querySelectorAll<HTMLHeadingElement>("h3")]
+    .find((item) => item.textContent === title)!;
+  return heading.closest("section")!;
+}
+
+function dialog() {
+  return document.body.querySelector<HTMLElement>('[role="dialog"]')!;
+}
+
+async function submitDialog() {
+  await act(async () => {
+    dialog().querySelector<HTMLFormElement>("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 describe("CommonLoginProfilesSettings", () => {
-  it("adds a reusable email and password profile", async () => {
-    mocks.upsertProfile.mockResolvedValue(existingProfile);
+  it("adds emails independently from passwords", async () => {
+    mocks.upsertEmail.mockResolvedValue(existingOptions.emails[0]);
     await renderSettings();
 
-    await act(async () => buttonWithText("添加").click());
-    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
-    const inputs = [...dialog.querySelectorAll<HTMLInputElement>("input")];
-    await act(async () => {
-      setInputValue(inputs[0], "shared@example.com");
-      setInputValue(inputs[1], " shared-password ");
-    });
-    await act(async () => {
-      dialog.querySelector<HTMLFormElement>("form")!
-        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    expect([...host.querySelectorAll("h2")].map((heading) => heading.textContent)).toEqual([
+      "常用登录信息",
+    ]);
+    await act(async () => optionGroup("邮箱").querySelector<HTMLButtonElement>("button")!.click());
+    const input = dialog().querySelector<HTMLInputElement>('input[type="email"]')!;
+    expect(dialog().querySelector('input[type="password"]')).toBeNull();
+    await act(async () => setInputValue(input, " shared@example.com "));
+    await submitDialog();
 
-    expect(mocks.upsertProfile).toHaveBeenCalledWith({
+    expect(mocks.upsertEmail).toHaveBeenCalledWith({
       id: null,
       email: "shared@example.com",
+    });
+    expect(mocks.upsertPassword).not.toHaveBeenCalled();
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("常用邮箱已添加");
+
+    await cleanup();
+  });
+
+  it("adds passwords independently and preserves password bytes", async () => {
+    mocks.upsertPassword.mockResolvedValue(existingOptions.passwords[0]);
+    await renderSettings();
+
+    await act(async () => optionGroup("密码").querySelector<HTMLButtonElement>("button")!.click());
+    const input = dialog().querySelector<HTMLInputElement>('input[type="password"]')!;
+    expect(dialog().querySelector('input[type="email"]')).toBeNull();
+    await act(async () => setInputValue(input, " shared-password "));
+    await submitDialog();
+
+    expect(mocks.upsertPassword).toHaveBeenCalledWith({
+      id: null,
       password: " shared-password ",
     });
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("常用登录信息已添加");
+    expect(mocks.upsertEmail).not.toHaveBeenCalled();
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("常用密码已添加");
 
     await cleanup();
   });
 
-  it("does not create a profile with a whitespace-only password", async () => {
+  it("blocks blank passwords and deletes each option from its own list", async () => {
+    mocks.listOptions.mockResolvedValue(existingOptions);
     await renderSettings();
 
-    await act(async () => buttonWithText("添加").click());
-    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
-    const inputs = [...dialog.querySelectorAll<HTMLInputElement>("input")];
+    await act(async () => optionGroup("密码").querySelector<HTMLButtonElement>('button[aria-label^="编辑"]')!.click());
+    const passwordInput = dialog().querySelector<HTMLInputElement>('input[type="password"]')!;
+    await act(async () => setInputValue(passwordInput, "   "));
+    expect(dialog().querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true);
+
+    await act(async () => dialog().querySelector<HTMLButtonElement>('button[type="button"]')!.click());
+    await act(async () => optionGroup("邮箱").querySelector<HTMLButtonElement>('button[aria-label^="删除"]')!.click());
+    const confirmButton = [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "删除")!;
     await act(async () => {
-      setInputValue(inputs[0], "shared@example.com");
-      setInputValue(inputs[1], "   ");
-    });
-
-    expect(buttonWithText("保存").disabled).toBe(true);
-    await act(async () => {
-      dialog.querySelector<HTMLFormElement>("form")!
-        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
-    expect(mocks.upsertProfile).not.toHaveBeenCalled();
-
-    await cleanup();
-  });
-
-  it("preserves the password when editing and deletes the profile after confirmation", async () => {
-    mocks.listProfiles.mockResolvedValue([existingProfile]);
-    mocks.upsertProfile.mockResolvedValue({ ...existingProfile, email: "updated@example.com" });
-    await renderSettings();
-
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label^="编辑"]')!.click());
-    const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]')!;
-    const emailInput = dialog.querySelector<HTMLInputElement>('input[type="email"]')!;
-    await act(async () => setInputValue(emailInput, "updated@example.com"));
-    await act(async () => {
-      dialog.querySelector<HTMLFormElement>("form")!
-        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      confirmButton.click();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(mocks.upsertProfile).toHaveBeenCalledWith({
-      id: "profile-1",
-      email: "updated@example.com",
-      password: null,
-    });
-
-    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label^="删除"]')!.click());
-    await act(async () => {
-      buttonWithText("删除").click();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-
-    expect(mocks.deleteProfile).toHaveBeenCalledWith("profile-1");
-    expect(host.textContent).not.toContain("updated@example.com");
-    expect(mocks.toastSuccess).toHaveBeenLastCalledWith("常用登录信息已删除");
+    expect(mocks.upsertPassword).not.toHaveBeenCalled();
+    expect(mocks.deleteEmail).toHaveBeenCalledWith("email-1");
+    expect(mocks.deletePassword).not.toHaveBeenCalled();
+    expect(optionGroup("密码").textContent).toContain("sha...word");
 
     await cleanup();
   });

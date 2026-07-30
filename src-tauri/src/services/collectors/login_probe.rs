@@ -44,7 +44,7 @@ pub(crate) async fn test_station_login_input(
     if website_url.is_empty() {
         return Ok(StationLoginTestResult {
             status: "missing_base_url".to_string(),
-            message: "璇峰厛濉啓鍩虹鍦板潃銆?".to_string(),
+            message: "请先填写基础地址。".to_string(),
             diagnosis: None,
             token_present: false,
         });
@@ -52,7 +52,7 @@ pub(crate) async fn test_station_login_input(
     if login_username.is_empty() || login_password.is_empty() {
         return Ok(StationLoginTestResult {
             status: "missing_credentials".to_string(),
-            message: "璇峰厛濉啓鐧诲綍鐢ㄦ埛鍚嶅拰瀵嗙爜銆?".to_string(),
+            message: "请先填写登录用户名和密码。".to_string(),
             diagnosis: None,
             token_present: false,
         });
@@ -122,10 +122,10 @@ fn result_from_attempt(attempt: LoginProbeAttempt) -> StationLoginTestResult {
         .to_string(),
         message: attempt
             .login_message
-            .unwrap_or_else(|| "杩為€氭€ф祴璇曞凡瀹屾垚銆?".to_string()),
+            .unwrap_or_else(|| "连通性测试已完成。".to_string()),
         diagnosis: attempt
             .manual_required
-            .or_else(|| token_present.then(|| "鐧诲綍鎺ュ彛杩斿洖鍙敤 token銆?".to_string())),
+            .or_else(|| token_present.then(|| "登录接口返回可用 token。".to_string())),
         token_present,
     }
 }
@@ -423,5 +423,22 @@ mod tests {
             &json!({"reason": "REGION_RESTRICTED"}),
             403
         ));
+    }
+
+    #[test]
+    fn login_result_uses_readable_chinese_diagnosis() {
+        let result = result_from_attempt(LoginProbeAttempt {
+            credential_present: true,
+            login_message: Some("login token received from /api/v1/auth/login".to_string()),
+            manual_required: None,
+            newapi_session: None,
+        });
+
+        assert_eq!(result.status, "success");
+        assert_eq!(
+            result.diagnosis.as_deref(),
+            Some("登录接口返回可用 token。")
+        );
+        assert!(result.token_present);
     }
 }

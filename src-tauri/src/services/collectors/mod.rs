@@ -56,6 +56,7 @@ use crate::{
     outbound::{AsyncOutboundClient, ManualProxy, ProxyPolicy, RequestBudget},
 };
 
+use crate::models::provider_drafts::{ProviderDraftPreview, ProviderDraftPreviewGroup};
 use collector_apply::CollectorApplyPort;
 use output::{AdapterOutput, CollectorTask};
 
@@ -1088,6 +1089,70 @@ pub(crate) struct PreparedStationCollection {
     task: CollectorTask,
     outputs: Vec<AdapterOutput>,
     enabled_key_count: usize,
+}
+
+pub(crate) fn provider_draft_preview_from_prepared(
+    prepared: PreparedStationCollection,
+    runtime_fingerprint: String,
+    collected_at: String,
+) -> ProviderDraftPreview {
+    let mut groups = Vec::<ProviderDraftPreviewGroup>::new();
+    let mut models = Vec::<String>::new();
+    let mut balance = None;
+    let mut summaries = Vec::new();
+    let mut status = "success".to_string();
+    for output in prepared.outputs {
+        if output.status == "failed" {
+            status = "failed".to_string();
+        } else if output.status != "success" && status == "success" {
+            status = output.status.clone();
+        }
+        summaries.push(output.summary_json.clone());
+        for group in output.facts.groups {
+            let rate = output
+                .facts
+                .rates
+                .iter()
+                .find(|rate| rate.group_key_hash == group.group_key_hash)
+                .and_then(|rate| rate.effective_rate_multiplier);
+            if !groups
+                .iter()
+                .any(|item| item.group_key_hash == group.group_key_hash)
+            {
+                groups.push(ProviderDraftPreviewGroup {
+                    group_key_hash: group.group_key_hash,
+                    group_id_hash: group.group_id,
+                    group_name: group.group_name,
+                    rate_multiplier: rate,
+                    inferred_group_category: group.inferred_group_category,
+                    source: group.source,
+                    confidence: group.confidence,
+                });
+            }
+        }
+        for model in output.facts.models {
+            if model.available && !models.contains(&model.model) {
+                models.push(model.model);
+            }
+        }
+        if balance.is_none() {
+            balance = output.facts.balances.iter().find_map(|item| item.value);
+        }
+    }
+    ProviderDraftPreview {
+        draft_id: prepared.station_id,
+        kind: prepared.task.as_str().to_string(),
+        runtime_fingerprint,
+        status,
+        groups,
+        models,
+        balance,
+        summary_json: serde_json::json!({
+            "adapter": prepared.adapter,
+            "results": summaries,
+        }),
+        collected_at,
+    }
 }
 
 /// Applies a prepared task through V2 and returns a complete, bounded read model.

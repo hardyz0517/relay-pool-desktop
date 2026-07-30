@@ -994,42 +994,63 @@
       }
     },
     {
-      "command": "list_common_login_profiles",
+      "command": "list_common_login_options",
       "input": {},
-      "output": [
-        {
-          "email": "fixture@example.com",
-          "id": "common-login-fixture",
-          "passwordMasked": "fix...word",
-          "passwordPresent": true
-        }
-      ]
-    },
-    {
-      "command": "upsert_common_login_profile",
-      "input": {
-        "email": "fixture@example.com",
-        "id": null,
-        "password": "fixture-not-a-real-password"
-      },
       "output": {
-        "email": "fixture@example.com",
-        "id": "common-login-fixture",
-        "passwordMasked": "fix...word",
-        "passwordPresent": true
+        "emails": [
+          {
+            "email": "fixture@example.com",
+            "id": "common-login-email-fixture"
+          }
+        ],
+        "passwords": [
+          {
+            "id": "common-login-password-fixture",
+            "passwordMasked": "fix...word"
+          }
+        ]
       }
     },
     {
-      "command": "delete_common_login_profile",
+      "command": "upsert_common_login_email",
       "input": {
-        "id": "common-login-fixture"
+        "email": "fixture@example.com",
+        "id": null
+      },
+      "output": {
+        "email": "fixture@example.com",
+        "id": "common-login-email-fixture"
+      }
+    },
+    {
+      "command": "delete_common_login_email",
+      "input": {
+        "id": "common-login-email-fixture"
       },
       "output": null
     },
     {
-      "command": "get_common_login_profile_password",
+      "command": "upsert_common_login_password",
       "input": {
-        "id": "common-login-fixture"
+        "id": null,
+        "password": "fixture-not-a-real-password"
+      },
+      "output": {
+        "id": "common-login-password-fixture",
+        "passwordMasked": "fix...word"
+      }
+    },
+    {
+      "command": "delete_common_login_password",
+      "input": {
+        "id": "common-login-password-fixture"
+      },
+      "output": null
+    },
+    {
+      "command": "get_common_login_password",
+      "input": {
+        "id": "common-login-password-fixture"
       },
       "output": "fixture-not-a-real-password"
     },
@@ -3035,6 +3056,268 @@
         "requestCount": 2,
         "running": true,
         "startedAt": "1700000000000"
+      }
+    },
+    {
+      "command": "create_or_resume_provider_draft",
+      "input": {
+        "baseStationId": null,
+        "payload": {
+          "apiBaseUrl": "https://draft.example.test/v1",
+          "collectionIntervalMinutes": 5,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "creditPerCny": 1.0,
+          "enabled": true,
+          "groups": [],
+          "keys": [],
+          "loginUsername": null,
+          "lowBalanceThresholdCny": null,
+          "name": "Draft Provider",
+          "note": null,
+          "rememberPassword": false,
+          "stationType": "newapi",
+          "websiteUrl": "https://draft.example.test"
+        }
+      },
+      "output": {
+        "baseStationId": null,
+        "committedStationId": null,
+        "createdAt": "1000",
+        "expiresAt": "2000",
+        "id": "draft-fixture",
+        "keyApiKeyClientIds": [],
+        "loginPasswordPresent": false,
+        "payload": {
+          "apiBaseUrl": "https://draft.example.test/v1",
+          "collectionIntervalMinutes": 5,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "creditPerCny": 1.0,
+          "enabled": true,
+          "groups": [],
+          "keys": [],
+          "loginUsername": null,
+          "lowBalanceThresholdCny": null,
+          "name": "Draft Provider",
+          "note": null,
+          "rememberPassword": false,
+          "stationType": "newapi",
+          "websiteUrl": "https://draft.example.test"
+        },
+        "payloadSchemaVersion": 1,
+        "revision": 1,
+        "state": "active",
+        "stationApiKeyPresent": false,
+        "updatedAt": "1000"
+      }
+    },
+    {
+      "command": "get_provider_draft",
+      "input": {
+        "draftId": "draft-fixture"
+      },
+      "output": {
+        "baseStationId": null,
+        "committedStationId": null,
+        "createdAt": "1000",
+        "expiresAt": "2000",
+        "id": "draft-fixture",
+        "keyApiKeyClientIds": [],
+        "loginPasswordPresent": false,
+        "payload": {
+          "apiBaseUrl": "https://draft.example.test/v1",
+          "collectionIntervalMinutes": 5,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "creditPerCny": 1.0,
+          "enabled": true,
+          "groups": [],
+          "keys": [],
+          "loginUsername": null,
+          "lowBalanceThresholdCny": null,
+          "name": "Draft Provider",
+          "note": null,
+          "rememberPassword": false,
+          "stationType": "newapi",
+          "websiteUrl": "https://draft.example.test"
+        },
+        "payloadSchemaVersion": 1,
+        "revision": 1,
+        "state": "active",
+        "stationApiKeyPresent": false,
+        "updatedAt": "1000"
+      }
+    },
+    {
+      "command": "patch_provider_draft",
+      "input": {
+        "draftId": "draft-fixture",
+        "expectedRevision": 1,
+        "keyApiKeys": [],
+        "loginPassword": null,
+        "payload": {
+          "apiBaseUrl": "https://draft.example.test/v1",
+          "collectionIntervalMinutes": 5,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "creditPerCny": 1.0,
+          "enabled": true,
+          "groups": [],
+          "keys": [],
+          "loginUsername": null,
+          "lowBalanceThresholdCny": null,
+          "name": "Draft Provider",
+          "note": null,
+          "rememberPassword": false,
+          "stationType": "newapi",
+          "websiteUrl": "https://draft.example.test"
+        },
+        "stationApiKey": null
+      },
+      "output": {
+        "baseStationId": null,
+        "committedStationId": null,
+        "createdAt": "1000",
+        "expiresAt": "2000",
+        "id": "draft-fixture",
+        "keyApiKeyClientIds": [],
+        "loginPasswordPresent": false,
+        "payload": {
+          "apiBaseUrl": "https://draft.example.test/v1",
+          "collectionIntervalMinutes": 5,
+          "collectorProxyMode": "inherit",
+          "collectorProxyUrl": null,
+          "creditPerCny": 1.0,
+          "enabled": true,
+          "groups": [],
+          "keys": [],
+          "loginUsername": null,
+          "lowBalanceThresholdCny": null,
+          "name": "Draft Provider",
+          "note": null,
+          "rememberPassword": false,
+          "stationType": "newapi",
+          "websiteUrl": "https://draft.example.test"
+        },
+        "payloadSchemaVersion": 1,
+        "revision": 1,
+        "state": "active",
+        "stationApiKeyPresent": false,
+        "updatedAt": "1000"
+      }
+    },
+    {
+      "command": "discard_provider_draft",
+      "input": {
+        "draftId": "draft-fixture"
+      },
+      "output": null
+    },
+    {
+      "command": "collect_provider_draft_preview",
+      "input": {
+        "draftId": "draft-fixture",
+        "taskType": "groups"
+      },
+      "output": {
+        "balance": null,
+        "collectedAt": "1000",
+        "draftId": "draft-fixture",
+        "groups": [],
+        "kind": "groups",
+        "models": [],
+        "runtimeFingerprint": "hash",
+        "status": "success",
+        "summaryJson": {}
+      }
+    },
+    {
+      "command": "scan_provider_draft_remote_keys",
+      "input": {
+        "draftId": "draft-fixture"
+      },
+      "output": {
+        "capability": {
+          "canCreateRemoteKey": false,
+          "canListRemoteKeys": true,
+          "canReadGroups": true,
+          "requiresManualSession": true,
+          "stationId": "draft-fixture",
+          "stationType": "newapi",
+          "unsupportedReason": null
+        },
+        "keys": [],
+        "message": "read-only",
+        "stationId": "draft-fixture",
+        "syncedStationKeyIds": []
+      }
+    },
+    {
+      "command": "commit_provider_draft",
+      "input": {
+        "commitKey": "commit-fixture",
+        "draftId": "draft-fixture",
+        "expectedRevision": 1
+      },
+      "output": {
+        "apiBaseUrl": "https://draft.example.test/v1",
+        "apiKeyMasked": "未设置",
+        "apiKeyPresent": false,
+        "balanceCny": null,
+        "balanceRaw": null,
+        "collectionIntervalMinutes": 5,
+        "collectorProxyMode": "inherit",
+        "collectorProxyUrl": null,
+        "createdAt": "1000",
+        "creditPerCny": 1.0,
+        "enabled": true,
+        "endpointRevision": 1,
+        "id": "station-fixture",
+        "keyCount": 0,
+        "lastCheckedAt": null,
+        "lastPricingFetchedAt": null,
+        "latencyMs": null,
+        "lowBalanceThresholdCny": null,
+        "name": "Draft Provider",
+        "note": null,
+        "priority": 0,
+        "stationType": "newapi",
+        "status": "unchecked",
+        "updatedAt": "1000",
+        "websiteUrl": "https://draft.example.test"
+      }
+    },
+    {
+      "command": "start_provider_draft_authorization",
+      "input": {
+        "draftId": "draft-fixture"
+      },
+      "output": {
+        "captureCount": 0,
+        "lastError": null,
+        "pendingConfirmationCount": 0,
+        "recognizedFieldCount": 0,
+        "stationId": "draft-fixture",
+        "status": "capturing",
+        "webAuthorizationCandidate": false
+      }
+    },
+    {
+      "command": "finish_provider_draft_authorization_session",
+      "input": {
+        "draftId": "draft-fixture"
+      },
+      "output": {
+        "balance": null,
+        "collectedAt": "1000",
+        "draftId": "draft-fixture",
+        "groups": [],
+        "kind": "capture",
+        "models": [],
+        "runtimeFingerprint": "hash",
+        "status": "success",
+        "summaryJson": {}
       }
     }
   ],

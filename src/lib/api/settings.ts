@@ -1,5 +1,9 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
-import type { UpdateSettingsInput, UpsertCommonLoginProfileInput } from "@/lib/types/settings";
+import type {
+  UpdateSettingsInput,
+  UpsertCommonLoginEmailInput,
+  UpsertCommonLoginPasswordInput,
+} from "@/lib/types/settings";
 
 export function getSettings() {
   return getActiveBackendClient().settings.getSettings();
@@ -29,18 +33,26 @@ export function resetDataDir() {
   return getActiveBackendClient().settings.resetDataDir();
 }
 
-export function listCommonLoginProfiles() {
-  return getActiveBackendClient().settings.listCommonLoginProfiles();
+export function listCommonLoginOptions() {
+  return getActiveBackendClient().settings.listCommonLoginOptions();
 }
 
-export function upsertCommonLoginProfile(input: UpsertCommonLoginProfileInput) {
-  return getActiveBackendClient().settings.upsertCommonLoginProfile(input);
+export function upsertCommonLoginEmail(input: UpsertCommonLoginEmailInput) {
+  return getActiveBackendClient().settings.upsertCommonLoginEmail(input);
 }
 
-export function deleteCommonLoginProfile(id: string) {
-  return getActiveBackendClient().settings.deleteCommonLoginProfile(id);
+export function deleteCommonLoginEmail(id: string) {
+  return getActiveBackendClient().settings.deleteCommonLoginEmail(id);
 }
 
-export function getCommonLoginProfilePassword(id: string) {
-  return getActiveBackendClient().settings.getCommonLoginProfilePassword(id);
+export function upsertCommonLoginPassword(input: UpsertCommonLoginPasswordInput) {
+  return getActiveBackendClient().settings.upsertCommonLoginPassword(input);
+}
+
+export function deleteCommonLoginPassword(id: string) {
+  return getActiveBackendClient().settings.deleteCommonLoginPassword(id);
+}
+
+export function getCommonLoginPassword(id: string) {
+  return getActiveBackendClient().settings.getCommonLoginPassword(id);
 }

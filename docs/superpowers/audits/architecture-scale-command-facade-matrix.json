@@ -484,23 +484,33 @@
       ],
       "commands": [
         {
-          "command": "list_common_login_profiles",
-          "use_case": "list_common_login_profiles",
+          "command": "list_common_login_options",
+          "use_case": "list_common_login_options",
           "dependencies": ["CredentialService"]
         },
         {
-          "command": "upsert_common_login_profile",
-          "use_case": "upsert_common_login_profile",
+          "command": "upsert_common_login_email",
+          "use_case": "upsert_common_login_email",
           "dependencies": ["CredentialService"]
         },
         {
-          "command": "delete_common_login_profile",
-          "use_case": "delete_common_login_profile",
+          "command": "delete_common_login_email",
+          "use_case": "delete_common_login_email",
           "dependencies": ["CredentialService"]
         },
         {
-          "command": "get_common_login_profile_password",
-          "use_case": "get_common_login_profile_password",
+          "command": "upsert_common_login_password",
+          "use_case": "upsert_common_login_password",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "delete_common_login_password",
+          "use_case": "delete_common_login_password",
+          "dependencies": ["CredentialService"]
+        },
+        {
+          "command": "get_common_login_password",
+          "use_case": "get_common_login_password",
           "dependencies": ["CredentialService"]
         },
         {
@@ -707,6 +717,7 @@
       "dependencies": [
         "StationService",
         "CredentialService",
+        "ProviderDraftService",
         "CollectorService",
         "CaptureSessionStore supplied by command state",
         "AppHandle supplied by command state for web authorization cookie reads"
@@ -716,6 +727,11 @@
           "command": "start_capture_session",
           "use_case": "start_capture_session",
           "dependencies": ["StationService", "CredentialService"]
+        },
+        {
+          "command": "start_provider_draft_authorization",
+          "use_case": "start_provider_draft_authorization",
+          "dependencies": ["ProviderDraftService", "CredentialService"]
         },
         {
           "command": "record_capture_event",
@@ -731,6 +747,11 @@
           "command": "finish_web_authorization_session",
           "use_case": "finish_web_authorization_session",
           "dependencies": ["StationService", "CredentialService", "CollectorService", "CaptureSessionStore", "AppHandle"]
+        },
+        {
+          "command": "finish_provider_draft_authorization_session",
+          "use_case": "finish_provider_draft_authorization_session",
+          "dependencies": ["ProviderDraftService", "CaptureSessionStore", "AppHandle"]
         }
       ],
       "non_goals": [

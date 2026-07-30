@@ -6,10 +6,10 @@ use crate::{
     application::{clock::Clock, error::ApplicationError, ids::IdGenerator},
     models::{
         credentials::{
-            token_is_fresh, CommonLoginProfile, PersistStationSessionInput, ResolvedSession,
-            SessionResolveStatus, StationCredentials, StationSessionCredentialKind,
-            UpdateStationCredentialsInput, UpdateStationSessionInput,
-            UpsertCommonLoginProfileInput,
+            token_is_fresh, CommonLoginEmail, CommonLoginOptions, CommonLoginPassword,
+            PersistStationSessionInput, ResolvedSession, SessionResolveStatus, StationCredentials,
+            StationSessionCredentialKind, UpdateStationCredentialsInput, UpdateStationSessionInput,
+            UpsertCommonLoginEmailInput, UpsertCommonLoginPasswordInput,
         },
         group_facts::UpdateStationKeyGroupBindingInput,
         remote_keys::{RemoteKeyCapability, RemoteKeyMatchStatus, RemoteStationKey},
@@ -155,51 +155,29 @@ impl CredentialService {
         }
     }
 
-    pub(crate) async fn list_common_login_profiles(
+    pub(crate) async fn list_common_login_options(
         &self,
-    ) -> Result<Vec<CommonLoginProfile>, ApplicationError> {
+    ) -> Result<CommonLoginOptions, ApplicationError> {
         let store = self.store;
         let mut read = self.runtime.begin_read().await?;
         store
-            .list_common_login_profiles(&mut read)
+            .list_common_login_options(&mut read)
             .await
             .map_err(Into::into)
     }
 
-    pub(crate) async fn upsert_common_login_profile(
+    pub(crate) async fn upsert_common_login_email(
         &self,
-        input: UpsertCommonLoginProfileInput,
-    ) -> Result<CommonLoginProfile, ApplicationError> {
-        let profile_id = input.id.unwrap_or_else(|| self.ids.next_id());
+        input: UpsertCommonLoginEmailInput,
+    ) -> Result<CommonLoginEmail, ApplicationError> {
+        let email_id = input.id.unwrap_or_else(|| self.ids.next_id());
         let now = self.now_ms_string();
-        let password_secret = input
-            .password
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| {
-                let secret_ref = SecretRef {
-                    id: self.ids.next_id(),
-                    scope: "common_login_profile".to_string(),
-                    owner_id: profile_id.clone(),
-                    kind: "password".to_string(),
-                };
-                let encrypted = self
-                    .vault
-                    .encrypt(&secret_ref.aad(), SecretBytes::from(value))?;
-                Ok::<_, CredentialError>(encrypted_secret_row(secret_ref, encrypted, now.clone()))
-            })
-            .transpose()?;
         let store = self.store;
         self.runtime
             .write(|write| {
                 Box::pin(async move {
                     store
-                        .upsert_common_login_profile(
-                            write,
-                            profile_id,
-                            input.email,
-                            password_secret,
-                            &now,
-                        )
+                        .upsert_common_login_email(write, email_id, input.email, &now)
                         .await
                 })
             })
@@ -207,9 +185,9 @@ impl CredentialService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn delete_common_login_profile(
+    pub(crate) async fn delete_common_login_email(
         &self,
-        profile_id: String,
+        email_id: String,
     ) -> Result<(), ApplicationError> {
         let store = self.store;
         let now = self.now_ms_string();
@@ -217,7 +195,7 @@ impl CredentialService {
             .write(|write| {
                 Box::pin(async move {
                     store
-                        .delete_common_login_profile(write, &profile_id, &now)
+                        .delete_common_login_email(write, &email_id, &now)
                         .await
                 })
             })
@@ -225,14 +203,61 @@ impl CredentialService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn get_common_login_profile_password(
+    pub(crate) async fn upsert_common_login_password(
         &self,
-        profile_id: String,
+        input: UpsertCommonLoginPasswordInput,
+    ) -> Result<CommonLoginPassword, ApplicationError> {
+        let password_id = input.id.unwrap_or_else(|| self.ids.next_id());
+        let now = self.now_ms_string();
+        let secret_ref = SecretRef {
+            id: self.ids.next_id(),
+            scope: "common_login_password".to_string(),
+            owner_id: password_id.clone(),
+            kind: "password".to_string(),
+        };
+        let encrypted = self
+            .vault
+            .encrypt(&secret_ref.aad(), SecretBytes::from(input.password))?;
+        let password_secret = encrypted_secret_row(secret_ref, encrypted, now.clone());
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .upsert_common_login_password(write, password_id, password_secret, &now)
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn delete_common_login_password(
+        &self,
+        password_id: String,
+    ) -> Result<(), ApplicationError> {
+        let store = self.store;
+        let now = self.now_ms_string();
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .delete_common_login_password(write, &password_id, &now)
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn get_common_login_password(
+        &self,
+        password_id: String,
     ) -> Result<String, ApplicationError> {
         let store = self.store;
         let mut read = self.runtime.begin_read().await?;
         let secret = store
-            .common_login_profile_secret(&mut read, &profile_id)
+            .common_login_password_secret(&mut read, &password_id)
             .await?;
         let plaintext = self.decrypt_stored_secret(secret)?;
         String::from_utf8(plaintext.as_bytes().to_vec()).map_err(|_| ApplicationError::Internal)
@@ -1388,13 +1413,13 @@ mod tests {
     use super::*;
     use crate::{
         application::{clock::SystemClock, ids::UuidV7Generator},
-        models::credentials::UpsertCommonLoginProfileInput,
+        models::credentials::{UpsertCommonLoginEmailInput, UpsertCommonLoginPasswordInput},
         persistence::runtime::PersistenceRuntime,
         services::secrets::vault::DataKeyVault,
     };
 
     #[tokio::test]
-    async fn common_login_profiles_persist_only_encrypted_password_material() {
+    async fn common_login_options_are_independent_and_passwords_stay_encrypted() {
         let temp = tempfile::tempdir().expect("tempdir");
         let database_path = temp.path().join("common-login-profiles.sqlite3");
         let runtime = PersistenceRuntime::initialize_new(&database_path)
@@ -1408,20 +1433,25 @@ mod tests {
         );
         let password = " common-password-plaintext-canary ";
 
-        let saved = service
-            .upsert_common_login_profile(UpsertCommonLoginProfileInput {
+        let saved_email = service
+            .upsert_common_login_email(UpsertCommonLoginEmailInput {
                 id: None,
                 email: "shared@example.com".to_string(),
-                password: Some(password.to_string()),
             })
             .await
-            .expect("save common login profile");
+            .expect("save common login email");
+        let saved_password = service
+            .upsert_common_login_password(UpsertCommonLoginPasswordInput {
+                id: None,
+                password: password.to_string(),
+            })
+            .await
+            .expect("save common login password");
 
-        assert!(saved.password_present);
-        assert!(!saved.password_masked.contains("plaintext-canary"));
+        assert!(!saved_password.password_masked.contains("plaintext-canary"));
         assert_eq!(
             service
-                .get_common_login_profile_password(saved.id.clone())
+                .get_common_login_password(saved_password.id.clone())
                 .await
                 .expect("resolve common password"),
             password
@@ -1429,13 +1459,13 @@ mod tests {
 
         let mut read = runtime.handle().begin_read().await.expect("read");
         let index: String = sqlx::query_scalar(
-            "SELECT value FROM settings WHERE key = 'common_login_profiles_json'",
+            "SELECT value FROM settings WHERE key = 'common_login_catalog_json'",
         )
         .fetch_one(read.connection())
         .await
         .expect("profile index");
         let ciphertext: Vec<u8> = sqlx::query_scalar(
-            "SELECT ciphertext FROM secrets WHERE scope = 'common_login_profile'",
+            "SELECT ciphertext FROM secrets WHERE scope = 'common_login_password'",
         )
         .fetch_one(read.connection())
         .await
@@ -1445,14 +1475,138 @@ mod tests {
         drop(read);
 
         service
-            .delete_common_login_profile(saved.id)
+            .delete_common_login_password(saved_password.id)
             .await
-            .expect("delete common login profile");
-        assert!(service
-            .list_common_login_profiles()
+            .expect("delete common login password");
+        let remaining = service
+            .list_common_login_options()
             .await
-            .expect("list profiles")
-            .is_empty());
+            .expect("list common login options");
+        assert_eq!(remaining.emails.len(), 1);
+        assert_eq!(remaining.emails[0].id, saved_email.id);
+        assert!(remaining.passwords.is_empty());
+        drop(service);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn legacy_common_login_profile_is_split_and_migrated_on_write() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let database_path = temp.path().join("legacy-common-login-profile.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&database_path)
+            .await
+            .expect("runtime");
+        let vault = Arc::new(DataKeyVault::new([29; 32]));
+        let legacy_profile_id = "legacy-profile-1";
+        let legacy_secret_id = "legacy-password-secret-1";
+        let legacy_password = "legacy-password-plaintext-canary";
+        let secret_ref = SecretRef {
+            id: legacy_secret_id.to_string(),
+            scope: "common_login_profile".to_string(),
+            owner_id: legacy_profile_id.to_string(),
+            kind: "password".to_string(),
+        };
+        let encrypted = vault
+            .encrypt(
+                &secret_ref.aad(),
+                SecretBytes::from(legacy_password.to_string()),
+            )
+            .expect("encrypt legacy password");
+        let encrypted = encrypted_secret_row(secret_ref, encrypted, "1".to_string());
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO settings (key, value, updated_at)
+                        VALUES ('common_login_profiles_json', ?1, '1')
+                        "#,
+                    )
+                    .bind(format!(
+                        r#"[{{"id":"{legacy_profile_id}","email":"legacy@example.com","passwordSecretId":"{legacy_secret_id}"}}]"#
+                    ))
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
+                        INSERT INTO secrets (
+                            id, scope, owner_id, kind, masked_value,
+                            ciphertext, nonce, created_at, updated_at
+                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                        "#,
+                    )
+                    .bind(encrypted.id)
+                    .bind(encrypted.scope)
+                    .bind(encrypted.owner_id)
+                    .bind(encrypted.kind)
+                    .bind(encrypted.masked_value)
+                    .bind(encrypted.ciphertext)
+                    .bind(encrypted.nonce)
+                    .bind(encrypted.now)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("seed legacy profile");
+
+        let service = CredentialService::new(
+            runtime.handle(),
+            vault,
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        );
+        let migrated = service
+            .list_common_login_options()
+            .await
+            .expect("list migrated common login options");
+        assert_eq!(migrated.emails.len(), 1);
+        assert_eq!(migrated.emails[0].id, "legacy-email-legacy-profile-1");
+        assert_eq!(migrated.emails[0].email, "legacy@example.com");
+        assert_eq!(migrated.passwords.len(), 1);
+        assert_eq!(migrated.passwords[0].id, legacy_profile_id);
+        assert_eq!(
+            service
+                .get_common_login_password(legacy_profile_id.to_string())
+                .await
+                .expect("decrypt legacy common password"),
+            legacy_password
+        );
+
+        service
+            .upsert_common_login_email(UpsertCommonLoginEmailInput {
+                id: Some(migrated.emails[0].id.clone()),
+                email: "updated@example.com".to_string(),
+            })
+            .await
+            .expect("update migrated email");
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        let catalog: String = sqlx::query_scalar(
+            "SELECT value FROM settings WHERE key = 'common_login_catalog_json'",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("migrated catalog");
+        assert!(catalog.contains("updated@example.com"));
+        assert!(!catalog.contains(legacy_password));
+        drop(read);
+
+        service
+            .delete_common_login_password(legacy_profile_id.to_string())
+            .await
+            .expect("delete migrated password");
+        let remaining = service
+            .list_common_login_options()
+            .await
+            .expect("list options after deleting migrated password");
+        assert_eq!(remaining.emails.len(), 1);
+        assert_eq!(remaining.emails[0].email, "updated@example.com");
+        assert!(remaining.passwords.is_empty());
+
         drop(service);
         runtime.close().await.expect("close runtime");
     }

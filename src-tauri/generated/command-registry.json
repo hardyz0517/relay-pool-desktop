@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "a6524149a2ba5e63c1836d4dc31a5af8c01c016c3d7e2a50a499393c99cf9f79",
+  "contract_hash": "044b46d3d3eadb575020a39fa31aaa02a7fc0c697c993eded8384e8fa6705a7e",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -126,6 +126,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "collect_provider_draft_preview",
+      "transport": "ordinary",
+      "input_schema_hash": "950f82b4b75e9ff7818cd31d1666963d63ade452eb5a71343a97b5fb8a94a23c",
+      "output_schema_hash": "dc77891187fd3bc69b6f80fdfbb77a473bed0e533a35cd6a3828aac093b6eec1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "collect_station_info",
       "transport": "ordinary",
       "input_schema_hash": "08e5b676bfd39c5d4107a185f30d66f6475773d99a97718a26a625d8ef2c1847",
@@ -156,6 +167,17 @@
       "mutation_kind": "non_idempotent",
       "transport_retry": false,
       "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "commit_provider_draft",
+      "transport": "ordinary",
+      "input_schema_hash": "a2f8aa3005db2a53f8890e5a08dc493f01e4858874fe423aaf1b926776c076e5",
+      "output_schema_hash": "af8c76579fe949f562e6e4afea71c49f6d694990bea74e869e486baf4a103aed",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
     },
     {
@@ -200,6 +222,17 @@
       "mutation_kind": "non_idempotent",
       "transport_retry": false,
       "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "create_or_resume_provider_draft",
+      "transport": "ordinary",
+      "input_schema_hash": "835c15ecac7d7d999f48b6a212689aa4e7a713ce5add943e1078034ccedaee3b",
+      "output_schema_hash": "e7a2a2c043fe9871c05b015d8f016c4973c4c12f80ba6f558e6ddeab12f2cd49",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
     },
     {
@@ -258,9 +291,20 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
-      "name": "delete_common_login_profile",
+      "name": "delete_common_login_email",
       "transport": "ordinary",
-      "input_schema_hash": "7a6349c4442f8ce9be2e2f63c57dc7837a1d9ee2e85982f6e2c9107d86e2521f",
+      "input_schema_hash": "d3b3fb61cfff1a55478a4d6078829bd0d651ca0031a730e2d0443dacc37831d8",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "delete_common_login_password",
+      "transport": "ordinary",
+      "input_schema_hash": "d3b3fb61cfff1a55478a4d6078829bd0d651ca0031a730e2d0443dacc37831d8",
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
@@ -346,6 +390,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "discard_provider_draft",
+      "transport": "ordinary",
+      "input_schema_hash": "0c673aa4d8f3ac869a5cf5c40233da31b04d87a6ee01aadd46beffeeac4e6df5",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "dismiss_change_event",
       "transport": "ordinary",
       "input_schema_hash": "1641929dd9fa6c2f24b91288c5130098496d123f9d163fa52211035920f72fdf",
@@ -390,6 +445,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "finish_provider_draft_authorization_session",
+      "transport": "ordinary",
+      "input_schema_hash": "0c673aa4d8f3ac869a5cf5c40233da31b04d87a6ee01aadd46beffeeac4e6df5",
+      "output_schema_hash": "dc77891187fd3bc69b6f80fdfbb77a473bed0e533a35cd6a3828aac093b6eec1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "finish_web_authorization_session",
       "transport": "ordinary",
       "input_schema_hash": "3ead33aea82e96d8b76ab8eb1799af7b25011f1cb11530cef58c0788a4016f1e",
@@ -412,9 +478,9 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
-      "name": "get_common_login_profile_password",
+      "name": "get_common_login_password",
       "transport": "ordinary",
-      "input_schema_hash": "7a6349c4442f8ce9be2e2f63c57dc7837a1d9ee2e85982f6e2c9107d86e2521f",
+      "input_schema_hash": "d3b3fb61cfff1a55478a4d6078829bd0d651ca0031a730e2d0443dacc37831d8",
       "output_schema_hash": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
@@ -460,6 +526,17 @@
       "transport": "ordinary",
       "input_schema_hash": "66f06d3bb1280295c2d4f5b569d7cc25b99a91b4954cefd6364da6e9706d4ed8",
       "output_schema_hash": "e43b5a2e2392f38799fb2de33d004d165bf03699e2ddd09ac9c27ee16380efeb",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "get_provider_draft",
+      "transport": "ordinary",
+      "input_schema_hash": "0c673aa4d8f3ac869a5cf5c40233da31b04d87a6ee01aadd46beffeeac4e6df5",
+      "output_schema_hash": "e7a2a2c043fe9871c05b015d8f016c4973c4c12f80ba6f558e6ddeab12f2cd49",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -698,10 +775,10 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
-      "name": "list_common_login_profiles",
+      "name": "list_common_login_options",
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
-      "output_schema_hash": "2db7738c8ee01bc312cff6901ae601ee02231eca88a530971486c73995f76295",
+      "output_schema_hash": "1f25ad03dd9345670f834705ef548daa76583018a3fdd34c756d26be3cbaa85e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -962,6 +1039,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "patch_provider_draft",
+      "transport": "ordinary",
+      "input_schema_hash": "5bcc3f6020675c42998fc4bd0b84f8e31ec028a48a02d545041b4f1487206491",
+      "output_schema_hash": "e7a2a2c043fe9871c05b015d8f016c4973c4c12f80ba6f558e6ddeab12f2cd49",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "ping_station_endpoint",
       "transport": "ordinary",
       "input_schema_hash": "ca6ff4935fb83b44bb017eb5decb2e38a66654fda36cdd7df87a8747ecebac82",
@@ -1127,6 +1215,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "scan_provider_draft_remote_keys",
+      "transport": "ordinary",
+      "input_schema_hash": "0c673aa4d8f3ac869a5cf5c40233da31b04d87a6ee01aadd46beffeeac4e6df5",
+      "output_schema_hash": "d619fdd04030048a01ec9438a49aa6fa90f43e1fcfad1381377f3c8375986c90",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "scan_remote_station_keys",
       "transport": "ordinary",
       "input_schema_hash": "ca6ff4935fb83b44bb017eb5decb2e38a66654fda36cdd7df87a8747ecebac82",
@@ -1168,6 +1267,17 @@
       "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "start_provider_draft_authorization",
+      "transport": "ordinary",
+      "input_schema_hash": "0c673aa4d8f3ac869a5cf5c40233da31b04d87a6ee01aadd46beffeeac4e6df5",
+      "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
     },
     {
@@ -1380,10 +1490,21 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
-      "name": "upsert_common_login_profile",
+      "name": "upsert_common_login_email",
       "transport": "ordinary",
-      "input_schema_hash": "39cab125badf02ed82df86e5fd28317801413467c9625e6c33c407daa23bd0e4",
-      "output_schema_hash": "c27af9e51d345b4e5ea6e404f1158ec3a997c8b5a249f5fef29a68d82f8b6d0b",
+      "input_schema_hash": "15d1f5261d853da3e30bdc1543523e44e5e278fdce9b338de6ac9cdb615bf616",
+      "output_schema_hash": "7d458aa60bdcfb8a461219903e2332c6ee07982d033964286e7b8e0285edc4b3",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "upsert_common_login_password",
+      "transport": "ordinary",
+      "input_schema_hash": "096be33e9422acb884010938f1a9c9dbbda20928f82103418aecd148a2402793",
+      "output_schema_hash": "c5f89315923fae48c7b2f4c520bb8699c158cd68c23eb5261d8bf577b56072f4",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
       "transport_retry": false,
@@ -1445,6 +1566,6 @@
   ],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "b47f97c5d9d08806feb8a0b4cedee2da3465b032a4ace02a35412f310e66fc68"
+    "serialization_fixture_hash": "c597a0e08aa823ed5cdf68fad2319fd73ee9aee5f1fccd641645134cb573d37a"
   }
 }

@@ -9,9 +9,9 @@ use crate::{
             CaptureCommandFacade, ChangeEventsCommandFacade, ChannelMonitoringCommandFacade,
             ChannelStatusCommandFacade, CollectorMetadataCommandFacade, CredentialsCommandFacade,
             DataDirectoryCommandFacade, KeyPoolCommandFacade, LocalProxyCommandFacade,
-            PricingCommandFacade, RemoteKeysCommandFacade, RequestLogsCommandFacade,
-            RoutingCommandFacade, SettingsStationsCommandFacade, StationCollectionCommandFacade,
-            StationKeyConnectivityCommandFacade,
+            PricingCommandFacade, ProviderDraftCommandFacade, RemoteKeysCommandFacade,
+            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
+            StationCollectionCommandFacade, StationKeyConnectivityCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
@@ -335,6 +335,7 @@ pub(crate) fn compose_capture_command_facade(
     CaptureCommandFacade::new(
         Arc::clone(&services.stations),
         Arc::clone(&services.credentials),
+        Arc::clone(&services.provider_drafts),
         Arc::clone(&services.collectors),
         sessions,
         outbound,
@@ -346,6 +347,23 @@ pub(crate) fn compose_pricing_command_facade(services: &AppServices) -> PricingC
     PricingCommandFacade::new(
         Arc::clone(&services.pricing),
         Arc::clone(&services.pricing_comparison),
+    )
+}
+
+pub(crate) fn compose_provider_draft_command_facade(
+    services: &AppServices,
+    blocking: BlockingExecutor,
+    outbound: AsyncOutboundClient,
+    providers: Arc<ProviderRegistry>,
+    data_key: [u8; 32],
+) -> ProviderDraftCommandFacade {
+    ProviderDraftCommandFacade::new(
+        Arc::clone(&services.provider_drafts),
+        Arc::clone(&services.settings),
+        blocking,
+        outbound,
+        providers,
+        data_key,
     )
 }
 

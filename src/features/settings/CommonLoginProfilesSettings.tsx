@@ -1,35 +1,45 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
-import { Button, ConfirmDialog, Dialog, SectionCard, useToast } from "@/components/ui";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { AtSign, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { Button, ConfirmDialog, Dialog, IconButton, SectionCard, useToast } from "@/components/ui";
 import {
-  deleteCommonLoginProfile,
-  listCommonLoginProfiles,
-  upsertCommonLoginProfile,
+  deleteCommonLoginEmail,
+  deleteCommonLoginPassword,
+  listCommonLoginOptions,
+  upsertCommonLoginEmail,
+  upsertCommonLoginPassword,
 } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
-import type { CommonLoginProfile } from "@/lib/types/settings";
+import type { CommonLoginOptions } from "@/lib/types/settings";
 
-type ProfileDraft = {
+type OptionKind = "email" | "password";
+
+type OptionDraft = {
+  kind: OptionKind;
   id: string | null;
-  email: string;
-  password: string;
+  value: string;
 };
 
-const emptyDraft: ProfileDraft = { id: null, email: "", password: "" };
+type DeleteTarget = {
+  kind: OptionKind;
+  id: string;
+  label: string;
+};
+
+const emptyOptions: CommonLoginOptions = { emails: [], passwords: [] };
 
 export function CommonLoginProfilesSettings() {
   const toast = useToast();
-  const [profiles, setProfiles] = useState<CommonLoginProfile[]>([]);
+  const [options, setOptions] = useState<CommonLoginOptions>(emptyOptions);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState<ProfileDraft | null>(null);
-  const [deleting, setDeleting] = useState<CommonLoginProfile | null>(null);
+  const [draft, setDraft] = useState<OptionDraft | null>(null);
+  const [deleting, setDeleting] = useState<DeleteTarget | null>(null);
 
   useEffect(() => {
     let alive = true;
-    void listCommonLoginProfiles()
+    void listCommonLoginOptions()
       .then((items) => {
-        if (alive) setProfiles(items);
+        if (alive) setOptions(items);
       })
       .catch((error) => {
         if (alive) toast.error("读取常用登录信息失败", readError(error));
@@ -44,23 +54,33 @@ export function CommonLoginProfilesSettings() {
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft?.email.trim() || (!draft.id && !draft.password.trim())) return;
+    if (!draft?.value.trim()) return;
     setSaving(true);
     try {
-      const saved = await upsertCommonLoginProfile({
-        id: draft.id,
-        email: draft.email.trim(),
-        password: draft.password.trim() ? draft.password : null,
-      });
-      setProfiles((current) => {
-        const index = current.findIndex((profile) => profile.id === saved.id);
-        if (index < 0) return [...current, saved];
-        return current.map((profile) => (profile.id === saved.id ? saved : profile));
-      });
+      if (draft.kind === "email") {
+        const saved = await upsertCommonLoginEmail({
+          id: draft.id,
+          email: draft.value.trim(),
+        });
+        setOptions((current) => ({
+          ...current,
+          emails: replaceById(current.emails, saved),
+        }));
+        toast.success(draft.id ? "常用邮箱已更新" : "常用邮箱已添加");
+      } else {
+        const saved = await upsertCommonLoginPassword({
+          id: draft.id,
+          password: draft.value,
+        });
+        setOptions((current) => ({
+          ...current,
+          passwords: replaceById(current.passwords, saved),
+        }));
+        toast.success(draft.id ? "常用密码已更新" : "常用密码已添加");
+      }
       setDraft(null);
-      toast.success(draft.id ? "常用登录信息已更新" : "常用登录信息已添加");
     } catch (error) {
-      toast.error("保存常用登录信息失败", readError(error));
+      toast.error(draft.kind === "email" ? "保存常用邮箱失败" : "保存常用密码失败", readError(error));
     } finally {
       setSaving(false);
     }
@@ -70,88 +90,72 @@ export function CommonLoginProfilesSettings() {
     if (!deleting) return;
     setSaving(true);
     try {
-      await deleteCommonLoginProfile(deleting.id);
-      setProfiles((current) => current.filter((profile) => profile.id !== deleting.id));
+      if (deleting.kind === "email") {
+        await deleteCommonLoginEmail(deleting.id);
+        setOptions((current) => ({
+          ...current,
+          emails: current.emails.filter((item) => item.id !== deleting.id),
+        }));
+        toast.success("常用邮箱已删除");
+      } else {
+        await deleteCommonLoginPassword(deleting.id);
+        setOptions((current) => ({
+          ...current,
+          passwords: current.passwords.filter((item) => item.id !== deleting.id),
+        }));
+        toast.success("常用密码已删除");
+      }
       setDeleting(null);
-      toast.success("常用登录信息已删除");
     } catch (error) {
-      toast.error("删除常用登录信息失败", readError(error));
+      toast.error(deleting.kind === "email" ? "删除常用邮箱失败" : "删除常用密码失败", readError(error));
     } finally {
       setSaving(false);
     }
   }
 
+  const draftLabel = draft?.kind === "password" ? "密码" : "邮箱";
+
   return (
     <>
-      <SectionCard
-        contentClassName="p-0"
-        title="常用登录信息"
-        action={
-          <Button
-            className="h-7 px-2.5 text-xs"
-            disabled={loading || saving}
-            type="button"
-            variant="outline"
-            onClick={() => setDraft(emptyDraft)}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            添加
-          </Button>
-        }
-      >
-        {loading ? (
-          <div className="px-3 py-4 text-sm text-muted-foreground">读取中</div>
-        ) : profiles.length === 0 ? (
-          <div className="px-3 py-4 text-sm text-muted-foreground">
-            暂无常用登录信息
-          </div>
-        ) : (
-          profiles.map((profile) => (
-            <div
-              key={profile.id}
-              className="grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-3 py-2 last:border-b-0"
-            >
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-foreground">{profile.email}</div>
-                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <KeyRound className="h-3.5 w-3.5" />
-                  {profile.passwordPresent ? profile.passwordMasked : "未设置密码"}
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  aria-label={`编辑 ${profile.email}`}
-                  className="h-7 w-7 px-0"
-                  disabled={saving}
-                  title="编辑"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setDraft({ id: profile.id, email: profile.email, password: "" })}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  aria-label={`删除 ${profile.email}`}
-                  className="h-7 w-7 px-0 text-danger-foreground"
-                  disabled={saving}
-                  title="删除"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setDeleting(profile)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-          ))
-        )}
+      <SectionCard contentClassName="p-0" title="常用登录信息">
+        <div className="divide-y divide-border">
+          <CommonLoginOptionGroup
+            emptyLabel="暂无常用邮箱"
+            items={options.emails.map((item) => ({
+              id: item.id,
+              label: item.email,
+              icon: <AtSign className="h-3.5 w-3.5" />,
+            }))}
+            loading={loading}
+            saving={saving}
+            title="邮箱"
+            onAdd={() => setDraft({ kind: "email", id: null, value: "" })}
+            onDelete={(item) => setDeleting({ kind: "email", id: item.id, label: item.label })}
+            onEdit={(item) => setDraft({ kind: "email", id: item.id, value: item.label })}
+          />
+
+          <CommonLoginOptionGroup
+            emptyLabel="暂无常用密码"
+            items={options.passwords.map((item) => ({
+              id: item.id,
+              label: item.passwordMasked,
+              icon: <KeyRound className="h-3.5 w-3.5" />,
+            }))}
+            loading={loading}
+            saving={saving}
+            title="密码"
+            onAdd={() => setDraft({ kind: "password", id: null, value: "" })}
+            onDelete={(item) => setDeleting({ kind: "password", id: item.id, label: item.label })}
+            onEdit={(item) => setDraft({ kind: "password", id: item.id, value: "" })}
+          />
+        </div>
       </SectionCard>
 
       <Dialog
         className="max-w-md"
         open={draft !== null}
-        title={draft?.id ? "编辑常用登录信息" : "添加常用登录信息"}
-        description={draft?.id ? "密码留空将保留当前密码" : undefined}
+        title={`${draft?.id ? "编辑" : "添加"}常用${draftLabel}`}
+        description={draft?.kind === "password" && draft.id ? "输入新密码以替换当前密码" : undefined}
         onClose={() => !saving && setDraft(null)}
         footer={
           <div className="flex justify-end gap-2">
@@ -159,8 +163,8 @@ export function CommonLoginProfilesSettings() {
               取消
             </Button>
             <Button
-              disabled={saving || !draft?.email.trim() || (!draft.id && !draft.password.trim())}
-              form="common-login-profile-form"
+              disabled={saving || !draft?.value.trim()}
+              form="common-login-option-form"
               type="submit"
             >
               {saving ? "保存中" : "保存"}
@@ -168,28 +172,17 @@ export function CommonLoginProfilesSettings() {
           </div>
         }
       >
-        <form id="common-login-profile-form" className="grid gap-4 p-5" onSubmit={handleSave}>
+        <form id="common-login-option-form" className="grid gap-4 p-5" onSubmit={handleSave}>
           <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-            邮箱
+            {draftLabel}
             <input
-              autoComplete="email"
+              autoComplete={draft?.kind === "email" ? "email" : "new-password"}
               className={inputClassName}
+              placeholder={draft?.kind === "password" ? "输入常用密码" : "name@example.com"}
               required
-              type="email"
-              value={draft?.email ?? ""}
-              onChange={(event) => setDraft((current) => current && { ...current, email: event.target.value })}
-            />
-          </label>
-          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-            密码
-            <input
-              autoComplete="new-password"
-              className={inputClassName}
-              placeholder={draft?.id ? "留空保留当前密码" : "输入常用密码"}
-              required={!draft?.id}
-              type="password"
-              value={draft?.password ?? ""}
-              onChange={(event) => setDraft((current) => current && { ...current, password: event.target.value })}
+              type={draft?.kind === "password" ? "password" : "email"}
+              value={draft?.value ?? ""}
+              onChange={(event) => setDraft((current) => current && { ...current, value: event.target.value })}
             />
           </label>
         </form>
@@ -199,14 +192,102 @@ export function CommonLoginProfilesSettings() {
         cancelLabel="取消"
         confirmLabel="删除"
         confirming={saving}
-        description="删除后，供应商表单将不能再使用这组邮箱和密码快速填充。"
+        description={`删除后，供应商表单将不能再快速填充这个${deleting?.kind === "password" ? "密码" : "邮箱"}。`}
         open={deleting !== null}
-        title="删除常用登录信息？"
+        title={`删除常用${deleting?.kind === "password" ? "密码" : "邮箱"}？`}
         onCancel={() => !saving && setDeleting(null)}
         onConfirm={() => void handleDelete()}
       />
     </>
   );
+}
+
+type CommonLoginOptionItem = {
+  id: string;
+  label: string;
+  icon: ReactNode;
+};
+
+function CommonLoginOptionGroup({
+  emptyLabel,
+  items,
+  loading,
+  saving,
+  title,
+  onAdd,
+  onDelete,
+  onEdit,
+}: {
+  emptyLabel: string;
+  items: CommonLoginOptionItem[];
+  loading: boolean;
+  saving: boolean;
+  title: string;
+  onAdd: () => void;
+  onDelete: (item: CommonLoginOptionItem) => void;
+  onEdit: (item: CommonLoginOptionItem) => void;
+}) {
+  return (
+    <section aria-label={`常用${title}`}>
+      <div className="flex min-h-10 items-center justify-between gap-3 px-3 py-2">
+        <h3 className="text-xs font-semibold text-foreground">{title}</h3>
+        <Button
+          className="h-7 px-2.5 text-xs"
+          disabled={loading || saving}
+          type="button"
+          variant="outline"
+          onClick={onAdd}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          添加
+        </Button>
+      </div>
+      <div className="border-t border-border">
+        {loading ? (
+          <div className="px-3 py-4 text-sm text-muted-foreground">读取中</div>
+        ) : items.length === 0 ? (
+          <div className="px-3 py-4 text-sm text-muted-foreground">{emptyLabel}</div>
+        ) : (
+          items.map((item) => (
+            <div
+              key={item.id}
+              className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-3 py-2 last:border-b-0"
+            >
+              <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+                {item.icon}
+                <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <IconButton
+                  className="h-7 w-7"
+                  disabled={saving}
+                  label={`编辑 ${item.label}`}
+                  onClick={() => onEdit(item)}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </IconButton>
+                <IconButton
+                  className="h-7 w-7 text-danger-foreground"
+                  disabled={saving}
+                  label={`删除 ${item.label}`}
+                  onClick={() => onDelete(item)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </IconButton>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function replaceById<T extends { id: string }>(items: T[], saved: T) {
+  const existing = items.some((item) => item.id === saved.id);
+  return existing
+    ? items.map((item) => (item.id === saved.id ? saved : item))
+    : [...items, saved];
 }
 
 const inputClassName =

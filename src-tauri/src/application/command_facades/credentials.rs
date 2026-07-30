@@ -3,8 +3,9 @@ use std::sync::Arc;
 use crate::{
     application::{credentials::CredentialService, error::ApplicationError},
     models::credentials::{
-        CommonLoginProfile, StationCredentials, UpdateStationCredentialsInput,
-        UpdateStationSessionInput, UpsertCommonLoginProfileInput,
+        CommonLoginEmail, CommonLoginOptions, CommonLoginPassword, StationCredentials,
+        UpdateStationCredentialsInput, UpdateStationSessionInput, UpsertCommonLoginEmailInput,
+        UpsertCommonLoginPasswordInput,
     },
 };
 
@@ -18,34 +19,48 @@ impl CredentialsCommandFacade {
         Self { credentials }
     }
 
-    pub(crate) async fn list_common_login_profiles(
+    pub(crate) async fn list_common_login_options(
         &self,
-    ) -> Result<Vec<CommonLoginProfile>, ApplicationError> {
-        self.credentials.list_common_login_profiles().await
+    ) -> Result<CommonLoginOptions, ApplicationError> {
+        self.credentials.list_common_login_options().await
     }
 
-    pub(crate) async fn upsert_common_login_profile(
+    pub(crate) async fn upsert_common_login_email(
         &self,
-        input: UpsertCommonLoginProfileInput,
-    ) -> Result<CommonLoginProfile, ApplicationError> {
-        self.credentials.upsert_common_login_profile(input).await
+        input: UpsertCommonLoginEmailInput,
+    ) -> Result<CommonLoginEmail, ApplicationError> {
+        self.credentials.upsert_common_login_email(input).await
     }
 
-    pub(crate) async fn delete_common_login_profile(
+    pub(crate) async fn delete_common_login_email(
         &self,
-        profile_id: String,
+        email_id: String,
+    ) -> Result<(), ApplicationError> {
+        self.credentials.delete_common_login_email(email_id).await
+    }
+
+    pub(crate) async fn upsert_common_login_password(
+        &self,
+        input: UpsertCommonLoginPasswordInput,
+    ) -> Result<CommonLoginPassword, ApplicationError> {
+        self.credentials.upsert_common_login_password(input).await
+    }
+
+    pub(crate) async fn delete_common_login_password(
+        &self,
+        password_id: String,
     ) -> Result<(), ApplicationError> {
         self.credentials
-            .delete_common_login_profile(profile_id)
+            .delete_common_login_password(password_id)
             .await
     }
 
-    pub(crate) async fn get_common_login_profile_password(
+    pub(crate) async fn get_common_login_password(
         &self,
-        profile_id: String,
+        password_id: String,
     ) -> Result<String, ApplicationError> {
         self.credentials
-            .get_common_login_profile_password(profile_id)
+            .get_common_login_password(password_id)
             .await
     }
 

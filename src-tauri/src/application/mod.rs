@@ -11,6 +11,7 @@ pub(crate) mod ids;
 pub(crate) mod monitoring;
 pub(crate) mod pagination;
 pub(crate) mod pricing;
+pub(crate) mod provider_drafts;
 pub(crate) mod queries;
 pub(crate) mod request_finalization;
 pub(crate) mod request_lifecycle;

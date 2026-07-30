@@ -2,18 +2,35 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CommonLoginProfile {
+pub struct CommonLoginEmail {
     pub id: String,
     pub email: String,
-    pub password_present: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommonLoginPassword {
+    pub id: String,
     pub password_masked: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommonLoginOptions {
+    pub emails: Vec<CommonLoginEmail>,
+    pub passwords: Vec<CommonLoginPassword>,
+}
+
 #[derive(Debug, Clone)]
-pub struct UpsertCommonLoginProfileInput {
+pub struct UpsertCommonLoginEmailInput {
     pub id: Option<String>,
     pub email: String,
-    pub password: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertCommonLoginPasswordInput {
+    pub id: Option<String>,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

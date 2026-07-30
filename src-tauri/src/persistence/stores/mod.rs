@@ -3,6 +3,7 @@ pub(crate) mod collector_store;
 pub(crate) mod credential_store;
 pub(crate) mod monitoring_store;
 pub(crate) mod pricing_store;
+pub(crate) mod provider_draft_store;
 pub(crate) mod request_log_store;
 pub(crate) mod request_log_write;
 pub(crate) mod routing_store;

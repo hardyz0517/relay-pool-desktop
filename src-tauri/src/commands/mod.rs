@@ -18,6 +18,7 @@ pub(crate) mod model_aliases;
 pub(crate) mod operations;
 pub(crate) mod pricing;
 pub(crate) mod pricing_workspace;
+pub(crate) mod provider_drafts;
 pub(crate) mod request_logs;
 pub(crate) mod routing_health;
 pub(crate) mod runtime;

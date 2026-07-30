@@ -33,6 +33,8 @@ type SelectControlProps<T extends string = string> = {
   disabled?: boolean;
   className?: string;
   menuClassName?: string;
+  menuAlign?: "start" | "end";
+  menuMinWidth?: number;
 };
 
 type MenuPosition = {
@@ -53,6 +55,8 @@ export function SelectControl<T extends string>({
   disabled = false,
   className,
   menuClassName,
+  menuAlign = "start",
+  menuMinWidth = MIN_MENU_WIDTH,
 }: SelectControlProps<T>) {
   const interactionActive = useInteractionActivity();
   const id = useId();
@@ -82,7 +86,7 @@ export function SelectControl<T extends string>({
       return;
     }
     updatePosition();
-  }, [open, options.length]);
+  }, [menuAlign, menuMinWidth, open, options.length]);
 
   useEffect(() => {
     if (!open) {
@@ -146,15 +150,19 @@ export function SelectControl<T extends string>({
     const maxHeight = Math.max(160, Math.min(320, Math.max(spaceBelow, spaceAbove) - gap));
     const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
     const menuHeight = estimateMenuHeight(options, maxHeight);
-    const menuWidth = Math.max(rect.width, MIN_MENU_WIDTH);
+    const menuWidth = Math.max(rect.width, menuMinWidth);
     const top = openAbove
       ? Math.max(viewportPadding, rect.top - menuHeight - gap)
       : Math.min(window.innerHeight - viewportPadding, rect.bottom + gap);
+    const preferredLeft = menuAlign === "end" ? rect.right - menuWidth : rect.left;
 
     setPosition({
-      left: Math.max(viewportPadding, Math.min(rect.left, window.innerWidth - menuWidth - viewportPadding)),
+      left: Math.max(
+        viewportPadding,
+        Math.min(preferredLeft, window.innerWidth - menuWidth - viewportPadding),
+      ),
       top,
-      width: Math.max(rect.width, MIN_MENU_WIDTH),
+      width: menuWidth,
       maxHeight,
     });
   }

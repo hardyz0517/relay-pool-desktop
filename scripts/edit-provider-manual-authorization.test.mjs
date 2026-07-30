@@ -1,47 +1,44 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
-
-assert.match(
-  source,
-  /import \{[^}]*startManualAuthorization[^}]*\} from "@\/lib\/api\/collector"/s,
-  "edit provider page should reuse the existing manual web authorization API",
+const pageSource = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
+const controllerSource = await readFile("src/features/stations/useAddProviderPageController.ts", "utf8");
+const sectionsSource = await readFile("src/features/stations/pages/add-provider/AddProviderSections.tsx", "utf8");
+const captureCommands = await readFile("src-tauri/src/commands/capture.rs", "utf8");
+const captureFacade = await readFile(
+  "src-tauri/src/application/command_facades/capture.rs",
+  "utf8",
 );
 
 assert.match(
-  source,
-  /const \[startingAuthorization, setStartingAuthorization\] = useState\(false\)/,
-  "edit provider page should guard the authorization popup against repeated clicks",
-);
-
-assert.match(
-  source,
-  /async function handleStartManualAuthorization\(\)[\s\S]*await startManualAuthorization\(activeStationId\)/,
-  "manual authorization button should open the saved station capture popup",
-);
-
-assert.match(
-  source,
-  /\{editing && \([\s\S]*网页登录授权[\s\S]*\)\}/,
-  "manual authorization button should only be rendered on the edit provider page",
-);
-
-assert.match(
-  source,
-  /md:grid-cols-\[minmax\(0,1fr\)_minmax\(0,1fr\)_auto_auto\]/,
-  "login credential row should reserve room for both test and web authorization buttons",
-);
-
-assert.match(
-  source,
-  /md:grid-cols-\[minmax\(0,1fr\)_minmax\(0,1fr\)_auto\][\s\S]*复制前端网址/,
-  "website and API URL row should include the compact copy button in the same row",
+  controllerSource,
+  /if \(activeStationId\)[\s\S]*startManualAuthorization\(activeStationId\)[\s\S]*flushProviderDraft\(\)[\s\S]*startProviderDraftAuthorization\(draft\.id\)/,
+  "manual authorization should support both saved stations and flushed drafts",
 );
 
 assert.ok(
-  !/mt-2 flex justify-end[\s\S]{0,240}复制前端网址/.test(source),
-  "copy website button should not be pushed onto its own row",
+  !controllerSource.includes("ensureStationForManualAuthorization"),
+  "draft authorization should not use the temporary save-first guard",
 );
 
-console.log("edit provider manual authorization source guard passed");
+assert.match(
+  captureCommands,
+  /pub async fn start_provider_draft_authorization[\s\S]*\.start_provider_draft_authorization\(app, input\.draft_id\)/,
+  "the draft authorization command should delegate to the capture facade use case",
+);
+
+assert.match(
+  captureFacade,
+  /pub\(crate\) async fn start_provider_draft_authorization[\s\S]*prepare_provider_draft_capture_session_start\(draft_id\)/,
+  "the capture facade should own draft authorization preparation",
+);
+
+assert.match(
+  sectionsSource,
+  /打开窗口授权[\s\S]*测试连通性/,
+  "authorization button should appear to the left of connectivity test",
+);
+
+assert.match(pageSource, /onStartManualAuthorization=\{handleStartManualAuthorization\}/);
+
+console.log("provider draft manual authorization source guard passed");

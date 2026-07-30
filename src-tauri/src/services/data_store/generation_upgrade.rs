@@ -860,10 +860,21 @@ fn open_and_validate_v2(
     faults: &dyn UpgradeFaultInjector,
 ) -> Result<PersistenceRuntime, String> {
     check(faults, UpgradeFailpoint::V2Reopen)?;
-    let runtime = block_on(PersistenceRuntime::open_current(final_path))
+    let mut runtime = block_on(PersistenceRuntime::open_current(final_path))
         .map_err(|error| format!("failed to open generation 2 database: {error}"))?;
-    let health = block_on(runtime.health())
+    let mut health = block_on(runtime.health())
         .map_err(|error| format!("generation 2 health check failed: {error}"))?;
+    if health.open_mode == "inspection_only" {
+        block_on(runtime.close()).map_err(|error| {
+            format!("failed to close generation 2 database for migration: {error}")
+        })?;
+        block_on(persistence::upgrade_existing_v2_database(final_path))
+            .map_err(|error| format!("failed to migrate generation 2 database: {error}"))?;
+        runtime = block_on(PersistenceRuntime::open_current(final_path))
+            .map_err(|error| format!("failed to reopen migrated generation 2 database: {error}"))?;
+        health = block_on(runtime.health())
+            .map_err(|error| format!("migrated generation 2 health check failed: {error}"))?;
+    }
     if health.open_mode != "writable" {
         return Err("generation 2 database opened in inspection-only mode".to_string());
     }

@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/ui";
 import { collectStationTask, startManualAuthorization, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import {
-  getCommonLoginProfilePassword,
+  getCommonLoginPassword,
   getSettings,
-  listCommonLoginProfiles,
+  listCommonLoginOptions,
 } from "@/lib/api/settings";
 import {
   bindRemoteStationKey,
@@ -23,14 +23,24 @@ import {
   updateStationCredentials,
   updateStationKey,
 } from "@/lib/api/stationKeys";
-import { createStation, listStations, updateStation } from "@/lib/api/stations";
+import { listStations, updateStation } from "@/lib/api/stations";
+import {
+  collectProviderDraftPreview,
+  commitProviderDraft,
+  createOrResumeProviderDraft,
+  discardProviderDraft,
+  patchProviderDraft,
+  scanProviderDraftRemoteKeys,
+  startProviderDraftAuthorization,
+} from "@/lib/api/providerDrafts";
 import { readError } from "@/lib/errors";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { normalizeStationGroupOptions } from "@/lib/groupOptionViewModels";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import type { StationType } from "@/lib/types/stations";
-import type { CommonLoginProfile } from "@/lib/types/settings";
+import type { CommonLoginOptions } from "@/lib/types/settings";
+import type { ProviderDraft } from "@/lib/types/providerDrafts";
 import {
   createEmptyStationGroupDraft,
   type StationGroupDraft,
@@ -55,7 +65,6 @@ import {
 import {
   collectRemoteGroupOptions,
   dedupeGroupRows,
-  findReusableDefaultKey,
   groupBindingsToCurrentOptions,
   groupBindingsToDrafts,
   groupDraftToOption,
@@ -74,6 +83,11 @@ import {
   validateKeyRows,
 } from "./pages/add-provider/keyGroupModel";
 import { saveGroupRows, saveKeyRows } from "./pages/add-provider/saveController";
+import {
+  editorFromProviderDraft,
+  mergeProviderDraftPreviewGroups,
+  providerDraftPayloadFromEditor,
+} from "./pages/add-provider/providerDraftModel";
 
 export type AddProviderPageControllerOptions = {
   stationId?: string | null;
@@ -92,6 +106,15 @@ export function useAddProviderPageController({
   const queryClient = useQueryClient();
   const editing = Boolean(stationId);
   const [activeStationId, setActiveStationId] = useState<string | null>(stationId ?? null);
+  const [providerDraftId, setProviderDraftId] = useState<string | null>(null);
+  const providerDraftRef = useRef<ProviderDraft | null>(null);
+  const providerDraftWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const lastFlushedDraftSnapshotRef = useRef<string | null>(null);
+  const lastFlushedSecretsRef = useRef({
+    stationApiKey: "",
+    loginPassword: "",
+    keyApiKeys: {} as Record<string, string>,
+  });
   const [form, setForm] = useState<AddProviderFormState>(createDefaultProviderForm);
   const [loading, setLoading] = useState(Boolean(stationId));
   const [saving, setSaving] = useState(false);
@@ -116,7 +139,10 @@ export function useAddProviderPageController({
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [remoteKeyPendingDelete, setRemoteKeyPendingDelete] = useState<RemoteStationKey | null>(null);
   const [developerModeEnabled, setDeveloperModeEnabled] = useState(false);
-  const [commonLoginProfiles, setCommonLoginProfiles] = useState<CommonLoginProfile[]>([]);
+  const [commonLoginOptions, setCommonLoginOptions] = useState<CommonLoginOptions>({
+    emails: [],
+    passwords: [],
+  });
   const [passwordProfileLoading, setPasswordProfileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initialDraftSnapshot, setInitialDraftSnapshot] = useState(() =>
@@ -131,6 +157,81 @@ export function useAddProviderPageController({
       queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
       queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
     ]);
+  }
+
+  async function flushProviderDraft() {
+    if (editing) {
+      throw new Error("编辑已有供应商不使用新建草稿");
+    }
+    const snapshot = serializeProviderDraft(form, groupRows, keyRows);
+    const payload = providerDraftPayloadFromEditor(form, groupRows, keyRows);
+    const execute = async () => {
+      let draft = providerDraftRef.current;
+      if (!draft) {
+        draft = await createOrResumeProviderDraft(payload);
+        providerDraftRef.current = draft;
+        setProviderDraftId(draft.id);
+      }
+      if (lastFlushedDraftSnapshotRef.current === snapshot) {
+        return draft;
+      }
+
+      const previousSecrets = lastFlushedSecretsRef.current;
+      const currentKeySecrets = Object.fromEntries(
+        keyRows
+          .filter((row) => !row.deleteRequested && row.apiKey.trim())
+          .map((row) => [row.clientId, row.apiKey]),
+      );
+      const keySecretClientIds = new Set([
+        ...Object.keys(previousSecrets.keyApiKeys),
+        ...Object.keys(currentKeySecrets),
+      ]);
+      const patched = await patchProviderDraft({
+        draftId: draft.id,
+        expectedRevision: draft.revision,
+        payload,
+        stationApiKey: form.apiKey.trim()
+          ? form.apiKey
+          : previousSecrets.stationApiKey
+            ? ""
+            : null,
+        loginPassword: form.loginPassword.trim()
+          ? form.loginPassword
+          : previousSecrets.loginPassword
+            ? ""
+            : null,
+        keyApiKeys: [...keySecretClientIds].map((clientId) => ({
+          clientId,
+          apiKey: currentKeySecrets[clientId] ?? "",
+        })),
+      });
+      providerDraftRef.current = patched;
+      setProviderDraftId(patched.id);
+      lastFlushedDraftSnapshotRef.current = snapshot;
+      lastFlushedSecretsRef.current = {
+        stationApiKey: form.apiKey,
+        loginPassword: form.loginPassword,
+        keyApiKeys: currentKeySecrets,
+      };
+      return patched;
+    };
+
+    const pending = providerDraftWriteQueueRef.current.then(execute, execute);
+    providerDraftWriteQueueRef.current = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  }
+
+  async function discardCurrentProviderDraft() {
+    await providerDraftWriteQueueRef.current;
+    const draft = providerDraftRef.current;
+    if (draft?.state === "active") {
+      await discardProviderDraft(draft.id);
+    }
+    providerDraftRef.current = null;
+    setProviderDraftId(null);
   }
 
   const editableGroupOptions = useMemo(() => {
@@ -155,27 +256,23 @@ export function useAddProviderPageController({
   const remoteCapabilityUnavailableReason = remoteCapabilityError
     ? `远端 Key 能力读取失败：${remoteCapabilityError}`
     : remoteUnsupportedReason;
+  const remoteActionUnavailableReason = remoteCapabilityUnavailableReason;
   const remoteDiscoveryReason =
     remoteCapabilityUnavailableReason ??
     (remoteListError ? `远端 Key 列表读取失败：${remoteListError}` : null);
-  const createPageRemoteDraftReady =
-    Boolean(form.websiteUrl.trim()) &&
-    Boolean(form.apiBaseUrl.trim()) &&
-    Boolean(form.loginUsername.trim()) &&
-    Boolean(form.loginPassword.trim());
   const scanRemoteDisabled =
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
-    (activeStationId ? remoteCapability?.canListRemoteKeys !== true : !createPageRemoteDraftReady);
+    (!activeStationId && !providerDraftId) ||
+    remoteCapability?.canListRemoteKeys !== true;
   const savedStationCreateRemoteUnavailable = activeStationId
     ? remoteCapability?.canCreateRemoteKey !== true
     : false;
-  const createPageCreateRemoteUnavailable = activeStationId ? false : !createPageRemoteDraftReady;
   const createRemoteDisabled =
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
-    savedStationCreateRemoteUnavailable ||
-    createPageCreateRemoteUnavailable;
+    !activeStationId ||
+    savedStationCreateRemoteUnavailable;
 
   useEffect(() => {
     let alive = true;
@@ -193,9 +290,9 @@ export function useAddProviderPageController({
 
   useEffect(() => {
     let alive = true;
-    void listCommonLoginProfiles()
-      .then((profiles) => {
-        if (alive) setCommonLoginProfiles(profiles);
+    void listCommonLoginOptions()
+      .then((options) => {
+        if (alive) setCommonLoginOptions(options);
       })
       .catch(() => undefined);
     return () => {
@@ -204,6 +301,7 @@ export function useAddProviderPageController({
   }, []);
 
   useEffect(() => {
+    let alive = true;
     setActiveStationId(stationId ?? null);
     if (!stationId) {
       const nextForm = createDefaultProviderForm();
@@ -219,12 +317,50 @@ export function useAddProviderPageController({
       setRemoteListError(null);
       setRemoteKeys([]);
       setCreateRemoteOpen(false);
-      setInitialDraftSnapshot(serializeProviderDraft(nextForm, [], nextKeyRows));
-      setLoading(false);
-      return;
+      setRemoteKeyPendingDelete(null);
+      setProviderDraftId(null);
+      providerDraftRef.current = null;
+      lastFlushedDraftSnapshotRef.current = null;
+      lastFlushedSecretsRef.current = {
+        stationApiKey: "",
+        loginPassword: "",
+        keyApiKeys: {},
+      };
+      setLoading(true);
+      setError(null);
+      void createOrResumeProviderDraft(
+        providerDraftPayloadFromEditor(nextForm, [], nextKeyRows),
+      )
+        .then((draft) => {
+          if (!alive) return;
+          const editor = editorFromProviderDraft(draft);
+          const restoredKeyRows = editor.keyRows.length ? editor.keyRows : nextKeyRows;
+          const snapshot = serializeProviderDraft(editor.form, editor.groupRows, restoredKeyRows);
+          providerDraftRef.current = draft;
+          setProviderDraftId(draft.id);
+          setForm(editor.form);
+          setGroupRows(editor.groupRows);
+          setKeyRows(restoredKeyRows);
+          setRemoteCapability(draftRemoteCapability(editor.form.stationType));
+          setInitialDraftSnapshot(snapshot);
+          lastFlushedDraftSnapshotRef.current = snapshot;
+        })
+        .catch((requestError) => {
+          if (!alive) return;
+          const message = readError(requestError);
+          setError(message);
+          toast.error("恢复供应商草稿失败", message);
+        })
+        .finally(() => {
+          if (alive) setLoading(false);
+        });
+      return () => {
+        alive = false;
+      };
     }
 
-    let alive = true;
+    setProviderDraftId(null);
+    providerDraftRef.current = null;
     setLoading(true);
     setError(null);
     void Promise.all([
@@ -287,6 +423,16 @@ export function useAddProviderPageController({
     setKeyRows((currentRows) => syncRowsWithGroupRateOptions(currentRows, editableGroupOptions));
   }, [editableGroupOptions]);
 
+  useEffect(() => {
+    if (editing || loading || !providerDraftId) return;
+    const timeout = window.setTimeout(() => {
+      void flushProviderDraft().catch((requestError) => {
+        setError(readError(requestError));
+      });
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [editing, form, groupRows, keyRows, loading, providerDraftId]);
+
   function applyPreset(presetId: ProviderPresetId) {
     const preset = providerPresets.find((item) => item.id === presetId) ?? defaultPreset;
     setForm((current) => ({
@@ -318,76 +464,7 @@ export function useAddProviderPageController({
     if (activeStationId) {
       return activeStationId;
     }
-    if (!form.name.trim()) {
-      throw new Error("请填写供应商名称");
-    }
-    if (!form.websiteUrl.trim()) {
-      throw new Error("请填写前端网址");
-    }
-    if (!form.apiBaseUrl.trim()) {
-      throw new Error("请填写 API Base URL");
-    }
-    const remoteActionStationType: StationType =
-      form.stationType === "custom" || form.stationType === "openai-compatible"
-        ? "sub2api"
-        : form.stationType;
-
-    const firstKeyDraft = keyRows.find((row) => !row.deleteRequested && row.apiKey.trim());
-    const stationApiKey = form.apiKey.trim() || firstKeyDraft?.apiKey.trim() || "";
-    const station = await createStation({
-      name: form.name.trim(),
-      stationType: remoteActionStationType,
-      websiteUrl: form.websiteUrl.trim(),
-      apiBaseUrl: form.apiBaseUrl.trim(),
-      apiKey: stationApiKey,
-      collectorProxyMode: form.collectorProxyMode,
-      collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
-        ? form.collectorProxyUrl.trim()
-        : null,
-      enabled: form.enabled,
-      creditPerCny: Number(form.creditPerCny),
-      lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
-        ? Number(form.lowBalanceThresholdCny)
-        : null,
-      collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
-      note: form.note.trim() ? form.note.trim() : null,
-    });
-    if (remoteActionStationType !== form.stationType) {
-      setForm((current) => ({ ...current, stationType: remoteActionStationType }));
-    }
-
-    let rowsToSave = keyRows;
-    if (!form.apiKey.trim() && firstKeyDraft) {
-      const createdKeys = await listStationKeys(station.id);
-      const defaultKey = findReusableDefaultKey(createdKeys);
-      if (defaultKey) {
-        rowsToSave = keyRows.map((row) =>
-          row.clientId === firstKeyDraft.clientId
-            ? { ...row, id: defaultKey.id, apiKey: "" }
-            : row,
-        );
-      }
-    }
-    const savedGroupOptions = await saveGroupRows(station.id, groupRows, currentCreditPerCny);
-    if (savedGroupOptions.length) {
-      setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
-      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
-    }
-    await saveKeyRows(station.id, rowsToSave);
-    if (form.loginUsername.trim() || form.loginPassword.trim()) {
-      await updateStationCredentials({
-        stationId: station.id,
-        loginUsername: form.loginUsername.trim() ? form.loginUsername.trim() : null,
-        loginPassword: form.loginPassword.trim() ? form.loginPassword : null,
-        rememberPassword: Boolean(form.loginPassword.trim()),
-      });
-    }
-
-    setActiveStationId(station.id);
-    setLocalStationKeys(await refreshLocalStationKeyState(station.id));
-    await invalidateProviderWorkspaceCaches();
-    toast.success("供应商已保存，正在获取远端 Key");
-    return station.id;
+    throw new Error("请先保存供应商，再使用远端同步功能");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -415,7 +492,6 @@ export function useAddProviderPageController({
 
     setSaving(true);
     setError(null);
-    let createdStationId: string | null = null;
     try {
       if (activeStationId) {
         await updateStation({
@@ -461,67 +537,19 @@ export function useAddProviderPageController({
         return;
       }
 
-      const firstKeyDraft = keyRows.find((row) => !row.deleteRequested && row.apiKey.trim());
-      const stationApiKey = form.apiKey.trim() || firstKeyDraft?.apiKey.trim() || "";
-      const station = await createStation({
-        name: form.name.trim(),
-        stationType: form.stationType,
-        websiteUrl: form.websiteUrl.trim(),
-        apiBaseUrl: form.apiBaseUrl.trim(),
-        apiKey: stationApiKey,
-        collectorProxyMode: form.collectorProxyMode,
-        collectorProxyUrl: form.collectorProxyMode === "manual" && form.collectorProxyUrl.trim()
-          ? form.collectorProxyUrl.trim()
-          : null,
-        enabled: form.enabled,
-        creditPerCny: Number(form.creditPerCny),
-        lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
-          ? Number(form.lowBalanceThresholdCny)
-          : null,
-        collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
-        note: form.note.trim() ? form.note.trim() : null,
-      });
-      createdStationId = station.id;
+      const draft = await flushProviderDraft();
+      const commitKey = globalThis.crypto?.randomUUID?.() ?? `provider-draft-${Date.now()}`;
+      const station = await commitProviderDraft(draft.id, draft.revision, commitKey);
+      providerDraftRef.current = null;
+      setProviderDraftId(null);
       setActiveStationId(station.id);
-      let rowsToSave = keyRows;
-      if (!form.apiKey.trim() && firstKeyDraft) {
-        const createdKeys = await listStationKeys(station.id);
-        const defaultKey = findReusableDefaultKey(createdKeys);
-        if (defaultKey) {
-          rowsToSave = keyRows.map((row) =>
-            row.clientId === firstKeyDraft.clientId
-              ? { ...row, id: defaultKey.id, apiKey: "" }
-              : row,
-          );
-        }
-      }
-      const savedGroupOptions = await saveGroupRows(station.id, groupRows, currentCreditPerCny);
-      rowsToSave = mergeKeyRowsWithSavedGroupOptions(rowsToSave, savedGroupOptions);
-      setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
-      setKeyRows(rowsToSave);
-      await saveKeyRows(station.id, rowsToSave);
       await invalidateProviderWorkspaceCaches();
-      if (form.loginUsername.trim() || form.loginPassword.trim()) {
-        await updateStationCredentials({
-          stationId: station.id,
-          loginUsername: form.loginUsername.trim() ? form.loginUsername.trim() : null,
-          loginPassword: form.loginPassword.trim() ? form.loginPassword : null,
-          rememberPassword: Boolean(form.loginPassword.trim()),
-        });
-      }
       toast.success("供应商已添加");
       onCreated?.();
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : String(requestError);
-      if (!editing && createdStationId) {
-        const partialSuccessMessage = "供应商已创建，但密钥或登录信息保存失败，请重新打开后补全。";
-        setError(partialSuccessMessage);
-        toast.error("供应商部分保存成功", partialSuccessMessage);
-        onCreated?.();
-      } else {
-        setError(message);
-        toast.error(editing ? "保存供应商失败" : "添加供应商失败", message);
-      }
+      setError(message);
+      toast.error(editing ? "保存供应商失败" : "添加供应商失败", message);
     } finally {
       setSaving(false);
     }
@@ -541,6 +569,7 @@ export function useAddProviderPageController({
     setError(null);
     setConnectionTest({ status: "testing", message: "正在测试连通性..." });
     try {
+      if (!editing) await flushProviderDraft();
       const result = await testStationLoginInput({
         stationType: form.stationType,
         websiteUrl: form.websiteUrl.trim(),
@@ -567,15 +596,15 @@ export function useAddProviderPageController({
   }
 
   async function handleStartManualAuthorization() {
-    if (!activeStationId) {
-      toast.info("请先保存供应商后再打开网页登录授权");
-      return;
-    }
-
     setStartingAuthorization(true);
     setError(null);
     try {
-      await startManualAuthorization(activeStationId);
+      if (activeStationId) {
+        await startManualAuthorization(activeStationId);
+      } else {
+        const draft = await flushProviderDraft();
+        await startProviderDraftAuthorization(draft.id);
+      }
       toast.success("已打开网页登录授权窗口", "请在弹窗中完成登录，授权成功后会自动写回会话。");
     } catch (requestError) {
       const message = readError(requestError);
@@ -591,13 +620,18 @@ export function useAddProviderPageController({
     setError(null);
     setRemoteListError(null);
     try {
-      const targetStationId = await ensureStationForRemoteKeyActions();
-      const result = await scanRemoteStationKeys(targetStationId);
+      const result = activeStationId
+        ? await scanRemoteStationKeys(activeStationId)
+        : await scanProviderDraftRemoteKeys((await flushProviderDraft()).id);
       setRemoteCapability(result.capability);
       setRemoteCapabilityError(null);
       setRemoteKeys(result.keys);
-      const keys = await refreshLocalStationKeyState(targetStationId);
-      setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(result.keys, keys));
+      if (activeStationId) {
+        const keys = await refreshLocalStationKeyState(activeStationId);
+        setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(result.keys, keys));
+      } else {
+        setRemoteCreatedLocalKeyIds({});
+      }
       toast.success("远端 Key 已更新", result.message || `发现 ${result.keys.length} 个远端 Key`);
     } catch (requestError) {
       const message = readError(requestError);
@@ -614,7 +648,17 @@ export function useAddProviderPageController({
     setError(null);
     setRemoteListError(null);
     try {
-      const targetStationId = await ensureStationForRemoteKeyActions();
+      if (!activeStationId) {
+        const draft = await flushProviderDraft();
+        const preview = await collectProviderDraftPreview(draft.id, "groups");
+        const syncedGroupRows = mergeProviderDraftPreviewGroups(groupRows, preview.groups);
+        setGroupRows(syncedGroupRows);
+        setRemoteCapability(draftRemoteCapability(form.stationType));
+        setRemoteCapabilityError(null);
+        toast.success("远端分组已同步到草稿", `发现 ${preview.groups.length} 个分组，保存后才会正式创建`);
+        return;
+      }
+      const targetStationId = activeStationId;
       await collectStationTask(targetStationId, "groups");
       const [groupBindings, groupRates, capability] = await Promise.all([
         listStationGroupBindings(targetStationId),
@@ -643,29 +687,7 @@ export function useAddProviderPageController({
       return;
     }
 
-    setRemoteLoading(true);
-    setError(null);
-    setRemoteListError(null);
-    try {
-      const targetStationId = await ensureStationForRemoteKeyActions();
-      const capability = await getRemoteKeyCapability(targetStationId);
-      setRemoteCapability(capability);
-      setRemoteCapabilityError(null);
-      if (capability.canCreateRemoteKey !== true) {
-        const reason = capability.unsupportedReason ?? "当前中转站暂不支持新建远端 Key";
-        setRemoteListError(reason);
-        toast.info(reason);
-        return;
-      }
-      setCreateRemoteOpen(true);
-    } catch (requestError) {
-      const message = readError(requestError);
-      setError(message);
-      setRemoteListError(message);
-      toast.error("准备新建远端 Key 失败", message);
-    } finally {
-      setRemoteLoading(false);
-    }
+    toast.info("草稿不支持修改远端数据，请先保存供应商");
   }
 
   function handleCreateRemoteKey(input: RemoteCreateInput) {
@@ -704,6 +726,10 @@ export function useAddProviderPageController({
   }
 
   async function handleBindRemoteKey(remoteKeyId: string, stationKeyId: string) {
+    if (!activeStationId) {
+      toast.info("草稿不支持修改远端或正式 Key 绑定");
+      return;
+    }
     setRemoteLoading(true);
     setError(null);
     try {
@@ -723,6 +749,10 @@ export function useAddProviderPageController({
     remoteKey: RemoteStationKey,
     checked: boolean,
   ) {
+    if (!activeStationId) {
+      toast.info("草稿阶段只能查看远端 Key");
+      return;
+    }
     setRemoteLoading(true);
     setError(null);
     try {
@@ -848,16 +878,16 @@ export function useAddProviderPageController({
   }
 
   function handleCommonEmailSelect(profileId: string) {
-    const profile = commonLoginProfiles.find((item) => item.id === profileId);
-    if (!profile) return;
-    setForm((current) => ({ ...current, loginUsername: profile.email }));
+    const email = commonLoginOptions.emails.find((item) => item.id === profileId);
+    if (!email) return;
+    setForm((current) => ({ ...current, loginUsername: email.email }));
     resetConnectionTest();
   }
 
   async function handleCommonPasswordSelect(profileId: string) {
     setPasswordProfileLoading(true);
     try {
-      const password = await getCommonLoginProfilePassword(profileId);
+      const password = await getCommonLoginPassword(profileId);
       setForm((current) => ({
         ...current,
         loginPassword: password,
@@ -905,9 +935,20 @@ export function useAddProviderPageController({
     setDiscardConfirmOpen(false);
   }
 
+  async function exitAndDiscardDraft() {
+    try {
+      if (!editing) await discardCurrentProviderDraft();
+      onBack();
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      toast.error("丢弃供应商草稿失败", message);
+    }
+  }
+
   function confirmDiscardChanges() {
     setDiscardConfirmOpen(false);
-    onBack();
+    void exitAndDiscardDraft();
   }
 
   function requestExit() {
@@ -915,7 +956,7 @@ export function useAddProviderPageController({
       setDiscardConfirmOpen(true);
       return;
     }
-    onBack();
+    void exitAndDiscardDraft();
   }
 
   return {
@@ -924,7 +965,7 @@ export function useAddProviderPageController({
     cancelDeleteRemoteKey,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
-    commonLoginProfiles,
+    commonLoginOptions,
     confirmDiscardChanges,
     confirmDeleteRemoteKey,
     connectionTest,
@@ -940,9 +981,9 @@ export function useAddProviderPageController({
     groupRows,
     handleAddGroup,
     handleAddLocalKey,
+    handleBindRemoteKey,
     handleCommonEmailSelect,
     handleCommonPasswordSelect,
-    handleBindRemoteKey,
     handleCreateRemoteKey,
     handleGroupRowsChange,
     handleOpenCreateRemoteKey,
@@ -956,10 +997,11 @@ export function useAddProviderPageController({
     keyRows,
     loading,
     passwordProfileLoading,
+    providerDraftId,
     localStationKeys,
     remoteCapability,
     remoteCapabilityError,
-    remoteCapabilityUnavailableReason,
+    remoteCapabilityUnavailableReason: remoteActionUnavailableReason,
     remoteCreatedLocalKeyIds,
     remoteDiscoveryReason,
     remoteGroupOptions,

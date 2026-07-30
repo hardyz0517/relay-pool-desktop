@@ -6,6 +6,7 @@ pub mod collector_runs;
 pub mod credentials;
 pub mod group_facts;
 pub mod pricing;
+pub mod provider_drafts;
 pub mod proxy;
 pub mod remote_keys;
 pub mod routing;
