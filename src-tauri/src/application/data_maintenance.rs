@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    background_tasks::OperationRegistry,
+    background_tasks::{OperationId, OperationRegistry},
     persistence::runtime::{ActivationFreezeEvidence, PersistenceRuntime, RuntimeTransitionError},
     services::{
         proxy::runtime::ProxyRuntimeState, station_collectors::StationCollectorRunnerState,
@@ -207,11 +207,29 @@ impl DataMaintenanceCoordinator {
         proxy: Option<&ProxyRuntimeState>,
         deadline: Duration,
     ) -> Result<ActivationFreezeEvidence, DataMaintenanceError> {
+        self.freeze_dependencies_for_activation_except(
+            lease, runtime, operations, None, runner, proxy, deadline,
+        )
+        .await
+    }
+
+    pub(crate) async fn freeze_dependencies_for_activation_except(
+        &self,
+        lease: &DataMaintenanceLease,
+        runtime: &PersistenceRuntime,
+        operations: &OperationRegistry,
+        excluded_operation: Option<OperationId>,
+        runner: Option<&StationCollectorRunnerState>,
+        proxy: Option<&ProxyRuntimeState>,
+        deadline: Duration,
+    ) -> Result<ActivationFreezeEvidence, DataMaintenanceError> {
         if lease.activity != DataMaintenanceActivity::PrepareImport || !lease.active {
             return Err(DataMaintenanceError::InvalidTransition);
         }
 
-        let operation_report = operations.stop_admission_and_cancel(deadline).await;
+        let operation_report = operations
+            .stop_admission_and_cancel_except(excluded_operation, deadline)
+            .await;
         if !operation_report.timed_out.is_empty() {
             return Err(DataMaintenanceError::OperationDrainTimedOut);
         }
@@ -281,7 +299,7 @@ mod tests {
         },
         background_tasks::{
             OperationOwner, OperationRegistry, OperationRegistryConfig, OperationStartRequest,
-            OperationTerminal,
+            OperationState, OperationTerminal,
         },
         persistence::{error::PersistenceError, runtime::PersistenceRuntime},
     };
@@ -431,5 +449,54 @@ mod tests {
                 |_| Box::pin(async { OperationTerminal::Completed }),
             ))
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn activation_freeze_can_exclude_current_operation_from_drain() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let path = root.path().join("runtime.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        let coordinator = DataMaintenanceCoordinator::new();
+        let lease = coordinator
+            .begin(DataMaintenanceActivity::PrepareImport)
+            .expect("prepare lease");
+        let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
+        let id = operations
+            .start(OperationStartRequest::new(
+                "portable-import-prepare",
+                OperationOwner::new("test"),
+                |context| {
+                    Box::pin(async move {
+                        context.cancellation_token.cancelled().await;
+                        OperationTerminal::Cancelled
+                    })
+                },
+            ))
+            .expect("operation starts");
+
+        coordinator
+            .freeze_dependencies_for_activation_except(
+                &lease,
+                &runtime,
+                &operations,
+                Some(id),
+                None,
+                None,
+                Duration::from_secs(1),
+            )
+            .await
+            .expect("freeze excludes current operation");
+
+        let status = operations.status(id).expect("status retained");
+        assert_eq!(status.state, OperationState::Running);
+        assert!(matches!(
+            operations
+                .cancel(id, Duration::from_secs(1))
+                .await
+                .expect("excluded operation can be cancelled during cleanup"),
+            crate::background_tasks::OperationCancelOutcome::Stopped { .. }
+        ));
     }
 }

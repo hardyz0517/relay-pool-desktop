@@ -209,6 +209,14 @@ impl OperationRegistry {
     }
 
     pub async fn stop_admission_and_cancel(&self, wait: Duration) -> OperationDrainReport {
+        self.stop_admission_and_cancel_except(None, wait).await
+    }
+
+    pub async fn stop_admission_and_cancel_except(
+        &self,
+        excluded: Option<OperationId>,
+        wait: Duration,
+    ) -> OperationDrainReport {
         self.admission_closed.store(true, Ordering::SeqCst);
         let active_ids = {
             let inner = self.inner.lock().expect("operation registry mutex");
@@ -216,6 +224,9 @@ impl OperationRegistry {
                 .slots
                 .iter()
                 .filter_map(|(id, slot)| {
+                    if Some(*id) == excluded {
+                        return None;
+                    }
                     matches!(
                         slot.state,
                         OperationState::Running | OperationState::Stopping

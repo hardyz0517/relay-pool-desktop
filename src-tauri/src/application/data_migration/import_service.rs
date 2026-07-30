@@ -16,7 +16,7 @@ use crate::{
             PortableImportPrepareArtifact, PortableImportPrepareRequest,
         },
     },
-    background_tasks::OperationRegistry,
+    background_tasks::{OperationId, OperationRegistry},
     persistence::{
         runtime::{ActivationFreezeEvidence, PersistenceRuntime},
         validate_read_only_sqlite,
@@ -123,6 +123,7 @@ impl DataMigrationImportService {
             proxy,
             &NoPortableActivationFaults,
             None,
+            None,
         )
         .await
     }
@@ -131,6 +132,7 @@ impl DataMigrationImportService {
         &self,
         request: PortableImportActivationPrepareRequest,
         import_id: String,
+        excluded_operation: Option<OperationId>,
         runtime: &PersistenceRuntime,
         operations: &OperationRegistry,
         runner: Option<&StationCollectorRunnerState>,
@@ -143,6 +145,7 @@ impl DataMigrationImportService {
             runner,
             proxy,
             &NoPortableActivationFaults,
+            excluded_operation,
             Some(import_id),
         )
         .await
@@ -156,6 +159,7 @@ impl DataMigrationImportService {
         runner: Option<&StationCollectorRunnerState>,
         proxy: Option<&ProxyRuntimeState>,
         faults: &dyn PortableActivationFaults,
+        excluded_operation: Option<OperationId>,
         import_id: Option<String>,
     ) -> Result<PortableImportActivationPrepareResult, DataMigrationImportError> {
         validate_import_mode(request.import.mode, &request.import.confirmation_text)?;
@@ -189,10 +193,11 @@ impl DataMigrationImportService {
 
         let freeze = self
             .maintenance
-            .freeze_dependencies_for_activation(
+            .freeze_dependencies_for_activation_except(
                 &lease,
                 runtime,
                 operations,
+                excluded_operation,
                 runner,
                 proxy,
                 request.freeze_deadline,
@@ -1087,6 +1092,7 @@ mod tests {
                 None,
                 None,
                 &InjectPortableActivationFault::at(PortableActivationStep::BeforeJournalPublish),
+                None,
                 None,
             )
             .await

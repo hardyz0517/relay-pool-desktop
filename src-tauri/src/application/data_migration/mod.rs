@@ -460,6 +460,7 @@ impl PortableMigrationCommandFacade {
                         .prepare_portable_import_for_activation_with_import_id(
                             request,
                             import_id.clone(),
+                            Some(context.id),
                             &runtime,
                             &raw_operations,
                             None,
