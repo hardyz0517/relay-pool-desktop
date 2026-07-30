@@ -1997,6 +1997,53 @@
       ]
     },
     {
+      "command": "load_channel_status_workspace",
+      "input": {
+        "limit": 50,
+        "timezoneId": "UTC",
+        "window": "last24h"
+      },
+      "output": {
+        "aggregate": {
+          "availableRows": 0,
+          "degradedRows": 0,
+          "dirtyRows": 0,
+          "missingRows": 0,
+          "returnedRows": 0,
+          "runningRows": 0,
+          "skippedRows": 0,
+          "totalRows": 0,
+          "unavailableRows": 0
+        },
+        "bucketLayout": {
+          "daily": [],
+          "hourly": [],
+          "recentLimit": 60
+        },
+        "freshness": {
+          "hasCorruptRollups": false,
+          "hasDirtyRollups": false,
+          "newestResultAtMs": null,
+          "oldestResultAtMs": null,
+          "runningExecutionCount": 0
+        },
+        "generatedAtMs": 1700000000000,
+        "page": {
+          "limit": 50,
+          "nextCursor": null,
+          "returned": 0
+        },
+        "rows": [],
+        "schemaVersion": 2,
+        "timezone": {
+          "id": "UTC",
+          "requestedId": null,
+          "source": "iana"
+        },
+        "window": "last24h"
+      }
+    },
+    {
       "command": "list_channel_monitor_runs",
       "input": {
         "monitorId": "monitor-1"
@@ -2206,39 +2253,29 @@
       "output": null
     },
     {
-      "command": "load_channel_status_workspace",
-      "input": {},
+      "command": "run_channel_monitor_now",
+      "input": {
+        "monitorId": "monitor-1",
+        "triggerRequestId": "manual:monitor-1:fixture"
+      },
       "output": {
-        "channelStatusSummaries": [],
-        "keyPoolItems": [],
-        "requestLogs": [],
-        "stationKeyHealth": []
+        "executionId": "execution-1",
+        "monitorId": "monitor-1",
+        "reusedExisting": false,
+        "status": "completed",
+        "triggerRequestId": "manual:monitor-1:fixture"
       }
     },
     {
-      "command": "run_channel_monitor_now",
+      "command": "cancel_channel_monitor_execution",
       "input": {
-        "monitorId": "monitor-1"
+        "executionId": "execution-1"
       },
-      "output": [
-        {
-          "createdAt": "1700000000000",
-          "durationMs": 100,
-          "errorMessage": null,
-          "fallbackModel": null,
-          "finishedAt": "1700000000100",
-          "httpStatus": 200,
-          "id": "monitor-run-1",
-          "latencyMs": 80,
-          "monitorId": "monitor-1",
-          "responseModel": "fixture-model",
-          "startedAt": "1700000000000",
-          "stationId": "station-1",
-          "stationKeyId": "key-1",
-          "status": "success",
-          "templateId": "template-1"
-        }
-      ]
+      "output": {
+        "cancelled": true,
+        "executionId": "execution-1",
+        "status": "cancelled"
+      }
     },
     {
       "command": "detect_sub2api_station",

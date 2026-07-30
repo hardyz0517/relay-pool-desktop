@@ -1,0 +1,22 @@
+{
+  "id": "resp_probe",
+  "object": "response",
+  "status": "completed",
+  "model": "gpt-4.1-mini",
+  "output": [
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "RP_ANSWER=42"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 5,
+    "output_tokens": 6,
+    "total_tokens": 11
+  }
+}

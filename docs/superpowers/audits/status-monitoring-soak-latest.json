@@ -1,0 +1,11 @@
+{
+    "kind":  "status-monitoring-soak",
+    "startedAt":  "2026-07-30T01:08:11.6966735+08:00",
+    "finishedAt":  "2026-07-30T01:08:26.6338410+08:00",
+    "requestedDurationMinutes":  1,
+    "quick":  true,
+    "iterations":  1,
+    "failures":  [
+
+                 ]
+}

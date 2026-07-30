@@ -300,7 +300,7 @@ fn prepare_data_store(
 }
 
 async fn drain_application_shutdown(app: tauri::AppHandle) {
-    if let Some(runner) = app.try_state::<services::channel_monitors::ChannelMonitorRunnerState>() {
+    if let Some(runner) = app.try_state::<services::monitoring::runner::MonitoringRunnerState>() {
         runner.stop();
     }
     if let Some(runner) =
@@ -437,14 +437,14 @@ pub fn run() {
                     );
                     let request_logs_command_facade =
                         app_composition::compose_request_logs_command_facade(&app_services);
-                    let channel_monitor_runner_port = services::channel_monitors::v2_runner_port(
+                    let monitoring_runner = services::monitoring::runner::compose_monitoring_runner(
                         &app_services,
                         outbound_client.clone(),
                     );
                     let channel_monitoring_command_facade =
                         app_composition::compose_channel_monitoring_command_facade(
                             &app_services,
-                            Arc::clone(&channel_monitor_runner_port),
+                            Arc::clone(&monitoring_runner),
                         );
                     let channel_status_command_facade =
                         app_composition::compose_channel_status_command_facade(&app_services);
@@ -500,6 +500,14 @@ pub fn run() {
                     .map_err(|error| {
                         format!("failed to initialize built-in model prices: {error}")
                     })?;
+                    tauri::async_runtime::block_on(
+                        app_services
+                            .monitoring
+                            .recover_startup_interrupted_monitoring_executions(),
+                    )
+                    .map_err(|error| {
+                        format!("failed to recover interrupted monitor executions: {error}")
+                    })?;
                     let settings = tauri::async_runtime::block_on(app_services.settings.load())
                         .map_err(|error| format!("failed to load application settings: {error}"))?;
                     app.state::<Arc<TrayBehaviorState>>()
@@ -510,14 +518,12 @@ pub fn run() {
                         work_runtime,
                     )
                     .map_err(|error| format!("failed to register work runtime: {error}"))?;
-                    let channel_monitor_runner =
-                        services::channel_monitors::ChannelMonitorRunnerState::start_v2(
+                    let monitoring_runner_state =
+                        services::monitoring::runner::MonitoringRunnerState::start(
                             supervisor_handle.clone(),
-                            channel_monitor_runner_port,
+                            monitoring_runner,
                         )
-                        .map_err(|error| {
-                            format!("failed to start channel monitor runner: {error}")
-                        })?;
+                        .map_err(|error| format!("failed to start monitoring runner: {error}"))?;
                     let station_collector_runner =
                         services::station_collectors::StationCollectorRunnerState::start_v2(
                             supervisor_handle,
@@ -561,7 +567,7 @@ pub fn run() {
                             credentials_command_facade,
                             data_directory_command_facade,
                             local_proxy_command_facade,
-                            channel_monitor_runner,
+                            monitoring_runner_state,
                             station_collector_runner,
                         ),
                     )

@@ -6,7 +6,14 @@ use crate::{
     commands::error,
     ipc::dto::{
         channel_monitor_operations::ChannelStatusWorkspaceDto,
-        channel_monitor_reads::ChannelStatusSummaryDto, EmptyInputDto,
+        channel_monitor_reads::{
+            ChannelMonitorAttemptHistoryInputDto, ChannelMonitorAttemptPageDto,
+            ChannelMonitorExecutionDetailDto, ChannelMonitorExecutionIdInputDto,
+            ChannelMonitorExecutionListInputDto, ChannelMonitorExecutionPageDto,
+            ChannelStatusSummaryDto, ChannelStatusWorkspaceInputDto,
+            MonitoringCapabilityCatalogDto,
+        },
+        EmptyInputDto,
     },
     observability::correlation,
 };
@@ -32,11 +39,70 @@ pub async fn load_channel_status_workspace(
     input: Value,
 ) -> Result<ChannelStatusWorkspaceDto, error::CommandError> {
     correlation::in_command_scope("load_channel_status_workspace", async {
+        let input = ChannelStatusWorkspaceInputDto::parse(input)?;
+        facade
+            .load_channel_status_workspace(input)
+            .await
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_channel_monitor_executions(
+    facade: State<'_, ChannelStatusCommandFacade>,
+    input: Value,
+) -> Result<ChannelMonitorExecutionPageDto, error::CommandError> {
+    correlation::in_command_scope("list_channel_monitor_executions", async {
+        let input = ChannelMonitorExecutionListInputDto::parse(input)?;
+        facade
+            .list_channel_monitor_executions(input)
+            .await
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_channel_monitor_execution(
+    facade: State<'_, ChannelStatusCommandFacade>,
+    input: Value,
+) -> Result<ChannelMonitorExecutionDetailDto, error::CommandError> {
+    correlation::in_command_scope("get_channel_monitor_execution", async {
+        let input = ChannelMonitorExecutionIdInputDto::parse(input)?;
+        facade
+            .get_channel_monitor_execution(input)
+            .await
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_channel_monitor_attempts(
+    facade: State<'_, ChannelStatusCommandFacade>,
+    input: Value,
+) -> Result<ChannelMonitorAttemptPageDto, error::CommandError> {
+    correlation::in_command_scope("list_channel_monitor_attempts", async {
+        let input = ChannelMonitorAttemptHistoryInputDto::parse(input)?;
+        facade
+            .list_channel_monitor_attempts(input)
+            .await
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_monitoring_capabilities(
+    facade: State<'_, ChannelStatusCommandFacade>,
+    input: Value,
+) -> Result<MonitoringCapabilityCatalogDto, error::CommandError> {
+    correlation::in_command_scope("list_monitoring_capabilities", async {
         EmptyInputDto::parse(input)?;
         facade
-            .load_channel_status_workspace(PageLimit::new(200).expect("bounded limit"))
+            .list_monitoring_capabilities()
             .await
-            .map(ChannelStatusWorkspaceDto::from)
             .map_err(super::public_command_application_error)
     })
     .await

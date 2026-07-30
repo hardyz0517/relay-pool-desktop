@@ -5,6 +5,8 @@ pub mod collector;
 pub mod collector_runs;
 pub mod credentials;
 pub mod group_facts;
+pub(crate) mod health;
+pub mod monitoring;
 pub mod pricing;
 pub mod proxy;
 pub mod remote_keys;

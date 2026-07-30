@@ -1,0 +1,20 @@
+{
+  "id": "grok_probe",
+  "object": "chat.completion",
+  "model": "grok-4",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "RP_ANSWER=42"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 5,
+    "completion_tokens": 6,
+    "total_tokens": 11
+  }
+}

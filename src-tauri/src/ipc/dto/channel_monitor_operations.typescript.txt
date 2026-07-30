@@ -5,9 +5,101 @@ export type StationKeyHealthDto = {
   updatedAt: string;
 };
 
+export type ChannelStatusTimezoneSourceDto = "iana" | "utc_fallback";
+export type ChannelStatusBucketKindDto = "hour" | "day";
+export type ChannelStatusBucketStateDto =
+  | "missing" | "dirty" | "skipped_only" | "available" | "degraded" | "unavailable";
+
+export type ChannelStatusTimezoneDto = {
+  id: string; source: ChannelStatusTimezoneSourceDto; requestedId: string | null;
+};
+
+export type ChannelStatusBucketBoundaryDto = {
+  kind: ChannelStatusBucketKindDto; startMs: number; endMs: number; label: string;
+};
+
+export type ChannelStatusBucketLayoutDto = {
+  recentLimit: number; hourly: ChannelStatusBucketBoundaryDto[]; daily: ChannelStatusBucketBoundaryDto[];
+};
+
+export type ChannelStatusPageDto = {
+  limit: number; returned: number; nextCursor: ChannelStatusCursorDto | null;
+};
+
+export type ChannelStatusMonitorDto = {
+  id: string; name: string; targetType: string; enabled: boolean; protocolKind: string;
+  clientProfileId: string; clientProfileVersion: number; primaryModel: string;
+  fallbackModels: string[]; intervalSeconds: number; jitterSeconds: number;
+  nextDueAtMs: number | null;
+};
+
+export type ChannelStatusTargetDto = {
+  stationId: string; stationName: string | null; stationKeyId: string | null; stationKeyName: string | null;
+};
+
+export type ChannelStatusLatestResultDto = {
+  targetResultId: string; executionId: string; outcome: ChannelStatusOutcomeDto;
+  failureKind: string | null; terminalReason: string | null;
+  latencyMs: number | null; finishedAtMs: number | null;
+  semanticConfidence: string; usedFallback: boolean; attemptCount: number; effectiveModel: string | null;
+};
+
+export type ChannelStatusRunningExecutionDto = {
+  executionId: string; status: string; triggerKind: string; triggerRequestId: string | null;
+  plannedAtMs: number; startedAtMs: number | null;
+};
+
+export type ChannelStatusRecentPointDto = {
+  targetResultId: string; executionId: string; outcome: ChannelStatusOutcomeDto;
+  failureKind: string | null; terminalReason: string | null;
+  latencyMs: number | null; checkedAtMs: number | null;
+  usedFallback: boolean; semanticConfidence: string; attemptCount: number; effectiveModel: string | null;
+};
+
+export type ChannelStatusBucketCountsDto = {
+  total: number; available: number; degraded: number; unavailable: number; skipped: number;
+};
+
+export type ChannelStatusBucketDto = {
+  kind: ChannelStatusBucketKindDto; startMs: number; endMs: number; state: ChannelStatusBucketStateDto;
+  counts: ChannelStatusBucketCountsDto; strictAvailabilityBps: number | null;
+  effectiveAvailabilityBps: number | null; p50LatencyMs: number | null; p95LatencyMs: number | null;
+  failureCounts: Record<string, number>; dirty: boolean; corrupt: boolean;
+};
+
+export type ChannelStatusWindowSummaryV2Dto = {
+  window: ChannelStatusWorkspaceWindowDto; bucketKind: ChannelStatusBucketKindDto;
+  startMs: number; endMs: number; counts: ChannelStatusBucketCountsDto;
+  strictAvailabilityBps: number | null; effectiveAvailabilityBps: number | null;
+  latestOutcome: ChannelStatusOutcomeDto; latestCheckedAtMs: number | null;
+  dirty: boolean; corrupt: boolean;
+};
+
+export type ChannelStatusRowDto = {
+  rowKey: string; monitor: ChannelStatusMonitorDto; target: ChannelStatusTargetDto;
+  latest: ChannelStatusLatestResultDto | null; running: ChannelStatusRunningExecutionDto | null;
+  recent: ChannelStatusRecentPointDto[]; hourlyBuckets: ChannelStatusBucketDto[];
+  dailyBuckets: ChannelStatusBucketDto[]; selectedWindow: ChannelStatusWindowSummaryV2Dto;
+};
+
+export type ChannelStatusAggregateDto = {
+  totalRows: number; returnedRows: number; runningRows: number; availableRows: number;
+  degradedRows: number; unavailableRows: number; skippedRows: number; missingRows: number; dirtyRows: number;
+};
+
+export type ChannelStatusFreshnessDto = {
+  newestResultAtMs: number | null; oldestResultAtMs: number | null;
+  hasDirtyRollups: boolean; hasCorruptRollups: boolean; runningExecutionCount: number;
+};
+
 export type ChannelStatusWorkspaceDto = {
-  keyPoolItems: KeyPoolItemDto[];
-  requestLogs: RequestLogDto[];
-  stationKeyHealth: StationKeyHealthDto[];
-  channelStatusSummaries: ChannelStatusSummaryDto[];
+  schemaVersion: number; generatedAtMs: number; window: ChannelStatusWorkspaceWindowDto;
+  timezone: ChannelStatusTimezoneDto; bucketLayout: ChannelStatusBucketLayoutDto;
+  aggregate: ChannelStatusAggregateDto; freshness: ChannelStatusFreshnessDto;
+  page: ChannelStatusPageDto; rows: ChannelStatusRowDto[];
+};
+
+export type CancelChannelMonitorExecutionInputDto = { executionId: string };
+export type CancelChannelMonitorExecutionReceiptDto = {
+  executionId: string; status: string; cancelled: boolean;
 };

@@ -1,272 +1,390 @@
-import type { RequestLog } from "@/lib/types/proxy";
-import type { StationKeyHealth } from "@/lib/types/routing";
 import type {
-  ChannelMonitor,
-  ChannelMonitorRun,
-  ChannelStatusSummary,
-  ChannelStatusTimelinePoint,
-  ChannelStatusWindowSummary,
+  ChannelStatusBucket,
+  ChannelStatusOutcome,
+  ChannelStatusRecentPoint,
+  ChannelStatusRow,
+  ChannelStatusWorkspace,
+  ChannelStatusWorkspaceInput,
+  ChannelStatusWorkspaceWindow,
 } from "@/lib/types/channelMonitors";
-import type { StationKeyStatus } from "@/lib/types/stationKeys";
-import { toTimestampMillis } from "@/lib/time";
 
-export type ChannelWindow = "recent" | "24h" | "7d";
-
-export type RecentOutcome = "success" | "warning" | "failed" | "unknown";
-
-export type ChannelAvailabilityState = {
-  status: StationKeyStatus;
-  availabilityPercent: number | null;
-};
+export type ChannelWindow = ChannelStatusWorkspaceWindow;
 
 export type AvailabilityTone = "muted" | "danger" | "warning" | "success";
+export type StatusTone = "available" | "degraded" | "unavailable" | "skipped" | "missing" | "running" | "disabled";
+export type TrendCellTone = "available" | "degraded" | "unavailable" | "skipped" | "missing" | "dirty" | "corrupt";
 
-const HSL_HUE_PER_PERCENT = 1.2;
-const HSL_SATURATION = 72;
-const HSL_LIGHTNESS = 42;
-const HSL_COLOR_FUNCTION = "hsl";
-
-const RECENT_OUTCOME_BAR_HEIGHT_PERCENT: Record<RecentOutcome, number> = {
-  success: 100,
-  warning: 65,
-  failed: 35,
-  unknown: 15,
+export type ChannelStatusFilters = {
+  search: string;
+  enabled: "all" | "enabled" | "disabled";
+  outcome: "all" | ChannelStatusOutcome;
+  protocolKind: string;
+  clientProfileId: string;
 };
 
-export type OrderedChannel = {
+export type ChannelStatusSortModel = {
+  field: NonNullable<ChannelStatusWorkspaceInput["sort"]>["field"];
+  direction: NonNullable<ChannelStatusWorkspaceInput["sort"]>["direction"];
+};
+
+export type ChannelStatusInputState = {
+  window: ChannelWindow;
+  filters: ChannelStatusFilters;
+  sort: ChannelStatusSortModel;
+  limit?: number;
+};
+
+export type TrendCellView = {
   id: string;
+  tone: TrendCellTone;
+  label: string;
+  title: string;
+  latencyMs: number | null;
+  startMs: number | null;
+  endMs: number | null;
+  total: number | null;
 };
 
-export type ChannelLatencyMetricInput = {
-  requestLatencyMs: number | null;
-  healthLatencyMs: number | null;
-  endpointPingMs: number | null;
+export type ChannelStatusRowView = {
+  rowKey: string;
+  monitorId: string;
+  monitorName: string;
+  targetName: string;
+  stationName: string;
+  keyName: string | null;
+  enabled: boolean;
+  protocolLabel: string;
+  profileLabel: string;
+  modelLabel: string;
+  currentTone: StatusTone;
+  currentLabel: string;
+  currentReason: string | null;
+  runningExecutionId: string | null;
+  latestExecutionId: string | null;
+  availabilityPercent: number | null;
+  strictAvailabilityPercent: number | null;
+  availabilityLabel: string;
+  latencyMs: number | null;
+  latencyLabel: string;
+  lastCheckedAtMs: number | null;
+  lastCheckedLabel: string;
+  attemptsLabel: string;
+  fallbackLabel: string;
+  trend: TrendCellView[];
+  dirty: boolean;
+  corrupt: boolean;
 };
 
-export type ChannelLatencyMetrics = {
-  conversationLatencyMs: number | null;
-  endpointPingMs: number | null;
+export type ChannelStatusWorkspaceView = {
+  generatedAtLabel: string;
+  freshnessLabel: string;
+  aggregateLabel: string;
+  rows: ChannelStatusRowView[];
 };
 
-type HealthOutcomeSummary = Pick<StationKeyHealth, "successCount" | "failureCount">;
-type StationKeyMonitorSummary = Pick<
-  ChannelMonitor,
-  "id" | "targetType" | "stationKeyId" | "enabled" | "updatedAt"
->;
-type MonitorRunSummary = Pick<ChannelMonitorRun, "status" | "startedAt">;
-type WindowedItem = { startedAt: string };
-
-const CHANNEL_WINDOW_MS: Record<Exclude<ChannelWindow, "recent">, number> = {
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
+export const defaultChannelStatusFilters: ChannelStatusFilters = {
+  search: "",
+  enabled: "all",
+  outcome: "all",
+  protocolKind: "",
+  clientProfileId: "",
 };
 
-export function enabledStationKeyMonitorsByKey(monitors: StationKeyMonitorSummary[]) {
-  const monitorByKey = new Map<string, StationKeyMonitorSummary>();
-  for (const monitor of monitors) {
-    if (!monitor.enabled || monitor.targetType !== "station_key" || !monitor.stationKeyId) {
-      continue;
-    }
-    const existing = monitorByKey.get(monitor.stationKeyId);
-    if (!existing || toTime(monitor.updatedAt) >= toTime(existing.updatedAt)) {
-      monitorByKey.set(monitor.stationKeyId, monitor);
-    }
-  }
-  return monitorByKey;
+export const defaultChannelStatusSort: ChannelStatusSortModel = {
+  field: "latest_checked_at",
+  direction: "desc",
+};
+
+export function createChannelStatusWorkspaceInput({
+  window,
+  filters,
+  sort,
+  limit = 500,
+}: ChannelStatusInputState): ChannelStatusWorkspaceInput {
+  return {
+    window,
+    filter: {
+      search: blankToNull(filters.search),
+      enabled: filters.enabled === "all" ? null : filters.enabled === "enabled",
+      outcome: filters.outcome === "all" ? null : filters.outcome,
+      protocolKind: blankToNull(filters.protocolKind),
+      clientProfileId: blankToNull(filters.clientProfileId),
+      stationId: null,
+    },
+    sort: {
+      field: sort.field,
+      direction: sort.direction,
+    },
+    cursor: null,
+    limit,
+  };
 }
 
-export function monitorRunToStationKeyStatus(
-  run: Pick<ChannelMonitorRun, "status"> | null | undefined,
-): StationKeyStatus {
-  if (!run) {
-    return "unchecked";
+export function buildChannelStatusWorkspaceView(
+  workspace: ChannelStatusWorkspace | undefined,
+): ChannelStatusWorkspaceView {
+  if (!workspace) {
+    return {
+      generatedAtLabel: "--",
+      freshnessLabel: "尚未加载",
+      aggregateLabel: "0 行",
+      rows: [],
+    };
   }
-  if (run.status === "success") {
-    return "healthy";
-  }
-  if (run.status === "failed") {
-    return "error";
-  }
-  return "warning";
+
+  return {
+    generatedAtLabel: formatTime(workspace.generatedAtMs),
+    freshnessLabel: formatFreshness(workspace),
+    aggregateLabel: `${workspace.aggregate.returnedRows}/${workspace.aggregate.totalRows} 行 · ${workspace.aggregate.runningRows} 运行中`,
+    rows: workspace.rows.map((row) => buildRowView(row, workspace.window)),
+  };
 }
 
-export function buildMonitorRecentOutcomes(runs: MonitorRunSummary[]) {
-  return padRecentOutcomes(
-    [...runs]
-      .sort((a, b) => toTime(a.startedAt) - toTime(b.startedAt))
-      .slice(-60)
-      .map(monitorRunToOutcome),
-  );
+export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): ChannelStatusRowView {
+  const latest = row.latest;
+  const selected = row.selectedWindow;
+  const runningExecutionId = row.running?.executionId ?? null;
+  const currentOutcome = selected.latestOutcome;
+  const currentTone: StatusTone = row.monitor.enabled
+    ? runningExecutionId
+      ? "running"
+      : currentOutcome
+    : "disabled";
+  const availabilityPercent = bpsToPercent(selected.effectiveAvailabilityBps);
+  const strictAvailabilityPercent = bpsToPercent(selected.strictAvailabilityBps);
+
+  return {
+    rowKey: row.rowKey,
+    monitorId: row.monitor.id,
+    monitorName: row.monitor.name,
+    targetName: row.target.stationKeyName ?? row.target.stationName ?? row.monitor.name,
+    stationName: row.target.stationName ?? row.target.stationId,
+    keyName: row.target.stationKeyName,
+    enabled: row.monitor.enabled,
+    protocolLabel: normalizeProtocolLabel(row.monitor.protocolKind),
+    profileLabel: `${row.monitor.clientProfileId}@${row.monitor.clientProfileVersion}`,
+    modelLabel: formatModelLabel(row.monitor.primaryModel, row.monitor.fallbackModels),
+    currentTone,
+    currentLabel: statusLabel(currentTone),
+    currentReason: latest?.terminalReason ?? latest?.failureKind ?? null,
+    runningExecutionId,
+    latestExecutionId: latest?.executionId ?? null,
+    availabilityPercent,
+    strictAvailabilityPercent,
+    availabilityLabel: formatAvailability(availabilityPercent),
+    latencyMs: latest?.latencyMs ?? null,
+    latencyLabel: formatLatency(latest?.latencyMs ?? null),
+    lastCheckedAtMs: selected.latestCheckedAtMs,
+    lastCheckedLabel: formatTime(selected.latestCheckedAtMs),
+    attemptsLabel: latest ? `${latest.attemptCount} 次` : "--",
+    fallbackLabel: latest?.usedFallback ? `fallback · ${latest.effectiveModel ?? "未知模型"}` : latest?.effectiveModel ?? "primary",
+    trend: buildTrend(row, window),
+    dirty: selected.dirty || row.hourlyBuckets.some((bucket) => bucket.dirty) || row.dailyBuckets.some((bucket) => bucket.dirty),
+    corrupt: selected.corrupt || row.hourlyBuckets.some((bucket) => bucket.corrupt) || row.dailyBuckets.some((bucket) => bucket.corrupt),
+  };
 }
 
-export function buildMonitorTimelineOutcomes(
-  timeline: Array<Pick<ChannelStatusTimelinePoint, "status">>,
-) {
-  return padRecentOutcomes([...timeline].reverse().slice(-60).map(monitorRunToOutcome));
-}
-
-export function selectChannelStatusWindowSummary(
-  summary: Pick<ChannelStatusSummary, "recent" | "last24h" | "last7d">,
-  timeWindow: ChannelWindow,
-): ChannelStatusWindowSummary {
-  if (timeWindow === "24h") {
-    return summary.last24h;
+export function buildTrend(row: ChannelStatusRow, window: ChannelWindow): TrendCellView[] {
+  if (window === "recent") {
+    return row.recent.map(recentPointToCell);
   }
-  if (timeWindow === "7d") {
-    return summary.last7d;
+  if (window === "last24h") {
+    return row.hourlyBuckets.map(bucketToCell);
   }
-  return summary.recent;
-}
-
-export function filterChannelItemsByWindow<TItem extends WindowedItem>(
-  items: TItem[],
-  timeWindow: ChannelWindow,
-  now = Date.now(),
-) {
-  if (timeWindow === "recent") {
-    return items;
+  if (window === "last7d") {
+    return row.dailyBuckets.slice(-7).map(bucketToCell);
   }
-  const cutoff = now - CHANNEL_WINDOW_MS[timeWindow];
-  return items.filter((item) => toTime(item.startedAt) >= cutoff);
+  return row.dailyBuckets.map(bucketToCell);
 }
 
-export function filterChannelMonitorRunsByWindow<TItem extends MonitorRunSummary>(
-  runs: TItem[],
-  timeWindow: ChannelWindow,
-  now = Date.now(),
-) {
-  return filterChannelItemsByWindow(runs, timeWindow, now);
-}
-
-export function availabilityTone(channel: ChannelAvailabilityState): AvailabilityTone {
-  if (channel.status === "disabled" || channel.availabilityPercent === null) {
+export function availabilityTone(value: number | null): AvailabilityTone {
+  if (value === null) {
     return "muted";
   }
-  if (channel.availabilityPercent < 50) {
+  if (value < 50) {
     return "danger";
   }
-  if (channel.availabilityPercent < 75) {
+  if (value < 75) {
     return "warning";
   }
   return "success";
 }
 
-export function hslForAvailabilityPercent(value: number | null | undefined) {
-  if (value === null || value === undefined || Number.isNaN(value)) {
-    return undefined;
+export function statusLabel(tone: StatusTone) {
+  switch (tone) {
+    case "available":
+      return "可用";
+    case "degraded":
+      return "降级";
+    case "unavailable":
+      return "不可用";
+    case "skipped":
+      return "跳过";
+    case "running":
+      return "运行中";
+    case "disabled":
+      return "已停用";
+    default:
+      return "无数据";
   }
-  const clamped = Math.max(0, Math.min(100, value));
-  const hue = clamped * HSL_HUE_PER_PERCENT;
-  return `${HSL_COLOR_FUNCTION}(${hue} ${HSL_SATURATION}% ${HSL_LIGHTNESS}%)`;
 }
 
-export function recentOutcomeBarHeightPercent(outcome: RecentOutcome) {
-  return RECENT_OUTCOME_BAR_HEIGHT_PERCENT[outcome];
+export function formatAvailability(value: number | null) {
+  return value === null ? "--" : `${value.toFixed(2)}%`;
 }
 
-export function buildRecentOutcomes(
-  logs: RequestLog[],
-  health: HealthOutcomeSummary | null | undefined,
-) {
-  const logOutcomes = logs.slice(-60).map(logToOutcome);
-  if (logOutcomes.length > 0) {
-    return padRecentOutcomes(logOutcomes);
-  }
-
-  const healthOutcomes = healthToRecentOutcomes(health);
-  return padRecentOutcomes(healthOutcomes);
+export function formatLatency(value: number | null) {
+  return value === null ? "--" : `${value} ms`;
 }
 
-export function orderChannelsBySavedOrder<TChannel extends OrderedChannel>(
-  channels: TChannel[],
-  savedOrder: string[],
-) {
-  if (savedOrder.length === 0) {
-    return channels;
+export function formatTime(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "--";
   }
-
-  const channelById = new Map(channels.map((channel) => [channel.id, channel] as const));
-  const orderedChannels = savedOrder.flatMap((id) => {
-    const channel = channelById.get(id);
-    return channel ? [channel] : [];
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
-  const orderedIds = new Set(orderedChannels.map((channel) => channel.id));
-  const newChannels = channels.filter((channel) => !orderedIds.has(channel.id));
-  return orderedChannels.concat(newChannels);
 }
 
-export function resolveChannelLatencyMetrics({
-  requestLatencyMs,
-  healthLatencyMs,
-  endpointPingMs,
-}: ChannelLatencyMetricInput): ChannelLatencyMetrics {
+function recentPointToCell(point: ChannelStatusRecentPoint, index: number): TrendCellView {
+  const tone = outcomeToTrendTone(point.outcome);
   return {
-    conversationLatencyMs: requestLatencyMs ?? healthLatencyMs,
-    endpointPingMs,
+    id: point.targetResultId || `${point.executionId}-${index}`,
+    tone,
+    label: outcomeLabel(point.outcome),
+    title: [
+      outcomeLabel(point.outcome),
+      `时间：${formatTime(point.checkedAtMs)}`,
+      `延迟：${formatLatency(point.latencyMs)}`,
+      `尝试：${point.attemptCount}`,
+      point.failureKind ? `失败分类：${point.failureKind}` : null,
+      point.terminalReason ? `原因：${point.terminalReason}` : null,
+    ].filter(Boolean).join("\n"),
+    latencyMs: point.latencyMs,
+    startMs: point.checkedAtMs,
+    endMs: point.checkedAtMs,
+    total: 1,
   };
 }
 
-export function logToOutcome(log: RequestLog): RecentOutcome {
-  if (log.status === "success") {
-    return "success";
-  }
-  if (log.status === "fallback" || log.fallbackCount > 0) {
-    return "warning";
-  }
-  if (log.status === "failed") {
-    return "failed";
-  }
-  return "unknown";
+function bucketToCell(bucket: ChannelStatusBucket): TrendCellView {
+  const tone = bucket.corrupt ? "corrupt" : bucket.dirty ? "dirty" : bucketStateToTrendTone(bucket);
+  const failureCounts = Object.entries(bucket.failureCounts)
+    .map(([kind, count]) => `${kind}:${count}`)
+    .join(", ");
+  return {
+    id: `${bucket.kind}-${bucket.startMs}`,
+    tone,
+    label: bucketStateLabel(bucket.state),
+    title: [
+      `${formatTime(bucket.startMs)} - ${formatTime(bucket.endMs)}`,
+      `状态：${bucketStateLabel(bucket.state)}`,
+      `样本：${bucket.counts.total} · 可用 ${bucket.counts.available} · 降级 ${bucket.counts.degraded} · 不可用 ${bucket.counts.unavailable} · 跳过 ${bucket.counts.skipped}`,
+      `可用率：${formatAvailability(bpsToPercent(bucket.effectiveAvailabilityBps))}`,
+      `P50/P95：${formatLatency(bucket.p50LatencyMs)} / ${formatLatency(bucket.p95LatencyMs)}`,
+      failureCounts ? `失败分类：${failureCounts}` : null,
+      bucket.dirty ? "rollup 需要重建" : null,
+      bucket.corrupt ? "rollup 数据异常" : null,
+    ].filter(Boolean).join("\n"),
+    latencyMs: bucket.p50LatencyMs,
+    startMs: bucket.startMs,
+    endMs: bucket.endMs,
+    total: bucket.counts.total,
+  };
 }
 
-function monitorRunToOutcome(run: Pick<ChannelMonitorRun, "status">): RecentOutcome {
-  if (run.status === "success") {
-    return "success";
-  }
-  if (run.status === "warning" || run.status === "skipped") {
-    return "warning";
-  }
-  if (run.status === "failed") {
-    return "failed";
-  }
-  return "unknown";
+function bucketStateToTrendTone(bucket: ChannelStatusBucket): TrendCellTone {
+  if (bucket.state === "available") return "available";
+  if (bucket.state === "degraded") return "degraded";
+  if (bucket.state === "unavailable") return "unavailable";
+  if (bucket.state === "skipped_only") return "skipped";
+  return "missing";
 }
 
-function padRecentOutcomes(outcomes: RecentOutcome[]) {
-  const recentOutcomes = outcomes.slice(-60);
-  const unknownOutcomes: RecentOutcome[] = Array.from(
-    { length: 60 - recentOutcomes.length },
-    () => "unknown",
-  );
-  return unknownOutcomes.concat(recentOutcomes);
+function outcomeToTrendTone(outcome: ChannelStatusOutcome): TrendCellTone {
+  if (outcome === "available") return "available";
+  if (outcome === "degraded") return "degraded";
+  if (outcome === "unavailable") return "unavailable";
+  if (outcome === "skipped") return "skipped";
+  return "missing";
 }
 
-function healthToRecentOutcomes(health: HealthOutcomeSummary | null | undefined) {
-  if (!health) {
-    return [];
+function outcomeLabel(outcome: ChannelStatusOutcome) {
+  switch (outcome) {
+    case "available":
+      return "可用";
+    case "degraded":
+      return "降级";
+    case "unavailable":
+      return "不可用";
+    case "skipped":
+      return "跳过";
+    default:
+      return "缺失";
   }
-  const successCount = Math.max(0, health.successCount);
-  const failureCount = Math.max(0, health.failureCount);
-  const total = successCount + failureCount;
-  if (total === 0) {
-    return [];
-  }
+}
 
-  if (total <= 60) {
-    return [
-      ...Array.from({ length: failureCount }, () => "failed" as const),
-      ...Array.from({ length: successCount }, () => "success" as const),
-    ];
+function bucketStateLabel(state: ChannelStatusBucket["state"]) {
+  switch (state) {
+    case "available":
+      return "可用";
+    case "degraded":
+      return "降级";
+    case "unavailable":
+      return "不可用";
+    case "skipped_only":
+      return "仅跳过";
+    case "dirty":
+      return "待重建";
+    default:
+      return "缺失";
   }
+}
 
-  const successSlots = Math.round((successCount / total) * 60);
-  const failureSlots = 60 - successSlots;
-  return [
-    ...Array.from({ length: failureSlots }, () => "failed" as const),
-    ...Array.from({ length: successSlots }, () => "success" as const),
+function statusSummaryLabel(outcome: ChannelStatusOutcome) {
+  return outcomeLabel(outcome);
+}
+
+function formatFreshness(workspace: ChannelStatusWorkspace) {
+  const parts = [
+    `最新 ${formatTime(workspace.freshness.newestResultAtMs)}`,
+    workspace.freshness.hasDirtyRollups ? "有待重建 rollup" : null,
+    workspace.freshness.hasCorruptRollups ? "有异常 rollup" : null,
+    workspace.freshness.runningExecutionCount > 0 ? `${workspace.freshness.runningExecutionCount} 个执行中` : null,
+    `当前窗口 ${statusSummaryLabel(workspace.aggregate.unavailableRows > 0 ? "unavailable" : workspace.aggregate.degradedRows > 0 ? "degraded" : workspace.aggregate.availableRows > 0 ? "available" : "missing")}`,
   ];
+  return parts.filter(Boolean).join(" · ");
 }
 
-function toTime(value: string) {
-  return toTimestampMillis(value);
+function formatModelLabel(primary: string, fallbacks: string[]) {
+  if (fallbacks.length === 0) {
+    return primary;
+  }
+  return `${primary} +${fallbacks.length}`;
+}
+
+function normalizeProtocolLabel(value: string) {
+  if (value === "openai_chat") return "OpenAI Chat";
+  if (value === "openai_responses") return "OpenAI Responses";
+  if (value === "anthropic_messages") return "Anthropic";
+  if (value === "gemini_native") return "Gemini";
+  if (value === "xai_grok") return "xAI/Grok";
+  if (value === "generic_openai") return "OpenAI-compatible";
+  return value;
+}
+
+function bpsToPercent(value: number | null) {
+  return value === null ? null : value / 100;
+}
+
+function blankToNull(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }

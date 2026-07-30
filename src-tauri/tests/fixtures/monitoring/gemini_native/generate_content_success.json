@@ -1,0 +1,23 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "RP_ANSWER=42"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "safetyRatings": []
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 7,
+    "candidatesTokenCount": 4,
+    "totalTokenCount": 11,
+    "cachedContentTokenCount": 2
+  },
+  "modelVersion": "gemini-2.5-flash"
+}

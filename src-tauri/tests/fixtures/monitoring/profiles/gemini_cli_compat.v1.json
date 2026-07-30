@@ -1,0 +1,21 @@
+{
+  "id": "gemini_cli_compat",
+  "version": 1,
+  "enabled": true,
+  "supported_protocols": [
+    "gemini_native"
+  ],
+  "method": "POST",
+  "path": "/v1beta/models/{model}:generateContent",
+  "header_names": [
+    "accept",
+    "content-type",
+    "user-agent",
+    "x-goog-api-client"
+  ],
+  "body_defaults": [
+    "generationConfig.maxOutputTokens",
+    "stream"
+  ],
+  "profile_hash": "48e2b30d99d6de7dffa0148b2eac1ca6179aa632cd6e3980ff50b32f8f17cfe7"
+}

@@ -3,6 +3,9 @@ import type { ChannelMonitorSummaryOptions } from "@/lib/bridge/BackendClient";
 import type {
   CreateChannelMonitorInput,
   CreateChannelMonitorTemplateInput,
+  ChannelMonitorAttemptHistoryInput,
+  ChannelMonitorExecutionListInput,
+  ChannelStatusWorkspaceInput,
   UpdateChannelMonitorInput,
   UpdateChannelMonitorTemplateInput,
 } from "@/lib/types/channelMonitors";
@@ -37,6 +40,30 @@ export function runChannelMonitorNow(monitorId: string) {
   return getActiveBackendClient().channels.runChannelMonitorNow(monitorId);
 }
 
+export function runChannelMonitorNowWithTrigger(monitorId: string, triggerRequestId: string) {
+  return getActiveBackendClient().channels.runChannelMonitorNow(monitorId, triggerRequestId);
+}
+
+export function cancelChannelMonitorExecution(executionId: string) {
+  return getActiveBackendClient().channels.cancelChannelMonitorExecution(executionId);
+}
+
+export function listChannelMonitorExecutions(input: ChannelMonitorExecutionListInput = {}) {
+  return getActiveBackendClient().channels.listChannelMonitorExecutions(input);
+}
+
+export function getChannelMonitorExecution(executionId: string) {
+  return getActiveBackendClient().channels.getChannelMonitorExecution(executionId);
+}
+
+export function listChannelMonitorAttempts(input: ChannelMonitorAttemptHistoryInput) {
+  return getActiveBackendClient().channels.listChannelMonitorAttempts(input);
+}
+
+export function listMonitoringCapabilities() {
+  return getActiveBackendClient().channels.listMonitoringCapabilities();
+}
+
 export function listChannelMonitorRuns(monitorId: string) {
   return getActiveBackendClient().channels.listChannelMonitorRuns(monitorId);
 }
@@ -59,4 +86,8 @@ export function duplicateChannelMonitorTemplate(id: string) {
 
 export function deleteChannelMonitorTemplate(id: string) {
   return getActiveBackendClient().channels.deleteChannelMonitorTemplate(id);
+}
+
+export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInput = {}) {
+  return getActiveBackendClient().channels.loadChannelStatusWorkspace(input);
 }

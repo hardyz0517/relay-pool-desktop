@@ -349,6 +349,11 @@
           "command": "run_channel_monitor_now",
           "use_case": "run_channel_monitor_now",
           "dependencies": ["ChannelMonitorRunnerPort"]
+        },
+        {
+          "command": "cancel_channel_monitor_execution",
+          "use_case": "cancel_channel_monitor_execution",
+          "dependencies": ["MonitoringService"]
         }
       ],
       "non_goals": [
@@ -569,6 +574,26 @@
         {
           "command": "load_channel_status_workspace",
           "use_case": "load_channel_status_workspace",
+          "dependencies": ["ChannelStatusQuery"]
+        },
+        {
+          "command": "list_channel_monitor_executions",
+          "use_case": "list_channel_monitor_executions",
+          "dependencies": ["ChannelStatusQuery"]
+        },
+        {
+          "command": "get_channel_monitor_execution",
+          "use_case": "get_channel_monitor_execution",
+          "dependencies": ["ChannelStatusQuery"]
+        },
+        {
+          "command": "list_channel_monitor_attempts",
+          "use_case": "list_channel_monitor_attempts",
+          "dependencies": ["ChannelStatusQuery"]
+        },
+        {
+          "command": "list_monitoring_capabilities",
+          "use_case": "list_monitoring_capabilities",
           "dependencies": ["ChannelStatusQuery"]
         }
       ],

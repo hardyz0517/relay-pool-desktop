@@ -2,13 +2,9 @@ use std::sync::Arc;
 
 use crate::{
     application::{clock::Clock, error::ApplicationError, ids::IdGenerator, pagination::PageLimit},
-    models::{
-        channel_monitors::{MonitorProbeUsageEvidence, MonitorRequestPricingEvidence},
-        pricing::{
-            BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, RequestUsage,
-            ResolvedPricingContext, UpsertBalanceSnapshotInput, UpsertModelBasePriceInput,
-            UpsertPricingRuleInput,
-        },
+    models::pricing::{
+        BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
+        UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
     },
     persistence::{
         runtime::PersistenceHandle,
@@ -17,10 +13,7 @@ use crate::{
             SelectedModelBasePriceRow, StationKeyPricingResolutionRow,
         },
     },
-    services::pricing::{
-        pricing_context_from_pricing_parts, request_cost_from_pricing_parts_and_usage,
-        RequestPricingParts,
-    },
+    services::pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
 };
 
 pub(crate) trait BuiltinModelBasePriceCatalog: Send + Sync {
@@ -210,49 +203,6 @@ impl PricingService {
             context.resolved_at = now;
         }
         Ok(context)
-    }
-
-    pub(crate) async fn estimate_monitor_request_cost(
-        &self,
-        station_key_id: &str,
-        requested_model: &str,
-        usage: Option<&MonitorProbeUsageEvidence>,
-    ) -> Result<MonitorRequestPricingEvidence, ApplicationError> {
-        let station_key_id = station_key_id.trim();
-        let requested_model = requested_model.trim();
-        if station_key_id.is_empty() || requested_model.is_empty() {
-            return Err(ApplicationError::ConstraintViolation);
-        }
-
-        let now = self.now_ms_string();
-        let mut read = self.runtime.begin_read().await?;
-        let resolution = self
-            .store
-            .resolve_station_key_pricing(&mut read, station_key_id, requested_model, &now)
-            .await?;
-        let owned = pricing_parts_from_resolution(resolution.as_ref());
-        let group_binding_id = owned.group_binding_id.clone();
-        let normalization_status = owned.normalization_status.clone();
-        let usage = RequestUsage {
-            input_tokens: usage.and_then(|usage| usage.prompt_tokens),
-            output_tokens: usage.and_then(|usage| usage.completion_tokens),
-            total_tokens: usage.and_then(|usage| usage.total_tokens),
-            request_count: Some(1),
-            cache_creation_tokens: usage.and_then(|usage| usage.cache_creation_tokens),
-            cache_read_tokens: usage.and_then(|usage| usage.cache_read_tokens),
-            media_count: None,
-            duration_seconds: None,
-            size_tier: None,
-        };
-        let estimate = request_cost_from_pricing_parts_and_usage(
-            Some(owned.as_parts(station_key_id, None, requested_model)),
-            &usage,
-        );
-        Ok(MonitorRequestPricingEvidence {
-            estimate,
-            group_binding_id,
-            normalization_status,
-        })
     }
 
     pub(crate) async fn upsert_balance_snapshot(

@@ -10,6 +10,7 @@ import {
   clearChangeEvents as clearChangeEventsBinding,
   clearRequestLogs as clearRequestLogsBinding,
   clearCaptureSession as clearCaptureSessionBinding,
+  cancelChannelMonitorExecution as cancelChannelMonitorExecutionBinding,
   chooseDataDir as chooseDataDirBinding,
   closeCaptureSession as closeCaptureSessionBinding,
   clearStationCredentials as clearStationCredentialsBinding,
@@ -37,6 +38,7 @@ import {
   finishCaptureSession as finishCaptureSessionBinding,
   finishWebAuthorizationSession as finishWebAuthorizationSessionBinding,
   getCaptureSessionStatus as getCaptureSessionStatusBinding,
+  getChannelMonitorExecution as getChannelMonitorExecutionBinding,
   getLatestCollectorSnapshot as getLatestCollectorSnapshotBinding,
   getCommonLoginProfilePassword as getCommonLoginProfilePasswordBinding,
   getRemoteKeyCapability as getRemoteKeyCapabilityBinding,
@@ -53,6 +55,8 @@ import {
   listBalanceSnapshots as listBalanceSnapshotsBinding,
   listBalanceSnapshotsForStation as listBalanceSnapshotsForStationBinding,
   listChannelMonitorRuns as listChannelMonitorRunsBinding,
+  listChannelMonitorAttempts as listChannelMonitorAttemptsBinding,
+  listChannelMonitorExecutions as listChannelMonitorExecutionsBinding,
   listChannelMonitorSummaries as listChannelMonitorSummariesBinding,
   listChannelMonitorTemplates as listChannelMonitorTemplatesBinding,
   listChannelMonitors as listChannelMonitorsBinding,
@@ -70,6 +74,7 @@ import {
   loadChannelStatusWorkspace as loadChannelStatusWorkspaceBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
   listModelAliases as listModelAliasesBinding,
+  listMonitoringCapabilities as listMonitoringCapabilitiesBinding,
   listModelBasePrices as listModelBasePricesBinding,
   listPricingRules as listPricingRulesBinding,
   listRemoteStationKeys as listRemoteStationKeysBinding,
@@ -388,7 +393,16 @@ export class DesktopBackend implements BackendClient {
     updateChannelMonitor: (input: Parameters<BackendClient["channels"]["updateChannelMonitor"]>[0]) =>
       updateChannelMonitorBinding(input),
     deleteChannelMonitor: (id: string) => deleteChannelMonitorBinding({ id }),
-    runChannelMonitorNow: (monitorId: string) => runChannelMonitorNowBinding({ monitorId }),
+    runChannelMonitorNow: (monitorId: string, triggerRequestId?: string) =>
+      runChannelMonitorNowBinding({ monitorId, triggerRequestId: triggerRequestId ?? null }),
+    cancelChannelMonitorExecution: (executionId: string) =>
+      cancelChannelMonitorExecutionBinding({ executionId }),
+    listChannelMonitorExecutions: (input = {}) => listChannelMonitorExecutionsBinding(input),
+    getChannelMonitorExecution: (executionId: string) =>
+      getChannelMonitorExecutionBinding({ executionId }),
+    listChannelMonitorAttempts: (input: Parameters<BackendClient["channels"]["listChannelMonitorAttempts"]>[0]) =>
+      listChannelMonitorAttemptsBinding(input),
+    listMonitoringCapabilities: () => listMonitoringCapabilitiesBinding(),
     listChannelMonitorRuns: (monitorId: string) => listChannelMonitorRunsBinding({ monitorId }),
     listChannelMonitorTemplates: () => listChannelMonitorTemplatesBinding(),
     createChannelMonitorTemplate: (
@@ -409,8 +423,8 @@ export class DesktopBackend implements BackendClient {
 
       return { monitorSummaries, stations, keyPoolItems, templates };
     },
-    loadChannelStatusWorkspace: () =>
-      loadChannelStatusWorkspaceBinding() as ReturnType<BackendClient["channels"]["loadChannelStatusWorkspace"]>,
+    loadChannelStatusWorkspace: (input = {}) =>
+      loadChannelStatusWorkspaceBinding(input) as ReturnType<BackendClient["channels"]["loadChannelStatusWorkspace"]>,
   };
   readonly stationKeys = {
     listStationKeys: (stationId: string) => listStationKeysBinding({ stationId }),

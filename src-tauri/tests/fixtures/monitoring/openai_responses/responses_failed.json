@@ -1,0 +1,9 @@
+{
+  "id": "resp_probe",
+  "object": "response",
+  "status": "failed",
+  "model": "gpt-4.1-mini",
+  "error": {
+    "message": "probe failed"
+  }
+}

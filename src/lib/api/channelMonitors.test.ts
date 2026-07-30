@@ -6,14 +6,19 @@ import type { BackendClient } from "@/lib/bridge/BackendClient";
 import {
   createChannelMonitor,
   createChannelMonitorTemplate,
+  cancelChannelMonitorExecution,
   deleteChannelMonitor,
   deleteChannelMonitorTemplate,
   duplicateChannelMonitorTemplate,
+  getChannelMonitorExecution,
+  listChannelMonitorAttempts,
+  listChannelMonitorExecutions,
   listChannelMonitorRuns,
   listChannelMonitorSummaries,
   listChannelMonitorTemplates,
   listChannelMonitors,
   listChannelStatusSummaries,
+  listMonitoringCapabilities,
   runChannelMonitorNow,
   updateChannelMonitor,
   updateChannelMonitorTemplate,
@@ -27,7 +32,42 @@ describe("channel monitor backend cutover", () => {
     createChannelMonitor: vi.fn(async (input) => ({ id: "monitor-1", createdAt: "now", updatedAt: "now", ...input })),
     updateChannelMonitor: vi.fn(async (input) => ({ createdAt: "now", updatedAt: "now", ...input })),
     deleteChannelMonitor: vi.fn(async () => undefined),
-    runChannelMonitorNow: vi.fn(async () => []),
+    runChannelMonitorNow: vi.fn(async (monitorId: string) => ({
+      executionId: "execution-1",
+      monitorId,
+      status: "completed",
+      triggerRequestId: "manual:test",
+      reusedExisting: false,
+    })),
+    cancelChannelMonitorExecution: vi.fn(async (executionId: string) => ({
+      executionId,
+      status: "cancelled",
+      cancelled: true,
+    })),
+    listChannelMonitorExecutions: vi.fn(async () => ({ items: [], nextCursor: null })),
+    getChannelMonitorExecution: vi.fn(async (executionId: string) => ({
+      execution: {
+        executionId,
+        monitorId: "monitor-1",
+        status: "completed",
+        triggerKind: "manual",
+        triggerRequestId: "manual:test",
+        plannedAtMs: 1,
+        startedAtMs: 2,
+        finishedAtMs: 3,
+        targetCount: 0,
+        availableCount: 0,
+        degradedCount: 0,
+        unavailableCount: 0,
+        skippedCount: 0,
+        summaryOutcome: null,
+        summaryFailureKind: null,
+        createdAtMs: 1,
+      },
+      targets: [],
+    })),
+    listChannelMonitorAttempts: vi.fn(async () => ({ items: [], nextCursor: null })),
+    listMonitoringCapabilities: vi.fn(async () => ({ protocols: [], profiles: [] })),
     listChannelMonitorRuns: vi.fn(async () => []),
     listChannelMonitorTemplates: vi.fn(async () => []),
     createChannelMonitorTemplate: vi.fn(async (input) => ({
@@ -93,6 +133,11 @@ describe("channel monitor backend cutover", () => {
     await updateChannelMonitor({ ...monitorInput, id: "monitor-1" });
     await deleteChannelMonitor("monitor-1");
     await runChannelMonitorNow("monitor-1");
+    await cancelChannelMonitorExecution("execution-1");
+    await listChannelMonitorExecutions({ monitorId: "monitor-1", limit: 20 });
+    await getChannelMonitorExecution("execution-1");
+    await listChannelMonitorAttempts({ executionId: "execution-1", limit: 20 });
+    await listMonitoringCapabilities();
     await listChannelMonitorRuns("monitor-1");
     await listChannelMonitorTemplates();
     await createChannelMonitorTemplate(templateInput);
@@ -110,6 +155,11 @@ describe("channel monitor backend cutover", () => {
     expect(channels.updateChannelMonitor).toHaveBeenCalledWith({ ...monitorInput, id: "monitor-1" });
     expect(channels.deleteChannelMonitor).toHaveBeenCalledWith("monitor-1");
     expect(channels.runChannelMonitorNow).toHaveBeenCalledWith("monitor-1");
+    expect(channels.cancelChannelMonitorExecution).toHaveBeenCalledWith("execution-1");
+    expect(channels.listChannelMonitorExecutions).toHaveBeenCalledWith({ monitorId: "monitor-1", limit: 20 });
+    expect(channels.getChannelMonitorExecution).toHaveBeenCalledWith("execution-1");
+    expect(channels.listChannelMonitorAttempts).toHaveBeenCalledWith({ executionId: "execution-1", limit: 20 });
+    expect(channels.listMonitoringCapabilities).toHaveBeenCalledTimes(1);
     expect(channels.listChannelMonitorRuns).toHaveBeenCalledWith("monitor-1");
     expect(channels.listChannelMonitorTemplates).toHaveBeenCalledTimes(1);
     expect(channels.createChannelMonitorTemplate).toHaveBeenCalledWith(templateInput);

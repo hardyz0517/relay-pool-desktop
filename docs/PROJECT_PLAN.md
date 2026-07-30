@@ -32,6 +32,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - P7 已完成价格归一化、余额快照、请求成本和 cheap_first 路由展示。
 - P8 正在推进安全与凭据治理。
 - P9 真实站点采集与路由事实层：补齐 Sub2API / NewAPI / OpenAI-compatible adapter，建立 group binding、倍率历史、collector run、价格归一化和路由经济解释，让 UI 和路由消费稳定事实而不是 raw snapshot JSON。
+- P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；release 级 live provider、soak、签名包、升级和休眠恢复验证仍是发布门禁。
 
 ## 2.1 信息架构
 
@@ -40,7 +41,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - Key 池：回答“哪把 Key 能不能路由？”，管理 Station Key 的启用、优先级、能力、模型范围、健康和备用状态。
 - 路由规则：回答“为什么请求会走这把 Key？”，管理自动调度、候选分组、倍率限制、低余额边界、耗尽兜底、模型映射和路由模拟解释。
 - 价格 / 倍率：回答“哪个站点更便宜？”，展示模型价格、分组倍率和模型可用性的跨站点矩阵，并管理模型基准价格。
-- 渠道状态：回答“最近运行稳不稳？”，展示 Key / Channel 的成功率、延迟、冷却和最近请求状态。
+- 渠道状态：回答“最近运行稳不稳？”，以横向高密度桌面工具视图展示 Key / Channel 的当前可用性、最近探针、语义验证结果、失败类型、延迟、冷却、recent/24h/7d/30d 后端时间桶和手动执行入口；不再由前端拼装 request logs / health / legacy runs。
 - 变更中心：回答“最近有什么需要注意的变化？”，记录余额、Key、站点、采集、价格、倍率、模型和路由影响事件。
 - 请求日志：回答“某次请求为什么成功或失败？”，展示请求、耗时、成本、fallback 和拒绝候选。
 - 信息采集（高级工具）：回答“采集器为什么得到这些结果？”，运行站点采集任务，查看快照与任务记录，并在高级区域调整采集频率、超时和并发。

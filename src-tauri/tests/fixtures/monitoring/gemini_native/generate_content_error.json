@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "fixture redacted",
+    "status": "INVALID_ARGUMENT"
+  }
+}

@@ -1,0 +1,763 @@
+{
+  "status": "task18_local_and_release_mixed_soak_qualification_passed_external_release_gates_pending",
+  "date": "2026-07-29",
+  "branch": "codex/status-monitoring-refactor",
+  "baseline_commit": "87280a4e1ac836870cbb1b69b7d5d4cfb613cad4",
+  "target_architecture": {
+    "fact_chain": [
+      "MonitorDefinition",
+      "MonitorExecution",
+      "MonitorTargetResult",
+      "ProbeAttempt",
+      "HealthObservation",
+      "BucketRollup",
+      "ChannelStatusWorkspace"
+    ],
+    "allowed_dependency_direction": [
+      "ui -> bridge dto",
+      "commands -> application",
+      "application -> models and repository/service ports",
+      "services/monitoring/adapters -> protocol domain only",
+      "services/monitoring/transport -> outbound client and request budgets",
+      "persistence/stores/monitoring -> sqlx and monitoring persistence rows",
+      "models/monitoring -> std, serde, chrono-compatible primitive data only"
+    ],
+    "forbidden_new_dependencies": [
+      "models/monitoring -> tauri",
+      "models/monitoring -> sqlx",
+      "models/monitoring -> reqwest",
+      "models/monitoring -> persistence",
+      "models/monitoring -> services",
+      "services/monitoring/adapters -> persistence",
+      "services/monitoring/adapters -> SecretManager",
+      "ui -> raw channel_monitor_runs statistics",
+      "ui -> request_logs to synthesize monitor trends"
+    ]
+  },
+  "current_exceptions": [
+    {
+      "path": "src-tauri/src/persistence/stores/monitoring_store.rs",
+      "imports": [
+        "channel_monitor_runs read queries"
+      ],
+      "risk": "legacy run table is retained for one release observation cycle as read-only compatibility and migration/backfill evidence; it is no longer a production write authority or status/bucket/current-health input",
+      "target_owner": "src-tauri/src/persistence/stores/monitoring/status_queries.rs for V2 status, plus a future dedicated legacy-run reader until table deletion",
+      "removal_task": 18
+    },
+    {
+      "path": "src-tauri/src/ipc/dto/channel_monitor_reads.rs and list_channel_monitor_runs IPC",
+      "imports": [
+        "ChannelMonitorRunDto"
+      ],
+      "risk": "old run history remains visible for compatibility, but must not drive ChannelStatusWorkspaceV2, health observations or availability rollups",
+      "target_owner": "application/monitoring/queries.rs execution/attempt history",
+      "removal_task": 18
+    }
+  ],
+  "generated_files": [
+    "src-tauri/generated/command-registry.json",
+    "src-tauri/gen/schemas/acl-manifests.json",
+    "src-tauri/gen/schemas/desktop-schema.json",
+    "src-tauri/gen/schemas/windows-schema.json",
+    "src-tauri/permissions/*.toml",
+    "src/lib/bridge/generated.ts",
+    "src-tauri/src/ipc/dto/*.typescript.txt",
+    "src-tauri/src/ipc/registry.rs"
+  ],
+  "cross_layer_import_patterns_to_gate": [
+    {
+      "pattern": "sqlx::|sqlx::query",
+      "allowed_under": [
+        "src-tauri/src/persistence",
+        "src-tauri/tests"
+      ],
+      "current_monitoring_hits": [
+        "src-tauri/src/persistence/stores/monitoring_store.rs",
+        "src-tauri/src/persistence/stores/request_log_store.rs",
+        "src-tauri/src/persistence/stores/routing_store.rs",
+        "src-tauri/src/application/monitoring.rs tests only"
+      ]
+    },
+    {
+      "pattern": "reqwest::|OutboundRequest|AsyncOutboundClient",
+      "allowed_under": [
+        "src-tauri/src/outbound",
+        "src-tauri/src/services/monitoring/transport.rs",
+        "src-tauri/src/services/monitoring/orchestrator_transport.rs",
+        "src-tauri/src/services/monitoring/runner.rs"
+      ],
+      "current_monitoring_hits": [
+        "src-tauri/src/services/monitoring/orchestrator_transport.rs",
+        "src-tauri/src/services/monitoring/runner.rs"
+      ]
+    },
+    {
+      "pattern": "tauri::|#[tauri::command]",
+      "allowed_under": [
+        "src-tauri/src/commands",
+        "src-tauri/src/ipc",
+        "src-tauri/src/lib.rs"
+      ],
+      "current_monitoring_hits": []
+    }
+  ],
+  "task0_checks": {
+    "rust_monitoring_lib": "cargo test --manifest-path src-tauri/Cargo.toml --lib channel_monitor -- --nocapture => passed, 40 tests",
+    "frontend_tests": "pnpm.cmd test -- src/features/channels src/lib/api/channelMonitors.test.ts src/lib/queries/channelQueries.test.ts => passed, 54 files/181 tests due current Vitest arg handling",
+    "contracts": "pnpm.cmd test:contracts => passed",
+    "frontend_build": "pnpm.cmd build => passed",
+    "rust_check": "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+  },
+  "next_architecture_gate": {
+    "task": 1,
+    "script": "scripts/monitoring-architecture.test.mjs",
+    "must_reject": [
+      "models/monitoring imports tauri",
+      "models/monitoring imports sqlx",
+      "models/monitoring imports reqwest",
+      "models/monitoring imports persistence",
+      "models/monitoring imports services"
+    ]
+  },
+  "task1_domain_layer": {
+    "created_paths": [
+      "src-tauri/src/models/monitoring/mod.rs",
+      "src-tauri/src/models/monitoring/definition.rs",
+      "src-tauri/src/models/monitoring/execution.rs",
+      "src-tauri/src/models/monitoring/outcome.rs",
+      "src-tauri/src/models/monitoring/policy.rs",
+      "src-tauri/tests/monitoring_domain.rs",
+      "scripts/monitoring-architecture.test.mjs"
+    ],
+    "verified_invariants": [
+      "definition rejects station/station_key scope mismatches",
+      "definition rejects empty primary model",
+      "definition deduplicates fallback models and rejects more than 3 unique fallbacks",
+      "profile/protocol incompatibility is rejected",
+      "schedule/retry policies reject negative and out-of-bounds values",
+      "target result owns exactly its station key attempts",
+      "zero attempts require explicit skipped target result",
+      "retry/fallback recovery is terminal degraded",
+      "skipped target results are excluded from availability denominator",
+      "execution summary is independent of target result write order",
+      "LegacyHttpOnly semantic confidence cannot perform authoritative health writeback"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_domain -- --nocapture => passed, 7 tests",
+      "node scripts/monitoring-architecture.test.mjs => passed",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed",
+      "pnpm.cmd test:contracts => passed, includes monitoring architecture gate"
+    ]
+  },
+  "task2_protocol_foundation": {
+    "created_paths": [
+      "src-tauri/src/services/monitoring/mod.rs",
+      "src-tauri/src/services/monitoring/challenge.rs",
+      "src-tauri/src/services/monitoring/adapters/mod.rs",
+      "src-tauri/src/services/monitoring/adapters/contract.rs",
+      "src-tauri/src/services/monitoring/adapters/http_mapping.rs",
+      "src-tauri/src/services/monitoring/adapters/sse.rs",
+      "src-tauri/tests/monitoring_adapter_contracts.rs"
+    ],
+    "verified_invariants": [
+      "challenge uses random CSPRNG token material and serializes only prompt/token snapshot",
+      "validator compares normalized expected output by hash rather than persisting plain expected answer",
+      "HTTP 200 HTML fails closed",
+      "HTTP 200 error JSON fails closed",
+      "HTTP 200 empty body fails closed",
+      "HTTP 200 wrong content fails content_mismatch",
+      "HTTP 401/403/429/400/422/4xx/5xx map to structured FailureKind",
+      "JSON success requires extracted output and validator hit",
+      "SSE parser is stable across arbitrary chunk boundaries including CRLF/LF and UTF-8 split chunks",
+      "SSE premature EOF, stream error event and hard limits fail closed"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts common_ -- --nocapture => passed, 6 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib services::monitoring -- --nocapture => passed, 3 tests",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ]
+  },
+  "task3_provider_adapters": {
+    "created_paths": [
+      "src-tauri/src/services/monitoring/adapters/openai_chat.rs",
+      "src-tauri/src/services/monitoring/adapters/openai_responses.rs",
+      "src-tauri/src/services/monitoring/adapters/generic_openai.rs",
+      "src-tauri/src/services/monitoring/adapters/xai_grok.rs",
+      "src-tauri/tests/fixtures/monitoring/openai_chat/**",
+      "src-tauri/tests/fixtures/monitoring/openai_responses/**",
+      "src-tauri/tests/fixtures/monitoring/generic_openai/**",
+      "src-tauri/tests/fixtures/monitoring/xai_grok/**"
+    ],
+    "verified_invariants": [
+      "OpenAI Chat JSON requires choices[].message.content and rejects status-only HTTP 200 success",
+      "OpenAI Chat streaming requires data deltas, non-null finish_reason and [DONE]",
+      "OpenAI Chat streaming rejects stream error and no-content completions",
+      "OpenAI Responses JSON requires status=completed and rejects failed/incomplete states",
+      "OpenAI Responses streaming treats response.completed as terminal success and response.failed/response.incomplete as terminal protocol failures",
+      "Generic OpenAI uses only the explicit minimal chat-compatible intersection and does not infer vendor dialect from URL/provider name",
+      "xAI/Grok is represented by a distinct adapter and ProtocolKind even when the wire shape is chat-completions-like",
+      "OpenAI-compatible adapters extract redacted model and usage evidence without preserving raw response text as an audit artifact",
+      "2xx parser failures preserve the actual HTTP status instead of rewriting it to 200"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts openai_ -- --nocapture => passed, 5 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts generic_openai_ -- --nocapture => passed, 1 test",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts xai_grok_ -- --nocapture => passed, 1 test",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts -- --nocapture => passed, 15 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib services::monitoring -- --nocapture => passed, 4 tests",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ]
+  },
+  "task4_native_provider_adapters": {
+    "created_paths": [
+      "src-tauri/src/services/monitoring/adapters/anthropic_messages.rs",
+      "src-tauri/src/services/monitoring/adapters/gemini_native.rs",
+      "src-tauri/src/services/monitoring/adapters/protocol_auto.rs",
+      "src-tauri/tests/fixtures/monitoring/anthropic_messages/**",
+      "src-tauri/tests/fixtures/monitoring/gemini_native/**"
+    ],
+    "verified_invariants": [
+      "Anthropic Messages JSON requires type=message, successful stop_reason and typed text content blocks",
+      "Anthropic Messages streaming requires content_block_delta text plus message_delta stop_reason and message_stop terminal event",
+      "Anthropic error JSON and stream error events fail closed as protocol_mismatch",
+      "Anthropic usage extraction maps input/output/cache creation/cache read tokens without preserving raw response text",
+      "Gemini Native JSON requires candidate text and finishReason=STOP",
+      "Gemini Native streaming uses streamGenerateContent SSE events and requires a terminal STOP candidate",
+      "Gemini API error, promptFeedback.blockReason and safety/block finish reasons fail closed as protocol_mismatch",
+      "Gemini Native remains separate from Gemini OpenAI-compatible behavior, which must enter through Generic/OpenAI-compatible adapters later by explicit dialect/profile",
+      "protocol auto resolution uses only provider/endpoint capability facts, performs zero network calls and returns needs_configuration for unknown or conflicting facts"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts anthropic_ -- --nocapture => passed, 1 test",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts gemini_ -- --nocapture => passed, 1 test",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts protocol_auto_ -- --nocapture => passed, 1 test",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts -- --nocapture => passed, 18 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib services::monitoring -- --nocapture => passed, 4 tests",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ]
+  },
+  "task5_profile_registry": {
+    "created_paths": [
+      "src-tauri/src/services/monitoring/auth.rs",
+      "src-tauri/src/services/monitoring/profiles/mod.rs",
+      "src-tauri/src/services/monitoring/profiles/registry.rs",
+      "src-tauri/src/services/monitoring/profiles/standard.rs",
+      "src-tauri/src/services/monitoring/profiles/codex_cli.rs",
+      "src-tauri/src/services/monitoring/profiles/claude_code.rs",
+      "src-tauri/src/services/monitoring/profiles/gemini_cli.rs",
+      "src-tauri/tests/monitoring_profile_golden.rs",
+      "src-tauri/tests/fixtures/monitoring/profiles/**"
+    ],
+    "modified_paths": [
+      "src-tauri/src/models/monitoring/definition.rs",
+      "src-tauri/src/services/monitoring/mod.rs",
+      "scripts/monitoring-architecture.test.mjs",
+      "docs/superpowers/audits/status-monitoring-protocol-sources.md"
+    ],
+    "verified_invariants": [
+      "standard_api, codex_cli_compat, claude_code_compat and gemini_cli_compat are explicit versioned builtin profiles",
+      "golden summaries compare method, path, header names, body defaults and stable profile hash",
+      "profile hashes include public header values and body default keys, while golden summaries expose only safe request image metadata",
+      "profiles cannot override Authorization, Proxy-Authorization, API-key headers, Cookie, Host or forwarding host/proto headers",
+      "profile/protocol capability mismatch is rejected before execution",
+      "grok_cli_compat is registered as a disabled placeholder with no supported protocol",
+      "adapter and profile boundary gate rejects persistence, Tauri, SQLx, Reqwest and SecretManager dependencies",
+      "fixture security scan has zero Authorization/Bearer/API-key/Cookie/sk-* matches"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_profile_golden -- --nocapture => passed, 4 tests",
+      "rg -n \"Authorization|Bearer |api[_-]?key|Cookie|sk-[A-Za-z0-9]\" src-tauri/tests/fixtures/monitoring; if ($LASTEXITCODE -eq 1) { exit 0 } else { exit $LASTEXITCODE } => passed, no matches",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "node scripts/monitoring-architecture.test.mjs => passed",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ]
+  },
+  "checkpoint_a": {
+    "verified_invariants": [
+      "domain tests cover definition, policy, execution summary and LegacyHttpOnly writeback boundaries",
+      "adapter contracts cover common parser plus OpenAI Chat, OpenAI Responses, Generic OpenAI, xAI/Grok, Anthropic Messages, Gemini Native and protocol auto",
+      "profile golden tests cover standard API, Codex CLI compatibility, Claude Code compatibility, Gemini CLI compatibility and disabled Grok placeholder",
+      "HTTP 200 fake success fixtures are rejected by semantic parser/validator coverage",
+      "protocol sources and profile source boundaries are documented",
+      "architecture gate covers domain, adapters and profiles"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_domain -- --nocapture => passed, 7 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts -- --nocapture => passed, 18 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_profile_golden -- --nocapture => passed, 4 tests",
+      "node scripts/monitoring-architecture.test.mjs => passed",
+      "pnpm.cmd test:contracts => passed, includes monitoring architecture gate",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ]
+  },
+  "task6_status_monitoring_v2_migration": {
+    "created_paths": [
+      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/tests/monitoring_migration.rs",
+      "docs/superpowers/audits/status-monitoring-migration-manifest.md"
+    ],
+    "modified_paths": [
+      "src-tauri/src/persistence/migrations.rs",
+      "src-tauri/tests/persistence_pricing_monitoring.rs"
+    ],
+    "verified_invariants": [
+      "fresh SQLx migrator reaches schema version 9",
+      "channel_monitors carries V2 protocol/profile/model/retry/risk/health/timeout/schedule fields",
+      "legacy fallback_models_json[0] backfills to primary_model and distinct remaining fallbacks backfill to fallback_models_v2_json",
+      "legacy next_run_at backfills to integer next_due_at_ms",
+      "executions, attempts, target results, rollup, dirty range, health observation and budget tables exist with CHECK constraints",
+      "each legacy channel_monitor_runs row backfills to one execution, one decisive attempt, one target result and one dirty rollup range",
+      "legacy HTTP-only target results are semantic_confidence=legacy_http_only and suppress health observations",
+      "invalid attempt outcomes are rejected",
+      "duplicate target results for the same execution/station key are rejected",
+      "current binary compatibility reads schema 1..=9 and writes schema 9"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_migration -- --nocapture => passed, 3 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_pricing_monitoring -- --nocapture => passed, 4 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_upgrade -- --nocapture => passed, 22 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_upgrade_recovery -- --nocapture => passed, 15 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_runtime -- --nocapture => passed, 15 tests",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ],
+    "deferred_to_task7_plus": [
+      "production write path switch from legacy monitoring_store",
+      "rollup rebuild implementation and retention jobs"
+    ]
+  },
+  "task7_monitoring_repositories": {
+    "created_paths": [
+      "src-tauri/src/persistence/stores/monitoring/mod.rs",
+      "src-tauri/src/persistence/stores/monitoring/definitions.rs",
+      "src-tauri/src/persistence/stores/monitoring/executions.rs",
+      "src-tauri/src/persistence/stores/monitoring/status_queries.rs",
+      "src-tauri/src/persistence/stores/monitoring/retention.rs",
+      "src-tauri/src/persistence/stores/monitoring/budgets.rs",
+      "src-tauri/tests/monitoring_persistence.rs"
+    ],
+    "modified_paths": [
+      "src-tauri/src/persistence/stores/mod.rs",
+      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql"
+    ],
+    "verified_invariants": [
+      "attempt append is idempotent by stable attempt id and by (execution,target,model_index,attempt_number)",
+      "target finalization is idempotent for the same target/result and rolls back when attempt_count or decisive attempt ownership is inconsistent",
+      "execution repository no longer owns HealthObservation writes; Task 10 moves observation exactly-once behavior to HealthObservationStore and HealthTransitionService",
+      "execution finalization requires all target results to be terminal and replays summary/next_due_at_ms consistently",
+      "rollup write failure is represented by bounded dirty range merge and does not roll back completed execution facts",
+      "probe budget reservation is atomic before network execution and cannot exceed the configured daily limit under concurrent reservations",
+      "due monitor and recent target result reads are bounded, cursor-stable and backed by verified SQLite query plans",
+      "monitoring repositories map SQL rows only; retry, fallback, protocol and health threshold decisions remain outside persistence"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_persistence -- --nocapture => passed, 7 tests after removing the pre-Task-10 direct observation writer",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_migration -- --nocapture => passed, 3 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_pricing_monitoring -- --nocapture => passed, 4 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_upgrade -- --nocapture => passed, 22 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_upgrade_recovery -- --nocapture => passed, 15 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_runtime -- --nocapture => passed, 15 tests",
+      "node scripts/monitoring-architecture.test.mjs => passed",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ],
+    "deferred_to_task8_plus": [
+      "production write path switch from legacy monitoring_store",
+      "rollup rebuild implementation and retention jobs"
+    ]
+  },
+  "task8_monitoring_orchestrator_foundation": {
+    "created_paths": [
+      "src-tauri/src/application/monitoring/mod.rs",
+      "src-tauri/src/application/monitoring/commands.rs",
+      "src-tauri/src/application/monitoring/planner.rs",
+      "src-tauri/src/application/monitoring/orchestrator.rs",
+      "src-tauri/src/application/monitoring/recorder.rs",
+      "src-tauri/tests/monitoring_orchestrator.rs"
+    ],
+    "moved_paths": [
+      "src-tauri/src/application/monitoring.rs -> src-tauri/src/application/monitoring/legacy.rs"
+    ],
+    "verified_invariants": [
+      "ProbePlanner freezes station-scope target snapshots, endpoint revisions, resolved protocol/profile hash and bounded model plan before execution",
+      "auto protocol resolution uses only persisted provider/endpoint capability facts; unknown facts become skipped/needs_configuration and call transport zero times",
+      "profile/protocol mismatches are rejected before transport and before any attempt append",
+      "MonitorOrchestrator::request_execution is the deterministic manual/scheduled entrypoint; manual idempotency key returns an existing execution without transport",
+      "auth/profile-like hard failures are not retried and are not hidden by fallback models",
+      "429/rate_limit can retry the same model with Retry-After when deadline permits, but never falls back to mask target-level rate limiting",
+      "primary model exhausts allowed retry attempts before fallback; fallback recovery records a degraded target result with one availability denominator",
+      "deadline covers attempt start, retry backoff and fallback; once remaining time cannot fit a full attempt, no further request starts",
+      "attempts are appended immediately, targets finalized independently, and execution summary is stable across randomized station target order",
+      "new orchestrator/planner/recorder ports are not connected to production runner in this task; legacy MonitoringService remains isolated under application/monitoring/legacy.rs"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_orchestrator -- --nocapture => passed, 11 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib application::monitoring -- --nocapture => passed, 4 legacy-filtered tests",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed"
+    ],
+    "deferred_to_task9_plus": [
+      "production write path switch from legacy monitoring_store",
+      "health transition service integration",
+      "scheduler/runtime composition"
+    ]
+  },
+  "task9_monitoring_transport_executor": {
+    "created_paths": [
+      "src-tauri/src/services/monitoring/transport.rs",
+      "src-tauri/src/services/monitoring/executor.rs",
+      "src-tauri/tests/monitoring_transport.rs",
+      "src-tauri/tests/monitoring_execution_integration.rs"
+    ],
+    "modified_paths": [
+      "src-tauri/src/services/monitoring/mod.rs"
+    ],
+    "verified_invariants": [
+      "MonitoringTransport reuses AsyncOutboundClient warm pools instead of creating one reqwest client per attempt",
+      "monitoring transport maps outbound invalid URL/header/proxy/redirect/connect-or-DNS-or-TLS/first-header/body/total timeout/body-limit/cancel/request failure into typed monitoring transport failures and domain FailureKind",
+      "adapter-owned request descriptor remains method/path/body only; profile public headers and Authorization secret are injected at the transport boundary",
+      "secret-bearing Authorization reaches the loopback server but does not appear in request evidence, debug summaries, docs, source modules or monitoring fixtures",
+      "buffered transport records method, relative path, final URL, redirect count, response bytes and latency-style timing without preserving raw provider body in evidence",
+      "executor validates endpoint revision before send and again before writeback; revision drift fails closed as interrupted",
+      "loopback executor proves OpenAI Responses request rendering, profile hash, secret injection, semantic challenge validation, usage/model parsing and redacted debug summary are connected",
+      "transport cancellation and body limit failures are terminal typed failures"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_transport -- --nocapture => passed, 2 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_execution_integration -- --nocapture => passed, 6 tests including adapter unit contracts pulled into the integration shim",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed",
+      "rg -n \"rp-canary-secret\" docs src-tauri/src src-tauri/tests/fixtures; if ($LASTEXITCODE -eq 1) { exit 0 } else { exit $LASTEXITCODE } => passed, no matches outside test source"
+    ],
+    "deferred_to_task10_plus": [
+      "production CredentialService adapter for ProbeSecretResolver composition",
+      "health transition service integration",
+      "scheduler/runtime composition",
+      "streaming timing split for first headers versus first content if UI/debug later needs strict separation beyond current outbound evidence"
+    ]
+  },
+  "task10_health_transitions": {
+    "created_paths": [
+      "src-tauri/src/models/health.rs",
+      "src-tauri/src/application/health_transitions.rs",
+      "src-tauri/src/persistence/stores/health_observation_store.rs",
+      "src-tauri/tests/station_key_health_transitions.rs"
+    ],
+    "modified_paths": [
+      "src-tauri/src/application/mod.rs",
+      "src-tauri/src/application/request_finalization.rs",
+      "src-tauri/src/application/routing.rs",
+      "src-tauri/src/models/mod.rs",
+      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/src/persistence/stores/mod.rs",
+      "src-tauri/src/persistence/stores/request_log_store.rs",
+      "src-tauri/src/persistence/stores/routing_store.rs"
+    ],
+    "verified_invariants": [
+      "HealthObservation is the single application input for proxy request, synthetic monitor and manual connectivity health evidence",
+      "station_key_health_observations accepts nullable target_result_id for proxy/manual rows while synthetic monitor rows can remain linked to target_result_id",
+      "observation writes are exactly-once by UNIQUE(source, source_event_id), so replay cannot double-increment health counters",
+      "HealthTransitionService is the only business reducer for station_key_health; HealthObservationStore performs SQL mapping only",
+      "MonitoringExecutionRepository no longer exposes insert_health_observation_once or HealthObservationRow, preventing synthetic monitoring from bypassing HealthTransitionService",
+      "RequestLogStore no longer contains apply_attempt_health or private station_key_health transition logic",
+      "RoutingStore no longer contains manual connectivity station_key_health reducers; manual connectivity enters as diagnostic observation through HealthTransitionService",
+      "Real user proxy traffic and synthetic_standard authoritative observations can update route health",
+      "diagnostic/manual observations, observe_only monitors, skipped/neutral outcomes and synthetic_cli_compat failures are recorded but do not update route health",
+      "endpoint revision mismatch fails closed before writing observations, and endpoint revision changes reset stale station_key_health snapshots before applying new facts",
+      "retry-after cooldown and hard-fail cooldown are deterministic and covered by integration tests",
+      "routing_health.rs remains a pure reducer/policy helper with its previous tests intact"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test station_key_health_transitions -- --nocapture => passed, 8 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib application::request_finalization -- --nocapture => passed, 4 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib application::routing_engine::routing_health -- --nocapture => passed, 7 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_persistence -- --nocapture => passed, 7 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test proxy_lifecycle_persistence -- --nocapture => passed, 1 test",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed with existing future-task dead-code warnings"
+    ],
+    "deferred_to_task11_plus": [
+      "production CredentialService adapter for ProbeSecretResolver composition",
+      "monitoring recorder target-finalization writeback through HealthTransitionService once scheduler/runtime wiring is introduced"
+    ]
+  },
+  "task11_scheduler_runtime_foundation": {
+    "created_paths": [
+      "src-tauri/src/services/monitoring/scheduler.rs",
+      "src-tauri/src/services/monitoring/runtime.rs",
+      "src-tauri/tests/monitoring_scheduler.rs"
+    ],
+    "modified_paths": [
+      "src-tauri/src/services/monitoring/mod.rs"
+    ],
+    "verified_invariants": [
+      "scheduler tracks nearest due monitor with an ordered due index rather than fixed full scans",
+      "definition edit notify updates due time without preserving stale schedule rows",
+      "startup stagger deterministically spreads initial monitor due times",
+      "scheduled baseline advances from current time after long sleep, preventing catch-up storms",
+      "manual execution command generation does not move the scheduled baseline",
+      "runtime admission is bounded by queue capacity and records queue-full lag diagnostics without busy-loop retry",
+      "runtime single-flights by monitor and by station key, so manual/scheduled overlap reuses an existing queued or active execution",
+      "global -> station -> key permit checks happen before start and ExecutionGuard RAII releases permits on finish/drop",
+      "shutdown stops admission, cancels queued work, marks running executions for interruption and releases active permits",
+      "monitoring runtime can be registered with TaskSupervisor and exposes diagnostics for queue depth, active count, permits, lag and interruption count"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_scheduler -- --nocapture => passed, 6 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test observability_contract -- --nocapture => passed, 16 tests",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed with existing future-task dead-code warnings"
+    ],
+    "deferred_to_task12_plus": [
+      "full production composition-root startup wiring; existing legacy channel-monitor runner remains registered until the planned cutover/removal task",
+      "startup recovery SQL that marks old queued/running executions interrupted and recomputes persisted next_due_at_ms",
+      "database-backed due monitor loading into MonitoringScheduler",
+      "scheduler-driven invocation of MonitorOrchestrator and persistent recorder"
+    ]
+  },
+  "task11_plus_v2_write_path_bridge": {
+    "created_paths": [
+      "src-tauri/src/application/monitoring/write_path.rs",
+      "src-tauri/src/application/monitoring/definition_bridge.rs",
+      "src-tauri/tests/monitoring_write_path.rs"
+    ],
+    "modified_paths": [
+      "src-tauri/src/application/monitoring/legacy.rs",
+      "src-tauri/src/application/monitoring/mod.rs",
+      "src-tauri/src/models/monitoring/definition.rs",
+      "src-tauri/src/models/monitoring/execution.rs",
+      "src-tauri/src/models/monitoring/outcome.rs",
+      "src-tauri/src/models/monitoring/policy.rs",
+      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/src/persistence/stores/monitoring/definitions.rs",
+      "src-tauri/src/persistence/stores/monitoring/executions.rs",
+      "src-tauri/tests/monitoring_persistence.rs"
+    ],
+    "verified_invariants": [
+      "MonitoringExecutionCommitter persists orchestrator BufferedExecution into channel_monitor_executions, channel_monitor_attempts, channel_monitor_target_results and station_key_health_observations without writing channel_monitor_runs",
+      "stable attempt ids include execution_id, station_key_id, model_index and attempt_number to prevent cross-execution collisions",
+      "target result schema allows skipped/needs_configuration targets to omit resolved protocol and request_profile_hash instead of storing fake request facts",
+      "manual execution commits do not advance next_due_at_ms; scheduled execution commits advance next_due_at_ms from the scheduled baseline",
+      "replaying the same buffered execution is exactly-once for execution, attempt, target result and health observation rows",
+      "endpoint revision mismatch fails closed through HealthTransitionService and rolls back V2 execution/attempt/target/observation rows when wrapped in the production write transaction",
+      "MonitoringService exposes commit_monitoring_execution so the production PersistenceHandle write coordinator owns the V2 write transaction boundary",
+      "MonitoringDefinitionRepository::load_config reads V2 definition fields including primary_model, fallback_models_v2_json, profile, retry, risk, health and schedule fields without inferring primary from legacy fallback_models_json[0]",
+      "application definition bridge maps V2 config rows to MonitorPlanningSnapshot and routing runtime candidates to TargetCapabilitySnapshot using persisted capability facts only"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml --check => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_write_path -- --nocapture => passed, 6 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_persistence -- --nocapture => passed, 9 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test station_key_health_transitions -- --nocapture => passed, 8 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_scheduler -- --nocapture => passed, 6 tests",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed with existing future-task dead-code warnings"
+    ],
+    "deferred_to_task13_plus": []
+  },
+  "checkpoint_b_production_runner_cutover": {
+    "modified_paths": [
+      "src-tauri/src/services/monitoring/runner.rs",
+      "src-tauri/src/application/command_facades/channel_monitoring.rs",
+      "src-tauri/src/application/monitoring/legacy.rs",
+      "src-tauri/src/persistence/stores/monitoring/budgets.rs",
+      "src-tauri/src/persistence/stores/monitoring/executions.rs",
+      "src-tauri/src/lib.rs",
+      "src-tauri/tests/monitoring_persistence.rs",
+      "scripts/monitoring-architecture.test.mjs"
+    ],
+    "verified_invariants": [
+      "production compose_monitoring_runner now composes MonitoringRunner from services/monitoring/runner.rs; src-tauri/src/services/channel_monitors/mod.rs no longer exists",
+      "scheduled due monitor execution loads V2 definitions through MonitoringDefinitionRepository::list_due and MonitoringService::load_monitoring_planning_snapshot",
+      "production execution builds target capability snapshots from routing runtime candidates and passes persisted capability facts into ProbePlanner",
+      "production probes execute through MonitorOrchestrator plus ProbeExecutorTransport, preserving semantic protocol validation and profile hashes",
+      "production runner commits BufferedExecution through MonitoringService::commit_monitoring_execution, so new monitor execution writes no channel_monitor_runs rows",
+      "manual run facade now enters the runner with TriggerKind::Manual and a manual idempotency key, keeping manual executions from advancing next_due_at_ms in the V2 committer",
+      "MonitoringService::record_probe_outcome, CompletedMonitorProbe, insert_run_and_advance_monitor and insert_completed_monitor_observation were deleted from production source",
+      "monitoring runner uses nearest next_due_at_ms wakeups instead of a fixed status-monitor full-table poll",
+      "production ProbeExecutorTransport is wrapped by BudgetedProbeTransport so the persisted daily probe budget is reserved before every network send",
+      "budget reservation denial returns a typed budget_exceeded failure without performing a network call, and reservation errors fail closed as internal",
+      "startup recovery marks queued/running monitoring executions as interrupted, advances next_due_at_ms from the current startup baseline and does not replay network attempts or synthesize target results",
+      "startup recovery is idempotent and runs before the monitor runner starts",
+      "architecture gate rejects regressions where compose_monitoring_runner composes the legacy runner, status-only probe adapter, record_monitor_run_v2 helper or record_probe_outcome write path"
+    ],
+    "verification": [
+      "rg -n \"RUNNER_POLL_INTERVAL|ACTIVE_MONITOR_RUNS|ChannelMonitorRunnerPort|CompletedMonitorProbe|record_probe_outcome|insert_run_and_advance_monitor|healthToRecentOutcomes|buildRecentOutcomes|OrchestratedChannelMonitorRunnerAdapter|insert_completed_monitor_observation|CompletedMonitorRequestWrite\" src-tauri/src src scripts => no hits",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_persistence startup_recovery_marks_queued_and_running_interrupted_without_replaying_network -- --nocapture => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_write_path -- --nocapture => passed, 6 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_orchestrator -- --nocapture => passed, 11 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_persistence -- --nocapture => passed, 9 tests",
+      "node scripts/monitoring-architecture.test.mjs => passed",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml => passed",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed with existing/future-task dead-code warnings"
+    ],
+    "deferred_to_task17_plus": [
+      "channel_monitor_runs table and list_channel_monitor_runs IPC remain as read-only compatibility for one release observation cycle; no production writer remains",
+      "live cancellation token registration is wired through MonitoringRunner::cancel_live, but full background Run Now admission/queued row semantics should be hardened by Task 17 fault/concurrency tests"
+    ]
+  },
+  "task12_buckets_retention_foundation": {
+    "created_paths": [
+      "src-tauri/src/application/monitoring/buckets.rs",
+      "src-tauri/src/application/monitoring/retention.rs",
+      "src-tauri/src/services/monitoring/maintenance.rs",
+      "src-tauri/tests/monitoring_buckets_retention.rs"
+    ],
+    "modified_paths": [
+      "src-tauri/Cargo.toml",
+      "src-tauri/Cargo.lock",
+      "src-tauri/src/application/monitoring/mod.rs",
+      "src-tauri/src/application/monitoring/write_path.rs",
+      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/src/persistence/stores/monitoring/retention.rs",
+      "src-tauri/src/persistence/stores/monitoring/status_queries.rs",
+      "src-tauri/src/services/monitoring/mod.rs",
+      "src-tauri/tests/monitoring_write_path.rs"
+    ],
+    "verified_invariants": [
+      "recent target result read is hard-capped to the latest 60 target results; retry attempts remain traceable but do not add recent cells",
+      "24h hourly bucket windows include the current hour and are generated by backend logic",
+      "7d/30d local-day bucket windows include the current day and use IANA timezone rules, including DST forward/backward and cross-year labels",
+      "invalid or unavailable timezone ids fall back explicitly to UTC with source metadata",
+      "bucket availability distinguishes missing, skipped-only, unavailable, degraded and available; skipped is excluded from the availability denominator",
+      "strict availability and effective availability with degraded weighting are computed from backend bucket counts",
+      "bucket rollups persist failure_counts_json and read-side parsing returns empty counts for corrupt JSON instead of damaged data",
+      "corrupt failure_counts_json is marked dirty for repair",
+      "V2 execution commit records rollup dirty ranges in the same write transaction without writing bucket rollups synchronously",
+      "rollup dirty repair is idempotent, merges overlapping dirty ranges and rebuilds hour/day rollups from MonitorTargetResult facts",
+      "retention refuses to delete raw executions until their target results are rolled up and skips dirty raw sources",
+      "maintenance state has startup delay plus jitter, no reentry, row/time budget checks, cancellation and local metrics shape"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_buckets_retention -- --nocapture => passed, 8 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_write_path -- --nocapture => passed, 6 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_persistence -- --nocapture => passed, 10 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_migration -- --nocapture => passed, 3 tests",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check => passed",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed with expected future-task dead-code warnings",
+      "node scripts/monitoring-architecture.test.mjs => passed"
+    ],
+    "deferred_to_task13_plus": [
+      "parameterized ChannelStatusWorkspaceV2 IPC still needs to expose these backend windows/rollups to the UI",
+      "execution/attempt history cursor queries remain separate Task 13 work",
+      "maintenance worker still needs composition-root scheduling through TaskSupervisor when production read model is wired"
+    ]
+  },
+  "checkpoint_b": {
+    "verified_invariants": [
+      "manual and scheduled monitor executions share the V2 MonitorOrchestrator path",
+      "production runner commits MonitorExecution, ProbeAttempt, MonitorTargetResult and HealthObservation through the V2 write path without production writes to channel_monitor_runs",
+      "retry/fallback attempts are traceable while availability consumes exactly one terminal target result per station key",
+      "health observations are exactly-once and route health updates flow through HealthTransitionService",
+      "endpoint revision rollback prevents stale synthetic monitor observations from updating current route health",
+      "probe budget is persisted and reserved before network execution, including across runtime restart",
+      "startup recovery converts queued/running executions to interrupted without replaying network requests",
+      "architecture gates protect the production runner from reverting to legacy status-only probes or record_probe_outcome"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check => passed",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed with expected future-task dead-code warnings",
+      "node scripts/monitoring-architecture.test.mjs => passed",
+      "node -e \"JSON.parse(require('fs').readFileSync('docs/superpowers/audits/status-monitoring-boundary-manifest.json','utf8'))\" => passed",
+      "core Checkpoint B Rust suites listed in task11_plus_v2_write_path_bridge and checkpoint_b_production_runner_cutover passed"
+    ],
+    "remaining_plan_scope": [
+      "release-gate live provider qualification requires explicit user authorization and secrets",
+      "release-gate signed Windows install/upgrade/sleep-resume qualification remains outside default dev validation"
+    ]
+  },
+  "task17_fault_concurrency_and_local_soak": {
+    "created_paths": [
+      "src-tauri/tests/monitoring_faults.rs",
+      "src-tauri/tests/monitoring_concurrency.rs",
+      "scripts/run-monitoring-soak.ps1",
+      "scripts/verify-monitoring-live.ps1",
+      "scripts/verify-monitoring-db.ps1",
+      "docs/superpowers/audits/status-monitoring-qualification.md"
+    ],
+    "modified_paths": [
+      "src-tauri/src/persistence/stores/monitoring/budgets.rs"
+    ],
+    "verified_invariants": [
+      "attempt append, target finalization, health observation, execution finalization, rollup dirty range marking and budget reservation roll back together when the write transaction rolls back",
+      "commit-outcome-unknown replay is idempotent for probe budget reservations and health observations",
+      "invalid target ownership does not create partial target results or fake execution summaries",
+      "hard-kill startup recovery marks running executions interrupted without synthesizing failed attempts, replaying network requests or refunding already-reserved probe budget",
+      "scheduler admits 100 simultaneous due monitors through a bounded queue and advances due baselines instead of creating a catch-up storm",
+      "runtime single-flights same monitor/station-key manual storms and drains 100 unique-key executions under global/station/key permit limits without leaked active executions"
+    ],
+    "verification": [
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_faults -- --nocapture => passed, 7 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_concurrency -- --nocapture => passed, 2 tests",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 1 -Quick => passed, wrote docs/superpowers/audits/status-monitoring-soak-latest.json",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 60 -OutputPath docs/superpowers/audits/status-monitoring-soak-60m-latest.json => passed, 985 iterations, 0 failures",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 60 -ReleaseBuild -MixedProviderWorkload -OutputPath docs/superpowers/audits/status-monitoring-soak-release-mixed-60m-latest.json => passed, release profile, 513 iterations, 0 failures",
+      "node scripts/monitoring-architecture.test.mjs => passed",
+      "old-symbol rg gate including removed pricing evidence symbols => no hits"
+    ],
+    "deferred_release_gates": [
+      "authorized live OpenAI/Anthropic/Gemini/xAI/Grok/Generic verification",
+      "signed Windows fresh install, previous-release upgrade and sleep/resume"
+    ]
+  },
+  "task18_documentation_and_legacy_followup": {
+    "created_paths": [
+      "docs/release/status-monitoring-v2-qualification.md",
+      "docs/superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md"
+    ],
+    "modified_paths": [
+      "docs/README.md",
+      "docs/PROJECT_PLAN.md",
+      "docs/PRODUCT_MODEL.md",
+      "docs/proposals/STATUS_MONITORING_REFACTOR_SPEC.md",
+      "docs/superpowers/audits/status-monitoring-boundary-manifest.json"
+    ],
+    "verified_invariants": [
+      "spec points to implementation plan, qualification, boundary manifest, deletion ledger and legacy table removal follow-up",
+      "product model names Status Monitoring V2 as MonitorExecution -> MonitorTargetResult -> ProbeAttempt and keeps station_key_health as shared health state",
+      "project plan documents the V2 implementation cutover and release qualification gates",
+      "docs README is valid UTF-8 navigation and links the V2 qualification artifacts",
+      "legacy channel_monitor_runs removal is tracked as an explicit follow-up after one release observation cycle"
+    ],
+    "verification": [
+      "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check => passed",
+      "pnpm.cmd architecture:fixtures => passed",
+      "pnpm.cmd architecture:typescript => passed",
+      "pnpm.cmd architecture:commands => passed",
+      "pnpm.cmd architecture:security => passed",
+      "pnpm.cmd test:contracts => passed",
+      "pnpm.cmd test => passed, 54 files / 184 tests",
+      "pnpm.cmd lint => passed, 0 errors / 79 warnings",
+      "pnpm.cmd build => passed",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib -- --nocapture => passed, 659 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_domain -- --nocapture => passed, 7 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_adapter_contracts -- --nocapture => passed, 18 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_profile_golden -- --nocapture => passed, 4 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_migration -- --nocapture => passed, 3 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_persistence -- --nocapture => passed, 10 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_orchestrator -- --nocapture => passed, 11 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_transport -- --nocapture => passed, 2 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_scheduler -- --nocapture => passed, 6 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test station_key_health_transitions -- --nocapture => passed, 8 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_buckets_retention -- --nocapture => passed, 8 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_read_model -- --nocapture => passed, 3 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_execution_integration -- --nocapture => passed, 6 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_faults -- --nocapture => passed, 7 tests",
+      "cargo test --manifest-path src-tauri/Cargo.toml --test monitoring_concurrency -- --nocapture => passed, 2 tests",
+      "cargo check --manifest-path src-tauri/Cargo.toml => passed",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 1 -Quick => passed",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 60 -OutputPath docs/superpowers/audits/status-monitoring-soak-60m-latest.json => passed, 985 iterations, 0 failures",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 60 -ReleaseBuild -MixedProviderWorkload -OutputPath docs/superpowers/audits/status-monitoring-soak-release-mixed-60m-latest.json => passed, release profile, 513 iterations, 0 failures",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-db.ps1 against fresh migrated v9 temp DB => passed",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-read-model-performance.ps1 -MonitorRows 500 -TargetResults 500000 -Attempts 100000 -Samples 20 -WorkspaceP95LimitMs 250 -SchedulerLagP95LimitMs 2000 => passed, workspace p95 134.93 ms and scheduler p95 16 ms",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-live.ps1 without authorization => failed closed as designed",
+      "pnpm.cmd tauri:build => release app and NSIS bundle generated, final updater signing failed because TAURI_SIGNING_PRIVATE_KEY is not configured"
+    ],
+    "release_gates_pending": [
+      "TAURI_SIGNING_PRIVATE_KEY-backed signed updater artifact generation",
+      "authorized live provider verification for OpenAI, Anthropic, Gemini, xAI/Grok and Generic OpenAI-compatible targets",
+      "fresh signed Windows install, previous-release upgrade, quit/restart and sleep/resume",
+      "real Tauri WebView screenshot and interaction check across target viewports"
+    ]
+  }
+}

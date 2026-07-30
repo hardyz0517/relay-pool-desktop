@@ -35,6 +35,7 @@ semver = "1"
 sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros", "chrono", "json"] }
 httparse = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono-tz = "0.10"
 thiserror = "2"
 tracing = "0.1"
 uuid = { version = "1", features = ["v7", "rng"] }

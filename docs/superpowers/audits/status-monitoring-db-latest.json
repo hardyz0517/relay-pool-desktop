@@ -1,0 +1,43 @@
+{
+    "kind":  "status-monitoring-db-verification",
+    "generatedAt":  "2026-07-30T01:44:46.5382780+08:00",
+    "databasePath":  "C:\\Users\\Hardy\\AppData\\Local\\Temp\\relay-pool-monitoring-read-model-performance-bd0be21aa4034ada8b848a082f91f360\\monitoring-read-model-performance.sqlite3",
+    "maxRunningAgeMinutes":  10,
+    "tables":  [
+                   {
+                       "table":  "channel_monitor_executions",
+                       "exists":  true,
+                       "rowCount":  "500000"
+                   },
+                   {
+                       "table":  "channel_monitor_target_results",
+                       "exists":  true,
+                       "rowCount":  "500000"
+                   },
+                   {
+                       "table":  "channel_monitor_attempts",
+                       "exists":  true,
+                       "rowCount":  "100000"
+                   },
+                   {
+                       "table":  "channel_monitor_bucket_rollups",
+                       "exists":  true,
+                       "rowCount":  "27000"
+                   },
+                   {
+                       "table":  "channel_monitor_probe_budget_usage",
+                       "exists":  true,
+                       "rowCount":  "0"
+                   },
+                   {
+                       "table":  "station_key_health_observations",
+                       "exists":  true,
+                       "rowCount":  "0"
+                   }
+               ],
+    "staleRunningExecutions":  0,
+    "legacyChannelMonitorRunsRows":  0,
+    "legacyHttpOnlyAuthoritativeWritebacks":  0,
+    "status":  "pass",
+    "note":  "channel_monitor_runs may exist for one read-only observation cycle, but production code must not write it."
+}

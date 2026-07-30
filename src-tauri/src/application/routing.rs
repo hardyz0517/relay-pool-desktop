@@ -1,5 +1,4 @@
 use crate::{
-    application::error::ApplicationError,
     application::routing_engine::{
         router::select_route_candidates_with_scheduler,
         routing_snapshot::{build_local_routing_workspace, LocalRoutingReadCandidate},
@@ -9,7 +8,12 @@ use crate::{
         },
         scheduler::SchedulerRuntimeState,
     },
+    application::{error::ApplicationError, health_transitions::HealthTransitionService},
     models::{
+        health::{
+            HealthObservation, HealthObservationOutcome, HealthObservationSource,
+            HealthWritebackMode, TrafficEquivalence,
+        },
         pricing::BalanceSnapshot,
         proxy::{ProxyStatus, RequestLog},
         routing::{
@@ -261,23 +265,42 @@ impl RoutingService {
         duration_ms: i64,
         error_summary: String,
     ) -> Result<(), ApplicationError> {
-        let store = self.store;
-        let now = chrono::Utc::now().timestamp_millis().to_string();
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let health = HealthTransitionService::new();
         self.runtime
             .write(|write| {
                 Box::pin(async move {
-                    store
-                        .record_station_key_connectivity(
-                            write,
-                            &station_key_id,
-                            &station_id,
-                            expected_endpoint_revision,
-                            ok,
-                            duration_ms,
-                            &error_summary,
-                            &now,
+                    let observation_id =
+                        format!("health-observation-manual-connectivity-{station_key_id}-{now_ms}");
+                    let source_event_id = format!(
+                        "manual-connectivity:{station_id}:{expected_endpoint_revision}:{now_ms}"
+                    );
+                    health
+                        .record_observation(
+                            write.connection(),
+                            HealthObservation {
+                                id: observation_id,
+                                station_key_id,
+                                target_result_id: None,
+                                source: HealthObservationSource::ManualConnectivity,
+                                source_event_id,
+                                observed_at_ms: now_ms,
+                                endpoint_revision: expected_endpoint_revision,
+                                outcome: if ok {
+                                    HealthObservationOutcome::Success
+                                } else {
+                                    HealthObservationOutcome::ObserveFailure
+                                },
+                                failure_kind: (!ok).then_some("manual_connectivity".to_string()),
+                                latency_ms: Some(duration_ms),
+                                retry_after_ms: None,
+                                error_summary: (!ok).then_some(error_summary),
+                                writeback_mode: HealthWritebackMode::Authoritative,
+                                traffic_equivalence: TrafficEquivalence::Diagnostic,
+                            },
                         )
                         .await
+                        .map(|_| ())
                 })
             })
             .await

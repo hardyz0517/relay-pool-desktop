@@ -3,6 +3,13 @@ use serde_json::Value;
 
 use crate::models::{
     channel_monitors::{ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun},
+    monitoring::{
+        ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
+        ChannelMonitorExecutionDetail, ChannelMonitorExecutionIdInput,
+        ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelStatusWorkspaceInput,
+        ChannelStatusWorkspaceV2, MonitoringCapabilityCatalog, RunChannelMonitorNowInputV2,
+        RunChannelMonitorReceipt,
+    },
     shared_capabilities::{ChannelMonitorSummary, ChannelStatusSummary},
 };
 
@@ -17,6 +24,17 @@ pub type ChannelMonitorRequestTemplateDto = ChannelMonitorRequestTemplate;
 pub type ChannelMonitorRunDto = ChannelMonitorRun;
 pub type ChannelMonitorSummaryDto = ChannelMonitorSummary;
 pub type ChannelStatusSummaryDto = ChannelStatusSummary;
+pub type ChannelStatusWorkspaceInputDto = ChannelStatusWorkspaceInput;
+pub type ChannelStatusWorkspaceV2Dto = ChannelStatusWorkspaceV2;
+pub type ChannelMonitorExecutionIdInputDto = ChannelMonitorExecutionIdInput;
+pub type ChannelMonitorExecutionListInputDto = ChannelMonitorExecutionListInput;
+pub type ChannelMonitorExecutionPageDto = ChannelMonitorExecutionPage;
+pub type ChannelMonitorExecutionDetailDto = ChannelMonitorExecutionDetail;
+pub type ChannelMonitorAttemptHistoryInputDto = ChannelMonitorAttemptHistoryInput;
+pub type ChannelMonitorAttemptPageDto = ChannelMonitorAttemptPage;
+pub type MonitoringCapabilityCatalogDto = MonitoringCapabilityCatalog;
+pub type RunChannelMonitorNowInputDto = RunChannelMonitorNowInputV2;
+pub type RunChannelMonitorReceiptDto = RunChannelMonitorReceipt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -28,6 +46,94 @@ impl ChannelMonitorIdInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
         validate_id("monitorId", &input.monitor_id)?;
+        Ok(input)
+    }
+}
+
+impl ChannelStatusWorkspaceInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_workspace_input(&input)?;
+        Ok(input)
+    }
+}
+
+impl ChannelMonitorExecutionIdInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_id("executionId", &input.execution_id)?;
+        Ok(input)
+    }
+}
+
+impl ChannelMonitorExecutionListInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_optional_id("monitorId", input.monitor_id.as_deref())?;
+        validate_optional_id("stationKeyId", input.station_key_id.as_deref())?;
+        validate_optional_status(input.status.as_deref())?;
+        if input.limit.is_some_and(|limit| limit == 0 || limit > 200) {
+            return Err(invalid_input(
+                "limit",
+                "invalid_limit",
+                "The execution history limit is outside the allowed range.",
+            ));
+        }
+        if let Some(cursor) = &input.cursor {
+            validate_id("cursor.executionId", &cursor.execution_id)?;
+            if cursor.started_at_ms < 0 {
+                return Err(invalid_input(
+                    "cursor.startedAtMs",
+                    "invalid_cursor",
+                    "The execution cursor timestamp is invalid.",
+                ));
+            }
+        }
+        Ok(input)
+    }
+}
+
+impl ChannelMonitorAttemptHistoryInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_id("executionId", &input.execution_id)?;
+        validate_optional_id("stationKeyId", input.station_key_id.as_deref())?;
+        if input.limit.is_some_and(|limit| limit == 0 || limit > 200) {
+            return Err(invalid_input(
+                "limit",
+                "invalid_limit",
+                "The attempt history limit is outside the allowed range.",
+            ));
+        }
+        if let Some(cursor) = &input.cursor {
+            validate_id("cursor.attemptId", &cursor.attempt_id)?;
+            if cursor.started_at_ms < 0 {
+                return Err(invalid_input(
+                    "cursor.startedAtMs",
+                    "invalid_cursor",
+                    "The attempt cursor timestamp is invalid.",
+                ));
+            }
+        }
+        Ok(input)
+    }
+}
+
+impl RunChannelMonitorNowInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_id("monitorId", &input.monitor_id)?;
+        if input.trigger_request_id.as_ref().is_some_and(|value| {
+            value.trim().is_empty()
+                || value.len() > MAX_ID_BYTES
+                || value.chars().any(char::is_control)
+        }) {
+            return Err(invalid_input(
+                "triggerRequestId",
+                "invalid_idempotency_key",
+                "The trigger request id is invalid.",
+            ));
+        }
         Ok(input)
     }
 }
@@ -98,6 +204,69 @@ fn validate_id(
     Ok(())
 }
 
+fn validate_optional_id(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), crate::commands::error::CommandError> {
+    if let Some(value) = value {
+        validate_id(field, value)?;
+    }
+    Ok(())
+}
+
+fn validate_optional_status(
+    value: Option<&str>,
+) -> Result<(), crate::commands::error::CommandError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if matches!(
+        value,
+        "queued" | "running" | "completed" | "partial" | "cancelled" | "skipped" | "interrupted"
+    ) {
+        Ok(())
+    } else {
+        Err(invalid_input(
+            "status",
+            "invalid_status",
+            "The execution status is invalid.",
+        ))
+    }
+}
+
+fn validate_workspace_input(
+    input: &ChannelStatusWorkspaceInput,
+) -> Result<(), crate::commands::error::CommandError> {
+    if input.limit.is_some_and(|limit| limit == 0 || limit > 500) {
+        return Err(invalid_input(
+            "limit",
+            "invalid_limit",
+            "The channel status workspace limit is outside the allowed range.",
+        ));
+    }
+    if input.timezone_id.as_ref().is_some_and(|value| {
+        value.trim().is_empty() || value.len() > 64 || value.chars().any(char::is_control)
+    }) {
+        return Err(invalid_input(
+            "timezoneId",
+            "invalid_timezone",
+            "The timezone id is invalid.",
+        ));
+    }
+    if input
+        .cursor
+        .as_ref()
+        .is_some_and(|cursor| cursor.row_key.is_empty() || cursor.row_key.len() > 256)
+    {
+        return Err(invalid_input(
+            "cursor",
+            "invalid_cursor",
+            "The channel status cursor is invalid.",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub const CHANNEL_MONITOR_READS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "ChannelMonitorReadsDto",
@@ -119,9 +288,48 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command":"list_channel_monitors","input":{},"output":[monitor]}),
         serde_json::json!({"command":"list_channel_monitor_summaries","input":{"runSince":"1700000000000","runLimit":60},"output":[summary]}),
         serde_json::json!({"command":"list_channel_status_summaries","input":{},"output":[status]}),
+        serde_json::json!({"command":"load_channel_status_workspace","input":{"window":"last24h","timezoneId":"UTC","limit":50},"output":fixture_workspace_v2()}),
         serde_json::json!({"command":"list_channel_monitor_runs","input":{"monitorId":"monitor-1"},"output":[run]}),
         serde_json::json!({"command":"list_channel_monitor_templates","input":{},"output":[fixture_template()]}),
     ]
+}
+
+#[cfg(test)]
+fn fixture_workspace_v2() -> ChannelStatusWorkspaceV2 {
+    use crate::models::monitoring::{
+        ChannelStatusAggregate, ChannelStatusBucketLayout, ChannelStatusFreshness,
+        ChannelStatusPage, ChannelStatusTimezone, ChannelStatusTimezoneSource,
+        ChannelStatusWorkspaceWindow,
+    };
+    ChannelStatusWorkspaceV2 {
+        schema_version: 2,
+        generated_at_ms: 1_700_000_000_000,
+        window: ChannelStatusWorkspaceWindow::Last24h,
+        timezone: ChannelStatusTimezone {
+            id: "UTC".into(),
+            source: ChannelStatusTimezoneSource::Iana,
+            requested_id: None,
+        },
+        bucket_layout: ChannelStatusBucketLayout {
+            recent_limit: 60,
+            hourly: Vec::new(),
+            daily: Vec::new(),
+        },
+        aggregate: ChannelStatusAggregate::default(),
+        freshness: ChannelStatusFreshness {
+            newest_result_at_ms: None,
+            oldest_result_at_ms: None,
+            has_dirty_rollups: false,
+            has_corrupt_rollups: false,
+            running_execution_count: 0,
+        },
+        page: ChannelStatusPage {
+            limit: 50,
+            returned: 0,
+            next_cursor: None,
+        },
+        rows: Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -247,5 +455,22 @@ mod tests {
                 CommandErrorCode::InvalidInput
             );
         }
+        assert!(ChannelStatusWorkspaceInputDto::parse(serde_json::json!({
+            "window": "last24h",
+            "timezoneId": "Asia/Shanghai",
+            "limit": 500
+        }))
+        .is_ok());
+        assert_eq!(
+            ChannelStatusWorkspaceInputDto::parse(serde_json::json!({"limit":501}))
+                .expect_err("invalid workspace limit")
+                .code,
+            CommandErrorCode::InvalidInput
+        );
+        assert!(RunChannelMonitorNowInputDto::parse(serde_json::json!({
+            "monitorId":"monitor-1",
+            "triggerRequestId":"manual:monitor-1:click-1"
+        }))
+        .is_ok());
     }
 }

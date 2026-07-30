@@ -12,9 +12,19 @@ import type {
   ChannelMonitorRequestTemplate,
   ChannelMonitorRun,
   ChannelMonitorSummary,
+  ChannelMonitorAttemptHistoryInput,
+  ChannelMonitorAttemptPage,
+  ChannelMonitorExecutionDetail,
+  ChannelMonitorExecutionListInput,
+  ChannelMonitorExecutionPage,
   ChannelStatusSummary,
+  ChannelStatusWorkspace,
+  ChannelStatusWorkspaceInput,
+  CancelChannelMonitorExecutionReceipt,
   CreateChannelMonitorInput,
   CreateChannelMonitorTemplateInput,
+  MonitoringCapabilityCatalog,
+  RunChannelMonitorReceipt,
   UpdateChannelMonitorInput,
   UpdateChannelMonitorTemplateInput,
 } from "@/lib/types/channelMonitors";
@@ -257,13 +267,6 @@ export type ChannelMonitoringWorkspace = {
   templates: ChannelMonitorRequestTemplate[];
 };
 
-export type ChannelStatusWorkspace = {
-  keyPoolItems: KeyPoolItem[];
-  requestLogs: RequestLog[];
-  stationKeyHealth: StationKeyHealth[];
-  channelStatusSummaries: ChannelStatusSummary[];
-};
-
 export type ChannelsDomainClient = {
   listChannelMonitors(): Promise<ChannelMonitor[]>;
   listChannelMonitorSummaries(options?: ChannelMonitorSummaryOptions): Promise<ChannelMonitorSummary[]>;
@@ -271,7 +274,12 @@ export type ChannelsDomainClient = {
   createChannelMonitor(input: CreateChannelMonitorInput): Promise<ChannelMonitor>;
   updateChannelMonitor(input: UpdateChannelMonitorInput): Promise<ChannelMonitor>;
   deleteChannelMonitor(id: string): Promise<void>;
-  runChannelMonitorNow(monitorId: string): Promise<ChannelMonitorRun[]>;
+  runChannelMonitorNow(monitorId: string, triggerRequestId?: string): Promise<RunChannelMonitorReceipt>;
+  cancelChannelMonitorExecution(executionId: string): Promise<CancelChannelMonitorExecutionReceipt>;
+  listChannelMonitorExecutions(input?: ChannelMonitorExecutionListInput): Promise<ChannelMonitorExecutionPage>;
+  getChannelMonitorExecution(executionId: string): Promise<ChannelMonitorExecutionDetail>;
+  listChannelMonitorAttempts(input: ChannelMonitorAttemptHistoryInput): Promise<ChannelMonitorAttemptPage>;
+  listMonitoringCapabilities(): Promise<MonitoringCapabilityCatalog>;
   listChannelMonitorRuns(monitorId: string): Promise<ChannelMonitorRun[]>;
   listChannelMonitorTemplates(): Promise<ChannelMonitorRequestTemplate[]>;
   createChannelMonitorTemplate(input: CreateChannelMonitorTemplateInput): Promise<ChannelMonitorRequestTemplate>;
@@ -279,7 +287,7 @@ export type ChannelsDomainClient = {
   duplicateChannelMonitorTemplate(id: string): Promise<ChannelMonitorRequestTemplate>;
   deleteChannelMonitorTemplate(id: string): Promise<void>;
   loadChannelMonitoringWorkspace(): Promise<ChannelMonitoringWorkspace>;
-  loadChannelStatusWorkspace(): Promise<ChannelStatusWorkspace>;
+  loadChannelStatusWorkspace(input?: ChannelStatusWorkspaceInput): Promise<ChannelStatusWorkspace>;
 };
 
 export type CollectorsDomainClient = {

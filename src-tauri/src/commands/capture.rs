@@ -31,7 +31,7 @@ pub async fn start_capture_session(
     correlation::in_command_scope("start_capture_session", async {
         let input = CaptureStationIdInputDto::parse(input)?;
         let plan = facade
-            .prepare_capture_session_start(input.station_id)
+            .start_capture_session(input.station_id)
             .await
             .map_err(capture_command_error)?;
         open_capture_window(app, plan.target, plan.label.clone(), plan.script)

@@ -10,22 +10,20 @@ use crate::{
             CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
             UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
         },
+        monitoring::{CancelChannelMonitorExecutionReceipt, RunChannelMonitorReceipt},
         shared_capabilities::ChannelMonitorSummary,
     },
-    services::channel_monitors::ChannelMonitorRunnerPort,
+    services::monitoring::runner::MonitoringRunner,
 };
 
 #[derive(Clone)]
 pub(crate) struct ChannelMonitoringCommandFacade {
     monitoring: Arc<MonitoringService>,
-    runner: Arc<dyn ChannelMonitorRunnerPort>,
+    runner: Arc<MonitoringRunner>,
 }
 
 impl ChannelMonitoringCommandFacade {
-    pub(crate) fn new(
-        monitoring: Arc<MonitoringService>,
-        runner: Arc<dyn ChannelMonitorRunnerPort>,
-    ) -> Self {
+    pub(crate) fn new(monitoring: Arc<MonitoringService>, runner: Arc<MonitoringRunner>) -> Self {
         Self { monitoring, runner }
     }
 
@@ -113,9 +111,51 @@ impl ChannelMonitoringCommandFacade {
     pub(crate) async fn run_channel_monitor_now(
         &self,
         monitor_id: String,
-    ) -> Result<Vec<ChannelMonitorRun>, String> {
-        self.runner
-            .run_monitor(monitor_id, CancellationToken::new())
-            .await
+        trigger_request_id: Option<String>,
+    ) -> Result<RunChannelMonitorReceipt, String> {
+        let trigger_request_id =
+            trigger_request_id.unwrap_or_else(|| format!("manual:{}", uuid::Uuid::now_v7()));
+        let receipt = self
+            .runner
+            .run_manual(
+                monitor_id.clone(),
+                trigger_request_id.clone(),
+                CancellationToken::new(),
+            )
+            .await?;
+        Ok(RunChannelMonitorReceipt {
+            execution_id: receipt.execution_id,
+            monitor_id,
+            status: if receipt.reused_existing {
+                "running"
+            } else {
+                "completed"
+            }
+            .to_string(),
+            trigger_request_id,
+            reused_existing: receipt.reused_existing,
+        })
+    }
+
+    pub(crate) async fn cancel_channel_monitor_execution(
+        &self,
+        execution_id: String,
+    ) -> Result<CancelChannelMonitorExecutionReceipt, ApplicationError> {
+        let live_cancelled = self.runner.cancel_live(&execution_id);
+        match self.monitoring.cancel_execution(execution_id.clone()).await {
+            Ok(mut receipt) => {
+                receipt.cancelled = receipt.cancelled || live_cancelled;
+                if live_cancelled && receipt.status != "cancelled" {
+                    receipt.status = "cancelling".to_string();
+                }
+                Ok(receipt)
+            }
+            Err(_error) if live_cancelled => Ok(CancelChannelMonitorExecutionReceipt {
+                execution_id,
+                status: "cancelling".to_string(),
+                cancelled: true,
+            }),
+            Err(error) => Err(error),
+        }
     }
 }

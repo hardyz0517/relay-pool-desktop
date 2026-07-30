@@ -1,48 +1,37 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
-    application::{clock::Clock, error::ApplicationError, pagination::PageLimit},
+    application::{
+        clock::Clock, error::ApplicationError, monitoring::queries::ChannelStatusReadModelQuery,
+        pagination::PageLimit,
+    },
     models::{
-        channel_monitors::{ChannelMonitor, ChannelMonitorRun},
+        channel_monitors::ChannelMonitor,
+        monitoring::{
+            ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
+            ChannelMonitorExecutionDetail, ChannelMonitorExecutionIdInput,
+            ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelStatusBucket,
+            ChannelStatusOutcome, ChannelStatusWorkspaceInput, ChannelStatusWorkspaceV2,
+            MonitoringCapabilityCatalog, MonitoringClientProfileCapability,
+            MonitoringProtocolCapability, ProtocolKind,
+        },
         shared_capabilities::{
             ChannelStatusSummary, ChannelStatusTimelinePoint, ChannelStatusWindowSummary,
-            ChannelStatusWorkspace,
         },
     },
-    persistence::{
-        runtime::PersistenceHandle,
-        stores::{
-            credential_store::CredentialStore,
-            monitoring_store::{ChannelStatusRunRow, ChannelWindowAggregate, MonitoringStore},
-            request_log_store::RequestLogStore,
-            routing_store::RoutingStore,
-        },
-        ReadSession,
-    },
+    persistence::runtime::PersistenceHandle,
+    services::monitoring::profiles::registry::BuiltinProfileRegistry,
 };
-
-const RECENT_RUN_LIMIT: u32 = 60;
-const DAY_MS: i64 = 24 * 60 * 60 * 1_000;
 
 #[derive(Clone)]
 pub(crate) struct ChannelStatusQuery {
-    runtime: PersistenceHandle,
-    clock: Arc<dyn Clock>,
-    store: MonitoringStore,
-    credentials: CredentialStore,
-    request_logs: RequestLogStore,
-    routing: RoutingStore,
+    read_model: ChannelStatusReadModelQuery,
 }
 
 impl ChannelStatusQuery {
     pub(crate) fn new(runtime: PersistenceHandle, clock: Arc<dyn Clock>) -> Self {
         Self {
-            runtime,
-            clock,
-            store: MonitoringStore,
-            credentials: CredentialStore,
-            request_logs: RequestLogStore,
-            routing: RoutingStore,
+            read_model: ChannelStatusReadModelQuery::new(runtime, clock),
         }
     }
 
@@ -50,209 +39,258 @@ impl ChannelStatusQuery {
         &self,
         monitor_limit: PageLimit,
     ) -> Result<Vec<ChannelStatusSummary>, ApplicationError> {
-        let now_ms = self.clock.now_utc().timestamp_millis();
-        let mut read = self.runtime.begin_read().await?;
-        self.load_summaries(&mut read, monitor_limit, now_ms).await
+        let workspace = self
+            .read_model
+            .load_workspace(ChannelStatusWorkspaceInput {
+                limit: Some(monitor_limit.get()),
+                ..ChannelStatusWorkspaceInput::default()
+            })
+            .await?;
+        Ok(workspace.rows.into_iter().map(legacy_summary).collect())
     }
 
     pub(crate) async fn load_workspace(
         &self,
-        monitor_limit: PageLimit,
-    ) -> Result<ChannelStatusWorkspace, ApplicationError> {
-        let now_ms = self.clock.now_utc().timestamp_millis();
-        let mut read = self.runtime.begin_read().await?;
-        let key_pool_items = self.credentials.list_key_pool_items(&mut read).await?;
-        let request_logs = self.request_logs.list_recent(&mut read, 500).await?;
-        let station_key_health = self.routing.list_station_key_health(&mut read).await?;
-        let channel_status_summaries = self
-            .load_summaries(&mut read, monitor_limit, now_ms)
-            .await?;
-        Ok(ChannelStatusWorkspace {
-            key_pool_items,
-            request_logs,
-            station_key_health,
-            channel_status_summaries,
-        })
+        input: ChannelStatusWorkspaceInput,
+    ) -> Result<ChannelStatusWorkspaceV2, ApplicationError> {
+        self.read_model.load_workspace(input).await
     }
 
-    async fn load_summaries(
+    pub(crate) async fn list_executions(
         &self,
-        read: &mut ReadSession,
-        monitor_limit: PageLimit,
-        now_ms: i64,
-    ) -> Result<Vec<ChannelStatusSummary>, ApplicationError> {
-        let monitors = self.store.list_monitors(read, monitor_limit.get()).await?;
-        let recent_runs = self
-            .store
-            .recent_status_runs(read, monitor_limit.get(), RECENT_RUN_LIMIT)
-            .await?;
-        let day = self
-            .store
-            .window_aggregates(read, now_ms.saturating_sub(DAY_MS), monitor_limit.get())
-            .await?;
-        let week = self
-            .store
-            .window_aggregates(read, now_ms.saturating_sub(7 * DAY_MS), monitor_limit.get())
-            .await?;
-
-        Ok(build_summaries(monitors, recent_runs, day, week, now_ms))
+        input: ChannelMonitorExecutionListInput,
+    ) -> Result<ChannelMonitorExecutionPage, ApplicationError> {
+        self.read_model.list_executions(input).await
     }
-}
 
-fn build_summaries(
-    monitors: Vec<ChannelMonitor>,
-    recent_rows: Vec<ChannelStatusRunRow>,
-    day_rows: Vec<ChannelWindowAggregate>,
-    week_rows: Vec<ChannelWindowAggregate>,
-    now_ms: i64,
-) -> Vec<ChannelStatusSummary> {
-    let mut recent_by_monitor: BTreeMap<String, Vec<ChannelMonitorRun>> = BTreeMap::new();
-    for row in recent_rows {
-        recent_by_monitor
-            .entry(row.monitor_id)
-            .or_default()
-            .push(row.run);
+    pub(crate) async fn get_execution(
+        &self,
+        input: ChannelMonitorExecutionIdInput,
+    ) -> Result<ChannelMonitorExecutionDetail, ApplicationError> {
+        self.read_model.get_execution(input).await
     }
-    let day_by_monitor = day_rows
-        .into_iter()
-        .map(|row| (row.monitor_id.clone(), row))
-        .collect::<BTreeMap<_, _>>();
-    let week_by_monitor = week_rows
-        .into_iter()
-        .map(|row| (row.monitor_id.clone(), row))
-        .collect::<BTreeMap<_, _>>();
 
-    monitors
+    pub(crate) async fn list_attempt_history(
+        &self,
+        input: ChannelMonitorAttemptHistoryInput,
+    ) -> Result<ChannelMonitorAttemptPage, ApplicationError> {
+        self.read_model.list_attempt_history(input).await
+    }
+
+    pub(crate) async fn list_monitoring_capabilities(
+        &self,
+    ) -> Result<MonitoringCapabilityCatalog, ApplicationError> {
+        let protocols = [
+            ProtocolKind::OpenAiChat,
+            ProtocolKind::OpenAiResponses,
+            ProtocolKind::AnthropicMessages,
+            ProtocolKind::GeminiNative,
+            ProtocolKind::XaiGrok,
+            ProtocolKind::GenericOpenAi,
+        ]
         .into_iter()
-        .map(|monitor| {
-            let runs = recent_by_monitor.remove(&monitor.id).unwrap_or_default();
-            let recent = summarize_recent("recent", &runs);
-            let last24h = summarize_window(
-                "last24h",
-                day_by_monitor.get(&monitor.id),
-                &runs,
-                now_ms.saturating_sub(DAY_MS),
-            );
-            let last7d = summarize_window(
-                "last7d",
-                week_by_monitor.get(&monitor.id),
-                &runs,
-                now_ms.saturating_sub(7 * DAY_MS),
-            );
-            ChannelStatusSummary {
-                monitor,
-                recent,
-                last24h,
-                last7d,
-            }
+        .map(|protocol| MonitoringProtocolCapability {
+            id: protocol.as_str().to_string(),
+            enabled: true,
+            streaming: !matches!(protocol, ProtocolKind::GenericOpenAi),
         })
-        .collect()
+        .collect();
+        let registry = BuiltinProfileRegistry::default();
+        let profiles = registry
+            .list()
+            .map(|profile| {
+                let summary = profile.golden_summary();
+                MonitoringClientProfileCapability {
+                    id: summary.id.as_str().to_string(),
+                    version: summary.version,
+                    enabled: summary.enabled,
+                    cli_compat: !matches!(
+                        summary.id,
+                        crate::models::monitoring::ClientProfileId::StandardApi
+                    ),
+                    supported_protocols: summary
+                        .supported_protocols
+                        .into_iter()
+                        .map(|protocol| protocol.as_str().to_string())
+                        .collect(),
+                    method: summary.method,
+                    path: summary.path,
+                    header_names: summary.header_names,
+                    body_defaults: summary.body_defaults,
+                    profile_hash: summary.profile_hash,
+                }
+            })
+            .collect();
+        Ok(MonitoringCapabilityCatalog {
+            protocols,
+            profiles,
+        })
+    }
 }
 
-fn summarize_recent(window: &str, runs: &[ChannelMonitorRun]) -> ChannelStatusWindowSummary {
-    let total_count = runs.len() as i64;
-    let success_count = count_status(runs, "success");
-    let failure_count = count_status(runs, "failed");
-    let warning_count = runs
+fn legacy_summary(row: crate::models::monitoring::ChannelStatusRow) -> ChannelStatusSummary {
+    let monitor = ChannelMonitor {
+        id: row.monitor.id.clone(),
+        name: row.monitor.name.clone(),
+        target_type: row.monitor.target_type.clone(),
+        station_id: row.target.station_id.clone(),
+        station_key_id: row.target.station_key_id.clone(),
+        template_id: String::new(),
+        enabled: row.monitor.enabled,
+        interval_seconds: row.monitor.interval_seconds,
+        jitter_seconds: row.monitor.jitter_seconds,
+        timeout_seconds: 0,
+        max_concurrency: 1,
+        consecutive_failure_threshold: 1,
+        fallback_models: row.monitor.fallback_models.clone(),
+        note: None,
+        created_at: "0".to_string(),
+        updated_at: "0".to_string(),
+    };
+    ChannelStatusSummary {
+        monitor,
+        recent: legacy_recent_summary(&row),
+        last24h: legacy_bucket_summary("24h", &row.hourly_buckets),
+        last7d: legacy_bucket_summary("7d", tail(&row.daily_buckets, 7)),
+    }
+}
+
+fn legacy_recent_summary(
+    row: &crate::models::monitoring::ChannelStatusRow,
+) -> ChannelStatusWindowSummary {
+    let total_count = row.recent.len() as i64;
+    let success_count = row
+        .recent
         .iter()
-        .filter(|run| matches!(run.status.as_str(), "warning" | "skipped"))
+        .filter(|point| matches!(point.outcome, ChannelStatusOutcome::Available))
         .count() as i64;
-    let latencies = runs
+    let failure_count = row
+        .recent
         .iter()
-        .filter_map(|run| run.latency_ms.or(run.duration_ms))
-        .collect::<Vec<_>>();
-    let avg_latency_ms =
-        (!latencies.is_empty()).then(|| latencies.iter().sum::<i64>() / latencies.len() as i64);
-    summary_from_parts(
-        window,
+        .filter(|point| matches!(point.outcome, ChannelStatusOutcome::Unavailable))
+        .count() as i64;
+    let warning_count = row
+        .recent
+        .iter()
+        .filter(|point| {
+            matches!(
+                point.outcome,
+                ChannelStatusOutcome::Degraded | ChannelStatusOutcome::Skipped
+            )
+        })
+        .count() as i64;
+    ChannelStatusWindowSummary {
+        window: "recent".to_string(),
         total_count,
         success_count,
         failure_count,
         warning_count,
-        avg_latency_ms,
-        runs,
-    )
+        availability_percent: percent(success_count, total_count),
+        avg_latency_ms: average_latency(row.recent.iter().filter_map(|point| point.latency_ms)),
+        avg_endpoint_ping_ms: None,
+        last_checked_at: row
+            .latest
+            .as_ref()
+            .and_then(|latest| latest.finished_at_ms)
+            .map(|value| value.to_string()),
+        latest_status: row
+            .latest
+            .as_ref()
+            .map(|latest| legacy_status(latest.outcome)),
+        latest_error_message: None,
+        timeline: row
+            .recent
+            .iter()
+            .map(|point| ChannelStatusTimelinePoint {
+                status: legacy_status(point.outcome),
+                latency_ms: point.latency_ms,
+                endpoint_ping_ms: None,
+                checked_at: point.checked_at_ms.unwrap_or_default().to_string(),
+            })
+            .collect(),
+    }
 }
 
-fn summarize_window(
+fn legacy_bucket_summary(
     window: &str,
-    aggregate: Option<&ChannelWindowAggregate>,
-    recent_runs: &[ChannelMonitorRun],
-    since_ms: i64,
+    buckets: &[ChannelStatusBucket],
 ) -> ChannelStatusWindowSummary {
-    let matching_runs = recent_runs
+    let total_count = buckets
         .iter()
-        .filter(|run| parse_millis(&run.started_at).is_some_and(|value| value >= since_ms))
-        .cloned()
-        .collect::<Vec<_>>();
-    let empty = ChannelWindowAggregate {
-        monitor_id: String::new(),
-        total_count: 0,
-        success_count: 0,
-        failure_count: 0,
-        warning_count: 0,
-        avg_latency_ms: None,
-    };
-    let aggregate = aggregate.unwrap_or(&empty);
-    summary_from_parts(
-        window,
-        aggregate.total_count,
-        aggregate.success_count,
-        aggregate.failure_count,
-        aggregate.warning_count,
-        aggregate.avg_latency_ms,
-        &matching_runs,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn summary_from_parts(
-    window: &str,
-    total_count: i64,
-    success_count: i64,
-    failure_count: i64,
-    warning_count: i64,
-    avg_latency_ms: Option<i64>,
-    timeline_runs: &[ChannelMonitorRun],
-) -> ChannelStatusWindowSummary {
-    let latest = timeline_runs.first();
+        .map(|bucket| i64::from(bucket.counts.total))
+        .sum::<i64>();
+    let success_count = buckets
+        .iter()
+        .map(|bucket| i64::from(bucket.counts.available))
+        .sum::<i64>();
+    let failure_count = buckets
+        .iter()
+        .map(|bucket| i64::from(bucket.counts.unavailable))
+        .sum::<i64>();
+    let warning_count = buckets
+        .iter()
+        .map(|bucket| i64::from(bucket.counts.degraded + bucket.counts.skipped))
+        .sum::<i64>();
     ChannelStatusWindowSummary {
         window: window.to_string(),
         total_count,
         success_count,
         failure_count,
         warning_count,
-        availability_percent: (total_count > 0)
-            .then(|| success_count as f64 * 100.0 / total_count as f64),
-        avg_latency_ms,
+        availability_percent: percent(success_count, total_count),
+        avg_latency_ms: None,
         avg_endpoint_ping_ms: None,
-        last_checked_at: latest.map(run_checked_at),
-        latest_status: latest.map(|run| run.status.clone()),
-        latest_error_message: timeline_runs
+        last_checked_at: buckets
             .iter()
-            .find_map(|run| run.error_message.clone()),
-        timeline: timeline_runs
+            .rev()
+            .find(|bucket| bucket.counts.total > 0)
+            .map(|bucket| bucket.end_ms.to_string()),
+        latest_status: buckets
             .iter()
-            .map(|run| ChannelStatusTimelinePoint {
-                status: run.status.clone(),
-                latency_ms: run.latency_ms.or(run.duration_ms),
-                endpoint_ping_ms: None,
-                checked_at: run_checked_at(run),
-            })
-            .collect(),
+            .rev()
+            .find(|bucket| bucket.counts.total > 0)
+            .map(|bucket| legacy_bucket_status(bucket)),
+        latest_error_message: None,
+        timeline: Vec::new(),
     }
 }
 
-fn count_status(runs: &[ChannelMonitorRun], status: &str) -> i64 {
-    runs.iter().filter(|run| run.status == status).count() as i64
+fn legacy_status(outcome: ChannelStatusOutcome) -> String {
+    match outcome {
+        ChannelStatusOutcome::Available => "success",
+        ChannelStatusOutcome::Degraded => "warning",
+        ChannelStatusOutcome::Unavailable => "failed",
+        ChannelStatusOutcome::Skipped | ChannelStatusOutcome::Missing => "skipped",
+    }
+    .to_string()
 }
 
-fn run_checked_at(run: &ChannelMonitorRun) -> String {
-    run.finished_at
-        .clone()
-        .unwrap_or_else(|| run.started_at.clone())
+fn legacy_bucket_status(bucket: &ChannelStatusBucket) -> String {
+    if bucket.counts.unavailable > 0 {
+        "failed"
+    } else if bucket.counts.degraded > 0 || bucket.counts.skipped > 0 {
+        "warning"
+    } else if bucket.counts.available > 0 {
+        "success"
+    } else {
+        "skipped"
+    }
+    .to_string()
 }
 
-fn parse_millis(value: &str) -> Option<i64> {
-    value.trim().parse().ok()
+fn percent(count: i64, total: i64) -> Option<f64> {
+    (total > 0).then(|| count as f64 * 100.0 / total as f64)
+}
+
+fn average_latency(values: impl Iterator<Item = i64>) -> Option<i64> {
+    let values = values.collect::<Vec<_>>();
+    (!values.is_empty()).then(|| values.iter().sum::<i64>() / values.len() as i64)
+}
+
+fn tail<T>(items: &[T], count: usize) -> &[T] {
+    if items.len() <= count {
+        items
+    } else {
+        &items[items.len() - count..]
+    }
 }

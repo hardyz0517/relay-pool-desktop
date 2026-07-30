@@ -23,11 +23,11 @@ use crate::{
     persistence::runtime::PersistenceHandle,
     runtime_composition::{RuntimeCompositionError, WorkRuntimeBundle},
     services::{
-        channel_monitors::ChannelMonitorRunnerPort,
         collectors::{
             drivers::{static_provider_entries, REQUIRED_PROVIDER_KINDS},
             orchestration::{ProviderRegistry, ProviderRegistryError},
         },
+        monitoring::runner::MonitoringRunner,
         pricing_catalog::StaticBuiltinModelBasePriceCatalog,
         proxy::runtime::ProxyRuntimeState,
         secrets::vault::DataKeyVault,
@@ -163,7 +163,7 @@ pub(crate) fn compose_request_logs_command_facade(
 
 pub(crate) fn compose_channel_monitoring_command_facade(
     services: &AppServices,
-    runner: Arc<dyn ChannelMonitorRunnerPort>,
+    runner: Arc<MonitoringRunner>,
 ) -> ChannelMonitoringCommandFacade {
     ChannelMonitoringCommandFacade::new(Arc::clone(&services.monitoring), runner)
 }

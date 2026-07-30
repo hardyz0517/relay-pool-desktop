@@ -1,0 +1,25 @@
+{
+    "kind":  "status-monitoring-soak",
+    "startedAt":  "2026-07-30T02:32:28.0905333+08:00",
+    "finishedAt":  "2026-07-30T03:32:29.3902925+08:00",
+    "requestedDurationMinutes":  60,
+    "quick":  false,
+    "buildProfile":  "release",
+    "workload":  "mixed-provider-stream-retry-fallback-missing",
+    "commandPlan":  [
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_adapter_contracts -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_profile_golden -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_transport -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_orchestrator -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_execution_integration -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_faults -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_concurrency -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_scheduler -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_buckets_retention -- --nocapture",
+                        "cargo test --manifest-path src-tauri/Cargo.toml --release --test monitoring_read_model -- --nocapture"
+                    ],
+    "iterations":  513,
+    "failures":  [
+
+                 ]
+}

@@ -1,11 +1,11 @@
 pub mod capture;
-pub mod channel_monitors;
 pub mod collectors;
 pub mod data_store;
 pub mod endpoint_ping;
 pub mod group_categories;
 pub mod health;
 pub mod logs;
+pub mod monitoring;
 pub mod outbound;
 pub mod pricing;
 pub(crate) mod pricing_catalog;

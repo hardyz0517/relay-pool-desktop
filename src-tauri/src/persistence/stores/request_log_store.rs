@@ -1,14 +1,9 @@
 use sqlx::{Row, SqliteConnection};
 
-use crate::{
-    models::{pricing::RequestCostEstimate, proxy::RequestLog, routing::StationKeyHealth},
-    persistence::read_session::ReadSession,
-};
+use crate::{models::proxy::RequestLog, persistence::read_session::ReadSession};
 
 use super::super::{error::PersistenceError, write_session::WriteSession};
-use super::request_log_write::{
-    AttemptHealthUpdate, AttemptTerminalWrite, RequestStartWrite, RequestTerminalWrite,
-};
+use super::request_log_write::{AttemptTerminalWrite, RequestStartWrite, RequestTerminalWrite};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct RequestLogStore;
@@ -27,28 +22,6 @@ pub(crate) struct AttemptPersistenceResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequestTerminalPersistenceResult {
     pub finalized: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CompletedMonitorRequestWrite {
-    pub(crate) request_id: String,
-    pub(crate) started_at: String,
-    pub(crate) finished_at: Option<String>,
-    pub(crate) duration_ms: Option<i64>,
-    pub(crate) method: String,
-    pub(crate) path: String,
-    pub(crate) endpoint: String,
-    pub(crate) model: String,
-    pub(crate) stream: bool,
-    pub(crate) status: String,
-    pub(crate) station_key_id: String,
-    pub(crate) station_id: String,
-    pub(crate) upstream_base_url: String,
-    pub(crate) reasoning_effort: Option<String>,
-    pub(crate) first_token_ms: Option<i64>,
-    pub(crate) pricing: RequestCostEstimate,
-    pub(crate) group_binding_id: Option<String>,
-    pub(crate) normalization_status: Option<String>,
 }
 
 impl RequestLogStore {
@@ -108,76 +81,6 @@ impl RequestLogStore {
         sqlx::query("DELETE FROM request_logs")
             .execute(write.connection())
             .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn insert_completed_monitor_observation(
-        &self,
-        write: &mut WriteSession,
-        record: &CompletedMonitorRequestWrite,
-        created_at: &str,
-    ) -> Result<(), PersistenceError> {
-        let cost = &record.pricing;
-
-        sqlx::query(
-            r#"
-            INSERT INTO request_logs (
-                id, request_id, started_at, finished_at, duration_ms, method, path,
-                endpoint, model, stream, status, lifecycle_status, station_key_id,
-                station_id, upstream_base_url, fallback_count,
-                route_policy, route_reason, completion_source, prompt_tokens,
-                completion_tokens, total_tokens, cache_creation_tokens,
-                cache_read_tokens, reasoning_effort, first_token_ms, billing_mode,
-                estimated_input_cost, estimated_output_cost, estimated_total_cost,
-                base_input_cost, base_output_cost, base_fixed_cost, base_total_cost,
-                cost_currency, pricing_rule_id, pricing_source, cost_status,
-                group_binding_id, normalization_status, created_at
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'completed',
-                ?12, ?13, ?14, 0, 'channel_monitor', 'monitor_probe', 'channel_monitor',
-                ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
-                ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36
-            )
-            "#,
-        )
-        .bind(&record.request_id)
-        .bind(&record.request_id)
-        .bind(&record.started_at)
-        .bind(record.finished_at.as_deref())
-        .bind(record.duration_ms)
-        .bind(&record.method)
-        .bind(&record.path)
-        .bind(&record.endpoint)
-        .bind(&record.model)
-        .bind(i64::from(record.stream as u8))
-        .bind(&record.status)
-        .bind(&record.station_key_id)
-        .bind(&record.station_id)
-        .bind(&record.upstream_base_url)
-        .bind(cost.prompt_tokens)
-        .bind(cost.completion_tokens)
-        .bind(cost.total_tokens)
-        .bind(cost.cache_creation_tokens)
-        .bind(cost.cache_read_tokens)
-        .bind(record.reasoning_effort.as_deref())
-        .bind(record.first_token_ms)
-        .bind(cost.billing_mode.as_deref())
-        .bind(cost.estimated_input_cost)
-        .bind(cost.estimated_output_cost)
-        .bind(cost.estimated_total_cost)
-        .bind(cost.base_input_cost)
-        .bind(cost.base_output_cost)
-        .bind(cost.base_fixed_cost)
-        .bind(cost.base_total_cost)
-        .bind(cost.cost_currency.as_deref())
-        .bind(cost.pricing_rule_id.as_deref())
-        .bind(cost.pricing_source.as_deref())
-        .bind(&cost.cost_status)
-        .bind(record.group_binding_id.as_deref())
-        .bind(record.normalization_status.as_deref())
-        .bind(created_at)
-        .execute(write.connection())
-        .await?;
         Ok(())
     }
 
@@ -273,10 +176,9 @@ impl RequestLogStore {
         .execute(session.connection())
         .await?;
 
-        let health_applied = apply_attempt_health(session.connection(), record).await?;
         Ok(AttemptPersistenceResult {
             inserted: true,
-            health_applied,
+            health_applied: false,
         })
     }
 
@@ -555,301 +457,6 @@ async fn request_attempt_by_request_and_ordinal(
     }))
 }
 
-async fn apply_attempt_health(
-    connection: &mut SqliteConnection,
-    record: &AttemptTerminalWrite,
-) -> Result<bool, PersistenceError> {
-    let health = match record.health_update {
-        AttemptHealthUpdate::Success => Some(("success", None)),
-        AttemptHealthUpdate::ObserveFailure => Some(("observe", None)),
-        AttemptHealthUpdate::Cooldown { retry_after_ms } => Some(("cooldown", retry_after_ms)),
-        AttemptHealthUpdate::HardFail => Some(("hard_fail", Some(15 * 60 * 1000))),
-        AttemptHealthUpdate::Neutral => None,
-    };
-
-    let Some((mode, retry_after_ms)) = health else {
-        return Ok(false);
-    };
-    if mode == "neutral" {
-        return Ok(false);
-    }
-
-    let now_ms = record.terminal_at_ms;
-    let now = now_ms.to_string();
-    let current = station_key_health_by_key_id(connection, &record.station_key_id, &now).await?;
-    let endpoint_revision = record.endpoint_revision;
-    let next = match mode {
-        "success" => StationKeyHealthMutation::success(
-            current,
-            endpoint_revision,
-            &now,
-            record.terminal_at_ms,
-        ),
-        "observe" => StationKeyHealthMutation::observe(
-            current,
-            endpoint_revision,
-            &now,
-            record.terminal_at_ms,
-        ),
-        "cooldown" => {
-            StationKeyHealthMutation::cooldown(current, endpoint_revision, &now, retry_after_ms)
-        }
-        "hard_fail" => StationKeyHealthMutation::hard_fail(current, endpoint_revision, &now),
-        _ => StationKeyHealthMutation::neutral(current, endpoint_revision, &now),
-    };
-    upsert_station_key_health(connection, &record.station_key_id, next).await?;
-    Ok(true)
-}
-
-struct StationKeyHealthMutation {
-    endpoint_revision: i64,
-    last_success_at: Option<String>,
-    last_failure_at: Option<String>,
-    consecutive_failures: i64,
-    success_count: i64,
-    failure_count: i64,
-    total_duration_ms: i64,
-    avg_latency_ms: Option<i64>,
-    last_error_summary: Option<String>,
-    cooldown_until: Option<String>,
-    updated_at: String,
-}
-
-impl StationKeyHealthMutation {
-    fn success(
-        current: crate::models::routing::StationKeyHealth,
-        endpoint_revision: i64,
-        now: &str,
-        duration_ms: i64,
-    ) -> Self {
-        let success_count = current.success_count + 1;
-        let total_duration_ms = current
-            .avg_latency_ms
-            .map(|avg| avg * current.success_count)
-            .unwrap_or(0)
-            + duration_ms.max(0);
-        let avg_latency_ms = if success_count > 0 {
-            Some(total_duration_ms / success_count)
-        } else {
-            None
-        };
-        Self {
-            endpoint_revision,
-            last_success_at: Some(now.to_string()),
-            last_failure_at: current.last_failure_at,
-            consecutive_failures: 0,
-            success_count,
-            failure_count: current.failure_count,
-            total_duration_ms,
-            avg_latency_ms,
-            last_error_summary: None,
-            cooldown_until: None,
-            updated_at: now.to_string(),
-        }
-    }
-
-    fn observe(
-        current: crate::models::routing::StationKeyHealth,
-        endpoint_revision: i64,
-        now: &str,
-        _duration_ms: i64,
-    ) -> Self {
-        let consecutive_failures = current.consecutive_failures + 1;
-        let cooldown_until = if consecutive_failures >= 3 {
-            Some(cooldown_until_with_threshold(consecutive_failures, 3, now))
-        } else {
-            None
-        };
-        Self {
-            endpoint_revision,
-            last_success_at: current.last_success_at,
-            last_failure_at: Some(now.to_string()),
-            consecutive_failures,
-            success_count: current.success_count,
-            failure_count: current.failure_count + 1,
-            total_duration_ms: current
-                .avg_latency_ms
-                .map(|avg| avg * current.success_count)
-                .unwrap_or(0),
-            avg_latency_ms: current.avg_latency_ms,
-            last_error_summary: current.last_error_summary,
-            cooldown_until,
-            updated_at: now.to_string(),
-        }
-    }
-
-    fn cooldown(
-        current: crate::models::routing::StationKeyHealth,
-        endpoint_revision: i64,
-        now: &str,
-        retry_after_ms: Option<i64>,
-    ) -> Self {
-        let consecutive_failures = current.consecutive_failures + 1;
-        let cooldown_until = retry_after_ms
-            .map(|retry_after_ms| now.parse::<i64>().unwrap_or(0) + retry_after_ms.max(0));
-        Self {
-            endpoint_revision,
-            last_success_at: current.last_success_at,
-            last_failure_at: Some(now.to_string()),
-            consecutive_failures,
-            success_count: current.success_count,
-            failure_count: current.failure_count + 1,
-            total_duration_ms: current
-                .avg_latency_ms
-                .map(|avg| avg * current.success_count)
-                .unwrap_or(0),
-            avg_latency_ms: current.avg_latency_ms,
-            last_error_summary: current.last_error_summary,
-            cooldown_until: cooldown_until.map(|value| value.to_string()),
-            updated_at: now.to_string(),
-        }
-    }
-
-    fn hard_fail(
-        current: crate::models::routing::StationKeyHealth,
-        endpoint_revision: i64,
-        now: &str,
-    ) -> Self {
-        let consecutive_failures = current.consecutive_failures + 1;
-        Self {
-            endpoint_revision,
-            last_success_at: current.last_success_at,
-            last_failure_at: Some(now.to_string()),
-            consecutive_failures,
-            success_count: current.success_count,
-            failure_count: current.failure_count + 1,
-            total_duration_ms: current
-                .avg_latency_ms
-                .map(|avg| avg * current.success_count)
-                .unwrap_or(0),
-            avg_latency_ms: current.avg_latency_ms,
-            last_error_summary: current.last_error_summary,
-            cooldown_until: Some((now.parse::<i64>().unwrap_or(0) + 15 * 60 * 1000).to_string()),
-            updated_at: now.to_string(),
-        }
-    }
-
-    fn neutral(
-        current: crate::models::routing::StationKeyHealth,
-        endpoint_revision: i64,
-        now: &str,
-    ) -> Self {
-        Self {
-            endpoint_revision,
-            last_success_at: current.last_success_at,
-            last_failure_at: current.last_failure_at,
-            consecutive_failures: current.consecutive_failures,
-            success_count: current.success_count,
-            failure_count: current.failure_count,
-            total_duration_ms: current
-                .avg_latency_ms
-                .map(|avg| avg * current.success_count)
-                .unwrap_or(0),
-            avg_latency_ms: current.avg_latency_ms,
-            last_error_summary: current.last_error_summary,
-            cooldown_until: current.cooldown_until,
-            updated_at: now.to_string(),
-        }
-    }
-}
-
-async fn station_key_health_by_key_id(
-    connection: &mut SqliteConnection,
-    station_key_id: &str,
-    now: &str,
-) -> Result<StationKeyHealth, PersistenceError> {
-    let row = sqlx::query(
-        "SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
-                    success_count, failure_count, avg_latency_ms, last_error_summary,
-                    cooldown_until, updated_at
-             FROM station_key_health WHERE station_key_id = ?",
-    )
-    .bind(station_key_id)
-    .fetch_optional(&mut *connection)
-    .await?
-    .map(|row| StationKeyHealth {
-        station_key_id: row.get(0),
-        last_success_at: row.get(1),
-        last_failure_at: row.get(2),
-        consecutive_failures: row.get(3),
-        success_count: row.get(4),
-        failure_count: row.get(5),
-        avg_latency_ms: row.get(6),
-        last_error_summary: row.get(7),
-        cooldown_until: row.get(8),
-        updated_at: row.get(9),
-    });
-    Ok(row.unwrap_or_else(|| StationKeyHealth {
-        station_key_id: station_key_id.to_string(),
-        last_success_at: None,
-        last_failure_at: None,
-        consecutive_failures: 0,
-        success_count: 0,
-        failure_count: 0,
-        avg_latency_ms: None,
-        last_error_summary: None,
-        cooldown_until: None,
-        updated_at: now.to_string(),
-    }))
-}
-
-async fn upsert_station_key_health(
-    connection: &mut SqliteConnection,
-    station_key_id: &str,
-    mutation: StationKeyHealthMutation,
-) -> Result<(), PersistenceError> {
-    sqlx::query(
-        "INSERT INTO station_key_health (
-            station_key_id, endpoint_revision, last_success_at, last_failure_at, consecutive_failures,
-            success_count, failure_count, total_duration_ms, avg_latency_ms,
-            last_error_summary, cooldown_until, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(station_key_id) DO UPDATE SET
-            endpoint_revision = excluded.endpoint_revision,
-            last_success_at = excluded.last_success_at,
-            last_failure_at = excluded.last_failure_at,
-            consecutive_failures = excluded.consecutive_failures,
-            success_count = excluded.success_count,
-            failure_count = excluded.failure_count,
-            total_duration_ms = excluded.total_duration_ms,
-            avg_latency_ms = excluded.avg_latency_ms,
-            last_error_summary = excluded.last_error_summary,
-            cooldown_until = excluded.cooldown_until,
-            updated_at = excluded.updated_at",
-    )
-    .bind(station_key_id)
-    .bind(mutation.endpoint_revision)
-    .bind(mutation.last_success_at)
-    .bind(mutation.last_failure_at)
-    .bind(mutation.consecutive_failures)
-    .bind(mutation.success_count)
-    .bind(mutation.failure_count)
-    .bind(mutation.total_duration_ms)
-    .bind(mutation.avg_latency_ms)
-    .bind(mutation.last_error_summary)
-    .bind(mutation.cooldown_until)
-    .bind(mutation.updated_at)
-    .execute(&mut *connection)
-    .await?;
-    Ok(())
-}
-
-fn cooldown_until_with_threshold(
-    consecutive_failures: i64,
-    consecutive_failure_threshold: i64,
-    now: &str,
-) -> String {
-    let now = now.parse::<i64>().unwrap_or(0);
-    let threshold = consecutive_failure_threshold.max(1);
-    let duration_ms = match consecutive_failures - threshold {
-        failures_before_threshold if failures_before_threshold < 0 => 0,
-        0 => 2 * 60 * 1000,
-        1 => 5 * 60 * 1000,
-        _ => 15 * 60 * 1000,
-    };
-    (now + duration_ms).to_string()
-}
-
 #[cfg(test)]
 mod v2_tests {
     use std::collections::BTreeSet;
@@ -871,10 +478,10 @@ mod v2_tests {
 
     fn binary() -> BinaryCompatibility {
         BinaryCompatibility {
-            app_version: Version::new(0, 3, 1),
+            app_version: Version::new(0, 3, 3),
             database_generation: 2,
-            readable_schema: 1..=8,
-            writable_schema: BTreeSet::from([8]),
+            readable_schema: 1..=9,
+            writable_schema: BTreeSet::from([9]),
         }
     }
 
@@ -1026,7 +633,7 @@ mod v2_tests {
     }
 
     #[tokio::test]
-    async fn attempt_and_health_are_applied_once() {
+    async fn attempt_terminal_is_applied_once_without_store_level_health_side_effect() {
         let runtime = runtime().await;
         let store = RequestLogStore;
         seed_attempt_owner(&runtime).await;
@@ -1039,31 +646,28 @@ mod v2_tests {
         session.commit().await.expect("commit");
         let attempt = attempt_record("req-attempt");
         let mut first = runtime.begin_write().await.expect("write");
-        assert!(
-            store
-                .finish_attempt(&mut first, &attempt)
-                .await
-                .expect("attempt")
-                .inserted
-        );
+        let first_outcome = store
+            .finish_attempt(&mut first, &attempt)
+            .await
+            .expect("attempt");
+        assert!(first_outcome.inserted);
+        assert!(!first_outcome.health_applied);
         first.commit().await.expect("commit");
         let mut duplicate = runtime.begin_write().await.expect("write");
-        assert!(
-            !store
-                .finish_attempt(&mut duplicate, &attempt)
-                .await
-                .expect("duplicate")
-                .inserted
-        );
+        let duplicate_outcome = store
+            .finish_attempt(&mut duplicate, &attempt)
+            .await
+            .expect("duplicate");
+        assert!(!duplicate_outcome.inserted);
+        assert!(!duplicate_outcome.health_applied);
         duplicate.commit().await.expect("commit");
         let mut read = runtime.begin_read().await.expect("read");
-        let row = sqlx::query("SELECT COUNT(*), success_count FROM request_attempts a JOIN station_key_health h ON h.station_key_id = a.station_key_id WHERE a.request_id = ?")
+        let row = sqlx::query("SELECT COUNT(*) FROM request_attempts WHERE request_id = ?")
             .bind("req-attempt")
             .fetch_one(read.connection())
             .await
-            .expect("health row");
+            .expect("attempt row");
         assert_eq!(row.get::<i64, _>(0), 1);
-        assert_eq!(row.get::<i64, _>(1), 1);
     }
 
     async fn seed_attempt_owner(runtime: &PersistenceRuntime) {

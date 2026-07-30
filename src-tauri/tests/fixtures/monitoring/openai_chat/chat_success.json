@@ -1,0 +1,20 @@
+{
+  "id": "chatcmpl_probe",
+  "object": "chat.completion",
+  "model": "gpt-4.1-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "RP_ANSWER=42"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 5,
+    "completion_tokens": 6,
+    "total_tokens": 11
+  }
+}

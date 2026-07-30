@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "51309a9ca7e305d0940ea679d4907970b0a0cc025f2f9e536187cdd240709571";
+    "288f1b11d724e61a5ade2ab87f8268cf4ce440c2995ae7f1caf346d88efbd7c6";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -113,6 +113,10 @@ macro_rules! ipc_command_registry {
             list_channel_monitor_summaries => $crate::commands::channel_monitoring::list_channel_monitor_summaries,
             list_channel_status_summaries => $crate::commands::channel_status::list_channel_status_summaries,
             load_channel_status_workspace => $crate::commands::channel_status::load_channel_status_workspace,
+            list_channel_monitor_executions => $crate::commands::channel_status::list_channel_monitor_executions,
+            get_channel_monitor_execution => $crate::commands::channel_status::get_channel_monitor_execution,
+            list_channel_monitor_attempts => $crate::commands::channel_status::list_channel_monitor_attempts,
+            list_monitoring_capabilities => $crate::commands::channel_status::list_monitoring_capabilities,
             load_pricing_comparison_workspace => $crate::commands::pricing_workspace::load_pricing_comparison_workspace,
             create_channel_monitor => $crate::commands::channel_monitoring::create_channel_monitor,
             update_channel_monitor => $crate::commands::channel_monitoring::update_channel_monitor,
@@ -124,6 +128,7 @@ macro_rules! ipc_command_registry {
             duplicate_channel_monitor_template => $crate::commands::channel_monitoring::duplicate_channel_monitor_template,
             delete_channel_monitor_template => $crate::commands::channel_monitoring::delete_channel_monitor_template,
             run_channel_monitor_now => $crate::commands::channel_monitoring::run_channel_monitor_now,
+            cancel_channel_monitor_execution => $crate::commands::channel_monitoring::cancel_channel_monitor_execution,
             get_station_key_health => $crate::commands::routing_health::get_station_key_health,
             get_operation_status => $crate::commands::operations::get_operation_status,
             cancel_operation => $crate::commands::operations::cancel_operation,
@@ -519,14 +524,36 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
-        "load_channel_status_workspace" => {
-            migrated_read("EmptyInputDto", "ChannelStatusWorkspaceDto")
+        "load_channel_status_workspace" => migrated_read(
+            "ChannelStatusWorkspaceInputDto",
+            "ChannelStatusWorkspaceDto",
+        ),
+        "list_channel_monitor_executions" => migrated_read(
+            "ChannelMonitorExecutionListInputDto",
+            "ChannelMonitorExecutionPageDto",
+        ),
+        "get_channel_monitor_execution" => migrated_read(
+            "ChannelMonitorExecutionIdInputDto",
+            "ChannelMonitorExecutionDetailDto",
+        ),
+        "list_channel_monitor_attempts" => migrated_read(
+            "ChannelMonitorAttemptHistoryInputDto",
+            "ChannelMonitorAttemptPageDto",
+        ),
+        "list_monitoring_capabilities" => {
+            migrated_read("EmptyInputDto", "MonitoringCapabilityCatalogDto")
         }
         "run_channel_monitor_now" => migrated_mutation(
-            "ChannelMonitorIdInputDto",
-            "Vec<ChannelMonitorRunDto>",
+            "RunChannelMonitorNowInputDto",
+            "RunChannelMonitorReceiptDto",
             "non_idempotent",
             true,
+        ),
+        "cancel_channel_monitor_execution" => migrated_mutation(
+            "CancelChannelMonitorExecutionInputDto",
+            "CancelChannelMonitorExecutionReceiptDto",
+            "idempotent",
+            false,
         ),
         "detect_sub2api_station"
         | "collect_sub2api_station"
@@ -1102,12 +1129,32 @@ export function deleteChannelMonitorTemplate(input: ChannelMonitorMutationIdInpu
   return invokeCommand<void>("delete_channel_monitor_template", { input });
 }
 
-export function loadChannelStatusWorkspace(input: EmptyInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
+export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
   return invokeCommand<ChannelStatusWorkspaceDto>("load_channel_status_workspace", { input });
 }
 
-export function runChannelMonitorNow(input: ChannelMonitorIdInputDto): Promise<ChannelMonitorRunDto[]> {
-  return invokeNonIdempotent<ChannelMonitorRunDto[]>("run_channel_monitor_now", { input });
+export function listChannelMonitorExecutions(input: ChannelMonitorExecutionListInputDto = {}): Promise<ChannelMonitorExecutionPageDto> {
+  return invokeCommand<ChannelMonitorExecutionPageDto>("list_channel_monitor_executions", { input });
+}
+
+export function getChannelMonitorExecution(input: ChannelMonitorExecutionIdInputDto): Promise<ChannelMonitorExecutionDetailDto> {
+  return invokeCommand<ChannelMonitorExecutionDetailDto>("get_channel_monitor_execution", { input });
+}
+
+export function listChannelMonitorAttempts(input: ChannelMonitorAttemptHistoryInputDto): Promise<ChannelMonitorAttemptPageDto> {
+  return invokeCommand<ChannelMonitorAttemptPageDto>("list_channel_monitor_attempts", { input });
+}
+
+export function listMonitoringCapabilities(input: EmptyInputDto = {}): Promise<MonitoringCapabilityCatalogDto> {
+  return invokeCommand<MonitoringCapabilityCatalogDto>("list_monitoring_capabilities", { input });
+}
+
+export function runChannelMonitorNow(input: RunChannelMonitorNowInputDto): Promise<RunChannelMonitorReceiptDto> {
+  return invokeNonIdempotent<RunChannelMonitorReceiptDto>("run_channel_monitor_now", { input });
+}
+
+export function cancelChannelMonitorExecution(input: CancelChannelMonitorExecutionInputDto): Promise<CancelChannelMonitorExecutionReceiptDto> {
+  return invokeCommand<CancelChannelMonitorExecutionReceiptDto>("cancel_channel_monitor_execution", { input });
 }
 
 export function detectSub2apiStation(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
@@ -1625,7 +1672,7 @@ mod tests {
     #[test]
     fn channel_monitor_operations_have_closed_schemas_and_frozen_semantics() {
         let workspace = command_contract("load_channel_status_workspace");
-        assert_eq!(workspace.input, "EmptyInputDto");
+        assert_eq!(workspace.input, "ChannelStatusWorkspaceInputDto");
         assert_eq!(workspace.output, "ChannelStatusWorkspaceDto");
         assert_eq!(workspace.mutation_kind, "read");
         assert_eq!(workspace.runtime_validation, "rust_dto_pre_application");
@@ -1633,8 +1680,8 @@ mod tests {
         assert!(!workspace.result_unknown);
 
         let run_now = command_contract("run_channel_monitor_now");
-        assert_eq!(run_now.input, "ChannelMonitorIdInputDto");
-        assert_eq!(run_now.output, "Vec<ChannelMonitorRunDto>");
+        assert_eq!(run_now.input, "RunChannelMonitorNowInputDto");
+        assert_eq!(run_now.output, "RunChannelMonitorReceiptDto");
         assert_eq!(run_now.mutation_kind, "non_idempotent");
         assert_eq!(run_now.runtime_validation, "rust_dto_pre_application");
         assert!(!run_now.transport_retry);
@@ -2063,7 +2110,7 @@ mod tests {
                 "duplicate_channel_monitor_template",
                 "ChannelMonitorRequestTemplateDto",
             ),
-            ("run_channel_monitor_now", "ChannelMonitorRunDto[]"),
+            ("run_channel_monitor_now", "RunChannelMonitorReceiptDto"),
             ("detect_sub2api_station", "CollectorRunResultDto"),
             ("collect_sub2api_station", "CollectorRunResultDto"),
             ("detect_station_info", "CollectorRunResultDto"),

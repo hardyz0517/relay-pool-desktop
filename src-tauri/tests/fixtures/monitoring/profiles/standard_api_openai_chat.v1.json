@@ -1,0 +1,24 @@
+{
+  "id": "standard_api",
+  "version": 1,
+  "enabled": true,
+  "supported_protocols": [
+    "open_ai_chat",
+    "open_ai_responses",
+    "anthropic_messages",
+    "gemini_native",
+    "xai_grok",
+    "generic_open_ai"
+  ],
+  "method": "POST",
+  "path": "{adapter_path}",
+  "header_names": [
+    "accept",
+    "content-type"
+  ],
+  "body_defaults": [
+    "max_tokens",
+    "stream"
+  ],
+  "profile_hash": "bb2d9ee70897dabb5945ad8be41223d5aefeae5011487d6919b8d9c6fb0da642"
+}

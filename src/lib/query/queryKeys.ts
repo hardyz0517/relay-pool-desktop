@@ -18,4 +18,8 @@ export const queryKeys = {
   channelMonitoring: ["channelMonitoring"] as const,
   pricing: ["pricing"] as const,
   channelStatus: ["channelStatus"] as const,
+  channelMonitorExecutions: ["channelMonitorExecutions"] as const,
+  channelMonitorExecution: (executionId: string) => ["channelMonitorExecution", executionId] as const,
+  channelMonitorAttempts: ["channelMonitorAttempts"] as const,
+  monitoringCapabilities: ["monitoringCapabilities"] as const,
 } as const;

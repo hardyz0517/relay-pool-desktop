@@ -124,6 +124,32 @@ It owns:
 - pricing rule source
 - cost status
 
+## Channel Status / Status Monitoring
+
+`Channel Status` is the local desktop workspace for synthetic monitor facts, station-key health, and recent availability trends.
+
+It owns:
+
+- monitor definitions for station or station-key targets;
+- typed protocol selection for OpenAI Chat, OpenAI Responses, Anthropic Messages, Gemini native, xAI/Grok, and Generic OpenAI-compatible targets;
+- optional, versioned client profiles for standard API and controlled CLI compatibility images;
+- scheduled and manual monitor executions;
+- one terminal target result per station key per execution;
+- probe attempts for primary/fallback model tries and retries;
+- semantic validation evidence instead of HTTP-status-only success;
+- health observations that flow into the shared `station_key_health` state machine;
+- backend-owned recent, 24h, 7d, and 30d status buckets for the horizontal status workspace.
+
+It does not own:
+
+- public status pages;
+- cloud notification or webhook delivery;
+- provider secrets;
+- real user request logs;
+- a second health universe separate from routing health.
+
+Legacy `channel_monitor_runs` may remain read-only for one release observation cycle. New monitor facts are written only through `MonitorExecution -> MonitorTargetResult -> ProbeAttempt`.
+
 ## Group Binding
 
 `Group Binding` is the durable relationship between a Station, its available groups, and the Station Keys that route through those groups.

@@ -496,130 +496,6 @@ impl RoutingStore {
         .await?;
         station_endpoint_health_by_id(write, station_id, expected_endpoint_revision).await
     }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn record_station_key_connectivity(
-        &self,
-        write: &mut WriteSession,
-        station_key_id: &str,
-        station_id: &str,
-        expected_endpoint_revision: i64,
-        ok: bool,
-        duration_ms: i64,
-        error_summary: &str,
-        now: &str,
-    ) -> Result<(), PersistenceError> {
-        assert_station_endpoint_revision(write, station_id, expected_endpoint_revision).await?;
-        let belongs_to_station = sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM station_keys WHERE id = ?1 AND station_id = ?2)",
-        )
-        .bind(station_key_id)
-        .bind(station_id)
-        .fetch_one(write.connection())
-        .await?;
-        if belongs_to_station == 0 {
-            return Err(PersistenceError::NotFound);
-        }
-        let current =
-            station_key_health_for_write(write, station_key_id, expected_endpoint_revision)
-                .await?
-                .unwrap_or_else(|| default_station_key_health(station_key_id));
-        let (
-            last_success_at,
-            last_failure_at,
-            consecutive_failures,
-            success_count,
-            failure_count,
-            total_duration_ms,
-            avg_latency_ms,
-            last_error_summary,
-            cooldown_until,
-        ) = if ok {
-            let success_count = current.success_count.saturating_add(1);
-            let total_duration_ms = current
-                .avg_latency_ms
-                .unwrap_or(0)
-                .saturating_mul(current.success_count)
-                .saturating_add(duration_ms.max(0));
-            (
-                Some(now.to_string()),
-                current.last_failure_at,
-                0,
-                success_count,
-                current.failure_count,
-                total_duration_ms,
-                Some(total_duration_ms / success_count.max(1)),
-                None,
-                None,
-            )
-        } else {
-            let consecutive_failures = current.consecutive_failures.saturating_add(1);
-            let cooldown_until = connectivity_cooldown_until(consecutive_failures, now);
-            (
-                current.last_success_at,
-                Some(now.to_string()),
-                consecutive_failures,
-                current.success_count,
-                current.failure_count.saturating_add(1),
-                current
-                    .avg_latency_ms
-                    .unwrap_or(0)
-                    .saturating_mul(current.success_count),
-                current.avg_latency_ms,
-                Some(trim_error_summary(error_summary)),
-                cooldown_until,
-            )
-        };
-        sqlx::query(
-            r#"
-            INSERT INTO station_key_health (
-                station_key_id, endpoint_revision, last_success_at, last_failure_at,
-                consecutive_failures, success_count, failure_count, total_duration_ms,
-                avg_latency_ms, last_error_summary, cooldown_until, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-            ON CONFLICT(station_key_id) DO UPDATE SET
-                endpoint_revision = excluded.endpoint_revision,
-                last_success_at = excluded.last_success_at,
-                last_failure_at = excluded.last_failure_at,
-                consecutive_failures = excluded.consecutive_failures,
-                success_count = excluded.success_count,
-                failure_count = excluded.failure_count,
-                total_duration_ms = excluded.total_duration_ms,
-                avg_latency_ms = excluded.avg_latency_ms,
-                last_error_summary = excluded.last_error_summary,
-                cooldown_until = excluded.cooldown_until,
-                updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(station_key_id)
-        .bind(expected_endpoint_revision)
-        .bind(last_success_at)
-        .bind(last_failure_at)
-        .bind(consecutive_failures)
-        .bind(success_count)
-        .bind(failure_count)
-        .bind(total_duration_ms)
-        .bind(avg_latency_ms)
-        .bind(last_error_summary)
-        .bind(cooldown_until)
-        .bind(now)
-        .execute(write.connection())
-        .await?;
-        sqlx::query(
-            r#"
-            UPDATE station_keys
-            SET status = ?1, last_checked_at = ?2, updated_at = ?2
-            WHERE id = ?3 AND station_id = ?4
-            "#,
-        )
-        .bind(if ok { "healthy" } else { "error" })
-        .bind(now)
-        .bind(station_key_id)
-        .bind(station_id)
-        .execute(write.connection())
-        .await?;
-        Ok(())
-    }
 }
 
 async fn load_runtime_secrets(
@@ -879,27 +755,6 @@ async fn station_endpoint_health_by_id(
     Ok(row_to_station_endpoint_health(row))
 }
 
-async fn station_key_health_for_write(
-    write: &mut WriteSession,
-    station_key_id: &str,
-    endpoint_revision: i64,
-) -> Result<Option<StationKeyHealth>, PersistenceError> {
-    let row = sqlx::query(
-        r#"
-        SELECT station_key_id, last_success_at, last_failure_at, consecutive_failures,
-               success_count, failure_count, avg_latency_ms, last_error_summary,
-               cooldown_until, updated_at
-        FROM station_key_health
-        WHERE station_key_id = ?1 AND endpoint_revision = ?2
-        "#,
-    )
-    .bind(station_key_id)
-    .bind(endpoint_revision)
-    .fetch_optional(write.connection())
-    .await?;
-    Ok(row.map(row_to_station_key_health))
-}
-
 fn row_to_station_endpoint_health(row: sqlx::sqlite::SqliteRow) -> StationEndpointHealth {
     StationEndpointHealth {
         station_id: row.get("station_id"),
@@ -910,26 +765,6 @@ fn row_to_station_endpoint_health(row: sqlx::sqlite::SqliteRow) -> StationEndpoi
         error_summary: row.get("error_summary"),
         updated_at: row.get("updated_at"),
     }
-}
-
-fn connectivity_cooldown_until(consecutive_failures: i64, now: &str) -> Option<String> {
-    let now = now.parse::<i64>().ok()?;
-    let duration_ms = match consecutive_failures {
-        failures if failures < 3 => return None,
-        3 => 2 * 60 * 1000,
-        4 => 5 * 60 * 1000,
-        _ => 15 * 60 * 1000,
-    };
-    Some(now.saturating_add(duration_ms).to_string())
-}
-
-fn trim_error_summary(value: &str) -> String {
-    let mut chars = value.trim().chars();
-    let mut summary = chars.by_ref().take(160).collect::<String>();
-    if chars.next().is_some() {
-        summary.push_str("...");
-    }
-    summary
 }
 
 fn required_setting<'a>(

@@ -1,14 +1,10 @@
 use sqlx::{Row, SqliteConnection};
 
 use crate::{
-    models::{
-        channel_monitors::{
-            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
-            ChannelMonitorRunCursor, ChannelMonitorRunPage, CreateChannelMonitorInput,
-            CreateChannelMonitorRunInput, CreateChannelMonitorTemplateInput,
-            UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
-        },
-        secrets::redact_text,
+    models::channel_monitors::{
+        ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun, ChannelMonitorRunCursor,
+        ChannelMonitorRunPage, CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
+        UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
     },
     persistence::{
         error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
@@ -43,14 +39,6 @@ pub(crate) struct NewMonitorRow {
 pub(crate) struct MonitorPatch {
     pub(crate) now: String,
     pub(crate) input: UpdateChannelMonitorInput,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct NewMonitorRunRow {
-    pub(crate) id: String,
-    pub(crate) now: String,
-    pub(crate) next_run_at: String,
-    pub(crate) input: CreateChannelMonitorRunInput,
 }
 
 #[derive(Debug, Clone)]
@@ -350,103 +338,6 @@ impl MonitoringStore {
         .fetch_all(read.connection())
         .await?;
         rows.into_iter().map(row_to_monitor).collect()
-    }
-
-    pub(crate) async fn insert_run_and_advance_monitor(
-        &self,
-        write: &mut WriteSession,
-        row: NewMonitorRunRow,
-    ) -> Result<ChannelMonitorRun, PersistenceError> {
-        validate_run(write.connection(), &row.input).await?;
-        let error_message = row
-            .input
-            .error_message
-            .as_deref()
-            .map(redact_text)
-            .filter(|value| !value.trim().is_empty());
-        sqlx::query(
-            r#"
-            INSERT INTO channel_monitor_runs (
-                id, monitor_id, template_id, station_id, station_key_id, status,
-                started_at, finished_at, duration_ms, http_status, latency_ms,
-                response_model, fallback_model, error_message, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-            "#,
-        )
-        .bind(&row.id)
-        .bind(&row.input.monitor_id)
-        .bind(&row.input.template_id)
-        .bind(&row.input.station_id)
-        .bind(normalize_optional(&row.input.station_key_id))
-        .bind(row.input.status.trim())
-        .bind(&row.input.started_at)
-        .bind(normalize_optional(&row.input.finished_at))
-        .bind(row.input.duration_ms)
-        .bind(row.input.http_status)
-        .bind(row.input.latency_ms)
-        .bind(normalize_optional(&row.input.response_model))
-        .bind(normalize_optional(&row.input.fallback_model))
-        .bind(&error_message)
-        .bind(&row.now)
-        .execute(write.connection())
-        .await?;
-
-        let last_run_at = row
-            .input
-            .finished_at
-            .as_deref()
-            .unwrap_or(&row.input.started_at);
-        let changed = sqlx::query(
-            r#"
-            UPDATE channel_monitors
-            SET last_run_at = ?1,
-                last_run_id = ?2,
-                next_run_at = ?3,
-                last_status = ?4,
-                last_error_message = ?5,
-                updated_at = ?6
-            WHERE id = ?7
-              AND (
-                last_run_at IS NULL
-                OR CAST(last_run_at AS INTEGER) < CAST(?1 AS INTEGER)
-                OR (
-                    CAST(last_run_at AS INTEGER) = CAST(?1 AS INTEGER)
-                    AND COALESCE(last_run_id, '') < ?2
-                )
-              )
-            "#,
-        )
-        .bind(last_run_at)
-        .bind(&row.id)
-        .bind(&row.next_run_at)
-        .bind(row.input.status.trim())
-        .bind(&error_message)
-        .bind(&row.now)
-        .bind(&row.input.monitor_id)
-        .execute(write.connection())
-        .await?
-        .rows_affected();
-        if changed > 1 {
-            return Err(PersistenceError::InvariantViolation(
-                "monitor run advanced more than one monitor".into(),
-            ));
-        }
-        run_by_id(write.connection(), &row.id).await
-    }
-
-    pub(crate) async fn monitor_schedule(
-        &self,
-        write: &mut WriteSession,
-        monitor_id: &str,
-    ) -> Result<(i64, i64), PersistenceError> {
-        let row = sqlx::query(
-            "SELECT interval_seconds, jitter_seconds FROM channel_monitors WHERE id = ?1",
-        )
-        .bind(monitor_id)
-        .fetch_optional(write.connection())
-        .await?
-        .ok_or(PersistenceError::NotFound)?;
-        Ok((row.get("interval_seconds"), row.get("jitter_seconds")))
     }
 
     pub(crate) async fn list_run_page(
@@ -835,67 +726,6 @@ async fn validate_monitor_owners(
             } else {
                 Err(PersistenceError::ConstraintViolation)
             }
-        }
-        _ => Err(PersistenceError::ConstraintViolation),
-    }
-}
-
-async fn validate_run(
-    connection: &mut SqliteConnection,
-    input: &CreateChannelMonitorRunInput,
-) -> Result<(), PersistenceError> {
-    let started_at = parse_millis(&input.started_at);
-    let finished_at = input.finished_at.as_deref().and_then(parse_millis);
-    if !matches!(
-        input.status.trim(),
-        "success" | "warning" | "failed" | "skipped"
-    ) || started_at.is_none()
-        || input
-            .finished_at
-            .as_deref()
-            .is_some_and(|value| parse_millis(value).is_none())
-        || finished_at
-            .zip(started_at)
-            .is_some_and(|(finished, started)| finished < started)
-        || input.duration_ms.is_some_and(|value| value < 0)
-        || input
-            .http_status
-            .is_some_and(|value| !(100..=599).contains(&value))
-        || input.latency_ms.is_some_and(|value| value < 0)
-    {
-        return Err(PersistenceError::ConstraintViolation);
-    }
-    let monitor = sqlx::query(
-        "SELECT station_id, station_key_id, template_id, target_type FROM channel_monitors WHERE id = ?1",
-    )
-    .bind(&input.monitor_id)
-    .fetch_optional(&mut *connection)
-    .await?
-    .ok_or(PersistenceError::NotFound)?;
-    let station_id: String = monitor.get("station_id");
-    let station_key_id: Option<String> = monitor.get("station_key_id");
-    let template_id: String = monitor.get("template_id");
-    let target_type: String = monitor.get("target_type");
-    if input.station_id != station_id || input.template_id != template_id {
-        return Err(PersistenceError::ConstraintViolation);
-    }
-    match target_type.as_str() {
-        "station_key" if input.station_key_id == station_key_id => Ok(()),
-        "station" => {
-            if let Some(run_key_id) = input.station_key_id.as_deref() {
-                let owned = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM station_keys WHERE id = ?1 AND station_id = ?2",
-                )
-                .bind(run_key_id)
-                .bind(&input.station_id)
-                .fetch_one(connection)
-                .await?
-                    == 1;
-                if !owned {
-                    return Err(PersistenceError::ConstraintViolation);
-                }
-            }
-            Ok(())
         }
         _ => Err(PersistenceError::ConstraintViolation),
     }

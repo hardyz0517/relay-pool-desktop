@@ -1,0 +1,11 @@
+{
+  "model": "vendor-compatible-model",
+  "choices": [
+    {
+      "message": {
+        "content": "RP_ANSWER=42"
+      },
+      "finish_reason": "stop"
+    }
+  ]
+}

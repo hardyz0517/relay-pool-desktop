@@ -12,7 +12,19 @@ import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
-import { loadChannelMonitoringWorkspace, loadChannelStatusWorkspace } from "@/lib/queries/channelQueries";
+import {
+  getChannelMonitorExecution,
+  listChannelMonitorAttempts,
+  listChannelMonitorExecutions,
+  listMonitoringCapabilities,
+  loadChannelMonitoringWorkspace,
+  loadChannelStatusWorkspace,
+} from "@/lib/queries/channelQueries";
+import type {
+  ChannelMonitorAttemptHistoryInput,
+  ChannelMonitorExecutionListInput,
+  ChannelStatusWorkspaceInput,
+} from "@/lib/types/channelMonitors";
 import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
 import { loadPricingComparisonWorkspace } from "@/lib/queries/pricingQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
@@ -135,12 +147,49 @@ export const localRoutingWorkspaceQueryOptions = () =>
     staleTime: 2_000,
   });
 
-export const channelStatusQueryOptions = (refetchInterval: number | false = false) =>
+export const channelStatusQueryOptions = (
+  refetchInterval: number | false = false,
+  input: ChannelStatusWorkspaceInput = {},
+) =>
   queryOptions({
-    queryKey: queryKeys.channelStatus,
-    queryFn: loadChannelStatusWorkspace,
+    queryKey: [...queryKeys.channelStatus, input],
+    queryFn: () => loadChannelStatusWorkspace(input),
     staleTime: 5_000,
     refetchInterval,
+  });
+
+export const channelMonitorExecutionsQueryOptions = (
+  input: ChannelMonitorExecutionListInput = {},
+) =>
+  queryOptions({
+    queryKey: [...queryKeys.channelMonitorExecutions, input],
+    queryFn: () => listChannelMonitorExecutions(input),
+    staleTime: 5_000,
+  });
+
+export const channelMonitorExecutionQueryOptions = (executionId: string | null) =>
+  queryOptions({
+    queryKey: queryKeys.channelMonitorExecution(executionId ?? ""),
+    enabled: Boolean(executionId),
+    queryFn: () => getChannelMonitorExecution(executionId ?? ""),
+    staleTime: 5_000,
+  });
+
+export const channelMonitorAttemptsQueryOptions = (
+  input: ChannelMonitorAttemptHistoryInput,
+) =>
+  queryOptions({
+    queryKey: [...queryKeys.channelMonitorAttempts, input],
+    enabled: Boolean(input.executionId),
+    queryFn: () => listChannelMonitorAttempts(input),
+    staleTime: 5_000,
+  });
+
+export const monitoringCapabilitiesQueryOptions = () =>
+  queryOptions({
+    queryKey: queryKeys.monitoringCapabilities,
+    queryFn: listMonitoringCapabilities,
+    staleTime: 60_000,
   });
 
 export const pricingComparisonQueryOptions = (refetchInterval: number | false = false) =>

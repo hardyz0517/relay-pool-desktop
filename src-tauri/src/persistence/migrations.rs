@@ -59,10 +59,10 @@ pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), Persistenc
 
 pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
-        app_version: Version::new(0, 3, 1),
+        app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=8,
-        writable_schema: BTreeSet::from([8]),
+        readable_schema: 1..=9,
+        writable_schema: BTreeSet::from([9]),
     }
 }
 

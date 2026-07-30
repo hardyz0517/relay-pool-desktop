@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(30);
+const COLLECTOR_BACKGROUND_INTERVAL: Duration = Duration::from_secs(30);
 const RUNNER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNNER_TASK_ID: &str = "station-collector-runner";
 const RUNNER_TASK_KIND: &str = "station_collector_runner";
@@ -287,7 +287,7 @@ async fn runner_loop_v2(
     port: Arc<dyn StationCollectorRunnerPort>,
     context: TaskRunContext,
 ) -> Result<(), TaskFailure> {
-    let mut interval = tokio::time::interval(RUNNER_POLL_INTERVAL);
+    let mut interval = tokio::time::interval(COLLECTOR_BACKGROUND_INTERVAL);
     loop {
         tokio::select! {
             _ = context.cancellation_token.cancelled() => {

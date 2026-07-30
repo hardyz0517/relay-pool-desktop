@@ -1,0 +1,19 @@
+{
+  "id": "msg_fixture",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet-20241022",
+  "stop_reason": "end_turn",
+  "content": [
+    {
+      "type": "text",
+      "text": "RP_ANSWER=42"
+    }
+  ],
+  "usage": {
+    "input_tokens": 7,
+    "output_tokens": 4,
+    "cache_creation_input_tokens": 1,
+    "cache_read_input_tokens": 2
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "resp_probe",
+  "object": "response",
+  "status": "incomplete",
+  "model": "gpt-4.1-mini",
+  "incomplete_details": {
+    "reason": "max_output_tokens"
+  }
+}

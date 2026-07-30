@@ -10,9 +10,13 @@ use crate::{
             CreateChannelMonitorTemplateInputDto, UpdateChannelMonitorInputDto,
             UpdateChannelMonitorTemplateInputDto,
         },
+        channel_monitor_operations::{
+            CancelChannelMonitorExecutionInputDto, CancelChannelMonitorExecutionReceiptDto,
+        },
         channel_monitor_reads::{
             ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
             ChannelMonitorRunDto, ChannelMonitorSummaryDto, ChannelMonitorSummaryInputDto,
+            RunChannelMonitorNowInputDto, RunChannelMonitorReceiptDto,
         },
         EmptyInputDto,
     },
@@ -191,13 +195,28 @@ pub async fn delete_channel_monitor_template(
 pub async fn run_channel_monitor_now(
     facade: State<'_, ChannelMonitoringCommandFacade>,
     input: Value,
-) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
+) -> Result<RunChannelMonitorReceiptDto, error::CommandError> {
     correlation::in_command_scope("run_channel_monitor_now", async {
-        let input = ChannelMonitorIdInputDto::parse(input)?;
+        let input = RunChannelMonitorNowInputDto::parse(input)?;
         facade
-            .run_channel_monitor_now(input.monitor_id)
+            .run_channel_monitor_now(input.monitor_id, input.trigger_request_id)
             .await
             .map_err(public_channel_monitor_run_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cancel_channel_monitor_execution(
+    facade: State<'_, ChannelMonitoringCommandFacade>,
+    input: Value,
+) -> Result<CancelChannelMonitorExecutionReceiptDto, error::CommandError> {
+    correlation::in_command_scope("cancel_channel_monitor_execution", async {
+        let input = CancelChannelMonitorExecutionInputDto::parse(input)?;
+        facade
+            .cancel_channel_monitor_execution(input.execution_id)
+            .await
+            .map_err(super::public_command_application_error)
     })
     .await
 }

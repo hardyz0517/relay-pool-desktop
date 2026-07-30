@@ -3,7 +3,6 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use crate::{
-    application::clock::{Clock, SystemClock},
     application::request_lifecycle::{
         attempt::{AttemptTerminal, AttemptTerminalRecord, HealthEffect},
         ports::{
@@ -11,6 +10,14 @@ use crate::{
             RequestStartAck,
         },
         request::{FinalRequestRecord, RequestStartRecord, RequestTerminal},
+    },
+    application::{
+        clock::{Clock, SystemClock},
+        health_transitions::HealthTransitionService,
+    },
+    models::health::{
+        HealthObservation, HealthObservationOutcome, HealthObservationSource, HealthWritebackMode,
+        TrafficEquivalence,
     },
     persistence::{
         error::PersistenceError,
@@ -30,6 +37,7 @@ use crate::{
 pub(crate) struct RequestFinalizationService {
     runtime: PersistenceHandle,
     clock: Arc<dyn Clock>,
+    health: HealthTransitionService,
 }
 
 impl RequestFinalizationService {
@@ -37,6 +45,7 @@ impl RequestFinalizationService {
         Self {
             runtime,
             clock: Arc::new(SystemClock),
+            health: HealthTransitionService::new(),
         }
     }
 }
@@ -67,6 +76,7 @@ impl RequestLifecycleStore for RequestFinalizationService {
         record: AttemptTerminalRecord,
     ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
         let runtime = self.runtime.clone();
+        let health = self.health;
         let write = map_attempt_terminal(record);
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
@@ -74,10 +84,20 @@ impl RequestLifecycleStore for RequestFinalizationService {
                 .finish_attempt(&mut session, &write)
                 .await
                 .map_err(map_persistence_error)?;
+            let mut health_applied = false;
+            if outcome.inserted {
+                if let Some(observation) = attempt_health_observation(&write) {
+                    health_applied = health
+                        .record_observation(session.connection(), observation)
+                        .await
+                        .map_err(map_persistence_error)?
+                        .health_applied;
+                }
+            }
             session.commit().await.map_err(map_persistence_error)?;
             Ok(AttemptCommitAck {
                 inserted: outcome.inserted,
-                health_applied: outcome.health_applied,
+                health_applied,
             })
         })
     }
@@ -101,6 +121,36 @@ impl RequestLifecycleStore for RequestFinalizationService {
             })
         })
     }
+}
+
+fn attempt_health_observation(record: &AttemptTerminalWrite) -> Option<HealthObservation> {
+    let outcome = match record.health_update {
+        AttemptHealthUpdate::Success => HealthObservationOutcome::Success,
+        AttemptHealthUpdate::ObserveFailure => HealthObservationOutcome::ObserveFailure,
+        AttemptHealthUpdate::Cooldown { .. } => HealthObservationOutcome::Cooldown,
+        AttemptHealthUpdate::HardFail => HealthObservationOutcome::HardFail,
+        AttemptHealthUpdate::Neutral => return None,
+    };
+    let source_event_id = format!("proxy:{}:{}", record.request_id, record.ordinal);
+    Some(HealthObservation {
+        id: format!("health-observation-{source_event_id}"),
+        station_key_id: record.station_key_id.clone(),
+        target_result_id: None,
+        source: HealthObservationSource::ProxyRequest,
+        source_event_id,
+        observed_at_ms: record.terminal_at_ms,
+        endpoint_revision: record.endpoint_revision,
+        outcome,
+        failure_kind: record.failure_kind.clone(),
+        latency_ms: Some(record.terminal_at_ms.saturating_sub(record.started_at_ms)),
+        retry_after_ms: match record.health_update {
+            AttemptHealthUpdate::Cooldown { retry_after_ms } => retry_after_ms,
+            _ => None,
+        },
+        error_summary: record.sanitized_detail.clone(),
+        writeback_mode: HealthWritebackMode::Authoritative,
+        traffic_equivalence: TrafficEquivalence::RealUserTraffic,
+    })
 }
 
 fn map_request_start(record: RequestStartRecord) -> RequestStartWrite {

@@ -114,7 +114,14 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) async fn prepare_capture_session_start(
+    pub(crate) async fn start_capture_session(
+        &self,
+        station_id: String,
+    ) -> Result<CaptureSessionStartPlan, CaptureCommandError> {
+        self.prepare_capture_session_start(station_id).await
+    }
+
+    async fn prepare_capture_session_start(
         &self,
         station_id: String,
     ) -> Result<CaptureSessionStartPlan, CaptureCommandError> {
@@ -275,12 +282,15 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) async fn web_authorization_cookie_url(
-        &self,
-        station_id: &str,
-    ) -> Result<String, CaptureCommandError> {
-        let station = self.stations.station_for_capture(station_id).await?;
-        Ok(station.website_url)
+    pub(crate) fn web_authorization_cookie_url<'a>(
+        &'a self,
+        station_id: &'a str,
+    ) -> BoxFuture<'a, Result<String, CaptureCommandError>> {
+        async move {
+            let station = self.stations.station_for_capture(station_id).await?;
+            Ok(station.website_url)
+        }
+        .boxed()
     }
 
     pub(crate) fn start_prepared_session(
