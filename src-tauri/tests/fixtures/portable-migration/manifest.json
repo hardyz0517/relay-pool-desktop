@@ -14,7 +14,7 @@
       "profile": "encrypted-secrets-v1",
       "requiredFeatures": [],
       "path": "v1/manifest-valid.json",
-      "sha256": "f1891a4874db0894b4c0e1605371f898e7898096eb3822b5634da3a21177fdca",
+      "sha256": "4eaa1f86407ff3e06def2832bbfe156e860f45639a9cb15bd8372780876f6e95",
       "expected": {
         "outcome": "valid",
         "summary": {
@@ -41,7 +41,7 @@
       "profile": "encrypted-secrets-v1",
       "requiredFeatures": [],
       "path": "v1/schema-fingerprint.txt",
-      "sha256": "81709e570828e28028a4aed698d5b27b006770aab81241e25d107d1ca68126f9",
+      "sha256": "9690d689f7013126dfb3e5eba4ae3b8fa926a07ddaa4f943596336ca9f85a73c",
       "expected": {
         "outcome": "valid",
         "reader": "V1EncryptedSecrets"
@@ -111,7 +111,7 @@
         "future.required"
       ],
       "path": "v1/manifest-unknown-required-feature.json",
-      "sha256": "fe277d3317e2dfe2e4455d9c8c035454170c9a72f4f620fd935afbbdadad3606",
+      "sha256": "4b68683985be2709ca4ab43bdecf4307dae4fcfca05c70bc8cccb69794af6df3",
       "expected": {
         "outcome": "error",
         "error": "UnsupportedRequiredFeature"
@@ -132,7 +132,7 @@
       "profile": "encrypted-secrets-v1",
       "requiredFeatures": [],
       "path": "v1/manifest-too-new-schema.json",
-      "sha256": "97e2ec168ae62c5c1b35028fb4425ca0f92a5d454a4e4fdaffaee5bcdb54813c",
+      "sha256": "0f56725e123829dbd9c968e403acb6c36e7ea83fb3bf757dc8114b4c191e6722",
       "expected": {
         "outcome": "error",
         "error": "UnsupportedDatabaseSchema"
