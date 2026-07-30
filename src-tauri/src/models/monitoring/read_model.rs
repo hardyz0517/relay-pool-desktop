@@ -213,6 +213,15 @@ pub struct ChannelStatusTarget {
     pub station_key_name: Option<String>,
     pub group_name: Option<String>,
     pub effective_group_category: Option<String>,
+    pub endpoint_ping: Option<ChannelStatusEndpointPing>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelStatusEndpointPing {
+    pub status: String,
+    pub latency_ms: Option<i64>,
+    pub checked_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -223,6 +232,7 @@ pub struct ChannelStatusLatestResult {
     pub outcome: ChannelStatusOutcome,
     pub failure_kind: Option<String>,
     pub terminal_reason: Option<String>,
+    pub http_status: Option<i64>,
     pub latency_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
     pub semantic_confidence: String,
@@ -250,6 +260,7 @@ pub struct ChannelStatusRecentPoint {
     pub outcome: ChannelStatusOutcome,
     pub failure_kind: Option<String>,
     pub terminal_reason: Option<String>,
+    pub http_status: Option<i64>,
     pub latency_ms: Option<i64>,
     pub checked_at_ms: Option<i64>,
     pub used_fallback: bool,

@@ -88,18 +88,19 @@ fn endpoint_ping_response_result(
     response: crate::outbound::OutboundResponse,
 ) -> EndpointPingProbeResult {
     let status_code = response.status.as_u16();
+    let latency_ms = Some(started_at.elapsed().as_millis() as i64);
     if (200..400).contains(&status_code) {
         EndpointPingProbeResult {
             ok: true,
             status: "success".to_string(),
-            latency_ms: Some(started_at.elapsed().as_millis() as i64),
+            latency_ms,
             error_summary: None,
         }
     } else {
         EndpointPingProbeResult {
             ok: false,
             status: "failed".to_string(),
-            latency_ms: None,
+            latency_ms,
             error_summary: Some(format!("HTTP {status_code}")),
         }
     }
@@ -197,7 +198,7 @@ mod tests {
 
         assert!(!result.ok);
         assert_eq!(result.status, "failed");
-        assert_eq!(result.latency_ms, None);
+        assert!(result.latency_ms.is_some());
         assert!(result.error_summary.unwrap().contains("HTTP 503"));
     }
 
@@ -217,7 +218,7 @@ mod tests {
 
         assert!(!result.ok);
         assert_eq!(result.status, "failed");
-        assert_eq!(result.latency_ms, None);
+        assert!(result.latency_ms.is_some());
         assert!(result.error_summary.unwrap().contains("HTTP 503"));
     }
 

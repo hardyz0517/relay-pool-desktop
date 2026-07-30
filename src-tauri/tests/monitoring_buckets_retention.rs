@@ -2,7 +2,7 @@
 pub mod app_retention;
 #[path = "../src/application/monitoring/buckets.rs"]
 pub mod buckets;
-#[path = "../src/services/monitoring/maintenance.rs"]
+#[path = "../src/services/monitoring/maintenance_policy.rs"]
 pub mod maintenance;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;

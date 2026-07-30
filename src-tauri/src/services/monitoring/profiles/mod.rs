@@ -16,6 +16,23 @@ pub mod standard;
 pub enum HeaderValue {
     Static(String),
     StableLocalIdentity { scope: String },
+    RequestValue { kind: RequestValueKind },
+    ModelTemplate { template: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestValueKind {
+    SessionId,
+    RequestId,
+}
+
+impl RequestValueKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::SessionId => "session_id",
+            Self::RequestId => "request_id",
+        }
+    }
 }
 
 impl HeaderValue {
@@ -29,6 +46,37 @@ impl HeaderValue {
                 kind: "stable_local_identity",
                 value: scope,
             },
+            Self::RequestValue { kind } => HeaderHashValue {
+                kind: "request_value",
+                value: kind.as_str(),
+            },
+            Self::ModelTemplate { template } => HeaderHashValue {
+                kind: "model_template",
+                value: template,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProfileAuthScheme {
+    BearerAuthorization,
+    ApiKeyHeader { name: String },
+}
+
+impl ProfileAuthScheme {
+    pub fn header_name(&self) -> &str {
+        match self {
+            Self::BearerAuthorization => "authorization",
+            Self::ApiKeyHeader { name } => name,
+        }
+    }
+
+    pub fn secret_value(&self, secret: &str) -> String {
+        match self {
+            Self::BearerAuthorization => format!("Bearer {secret}"),
+            Self::ApiKeyHeader { .. } => secret.to_string(),
         }
     }
 }
@@ -53,6 +101,7 @@ pub struct ClientProfileDefinition {
     pub version: u32,
     pub enabled: bool,
     pub supported_protocols: Vec<ProtocolKind>,
+    pub auth: ProfileAuthScheme,
     pub request: ClientProfileRequestShape,
 }
 
@@ -81,6 +130,7 @@ impl ClientProfileDefinition {
             version: self.version,
             enabled: self.enabled,
             supported_protocols: self.supported_protocols.clone(),
+            auth: self.auth.clone(),
             method: self.request.method.clone(),
             path: self.request.path.clone(),
             header_names: self
@@ -100,6 +150,7 @@ impl ClientProfileDefinition {
             version: self.version,
             enabled: self.enabled,
             supported_protocols: &self.supported_protocols,
+            auth: &self.auth,
             method: &self.request.method,
             path: &self.request.path,
             headers: self
@@ -122,6 +173,7 @@ pub struct ClientProfileGoldenSummary {
     pub version: u32,
     pub enabled: bool,
     pub supported_protocols: Vec<ProtocolKind>,
+    pub auth: ProfileAuthScheme,
     pub method: String,
     pub path: String,
     pub header_names: Vec<String>,
@@ -135,6 +187,7 @@ struct ClientProfileHashInput<'a> {
     version: u32,
     enabled: bool,
     supported_protocols: &'a [ProtocolKind],
+    auth: &'a ProfileAuthScheme,
     method: &'a str,
     path: &'a str,
     headers: Vec<HeaderHashInput<'a>>,
@@ -157,6 +210,22 @@ pub(crate) fn header(name: &str, value: &str) -> ClientProfileHeader {
     ClientProfileHeader {
         name: name.to_string(),
         value: HeaderValue::Static(value.to_string()),
+    }
+}
+
+pub(crate) fn request_value_header(name: &str, kind: RequestValueKind) -> ClientProfileHeader {
+    ClientProfileHeader {
+        name: name.to_string(),
+        value: HeaderValue::RequestValue { kind },
+    }
+}
+
+pub(crate) fn model_template_header(name: &str, template: &str) -> ClientProfileHeader {
+    ClientProfileHeader {
+        name: name.to_string(),
+        value: HeaderValue::ModelTemplate {
+            template: template.to_string(),
+        },
     }
 }
 

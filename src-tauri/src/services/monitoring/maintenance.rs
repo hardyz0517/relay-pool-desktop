@@ -1,112 +1,106 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::sync::Arc;
+use std::time::Duration;
+
+pub(crate) use super::maintenance_policy::*;
+use crate::{
+    application::monitoring::MonitoringService,
+    background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor},
 };
-use std::time::{Duration, Instant};
 
-use tokio_util::sync::CancellationToken;
+pub(crate) const MONITORING_MAINTENANCE_TASK_ID: &str = "monitoring-maintenance-v2";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MonitoringMaintenanceConfig {
-    pub(crate) startup_delay_ms: u64,
-    pub(crate) startup_jitter_ms: u64,
-    pub(crate) interval_ms: u64,
-    pub(crate) row_budget: u32,
-    pub(crate) time_budget_ms: u64,
-}
-
-impl Default for MonitoringMaintenanceConfig {
-    fn default() -> Self {
-        Self {
-            startup_delay_ms: 5_000,
-            startup_jitter_ms: 30_000,
-            interval_ms: 15 * 60 * 1_000,
-            row_budget: 2_000,
-            time_budget_ms: 250,
-        }
-    }
-}
-
-impl MonitoringMaintenanceConfig {
-    pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        if self.interval_ms == 0 {
-            return Err("interval_ms must be positive");
-        }
-        if self.row_budget == 0 {
-            return Err("row_budget must be positive");
-        }
-        if self.time_budget_ms == 0 {
-            return Err("time_budget_ms must be positive");
-        }
-        Ok(())
-    }
-
-    pub(crate) fn deterministic_startup_delay(&self, installation_hash: u64) -> Duration {
-        let jitter = if self.startup_jitter_ms == 0 {
-            0
-        } else {
-            installation_hash % (self.startup_jitter_ms + 1)
-        };
-        Duration::from_millis(self.startup_delay_ms.saturating_add(jitter))
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct MonitoringMaintenanceMetrics {
-    pub(crate) attempted_runs: u64,
-    pub(crate) completed_runs: u64,
-    pub(crate) skipped_reentry: u64,
-    pub(crate) cancelled_runs: u64,
-    pub(crate) repaired_dirty_ranges: u64,
-    pub(crate) deleted_raw_rows: u64,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct MonitoringMaintenanceState {
-    running: Arc<AtomicBool>,
-}
-
-impl Default for MonitoringMaintenanceState {
-    fn default() -> Self {
-        Self {
-            running: Arc::new(AtomicBool::new(false)),
-        }
-    }
-}
-
-impl MonitoringMaintenanceState {
-    pub(crate) fn try_begin_cycle(&self) -> Option<MonitoringMaintenanceCycleGuard> {
-        self.running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .ok()
-            .map(|_| MonitoringMaintenanceCycleGuard {
-                running: Arc::clone(&self.running),
-                started_at: Instant::now(),
+pub(crate) fn register_monitoring_maintenance_task(
+    supervisor: &TaskSupervisor,
+    monitoring: Arc<MonitoringService>,
+    config: MonitoringMaintenanceConfig,
+    installation_hash: u64,
+) -> Result<TaskId, String> {
+    config.validate().map_err(str::to_string)?;
+    let task_id = TaskId::from(MONITORING_MAINTENANCE_TASK_ID);
+    let state = MonitoringMaintenanceState::default();
+    supervisor
+        .register(
+        TaskSpec::new(task_id.clone(), "monitoring_maintenance_v2", move |context: TaskRunContext| {
+            let monitoring = Arc::clone(&monitoring);
+            let state = state.clone();
+            let config = config.clone();
+            Box::pin(async move {
+                tokio::select! {
+                    _ = context.cancellation_token.cancelled() => return Err(TaskFailure::cancelled()),
+                    _ = tokio::time::sleep(config.deterministic_startup_delay(installation_hash)) => {}
+                }
+                loop {
+                    if context.cancellation_token.is_cancelled() {
+                        return Err(TaskFailure::cancelled());
+                    }
+                    if let Some(guard) = state.try_begin_cycle() {
+                        let cycle = run_maintenance_cycle(
+                            monitoring.as_ref(),
+                            &config,
+                            &context.cancellation_token,
+                            &guard,
+                        );
+                        tokio::select! {
+                            _ = context.cancellation_token.cancelled() => return Err(TaskFailure::cancelled()),
+                            result = tokio::time::timeout(
+                                Duration::from_millis(config.time_budget_ms),
+                                cycle,
+                            ) => {
+                                match result {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(error)) => eprintln!("monitoring maintenance failed: {error}"),
+                                    Err(_) => eprintln!("monitoring maintenance exceeded its time budget"),
+                                }
+                            }
+                        }
+                    }
+                    tokio::select! {
+                        _ = context.cancellation_token.cancelled() => return Err(TaskFailure::cancelled()),
+                        _ = tokio::time::sleep(Duration::from_millis(config.interval_ms)) => {}
+                    }
+                }
             })
-    }
+        })
+        .with_concurrency_key("monitoring-maintenance-v2")
+        .with_shutdown_timeout(Duration::from_secs(10)),
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(task_id)
 }
 
-#[derive(Debug)]
-pub(crate) struct MonitoringMaintenanceCycleGuard {
-    running: Arc<AtomicBool>,
-    started_at: Instant,
-}
-
-impl MonitoringMaintenanceCycleGuard {
-    pub(crate) fn should_continue(
-        &self,
-        cancellation: &CancellationToken,
-        processed_rows: u32,
-        config: &MonitoringMaintenanceConfig,
-    ) -> bool {
-        !cancellation.is_cancelled()
-            && processed_rows < config.row_budget
-            && self.started_at.elapsed() < Duration::from_millis(config.time_budget_ms)
+async fn run_maintenance_cycle(
+    monitoring: &MonitoringService,
+    config: &MonitoringMaintenanceConfig,
+    cancellation: &tokio_util::sync::CancellationToken,
+    guard: &MonitoringMaintenanceCycleGuard,
+) -> Result<(), String> {
+    let mut processed_rows = monitoring
+        .mark_corrupt_monitoring_rollups()
+        .await
+        .map_err(|error| error.to_string())?
+        .min(config.row_budget);
+    if !guard.should_continue(cancellation, processed_rows, config) {
+        return Ok(());
     }
-}
 
-impl Drop for MonitoringMaintenanceCycleGuard {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::Release);
+    let remaining = config.row_budget.saturating_sub(processed_rows);
+    let repaired = monitoring
+        .repair_pending_monitoring_rollups(remaining)
+        .await
+        .map_err(|error| error.to_string())?;
+    processed_rows = processed_rows
+        .saturating_add(repaired)
+        .min(config.row_budget);
+    if !guard.should_continue(cancellation, processed_rows, config) {
+        return Ok(());
     }
+
+    let remaining = config.row_budget.saturating_sub(processed_rows);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let cutoff_ms = now_ms.saturating_sub(30_i64 * 24 * 60 * 60 * 1_000);
+    monitoring
+        .delete_rolled_up_monitoring_executions(cutoff_ms, remaining, remaining)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }

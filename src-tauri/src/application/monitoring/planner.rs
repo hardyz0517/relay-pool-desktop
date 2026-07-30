@@ -140,7 +140,11 @@ impl ProbePlanner {
             let (request_profile_hash, skip_failure_kind) = match resolution {
                 Some(protocol_kind) => {
                     registry
-                        .validate_execution_profile(snapshot.client_profile.id, protocol_kind)
+                        .validate_execution_profile(
+                            snapshot.client_profile.id,
+                            snapshot.client_profile.version,
+                            protocol_kind,
+                        )
                         .map_err(PlanError::ProfileRejected)?;
                     let profile = registry
                         .get(snapshot.client_profile.id)

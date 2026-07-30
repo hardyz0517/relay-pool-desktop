@@ -42,6 +42,23 @@ impl AsyncOutboundClientConfig {
             https_downgrade_allowed: false,
         }
     }
+
+    pub fn monitoring_budget() -> Self {
+        Self {
+            timeouts: TimeoutPolicy {
+                connect_timeout: Duration::from_secs(10),
+                first_byte_timeout: Duration::from_secs(120),
+                body_read_timeout: Duration::from_secs(120),
+                total_timeout: Duration::from_secs(300),
+            },
+            header_policy: OutboundHeaderPolicy::provider_default(),
+            success_body_max_bytes: 64 * 1024,
+            error_body_max_bytes: 8 * 1024,
+            max_attempts: 1,
+            redirect_max_hops: 2,
+            https_downgrade_allowed: false,
+        }
+    }
 }
 
 #[derive(Clone)]

@@ -10,6 +10,9 @@
     "xai_grok",
     "generic_open_ai"
   ],
+  "auth": {
+    "kind": "bearer_authorization"
+  },
   "method": "POST",
   "path": "{adapter_path}",
   "header_names": [
@@ -20,5 +23,5 @@
     "max_tokens",
     "stream"
   ],
-  "profile_hash": "bb2d9ee70897dabb5945ad8be41223d5aefeae5011487d6919b8d9c6fb0da642"
+  "profile_hash": "9341f49e6c8d080cec2a82ec5a8519fcfafba9f68468b58b35f01e5fce959835"
 }

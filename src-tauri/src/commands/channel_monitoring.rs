@@ -15,8 +15,7 @@ use crate::{
         },
         channel_monitor_reads::{
             ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
-            ChannelMonitorRunDto, ChannelMonitorSummaryDto, ChannelMonitorSummaryInputDto,
-            RunChannelMonitorNowInputDto, RunChannelMonitorReceiptDto,
+            ChannelMonitorRunDto, RunChannelMonitorNowInputDto, RunChannelMonitorReceiptDto,
         },
         EmptyInputDto,
     },
@@ -32,21 +31,6 @@ pub async fn list_channel_monitors(
         EmptyInputDto::parse(input)?;
         facade
             .list_channel_monitors(PageLimit::new(200).expect("bounded limit"))
-            .await
-            .map_err(super::public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_channel_monitor_summaries(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelMonitorSummaryDto>, error::CommandError> {
-    correlation::in_command_scope("list_channel_monitor_summaries", async {
-        let input = ChannelMonitorSummaryInputDto::parse(input)?;
-        facade
-            .list_channel_monitor_summaries(input.run_since.as_deref(), input.run_limit)
             .await
             .map_err(super::public_command_application_error)
     })

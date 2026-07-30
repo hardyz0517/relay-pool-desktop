@@ -1,21 +1,26 @@
 {
   "id": "gemini_cli_compat",
-  "version": 1,
+  "version": 2,
   "enabled": true,
   "supported_protocols": [
     "gemini_native"
   ],
+  "auth": {
+    "kind": "api_key_header",
+    "name": "x-goog-api-key"
+  },
   "method": "POST",
   "path": "/v1beta/models/{model}:generateContent",
   "header_names": [
     "accept",
     "content-type",
-    "user-agent",
-    "x-goog-api-client"
+    "user-agent"
   ],
   "body_defaults": [
+    "contents",
+    "generationConfig.temperature",
     "generationConfig.maxOutputTokens",
-    "stream"
+    "generationConfig.thinkingConfig.thinkingBudget"
   ],
-  "profile_hash": "48e2b30d99d6de7dffa0148b2eac1ca6179aa632cd6e3980ff50b32f8f17cfe7"
+  "profile_hash": "62237ddeccace0169b109db9b75f76ec930406a23d7462239ac7ce75a264c03a"
 }

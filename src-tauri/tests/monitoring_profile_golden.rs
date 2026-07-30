@@ -53,7 +53,7 @@ use services::monitoring::{
     auth::AuthBoundaryViolation,
     profiles::{
         registry::BuiltinProfileRegistry, ClientProfileDefinition, ClientProfileHeader,
-        ClientProfileRequestShape, HeaderValue,
+        ClientProfileRequestShape, HeaderValue, ProfileAuthScheme,
     },
 };
 
@@ -67,15 +67,15 @@ fn profile_golden_definitions_match_versioned_request_images() {
         ),
         (
             ClientProfileId::CodexCliCompat,
-            include_str!("fixtures/monitoring/profiles/codex_cli_compat.v1.json"),
+            include_str!("fixtures/monitoring/profiles/codex_cli_compat.v2.json"),
         ),
         (
             ClientProfileId::ClaudeCodeCompat,
-            include_str!("fixtures/monitoring/profiles/claude_code_compat.v1.json"),
+            include_str!("fixtures/monitoring/profiles/claude_code_compat.v2.json"),
         ),
         (
             ClientProfileId::GeminiCliCompat,
-            include_str!("fixtures/monitoring/profiles/gemini_cli_compat.v1.json"),
+            include_str!("fixtures/monitoring/profiles/gemini_cli_compat.v2.json"),
         ),
     ] {
         let actual = registry
@@ -89,6 +89,37 @@ fn profile_golden_definitions_match_versioned_request_images() {
 }
 
 #[test]
+fn builtin_profile_headers_are_accepted_by_the_outbound_policy() {
+    use http::HeaderName;
+    use relay_pool_desktop_lib::outbound::OutboundHeaderPolicy;
+
+    let registry = BuiltinProfileRegistry::default();
+    let policy = OutboundHeaderPolicy::provider_default();
+
+    for profile in registry.list().filter(|profile| profile.enabled) {
+        let auth_name = HeaderName::from_bytes(profile.auth.header_name().as_bytes())
+            .expect("valid profile auth header");
+        assert!(
+            policy.allows_sensitive(&auth_name),
+            "profile {:?} declares auth header {} but the transport rejects it",
+            profile.id,
+            profile.auth.header_name()
+        );
+
+        for header in &profile.request.headers {
+            let name =
+                HeaderName::from_bytes(header.name.as_bytes()).expect("valid profile header");
+            assert!(
+                policy.allows_public(&name),
+                "profile {:?} declares outbound header {} but the transport rejects it",
+                profile.id,
+                header.name
+            );
+        }
+    }
+}
+
+#[test]
 fn profile_boundaries_reject_auth_cookie_host_and_transport_overrides() {
     for forbidden_header in ["authorization", "x-api-key", "cookie", "host"] {
         let profile = ClientProfileDefinition {
@@ -96,6 +127,7 @@ fn profile_boundaries_reject_auth_cookie_host_and_transport_overrides() {
             version: 1,
             enabled: true,
             supported_protocols: vec![ProtocolKind::OpenAiChat],
+            auth: ProfileAuthScheme::BearerAuthorization,
             request: ClientProfileRequestShape {
                 method: "POST".to_string(),
                 path: "{adapter_path}".to_string(),
@@ -132,16 +164,25 @@ fn profile_and_adapter_capabilities_must_match_before_execution() {
     assert!(registry
         .validate_execution_profile(
             ClientProfileId::CodexCliCompat,
+            2,
             ProtocolKind::OpenAiResponses
         )
         .is_ok());
     assert!(registry
         .validate_execution_profile(
             ClientProfileId::CodexCliCompat,
+            2,
             ProtocolKind::AnthropicMessages
         )
         .is_err());
     assert!(registry
-        .validate_execution_profile(ClientProfileId::GrokCliCompat, ProtocolKind::XaiGrok)
+        .validate_execution_profile(ClientProfileId::GrokCliCompat, 1, ProtocolKind::XaiGrok)
+        .is_err());
+    assert!(registry
+        .validate_execution_profile(
+            ClientProfileId::CodexCliCompat,
+            1,
+            ProtocolKind::OpenAiResponses
+        )
         .is_err());
 }

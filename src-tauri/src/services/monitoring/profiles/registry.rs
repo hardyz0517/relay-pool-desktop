@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::{
     models::monitoring::{ClientProfileId, ProtocolKind},
     services::monitoring::profiles::{
-        claude_code::claude_code_compat_v1, codex_cli::codex_cli_compat_v1,
-        gemini_cli::gemini_cli_compat_v1, standard::standard_api_v1, ClientProfileDefinition,
+        claude_code::claude_code_compat_v2, codex_cli::codex_cli_compat_v2,
+        gemini_cli::gemini_cli_compat_v2, standard::standard_api_v1, ClientProfileDefinition,
         ClientProfileRequestShape,
     },
 };
@@ -18,9 +18,9 @@ impl Default for BuiltinProfileRegistry {
     fn default() -> Self {
         let profiles = [
             standard_api_v1(),
-            codex_cli_compat_v1(),
-            claude_code_compat_v1(),
-            gemini_cli_compat_v1(),
+            codex_cli_compat_v2(),
+            claude_code_compat_v2(),
+            gemini_cli_compat_v2(),
             grok_cli_compat_disabled_placeholder(),
         ]
         .into_iter()
@@ -47,11 +47,18 @@ impl BuiltinProfileRegistry {
     pub fn validate_execution_profile(
         &self,
         id: ClientProfileId,
+        version: u32,
         protocol: ProtocolKind,
     ) -> Result<(), String> {
         let profile = self
             .get(id)
             .ok_or_else(|| "client profile is not registered".to_string())?;
+        if profile.version != version {
+            return Err(format!(
+                "client profile version is unsupported: configured={version}, current={}",
+                profile.version
+            ));
+        }
         profile
             .validate_boundaries()
             .map_err(|violation| format!("client profile violates auth boundary: {violation:?}"))?;
@@ -68,6 +75,7 @@ fn grok_cli_compat_disabled_placeholder() -> ClientProfileDefinition {
         version: 1,
         enabled: false,
         supported_protocols: Vec::new(),
+        auth: crate::services::monitoring::profiles::ProfileAuthScheme::BearerAuthorization,
         request: ClientProfileRequestShape {
             method: "POST".to_string(),
             path: "{disabled_until_verified}".to_string(),

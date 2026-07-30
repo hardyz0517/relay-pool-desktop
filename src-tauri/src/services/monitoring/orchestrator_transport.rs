@@ -28,6 +28,7 @@ pub(crate) struct ProbeTargetEndpoint {
     pub(crate) secret: String,
     pub(crate) protocol_kind: ProtocolKind,
     pub(crate) client_profile_id: ClientProfileId,
+    pub(crate) client_profile_version: u32,
 }
 
 pub(crate) struct ProbeExecutorTransport {
@@ -72,6 +73,7 @@ impl ProbeExecutorTransport {
                     secret: secret.clone(),
                     protocol_kind,
                     client_profile_id: target.client_profile.id,
+                    client_profile_version: target.client_profile.version,
                 })
             })
             .collect()
@@ -95,6 +97,7 @@ impl ProbeTransport for ProbeExecutorTransport {
             let endpoint_revision = endpoint.endpoint_revision;
             let protocol_kind = endpoint.protocol_kind;
             let client_profile_id = endpoint.client_profile_id;
+            let client_profile_version = endpoint.client_profile_version;
             let transport = MonitoringTransport::from_client(
                 client,
                 MonitoringTransportConfig {
@@ -119,6 +122,7 @@ impl ProbeTransport for ProbeExecutorTransport {
                         endpoint_revision,
                         protocol_kind,
                         client_profile_id,
+                        client_profile_version,
                         model: request.model,
                         prompt: snapshot.prompt,
                         validator: challenge.validator(),

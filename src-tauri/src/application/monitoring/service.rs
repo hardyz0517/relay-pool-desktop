@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     application::{
@@ -6,37 +6,35 @@ use crate::{
         error::ApplicationError,
         ids::IdGenerator,
         monitoring::{
-            definition_bridge::planning_snapshot_from_config, recorder::BufferedExecution,
-            write_path::MonitoringExecutionCommitter,
+            definition_bridge::planning_snapshot_from_config, planner::ProbePlan,
+            recorder::BufferedExecution, write_path::MonitoringExecutionCommitter,
         },
-        pagination::{PageLimit, MAX_PAGE_LIMIT},
+        pagination::PageLimit,
     },
     models::{
         channel_monitors::{
-            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
-            ChannelMonitorRunCursor, ChannelMonitorRunPage, CreateChannelMonitorInput,
-            CreateChannelMonitorTemplateInput, UpdateChannelMonitorInput,
-            UpdateChannelMonitorTemplateInput,
+            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRunCursor,
+            ChannelMonitorRunPage, CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
+            UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
         },
         monitoring::CancelChannelMonitorExecutionReceipt,
-        shared_capabilities::{ChannelMonitorRunsLoadStatus, ChannelMonitorSummary},
     },
     persistence::{
+        error::PersistenceError,
         runtime::PersistenceHandle,
+        stores::legacy_monitor_run_store::LegacyMonitorRunReader,
         stores::monitoring::{
             budgets::MonitoringBudgetRepository,
             definitions::{MonitorDefinitionConfigRow, MonitoringDefinitionRepository},
-            executions::{ExecutionSummaryRow, MonitoringExecutionRepository},
+            executions::{ExecutionSummaryRow, MonitoringExecutionRepository, NewExecutionRow},
             retention::MonitoringRetentionRepository,
         },
         stores::monitoring_store::{
-            ChannelStatusRunRow, MonitorPatch, MonitorTemplatePatch, MonitoringStore,
-            NewMonitorRow, NewMonitorTemplateRow,
+            MonitorPatch, MonitorTemplatePatch, MonitoringStore, NewMonitorRow,
+            NewMonitorTemplateRow,
         },
     },
 };
-
-const DEFAULT_SUMMARY_RUN_LIMIT: usize = 60;
 
 #[derive(Clone)]
 pub(crate) struct MonitoringService {
@@ -46,6 +44,7 @@ pub(crate) struct MonitoringService {
     store: MonitoringStore,
     definition_store: MonitoringDefinitionRepository,
     budget_store: MonitoringBudgetRepository,
+    legacy_run_reader: LegacyMonitorRunReader,
 }
 
 impl MonitoringService {
@@ -61,6 +60,7 @@ impl MonitoringService {
             store: MonitoringStore,
             definition_store: MonitoringDefinitionRepository,
             budget_store: MonitoringBudgetRepository,
+            legacy_run_reader: LegacyMonitorRunReader,
         }
     }
 
@@ -159,34 +159,6 @@ impl MonitoringService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn list_channel_monitor_summaries(
-        &self,
-        run_since: Option<&str>,
-        run_limit: Option<usize>,
-    ) -> Result<Vec<ChannelMonitorSummary>, ApplicationError> {
-        let run_since_ms = parse_summary_run_since(run_since)?;
-        let run_limit = summary_run_limit(run_limit)?;
-        let mut read = self.runtime.begin_read().await?;
-        let monitors = self.store.list_monitors(&mut read, MAX_PAGE_LIMIT).await?;
-        let runs = self
-            .store
-            .summary_runs(&mut read, run_since_ms, MAX_PAGE_LIMIT, run_limit)
-            .await
-            .ok();
-        Ok(build_monitor_summaries(monitors, runs))
-    }
-
-    pub(crate) async fn get_monitor(&self, id: &str) -> Result<ChannelMonitor, ApplicationError> {
-        if id.trim().is_empty() {
-            return Err(ApplicationError::ConstraintViolation);
-        }
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .get_monitor(&mut read, id)
-            .await
-            .map_err(Into::into)
-    }
-
     pub(crate) async fn create_monitor(
         &self,
         input: CreateChannelMonitorInput,
@@ -279,15 +251,126 @@ impl MonitoringService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn due_monitors(
+    pub(crate) async fn find_execution_by_trigger_request_id(
         &self,
-        limit: PageLimit,
-    ) -> Result<Vec<ChannelMonitor>, ApplicationError> {
+        trigger_request_id: &str,
+    ) -> Result<Option<(String, String, String)>, ApplicationError> {
+        if trigger_request_id.trim().is_empty() {
+            return Err(ApplicationError::ConstraintViolation);
+        }
         let mut read = self.runtime.begin_read().await?;
-        self.store
-            .due_monitors(&mut read, self.now_ms(), limit.get())
+        sqlx::query_as::<_, (String, String, String)>(
+            r#"
+            SELECT id, monitor_id, status
+            FROM channel_monitor_executions
+            WHERE trigger_request_id = ?1
+            ORDER BY created_at_ms DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(trigger_request_id)
+        .fetch_optional(read.connection())
+        .await
+        .map_err(PersistenceError::from)
+        .map_err(Into::into)
+    }
+
+    pub(crate) async fn queue_monitoring_execution(
+        &self,
+        execution_id: String,
+        trigger_request_id: Option<String>,
+        plan: &ProbePlan,
+        planned_at_ms: i64,
+    ) -> Result<(), ApplicationError> {
+        let executions = MonitoringExecutionRepository;
+        let row = NewExecutionRow {
+            id: execution_id,
+            monitor_id: plan.monitor_id.clone(),
+            trigger_kind: plan.trigger_kind.as_str().to_string(),
+            trigger_request_id,
+            status: "queued".to_string(),
+            planned_at_ms,
+            started_at_ms: None,
+            config_revision: plan.revision.0 as i64,
+            config_snapshot_hash: plan.config_snapshot_hash.clone(),
+            endpoint_revision: plan
+                .target_plans
+                .iter()
+                .map(|target| target.endpoint_revision)
+                .min()
+                .unwrap_or(1),
+            target_count: plan.target_plans.len() as i64,
+            created_at_ms: planned_at_ms,
+        };
+        self.runtime
+            .write(|write| {
+                Box::pin(async move { executions.insert_execution(write.connection(), &row).await })
+            })
             .await
-            .map_err(Into::into)
+            .map_err(ApplicationError::from)
+    }
+
+    pub(crate) async fn start_queued_monitoring_execution(
+        &self,
+        execution_id: &str,
+    ) -> Result<bool, ApplicationError> {
+        if execution_id.trim().is_empty() {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        let execution_id = execution_id.to_string();
+        let now_ms = self.now_ms();
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        UPDATE channel_monitor_executions
+                        SET status = 'running', started_at_ms = COALESCE(started_at_ms, ?1)
+                        WHERE id = ?2 AND status = 'queued'
+                        "#,
+                    )
+                    .bind(now_ms)
+                    .bind(execution_id)
+                    .execute(write.connection())
+                    .await
+                    .map(|result| result.rows_affected() == 1)
+                    .map_err(PersistenceError::from)
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub(crate) async fn interrupt_monitoring_execution(
+        &self,
+        execution_id: &str,
+    ) -> Result<bool, ApplicationError> {
+        if execution_id.trim().is_empty() {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        let execution_id = execution_id.to_string();
+        let now_ms = self.now_ms();
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        UPDATE channel_monitor_executions
+                        SET status = 'interrupted', finished_at_ms = COALESCE(finished_at_ms, ?1),
+                            summary_failure_kind = COALESCE(summary_failure_kind, 'interrupted')
+                        WHERE id = ?2 AND status IN ('queued', 'running')
+                        "#,
+                    )
+                    .bind(now_ms)
+                    .bind(execution_id)
+                    .execute(write.connection())
+                    .await
+                    .map(|result| result.rows_affected() == 1)
+                    .map_err(PersistenceError::from)
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)
     }
 
     pub(crate) async fn due_monitor_ids_v2(
@@ -380,6 +463,46 @@ impl MonitoringService {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn mark_corrupt_monitoring_rollups(&self) -> Result<u32, ApplicationError> {
+        let retention = MonitoringRetentionRepository;
+        let now_ms = self.now_ms();
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    retention
+                        .mark_corrupt_rollups_dirty(write.connection(), now_ms)
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn delete_rolled_up_monitoring_executions(
+        &self,
+        cutoff_ms: i64,
+        per_monitor_limit: u32,
+        global_limit: u32,
+    ) -> Result<u32, ApplicationError> {
+        let retention = MonitoringRetentionRepository;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    retention
+                        .delete_rolled_up_raw_executions(
+                            write.connection(),
+                            cutoff_ms,
+                            per_monitor_limit,
+                            global_limit,
+                        )
+                        .await
+                        .map(|outcome| outcome.deleted_executions)
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn reserve_monitoring_probe_budget(
         &self,
         monitor_id: &str,
@@ -422,7 +545,7 @@ impl MonitoringService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn list_run_page(
+    pub(crate) async fn list_legacy_run_page(
         &self,
         monitor_id: &str,
         cursor: Option<&ChannelMonitorRunCursor>,
@@ -432,8 +555,8 @@ impl MonitoringService {
             return Err(ApplicationError::ConstraintViolation);
         }
         let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_run_page(&mut read, monitor_id, cursor, limit.get())
+        self.legacy_run_reader
+            .list_page(&mut read, monitor_id, cursor, limit.get())
             .await
             .map_err(Into::into)
     }
@@ -447,233 +570,8 @@ impl MonitoringService {
     }
 }
 
-fn parse_summary_run_since(run_since: Option<&str>) -> Result<Option<i64>, ApplicationError> {
-    run_since
-        .map(|value| {
-            value
-                .trim()
-                .parse::<i64>()
-                .ok()
-                .filter(|timestamp| *timestamp > 0)
-                .ok_or(ApplicationError::ConstraintViolation)
-        })
-        .transpose()
-}
-
-fn summary_run_limit(run_limit: Option<usize>) -> Result<u32, ApplicationError> {
-    let value = run_limit.unwrap_or(DEFAULT_SUMMARY_RUN_LIMIT);
-    let value = u32::try_from(value).map_err(|_| ApplicationError::ConstraintViolation)?;
-    PageLimit::new(value).map(PageLimit::get)
-}
-
-fn build_monitor_summaries(
-    monitors: Vec<ChannelMonitor>,
-    runs: Option<Vec<ChannelStatusRunRow>>,
-) -> Vec<ChannelMonitorSummary> {
-    let Some(runs) = runs else {
-        return monitors
-            .into_iter()
-            .map(|monitor| ChannelMonitorSummary {
-                monitor,
-                recent_runs: Vec::new(),
-                runs_load_status: ChannelMonitorRunsLoadStatus::Failed,
-                latest_run: None,
-            })
-            .collect();
-    };
-    let mut runs_by_monitor = HashMap::<String, Vec<ChannelMonitorRun>>::new();
-    for row in runs {
-        runs_by_monitor
-            .entry(row.monitor_id)
-            .or_default()
-            .push(row.run);
-    }
-    monitors
-        .into_iter()
-        .map(|monitor| {
-            let recent_runs = runs_by_monitor.remove(&monitor.id).unwrap_or_default();
-            let latest_run = recent_runs.first().cloned();
-            ChannelMonitorSummary {
-                monitor,
-                recent_runs,
-                runs_load_status: ChannelMonitorRunsLoadStatus::Ok,
-                latest_run,
-            }
-        })
-        .collect()
-}
-
-fn next_run_at(monitor_id: &str, now_ms: i64, interval_seconds: i64, jitter_seconds: i64) -> i64 {
-    let jitter_range_ms = u64::try_from(jitter_seconds.max(0))
-        .unwrap_or_default()
-        .saturating_mul(1_000)
-        .saturating_add(1);
-    let jitter_ms = if jitter_seconds <= 0 {
-        0
-    } else {
-        stable_schedule_hash(monitor_id, now_ms) % jitter_range_ms
-    };
-    now_ms
-        .saturating_add(interval_seconds.max(1).saturating_mul(1_000))
-        .saturating_add(i64::try_from(jitter_ms).unwrap_or(i64::MAX))
-}
-
 fn utc_day_window_ms(now_ms: i64) -> (i64, i64) {
     const DAY_MS: i64 = 86_400_000;
     let start = now_ms.div_euclid(DAY_MS).saturating_mul(DAY_MS);
     (start, start.saturating_add(DAY_MS))
-}
-
-fn stable_schedule_hash(monitor_id: &str, now_ms: i64) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-    monitor_id
-        .as_bytes()
-        .iter()
-        .chain(now_ms.to_le_bytes().iter())
-        .fold(FNV_OFFSET, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
-        })
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    struct FixedClock;
-
-    impl Clock for FixedClock {
-        fn now_utc(&self) -> chrono::DateTime<Utc> {
-            Utc.timestamp_millis_opt(2_000).single().expect("timestamp")
-        }
-    }
-
-    #[test]
-    fn jitter_is_deterministic_and_bounded() {
-        let first = next_run_at("monitor-a", 1_000, 30, 5);
-        let second = next_run_at("monitor-a", 1_000, 30, 5);
-        assert_eq!(first, second);
-        assert!((31_000..=36_000).contains(&first));
-    }
-
-    #[test]
-    fn summary_query_validation_is_strict_and_bounded() {
-        assert_eq!(summary_run_limit(None).expect("default limit"), 60);
-        assert_eq!(summary_run_limit(Some(1)).expect("minimum limit"), 1);
-        assert_eq!(summary_run_limit(Some(500)).expect("maximum limit"), 500);
-        assert!(summary_run_limit(Some(0)).is_err());
-        assert!(summary_run_limit(Some(501)).is_err());
-        assert_eq!(
-            parse_summary_run_since(Some(" 1234 ")).expect("valid timestamp"),
-            Some(1234)
-        );
-        assert_eq!(
-            parse_summary_run_since(None).expect("optional timestamp"),
-            None
-        );
-        assert!(parse_summary_run_since(Some("")).is_err());
-        assert!(parse_summary_run_since(Some("0")).is_err());
-        assert!(parse_summary_run_since(Some("not-a-timestamp")).is_err());
-    }
-
-    #[test]
-    fn summary_mapping_preserves_latest_run_and_failure_status() {
-        let monitor_a = monitor("monitor-a");
-        let monitor_b = monitor("monitor-b");
-        let newest = run("run-newest", "monitor-a", "2000");
-        let older = run("run-older", "monitor-a", "1000");
-        let summaries = build_monitor_summaries(
-            vec![monitor_a.clone(), monitor_b.clone()],
-            Some(vec![
-                ChannelStatusRunRow {
-                    monitor_id: monitor_a.id.clone(),
-                    run: newest.clone(),
-                },
-                ChannelStatusRunRow {
-                    monitor_id: monitor_a.id.clone(),
-                    run: older,
-                },
-            ]),
-        );
-
-        assert_eq!(summaries.len(), 2);
-        assert_eq!(
-            summaries[0].latest_run.as_ref().map(|run| &run.id),
-            Some(&newest.id)
-        );
-        assert_eq!(summaries[0].recent_runs.len(), 2);
-        assert_eq!(
-            summaries[0].runs_load_status,
-            ChannelMonitorRunsLoadStatus::Ok
-        );
-        assert!(summaries[1].recent_runs.is_empty());
-        assert_eq!(
-            summaries[1].runs_load_status,
-            ChannelMonitorRunsLoadStatus::Ok
-        );
-
-        let failed = build_monitor_summaries(vec![monitor_a, monitor_b], None);
-        assert!(failed.iter().all(|summary| {
-            summary.runs_load_status == ChannelMonitorRunsLoadStatus::Failed
-                && summary.recent_runs.is_empty()
-                && summary.latest_run.is_none()
-        }));
-    }
-
-    fn monitor(id: &str) -> ChannelMonitor {
-        ChannelMonitor {
-            id: id.into(),
-            name: id.into(),
-            target_type: "station".into(),
-            station_id: "station-a".into(),
-            station_key_id: None,
-            template_id: "template-a".into(),
-            enabled: true,
-            protocol_kind: "open_ai_chat".into(),
-            client_profile_id: "standard_api".into(),
-            client_profile_version: 1,
-            primary_model: "fixture-model".into(),
-            retry_max_attempts_per_model: 1,
-            retry_initial_backoff_ms: 200,
-            retry_max_backoff_ms: 2_000,
-            risk_daily_probe_budget: 200,
-            health_writeback_mode: "observe_only".into(),
-            health_failure_threshold: 2,
-            health_recovery_threshold: 2,
-            attempt_timeout_ms: 10_000,
-            execution_timeout_ms: 30_000,
-            schedule_revision: 1,
-            interval_seconds: 60,
-            jitter_seconds: 0,
-            timeout_seconds: 30,
-            max_concurrency: 1,
-            consecutive_failure_threshold: 3,
-            fallback_models: Vec::new(),
-            note: None,
-            created_at: "1000".into(),
-            updated_at: "1000".into(),
-        }
-    }
-
-    fn run(id: &str, monitor_id: &str, started_at: &str) -> ChannelMonitorRun {
-        ChannelMonitorRun {
-            id: id.into(),
-            monitor_id: monitor_id.into(),
-            template_id: "template-a".into(),
-            station_id: "station-a".into(),
-            station_key_id: None,
-            status: "success".into(),
-            started_at: started_at.into(),
-            finished_at: Some(started_at.into()),
-            duration_ms: Some(1),
-            http_status: Some(200),
-            latency_ms: Some(1),
-            response_model: None,
-            fallback_model: None,
-            error_message: None,
-            created_at: started_at.into(),
-        }
-    }
 }

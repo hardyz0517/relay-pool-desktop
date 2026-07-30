@@ -7,25 +7,18 @@ use crate::models::{
         ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
         ChannelMonitorExecutionDetail, ChannelMonitorExecutionIdInput,
         ChannelMonitorExecutionListInput, ChannelMonitorExecutionPage, ChannelStatusWorkspaceInput,
-        ChannelStatusWorkspaceV2, MonitoringCapabilityCatalog, RunChannelMonitorNowInputV2,
-        RunChannelMonitorReceipt,
+        MonitoringCapabilityCatalog, RunChannelMonitorNowInputV2, RunChannelMonitorReceipt,
     },
-    shared_capabilities::{ChannelMonitorSummary, ChannelStatusSummary},
 };
 
 use super::{invalid_input, TypeDescriptor};
 
 const MAX_ID_BYTES: usize = 128;
-const MAX_TIMESTAMP_BYTES: usize = 128;
-const MAX_RUN_LIMIT: usize = 500;
 
 pub type ChannelMonitorDto = ChannelMonitor;
 pub type ChannelMonitorRequestTemplateDto = ChannelMonitorRequestTemplate;
 pub type ChannelMonitorRunDto = ChannelMonitorRun;
-pub type ChannelMonitorSummaryDto = ChannelMonitorSummary;
-pub type ChannelStatusSummaryDto = ChannelStatusSummary;
 pub type ChannelStatusWorkspaceInputDto = ChannelStatusWorkspaceInput;
-pub type ChannelStatusWorkspaceV2Dto = ChannelStatusWorkspaceV2;
 pub type ChannelMonitorExecutionIdInputDto = ChannelMonitorExecutionIdInput;
 pub type ChannelMonitorExecutionListInputDto = ChannelMonitorExecutionListInput;
 pub type ChannelMonitorExecutionPageDto = ChannelMonitorExecutionPage;
@@ -138,41 +131,6 @@ impl RunChannelMonitorNowInputDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ChannelMonitorSummaryInputDto {
-    pub run_since: Option<String>,
-    pub run_limit: Option<usize>,
-}
-
-impl ChannelMonitorSummaryInputDto {
-    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
-        let input: Self = parse_value(value)?;
-        if input.run_since.as_ref().is_some_and(|value| {
-            value.trim().is_empty()
-                || value.len() > MAX_TIMESTAMP_BYTES
-                || value.chars().any(char::is_control)
-        }) {
-            return Err(invalid_input(
-                "runSince",
-                "invalid_timestamp",
-                "The run cursor timestamp is invalid.",
-            ));
-        }
-        if input
-            .run_limit
-            .is_some_and(|value| value == 0 || value > MAX_RUN_LIMIT)
-        {
-            return Err(invalid_input(
-                "runLimit",
-                "invalid_limit",
-                "The run limit is outside the allowed range.",
-            ));
-        }
-        Ok(input)
-    }
-}
-
 fn parse_value<T: for<'de> Deserialize<'de>>(
     value: Value,
 ) -> Result<T, crate::commands::error::CommandError> {
@@ -277,17 +235,8 @@ pub const CHANNEL_MONITOR_READS_TYPE: TypeDescriptor = TypeDescriptor {
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
     let monitor = fixture_monitor();
     let run = fixture_run();
-    let summary = ChannelMonitorSummary {
-        monitor: monitor.clone(),
-        recent_runs: vec![run.clone()],
-        runs_load_status: crate::models::shared_capabilities::ChannelMonitorRunsLoadStatus::Ok,
-        latest_run: Some(run.clone()),
-    };
-    let status = fixture_status_summary(monitor.clone());
     vec![
         serde_json::json!({"command":"list_channel_monitors","input":{},"output":[monitor]}),
-        serde_json::json!({"command":"list_channel_monitor_summaries","input":{"runSince":"1700000000000","runLimit":60},"output":[summary]}),
-        serde_json::json!({"command":"list_channel_status_summaries","input":{},"output":[status]}),
         serde_json::json!({"command":"load_channel_status_workspace","input":{"window":"last24h","timezoneId":"UTC","limit":50},"output":fixture_workspace_v2()}),
         serde_json::json!({"command":"list_channel_monitor_runs","input":{"monitorId":"monitor-1"},"output":[run]}),
         serde_json::json!({"command":"list_channel_monitor_templates","input":{},"output":[fixture_template()]}),
@@ -295,13 +244,13 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
 }
 
 #[cfg(test)]
-fn fixture_workspace_v2() -> ChannelStatusWorkspaceV2 {
+fn fixture_workspace_v2() -> crate::models::monitoring::ChannelStatusWorkspaceV2 {
     use crate::models::monitoring::{
         ChannelStatusAggregate, ChannelStatusBucketLayout, ChannelStatusFreshness,
         ChannelStatusPage, ChannelStatusTimezone, ChannelStatusTimezoneSource,
         ChannelStatusWorkspaceWindow,
     };
-    ChannelStatusWorkspaceV2 {
+    crate::models::monitoring::ChannelStatusWorkspaceV2 {
         schema_version: 2,
         generated_at_ms: 1_700_000_000_000,
         window: ChannelStatusWorkspaceWindow::Last24h,
@@ -407,44 +356,12 @@ fn fixture_template() -> ChannelMonitorRequestTemplate {
 }
 
 #[cfg(test)]
-fn fixture_status_summary(monitor: ChannelMonitor) -> ChannelStatusSummary {
-    use crate::models::shared_capabilities::{
-        ChannelStatusTimelinePoint, ChannelStatusWindowSummary,
-    };
-    let window = |name: &str| ChannelStatusWindowSummary {
-        window: name.into(),
-        total_count: 1,
-        success_count: 1,
-        failure_count: 0,
-        warning_count: 0,
-        availability_percent: Some(100.0),
-        avg_latency_ms: Some(80),
-        avg_endpoint_ping_ms: Some(20),
-        last_checked_at: Some("1700000000100".into()),
-        latest_status: Some("success".into()),
-        latest_error_message: None,
-        timeline: vec![ChannelStatusTimelinePoint {
-            status: "success".into(),
-            latency_ms: Some(80),
-            endpoint_ping_ms: Some(20),
-            checked_at: "1700000000100".into(),
-        }],
-    };
-    ChannelStatusSummary {
-        monitor,
-        recent: window("recent"),
-        last24h: window("24h"),
-        last7d: window("7d"),
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::error::CommandErrorCode;
 
     #[test]
-    fn rejects_unknown_fields_invalid_ids_and_invalid_summary_bounds() {
+    fn rejects_unknown_fields_and_invalid_ids() {
         for value in [
             serde_json::json!({"monitorId":"bad id"}),
             serde_json::json!({"monitorId":"monitor-1","unexpected":true}),
@@ -452,19 +369,6 @@ mod tests {
             assert_eq!(
                 ChannelMonitorIdInputDto::parse(value)
                     .expect_err("invalid monitor input")
-                    .code,
-                CommandErrorCode::InvalidInput
-            );
-        }
-        for value in [
-            serde_json::json!({"runSince":"","runLimit":60}),
-            serde_json::json!({"runSince":null,"runLimit":0}),
-            serde_json::json!({"runSince":null,"runLimit":501}),
-            serde_json::json!({"runSince":null,"runLimit":60,"unexpected":true}),
-        ] {
-            assert_eq!(
-                ChannelMonitorSummaryInputDto::parse(value)
-                    .expect_err("invalid summary input")
                     .code,
                 CommandErrorCode::InvalidInput
             );

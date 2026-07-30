@@ -20,12 +20,12 @@ use crate::{
         ChannelMonitorTargetResultRecord, ChannelStatusAggregate, ChannelStatusBucket,
         ChannelStatusBucketBoundary, ChannelStatusBucketCounts, ChannelStatusBucketKind,
         ChannelStatusBucketLayout, ChannelStatusBucketState, ChannelStatusCursor,
-        ChannelStatusFreshness, ChannelStatusLatestResult, ChannelStatusMonitor,
-        ChannelStatusOutcome, ChannelStatusPage, ChannelStatusRecentPoint, ChannelStatusRow,
-        ChannelStatusRunningExecution, ChannelStatusSortDirection, ChannelStatusSortField,
-        ChannelStatusTarget, ChannelStatusTimezone, ChannelStatusTimezoneSource,
-        ChannelStatusWindowSummaryV2, ChannelStatusWorkspaceInput, ChannelStatusWorkspaceV2,
-        ChannelStatusWorkspaceWindow,
+        ChannelStatusEndpointPing, ChannelStatusFreshness, ChannelStatusLatestResult,
+        ChannelStatusMonitor, ChannelStatusOutcome, ChannelStatusPage, ChannelStatusRecentPoint,
+        ChannelStatusRow, ChannelStatusRunningExecution, ChannelStatusSortDirection,
+        ChannelStatusSortField, ChannelStatusTarget, ChannelStatusTimezone,
+        ChannelStatusTimezoneSource, ChannelStatusWindowSummaryV2, ChannelStatusWorkspaceInput,
+        ChannelStatusWorkspaceV2, ChannelStatusWorkspaceWindow,
     },
     persistence::{error::PersistenceError, runtime::PersistenceHandle, ReadSession},
 };
@@ -137,6 +137,7 @@ impl ChannelStatusReadModelQuery {
                         station_key_name: base.station_key_name,
                         group_name: base.group_name,
                         effective_group_category: base.effective_group_category,
+                        endpoint_ping: base.endpoint_ping,
                     },
                     latest,
                     running,
@@ -395,6 +396,7 @@ struct BaseStatusRow {
     station_key_name: Option<String>,
     group_name: Option<String>,
     effective_group_category: Option<String>,
+    endpoint_ping: Option<ChannelStatusEndpointPing>,
     enabled: bool,
     protocol_kind: String,
     client_profile_id: String,
@@ -522,6 +524,9 @@ async fn load_base_rows(
             sk.name AS station_key_name,
             COALESCE(gb.group_name, sk.group_name) AS group_name,
             COALESCE(gb.group_category_override, gb.inferred_group_category) AS effective_group_category,
+            eh.status AS endpoint_ping_status,
+            eh.latency_ms AS endpoint_ping_latency_ms,
+            eh.checked_at AS endpoint_ping_checked_at,
             m.enabled,
             m.protocol_kind,
             m.client_profile_id,
@@ -539,6 +544,9 @@ async fn load_base_rows(
             OR (m.target_type = 'station' AND sk.station_id = m.station_id)
           )
         LEFT JOIN station_group_bindings gb ON gb.id = sk.group_binding_id
+        LEFT JOIN station_endpoint_health eh
+          ON eh.station_id = s.id
+         AND eh.endpoint_revision = s.endpoint_revision
         WHERE 1 = 1
         "#,
     );
@@ -594,6 +602,7 @@ async fn load_base_rows(
                 station_key_name: row.get("station_key_name"),
                 group_name: row.get("group_name"),
                 effective_group_category: row.get("effective_group_category"),
+                endpoint_ping: endpoint_ping_from_row(&row),
                 enabled: row.get::<i64, _>("enabled") != 0,
                 protocol_kind: row.get("protocol_kind"),
                 client_profile_id: row.get("client_profile_id"),
@@ -606,6 +615,18 @@ async fn load_base_rows(
             }
         })
         .collect())
+}
+
+fn endpoint_ping_from_row(row: &SqliteRow) -> Option<ChannelStatusEndpointPing> {
+    let status = row.get::<Option<String>, _>("endpoint_ping_status")?;
+    let checked_at_ms = row
+        .get::<Option<String>, _>("endpoint_ping_checked_at")
+        .and_then(|value| value.parse::<i64>().ok());
+    Some(ChannelStatusEndpointPing {
+        status,
+        latency_ms: row.get("endpoint_ping_latency_ms"),
+        checked_at_ms,
+    })
 }
 
 async fn load_recent_results(
@@ -623,24 +644,26 @@ async fn load_recent_results(
             sqlx::query(
                 r#"
                 SELECT
-                    id,
-                    execution_id,
-                    monitor_id,
-                    station_key_id,
-                    terminal_outcome,
-                    terminal_failure_kind,
-                    terminal_reason,
-                    latency_ms,
-                    finished_at_ms,
-                    used_fallback,
-                    semantic_confidence,
-                    attempt_count,
-                    effective_model
-                FROM channel_monitor_target_results
-                WHERE monitor_id = ?1
-                  AND station_key_id = ?2
-                  AND finished_at_ms IS NOT NULL
-                ORDER BY finished_at_ms DESC, id DESC
+                    tr.id,
+                    tr.execution_id,
+                    tr.monitor_id,
+                    tr.station_key_id,
+                    tr.terminal_outcome,
+                    tr.terminal_failure_kind,
+                    tr.terminal_reason,
+                    a.http_status,
+                    tr.latency_ms,
+                    tr.finished_at_ms,
+                    tr.used_fallback,
+                    tr.semantic_confidence,
+                    tr.attempt_count,
+                    tr.effective_model
+                FROM channel_monitor_target_results tr
+                LEFT JOIN channel_monitor_attempts a ON a.id = tr.decisive_attempt_id
+                WHERE tr.monitor_id = ?1
+                  AND tr.station_key_id = ?2
+                  AND tr.finished_at_ms IS NOT NULL
+                ORDER BY tr.finished_at_ms DESC, tr.id DESC
                 LIMIT ?3
                 "#,
             )
@@ -654,24 +677,26 @@ async fn load_recent_results(
             sqlx::query(
                 r#"
                 SELECT
-                    id,
-                    execution_id,
-                    monitor_id,
-                    station_key_id,
-                    terminal_outcome,
-                    terminal_failure_kind,
-                    terminal_reason,
-                    latency_ms,
-                    finished_at_ms,
-                    used_fallback,
-                    semantic_confidence,
-                    attempt_count,
-                    effective_model
-                FROM channel_monitor_target_results
-                WHERE monitor_id = ?1
-                  AND station_key_id IS NULL
-                  AND finished_at_ms IS NOT NULL
-                ORDER BY finished_at_ms DESC, id DESC
+                    tr.id,
+                    tr.execution_id,
+                    tr.monitor_id,
+                    tr.station_key_id,
+                    tr.terminal_outcome,
+                    tr.terminal_failure_kind,
+                    tr.terminal_reason,
+                    a.http_status,
+                    tr.latency_ms,
+                    tr.finished_at_ms,
+                    tr.used_fallback,
+                    tr.semantic_confidence,
+                    tr.attempt_count,
+                    tr.effective_model
+                FROM channel_monitor_target_results tr
+                LEFT JOIN channel_monitor_attempts a ON a.id = tr.decisive_attempt_id
+                WHERE tr.monitor_id = ?1
+                  AND tr.station_key_id IS NULL
+                  AND tr.finished_at_ms IS NOT NULL
+                ORDER BY tr.finished_at_ms DESC, tr.id DESC
                 LIMIT ?2
                 "#,
             )
@@ -694,6 +719,7 @@ async fn load_recent_results(
                 ),
                 failure_kind: row.get("terminal_failure_kind"),
                 terminal_reason: row.get("terminal_reason"),
+                http_status: row.get("http_status"),
                 latency_ms: row.get("latency_ms"),
                 checked_at_ms: row.get("finished_at_ms"),
                 used_fallback: row.get::<i64, _>("used_fallback") != 0,
@@ -1104,6 +1130,7 @@ fn latest_from_recent(point: &ChannelStatusRecentPoint) -> ChannelStatusLatestRe
         outcome: point.outcome,
         failure_kind: point.failure_kind.clone(),
         terminal_reason: point.terminal_reason.clone(),
+        http_status: point.http_status,
         latency_ms: point.latency_ms,
         finished_at_ms: point.checked_at_ms,
         semantic_confidence: point.semantic_confidence.clone(),
@@ -1364,6 +1391,19 @@ mod tests {
                     .await?;
                     sqlx::query(
                         r#"
+                        INSERT INTO station_endpoint_health (
+                            station_id, endpoint_revision, status, latency_ms,
+                            checked_at, error_summary, updated_at
+                        ) VALUES (
+                            'station-1', 1, 'success', 48,
+                            '1700000000000', NULL, '1700000000000'
+                        )
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        r#"
                         INSERT INTO station_keys (
                             id, station_id, name, group_name, group_binding_id,
                             created_at, updated_at
@@ -1420,6 +1460,14 @@ mod tests {
         assert_eq!(
             workspace.rows[0].target.effective_group_category.as_deref(),
             Some("gpt")
+        );
+        assert_eq!(
+            workspace.rows[0].target.endpoint_ping,
+            Some(ChannelStatusEndpointPing {
+                status: "success".to_string(),
+                latency_ms: Some(48),
+                checked_at_ms: Some(1_700_000_000_000),
+            })
         );
         assert_eq!(workspace.aggregate.total_rows, 1);
         runtime.close().await.expect("close runtime");

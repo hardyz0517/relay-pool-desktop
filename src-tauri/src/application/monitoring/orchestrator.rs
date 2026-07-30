@@ -180,6 +180,9 @@ where
                 }
 
                 let started_at_ms = self.clock.now_ms();
+                let attempt_deadline_at_ms = deadline_at_ms.min(
+                    started_at_ms.saturating_add(plan.schedule_policy.attempt_timeout_ms as i64),
+                );
                 let transport_result = self
                     .transport
                     .send(ProbeTransportRequest {
@@ -188,11 +191,13 @@ where
                         model: model_plan.model.clone(),
                         model_index: model_index as u8,
                         attempt_number,
-                        deadline_at_ms,
+                        deadline_at_ms: attempt_deadline_at_ms,
                     })
                     .await;
                 self.clock.advance_ms(transport_result.latency_ms);
                 let finished_at_ms = self.clock.now_ms();
+                let slow_success = transport_result.outcome == ProbeOutcome::Available
+                    && transport_result.latency_ms > plan.schedule_policy.slow_latency_threshold_ms;
                 let attempt = RecordedAttempt {
                     execution_id: execution_id.to_string(),
                     station_key_id: target.station_key_id.clone(),
@@ -201,8 +206,16 @@ where
                     attempt_number,
                     started_at_ms,
                     finished_at_ms,
-                    outcome: transport_result.outcome,
-                    failure_kind: transport_result.failure_kind,
+                    outcome: if slow_success {
+                        ProbeOutcome::Degraded
+                    } else {
+                        transport_result.outcome
+                    },
+                    failure_kind: if slow_success {
+                        Some(FailureKind::SlowLatency)
+                    } else {
+                        transport_result.failure_kind
+                    },
                     retryable: transport_result.retryable,
                     semantic_confidence: transport_result.semantic_confidence,
                 };

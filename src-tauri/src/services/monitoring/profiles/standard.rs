@@ -1,6 +1,6 @@
 use crate::{
     models::monitoring::{ClientProfileId, ProtocolKind},
-    services::monitoring::profiles::{header, shape, ClientProfileDefinition},
+    services::monitoring::profiles::{header, shape, ClientProfileDefinition, ProfileAuthScheme},
 };
 
 pub fn standard_api_v1() -> ClientProfileDefinition {
@@ -16,6 +16,7 @@ pub fn standard_api_v1() -> ClientProfileDefinition {
             ProtocolKind::XaiGrok,
             ProtocolKind::GenericOpenAi,
         ],
+        auth: ProfileAuthScheme::BearerAuthorization,
         request: shape(
             "{adapter_path}",
             vec![

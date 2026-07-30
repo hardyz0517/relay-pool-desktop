@@ -3,7 +3,7 @@ use sqlx::{Connection, Row, SqliteConnection};
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
 
 #[tokio::test]
-async fn status_monitoring_v2_fresh_migrator_reaches_schema_nine() {
+async fn status_monitoring_v2_fresh_migrator_reaches_current_schema() {
     let mut connection = SqliteConnection::connect("sqlite::memory:")
         .await
         .expect("in-memory sqlite");
@@ -23,7 +23,15 @@ async fn status_monitoring_v2_fresh_migrator_reaches_schema_nine() {
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    assert_eq!(schema_version, 9);
+    let sqlx_version = sqlx::query_scalar::<_, i64>("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_one(&mut connection)
+        .await
+        .expect("sqlx migration version");
+    assert_eq!(schema_version, sqlx_version);
+    assert!(
+        schema_version >= 10,
+        "Monitoring V2 requires migration 0010"
+    );
 
     let execution_table = sqlx::query_scalar::<_, String>(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'channel_monitor_executions'",
@@ -36,7 +44,7 @@ async fn status_monitoring_v2_fresh_migrator_reaches_schema_nine() {
 
 #[tokio::test]
 async fn status_monitoring_v2_migration_backfills_legacy_runs_without_health_observations() {
-    let mut connection = migrate_to_v8().await;
+    let mut connection = migrate_to_v9().await;
     seed_station_monitor_and_legacy_run(&mut connection).await;
 
     sqlx::raw_sql(include_str!(
@@ -52,7 +60,7 @@ async fn status_monitoring_v2_migration_backfills_legacy_runs_without_health_obs
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    assert_eq!(schema_version, 9);
+    assert_eq!(schema_version, 10);
 
     let monitor = sqlx::query(
         r#"
@@ -221,18 +229,101 @@ async fn status_monitoring_v2_constraints_reject_invalid_outcomes_and_duplicate_
     }
 }
 
+#[tokio::test]
+async fn monitor_timeout_migration_only_upgrades_legacy_key_pool_defaults() {
+    let mut connection = migrate_to_v14().await;
+    seed_station(&mut connection).await;
+    sqlx::query(
+        r#"
+        INSERT INTO channel_monitor_request_templates (
+            id, name, endpoint_kind, method, path, request_body_json,
+            enabled, built_in, created_at, updated_at
+        ) VALUES ('template-timeout', 'Responses', 'responses', 'POST', '/v1/responses', '{}', 1, 0, '1', '1')
+        "#,
+    )
+    .execute(&mut connection)
+    .await
+    .expect("template");
+
+    for (id, attempt_timeout_ms, execution_timeout_ms) in [
+        ("legacy-default", 10_000, 30_000),
+        ("custom", 20_000, 40_000),
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO channel_monitors (
+                id, name, target_type, station_id, station_key_id, template_id,
+                enabled, interval_seconds, jitter_seconds, timeout_seconds,
+                max_concurrency, consecutive_failure_threshold, fallback_models_json,
+                next_run_at, created_at, updated_at, note,
+                attempt_timeout_ms, execution_timeout_ms
+            ) VALUES (?1, ?1, 'station_key', 'station-1', 'key-1', 'template-timeout',
+                      1, 300, 15, 30, 1, 3, '[]', '1', '1', '1',
+                      '由密钥池监控开关创建', ?2, ?3)
+            "#,
+        )
+        .bind(id)
+        .bind(attempt_timeout_ms)
+        .bind(execution_timeout_ms)
+        .execute(&mut connection)
+        .await
+        .expect("monitor");
+    }
+
+    sqlx::raw_sql(include_str!(
+        "../src/persistence/migrations/0015_monitor_probe_timeout_defaults.sql"
+    ))
+    .execute(&mut connection)
+    .await
+    .expect("migration 0015");
+
+    let legacy = sqlx::query(
+        "SELECT attempt_timeout_ms, execution_timeout_ms FROM channel_monitors WHERE id = 'legacy-default'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("legacy monitor");
+    assert_eq!(legacy.get::<i64, _>("attempt_timeout_ms"), 30_000);
+    assert_eq!(legacy.get::<i64, _>("execution_timeout_ms"), 45_000);
+
+    let custom = sqlx::query(
+        "SELECT attempt_timeout_ms, execution_timeout_ms FROM channel_monitors WHERE id = 'custom'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("custom monitor");
+    assert_eq!(custom.get::<i64, _>("attempt_timeout_ms"), 20_000);
+    assert_eq!(custom.get::<i64, _>("execution_timeout_ms"), 40_000);
+}
+
+async fn migrate_to_v14() -> SqliteConnection {
+    let mut connection = migrate_to_v10().await;
+    for migration in [
+        include_str!("../src/persistence/migrations/0011_remote_key_one_to_one.sql"),
+        include_str!("../src/persistence/migrations/0012_seed_builtin_monitor_templates.sql"),
+        include_str!("../src/persistence/migrations/0013_remote_key_discovery_order.sql"),
+        include_str!("../src/persistence/migrations/0014_monitor_profile_v2.sql"),
+    ] {
+        sqlx::raw_sql(migration)
+            .execute(&mut connection)
+            .await
+            .expect("migration");
+    }
+    connection
+}
+
 async fn migrate_to_v10() -> SqliteConnection {
-    let mut connection = migrate_to_v8().await;
+    let mut connection = migrate_to_v9().await;
     sqlx::raw_sql(include_str!(
         "../src/persistence/migrations/0010_status_monitoring_v2.sql"
     ))
     .execute(&mut connection)
     .await
-    .expect("migration 0009");
+    .expect("migration 0010");
     connection
 }
 
-async fn migrate_to_v8() -> SqliteConnection {
+async fn migrate_to_v9() -> SqliteConnection {
     let mut connection = SqliteConnection::connect("sqlite::memory:")
         .await
         .expect("in-memory sqlite");
@@ -249,6 +340,7 @@ async fn migrate_to_v8() -> SqliteConnection {
         include_str!("../src/persistence/migrations/0006_collectors_changes.sql"),
         include_str!("../src/persistence/migrations/0007_pricing_monitoring.sql"),
         include_str!("../src/persistence/migrations/0008_legacy_parity.sql"),
+        include_str!("../src/persistence/migrations/0009_provider_drafts.sql"),
     ] {
         sqlx::raw_sql(migration)
             .execute(&mut connection)

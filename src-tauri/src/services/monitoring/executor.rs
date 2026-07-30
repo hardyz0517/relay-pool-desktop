@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use http::header;
-use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -16,6 +14,9 @@ use crate::{
         },
         challenge::ChallengeValidator,
         profiles::{registry::BuiltinProfileRegistry, HeaderValue},
+        request_shape::{
+            build_probe_request_body, resolve_probe_request_path, ProbeRequestContext,
+        },
         transport::{
             MonitoringAuthHeader, MonitoringTransport, MonitoringTransportError,
             MonitoringTransportRequest,
@@ -29,6 +30,7 @@ pub struct ProbeExecutionInput {
     pub endpoint_revision: i64,
     pub protocol_kind: ProtocolKind,
     pub client_profile_id: crate::models::monitoring::ClientProfileId,
+    pub client_profile_version: u32,
     pub model: String,
     pub prompt: String,
     pub validator: ChallengeValidator,
@@ -103,7 +105,12 @@ where
     ) -> ProbeExecutionOutput {
         let started = Instant::now();
         let profile = match self.profiles.get(input.client_profile_id) {
-            Some(profile) if profile.supports_protocol(input.protocol_kind) => profile,
+            Some(profile)
+                if profile.version == input.client_profile_version
+                    && profile.supports_protocol(input.protocol_kind) =>
+            {
+                profile
+            }
             _ => {
                 return failure_output(
                     input.protocol_kind,
@@ -144,20 +151,24 @@ where
         };
 
         let adapter = adapter_for(input.protocol_kind, input.stream);
+        let request_context = ProbeRequestContext::new(&input.station_key_id);
         let mut descriptor = adapter.request_descriptor();
-        descriptor.body = request_body(
+        descriptor.path = resolve_probe_request_path(&descriptor.path, &input.model);
+        descriptor.body = build_probe_request_body(
             input.protocol_kind,
+            input.client_profile_id,
             &input.model,
             &input.prompt,
             input.stream,
+            &request_context,
         );
-        let public_headers = profile_public_headers(profile);
+        let public_headers = profile_public_headers(profile, &request_context, &input.model);
         let request = MonitoringTransportRequest {
             descriptor,
             public_headers,
             auth_header: Some(MonitoringAuthHeader {
-                name: header::AUTHORIZATION.as_str().to_string(),
-                value: SecretHeaderValue::new(format!("Bearer {}", secret.value)),
+                name: profile.auth.header_name().to_string(),
+                value: SecretHeaderValue::new(profile.auth.secret_value(&secret.value)),
             }),
             request_deadline: input.deadline_at,
         };
@@ -242,37 +253,10 @@ fn adapter_for(protocol_kind: ProtocolKind, stream: bool) -> Box<dyn ProtocolAda
     }
 }
 
-fn request_body(protocol_kind: ProtocolKind, model: &str, prompt: &str, stream: bool) -> Vec<u8> {
-    let value = match protocol_kind {
-        ProtocolKind::OpenAiResponses => json!({
-            "model": model,
-            "instructions": "Follow the input exactly.",
-            "input": prompt,
-            "max_output_tokens": 16,
-            "store": false,
-            "stream": stream
-        }),
-        ProtocolKind::AnthropicMessages => json!({
-            "model": model,
-            "max_tokens": 16,
-            "stream": stream,
-            "messages": [{"role": "user", "content": prompt}]
-        }),
-        ProtocolKind::GeminiNative => json!({
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}]
-        }),
-        ProtocolKind::OpenAiChat | ProtocolKind::GenericOpenAi | ProtocolKind::XaiGrok => json!({
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 16,
-            "stream": stream
-        }),
-    };
-    serde_json::to_vec(&value).expect("monitoring request body serializes")
-}
-
 fn profile_public_headers(
     profile: &crate::services::monitoring::profiles::ClientProfileDefinition,
+    request_context: &ProbeRequestContext,
+    model: &str,
 ) -> Vec<(String, String)> {
     profile
         .request
@@ -282,6 +266,13 @@ fn profile_public_headers(
             HeaderValue::Static(value) => Some((header.name.clone(), value.clone())),
             HeaderValue::StableLocalIdentity { scope } => {
                 Some((header.name.clone(), format!("relay-pool-desktop:{scope}")))
+            }
+            HeaderValue::RequestValue { kind } => Some((
+                header.name.clone(),
+                request_context.request_value(*kind).to_string(),
+            )),
+            HeaderValue::ModelTemplate { template } => {
+                Some((header.name.clone(), template.replace("{model}", model)))
             }
         })
         .collect()
@@ -344,30 +335,5 @@ fn failure_output(
             output_bytes: 0,
             error_summary,
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::Value;
-
-    use super::request_body;
-    use crate::models::monitoring::ProtocolKind;
-
-    #[test]
-    fn responses_probe_uses_minimal_explicit_instructions_without_storage() {
-        let body = request_body(
-            ProtocolKind::OpenAiResponses,
-            "gpt-5.5",
-            "Reply exactly RP_ANSWER=42",
-            true,
-        );
-        let value: Value = serde_json::from_slice(&body).expect("valid request JSON");
-
-        assert_eq!(value["instructions"], "Follow the input exactly.");
-        assert_eq!(value["store"], false);
-        assert_eq!(value["max_output_tokens"], 16);
-        assert_eq!(value["stream"], true);
-        assert_eq!(value["input"], "Reply exactly RP_ANSWER=42");
     }
 }

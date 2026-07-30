@@ -283,6 +283,37 @@ async fn auto_protocol_resolves_only_from_persisted_capability_facts() {
 }
 
 #[tokio::test]
+async fn slow_success_is_degraded_and_attempt_uses_its_own_deadline() {
+    let mut transport = FakeTransport::default();
+    transport.push_for_key("key-a", ProbeTransportResult::available(16_000));
+    let mut orchestrator = harness(transport);
+    let mut request = default_request(vec![target("key-a", Some(ProtocolKind::OpenAiResponses))]);
+    request.snapshot.schedule_policy =
+        SchedulePolicy::new(300, 0, 45_000, 30_000, 5_000).expect("schedule");
+
+    orchestrator
+        .request_execution(request)
+        .await
+        .expect("execution");
+    let (_, _, recorder, transport) = orchestrator.into_parts();
+
+    assert_eq!(transport.requests.len(), 1);
+    assert_eq!(transport.requests[0].deadline_at_ms, 31_000);
+    assert_eq!(recorder.attempts[0].outcome, ProbeOutcome::Degraded);
+    assert_eq!(
+        recorder.attempts[0].failure_kind,
+        Some(FailureKind::SlowLatency)
+    );
+    assert_eq!(recorder.targets[0].terminal_outcome, ProbeOutcome::Degraded);
+    assert_eq!(
+        recorder.targets[0].terminal_failure_kind,
+        Some(FailureKind::SlowLatency)
+    );
+    assert_eq!(recorder.summaries[0].degraded_count, 1);
+    assert_eq!(recorder.summaries[0].unavailable_count, 0);
+}
+
+#[tokio::test]
 async fn profile_protocol_mismatch_is_rejected_before_transport() {
     let mut request = default_request(vec![target("key-a", Some(ProtocolKind::AnthropicMessages))]);
     request.snapshot.client_profile =

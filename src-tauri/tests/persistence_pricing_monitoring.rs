@@ -269,7 +269,6 @@ async fn migrated_connection() -> SqliteConnection {
         include_str!("../src/persistence/migrations/0006_collectors_changes.sql"),
         include_str!("../src/persistence/migrations/0007_pricing_monitoring.sql"),
         include_str!("../src/persistence/migrations/0008_legacy_parity.sql"),
-        include_str!("../src/persistence/migrations/0010_status_monitoring_v2.sql"),
     ] {
         sqlx::raw_sql(migration)
             .execute(&mut connection)
@@ -282,7 +281,7 @@ async fn migrated_connection() -> SqliteConnection {
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    assert_eq!(schema_version, 9);
+    assert_eq!(schema_version, 8);
     connection
 }
 

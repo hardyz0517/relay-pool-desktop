@@ -1,5 +1,4 @@
 export type ChannelMonitorIdInputDto = { monitorId: string };
-export type ChannelMonitorSummaryInputDto = { runSince: string | null; runLimit: number | null };
 export type ChannelStatusWorkspaceWindowDto = "recent" | "last24h" | "last7d" | "last30d";
 export type ChannelStatusSortFieldDto = "monitor_name" | "latest_checked_at" | "availability" | "latency" | "status";
 export type ChannelStatusSortDirectionDto = "asc" | "desc";
@@ -103,26 +102,4 @@ export type ChannelMonitorRequestTemplateDto = {
   id: string; name: string; endpointKind: string; method: string; path: string;
   requestBodyJson: string; enabled: boolean; builtIn: boolean; note: string | null;
   createdAt: string; updatedAt: string;
-};
-
-export type ChannelMonitorSummaryDto = {
-  monitor: ChannelMonitorDto; recentRuns: ChannelMonitorRunDto[]; runsLoadStatus: "ok" | "failed";
-  latestRun: ChannelMonitorRunDto | null;
-};
-
-export type ChannelStatusTimelinePointDto = {
-  status: ChannelMonitorRunStatusDto; latencyMs: number | null; endpointPingMs: number | null; checkedAt: string;
-};
-
-export type ChannelStatusWindowSummaryDto = {
-  window: "recent" | "24h" | "7d"; totalCount: number; successCount: number; failureCount: number;
-  warningCount: number; availabilityPercent: number | null; avgLatencyMs: number | null;
-  avgEndpointPingMs: number | null; lastCheckedAt: string | null;
-  latestStatus: ChannelMonitorRunStatusDto | null; latestErrorMessage: string | null;
-  timeline: ChannelStatusTimelinePointDto[];
-};
-
-export type ChannelStatusSummaryDto = {
-  monitor: ChannelMonitorDto; recent: ChannelStatusWindowSummaryDto;
-  last24h: ChannelStatusWindowSummaryDto; last7d: ChannelStatusWindowSummaryDto;
 };

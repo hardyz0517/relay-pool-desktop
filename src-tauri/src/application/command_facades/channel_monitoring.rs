@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tokio_util::sync::CancellationToken;
-
 use crate::{
     application::{error::ApplicationError, monitoring::MonitoringService, pagination::PageLimit},
     models::{
@@ -11,7 +9,6 @@ use crate::{
             UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
         },
         monitoring::{CancelChannelMonitorExecutionReceipt, RunChannelMonitorReceipt},
-        shared_capabilities::ChannelMonitorSummary,
     },
     services::monitoring::runner::MonitoringRunner,
 };
@@ -32,16 +29,6 @@ impl ChannelMonitoringCommandFacade {
         limit: PageLimit,
     ) -> Result<Vec<ChannelMonitor>, ApplicationError> {
         self.monitoring.list_monitors(limit).await
-    }
-
-    pub(crate) async fn list_channel_monitor_summaries(
-        &self,
-        run_since: Option<&str>,
-        run_limit: Option<usize>,
-    ) -> Result<Vec<ChannelMonitorSummary>, ApplicationError> {
-        self.monitoring
-            .list_channel_monitor_summaries(run_since, run_limit)
-            .await
     }
 
     pub(crate) async fn create_channel_monitor(
@@ -68,7 +55,7 @@ impl ChannelMonitoringCommandFacade {
         limit: PageLimit,
     ) -> Result<Vec<ChannelMonitorRun>, ApplicationError> {
         self.monitoring
-            .list_run_page(monitor_id, None, limit)
+            .list_legacy_run_page(monitor_id, None, limit)
             .await
             .map(|page| page.items)
     }
@@ -115,26 +102,9 @@ impl ChannelMonitoringCommandFacade {
     ) -> Result<RunChannelMonitorReceipt, String> {
         let trigger_request_id =
             trigger_request_id.unwrap_or_else(|| format!("manual:{}", uuid::Uuid::now_v7()));
-        let receipt = self
-            .runner
-            .run_manual(
-                monitor_id.clone(),
-                trigger_request_id.clone(),
-                CancellationToken::new(),
-            )
-            .await?;
-        Ok(RunChannelMonitorReceipt {
-            execution_id: receipt.execution_id,
-            monitor_id,
-            status: if receipt.reused_existing {
-                "running"
-            } else {
-                "completed"
-            }
-            .to_string(),
-            trigger_request_id,
-            reused_existing: receipt.reused_existing,
-        })
+        self.runner
+            .enqueue_manual(monitor_id, trigger_request_id)
+            .await
     }
 
     pub(crate) async fn cancel_channel_monitor_execution(

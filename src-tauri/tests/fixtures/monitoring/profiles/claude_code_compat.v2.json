@@ -1,0 +1,32 @@
+{
+  "id": "claude_code_compat",
+  "version": 2,
+  "enabled": true,
+  "supported_protocols": [
+    "anthropic_messages"
+  ],
+  "auth": {
+    "kind": "bearer_authorization"
+  },
+  "method": "POST",
+  "path": "/v1/messages",
+  "header_names": [
+    "accept",
+    "anthropic-beta",
+    "anthropic-version",
+    "content-type",
+    "user-agent",
+    "x-app",
+    "x-claude-code-session-id",
+    "x-client-request-id"
+  ],
+  "body_defaults": [
+    "max_tokens",
+    "metadata.user_id",
+    "system",
+    "messages",
+    "tools",
+    "stream"
+  ],
+  "profile_hash": "42091450422d3242c298f49bb66389973490626aab67fb97d8a522d85f357eec"
+}

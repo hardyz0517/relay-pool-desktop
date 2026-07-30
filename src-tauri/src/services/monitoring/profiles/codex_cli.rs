@@ -1,30 +1,34 @@
 use crate::{
     models::monitoring::{ClientProfileId, ProtocolKind},
-    services::monitoring::profiles::{header, shape, ClientProfileDefinition},
+    services::monitoring::profiles::{header, shape, ClientProfileDefinition, ProfileAuthScheme},
 };
 
-pub fn codex_cli_compat_v1() -> ClientProfileDefinition {
+pub fn codex_cli_compat_v2() -> ClientProfileDefinition {
     ClientProfileDefinition {
         id: ClientProfileId::CodexCliCompat,
-        version: 1,
+        version: 2,
         enabled: true,
-        supported_protocols: vec![
-            ProtocolKind::OpenAiChat,
-            ProtocolKind::OpenAiResponses,
-            ProtocolKind::GenericOpenAi,
-        ],
+        supported_protocols: vec![ProtocolKind::OpenAiResponses],
+        auth: ProfileAuthScheme::BearerAuthorization,
         request: shape(
-            "{adapter_path}",
+            "/v1/responses",
             vec![
                 header("accept", "application/json"),
                 header("content-type", "application/json"),
-                header("openai-beta", "responses=v1"),
-                header("user-agent", "relay-pool-codex-cli-compat/1"),
-                header("x-stainless-arch", "unknown"),
-                header("x-stainless-lang", "rust"),
-                header("x-stainless-os", "unknown"),
+                header("openai-beta", "responses=experimental"),
+                header("user-agent", "codex_cli_rs/0.146.0"),
             ],
-            &["max_tokens", "stream"],
+            &[
+                "instructions",
+                "input",
+                "tools",
+                "tool_choice",
+                "parallel_tool_calls",
+                "reasoning.effort",
+                "reasoning.summary",
+                "store",
+                "stream",
+            ],
         ),
     }
 }

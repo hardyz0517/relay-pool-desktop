@@ -1,0 +1,31 @@
+{
+  "id": "codex_cli_compat",
+  "version": 2,
+  "enabled": true,
+  "supported_protocols": [
+    "open_ai_responses"
+  ],
+  "auth": {
+    "kind": "bearer_authorization"
+  },
+  "method": "POST",
+  "path": "/v1/responses",
+  "header_names": [
+    "accept",
+    "content-type",
+    "openai-beta",
+    "user-agent"
+  ],
+  "body_defaults": [
+    "instructions",
+    "input",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "reasoning.effort",
+    "reasoning.summary",
+    "store",
+    "stream"
+  ],
+  "profile_hash": "8ab4be106b7ed5dcf2089b6fc2d089386a07817fd10ca7d9e61c7a039aa2f31e"
+}

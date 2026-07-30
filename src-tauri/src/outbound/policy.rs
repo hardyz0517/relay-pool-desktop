@@ -72,9 +72,20 @@ impl OutboundHeaderPolicy {
                 "openai-organization",
                 "openai-project",
                 "openai-beta",
+                "anthropic-beta",
+                "anthropic-version",
                 "new-api-user",
+                "x-app",
+                "x-claude-code-session-id",
+                "x-client-request-id",
+                "x-goog-api-client",
             ],
-            ["authorization", "cookie", "proxy-authorization"],
+            [
+                "authorization",
+                "cookie",
+                "proxy-authorization",
+                "x-goog-api-key",
+            ],
         )
     }
 
