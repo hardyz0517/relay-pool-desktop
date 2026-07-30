@@ -2,7 +2,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{
     routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
-    settings::{AppSettings, UpdateSettingsInput},
+    settings::{
+        AppSettings, ConfirmHierarchicalRoutingMigrationInput, HierarchicalRoutingAffinityMode,
+        HierarchicalRoutingMigrationConfig, HierarchicalRoutingOrderingProfile,
+        UpdateSettingsInput,
+    },
     AppStatus,
 };
 
@@ -142,6 +146,59 @@ impl CollectorProxyModeDto {
             .as_str()
             .expect("proxy mode serializes as a string")
             .to_owned()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConfirmHierarchicalRoutingMigrationInputDto {
+    pub ordering_profile: HierarchicalRoutingOrderingProfile,
+    pub multiplier_ceiling: f64,
+    pub group_scope: RoutingGroupFilter,
+    pub allow_depleted_fallback: bool,
+    pub affinity_mode: HierarchicalRoutingAffinityMode,
+    pub legacy_policy: RoutingStrategyDto,
+}
+
+impl ConfirmHierarchicalRoutingMigrationInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The hierarchical routing migration payload is invalid.",
+            )
+        })?;
+        input.validate()?;
+        Ok(input)
+    }
+
+    pub fn into_domain(
+        self,
+    ) -> Result<ConfirmHierarchicalRoutingMigrationInput, crate::commands::error::CommandError>
+    {
+        self.validate()?;
+        Ok(ConfirmHierarchicalRoutingMigrationInput {
+            ordering_profile: self.ordering_profile,
+            multiplier_ceiling: self.multiplier_ceiling,
+            group_scope: self.group_scope,
+            allow_depleted_fallback: self.allow_depleted_fallback,
+            affinity_mode: self.affinity_mode,
+            legacy_policy: self.legacy_policy.into_string(),
+        })
+    }
+
+    fn validate(&self) -> Result<(), crate::commands::error::CommandError> {
+        if !self.multiplier_ceiling.is_finite()
+            || !(0.0..=MAX_RATE_MULTIPLIER).contains(&self.multiplier_ceiling)
+        {
+            return Err(invalid_input(
+                "multiplierCeiling",
+                "out_of_range",
+                "The migration multiplier ceiling is out of range.",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -411,6 +468,7 @@ pub struct SettingsDto {
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
+    pub hierarchical_routing_migration: Option<HierarchicalRoutingMigrationConfig>,
     pub developer_mode_enabled: bool,
     pub tray_behavior: String,
     pub data_dir: String,
@@ -439,6 +497,7 @@ impl From<AppSettings> for SettingsDto {
             collector_timeout_seconds: value.collector_timeout_seconds,
             collector_max_concurrency: value.collector_max_concurrency,
             allow_depleted_fallback: value.allow_depleted_fallback,
+            hierarchical_routing_migration: value.hierarchical_routing_migration,
             developer_mode_enabled: value.developer_mode_enabled,
             tray_behavior: value.tray_behavior,
             data_dir: value.data_dir,
@@ -499,6 +558,25 @@ export type RoutingStrategyInput =
 
 export type CollectorProxyModeInput = "direct" | "system" | "manual";
 
+export type HierarchicalRoutingOrderingProfile = "priority_first" | "cost_first";
+
+export type HierarchicalRoutingAffinityMode =
+  | "disabled"
+  | "session"
+  | "previous_response";
+
+export type HierarchicalRoutingMigrationConfig = {
+  configVersion: "hierarchical_routing_migration_v1";
+  policyVersion: "hierarchical_v1";
+  orderingProfile: HierarchicalRoutingOrderingProfile;
+  multiplierCeiling: number;
+  groupScope: RoutingGroupFilter;
+  allowDepletedFallback: boolean;
+  affinityMode: HierarchicalRoutingAffinityMode;
+  legacyPolicy: RoutingStrategyInput;
+  confirmedAtMs: number;
+};
+
 export type UpdateSettingsInputDto = {
   localProxyPort: number;
   defaultRoutingStrategy: RoutingStrategyInput;
@@ -518,6 +596,15 @@ export type UpdateSettingsInputDto = {
   allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
   trayBehavior?: "close_to_tray" | "minimize_to_tray" | "disabled";
+};
+
+export type ConfirmHierarchicalRoutingMigrationInputDto = {
+  orderingProfile: HierarchicalRoutingOrderingProfile;
+  multiplierCeiling: number;
+  groupScope: RoutingGroupFilter;
+  allowDepletedFallback: boolean;
+  affinityMode: HierarchicalRoutingAffinityMode;
+  legacyPolicy: RoutingStrategyInput;
 };
 
 export type UpdateLocalAccessKeyInputDto = {
@@ -547,6 +634,7 @@ export type SettingsDto = {
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
+  hierarchicalRoutingMigration: HierarchicalRoutingMigrationConfig | null;
   developerModeEnabled: boolean;
   trayBehavior: string;
   dataDir: string;

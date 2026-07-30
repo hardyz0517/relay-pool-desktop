@@ -57,6 +57,7 @@ const fallbackSettings: AppSettings = {
   collectorTimeoutSeconds: 15,
   collectorMaxConcurrency: 3,
   allowDepletedFallback: false,
+  hierarchicalRoutingMigration: null,
   developerModeEnabled: false,
   dataDir: "仅桌面端可读取",
   pendingDataDir: null,

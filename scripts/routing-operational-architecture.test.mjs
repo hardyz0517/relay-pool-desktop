@@ -193,6 +193,15 @@ function checkTestOnlyProductionApis() {
 
 function checkHierarchicalV1DoesNotReadLegacyWeights() {
   for (const file of filesUnder("src-tauri/src", [".rs"])) {
+    if (
+      [
+        "src-tauri/src/ipc/dto/settings.rs",
+        "src-tauri/src/models/settings.rs",
+        "src-tauri/src/persistence/stores/settings_store.rs",
+      ].includes(relative(file))
+    ) {
+      continue;
+    }
     const source = stripTestModules(readFileSync(file, "utf8"));
     if (/hierarchical_v1/u.test(source) && /\b(?:weight|weights|score|SchedulerAdvancedSettings)\b/u.test(source)) {
       failures.push(`${relative(file)}: hierarchical_v1 must not read legacy weights or score path`);

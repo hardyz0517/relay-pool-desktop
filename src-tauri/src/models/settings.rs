@@ -2,6 +2,35 @@ use serde::{Deserialize, Serialize};
 
 use super::routing::{RoutingGroupFilter, SchedulerAdvancedSettings};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum HierarchicalRoutingOrderingProfile {
+    PriorityFirst,
+    CostFirst,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum HierarchicalRoutingAffinityMode {
+    Disabled,
+    Session,
+    PreviousResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HierarchicalRoutingMigrationConfig {
+    pub config_version: String,
+    pub policy_version: String,
+    pub ordering_profile: HierarchicalRoutingOrderingProfile,
+    pub multiplier_ceiling: f64,
+    pub group_scope: RoutingGroupFilter,
+    pub allow_depleted_fallback: bool,
+    pub affinity_mode: HierarchicalRoutingAffinityMode,
+    pub legacy_policy: String,
+    pub confirmed_at_ms: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -23,6 +52,7 @@ pub struct AppSettings {
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
+    pub hierarchical_routing_migration: Option<HierarchicalRoutingMigrationConfig>,
     pub developer_mode_enabled: bool,
     pub tray_behavior: String,
     pub data_dir: String,
@@ -51,6 +81,17 @@ pub struct UpdateSettingsInput {
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
     pub tray_behavior: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmHierarchicalRoutingMigrationInput {
+    pub ordering_profile: HierarchicalRoutingOrderingProfile,
+    pub multiplier_ceiling: f64,
+    pub group_scope: RoutingGroupFilter,
+    pub allow_depleted_fallback: bool,
+    pub affinity_mode: HierarchicalRoutingAffinityMode,
+    pub legacy_policy: String,
 }
 
 #[cfg(test)]

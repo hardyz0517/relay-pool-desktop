@@ -5,7 +5,9 @@ use rand::{rngs::OsRng, RngCore};
 
 use crate::{
     application::{clock::Clock, error::ApplicationError},
-    models::settings::{AppSettings, UpdateSettingsInput},
+    models::settings::{
+        AppSettings, ConfirmHierarchicalRoutingMigrationInput, UpdateSettingsInput,
+    },
     persistence::{
         runtime::PersistenceHandle,
         stores::settings_store::{SettingsStore, SettingsUpdate},
@@ -165,6 +167,33 @@ impl SettingsService {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn confirm_hierarchical_routing_migration(
+        &self,
+        input: ConfirmHierarchicalRoutingMigrationInput,
+    ) -> Result<AppSettings, ApplicationError> {
+        let store = self.store;
+        let now = self.now_ms_string();
+        let confirmed_at_ms = self.clock.now_utc().timestamp_millis();
+        let projection = self.data_directory_projection()?;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .confirm_hierarchical_routing_migration(
+                            write,
+                            input,
+                            confirmed_at_ms,
+                            &now,
+                            &projection.active,
+                            projection.pending,
+                        )
+                        .await
+                })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
     #[allow(
         dead_code,
         reason = "exercised by the released-schema differential integration contract"
@@ -202,6 +231,10 @@ impl SettingsService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{
+        routing::RoutingGroupFilter,
+        settings::{HierarchicalRoutingAffinityMode, HierarchicalRoutingOrderingProfile},
+    };
     use crate::{application::clock::SystemClock, persistence::runtime::PersistenceRuntime};
 
     #[tokio::test]
@@ -284,6 +317,51 @@ mod tests {
                 .expect("persisted tray behavior");
         assert_eq!(persisted, "minimize_to_tray");
         drop(read);
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn confirm_hierarchical_routing_migration_persists_complete_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("settings.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        let service = SettingsService::new(
+            runtime.handle(),
+            Arc::new(SystemClock),
+            temp.path().display().to_string(),
+            None,
+        );
+
+        let settings = service
+            .confirm_hierarchical_routing_migration(ConfirmHierarchicalRoutingMigrationInput {
+                ordering_profile: HierarchicalRoutingOrderingProfile::CostFirst,
+                multiplier_ceiling: 2.0,
+                group_scope: RoutingGroupFilter::AllGroups,
+                allow_depleted_fallback: false,
+                affinity_mode: HierarchicalRoutingAffinityMode::Session,
+                legacy_policy: "cost_stable_first".to_string(),
+            })
+            .await
+            .expect("migration confirmation");
+
+        let config = settings
+            .hierarchical_routing_migration
+            .expect("persisted migration config");
+        assert_eq!(config.policy_version, "hierarchical_v1");
+        assert_eq!(
+            config.ordering_profile,
+            HierarchicalRoutingOrderingProfile::CostFirst
+        );
+        assert_eq!(config.multiplier_ceiling, 2.0);
+        assert_eq!(config.group_scope, RoutingGroupFilter::AllGroups);
+        assert_eq!(
+            config.affinity_mode,
+            HierarchicalRoutingAffinityMode::Session
+        );
+        assert_eq!(config.legacy_policy, "cost_stable_first");
+
         runtime.close().await.expect("close persistence runtime");
     }
 }

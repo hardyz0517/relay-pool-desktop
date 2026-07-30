@@ -10,6 +10,21 @@ export type RoutingStrategy =
 
 export type CollectorProxyMode = "direct" | "system" | "manual";
 
+export type HierarchicalRoutingOrderingProfile = "priority_first" | "cost_first";
+export type HierarchicalRoutingAffinityMode = "disabled" | "session" | "previous_response";
+
+export type HierarchicalRoutingMigrationConfig = {
+  configVersion: "hierarchical_routing_migration_v1";
+  policyVersion: "hierarchical_v1";
+  orderingProfile: HierarchicalRoutingOrderingProfile;
+  multiplierCeiling: number;
+  groupScope: RoutingGroupFilter;
+  allowDepletedFallback: boolean;
+  affinityMode: HierarchicalRoutingAffinityMode;
+  legacyPolicy: RoutingStrategy;
+  confirmedAtMs: number;
+};
+
 export type SchedulerAdvancedFieldKind =
   | "positiveInteger"
   | "nonNegativeWeight"
@@ -83,6 +98,7 @@ export type AppSettings = {
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
+  hierarchicalRoutingMigration: HierarchicalRoutingMigrationConfig | null;
   developerModeEnabled: boolean;
   dataDir: string;
   pendingDataDir: string | null;
@@ -138,6 +154,15 @@ export type UpdateSettingsInput = {
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
+};
+
+export type ConfirmHierarchicalRoutingMigrationInput = {
+  orderingProfile: HierarchicalRoutingOrderingProfile;
+  multiplierCeiling: number;
+  groupScope: RoutingGroupFilter;
+  allowDepletedFallback: boolean;
+  affinityMode: HierarchicalRoutingAffinityMode;
+  legacyPolicy: RoutingStrategy;
 };
 
 export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsInput {

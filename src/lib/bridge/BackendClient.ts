@@ -31,6 +31,7 @@ import type {
   CommonLoginEmail,
   CommonLoginOptions,
   CommonLoginPassword,
+  ConfirmHierarchicalRoutingMigrationInput,
   UpdateSettingsInput,
   UpsertCommonLoginEmailInput,
   UpsertCommonLoginPasswordInput,
@@ -113,6 +114,7 @@ export type SettingsDomainClient = {
   updateLocalAccessKey(value: string): Promise<AppSettings>;
   importRelayPoolToCCSwitch(): Promise<CcswitchImportResult>;
   updateSettings(input: UpdateSettingsInput): Promise<AppSettings>;
+  confirmHierarchicalRoutingMigration(input: ConfirmHierarchicalRoutingMigrationInput): Promise<AppSettings>;
   chooseDataDir(): Promise<AppSettings>;
   resetDataDir(): Promise<AppSettings>;
   listCommonLoginOptions(): Promise<CommonLoginOptions>;

@@ -1,6 +1,5 @@
 import { buildCurrentStationBalanceFacts } from "@/lib/projections/balanceFacts";
 import { buildCurrentStationGroupFacts, type StationGroupCurrentFact } from "@/lib/projections/groupFacts";
-import { buildPricingGroupCandidates, type PricingGroupCandidate } from "@/lib/projections/pricingFacts";
 import type { BalanceSnapshot, PricingRule } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities, StationKeyHealth } from "@/lib/types/routing";
@@ -88,7 +87,6 @@ export function buildRuntimeRouteSnapshot(input: {
   const capabilitiesByKeyId = new Map(input.capabilities.map((item) => [item.stationKeyId, item]));
   const healthByKeyId = new Map(input.health.map((item) => [item.stationKeyId, item]));
   const groupFactByBindingId = groupFactsByBindingId(input.groupBindings, input.groupRates);
-  const pricingByGroupBindingId = pricingCandidatesByGroupBindingId(input);
   const balancesByStationId = buildCurrentStationBalanceFacts({
     stations: input.stations,
     balances: input.balances,
@@ -113,7 +111,6 @@ export function buildRuntimeRouteSnapshot(input: {
       }
 
       const groupFact = groupBindingId ? groupFactByBindingId.get(groupBindingId) ?? null : null;
-      const pricing = groupBindingId ? pricingByGroupBindingId.get(groupBindingId) ?? null : null;
       const balance = balancesByStationId.get(stationId) ?? null;
       const capability = capabilitiesByKeyId.get(id) ?? null;
       const health = healthByKeyId.get(id) ?? null;
@@ -140,7 +137,7 @@ export function buildRuntimeRouteSnapshot(input: {
           rateMultiplier: groupFact?.rateMultiplier ?? null,
           rateSource: groupFact?.rateSource ?? null,
           modelPolicy: modelPolicyFor(capability),
-          pricingStatus: pricingStatusFor(pricing),
+          pricingStatus: pricingStatusFromReadinessBoundary(),
           balanceStatus: {
             status: balance?.status ?? null,
             value: balance?.value ?? null,
@@ -190,30 +187,6 @@ function groupFactsByBindingId(
   );
 }
 
-function pricingCandidatesByGroupBindingId(input: {
-  stations: Station[];
-  stationKeys: RuntimeStationKey[];
-  groupBindings: StationGroupBinding[];
-  groupRates: GroupRateRecord[];
-  pricingRules: PricingRule[];
-}) {
-  const candidates = buildPricingGroupCandidates({
-    stations: input.stations,
-    stationKeys: input.stationKeys,
-    groupBindings: input.groupBindings,
-    groupRates: input.groupRates,
-    pricingRules: input.pricingRules,
-  });
-  return new Map(
-    candidates.flatMap((candidate) => {
-      if (!candidate.groupBindingId) {
-        return [];
-      }
-      return [[candidate.groupBindingId, candidate] as const];
-    }),
-  );
-}
-
 function modelPolicyFor(capability: StationKeyCapabilities | null) {
   return {
     allowlist: capability?.modelAllowlist ?? [],
@@ -224,10 +197,10 @@ function modelPolicyFor(capability: StationKeyCapabilities | null) {
   };
 }
 
-function pricingStatusFor(candidate: PricingGroupCandidate | null) {
+function pricingStatusFromReadinessBoundary() {
   return {
-    pricingRuleId: candidate?.pricingRuleId ?? null,
+    pricingRuleId: null,
     priceConfidence: null,
-    source: candidate?.source ?? null,
+    source: "backend_read_model_required",
   };
 }

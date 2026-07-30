@@ -57,6 +57,11 @@ export function normalizeSettings(settings: SettingsDto | AppSettings): AppSetti
     allowDepletedFallback: normalizeBoolean(
       maybeSettings.allowDepletedFallback,
     ),
+    hierarchicalRoutingMigration:
+      maybeSettings.hierarchicalRoutingMigration &&
+      typeof maybeSettings.hierarchicalRoutingMigration === "object"
+        ? (maybeSettings.hierarchicalRoutingMigration as AppSettings["hierarchicalRoutingMigration"])
+        : null,
   };
 }
 

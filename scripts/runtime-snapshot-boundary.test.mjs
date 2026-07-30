@@ -16,8 +16,12 @@ assert.ok(
   "runtime snapshot projection should consume current station balance facts",
 );
 assert.ok(
-  source.includes("buildPricingGroupCandidates"),
-  "runtime snapshot projection should consume pricing group candidates as pricing evidence",
+  source.includes("backend_read_model_required"),
+  "runtime snapshot projection should not reconstruct pricing evidence in the frontend routing path",
+);
+assert.ok(
+  !source.includes("buildPricingGroupCandidates"),
+  "runtime snapshot projection must not consume the frontend pricing matcher in the routing path",
 );
 assert.ok(source.includes("secretRef"), "runtime snapshot should expose secret references only");
 assert.ok(!source.includes("@/features/"), "runtime snapshot projection must not import UI feature modules");
