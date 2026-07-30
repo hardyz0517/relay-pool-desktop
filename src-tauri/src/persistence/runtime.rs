@@ -1,8 +1,15 @@
-use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    fs,
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    Connection, Executor, SqliteConnection, SqlitePool,
+    Connection, Executor, Row, SqliteConnection, SqlitePool,
 };
 
 #[cfg(test)]
@@ -120,6 +127,7 @@ impl PersistenceHandle {
 #[derive(Debug)]
 pub(crate) struct PersistenceRuntime {
     handle: PersistenceHandle,
+    database_path: PathBuf,
     compatibility: SchemaCompatibility,
     open_mode: OpenMode,
     #[cfg(test)]
@@ -187,6 +195,7 @@ impl PersistenceRuntime {
                 lifecycle,
                 writes: Arc::new(WriteCoordinator::new()),
             },
+            database_path: path.to_path_buf(),
             compatibility,
             open_mode,
             #[cfg(test)]
@@ -281,6 +290,50 @@ impl PersistenceRuntime {
         self.close_inner(|_| Ok(())).await
     }
 
+    pub(crate) async fn freeze_for_activation(
+        &self,
+        timeout: Duration,
+    ) -> Result<ActivationFreezeEvidence, RuntimeTransitionError> {
+        match self.current_state() {
+            RuntimeState::Closed => {
+                return Ok(ActivationFreezeEvidence::from_database_path(
+                    &self.database_path,
+                ));
+            }
+            RuntimeState::Ready => self.handle.lifecycle.transition(RuntimeState::Draining)?,
+            RuntimeState::Draining => {}
+            RuntimeState::Starting => {
+                let _ = self.handle.lifecycle.transition(RuntimeState::Unavailable);
+                self.handle.pool.close().await;
+                return Err(RuntimeTransitionError::Invalid);
+            }
+            RuntimeState::Unavailable => {
+                self.handle.pool.close().await;
+                return Err(RuntimeTransitionError::CloseFailed);
+            }
+        }
+
+        self.handle.writes.close_admission();
+        tokio::time::timeout(timeout, self.handle.lifecycle.wait_for_idle())
+            .await
+            .map_err(|_| RuntimeTransitionError::MaintenanceIdleTimedOut)?;
+        self.handle
+            .writes
+            .wait_for_drain(timeout)
+            .await
+            .map_err(|_| RuntimeTransitionError::MaintenanceWriteDrainTimedOut)?;
+
+        checkpoint_wal_truncate(&self.handle.pool)
+            .await
+            .map_err(|_| RuntimeTransitionError::MaintenanceCheckpointFailed)?;
+        self.handle.pool.close().await;
+        let evidence = verify_and_remove_empty_sidecars_after_close(&self.database_path, timeout)
+            .await
+            .map_err(|_| RuntimeTransitionError::MaintenanceSidecarNonEmpty)?;
+        self.handle.lifecycle.transition(RuntimeState::Closed)?;
+        Ok(evidence)
+    }
+
     async fn close_inner(
         &self,
         fault: impl Fn(RuntimeCloseStep) -> Result<(), RuntimeTransitionError>,
@@ -331,6 +384,80 @@ impl PersistenceRuntime {
 enum RuntimeCloseStep {
     BeforePoolClose,
     AfterPoolClose,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActivationFreezeEvidence {
+    pub(crate) database_path: PathBuf,
+    pub(crate) wal_path: PathBuf,
+    pub(crate) shm_path: PathBuf,
+}
+
+impl ActivationFreezeEvidence {
+    fn from_database_path(database_path: &Path) -> Self {
+        Self {
+            database_path: database_path.to_path_buf(),
+            wal_path: sqlite_sidecar_path(database_path, "-wal"),
+            shm_path: sqlite_sidecar_path(database_path, "-shm"),
+        }
+    }
+}
+
+async fn checkpoint_wal_truncate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .fetch_one(pool)
+        .await?;
+    let busy = row.try_get::<i64, _>(0).unwrap_or(0);
+    if busy != 0 {
+        return Err(sqlx::Error::Protocol(
+            "WAL checkpoint reported busy connections".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn verify_and_remove_empty_sidecars(
+    database_path: &Path,
+) -> Result<ActivationFreezeEvidence, std::io::Error> {
+    let evidence = ActivationFreezeEvidence::from_database_path(database_path);
+    for sidecar in [&evidence.wal_path, &evidence.shm_path] {
+        match fs::metadata(sidecar) {
+            Ok(metadata) => {
+                if metadata.len() == 0 {
+                    fs::remove_file(sidecar)?;
+                } else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "sqlite sidecar is not empty after activation freeze",
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(evidence)
+}
+
+async fn verify_and_remove_empty_sidecars_after_close(
+    database_path: &Path,
+    timeout: Duration,
+) -> Result<ActivationFreezeEvidence, std::io::Error> {
+    let started = Instant::now();
+    loop {
+        match verify_and_remove_empty_sidecars(database_path) {
+            Ok(evidence) => return Ok(evidence),
+            Err(_error) if started.elapsed() < timeout => {
+                let remaining = timeout.saturating_sub(started.elapsed());
+                tokio::time::sleep(remaining.min(Duration::from_millis(10))).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", path.display(), suffix))
 }
 
 fn connect_options(
@@ -451,5 +578,102 @@ mod tests {
                 Err(PersistenceError::RuntimeUnavailable)
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn freeze_for_activation_blocks_new_writes_drains_and_closes_pool() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let path = root.path().join("runtime.sqlite3");
+        let runtime = Arc::new(
+            PersistenceRuntime::initialize_new(&path)
+                .await
+                .expect("initialize runtime"),
+        );
+        let session = runtime.begin_write().await.expect("begin tracked write");
+        let freezing_runtime = Arc::clone(&runtime);
+        let freezing = tokio::spawn(async move {
+            freezing_runtime
+                .freeze_for_activation(Duration::from_secs(1))
+                .await
+        });
+
+        for _ in 0..100 {
+            if runtime.state() == RuntimeState::Draining {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(runtime.state(), RuntimeState::Draining);
+        assert!(matches!(
+            runtime.begin_write().await,
+            Err(PersistenceError::RuntimeUnavailable)
+        ));
+        assert!(!freezing.is_finished());
+
+        drop(session);
+        let evidence = freezing
+            .await
+            .expect("freeze task")
+            .expect("freeze succeeds");
+        assert_eq!(evidence.database_path, path);
+        assert_eq!(runtime.state(), RuntimeState::Closed);
+        assert!(runtime.handle.pool.is_closed());
+    }
+
+    #[tokio::test]
+    async fn freeze_for_activation_times_out_when_write_session_is_checked_out() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let path = root.path().join("runtime.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("initialize runtime");
+        let _session = runtime.begin_write().await.expect("begin tracked write");
+
+        assert_eq!(
+            runtime
+                .freeze_for_activation(Duration::from_millis(10))
+                .await,
+            Err(RuntimeTransitionError::MaintenanceIdleTimedOut)
+        );
+        assert_eq!(runtime.state(), RuntimeState::Draining);
+        assert!(matches!(
+            runtime.begin_write().await,
+            Err(PersistenceError::RuntimeUnavailable)
+        ));
+    }
+
+    #[tokio::test]
+    async fn wal_freeze_checkpoints_and_removes_sqlite_sidecars() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let path = root.path().join("runtime.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("initialize runtime");
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('wal_freeze_canary', '1', '1')",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("write canary");
+
+        let evidence = runtime
+            .freeze_for_activation(Duration::from_secs(1))
+            .await
+            .expect("freeze");
+
+        assert_eq!(evidence.database_path, path);
+        assert!(!evidence.wal_path.exists());
+        assert!(!evidence.shm_path.exists());
+        assert!(matches!(
+            runtime.begin_write().await,
+            Err(PersistenceError::RuntimeUnavailable)
+        ));
     }
 }

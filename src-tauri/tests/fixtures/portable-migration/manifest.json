@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "format": "relay-pool-portable-migration",
+  "profile": "encrypted-secrets-v1",
+  "owner": "portable-migration-v1",
+  "frozenAt": "2026-07-29",
+  "fixtures": [
+    {
+      "id": "current-valid-manifest",
+      "kind": "manifest",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/manifest-valid.json",
+      "sha256": "76e74de20a412d9f00101c9b8f96c795b0a6ebf7880a820c227f1350179cdac8",
+      "expected": {
+        "outcome": "valid",
+        "summary": {
+          "includeHistory": true,
+          "recordCounts": {
+            "station_keys": 0,
+            "stations": 0
+          }
+        }
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/format.rs",
+          "symbol": "valid_manifest_fixture_parses_with_exact_record_count_keys"
+        }
+      ]
+    },
+    {
+      "id": "supported-v1-reader-valid",
+      "kind": "compatibility",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/schema-fingerprint.txt",
+      "sha256": "81709e570828e28028a4aed698d5b27b006770aab81241e25d107d1ca68126f9",
+      "expected": {
+        "outcome": "valid",
+        "reader": "V1EncryptedSecrets"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/schema_reader.rs",
+          "symbol": "select_reader"
+        }
+      ]
+    },
+    {
+      "id": "wrong-password-envelope",
+      "kind": "encrypted-package",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": null,
+      "sha256": null,
+      "expected": {
+        "outcome": "error",
+        "publicCode": "authentication_failed"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/age_envelope.rs",
+          "symbol": "age_envelope_wrong_passphrase_and_truncation_share_public_code"
+        },
+        {
+          "path": "src-tauri/src/application/data_migration/import_service.rs",
+          "symbol": "malicious_portable_package_wrong_password_truncation_and_toctou_fail_closed"
+        }
+      ]
+    },
+    {
+      "id": "truncated-frame",
+      "kind": "framing",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/framing-truncated.hex",
+      "sha256": "2789c20b26b948e0b4f5cb744e6dbfba85a1eaa783509bcfc7e9fbefd10807ca",
+      "expected": {
+        "outcome": "error",
+        "error": "Truncated",
+        "publicCode": "authentication_failed"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/format.rs",
+          "symbol": "malformed_framing_fixtures_match_expected_failures"
+        }
+      ]
+    },
+    {
+      "id": "unknown-required-feature",
+      "kind": "manifest",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [
+        "future.required"
+      ],
+      "path": "v1/manifest-unknown-required-feature.json",
+      "sha256": "200a632fc463a94627298eb46b9dfba0294d077301d63e01db3074a39b002ec4",
+      "expected": {
+        "outcome": "error",
+        "error": "UnsupportedRequiredFeature"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/schema_reader.rs",
+          "symbol": "UnsupportedRequiredFeature"
+        }
+      ]
+    },
+    {
+      "id": "too-new-schema",
+      "kind": "manifest",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 17,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/manifest-too-new-schema.json",
+      "sha256": "cf1dfc039748453bd424cbbfbf6b2cbfb045afc320c573a800e99f7bda4106c5",
+      "expected": {
+        "outcome": "error",
+        "error": "UnsupportedDatabaseSchema"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/schema_reader.rs",
+          "symbol": "UnsupportedDatabaseSchema"
+        }
+      ]
+    },
+    {
+      "id": "malformed-sqlite",
+      "kind": "sqlite",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/sqlite-malformed.hex",
+      "sha256": "d1be8e856097e227223dfe625f200d1a6ec934820c1bfbb21b94fcb5224fe798",
+      "expected": {
+        "outcome": "error",
+        "error": "OpenFailed"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/application/data_migration/import_service.rs",
+          "symbol": "malicious_portable_package_rejects_non_sqlite_and_schema_object_attacks"
+        }
+      ]
+    },
+    {
+      "id": "trigger-view-schema-object",
+      "kind": "sqlite-schema",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/sqlite-trigger-view.sql",
+      "sha256": "b3c01eb0372166940a02c26df1417505510285f0adf541550ae0980ce40af127",
+      "expected": {
+        "outcome": "error",
+        "error": "UnsupportedSchemaObject"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/schema_reader.rs",
+          "symbol": "reader_rejects_unknown_schema_objects_columns_and_spoofed_versions"
+        }
+      ]
+    },
+    {
+      "id": "foreign-key-broken",
+      "kind": "sqlite-data",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/sqlite-fk-broken.sql",
+      "sha256": "d150567f0c3523acea01fbad4254acba73cdf007944a10dca20edd5805b96da0",
+      "expected": {
+        "outcome": "error",
+        "error": "ForeignKeyCheckFailed"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/validate.rs",
+          "symbol": "validate_foreign_keys"
+        }
+      ]
+    },
+    {
+      "id": "resource-overflow",
+      "kind": "limits",
+      "formatVersion": 1,
+      "databaseGeneration": 2,
+      "databaseSchemaVersion": 16,
+      "profile": "encrypted-secrets-v1",
+      "requiredFeatures": [],
+      "path": "v1/resource-overflow.json",
+      "sha256": "82ec694c2df545ad1cc70db3276665b65e5980bd2cc0f3f77a1f304417ed28fb",
+      "expected": {
+        "outcome": "error",
+        "publicCode": "limit_exceeded"
+      },
+      "evidence": [
+        {
+          "path": "src-tauri/src/services/portable_migration/limits.rs",
+          "symbol": "numeric_limits_accept_limit_minus_one_and_limit_but_reject_limit_plus_one"
+        },
+        {
+          "path": "src-tauri/src/services/portable_migration/format.rs",
+          "symbol": "LengthLimitExceeded"
+        }
+      ]
+    }
+  ]
+}

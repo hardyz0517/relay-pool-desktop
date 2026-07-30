@@ -1,5 +1,76 @@
 use serde_json::{Map, Value};
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(
+    dead_code,
+    reason = "Task 4 rekey model is consumed by migration integration tests and later baseline conversion"
+)]
+pub struct SecretRecordSelector {
+    pub scope: String,
+    pub owner_id: String,
+    pub kind: String,
+}
+
+#[allow(
+    dead_code,
+    reason = "Task 4 rekey model constructors are used by integration tests and later migration code"
+)]
+impl SecretRecordSelector {
+    pub fn new(
+        scope: impl Into<String>,
+        owner_id: impl Into<String>,
+        kind: impl Into<String>,
+    ) -> Self {
+        Self {
+            scope: scope.into(),
+            owner_id: owner_id.into(),
+            kind: kind.into(),
+        }
+    }
+
+    pub fn aad(&self, encryption_version: u16) -> String {
+        canonical_secret_aad(&self.scope, &self.owner_id, &self.kind, encryption_version)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "Task 4 rekey model is consumed by migration integration tests and later baseline conversion"
+)]
+pub struct VersionedEncryptedSecret {
+    pub id: String,
+    pub selector: SecretRecordSelector,
+    pub key_id: String,
+    pub encryption_version: u16,
+    pub ciphertext: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub value_hash: String,
+}
+
+#[allow(
+    dead_code,
+    reason = "Task 4 encrypted row helpers are used by integration tests and later migration code"
+)]
+impl VersionedEncryptedSecret {
+    pub fn aad(&self) -> String {
+        self.selector.aad(self.encryption_version)
+    }
+}
+
+#[allow(
+    dead_code,
+    reason = "Task 4 canonical AAD builder is part of the migration crypto contract"
+)]
+pub fn canonical_secret_aad(
+    scope: &str,
+    owner_id: &str,
+    kind: &str,
+    encryption_version: u16,
+) -> String {
+    format!("{scope}:{owner_id}:{kind}:v{encryption_version}")
+}
+
 const SECRET_HINTS: [&str; 12] = [
     "api_key",
     "apikey",

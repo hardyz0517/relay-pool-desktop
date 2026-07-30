@@ -10,10 +10,17 @@ import { DataStoreBootstrap } from "./DataStoreBootstrap";
 
 const mocks = vi.hoisted(() => ({
   getDataStoreStartupState: vi.fn<() => Promise<DataStoreStartupView>>(),
+  getPortableImportRecoveryState: vi.fn(),
+  restartApp: vi.fn(),
 }));
 
 vi.mock("@/lib/api/dataRecovery", () => ({
   getDataStoreStartupState: mocks.getDataStoreStartupState,
+  restartApp: mocks.restartApp,
+}));
+
+vi.mock("@/lib/api/dataMigration", () => ({
+  getPortableImportRecoveryState: mocks.getPortableImportRecoveryState,
 }));
 
 vi.mock("@/lib/updater/UpdaterProvider", () => ({
@@ -51,6 +58,8 @@ beforeEach(() => {
   document.body.append(host);
   root = createRoot(host);
   mocks.getDataStoreStartupState.mockReset();
+  mocks.getPortableImportRecoveryState.mockReset().mockResolvedValue({ state: "none" });
+  mocks.restartApp.mockReset().mockResolvedValue(undefined);
 });
 
 async function renderBootstrap() {
@@ -165,6 +174,38 @@ describe("DataStoreBootstrap", () => {
 
     expect(host.textContent).toContain("启动检查失败");
     expect(host.textContent).toContain("not allowed by ACL");
+    expect(host.querySelector('[data-testid="business-app"]')).toBeNull();
+    await unmountBootstrap();
+  });
+
+  it("blocks the business app when portable import activation is pending", async () => {
+    mocks.getPortableImportRecoveryState.mockResolvedValue({
+      state: "activationPending",
+      importId: "018f0000-0000-7000-8000-000000000000",
+    });
+    mocks.getDataStoreStartupState.mockResolvedValue(readyState);
+
+    await renderBootstrap();
+    await act(async () => undefined);
+
+    expect(host.textContent).toContain("跨设备导入已准备完成");
+    expect(host.querySelector('[data-testid="business-app"]')).toBeNull();
+    await unmountBootstrap();
+  });
+
+  it("does not require data-store startup to succeed when portable import recovery blocks startup", async () => {
+    mocks.getPortableImportRecoveryState.mockResolvedValue({
+      state: "manualRecoveryRequired",
+      importId: null,
+      reasonCode: "journal_invalid",
+    });
+    mocks.getDataStoreStartupState.mockRejectedValue(new Error("startup should not be required"));
+
+    await renderBootstrap();
+    await act(async () => undefined);
+
+    expect(host.textContent).toContain("需要人工恢复跨设备导入");
+    expect(mocks.getDataStoreStartupState).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid="business-app"]')).toBeNull();
     await unmountBootstrap();
   });

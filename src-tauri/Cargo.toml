@@ -51,8 +51,11 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors", "limit", "request-id"] }
 url = "2"
 zeroize = "1"
+age = "=0.12.1"
+hmac = "=0.13.0"
 
 [dev-dependencies]
+static_assertions = "=1.1.0"
 syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
 

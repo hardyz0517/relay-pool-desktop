@@ -124,6 +124,7 @@ function testBackendClient(
     runtime: {} as BackendClient["runtime"],
     localRouting: {} as BackendClient["localRouting"],
     dataRecovery: {} as BackendClient["dataRecovery"],
+    dataMigration: {} as BackendClient["dataMigration"],
     economics: {} as BackendClient["economics"],
     groupFacts: {} as BackendClient["groupFacts"],
     pricing: {} as BackendClient["pricing"],

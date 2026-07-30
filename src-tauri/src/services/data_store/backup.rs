@@ -1,19 +1,24 @@
 use std::{
-    fs,
+    fs::{self, File},
+    io::Write,
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::persistence::create_verified_backup_from_path;
 
 use super::{
-    inspect::inspect_candidate,
+    file_identity::{identity_for_path, FileIdentity},
+    inspect::{inspect_candidate, inspect_candidate_async},
     types::{CandidateHealth, CandidateRole},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BackupResult {
     pub backup_path: PathBuf,
+    pub identity: FileIdentity,
 }
 
 #[cfg(test)]
@@ -33,6 +38,63 @@ pub(crate) fn backup_selected_database(
     return backup_selected_database_inner(source_path, default_app_data, None);
 }
 
+pub(crate) async fn backup_selected_database_async(
+    source_path: &Path,
+    default_app_data: &Path,
+) -> Result<BackupResult, String> {
+    #[cfg(not(test))]
+    return backup_selected_database_inner_async(source_path, default_app_data).await;
+    #[cfg(test)]
+    return backup_selected_database_inner_async(source_path, default_app_data, None).await;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SecurityBaselineBackupMetadata {
+    metadata_version: u32,
+    schema_profile: String,
+    security_format: String,
+    recovery_scope: String,
+}
+
+pub(crate) fn write_security_baseline_backup_metadata(
+    backup_path: &Path,
+    schema_profile: &str,
+    security_format: &str,
+) -> Result<(), String> {
+    let parent = backup_path
+        .parent()
+        .ok_or_else(|| "baseline backup path has no parent".to_string())?;
+    let metadata = SecurityBaselineBackupMetadata {
+        metadata_version: 1,
+        schema_profile: schema_profile.to_owned(),
+        security_format: security_format.to_owned(),
+        recovery_scope: "old-security-format-local-machine-only".to_string(),
+    };
+    let bytes = serde_json::to_vec_pretty(&metadata)
+        .map_err(|error| format!("failed to serialize baseline backup metadata: {error}"))?;
+    let path = parent.join("security-baseline-backup-metadata.json");
+    let mut file = File::create(&path).map_err(|error| {
+        format!(
+            "failed to create baseline backup metadata {}: {error}",
+            path.display()
+        )
+    })?;
+    file.write_all(&bytes).map_err(|error| {
+        format!(
+            "failed to write baseline backup metadata {}: {error}",
+            path.display()
+        )
+    })?;
+    file.sync_all().map_err(|error| {
+        format!(
+            "failed to sync baseline backup metadata {}: {error}",
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn backup_selected_database_with_failure_for_test(
     source_path: &Path,
@@ -43,6 +105,24 @@ pub(crate) fn backup_selected_database_with_failure_for_test(
 }
 
 fn backup_selected_database_inner(
+    source_path: &Path,
+    default_app_data: &Path,
+    #[cfg(test)] failure: Option<BackupFailure>,
+) -> Result<BackupResult, String> {
+    #[cfg(not(test))]
+    return tauri::async_runtime::block_on(backup_selected_database_inner_async(
+        source_path,
+        default_app_data,
+    ));
+    #[cfg(test)]
+    return tauri::async_runtime::block_on(backup_selected_database_inner_async(
+        source_path,
+        default_app_data,
+        failure,
+    ));
+}
+
+async fn backup_selected_database_inner_async(
     source_path: &Path,
     default_app_data: &Path,
     #[cfg(test)] failure: Option<BackupFailure>,
@@ -82,11 +162,14 @@ fn backup_selected_database_inner(
         return Err("injected destination-open failure".to_string());
     }
 
-    write_sqlite_backup(source_path, &final_backup_path)?;
-    verify_backup(&final_backup_path)?;
+    write_sqlite_backup(source_path, &final_backup_path).await?;
+    verify_backup_async(&final_backup_path).await?;
+    let identity = identity_for_path(&final_backup_path)
+        .map_err(|error| format!("failed to identify verified backup: {error}"))?;
 
     Ok(BackupResult {
         backup_path: final_backup_path,
+        identity,
     })
 }
 
@@ -111,17 +194,26 @@ fn create_unique_backup_dir(backups_root: &Path) -> Result<PathBuf, String> {
     Err("failed to allocate a unique backup directory".to_string())
 }
 
-fn write_sqlite_backup(source_path: &Path, temp_backup_path: &Path) -> Result<(), String> {
-    tauri::async_runtime::block_on(create_verified_backup_from_path(
-        source_path,
-        temp_backup_path,
-    ))
-    .map(|_| ())
-    .map_err(|error| format!("failed to create verified sqlite backup: {error}"))
+async fn write_sqlite_backup(source_path: &Path, temp_backup_path: &Path) -> Result<(), String> {
+    create_verified_backup_from_path(source_path, temp_backup_path)
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("failed to create verified sqlite backup: {error}"))
 }
 
 fn verify_backup(path: &Path) -> Result<(), String> {
     let inspected = inspect_candidate(path, CandidateRole::Backup)?;
+    if inspected.candidate.health != CandidateHealth::Healthy {
+        return Err(format!(
+            "backup failed validation with health {:?}",
+            inspected.candidate.health
+        ));
+    }
+    Ok(())
+}
+
+async fn verify_backup_async(path: &Path) -> Result<(), String> {
+    let inspected = inspect_candidate_async(path, CandidateRole::Backup).await?;
     if inspected.candidate.health != CandidateHealth::Healthy {
         return Err(format!(
             "backup failed validation with health {:?}",

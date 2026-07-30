@@ -186,6 +186,8 @@ Relay Pool Desktop 会在本机处理真实上游凭据。请勿提交 API Key�
 
 详细边界见 [Security Export and Import Policy](docs/SECURITY_EXPORT_IMPORT.md)。
 
+跨设备数据搬家（portable migration）已在 `codex/cross-device-encrypted-migration` 升级分支获得安全批准并开启 capability；正式合并/发布前仍需要完成两机 smoke、签名包门禁和 artifact/canary 审计。默认导出、本机备份和同机数据目录迁移仍不是跨设备恢复方案。
+
 ## 路线图
 
 当前工作重点是提高真实站点采集的兼容性与恢复能力、完善路由事实层和可观察性，并继续打磨 v0.3.x Windows 预览发布与自动更新流程。更完整的兼容矩阵、迁移体验和正式分发体验将在发布流程继续成熟后提供。

@@ -4,6 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Task 3 reviewed exception: this module is the legacy generation-1 to
+// generation-2 conversion adapter. It may receive a borrowed/callback-scoped
+// device key from startup/recovery while it rebuilds or validates a local
+// database candidate, but it must not be used as a long-lived business service
+// key holder.
+
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{SecondsFormat, Utc};
 
@@ -22,10 +28,11 @@ use crate::{
             UtcTimestamp,
         },
         upgrade_recovery_executor::{
-            journal_artifact_paths_are_safe, observe_backup, observe_journal,
-            observe_legacy_source, publish_v2_candidate_with_faults, read_legacy_tombstone,
-            remove_file_and_sync_parent_with_faults, replace_legacy_with_tombstone_with_faults,
-            resolve_allowlisted_artifact, sha256_file, write_journal_atomically_with_faults,
+            journal_artifact_paths_are_safe, observe_backup, observe_baseline_conversion_journal,
+            observe_journal, observe_legacy_source, publish_v2_candidate_with_faults,
+            read_legacy_tombstone, remove_file_and_sync_parent_with_faults,
+            replace_legacy_with_tombstone_with_faults, resolve_allowlisted_artifact, sha256_file,
+            write_journal_atomically_with_faults, BaselineConversionJournalState,
             RecoveryExecution, RecoveryExecutor, UpgradeExecutionError, UpgradeIoOperation,
             UpgradeRecoveryIo, UPGRADE_JOURNAL_FILE,
         },
@@ -40,7 +47,15 @@ use crate::{
             create_installation_marker, installation_marker_exists, read_config_v3,
             write_config_v3_with_faults, DataDirConfigV3, DatabaseGeneration,
         },
-        secrets::validation::validate_database_secrets,
+        secrets::{
+            baseline_conversion::{
+                ensure_active_database_baseline, finalize_pre_baseline_database,
+                initialize_fresh_database_at_baseline, initialize_pre_baseline_runtime_for_import,
+                resolver_from_parts,
+            },
+            validation::validate_database_secrets,
+            DeviceKeyResolver, LEGACY_DEVICE_KEY_ID,
+        },
     },
 };
 
@@ -67,14 +82,39 @@ pub(crate) fn prepare_generation_two(
     data_key: [u8; 32],
 ) -> Result<(PersistenceRuntime, PathBuf), String> {
     let transformer = DataKeyLegacyTransformer { data_key };
-    prepare_generation_two_with_faults(
+    let resolver = resolver_from_parts(LEGACY_DEVICE_KEY_ID, data_key);
+    prepare_generation_two_with_device_key_faults(
         default_data_dir,
         active_data_dir,
         selected_database_path,
         data_key,
+        &resolver,
         &transformer,
         &NoUpgradeFaults,
     )
+}
+
+pub(crate) fn prepare_generation_two_with_resolver(
+    default_data_dir: &Path,
+    active_data_dir: &Path,
+    selected_database_path: Option<&Path>,
+    device_keys: &DeviceKeyResolver,
+) -> Result<(PersistenceRuntime, PathBuf), String> {
+    device_keys
+        .with_active_key(|key_bytes| {
+            let data_key = *key_bytes;
+            let transformer = DataKeyLegacyTransformer { data_key };
+            prepare_generation_two_with_device_key_faults(
+                default_data_dir,
+                active_data_dir,
+                selected_database_path,
+                data_key,
+                device_keys,
+                &transformer,
+                &NoUpgradeFaults,
+            )
+        })
+        .map_err(|error| error.to_string())?
 }
 
 pub(crate) fn commit_explicit_generation_two_recovery(
@@ -250,6 +290,27 @@ pub(crate) fn prepare_generation_two_with_faults(
     transformer: &dyn LegacySecretTransformer,
     faults: &dyn UpgradeFaultInjector,
 ) -> Result<(PersistenceRuntime, PathBuf), String> {
+    let resolver = resolver_from_parts(LEGACY_DEVICE_KEY_ID, data_key);
+    prepare_generation_two_with_device_key_faults(
+        default_data_dir,
+        active_data_dir,
+        selected_database_path,
+        data_key,
+        &resolver,
+        transformer,
+        faults,
+    )
+}
+
+fn prepare_generation_two_with_device_key_faults(
+    default_data_dir: &Path,
+    active_data_dir: &Path,
+    selected_database_path: Option<&Path>,
+    data_key: [u8; 32],
+    device_keys: &DeviceKeyResolver,
+    transformer: &dyn LegacySecretTransformer,
+    faults: &dyn UpgradeFaultInjector,
+) -> Result<(PersistenceRuntime, PathBuf), String> {
     let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
     let source_path = active_data_dir.join(DatabaseGeneration::One.database_file());
     let journal_path = default_data_dir.join(UPGRADE_JOURNAL_FILE);
@@ -260,17 +321,28 @@ pub(crate) fn prepare_generation_two_with_faults(
         final_path: &final_path,
         journal_path: &journal_path,
         data_key,
+        device_keys,
         transformer,
         faults,
         action_error: RefCell::new(None),
     };
+
+    if journal_path.is_file()
+        && matches!(
+            observe_baseline_conversion_journal(&journal_path).state,
+            BaselineConversionJournalState::Valid(_)
+        )
+    {
+        let runtime = open_and_validate_v2(default_data_dir, &final_path, device_keys, faults)?;
+        return Ok((runtime, final_path));
+    }
 
     if journal_path.is_file() {
         return resume_journaled_upgrade(&io);
     }
 
     if selected_database_path.is_some_and(|path| path == final_path) {
-        let runtime = open_and_validate_v2(&final_path, data_key, faults)?;
+        let runtime = open_and_validate_v2(default_data_dir, &final_path, device_keys, faults)?;
         return Ok((runtime, final_path));
     }
 
@@ -287,7 +359,7 @@ pub(crate) fn prepare_generation_two_with_faults(
             default_data_dir,
             active_data_dir,
             &final_path,
-            data_key,
+            device_keys,
             faults,
         ),
     }
@@ -297,20 +369,19 @@ fn prepare_fresh_install(
     default_data_dir: &Path,
     active_data_dir: &Path,
     final_path: &Path,
-    data_key: [u8; 32],
+    device_keys: &DeviceKeyResolver,
     faults: &dyn UpgradeFaultInjector,
 ) -> Result<(PersistenceRuntime, PathBuf), String> {
     let staging_path = final_path.with_extension("sqlite3.first-run.tmp");
     remove_database_artifacts(&staging_path)?;
-    let runtime = block_on(PersistenceRuntime::initialize_new(&staging_path))
-        .map_err(|error| format!("failed to initialize generation 2 data store: {error}"))?;
-    block_on(runtime.close())
-        .map_err(|error| format!("failed to close generation 2 staging database: {error}"))?;
-    validate_v2_artifact(&staging_path, data_key, faults)?;
+    initialize_fresh_database_at_baseline(&staging_path, device_keys)?;
+    device_keys
+        .with_active_key(|key| validate_v2_artifact(&staging_path, *key, faults))
+        .map_err(|error| error.to_string())??;
     publish_v2_candidate_with_faults(&staging_path, final_path, faults)
         .map_err(redacted_execution_error)?;
     commit_generation_two_config(default_data_dir, active_data_dir, faults)?;
-    let runtime = open_and_validate_v2(final_path, data_key, faults)?;
+    let runtime = open_and_validate_v2(default_data_dir, final_path, device_keys, faults)?;
     Ok((runtime, final_path.to_path_buf()))
 }
 
@@ -362,7 +433,12 @@ fn resume_journaled_upgrade(
             deactivated_in_this_run = true;
         }
         if plan == RecoveryPlan::CleanupCompletedJournal {
-            let runtime = open_and_validate_v2(io.final_path, io.data_key, io.faults)?;
+            let runtime = open_and_validate_v2(
+                io.default_data_dir,
+                io.final_path,
+                io.device_keys,
+                io.faults,
+            )?;
             return Ok((runtime, io.final_path.to_path_buf()));
         }
     }
@@ -388,13 +464,23 @@ fn run_new_upgrade_attempt(
                 journal = record_generation_committed(io.journal_path, &journal, io.faults)?;
             }
             UpgradePhase::GenerationCommitted => {
-                let runtime = open_and_validate_v2(io.final_path, io.data_key, io.faults)?;
+                let runtime = open_and_validate_v2(
+                    io.default_data_dir,
+                    io.final_path,
+                    io.device_keys,
+                    io.faults,
+                )?;
                 record_v2_reopened(io.journal_path, &journal, io.faults)?;
                 cleanup_journal(io.journal_path, io.faults)?;
                 return Ok((runtime, io.final_path.to_path_buf()));
             }
             UpgradePhase::V2Reopened => {
-                let runtime = open_and_validate_v2(io.final_path, io.data_key, io.faults)?;
+                let runtime = open_and_validate_v2(
+                    io.default_data_dir,
+                    io.final_path,
+                    io.device_keys,
+                    io.faults,
+                )?;
                 cleanup_journal(io.journal_path, io.faults)?;
                 return Ok((runtime, io.final_path.to_path_buf()));
             }
@@ -442,8 +528,7 @@ fn execute_backup_verified_step(
     assert_backup_identity(&backup_path, journal)?;
     let temporary_path = temporary_path(io.active_data_dir, journal)?;
     remove_database_artifacts(&temporary_path)?;
-    let runtime = block_on(PersistenceRuntime::initialize_new(&temporary_path))
-        .map_err(|error| format!("failed to initialize V2 staging database: {error}"))?;
+    let runtime = initialize_pre_baseline_runtime_for_import(&temporary_path)?;
     let profile = block_on(legacy_import::detect_profile(&backup_path))
         .map_err(|error| format!("verified backup profile is unsupported: {error}"))?;
     let mut injected = None;
@@ -479,6 +564,7 @@ fn execute_backup_verified_step(
     if health.open_mode != "writable" {
         return Err("V2 staging database is not writable".to_string());
     }
+    finalize_pre_baseline_database(&temporary_path, io.device_keys)?;
     check(io.faults, UpgradeFailpoint::CompatibilityValidation)?;
     validate_v2_artifact(&temporary_path, io.data_key, io.faults)?;
     let next = journal
@@ -571,6 +657,7 @@ struct ProductionUpgradeRecoveryIo<'a> {
     final_path: &'a Path,
     journal_path: &'a Path,
     data_key: [u8; 32],
+    device_keys: &'a DeviceKeyResolver,
     transformer: &'a dyn LegacySecretTransformer,
     faults: &'a dyn UpgradeFaultInjector,
     action_error: RefCell<Option<String>>,
@@ -686,7 +773,12 @@ impl UpgradeRecoveryIo for ProductionUpgradeRecoveryIo<'_> {
     }
 
     fn reopen_generation_2(&self, journal: &UpgradeJournal) -> Result<(), UpgradeExecutionError> {
-        let runtime = match open_and_validate_v2(self.final_path, self.data_key, self.faults) {
+        let runtime = match open_and_validate_v2(
+            self.default_data_dir,
+            self.final_path,
+            self.device_keys,
+            self.faults,
+        ) {
             Ok(runtime) => runtime,
             Err(error) => return self.record_action_result::<()>(Err(error)),
         };
@@ -855,11 +947,13 @@ fn validate_v2_artifact(
 }
 
 fn open_and_validate_v2(
+    default_data_dir: &Path,
     final_path: &Path,
-    data_key: [u8; 32],
+    device_keys: &DeviceKeyResolver,
     faults: &dyn UpgradeFaultInjector,
 ) -> Result<PersistenceRuntime, String> {
     check(faults, UpgradeFailpoint::V2Reopen)?;
+    ensure_active_database_baseline(default_data_dir, final_path, device_keys)?;
     let mut runtime = block_on(PersistenceRuntime::open_current(final_path))
         .map_err(|error| format!("failed to open generation 2 database: {error}"))?;
     let mut health = block_on(runtime.health())
@@ -878,7 +972,9 @@ fn open_and_validate_v2(
     if health.open_mode != "writable" {
         return Err("generation 2 database opened in inspection-only mode".to_string());
     }
-    validate_v2_artifact(final_path, data_key, faults)?;
+    device_keys
+        .with_active_key(|key| validate_v2_artifact(final_path, *key, faults))
+        .map_err(|error| error.to_string())??;
     Ok(runtime)
 }
 

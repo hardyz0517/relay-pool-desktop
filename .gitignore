@@ -46,6 +46,19 @@ local-data/
 /upgrade-reports/
 *upgrade-report*.json
 *diagnostic-report*.json
+# Portable migration local artifacts
+*.rpd-move
+*.rpd-move.partial
+.*.rpd-move.*.partial
+migration-staging/
+.migration-staging/
+.relay-pool-import-staging/
+portable-migration-activation-journal*.json
+portable-migration-activation-journal*.json.partial
+portable.sqlite3.partial
+portable-*.sqlite3
+!src-tauri/tests/fixtures/portable-migration/**/*.rpd-move
+
 
 # Logs
 /logs/

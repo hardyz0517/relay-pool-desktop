@@ -849,12 +849,26 @@ impl ProviderDraftService {
             owner_id: stored.owner_id,
             kind: stored.kind,
         };
+        let aad = crate::application::credentials::secret_aad(
+            &secret_ref.scope,
+            &secret_ref.owner_id,
+            &secret_ref.kind,
+            stored.encryption_version,
+        );
         let encrypted = EncryptedSecret {
             ciphertext: stored.ciphertext,
             nonce: stored.nonce,
             masked_value: stored.masked_value,
+            key_id: stored.key_id,
+            encryption_version: stored.encryption_version,
+            value_hash: stored.value_hash,
         };
-        let plaintext = self.vault.decrypt(&secret_ref.aad(), &encrypted)?;
+        let plaintext = self.vault.decrypt(
+            &aad,
+            &encrypted.key_id,
+            encrypted.encryption_version,
+            &encrypted,
+        )?;
         String::from_utf8(plaintext.as_bytes().to_vec()).map_err(|_| ApplicationError::Internal)
     }
 
@@ -889,6 +903,9 @@ impl ProviderDraftService {
             masked_value: encrypted.masked_value,
             ciphertext: encrypted.ciphertext,
             nonce: encrypted.nonce,
+            key_id: encrypted.key_id,
+            encryption_version: encrypted.encryption_version,
+            value_hash: encrypted.value_hash,
             now: now.to_string(),
         })))
     }
@@ -918,6 +935,9 @@ impl ProviderDraftService {
             masked_value: encrypted.masked_value,
             ciphertext: encrypted.ciphertext,
             nonce: encrypted.nonce,
+            key_id: encrypted.key_id,
+            encryption_version: encrypted.encryption_version,
+            value_hash: encrypted.value_hash,
             now: now.to_string(),
         })
     }
@@ -1059,7 +1079,7 @@ mod tests {
             .expect("runtime");
         let service = ProviderDraftService::new(
             runtime.handle(),
-            Arc::new(DataKeyVault::new([31; 32])),
+            Arc::new(DataKeyVault::for_test([31; 32])),
             Arc::new(SystemClock),
             Arc::new(UuidV7Generator),
         );

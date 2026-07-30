@@ -549,6 +549,13 @@ enum SensitiveFieldPolicy {
 | `channel_monitor_request_templates` | `IncludeWithTransform` | 请求体通过禁止敏感字段校验后保留 |
 | `channel_monitors` | `IncludeWithTransform` | 保留配置，清空 last/next run 和临时错误状态 |
 | `channel_monitor_runs` | `OptionalHistory` | 错误文本再次脱敏 |
+| `channel_monitor_executions` | `OptionalHistory` | 仅在包含历史时保留；summary failure 再次脱敏 |
+| `channel_monitor_attempts` | `OptionalHistory` | 仅在包含历史时保留；error summary 再次脱敏 |
+| `channel_monitor_target_results` | `OptionalHistory` | 仅在包含历史时保留；terminal/health reason 再次脱敏 |
+| `channel_monitor_bucket_rollups` | `OptionalHistory` | 仅在包含历史时保留；failure_counts_json 受限 JSON |
+| `station_key_health_observations` | `OptionalHistory` | 仅在包含历史时保留；error summary 再次脱敏 |
+| `channel_monitor_rollup_dirty_ranges` | `Reset` | 目标机调度器重建 |
+| `channel_monitor_probe_budget_usage` | `Reset` | 目标机调度器重建 |
 | `provider_drafts` | `Exclude` | 首版不导出未提交工作区 |
 | `provider_draft_previews` | `Exclude` | 随 draft 排除 |
 | `app_secret_bindings`（前置新增） | `IncludeWithTransform` | 不包含 Local Key 绑定；其他绑定必须逐项声明策略 |

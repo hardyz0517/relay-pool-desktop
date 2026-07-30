@@ -82,10 +82,7 @@ use legacy_import::{
     detect_profile, import_profile, source_candidate_identity, validate_import,
     ExpectedImportManifest, UpgradeError,
 };
-use persistence::{
-    migrations::migrator, runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility,
-};
-use semver::Version;
+use persistence::runtime::PersistenceRuntime;
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, Executor, Row, SqliteConnection};
 
@@ -137,9 +134,12 @@ async fn every_released_profile_imports_to_the_expected_manifest() {
         );
         let target_path = temp_db_path(profile.id());
         create_v2_target(&target_path).await;
-        let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-            .await
-            .expect("V2 runtime");
+        let runtime = PersistenceRuntime::open(
+            &target_path,
+            persistence::migrations::current_binary_compatibility(),
+        )
+        .await
+        .expect("V2 runtime");
 
         import_profile(&profile, &fixture.source, &runtime.handle())
             .await
@@ -233,9 +233,12 @@ async fn case_only_identifier_changes_are_imported_without_data_loss() {
         .expect("case-equivalent schema profile");
     let target_path = temp_db_path("case-insensitive-import-target");
     create_v2_target(&target_path).await;
-    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-        .await
-        .expect("V2 runtime");
+    let runtime = PersistenceRuntime::open(
+        &target_path,
+        persistence::migrations::current_binary_compatibility(),
+    )
+    .await
+    .expect("V2 runtime");
     import_profile(&profile, &path, &runtime.handle())
         .await
         .expect("case-equivalent fixture import");
@@ -288,9 +291,12 @@ async fn legacy_setting_aliases_are_canonicalized_during_import() {
         .expect("released profile");
     let target_path = temp_db_path("legacy-setting-alias-target");
     create_v2_target(&target_path).await;
-    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-        .await
-        .expect("V2 runtime");
+    let runtime = PersistenceRuntime::open(
+        &target_path,
+        persistence::migrations::current_binary_compatibility(),
+    )
+    .await
+    .expect("V2 runtime");
     import_profile(&profile, &source_path, &runtime.handle())
         .await
         .expect("legacy settings import");
@@ -404,9 +410,12 @@ async fn request_lifecycle_capability_imports_attempt_history() {
         .expect("request lifecycle profile");
     let target_path = temp_db_path("request-lifecycle-target");
     create_v2_target(&target_path).await;
-    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-        .await
-        .expect("V2 runtime");
+    let runtime = PersistenceRuntime::open(
+        &target_path,
+        persistence::migrations::current_binary_compatibility(),
+    )
+    .await
+    .expect("V2 runtime");
     import_profile(&profile, &path, &runtime.handle())
         .await
         .expect("request lifecycle import");
@@ -521,9 +530,12 @@ async fn orphaned_legacy_secrets_are_not_carried_into_v2() {
     let profile = detect_profile(&path).await.expect("known schema");
     let target_path = temp_db_path("orphaned-legacy-secret-target");
     create_v2_target(&target_path).await;
-    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-        .await
-        .expect("V2 runtime");
+    let runtime = PersistenceRuntime::open(
+        &target_path,
+        persistence::migrations::current_binary_compatibility(),
+    )
+    .await
+    .expect("V2 runtime");
     import_profile(&profile, &path, &runtime.handle())
         .await
         .expect("orphan secret import");
@@ -567,9 +579,12 @@ async fn request_logs_with_deleted_keys_keep_history_with_a_null_reference() {
     let profile = detect_profile(&path).await.expect("known schema");
     let target_path = temp_db_path("request-log-deleted-key-target");
     create_v2_target(&target_path).await;
-    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-        .await
-        .expect("V2 runtime");
+    let runtime = PersistenceRuntime::open(
+        &target_path,
+        persistence::migrations::current_binary_compatibility(),
+    )
+    .await
+    .expect("V2 runtime");
     import_profile(&profile, &path, &runtime.handle())
         .await
         .expect("request log import");
@@ -624,9 +639,12 @@ async fn change_events_with_deleted_owners_keep_history_with_null_references() {
     let profile = detect_profile(&path).await.expect("known schema");
     let target_path = temp_db_path("change-event-deleted-owner-target");
     create_v2_target(&target_path).await;
-    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-        .await
-        .expect("V2 runtime");
+    let runtime = PersistenceRuntime::open(
+        &target_path,
+        persistence::migrations::current_binary_compatibility(),
+    )
+    .await
+    .expect("V2 runtime");
     import_profile(&profile, &path, &runtime.handle())
         .await
         .expect("change event import");
@@ -881,27 +899,9 @@ fn released_profile_ids_from_manifest() -> BTreeSet<String> {
 }
 
 async fn create_v2_target(path: &Path) {
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true);
-    let mut connection = SqliteConnection::connect_with(&options)
-        .await
-        .expect("target connection");
-    migrator()
-        .run_direct(&mut connection)
+    persistence::migrations::initialize_v2_database(path)
         .await
         .expect("V2 migrations");
-    connection.close().await.expect("close target");
-}
-
-fn binary_v2_schema_8() -> BinaryCompatibility {
-    let schema_version = persistence::migrations::current_schema_version();
-    BinaryCompatibility {
-        app_version: Version::new(0, 3, 1),
-        database_generation: 2,
-        readable_schema: 1..=schema_version,
-        writable_schema: BTreeSet::from([schema_version]),
-    }
 }
 
 fn file_evidence(path: &Path) -> Vec<(String, u64, u128, String)> {

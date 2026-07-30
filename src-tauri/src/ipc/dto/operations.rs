@@ -342,6 +342,7 @@ mod tests {
             id: OperationId::from_u64(9).expect("valid operation id"),
             kind: "connectivity".to_string(),
             owner: OperationOwner::new("key-pool"),
+            deadline: Duration::from_secs(30),
             state: OperationState::Terminal {
                 terminal: OperationTerminal::Failed {
                     code: OperationFailureCode::new("provider-timeout"),

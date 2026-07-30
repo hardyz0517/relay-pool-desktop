@@ -2,14 +2,19 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
-import { getDataStoreStartupState } from "@/lib/api/dataRecovery";
+import { getDataStoreStartupState, restartApp } from "@/lib/api/dataRecovery";
+import { getPortableImportRecoveryState } from "@/lib/api/dataMigration";
+import { describeRecoveryState } from "@/lib/dataMigrationViewModel";
 import { errorMessage } from "@/lib/errorMessage";
 import type { DataStoreStartupView } from "@/lib/types/dataRecovery";
+import type { PortableImportRecoveryState } from "@/lib/types/dataMigration";
 import { DataRecoveryScreen } from "./DataRecoveryScreen";
+import { MigrationMaintenanceScreen } from "./MigrationMaintenanceScreen";
 
 type BootstrapStatus =
   | { kind: "loading" }
   | { kind: "error"; error: unknown }
+  | { kind: "migrationRecovery"; migrationRecovery: PortableImportRecoveryState }
   | { kind: "loaded"; state: DataStoreStartupView };
 
 type DataStoreBootstrapProps = {
@@ -23,9 +28,15 @@ export function DataStoreBootstrap({ renderReady }: DataStoreBootstrapProps) {
   const reload = useCallback(() => {
     const requestId = ++requestSequence.current;
     setStatus({ kind: "loading" });
-    void getDataStoreStartupState().then(
-      (state) => {
-        if (requestSequence.current === requestId) setStatus({ kind: "loaded", state });
+    void (async () => {
+      const migrationRecovery = await getPortableImportRecoveryState();
+      if (describeRecoveryState(migrationRecovery).blocksBusinessApp) {
+        return { kind: "migrationRecovery" as const, migrationRecovery };
+      }
+      return { kind: "loaded" as const, state: await getDataStoreStartupState() };
+    })().then(
+      (nextStatus) => {
+        if (requestSequence.current === requestId) setStatus(nextStatus);
       },
       (error) => {
         if (requestSequence.current === requestId) setStatus({ kind: "error", error });
@@ -42,6 +53,15 @@ export function DataStoreBootstrap({ renderReady }: DataStoreBootstrapProps) {
 
   if (status.kind === "loading") return <StartupLoadingScreen />;
   if (status.kind === "error") return <StartupFatalError error={status.error} onRetry={reload} />;
+  if (status.kind === "migrationRecovery") {
+    return (
+      <MigrationMaintenanceScreen
+        state={status.migrationRecovery}
+        onRestart={() => void restartApp()}
+        onRetry={reload}
+      />
+    );
+  }
   if (status.state.mode !== "writable" || status.state.decision.kind !== "ready") {
     return <DataRecoveryScreen state={status.state} onActivated={reload} />;
   }

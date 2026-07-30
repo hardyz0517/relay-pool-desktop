@@ -1,44 +1,37 @@
-use base64::{engine::general_purpose, Engine as _};
-use keyring::Entry;
+use keyring::{Entry, Error as KeyringError};
 
-use super::crypto::generate_data_key;
+use super::device_key_store::{CredentialBackend, CredentialBackendError, DeviceKeyErrorKind};
 
 const SERVICE: &str = "relay-pool-desktop";
-const USERNAME: &str = "local-data-key-v1";
 
-pub fn load_or_create_data_key() -> Result<[u8; 32], String> {
-    let entry =
-        Entry::new(SERVICE, USERNAME).map_err(|error| format!("打开系统凭据失败: {error}"))?;
-    match entry.get_password() {
-        Ok(encoded) => decode_key(&encoded),
-        Err(_) => {
-            let key = generate_data_key();
-            let encoded = general_purpose::STANDARD.encode(key);
-            entry
-                .set_password(&encoded)
-                .map_err(|error| format!("保存系统凭据失败: {error}"))?;
-            Ok(key)
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SystemCredentialBackend;
+
+impl CredentialBackend for SystemCredentialBackend {
+    fn get_password(&self, username: &str) -> Result<String, CredentialBackendError> {
+        Entry::new(SERVICE, username)
+            .map_err(map_keyring_error)?
+            .get_password()
+            .map_err(map_keyring_error)
+    }
+
+    fn set_password(&self, username: &str, password: &str) -> Result<(), CredentialBackendError> {
+        Entry::new(SERVICE, username)
+            .map_err(map_keyring_error)?
+            .set_password(password)
+            .map_err(map_keyring_error)
+    }
+}
+
+fn map_keyring_error(error: KeyringError) -> CredentialBackendError {
+    CredentialBackendError::new(match error {
+        KeyringError::NoEntry => DeviceKeyErrorKind::NotFound,
+        KeyringError::NoStorageAccess(_) => DeviceKeyErrorKind::PermissionDenied,
+        KeyringError::BadEncoding(_) | KeyringError::Ambiguous(_) => DeviceKeyErrorKind::Corrupt,
+        KeyringError::TooLong(_, _) | KeyringError::Invalid(_, _) => {
+            DeviceKeyErrorKind::Unsupported
         }
-    }
-}
-
-fn decode_key(encoded: &str) -> Result<[u8; 32], String> {
-    let bytes = general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|error| format!("解析系统凭据失败: {error}"))?;
-    bytes
-        .try_into()
-        .map_err(|_| "系统凭据长度不正确。".to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn decode_key_rejects_invalid_length() {
-        let result = decode_key("abc");
-
-        assert!(result.is_err());
-    }
+        KeyringError::PlatformFailure(_) => DeviceKeyErrorKind::Unavailable,
+        _ => DeviceKeyErrorKind::Internal,
+    })
 }

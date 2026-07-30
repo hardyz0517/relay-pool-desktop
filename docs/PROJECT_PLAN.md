@@ -30,7 +30,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - P5 已完成本地 OpenAI-compatible 网关主干。
 - P6 已完成模型 / 协议 / 健康感知路由层。
 - P7 已完成价格归一化、余额快照、请求成本和 cheap_first 路由展示。
-- P8 正在推进安全与凭据治理。
+- P8 正在推进安全与凭据治理；跨设备数据搬家已在 `codex/cross-device-encrypted-migration` 升级分支获得安全批准并开启 capability，合并/发布仍要求同一 revision 的两机发布资格和签名包证据。
 - P9 真实站点采集与路由事实层：补齐 Sub2API / NewAPI / OpenAI-compatible adapter，建立 group binding、倍率历史、collector run、价格归一化和路由经济解释，让 UI 和路由消费稳定事实而不是 raw snapshot JSON。
 - P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；release 级 live provider、soak、签名包、升级和休眠恢复验证仍是发布门禁。
 
@@ -218,6 +218,8 @@ P7 完成时应满足：
 P8 安全与凭据治理：统一 SecretManager、本地加密存储、旧明文凭据迁移、UI 脱敏、日志 / 快照脱敏、导入导出安全边界和本地代理安全复核。
 
 P8 不继续扩展路由、价格或采集能力。它的核心目标是让真实 Station Key、站点登录密码、token / cookie / session、collector snapshot 和 request log 可以在本地长期使用时保持可控暴露面。
+
+跨设备数据搬家属于 P8 安全边界的一部分，但不是默认导出或本机备份的扩展。当前升级分支已获得安全政策批准并开启 capability；发布 checklist、签名包和同一 revision 自动门禁仍是合并/发布资格，不得用分支批准替代。
 
 ## 7. 后续阶段
 

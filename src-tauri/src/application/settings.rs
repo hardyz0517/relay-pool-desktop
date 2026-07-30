@@ -4,11 +4,19 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::{rngs::OsRng, RngCore};
 
 use crate::{
-    application::{clock::Clock, error::ApplicationError},
+    application::{
+        clock::Clock,
+        credentials::{CredentialVault, EncryptedSecret, SecretBytes, SecretRef},
+        error::ApplicationError,
+        ids::IdGenerator,
+    },
     models::settings::{AppSettings, UpdateSettingsInput},
     persistence::{
         runtime::PersistenceHandle,
-        stores::settings_store::{SettingsStore, SettingsUpdate},
+        stores::{
+            credential_store::{EncryptedSecretRow, StoredEncryptedSecret},
+            settings_store::{SettingsStore, SettingsUpdate},
+        },
     },
 };
 
@@ -16,6 +24,8 @@ use crate::{
 pub(crate) struct SettingsService {
     runtime: PersistenceHandle,
     clock: Arc<dyn Clock>,
+    ids: Arc<dyn IdGenerator>,
+    vault: Arc<dyn CredentialVault>,
     store: SettingsStore,
     data_directories: Arc<RwLock<DataDirectoryProjection>>,
 }
@@ -32,12 +42,16 @@ impl SettingsService {
     pub(crate) fn new(
         runtime: PersistenceHandle,
         clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        vault: Arc<dyn CredentialVault>,
         data_dir: String,
         pending_data_dir: Option<String>,
     ) -> Self {
         Self {
             runtime,
             clock,
+            ids,
+            vault,
             store: SettingsStore::new(),
             data_directories: Arc::new(RwLock::new(DataDirectoryProjection {
                 active: data_dir,
@@ -78,22 +92,28 @@ impl SettingsService {
     }
 
     pub(crate) async fn ensure_local_access_key(&self) -> Result<String, ApplicationError> {
-        let mut random = [0_u8; 32];
-        OsRng.fill_bytes(&mut random);
-        let generated = format!("sk-local-{}", URL_SAFE_NO_PAD.encode(random));
+        let generated = generate_local_access_key();
         let store = self.store;
         let now = self.now_ms_string();
+        let vault = self.vault.clone();
+        let ids = self.ids.clone();
         self.runtime
             .write(|write| {
                 Box::pin(async move {
-                    store
-                        .ensure_local_access_key(
-                            write,
-                            &generated,
-                            Self::INSECURE_LOCAL_KEY_PLACEHOLDER,
-                            &now,
-                        )
-                        .await
+                    if let Some(secret) = store.local_access_key_secret_for_write(write).await? {
+                        return decrypt_local_access_key(&*vault, secret);
+                    }
+                    let legacy = store.legacy_local_access_key_value(write).await?;
+                    let value = if legacy.trim().is_empty()
+                        || legacy == Self::INSECURE_LOCAL_KEY_PLACEHOLDER
+                    {
+                        generated
+                    } else {
+                        legacy
+                    };
+                    let row = encrypt_local_access_key(&*vault, &*ids, &value, &now)?;
+                    store.upsert_local_access_key_secret(write, &row).await?;
+                    Ok(value)
                 })
             })
             .await
@@ -106,23 +126,25 @@ impl SettingsService {
     ) -> Result<AppSettings, ApplicationError> {
         let store = self.store;
         let now = self.now_ms_string();
-        let projection = self.data_directory_projection()?;
+        let vault = self.vault.clone();
+        let ids = self.ids.clone();
         self.runtime
             .write(|write| {
                 Box::pin(async move {
-                    store
-                        .update_local_access_key(
-                            write,
-                            &value,
-                            &now,
-                            &projection.active,
-                            projection.pending,
-                        )
-                        .await
+                    let local_key = value.trim();
+                    if local_key.is_empty() {
+                        return Err(
+                            crate::persistence::error::PersistenceError::ConstraintViolation,
+                        );
+                    }
+                    let row = encrypt_local_access_key(&*vault, &*ids, local_key, &now)?;
+                    store.upsert_local_access_key_secret(write, &row).await?;
+                    Ok(())
                 })
             })
             .await
-            .map_err(Into::into)
+            .map_err(ApplicationError::from)?;
+        self.load().await
     }
 
     pub(crate) async fn set_local_proxy_start_on_launch(
@@ -199,10 +221,84 @@ impl SettingsService {
     }
 }
 
+pub(crate) fn generate_local_access_key() -> String {
+    let mut random = [0_u8; 32];
+    OsRng.fill_bytes(&mut random);
+    format!("sk-local-{}", URL_SAFE_NO_PAD.encode(random))
+}
+
+fn local_access_key_ref(ids: &dyn IdGenerator) -> SecretRef {
+    SecretRef {
+        id: ids.next_id(),
+        scope: "settings".to_string(),
+        owner_id: "local_key".to_string(),
+        kind: "local_access_key".to_string(),
+    }
+}
+
+fn encrypt_local_access_key(
+    vault: &dyn CredentialVault,
+    ids: &dyn IdGenerator,
+    value: &str,
+    now: &str,
+) -> Result<EncryptedSecretRow, crate::persistence::error::PersistenceError> {
+    let secret_ref = local_access_key_ref(ids);
+    let encrypted = vault
+        .encrypt(&secret_ref.aad(), SecretBytes::from(value.to_string()))
+        .map_err(|_| crate::persistence::error::PersistenceError::DatabaseFailed)?;
+    Ok(EncryptedSecretRow {
+        id: secret_ref.id,
+        scope: secret_ref.scope,
+        owner_id: secret_ref.owner_id,
+        kind: secret_ref.kind,
+        masked_value: encrypted.masked_value,
+        ciphertext: encrypted.ciphertext,
+        nonce: encrypted.nonce,
+        key_id: encrypted.key_id,
+        encryption_version: encrypted.encryption_version,
+        value_hash: encrypted.value_hash,
+        now: now.to_string(),
+    })
+}
+
+fn decrypt_local_access_key(
+    vault: &dyn CredentialVault,
+    secret: StoredEncryptedSecret,
+) -> Result<String, crate::persistence::error::PersistenceError> {
+    let secret_ref = SecretRef {
+        id: secret.id,
+        scope: secret.scope,
+        owner_id: secret.owner_id,
+        kind: secret.kind,
+    };
+    let encrypted = EncryptedSecret {
+        ciphertext: secret.ciphertext,
+        nonce: secret.nonce,
+        masked_value: secret.masked_value,
+        key_id: secret.key_id,
+        encryption_version: secret.encryption_version,
+        value_hash: secret.value_hash,
+    };
+    let decrypted = vault
+        .decrypt(
+            &secret_ref.aad(),
+            &encrypted.key_id,
+            encrypted.encryption_version,
+            &encrypted,
+        )
+        .map_err(|_| crate::persistence::error::PersistenceError::DatabaseFailed)?;
+    String::from_utf8(decrypted.as_bytes().to_vec())
+        .map_err(|_| crate::persistence::error::PersistenceError::DatabaseFailed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{application::clock::SystemClock, persistence::runtime::PersistenceRuntime};
+    use crate::{
+        application::{clock::SystemClock, ids::UuidV7Generator},
+        persistence::runtime::PersistenceRuntime,
+        services::secrets::vault::DataKeyVault,
+    };
 
     #[tokio::test]
     async fn ensure_local_access_key_replaces_placeholder_once_under_concurrency() {
@@ -214,6 +310,8 @@ mod tests {
         let service = Arc::new(SettingsService::new(
             runtime.handle(),
             Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+            Arc::new(DataKeyVault::for_test([9; 32])),
             temp.path().display().to_string(),
             None,
         ));
@@ -255,6 +353,8 @@ mod tests {
         let service = SettingsService::new(
             runtime.handle(),
             Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+            Arc::new(DataKeyVault::for_test([9; 32])),
             temp.path().display().to_string(),
             None,
         );

@@ -29,10 +29,6 @@ use crate::{
     },
 };
 
-// V2CollectorSourceAdapter resolves secrets through CredentialService; provider
-// adapters retain this argument only for the temporary legacy port implementation.
-const V2_UNUSED_DATA_KEY: [u8; 32] = [0; 32];
-
 #[derive(Debug)]
 pub(crate) enum RemoteKeyOperationError {
     Application(ApplicationError),
@@ -147,7 +143,6 @@ pub(crate) struct PreparedSub2ApiRemoteKeyDriverContext {
 
 pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station_id: String,
 ) -> Result<Option<PreparedNewApiRemoteKeyDriverContext>, RemoteKeyOperationError> {
     let station = source
@@ -167,9 +162,8 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
         unsupported_reason: None,
     };
     let session = source
-        .resolve_station_session_with_data_key(
+        .resolve_station_session(
             station.id.clone(),
-            data_key,
             crate::services::time::now_millis_for_services() as i64,
         )
         .map_err(|_| RemoteKeyOperationError::Internal)?;
@@ -244,7 +238,6 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
 
 pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
     source: &dyn CollectorSourcePort,
-    data_key: &[u8; 32],
     station_id: String,
 ) -> Result<Option<PreparedSub2ApiRemoteKeyDriverContext>, RemoteKeyOperationError> {
     let station = source
@@ -270,9 +263,8 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
         scope: CredentialScope::LoginSession,
     };
     let session = source
-        .resolve_station_session_with_data_key(
+        .resolve_station_session(
             station.id.clone(),
-            data_key,
             crate::services::time::now_millis_for_services() as i64,
         )
         .map_err(|_| RemoteKeyOperationError::Internal)?;
@@ -302,7 +294,7 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
                 return None;
             }
             let password = source
-                .get_station_login_password_with_data_key(station.id.clone(), data_key)
+                .get_station_login_password(station.id.clone())
                 .ok()
                 .flatten()?;
             if password.trim().is_empty() {
@@ -1123,7 +1115,7 @@ fn local_station_key_candidates_from_source(
         .map(|key| {
             let fingerprint = if key.api_key_present {
                 source
-                    .resolve_station_key_secret_with_data_key(&V2_UNUSED_DATA_KEY, &key.id)
+                    .resolve_station_key_secret(&key.id)
                     .ok()
                     .as_deref()
                     .and_then(api_key_fingerprint)

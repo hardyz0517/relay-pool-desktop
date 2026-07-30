@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::persistence::{read_encrypted_secrets, StoredEncryptedSecret};
 
 use super::crypto::{decrypt_secret, EncryptedPayload};
+use super::{DeviceKeyResolver, CURRENT_SECRET_ENCRYPTION_VERSION};
 
 pub fn validate_database_secrets(path: &Path, data_key: &[u8; 32]) -> Result<(), String> {
     let records: Vec<StoredEncryptedSecret> =
@@ -23,6 +24,18 @@ pub fn validate_database_secrets(path: &Path, data_key: &[u8; 32]) -> Result<(),
         })?;
     }
     Ok(())
+}
+
+pub(crate) fn validate_database_secrets_with_resolver(
+    path: &Path,
+    resolver: &DeviceKeyResolver,
+    key_id: &str,
+) -> Result<(), String> {
+    resolver
+        .with_key(key_id, CURRENT_SECRET_ENCRYPTION_VERSION, |key| {
+            validate_database_secrets(path, key)
+        })
+        .map_err(|error| format!("database secret key access failed: {error}"))?
 }
 
 fn sanitized_row_identifier(id: &str) -> String {
@@ -68,15 +81,19 @@ mod tests {
         let wrong_key = generate_data_key();
         let path = db_path("encrypted-rows");
         initialize_v2(&path);
-        let payload = encrypt_secret(&key, "sk-validation-canary", "station_key:key-1:api_key")
-            .expect("encrypt");
+        let payload = encrypt_secret(
+            &key,
+            "sk-validation-canary",
+            &crate::models::secrets::canonical_secret_aad("station_key", "key-1", "api_key", 1),
+        )
+        .expect("encrypt");
         let mut connection = open_existing(&path);
         tauri::async_runtime::block_on(
             sqlx::query(
                 "INSERT INTO secrets (
                     id, scope, owner_id, kind, masked_value, ciphertext, nonce,
-                    created_at, updated_at
-                ) VALUES (?1, 'station_key', 'key-1', 'api_key', 'sk-***', ?2, ?3, '1', '1')",
+                    key_id, encryption_version, value_hash, created_at, updated_at
+                ) VALUES (?1, 'station_key', 'key-1', 'api_key', 'sk-***', ?2, ?3, 'test-device-key', 1, ?4, '1', '1')",
             )
             .bind("secret-row-canary")
             .bind(
@@ -89,6 +106,7 @@ mod tests {
                     .decode(payload.nonce)
                     .expect("nonce"),
             )
+            .bind(payload.value_hash)
             .execute(&mut connection),
         )
         .expect("secret row");

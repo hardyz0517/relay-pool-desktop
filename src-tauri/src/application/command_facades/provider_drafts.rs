@@ -62,7 +62,6 @@ pub(crate) struct ProviderDraftCommandFacade {
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
-    data_key: [u8; 32],
 }
 
 impl ProviderDraftCommandFacade {
@@ -72,7 +71,6 @@ impl ProviderDraftCommandFacade {
         blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<ProviderRegistry>,
-        data_key: [u8; 32],
     ) -> Self {
         Self {
             drafts,
@@ -80,7 +78,6 @@ impl ProviderDraftCommandFacade {
             blocking,
             outbound,
             providers,
-            data_key,
         }
     }
 
@@ -128,7 +125,6 @@ impl ProviderDraftCommandFacade {
         let fingerprint = ProviderDraftService::runtime_fingerprint(&draft.payload);
         let finish_draft_id = draft_id.clone();
         let source = self.source(draft_id.clone());
-        let data_key = self.data_key;
         let prepared = self
             .blocking
             .submit(
@@ -138,7 +134,7 @@ impl ProviderDraftCommandFacade {
                 None,
                 move |_| {
                     Ok(collectors::prepare_station_collection_route_v2(
-                        &source, &data_key, draft_id, task,
+                        &source, draft_id, task,
                     ))
                 },
             )?
@@ -191,7 +187,6 @@ impl ProviderDraftCommandFacade {
         draft_id: String,
     ) -> Result<RemoteKeyScanResult, ProviderDraftCommandError> {
         let source = self.source(draft_id.clone());
-        let data_key = self.data_key;
         let newapi = self
             .blocking
             .submit(
@@ -203,7 +198,7 @@ impl ProviderDraftCommandFacade {
                     let draft_id = draft_id.clone();
                     move |_| {
                         Ok(remote_keys::prepare_newapi_remote_key_driver_context_v2(
-                            &source, &data_key, draft_id,
+                            &source, draft_id,
                         ))
                     }
                 },
@@ -223,7 +218,6 @@ impl ProviderDraftCommandFacade {
         }
 
         let source = self.source(draft_id.clone());
-        let data_key = self.data_key;
         let sub2api = self
             .blocking
             .submit(
@@ -235,7 +229,7 @@ impl ProviderDraftCommandFacade {
                     let draft_id = draft_id.clone();
                     move |_| {
                         Ok(remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                            &source, &data_key, draft_id,
+                            &source, draft_id,
                         ))
                     }
                 },
@@ -286,11 +280,7 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
         tauri::async_runtime::block_on(self.drafts.list_keys(&station_id)).map_err(app_error)
     }
 
-    fn resolve_station_key_secret_with_data_key(
-        &self,
-        _data_key: &[u8; 32],
-        station_key_id: &str,
-    ) -> Result<String, String> {
+    fn resolve_station_key_secret(&self, station_key_id: &str) -> Result<String, String> {
         tauri::async_runtime::block_on(self.drafts.key_secret(&self.draft_id, station_key_id))
             .map_err(app_error)
     }
@@ -300,27 +290,21 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
             .map_err(app_error)
     }
 
-    fn get_station_login_password_with_data_key(
-        &self,
-        station_id: String,
-        _data_key: &[u8; 32],
-    ) -> Result<Option<String>, String> {
+    fn get_station_login_password(&self, station_id: String) -> Result<Option<String>, String> {
         tauri::async_runtime::block_on(self.drafts.login_password(&station_id)).map_err(app_error)
     }
 
-    fn resolve_station_session_with_data_key(
+    fn resolve_station_session(
         &self,
         station_id: String,
-        _data_key: &[u8; 32],
         _now_ms: i64,
     ) -> Result<ResolvedSession, String> {
         tauri::async_runtime::block_on(self.drafts.resolve_session(&station_id)).map_err(app_error)
     }
 
-    fn update_station_session_with_data_key(
+    fn update_station_session(
         &self,
         input: UpdateStationSessionInput,
-        _data_key: &[u8; 32],
         expected_revision: i64,
     ) -> Result<StationCredentials, String> {
         tauri::async_runtime::block_on(self.drafts.update_session(input, expected_revision))

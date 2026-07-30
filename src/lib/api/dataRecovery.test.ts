@@ -41,6 +41,7 @@ describe("data recovery backend cutover", () => {
       runtime: {} as BackendClient["runtime"],
       localRouting: {} as BackendClient["localRouting"],
       dataRecovery,
+      dataMigration: {} as BackendClient["dataMigration"],
       economics: {} as BackendClient["economics"],
       groupFacts: {} as BackendClient["groupFacts"],
       pricing: {} as BackendClient["pricing"],

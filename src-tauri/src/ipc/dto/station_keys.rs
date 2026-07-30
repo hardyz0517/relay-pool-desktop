@@ -1403,7 +1403,7 @@ mod tests {
         let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
         let credentials = CredentialService::new(
             runtime.handle(),
-            Arc::new(DataKeyVault::new([23; 32])),
+            Arc::new(DataKeyVault::for_test([23; 32])),
             clock,
             ids,
         );
