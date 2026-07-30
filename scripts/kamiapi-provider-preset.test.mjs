@@ -5,9 +5,8 @@ const source = readFileSync("src/features/stations/providerPresets.ts", "utf8");
 
 const kamiApiName = "\u5361\u7c73API";
 
-assert.match(source, /kamiapi/);
-assert.match(source, new RegExp(kamiApiName));
-assert.match(source, /https:\/\/www\.kamiapi\.top/);
-assert.match(source, /stationType:\s*"newapi"/);
+assert.doesNotMatch(source, /kamiapi/);
+assert.doesNotMatch(source, new RegExp(kamiApiName));
+assert.doesNotMatch(source, /https:\/\/www\.kamiapi\.top/);
 
-console.log("kamiapi provider preset source guard passed");
+console.log("kamiapi provider preset removal guard passed");

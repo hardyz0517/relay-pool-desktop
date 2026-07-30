@@ -136,8 +136,8 @@ describe("add provider form model", () => {
   it("drafts remote-key capability only for supported station types", () => {
     expect(draftRemoteCapability("sub2api")).toMatchObject({
       canListRemoteKeys: true,
-      canCreateRemoteKey: true,
-      canDeleteRemoteKeys: true,
+      canCreateRemoteKey: false,
+      canDeleteRemoteKeys: false,
       canReadGroups: true,
     });
     expect(draftRemoteCapability("custom")).toMatchObject({

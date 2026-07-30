@@ -5,8 +5,9 @@ use serde_json::Value;
 
 use crate::models::{
     credentials::{
-        CommonLoginProfile, StationCredentials, UpdateStationCredentialsInput,
-        UpdateStationSessionInput, UpsertCommonLoginProfileInput,
+        CommonLoginEmail, CommonLoginOptions, CommonLoginPassword, StationCredentials,
+        UpdateStationCredentialsInput, UpdateStationSessionInput, UpsertCommonLoginEmailInput,
+        UpsertCommonLoginPasswordInput,
     },
     group_facts::UpdateStationKeyGroupBindingInput,
     remote_keys::{
@@ -46,7 +47,9 @@ pub type CreateRemoteStationKeyResultDto = CreateRemoteStationKeyResult;
 pub type CreateLocalStationKeyFromRemoteResultDto = CreateLocalStationKeyFromRemoteResult;
 pub type DeleteRemoteStationKeyResultDto = DeleteRemoteStationKeyResult;
 pub type StationCredentialsDto = StationCredentials;
-pub type CommonLoginProfileDto = CommonLoginProfile;
+pub type CommonLoginEmailDto = CommonLoginEmail;
+pub type CommonLoginPasswordDto = CommonLoginPassword;
+pub type CommonLoginOptionsDto = CommonLoginOptions;
 pub type SaveStationKeyWithDefaultsResultDto = SaveStationKeyWithDefaultsResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,11 +82,11 @@ impl StationKeyIdInputDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CommonLoginProfileIdInputDto {
+pub struct CommonLoginIdInputDto {
     pub id: String,
 }
 
-impl CommonLoginProfileIdInputDto {
+impl CommonLoginIdInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
         validate_id("id", &input.id)?;
@@ -93,25 +96,45 @@ impl CommonLoginProfileIdInputDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UpsertCommonLoginProfileInputDto {
+pub struct UpsertCommonLoginEmailInputDto {
     pub id: Option<String>,
     pub email: String,
-    pub password: Option<String>,
 }
 
-impl UpsertCommonLoginProfileInputDto {
+impl UpsertCommonLoginEmailInputDto {
     pub fn parse(
         value: Value,
-    ) -> Result<UpsertCommonLoginProfileInput, crate::commands::error::CommandError> {
+    ) -> Result<UpsertCommonLoginEmailInput, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
         if let Some(id) = input.id.as_deref() {
             validate_id("id", id)?;
         }
         validate_text("email", &input.email, MAX_NAME_BYTES, false)?;
-        validate_optional_secret("password", input.password.as_deref(), MAX_SECRET_BYTES)?;
-        Ok(UpsertCommonLoginProfileInput {
+        Ok(UpsertCommonLoginEmailInput {
             id: input.id,
             email: input.email.trim().to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpsertCommonLoginPasswordInputDto {
+    pub id: Option<String>,
+    pub password: String,
+}
+
+impl UpsertCommonLoginPasswordInputDto {
+    pub fn parse(
+        value: Value,
+    ) -> Result<UpsertCommonLoginPasswordInput, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        if let Some(id) = input.id.as_deref() {
+            validate_id("id", id)?;
+        }
+        validate_secret("password", &input.password, MAX_SECRET_BYTES)?;
+        Ok(UpsertCommonLoginPasswordInput {
+            id: input.id,
             password: input.password,
         })
     }
@@ -806,6 +829,17 @@ fn validate_optional_secret(
     Ok(())
 }
 
+fn validate_secret(
+    field: &'static str,
+    value: &str,
+    max: usize,
+) -> Result<(), crate::commands::error::CommandError> {
+    if value.trim().is_empty() {
+        return Err(invalid_input(field, "required", "The value is required."));
+    }
+    validate_optional_secret(field, Some(value), max)
+}
+
 fn validate_range(
     field: &'static str,
     value: i64,
@@ -866,11 +900,17 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
     let capability = fixture_remote_capability();
     let remote_key = fixture_remote_key();
     let credentials = fixture_credentials();
-    let common_login_profile = CommonLoginProfile {
-        id: "common-login-fixture".into(),
+    let common_login_email = CommonLoginEmail {
+        id: "common-login-email-fixture".into(),
         email: "fixture@example.com".into(),
-        password_present: true,
+    };
+    let common_login_password = CommonLoginPassword {
+        id: "common-login-password-fixture".into(),
         password_masked: "fix...word".into(),
+    };
+    let common_login_options = CommonLoginOptions {
+        emails: vec![common_login_email.clone()],
+        passwords: vec![common_login_password.clone()],
     };
     let saved = SaveStationKeyWithDefaultsResult {
         station_key: fixture_station_key(),
@@ -999,17 +1039,27 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         }),
         UpdateStationCredentialsInputDto::parse,
     );
-    let common_login_profile_input = checked_input(
+    let common_login_email_input = checked_input(
         serde_json::json!({
             "id": null,
-            "email": "fixture@example.com",
+            "email": "fixture@example.com"
+        }),
+        UpsertCommonLoginEmailInputDto::parse,
+    );
+    let common_login_password_input = checked_input(
+        serde_json::json!({
+            "id": null,
             "password": "fixture-not-a-real-password"
         }),
-        UpsertCommonLoginProfileInputDto::parse,
+        UpsertCommonLoginPasswordInputDto::parse,
     );
-    let common_login_profile_id = checked_input(
-        serde_json::json!({"id": "common-login-fixture"}),
-        CommonLoginProfileIdInputDto::parse,
+    let common_login_email_id = checked_input(
+        serde_json::json!({"id": "common-login-email-fixture"}),
+        CommonLoginIdInputDto::parse,
+    );
+    let common_login_password_id = checked_input(
+        serde_json::json!({"id": "common-login-password-fixture"}),
+        CommonLoginIdInputDto::parse,
     );
     let session_input = checked_input(
         serde_json::json!({
@@ -1042,10 +1092,12 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command": "list_key_pool_items", "input": {}, "output": [key_pool_item.clone()]}),
         serde_json::json!({"command": "reorder_key_pool", "input": checked_input(serde_json::json!({"keyIds": ["station-key-fixture"]}), ReorderKeyPoolInputDto::parse), "output": [key_pool_item]}),
         serde_json::json!({"command": "get_station_credentials", "input": station_id.clone(), "output": credentials.clone()}),
-        serde_json::json!({"command": "list_common_login_profiles", "input": {}, "output": [common_login_profile.clone()]}),
-        serde_json::json!({"command": "upsert_common_login_profile", "input": common_login_profile_input, "output": common_login_profile}),
-        serde_json::json!({"command": "delete_common_login_profile", "input": common_login_profile_id.clone(), "output": null}),
-        serde_json::json!({"command": "get_common_login_profile_password", "input": common_login_profile_id, "output": "fixture-not-a-real-password"}),
+        serde_json::json!({"command": "list_common_login_options", "input": {}, "output": common_login_options}),
+        serde_json::json!({"command": "upsert_common_login_email", "input": common_login_email_input, "output": common_login_email}),
+        serde_json::json!({"command": "delete_common_login_email", "input": common_login_email_id, "output": null}),
+        serde_json::json!({"command": "upsert_common_login_password", "input": common_login_password_input, "output": common_login_password}),
+        serde_json::json!({"command": "delete_common_login_password", "input": common_login_password_id.clone(), "output": null}),
+        serde_json::json!({"command": "get_common_login_password", "input": common_login_password_id, "output": "fixture-not-a-real-password"}),
         serde_json::json!({"command": "update_station_credentials", "input": credentials_input, "output": credentials.clone()}),
         serde_json::json!({"command": "update_station_session", "input": session_input, "output": credentials.clone()}),
         serde_json::json!({"command": "clear_station_credentials", "input": station_id, "output": credentials}),

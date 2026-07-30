@@ -64,6 +64,8 @@ describe("AddProviderSections", () => {
     const onCommonEmailSelect = vi.fn();
     const onCommonPasswordSelect = vi.fn();
     const onCopyWebsiteUrl = vi.fn();
+    const onStartManualAuthorization = vi.fn();
+    const onTestConnection = vi.fn();
     const host = document.createElement("div");
     const root = createRoot(host);
     const form = createDefaultProviderForm();
@@ -71,10 +73,12 @@ describe("AddProviderSections", () => {
     await act(async () =>
       root.render(
         <ProviderConnectionSection
-          commonLoginProfiles={[{
-            id: "profile-1",
+          commonLoginEmails={[{
+            id: "email-1",
             email: "shared@example.com",
-            passwordPresent: true,
+          }]}
+          commonLoginPasswords={[{
+            id: "password-1",
             passwordMasked: "sha...word",
           }]}
           connectionTest={{ status: "idle", message: null }}
@@ -91,9 +95,9 @@ describe("AddProviderSections", () => {
           onCommonPasswordSelect={onCommonPasswordSelect}
           onCopyWebsiteUrl={onCopyWebsiteUrl}
           onFormChange={vi.fn()}
-          onStartManualAuthorization={vi.fn()}
+          onStartManualAuthorization={onStartManualAuthorization}
           onStationTypeChange={vi.fn()}
-          onTestConnection={vi.fn()}
+          onTestConnection={onTestConnection}
         />,
       ),
     );
@@ -103,11 +107,24 @@ describe("AddProviderSections", () => {
     )!;
     await act(async () => copyButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
-    expect(onCopyWebsiteUrl).toHaveBeenCalledOnce();
+    const authorizationButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("打开窗口授权"),
+    )!;
+    const testButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes("测试连通性"),
+    )!;
+    await act(async () => authorizationButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => testButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
     const emailMenuButton = host.querySelector<HTMLButtonElement>('button[aria-label="选择常用邮箱"]')!;
     const usernameInput = host.querySelector<HTMLInputElement>('input[aria-label="登录用户名或邮箱"]')!;
     expect(emailMenuButton.closest("label")).toBeNull();
     expect(usernameInput.closest("label")).toBeNull();
+    expect(
+      usernameInput.compareDocumentPosition(emailMenuButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(usernameInput.className).toContain("w-full");
+    expect(emailMenuButton.className).not.toContain("rounded-r-none");
     expect(usernameInput.type).toBe("text");
     expect(usernameInput.autocomplete).toBe("username");
     await act(async () => emailMenuButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -121,8 +138,14 @@ describe("AddProviderSections", () => {
       .find((button) => button.textContent?.includes("sha...word"))!;
     await act(async () => passwordOption.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
-    expect(onCommonEmailSelect).toHaveBeenCalledWith("profile-1");
-    expect(onCommonPasswordSelect).toHaveBeenCalledWith("profile-1");
+    expect(onCopyWebsiteUrl).toHaveBeenCalledOnce();
+    expect(onStartManualAuthorization).toHaveBeenCalledOnce();
+    expect(onTestConnection).toHaveBeenCalledOnce();
+    expect(onCommonEmailSelect).toHaveBeenCalledWith("email-1");
+    expect(onCommonPasswordSelect).toHaveBeenCalledWith("password-1");
+    expect(
+      authorizationButton.compareDocumentPosition(testButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     await act(async () => root.unmount());
   });

@@ -8,6 +8,7 @@ pub mod group_facts;
 pub(crate) mod health;
 pub mod monitoring;
 pub mod pricing;
+pub mod provider_drafts;
 pub mod proxy;
 pub mod remote_keys;
 pub mod routing;

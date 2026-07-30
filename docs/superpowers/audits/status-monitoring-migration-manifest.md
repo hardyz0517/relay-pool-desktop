@@ -2,7 +2,7 @@
 
 Status: Task 6 initial schema/backfill verified
 Date: 2026-07-29
-Migration: `src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql`
+Migration: `src-tauri/src/persistence/migrations/0010_status_monitoring_v2.sql`
 
 ## Version
 

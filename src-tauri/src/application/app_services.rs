@@ -9,6 +9,7 @@ use super::{
     ids::{IdGenerator, UuidV7Generator},
     monitoring::MonitoringService,
     pricing::{BuiltinModelBasePriceCatalog, PricingService},
+    provider_drafts::ProviderDraftService,
     queries::{channel_status::ChannelStatusQuery, pricing_comparison::PricingComparisonQuery},
     request_finalization::RequestFinalizationService,
     request_logs::RequestLogService,
@@ -30,6 +31,7 @@ pub(crate) struct AppServices {
     pub(crate) request_logs: Arc<RequestLogService>,
     pub(crate) monitoring: Arc<MonitoringService>,
     pub(crate) pricing: Arc<PricingService>,
+    pub(crate) provider_drafts: Arc<ProviderDraftService>,
     pub(crate) channel_status: Arc<ChannelStatusQuery>,
     pub(crate) pricing_comparison: Arc<PricingComparisonQuery>,
     pub(crate) settings: Arc<SettingsService>,
@@ -57,6 +59,12 @@ impl AppServices {
             data_directory_port,
             settings.clone(),
             blocking,
+        ));
+        let provider_drafts = Arc::new(ProviderDraftService::new(
+            runtime.clone(),
+            credential_vault.clone(),
+            clock.clone(),
+            ids.clone(),
         ));
         Self::new(
             Arc::new(StationService::new(
@@ -95,6 +103,7 @@ impl AppServices {
                 ids,
                 builtin_price_catalog,
             )),
+            provider_drafts,
             Arc::new(ChannelStatusQuery::new(runtime.clone(), clock.clone())),
             Arc::new(PricingComparisonQuery::new(runtime.clone())),
             settings,
@@ -113,6 +122,7 @@ impl AppServices {
         request_logs: Arc<RequestLogService>,
         monitoring: Arc<MonitoringService>,
         pricing: Arc<PricingService>,
+        provider_drafts: Arc<ProviderDraftService>,
         channel_status: Arc<ChannelStatusQuery>,
         pricing_comparison: Arc<PricingComparisonQuery>,
         settings: Arc<SettingsService>,
@@ -128,6 +138,7 @@ impl AppServices {
             request_logs,
             monitoring,
             pricing,
+            provider_drafts,
             channel_status,
             pricing_comparison,
             settings,

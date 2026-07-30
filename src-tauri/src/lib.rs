@@ -458,6 +458,14 @@ pub fn run() {
                             Arc::clone(&provider_registry),
                             data_key,
                         );
+                    let provider_draft_command_facade =
+                        app_composition::compose_provider_draft_command_facade(
+                            &app_services,
+                            blocking_executor.clone(),
+                            outbound_client.clone(),
+                            Arc::clone(&provider_registry),
+                            data_key,
+                        );
                     let station_key_connectivity_command_facade =
                         app_composition::compose_station_key_connectivity_command_facade(
                             &app_services,
@@ -552,6 +560,7 @@ pub fn run() {
                             runtime,
                             app_services,
                             settings_stations_command_facade,
+                            provider_draft_command_facade,
                             key_pool_command_facade,
                             remote_keys_command_facade,
                             routing_command_facade,

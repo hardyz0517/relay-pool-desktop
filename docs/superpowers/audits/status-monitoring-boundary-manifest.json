@@ -293,7 +293,7 @@
   },
   "task6_status_monitoring_v2_migration": {
     "created_paths": [
-      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/src/persistence/migrations/0010_status_monitoring_v2.sql",
       "src-tauri/tests/monitoring_migration.rs",
       "docs/superpowers/audits/status-monitoring-migration-manifest.md"
     ],
@@ -339,7 +339,7 @@
     ],
     "modified_paths": [
       "src-tauri/src/persistence/stores/mod.rs",
-      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql"
+      "src-tauri/src/persistence/migrations/0010_status_monitoring_v2.sql"
     ],
     "verified_invariants": [
       "attempt append is idempotent by stable attempt id and by (execution,target,model_index,attempt_number)",
@@ -449,7 +449,7 @@
       "src-tauri/src/application/request_finalization.rs",
       "src-tauri/src/application/routing.rs",
       "src-tauri/src/models/mod.rs",
-      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/src/persistence/migrations/0010_status_monitoring_v2.sql",
       "src-tauri/src/persistence/stores/mod.rs",
       "src-tauri/src/persistence/stores/request_log_store.rs",
       "src-tauri/src/persistence/stores/routing_store.rs"
@@ -529,7 +529,7 @@
       "src-tauri/src/models/monitoring/execution.rs",
       "src-tauri/src/models/monitoring/outcome.rs",
       "src-tauri/src/models/monitoring/policy.rs",
-      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/src/persistence/migrations/0010_status_monitoring_v2.sql",
       "src-tauri/src/persistence/stores/monitoring/definitions.rs",
       "src-tauri/src/persistence/stores/monitoring/executions.rs",
       "src-tauri/tests/monitoring_persistence.rs"
@@ -608,7 +608,7 @@
       "src-tauri/Cargo.lock",
       "src-tauri/src/application/monitoring/mod.rs",
       "src-tauri/src/application/monitoring/write_path.rs",
-      "src-tauri/src/persistence/migrations/0009_status_monitoring_v2.sql",
+      "src-tauri/src/persistence/migrations/0010_status_monitoring_v2.sql",
       "src-tauri/src/persistence/stores/monitoring/retention.rs",
       "src-tauri/src/persistence/stores/monitoring/status_queries.rs",
       "src-tauri/src/services/monitoring/mod.rs",
@@ -748,7 +748,7 @@
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 1 -Quick => passed",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 60 -OutputPath docs/superpowers/audits/status-monitoring-soak-60m-latest.json => passed, 985 iterations, 0 failures",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monitoring-soak.ps1 -DurationMinutes 60 -ReleaseBuild -MixedProviderWorkload -OutputPath docs/superpowers/audits/status-monitoring-soak-release-mixed-60m-latest.json => passed, release profile, 513 iterations, 0 failures",
-      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-db.ps1 against fresh migrated v9 temp DB => passed",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-db.ps1 against fresh migrated v10 temp DB => passed",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-read-model-performance.ps1 -MonitorRows 500 -TargetResults 500000 -Attempts 100000 -Samples 20 -WorkspaceP95LimitMs 250 -SchedulerLagP95LimitMs 2000 => passed, workspace p95 134.93 ms and scheduler p95 16 ms",
       "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-live.ps1 without authorization => failed closed as designed",
       "pnpm.cmd tauri:build => release app and NSIS bundle generated, final updater signing failed because TAURI_SIGNING_PRIVATE_KEY is not configured"

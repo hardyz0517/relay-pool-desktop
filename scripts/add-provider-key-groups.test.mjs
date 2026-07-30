@@ -1,7 +1,11 @@
 ﻿import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const addProviderSource = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
+const addProviderPageSource = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
+const addProviderControllerSource = await readFile(
+  "src/features/stations/useAddProviderPageController.ts",
+  "utf8",
+);
 const editorSource = await readFile(
   "src/features/stations/components/StationKeyRowsEditor.tsx",
   "utf8",
@@ -14,8 +18,20 @@ const createRemoteKeyDialogSource = await readFile(
   "src/features/stations/components/CreateRemoteKeyDialog.tsx",
   "utf8",
 );
+const addProviderSectionsSource = await readFile(
+  "src/features/stations/pages/add-provider/AddProviderSections.tsx",
+  "utf8",
+);
+const keyGroupModelSource = await readFile(
+  "src/features/stations/pages/add-provider/keyGroupModel.ts",
+  "utf8",
+);
+const saveControllerSource = await readFile(
+  "src/features/stations/pages/add-provider/saveController.ts",
+  "utf8",
+);
 const groupOptionViewModelSource = await readFile(
-  "src/features/stations/groupOptionViewModels.ts",
+  "src/lib/groupOptionViewModels.ts",
   "utf8",
 );
 const collectorStoreSource = await readFile(
@@ -26,6 +42,13 @@ const stationDetailViewModelSource = await readFile(
   "src/features/stations/stationDetailViewModels.ts",
   "utf8",
 );
+const addProviderSource = [
+  addProviderPageSource,
+  addProviderControllerSource,
+  addProviderSectionsSource,
+  keyGroupModelSource,
+  saveControllerSource,
+].join("\n");
 
 function functionSource(source, name) {
   const match = source.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
@@ -33,8 +56,8 @@ function functionSource(source, name) {
   return match[0];
 }
 
-const optionalRateParserSource = functionSource(addProviderSource, "parseOptionalRateMultiplier");
-const draftRateParserSource = functionSource(addProviderSource, "parseDraftRateMultiplier");
+const optionalRateParserSource = functionSource(keyGroupModelSource, "parseOptionalRateMultiplier");
+const draftRateParserSource = functionSource(keyGroupModelSource, "parseDraftRateMultiplier");
 
 assert.match(
   optionalRateParserSource,
@@ -54,19 +77,19 @@ assert.match(
 );
 
 assert.ok(
-  !addProviderSource.includes("璇峰～鍐欓粯璁ゅ瘑閽ユ垨鏈湴瀵嗛挜"),
+  !addProviderSource.includes("请填写默认密钥或本地密钥"),
   "supplier creation should not force a default key or local key before saving",
 );
 
 assert.ok(
-  !addProviderSource.includes('label={editing ? "瀵嗛挜" : "榛樿瀵嗛挜"}'),
+  !addProviderSource.includes('label={editing ? "密钥" : "默认密钥"}'),
   "connection info should not keep a separate default-key field above the key editor",
 );
 
 assert.match(
-  addProviderSource,
+  addProviderControllerSource,
   /createRemoteStationKey\(\{\s*stationId: targetStationId,/,
-  "remote key creation should use the current active station id after create-page autosave",
+  "remote key creation should use the current active saved station id",
 );
 
 assert.ok(
@@ -101,7 +124,12 @@ assert.ok(
 
 assert.ok(
   addProviderSource.includes('collectStationTask(targetStationId, "groups")'),
-  "remote group sync should reuse the existing collector groups task instead of guessing groups from remote keys",
+  "saved-station group sync should reuse the existing collector groups task",
+);
+
+assert.ok(
+  addProviderSource.includes('collectProviderDraftPreview(draft.id, "groups")'),
+  "new-provider group sync should use the isolated draft preview path",
 );
 
 assert.ok(
@@ -121,25 +149,31 @@ assert.ok(
 );
 
 assert.ok(
-  !addProviderSource.includes('activeStationId ? remoteCapability?.canListRemoteKeys !== true : form.stationType !== "sub2api"'),
-  "create supplier page should not keep remote scan buttons disabled only because the station has not been saved yet",
+  addProviderControllerSource.includes("scanProviderDraftRemoteKeys") &&
+    addProviderControllerSource.includes("flushProviderDraft"),
+  "create supplier page should allow read-only remote scans through a flushed draft",
 );
 
 assert.ok(
-  !/const createRemoteDisabled =[\s\S]*?;\r?\n/.exec(addProviderSource)?.[0].includes("!activeStationId"),
-  "create supplier page should allow remote-key creation to autosave the station before opening or submitting",
+  /const createRemoteDisabled =[\s\S]*!activeStationId[\s\S]*savedStationCreateRemoteUnavailable/.test(addProviderControllerSource),
+  "create supplier page should not create remote keys before the supplier is explicitly saved",
 );
 
 assert.ok(
-  addProviderSource.includes("Boolean(form.websiteUrl.trim())") &&
-    addProviderSource.includes("Boolean(form.apiBaseUrl.trim())"),
-  "create-page remote-key autosave readiness should require both station endpoint roles",
+  !addProviderControllerSource.includes("createPageRemoteDraftReady"),
+  "create-page remote-key readiness should not be modeled as an implicit persistence path",
 );
 
 assert.ok(
-  addProviderSource.includes("handleOpenCreateRemoteKey") &&
-    addProviderSource.includes("const targetStationId = await ensureStationForRemoteKeyActions();"),
-  "remote-key creation should autosave an unsaved create-page station before using remote APIs",
+  addProviderControllerSource.includes("handleOpenCreateRemoteKey") &&
+    addProviderControllerSource.includes("草稿不支持修改远端数据，请先保存供应商"),
+  "remote-key creation should remain unavailable while the supplier is a draft",
+);
+
+assert.ok(
+  addProviderControllerSource.includes("commitProviderDraft(draft.id, draft.revision, commitKey)") &&
+    !addProviderControllerSource.includes("const station = await createStation({"),
+  "new supplier save should atomically promote one draft instead of running a multi-step frontend save",
 );
 
 assert.ok(
@@ -208,7 +242,7 @@ assert.ok(
 
 assert.ok(
   addProviderSource.includes("setGroupRows(syncedGroupRows)"),
-  "remote group sync should replace editable group rows with persisted collector facts",
+  "remote group sync should update editable rows for both draft previews and saved collector facts",
 );
 
 assert.ok(
@@ -243,10 +277,10 @@ assert.ok(
 );
 
 assert.ok(
-  addProviderSource.lastIndexOf("handleScanRemoteKeys") <
-    addProviderSource.lastIndexOf("handleOpenCreateRemoteKey") &&
-    addProviderSource.lastIndexOf("handleOpenCreateRemoteKey") <
-      addProviderSource.lastIndexOf("handleAddLocalKey"),
+  addProviderSectionsSource.indexOf("获取所有 Key") <
+    addProviderSectionsSource.indexOf("新建远端 Key") &&
+    addProviderSectionsSource.indexOf("新建远端 Key") <
+      addProviderSectionsSource.indexOf("添加密钥"),
   "local key creation should sit to the right of the remote key creation action",
 );
 

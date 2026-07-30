@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "288f1b11d724e61a5ade2ab87f8268cf4ce440c2995ae7f1caf346d88efbd7c6";
+    "81047e568a7d7505c54301877ac792a996d7236838010dc6d5b860d86b74feb3";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -65,6 +65,13 @@ macro_rules! ipc_command_registry {
             update_station => $crate::commands::stations::update_station,
             delete_station => $crate::commands::stations::delete_station,
             reorder_stations => $crate::commands::stations::reorder_stations,
+            create_or_resume_provider_draft => $crate::commands::provider_drafts::create_or_resume_provider_draft,
+            get_provider_draft => $crate::commands::provider_drafts::get_provider_draft,
+            patch_provider_draft => $crate::commands::provider_drafts::patch_provider_draft,
+            discard_provider_draft => $crate::commands::provider_drafts::discard_provider_draft,
+            collect_provider_draft_preview => $crate::commands::provider_drafts::collect_provider_draft_preview,
+            scan_provider_draft_remote_keys => $crate::commands::provider_drafts::scan_provider_draft_remote_keys,
+            commit_provider_draft => $crate::commands::provider_drafts::commit_provider_draft,
             get_settings => $crate::commands::settings::get_settings,
             get_local_access_key => $crate::commands::settings::get_local_access_key,
             update_local_access_key => $crate::commands::settings::update_local_access_key,
@@ -164,10 +171,12 @@ macro_rules! ipc_command_registry {
             update_station_credentials => $crate::commands::credentials::update_station_credentials,
             update_station_session => $crate::commands::credentials::update_station_session,
             clear_station_credentials => $crate::commands::credentials::clear_station_credentials,
-            list_common_login_profiles => $crate::commands::credentials::list_common_login_profiles,
-            upsert_common_login_profile => $crate::commands::credentials::upsert_common_login_profile,
-            delete_common_login_profile => $crate::commands::credentials::delete_common_login_profile,
-            get_common_login_profile_password => $crate::commands::credentials::get_common_login_profile_password,
+            list_common_login_options => $crate::commands::credentials::list_common_login_options,
+            upsert_common_login_email => $crate::commands::credentials::upsert_common_login_email,
+            delete_common_login_email => $crate::commands::credentials::delete_common_login_email,
+            upsert_common_login_password => $crate::commands::credentials::upsert_common_login_password,
+            delete_common_login_password => $crate::commands::credentials::delete_common_login_password,
+            get_common_login_password => $crate::commands::credentials::get_common_login_password,
             detect_station_info => $crate::commands::station_collection::detect_station_info,
             collect_station_info => $crate::commands::station_collection::collect_station_info,
             collect_station_task => $crate::commands::station_collection::collect_station_task,
@@ -179,10 +188,12 @@ macro_rules! ipc_command_registry {
             get_latest_collector_snapshot => $crate::commands::collector_metadata::get_latest_collector_snapshot,
             list_latest_collector_snapshots => $crate::commands::collector_metadata::list_latest_collector_snapshots,
             start_capture_session => $crate::commands::capture::start_capture_session,
+            start_provider_draft_authorization => $crate::commands::capture::start_provider_draft_authorization,
             get_capture_session_status => $crate::commands::capture::get_capture_session_status,
             record_capture_event => $crate::commands::capture::record_capture_event,
             finish_capture_session => $crate::commands::capture::finish_capture_session,
             finish_web_authorization_session => $crate::commands::capture::finish_web_authorization_session,
+            finish_provider_draft_authorization_session => $crate::commands::capture::finish_provider_draft_authorization_session,
             clear_capture_session => $crate::commands::capture::clear_capture_session,
             close_capture_session => $crate::commands::capture::close_capture_session,
         }
@@ -300,20 +311,56 @@ fn command_contract(name: &str) -> CommandContract {
         ),
         "list_key_pool_items" => migrated_read("EmptyInputDto", "Vec<KeyPoolItemDto>"),
         "get_station_credentials" => migrated_read("StationIdInputDto", "StationCredentialsDto"),
-        "list_common_login_profiles" => {
-            migrated_read("EmptyInputDto", "Vec<CommonLoginProfileDto>")
-        }
-        "get_common_login_profile_password" => {
-            migrated_read("CommonLoginProfileIdInputDto", "String")
-        }
-        "upsert_common_login_profile" => migrated_mutation(
-            "UpsertCommonLoginProfileInputDto",
-            "CommonLoginProfileDto",
+        "list_common_login_options" => migrated_read("EmptyInputDto", "CommonLoginOptionsDto"),
+        "get_common_login_password" => migrated_read("CommonLoginIdInputDto", "String"),
+        "upsert_common_login_email" => migrated_mutation(
+            "UpsertCommonLoginEmailInputDto",
+            "CommonLoginEmailDto",
             "non_idempotent",
             true,
         ),
-        "delete_common_login_profile" => {
-            migrated_mutation("CommonLoginProfileIdInputDto", "unit", "idempotent", false)
+        "upsert_common_login_password" => migrated_mutation(
+            "UpsertCommonLoginPasswordInputDto",
+            "CommonLoginPasswordDto",
+            "non_idempotent",
+            true,
+        ),
+        "create_or_resume_provider_draft" => migrated_mutation(
+            "CreateProviderDraftInputDto",
+            "ProviderDraftDto",
+            "idempotent",
+            false,
+        ),
+        "get_provider_draft" => migrated_read("ProviderDraftIdInputDto", "ProviderDraftDto"),
+        "patch_provider_draft" => migrated_mutation(
+            "PatchProviderDraftInputDto",
+            "ProviderDraftDto",
+            "idempotent",
+            false,
+        ),
+        "discard_provider_draft" => {
+            migrated_mutation("ProviderDraftIdInputDto", "unit", "idempotent", false)
+        }
+        "collect_provider_draft_preview" => migrated_mutation(
+            "CollectProviderDraftPreviewInputDto",
+            "ProviderDraftPreviewDto",
+            "idempotent",
+            false,
+        ),
+        "scan_provider_draft_remote_keys" => migrated_mutation(
+            "ProviderDraftIdInputDto",
+            "RemoteKeyScanResultDto",
+            "idempotent",
+            false,
+        ),
+        "commit_provider_draft" => migrated_mutation(
+            "CommitProviderDraftInputDto",
+            "StationDto",
+            "idempotent",
+            false,
+        ),
+        "delete_common_login_email" | "delete_common_login_password" => {
+            migrated_mutation("CommonLoginIdInputDto", "unit", "idempotent", false)
         }
         "create_station_key" => migrated_mutation(
             "CreateStationKeyInputDto",
@@ -524,10 +571,9 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
-        "load_channel_status_workspace" => migrated_read(
-            "ChannelStatusWorkspaceInputDto",
-            "ChannelStatusWorkspaceDto",
-        ),
+        "load_channel_status_workspace" => {
+            migrated_read("EmptyInputDto", "ChannelStatusWorkspaceDto")
+        }
         "list_channel_monitor_executions" => migrated_read(
             "ChannelMonitorExecutionListInputDto",
             "ChannelMonitorExecutionPageDto",
@@ -537,7 +583,7 @@ fn command_contract(name: &str) -> CommandContract {
             "ChannelMonitorExecutionDetailDto",
         ),
         "list_channel_monitor_attempts" => migrated_read(
-            "ChannelMonitorAttemptHistoryInputDto",
+            "ChannelMonitorAttemptListInputDto",
             "ChannelMonitorAttemptPageDto",
         ),
         "list_monitoring_capabilities" => {
@@ -580,9 +626,21 @@ fn command_contract(name: &str) -> CommandContract {
             "non_idempotent",
             true,
         ),
+        "start_provider_draft_authorization" => migrated_mutation(
+            "ProviderDraftIdInputDto",
+            "CaptureSessionStatusDto",
+            "non_idempotent",
+            true,
+        ),
         "finish_capture_session" | "finish_web_authorization_session" => migrated_mutation(
             "CaptureStationIdInputDto",
             "CollectorRunResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "finish_provider_draft_authorization_session" => migrated_mutation(
+            "ProviderDraftIdInputDto",
+            "ProviderDraftPreviewDto",
             "non_idempotent",
             true,
         ),
@@ -907,6 +965,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::pricing_reads::serialization_fixtures());
     commands.extend(super::dto::pricing_mutations::serialization_fixtures());
     commands.extend(super::dto::proxy_workspace_reads::serialization_fixtures());
+    commands.extend(super::dto::provider_drafts::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
         "{}\n",
@@ -944,6 +1003,38 @@ fn render_typescript(contract_hash: &str) -> String {
             r#"return invokeNonIdempotent<StationDto>("create_station", { input });"#,
         )
         .replace(
+            r#"export function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {"#,
+            r#"export function createOrResumeProviderDraft(input: CreateProviderDraftInputDto): Promise<ProviderDraftDto> {
+  return invokeCommand<ProviderDraftDto>("create_or_resume_provider_draft", { input });
+}
+
+export function getProviderDraft(input: ProviderDraftIdInputDto): Promise<ProviderDraftDto> {
+  return invokeCommand<ProviderDraftDto>("get_provider_draft", { input });
+}
+
+export function patchProviderDraft(input: PatchProviderDraftInputDto): Promise<ProviderDraftDto> {
+  return invokeCommand<ProviderDraftDto>("patch_provider_draft", { input });
+}
+
+export function discardProviderDraft(input: ProviderDraftIdInputDto): Promise<void> {
+  return invokeCommand<void>("discard_provider_draft", { input });
+}
+
+export function collectProviderDraftPreview(input: CollectProviderDraftPreviewInputDto): Promise<ProviderDraftPreviewDto> {
+  return invokeCommand<ProviderDraftPreviewDto>("collect_provider_draft_preview", { input });
+}
+
+export function scanProviderDraftRemoteKeys(input: ProviderDraftIdInputDto): Promise<RemoteKeyScanResultDto> {
+  return invokeCommand<RemoteKeyScanResultDto>("scan_provider_draft_remote_keys", { input });
+}
+
+export function commitProviderDraft(input: CommitProviderDraftInputDto): Promise<StationDto> {
+  return invokeCommand<StationDto>("commit_provider_draft", { input });
+}
+
+export function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {"#,
+        )
+        .replace(
             r#"export function getSettings(input: EmptyInputDto = {}): Promise<SettingsDto> {
   return invokeCommand<SettingsDto>("get_settings", { input });
 }"#,
@@ -977,20 +1068,28 @@ export function openExternalUrl(input: OpenExternalUrlInputDto): Promise<void> {
         )
         .replace(
             "export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>",
-            r#"export function listCommonLoginProfiles(input: EmptyInputDto = {}): Promise<CommonLoginProfileDto[]> {
-  return invokeCommand<CommonLoginProfileDto[]>("list_common_login_profiles", { input });
+            r#"export function listCommonLoginOptions(input: EmptyInputDto = {}): Promise<CommonLoginOptionsDto> {
+  return invokeCommand<CommonLoginOptionsDto>("list_common_login_options", { input });
 }
 
-export function upsertCommonLoginProfile(input: UpsertCommonLoginProfileInputDto): Promise<CommonLoginProfileDto> {
-  return invokeNonIdempotent<CommonLoginProfileDto>("upsert_common_login_profile", { input });
+export function upsertCommonLoginEmail(input: UpsertCommonLoginEmailInputDto): Promise<CommonLoginEmailDto> {
+  return invokeNonIdempotent<CommonLoginEmailDto>("upsert_common_login_email", { input });
 }
 
-export function deleteCommonLoginProfile(input: CommonLoginProfileIdInputDto): Promise<void> {
-  return invokeCommand<void>("delete_common_login_profile", { input });
+export function deleteCommonLoginEmail(input: CommonLoginIdInputDto): Promise<void> {
+  return invokeCommand<void>("delete_common_login_email", { input });
 }
 
-export function getCommonLoginProfilePassword(input: CommonLoginProfileIdInputDto): Promise<string> {
-  return invokeCommand<string>("get_common_login_profile_password", { input });
+export function upsertCommonLoginPassword(input: UpsertCommonLoginPasswordInputDto): Promise<CommonLoginPasswordDto> {
+  return invokeNonIdempotent<CommonLoginPasswordDto>("upsert_common_login_password", { input });
+}
+
+export function deleteCommonLoginPassword(input: CommonLoginIdInputDto): Promise<void> {
+  return invokeCommand<void>("delete_common_login_password", { input });
+}
+
+export function getCommonLoginPassword(input: CommonLoginIdInputDto): Promise<string> {
+  return invokeCommand<string>("get_common_login_password", { input });
 }
 
 export function listRequestLogs(input: EmptyInputDto = {}): Promise<RequestLogDto[]> {
@@ -1129,7 +1228,7 @@ export function deleteChannelMonitorTemplate(input: ChannelMonitorMutationIdInpu
   return invokeCommand<void>("delete_channel_monitor_template", { input });
 }
 
-export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
+export function loadChannelStatusWorkspace(input: EmptyInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
   return invokeCommand<ChannelStatusWorkspaceDto>("load_channel_status_workspace", { input });
 }
 
@@ -1141,7 +1240,7 @@ export function getChannelMonitorExecution(input: ChannelMonitorExecutionIdInput
   return invokeCommand<ChannelMonitorExecutionDetailDto>("get_channel_monitor_execution", { input });
 }
 
-export function listChannelMonitorAttempts(input: ChannelMonitorAttemptHistoryInputDto): Promise<ChannelMonitorAttemptPageDto> {
+export function listChannelMonitorAttempts(input: ChannelMonitorAttemptListInputDto): Promise<ChannelMonitorAttemptPageDto> {
   return invokeCommand<ChannelMonitorAttemptPageDto>("list_channel_monitor_attempts", { input });
 }
 
@@ -1189,6 +1288,10 @@ export function startCaptureSession(input: CaptureStationIdInputDto): Promise<Ca
   return invokeNonIdempotent<CaptureSessionStatusDto>("start_capture_session", { input });
 }
 
+export function startProviderDraftAuthorization(input: ProviderDraftIdInputDto): Promise<CaptureSessionStatusDto> {
+  return invokeNonIdempotent<CaptureSessionStatusDto>("start_provider_draft_authorization", { input });
+}
+
 export function getCaptureSessionStatus(input: CaptureStationIdInputDto): Promise<CaptureSessionStatusDto> {
   return invokeCommand<CaptureSessionStatusDto>("get_capture_session_status", { input });
 }
@@ -1203,6 +1306,10 @@ export function finishCaptureSession(input: CaptureStationIdInputDto): Promise<C
 
 export function finishWebAuthorizationSession(input: CaptureStationIdInputDto): Promise<CollectorRunResultDto> {
   return invokeNonIdempotent<CollectorRunResultDto>("finish_web_authorization_session", { input });
+}
+
+export function finishProviderDraftAuthorizationSession(input: ProviderDraftIdInputDto): Promise<ProviderDraftPreviewDto> {
+  return invokeNonIdempotent<ProviderDraftPreviewDto>("finish_provider_draft_authorization_session", { input });
 }
 
 export function clearCaptureSession(input: CaptureStationIdInputDto): Promise<CaptureSessionStatusDto> {
@@ -1609,11 +1716,15 @@ mod tests {
     #[test]
     fn channel_monitor_read_commands_have_closed_schemas() {
         for name in [
+            "get_channel_monitor_execution",
+            "list_channel_monitor_attempts",
+            "list_channel_monitor_executions",
             "list_channel_monitor_runs",
             "list_channel_monitor_summaries",
             "list_channel_monitor_templates",
             "list_channel_monitors",
             "list_channel_status_summaries",
+            "list_monitoring_capabilities",
         ] {
             let contract = command_contract(name);
             assert!(!contract.input.starts_with("legacy_"), "{name}");
@@ -1672,7 +1783,7 @@ mod tests {
     #[test]
     fn channel_monitor_operations_have_closed_schemas_and_frozen_semantics() {
         let workspace = command_contract("load_channel_status_workspace");
-        assert_eq!(workspace.input, "ChannelStatusWorkspaceInputDto");
+        assert_eq!(workspace.input, "EmptyInputDto");
         assert_eq!(workspace.output, "ChannelStatusWorkspaceDto");
         assert_eq!(workspace.mutation_kind, "read");
         assert_eq!(workspace.runtime_validation, "rust_dto_pre_application");
@@ -1686,6 +1797,14 @@ mod tests {
         assert_eq!(run_now.runtime_validation, "rust_dto_pre_application");
         assert!(!run_now.transport_retry);
         assert!(run_now.result_unknown);
+
+        let cancel = command_contract("cancel_channel_monitor_execution");
+        assert_eq!(cancel.input, "CancelChannelMonitorExecutionInputDto");
+        assert_eq!(cancel.output, "CancelChannelMonitorExecutionReceiptDto");
+        assert_eq!(cancel.mutation_kind, "idempotent");
+        assert_eq!(cancel.runtime_validation, "rust_dto_pre_application");
+        assert!(!cancel.transport_retry);
+        assert!(!cancel.result_unknown);
     }
 
     #[test]
@@ -2087,6 +2206,10 @@ mod tests {
             "listChannelMonitorTemplates",
             "listChannelMonitors",
             "listChannelStatusSummaries",
+            "listChannelMonitorExecutions",
+            "getChannelMonitorExecution",
+            "listChannelMonitorAttempts",
+            "listMonitoringCapabilities",
             "createChannelMonitor",
             "updateChannelMonitor",
             "deleteChannelMonitor",
@@ -2094,6 +2217,7 @@ mod tests {
             "updateChannelMonitorTemplate",
             "duplicateChannelMonitorTemplate",
             "deleteChannelMonitorTemplate",
+            "cancelChannelMonitorExecution",
         ] {
             assert!(
                 source.contains(&format!("function {wrapper}(")),
@@ -2170,6 +2294,10 @@ mod tests {
         fs::create_dir_all(&output_dir).expect("generator output directory must be created");
         let canonical = canonical_contract();
         let contract_hash = sha256(canonical);
+        assert_eq!(
+            contract_hash, IPC_BINDING_HASH,
+            "runtime binding hash is stale; update IPC_BINDING_HASH"
+        );
         let fixture = pilot_serialization_fixture();
         let fixture_hash = sha256(fixture.as_bytes());
         fs::write(

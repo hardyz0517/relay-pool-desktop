@@ -1,5 +1,7 @@
 # Phase 6 Routing Policy and Model Capabilities
 
+> **归档说明：** 这是早期路由策略阶段快照，不是当前路由架构说明。当前开发入口见 [`../../README.md`](../../README.md)。
+
 ## Goal
 
 P6 upgrades Relay Pool Desktop from a local gateway that mainly follows Key Pool priority into a model-aware, protocol-aware, health-aware Station Key router.

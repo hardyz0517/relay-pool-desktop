@@ -1,5 +1,7 @@
 # Phase 2 Data Plan
 
+> **归档说明：** 这是早期数据层阶段快照，不是当前架构说明。当前开发入口见 [`../../README.md`](../../README.md)。
+
 Phase 2 introduces the first local persistence layer for Relay Pool Desktop. The scope is intentionally narrow: SQLite initialization, `stations` CRUD, basic `settings` persistence, Tauri commands, and frontend wiring for the Stations and Settings pages.
 
 ## Implemented Scope

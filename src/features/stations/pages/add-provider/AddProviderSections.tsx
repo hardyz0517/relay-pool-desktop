@@ -18,7 +18,7 @@ import {
 } from "../../components/StationKeyRowsEditor";
 import { RemoteKeyDiscoveryList } from "../../components/RemoteKeyDiscoveryList";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
-import type { CommonLoginProfile } from "@/lib/types/settings";
+import type { CommonLoginEmail, CommonLoginPassword } from "@/lib/types/settings";
 import { inputClassName, type AddProviderFormState, type ConnectionTestState } from "./formModel";
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -73,7 +73,8 @@ export function ProviderPresetSection({ presetId, onApplyPreset }: ProviderPrese
 }
 
 type ProviderConnectionSectionProps = {
-  commonLoginProfiles: CommonLoginProfile[];
+  commonLoginEmails: CommonLoginEmail[];
+  commonLoginPasswords: CommonLoginPassword[];
   connectionTest: ConnectionTestState;
   editing: boolean;
   error: string | null;
@@ -94,7 +95,8 @@ type ProviderConnectionSectionProps = {
 };
 
 export function ProviderConnectionSection({
-  commonLoginProfiles,
+  commonLoginEmails,
+  commonLoginPasswords,
   connectionTest,
   editing,
   error,
@@ -171,7 +173,10 @@ export function ProviderConnectionSection({
             ariaLabel="登录用户名或邮箱"
             disabled={loading}
             kind="email"
-            profiles={commonLoginProfiles}
+            options={commonLoginEmails.map((item) => ({
+              value: item.id,
+              label: item.email,
+            }))}
             value={form.loginUsername}
             onChange={(value) => {
               onFormChange({ ...form, loginUsername: value });
@@ -185,7 +190,10 @@ export function ProviderConnectionSection({
             ariaLabel="登录密码"
             disabled={loading || passwordProfileLoading}
             kind="password"
-            profiles={commonLoginProfiles}
+            options={commonLoginPasswords.map((item) => ({
+              value: item.id,
+              label: item.passwordMasked,
+            }))}
             value={form.loginPassword}
             onChange={(value) => {
               onFormChange({
@@ -201,22 +209,20 @@ export function ProviderConnectionSection({
         </CompoundField>
         <Button
           variant="outline"
+          onClick={onStartManualAuthorization}
+          disabled={saving || loading || startingAuthorization}
+        >
+          <LogIn className="h-4 w-4" />
+          {startingAuthorization ? "打开中" : "打开窗口授权"}
+        </Button>
+        <Button
+          variant="outline"
           onClick={onTestConnection}
           disabled={saving || testingConnection}
         >
           <ShieldCheck className="h-4 w-4" />
           {testingConnection ? "测试中" : "测试连通性"}
         </Button>
-        {editing && (
-          <Button
-            variant="outline"
-            onClick={onStartManualAuthorization}
-            disabled={saving || loading || startingAuthorization}
-          >
-            <LogIn className="h-4 w-4" />
-            {startingAuthorization ? "打开中" : "网页登录授权"}
-          </Button>
-        )}
       </div>
       {connectionTest.message && (
         <div
@@ -253,7 +259,7 @@ function FillableLoginInput({
   ariaLabel,
   disabled,
   kind,
-  profiles,
+  options,
   value,
   placeholder,
   onChange,
@@ -262,40 +268,34 @@ function FillableLoginInput({
   ariaLabel: string;
   disabled: boolean;
   kind: "email" | "password";
-  profiles: CommonLoginProfile[];
+  options: Array<{ value: string; label: string }>;
   value: string;
   placeholder?: string;
   onChange: (value: string) => void;
   onProfileSelect: (profileId: string) => void;
 }) {
-  const availableProfiles = kind === "password"
-    ? profiles.filter((profile) => profile.passwordPresent)
-    : profiles;
   return (
-    <div className="flex min-w-0">
-      <SelectControl
-        ariaLabel={kind === "email" ? "选择常用邮箱" : "选择常用密码"}
-        className="h-8 w-9 min-w-0 shrink-0 rounded-r-none px-2 shadow-none"
-        disabled={disabled || availableProfiles.length === 0}
-        menuClassName="min-w-[220px]"
-        options={availableProfiles.map((profile) => ({
-          value: profile.id,
-          label: profile.email,
-          description: kind === "password" ? profile.passwordMasked : undefined,
-        }))}
-        placeholder=""
-        value=""
-        onChange={onProfileSelect}
-      />
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2">
       <input
         aria-label={ariaLabel}
         autoComplete={kind === "email" ? "username" : "current-password"}
-        className={cn(inputClassName, "-ml-px rounded-l-none")}
+        className={cn(inputClassName, "min-w-0 w-full")}
         disabled={disabled}
         placeholder={placeholder ?? "user@example.com"}
         type={kind === "password" ? "password" : "text"}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+      />
+      <SelectControl
+        ariaLabel={kind === "email" ? "选择常用邮箱" : "选择常用密码"}
+        className="h-8 w-8 min-w-[2rem] justify-center gap-0 px-0 shadow-none"
+        disabled={disabled || options.length === 0}
+        menuAlign="end"
+        menuMinWidth={220}
+        options={options}
+        placeholder={null}
+        value=""
+        onChange={onProfileSelect}
       />
     </div>
   );
@@ -363,6 +363,7 @@ export function ProviderGroupsSection({
 
 type ProviderKeysSectionProps = {
   activeStationId: string | null;
+  providerDraftId?: string | null;
   createRemoteDisabled: boolean;
   currentCreditPerCny: number;
   disabled: boolean;
@@ -390,6 +391,7 @@ type ProviderKeysSectionProps = {
 
 export function ProviderKeysSection({
   activeStationId,
+  providerDraftId,
   createRemoteDisabled,
   currentCreditPerCny,
   disabled,
@@ -457,7 +459,7 @@ export function ProviderKeysSection({
         rows={rows}
         onRowsChange={onRowsChange}
       />
-      {activeStationId && (
+      {(activeStationId || providerDraftId) && (
         <div className="mt-3 grid gap-2 border-t border-border pt-3">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <KeyRound className="h-3.5 w-3.5" />
@@ -474,6 +476,7 @@ export function ProviderKeysSection({
                 deleteDisabled={remoteCapability?.canDeleteRemoteKeys !== true}
                 keys={remoteKeys}
                 loading={remoteLoading}
+                readOnly={!activeStationId}
                 localKeyIdsCreatedByRemote={localKeyIdsCreatedByRemote}
                 localKeys={localKeys}
                 onBind={onBindRemoteKey}

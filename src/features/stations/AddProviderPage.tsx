@@ -23,7 +23,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     cancelDeleteRemoteKey,
     closeCreateRemoteDialog,
     closeDiscardConfirm,
-    commonLoginProfiles,
+    commonLoginOptions,
     confirmDiscardChanges,
     confirmDeleteRemoteKey,
     connectionTest,
@@ -56,6 +56,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     keyRows,
     loading,
     passwordProfileLoading,
+    providerDraftId,
     localStationKeys,
     remoteCapability,
     remoteCapabilityError,
@@ -109,7 +110,8 @@ export function AddProviderPage(props: AddProviderPageProps) {
             {!editing && <ProviderPresetSection presetId={form.presetId} onApplyPreset={applyPreset} />}
 
             <ProviderConnectionSection
-              commonLoginProfiles={commonLoginProfiles}
+              commonLoginEmails={commonLoginOptions.emails}
+              commonLoginPasswords={commonLoginOptions.passwords}
               connectionTest={connectionTest}
               editing={editing}
               error={error}
@@ -143,6 +145,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
 
             <ProviderKeysSection
               activeStationId={activeStationId}
+              providerDraftId={providerDraftId}
               createRemoteDisabled={createRemoteDisabled}
               currentCreditPerCny={currentCreditPerCny}
               disabled={saving || loading}

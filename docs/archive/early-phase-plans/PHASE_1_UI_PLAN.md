@@ -1,5 +1,7 @@
 # Phase 1 UI Plan
 
+> **归档说明：** 这是早期 UI 阶段快照，不是当前实施计划。当前开发入口见 [`../../README.md`](../../README.md)。
+
 Phase 1 的目标是把当前 7 个 placeholder 页面升级为接近真实产品的假数据界面。所有数据都来自本地 mock，不接后端，不保存设置，不调用 Tauri commands。UI 必须继续保持 CCSwitch 风格的浅色、简约、克制、紧凑桌面工具感，并为后续真实数据接入预留清晰结构。
 
 ## Phase 1 Boundary
@@ -733,7 +735,7 @@ Phase 1 完成后必须满足：
 ## Notes for Future Codex Runs
 
 - 每次只实现一个 Phase 1 子阶段，不要一次性做完整业务。
-- 开始前必须阅读 `AGENTS.md`、`docs/PROJECT_PLAN.md`、`docs/PHASE_1_UI_PLAN.md` 和相关页面文件。
+- 历史执行上下文要求先阅读 `AGENTS.md`、`docs/PROJECT_PLAN.md`、本归档文档和相关页面文件；该要求现已由仓库当前文档导航取代。
 - UI 改动保持 CCSwitch 风格：浅色、克制、紧凑、高信息密度。
 - 不要引入大型后台模板。
 - 不要把页面做成网站或营销页。

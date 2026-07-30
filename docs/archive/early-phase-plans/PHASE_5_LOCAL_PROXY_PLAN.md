@@ -1,5 +1,7 @@
 # Phase 5 Local Proxy MVP
 
+> **归档说明：** 这是早期本地代理阶段快照，后续运行时与请求链路已有演进。当前开发入口见 [`../../README.md`](../../README.md)。
+
 **Status:** P5.0-P5.4 core work has landed as the local gateway line. The app now exposes a localhost OpenAI-compatible proxy, routes through the enabled Key Pool, writes request logs, surfaces proxy status in the UI, supports `/v1/responses`, passes through SSE streams for chat completions and responses, handles CORS preflight, aggregates `/v1/models`, and shows request-log-derived Key / Channel status. Remaining work is deeper policy, model mapping, timeout tuning, and long-term health scoring.
 
 **Goal:** Keep Relay Pool Desktop usable as a local OpenAI-compatible gateway that external tools can point at once, while the app chooses enabled Station Keys, forwards, falls back, and records what happened.

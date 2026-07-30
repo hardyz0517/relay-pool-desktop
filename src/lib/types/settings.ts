@@ -95,17 +95,29 @@ export type CcswitchImportResult = {
   endpoint: string;
 };
 
-export type CommonLoginProfile = {
+export type CommonLoginEmail = {
+    id: string;
+    email: string;
+};
+
+export type CommonLoginPassword = {
   id: string;
-  email: string;
-  passwordPresent: boolean;
   passwordMasked: string;
 };
 
-export type UpsertCommonLoginProfileInput = {
+export type CommonLoginOptions = {
+  emails: CommonLoginEmail[];
+  passwords: CommonLoginPassword[];
+};
+
+export type UpsertCommonLoginEmailInput = {
   id?: string | null;
   email: string;
-  password?: string | null;
+};
+
+export type UpsertCommonLoginPasswordInput = {
+  id?: string | null;
+  password: string;
 };
 
 export type UpdateSettingsInput = {

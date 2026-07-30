@@ -1,0 +1,360 @@
+use std::sync::Arc;
+
+use crate::{
+    application::{
+        error::ApplicationError, provider_drafts::ProviderDraftService, settings::SettingsService,
+    },
+    background_tasks::{BlockingExecutor, BlockingExecutorError},
+    models::{
+        credentials::{
+            PersistStationSessionInput, ResolvedSession, StationCredentials,
+            StationSessionCredentialKind, UpdateStationSessionInput,
+        },
+        group_facts::StationGroupBinding,
+        provider_drafts::{
+            CommitProviderDraftInput, CreateProviderDraftInput, PatchProviderDraftInput,
+            ProviderDraft, ProviderDraftPreview,
+        },
+        remote_keys::RemoteKeyScanResult,
+        settings::AppSettings,
+        station_keys::StationKey,
+        stations::Station,
+    },
+    observability::correlation,
+    outbound::AsyncOutboundClient,
+    services::{
+        collectors::{
+            self, orchestration::ProviderRegistry, output::CollectorTask, CollectorSourcePort,
+        },
+        remote_keys::{self, RemoteKeyOperationError},
+    },
+};
+
+#[derive(Debug)]
+pub(crate) enum ProviderDraftCommandError {
+    Application(ApplicationError),
+    Blocking(BlockingExecutorError),
+    Remote(RemoteKeyOperationError),
+}
+
+impl From<ApplicationError> for ProviderDraftCommandError {
+    fn from(error: ApplicationError) -> Self {
+        Self::Application(error)
+    }
+}
+
+impl From<BlockingExecutorError> for ProviderDraftCommandError {
+    fn from(error: BlockingExecutorError) -> Self {
+        Self::Blocking(error)
+    }
+}
+
+impl From<RemoteKeyOperationError> for ProviderDraftCommandError {
+    fn from(error: RemoteKeyOperationError) -> Self {
+        Self::Remote(error)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct ProviderDraftCommandFacade {
+    drafts: Arc<ProviderDraftService>,
+    settings: Arc<SettingsService>,
+    blocking: BlockingExecutor,
+    outbound: AsyncOutboundClient,
+    providers: Arc<ProviderRegistry>,
+    data_key: [u8; 32],
+}
+
+impl ProviderDraftCommandFacade {
+    pub(crate) fn new(
+        drafts: Arc<ProviderDraftService>,
+        settings: Arc<SettingsService>,
+        blocking: BlockingExecutor,
+        outbound: AsyncOutboundClient,
+        providers: Arc<ProviderRegistry>,
+        data_key: [u8; 32],
+    ) -> Self {
+        Self {
+            drafts,
+            settings,
+            blocking,
+            outbound,
+            providers,
+            data_key,
+        }
+    }
+
+    pub(crate) async fn create_or_resume(
+        &self,
+        input: CreateProviderDraftInput,
+    ) -> Result<ProviderDraft, ProviderDraftCommandError> {
+        self.drafts
+            .create_or_resume(input)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn get(
+        &self,
+        draft_id: String,
+    ) -> Result<ProviderDraft, ProviderDraftCommandError> {
+        self.drafts.get(draft_id).await.map_err(Into::into)
+    }
+
+    pub(crate) async fn patch(
+        &self,
+        input: PatchProviderDraftInput,
+    ) -> Result<ProviderDraft, ProviderDraftCommandError> {
+        self.drafts.patch(input).await.map_err(Into::into)
+    }
+
+    pub(crate) async fn discard(&self, draft_id: String) -> Result<(), ProviderDraftCommandError> {
+        self.drafts.discard(draft_id).await.map_err(Into::into)
+    }
+
+    pub(crate) async fn commit(
+        &self,
+        input: CommitProviderDraftInput,
+    ) -> Result<Station, ProviderDraftCommandError> {
+        self.drafts.commit(input).await.map_err(Into::into)
+    }
+
+    pub(crate) async fn collect_preview(
+        &self,
+        draft_id: String,
+        task: CollectorTask,
+    ) -> Result<ProviderDraftPreview, ProviderDraftCommandError> {
+        let draft = self.drafts.get(draft_id.clone()).await?;
+        let fingerprint = ProviderDraftService::runtime_fingerprint(&draft.payload);
+        let source = self.source(draft_id.clone());
+        let data_key = self.data_key;
+        let prepared = self
+            .blocking
+            .submit(
+                "provider_draft_collection_prepare",
+                None,
+                current_correlation_id(),
+                None,
+                move |_| {
+                    Ok(collectors::prepare_station_collection_route_v2(
+                        &source, &data_key, draft_id, task,
+                    ))
+                },
+            )?
+            .result()
+            .await??;
+        let prepared = match prepared {
+            collectors::PreparedStationCollectionRoute::Sub2Api(prepared) => {
+                collectors::finish_sub2api_collection_v2(
+                    self.providers.as_ref(),
+                    &self.outbound,
+                    prepared,
+                    tokio_util::sync::CancellationToken::new(),
+                    current_correlation_id(),
+                )
+                .await?
+            }
+            collectors::PreparedStationCollectionRoute::OpenAiCompatible(prepared) => {
+                collectors::finish_openai_compatible_collection_v2(
+                    self.providers.as_ref(),
+                    &self.outbound,
+                    prepared,
+                    tokio_util::sync::CancellationToken::new(),
+                    current_correlation_id(),
+                )
+                .await?
+            }
+            collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
+                collectors::finish_newapi_collection_v2(
+                    self.providers.as_ref(),
+                    &self.outbound,
+                    prepared,
+                    tokio_util::sync::CancellationToken::new(),
+                    current_correlation_id(),
+                )
+                .await?
+            }
+        };
+        let preview = collectors::provider_draft_preview_from_prepared(
+            prepared,
+            fingerprint,
+            chrono::Utc::now().timestamp_millis().to_string(),
+        );
+        self.drafts.store_preview(preview).await.map_err(Into::into)
+    }
+
+    pub(crate) async fn scan_remote_keys(
+        &self,
+        draft_id: String,
+    ) -> Result<RemoteKeyScanResult, ProviderDraftCommandError> {
+        let source = self.source(draft_id.clone());
+        let data_key = self.data_key;
+        let newapi = self
+            .blocking
+            .submit(
+                "provider_draft_remote_key_prepare_newapi",
+                None,
+                current_correlation_id(),
+                None,
+                {
+                    let draft_id = draft_id.clone();
+                    move |_| {
+                        Ok(remote_keys::prepare_newapi_remote_key_driver_context_v2(
+                            &source, &data_key, draft_id,
+                        ))
+                    }
+                },
+            )?
+            .result()
+            .await??;
+        if let Some(prepared) = newapi {
+            let prepared = remote_keys::prepare_newapi_remote_key_scan_v2(
+                self.providers.as_ref(),
+                &self.outbound,
+                prepared,
+                tokio_util::sync::CancellationToken::new(),
+                current_correlation_id(),
+            )
+            .await?;
+            return remote_keys::preview_remote_key_scan_v2(prepared).map_err(Into::into);
+        }
+
+        let source = self.source(draft_id.clone());
+        let data_key = self.data_key;
+        let sub2api = self
+            .blocking
+            .submit(
+                "provider_draft_remote_key_prepare_sub2api",
+                None,
+                current_correlation_id(),
+                None,
+                {
+                    let draft_id = draft_id.clone();
+                    move |_| {
+                        Ok(remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                            &source, &data_key, draft_id,
+                        ))
+                    }
+                },
+            )?
+            .result()
+            .await??;
+        if let Some(prepared) = sub2api {
+            let prepared = remote_keys::prepare_sub2api_remote_key_scan_v2(
+                self.providers.as_ref(),
+                &self.outbound,
+                prepared,
+                tokio_util::sync::CancellationToken::new(),
+                current_correlation_id(),
+            )
+            .await?;
+            return remote_keys::preview_remote_key_scan_v2(prepared).map_err(Into::into);
+        }
+        Err(RemoteKeyOperationError::Unsupported.into())
+    }
+
+    fn source(&self, draft_id: String) -> ProviderDraftCollectorSource {
+        ProviderDraftCollectorSource {
+            drafts: Arc::clone(&self.drafts),
+            settings: Arc::clone(&self.settings),
+            draft_id,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ProviderDraftCollectorSource {
+    drafts: Arc<ProviderDraftService>,
+    settings: Arc<SettingsService>,
+    draft_id: String,
+}
+
+impl CollectorSourcePort for ProviderDraftCollectorSource {
+    fn station_for_collector(&self, station_id: &str) -> Result<Station, String> {
+        tauri::async_runtime::block_on(self.drafts.station_projection(station_id))
+            .map_err(app_error)
+    }
+
+    fn get_settings(&self) -> Result<AppSettings, String> {
+        tauri::async_runtime::block_on(self.settings.load()).map_err(app_error)
+    }
+
+    fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
+        tauri::async_runtime::block_on(self.drafts.list_keys(&station_id)).map_err(app_error)
+    }
+
+    fn resolve_station_key_secret_with_data_key(
+        &self,
+        _data_key: &[u8; 32],
+        station_key_id: &str,
+    ) -> Result<String, String> {
+        tauri::async_runtime::block_on(self.drafts.key_secret(&self.draft_id, station_key_id))
+            .map_err(app_error)
+    }
+
+    fn get_station_credentials(&self, station_id: String) -> Result<StationCredentials, String> {
+        tauri::async_runtime::block_on(self.drafts.credentials_projection(&station_id))
+            .map_err(app_error)
+    }
+
+    fn get_station_login_password_with_data_key(
+        &self,
+        station_id: String,
+        _data_key: &[u8; 32],
+    ) -> Result<Option<String>, String> {
+        tauri::async_runtime::block_on(self.drafts.login_password(&station_id)).map_err(app_error)
+    }
+
+    fn resolve_station_session_with_data_key(
+        &self,
+        station_id: String,
+        _data_key: &[u8; 32],
+        _now_ms: i64,
+    ) -> Result<ResolvedSession, String> {
+        tauri::async_runtime::block_on(self.drafts.resolve_session(&station_id)).map_err(app_error)
+    }
+
+    fn update_station_session_with_data_key(
+        &self,
+        input: UpdateStationSessionInput,
+        _data_key: &[u8; 32],
+        expected_revision: i64,
+    ) -> Result<StationCredentials, String> {
+        tauri::async_runtime::block_on(self.drafts.update_session(input, expected_revision))
+            .map_err(app_error)
+    }
+
+    fn persist_station_session_with_data_key(
+        &self,
+        input: PersistStationSessionInput,
+        _data_key: &[u8; 32],
+        expected_revision: i64,
+    ) -> Result<StationCredentials, String> {
+        tauri::async_runtime::block_on(self.drafts.persist_session(input, expected_revision))
+            .map_err(app_error)
+    }
+
+    fn invalidate_station_session_credential(
+        &self,
+        station_id: &str,
+        kind: StationSessionCredentialKind,
+    ) -> Result<(), String> {
+        tauri::async_runtime::block_on(self.drafts.invalidate_session_credential(station_id, kind))
+            .map_err(app_error)
+    }
+
+    fn list_station_group_bindings(
+        &self,
+        station_id: String,
+    ) -> Result<Vec<StationGroupBinding>, String> {
+        tauri::async_runtime::block_on(self.drafts.list_groups(&station_id)).map_err(app_error)
+    }
+}
+
+fn current_correlation_id() -> Option<String> {
+    correlation::current().map(|id| id.as_str().to_string())
+}
+
+fn app_error(error: ApplicationError) -> String {
+    error.to_string()
+}

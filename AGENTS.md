@@ -20,7 +20,8 @@
 - 不加入账号系统、支付系统、团队权限、云同步、插件市场。
 - 不把项目做成完整替代 CCSwitch；它应当与 CCSwitch 配合使用。
 - 不直接复制 AGPL / LGPL 项目的核心实现；参考项目需要保留边界意识和必要 attribution。
-- 后续实现代理、采集、路由、健康检测、日志前，先阅读 `docs/PROJECT_PLAN.md` 和相关模块文件。
+- 后续实现代理、采集、路由、健康检测、日志前，先阅读 `docs/README.md`、`docs/PROJECT_PLAN.md` 和相关模块文件。
+- `docs/archive/` 只用于追溯历史，不得单独作为当前实现依据。
 
 ## 数据与安全
 

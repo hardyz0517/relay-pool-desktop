@@ -40,7 +40,7 @@ async fn status_monitoring_v2_migration_backfills_legacy_runs_without_health_obs
     seed_station_monitor_and_legacy_run(&mut connection).await;
 
     sqlx::raw_sql(include_str!(
-        "../src/persistence/migrations/0009_status_monitoring_v2.sql"
+        "../src/persistence/migrations/0010_status_monitoring_v2.sql"
     ))
     .execute(&mut connection)
     .await
@@ -123,7 +123,7 @@ async fn status_monitoring_v2_migration_backfills_legacy_runs_without_health_obs
 
 #[tokio::test]
 async fn status_monitoring_v2_constraints_reject_invalid_outcomes_and_duplicate_targets() {
-    let mut connection = migrate_to_v9().await;
+    let mut connection = migrate_to_v10().await;
     seed_station(&mut connection).await;
 
     sqlx::query(
@@ -221,10 +221,10 @@ async fn status_monitoring_v2_constraints_reject_invalid_outcomes_and_duplicate_
     }
 }
 
-async fn migrate_to_v9() -> SqliteConnection {
+async fn migrate_to_v10() -> SqliteConnection {
     let mut connection = migrate_to_v8().await;
     sqlx::raw_sql(include_str!(
-        "../src/persistence/migrations/0009_status_monitoring_v2.sql"
+        "../src/persistence/migrations/0010_status_monitoring_v2.sql"
     ))
     .execute(&mut connection)
     .await

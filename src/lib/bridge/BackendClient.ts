@@ -31,9 +31,12 @@ import type {
 import type {
   AppSettings,
   CcswitchImportResult,
-  CommonLoginProfile,
+  CommonLoginEmail,
+  CommonLoginOptions,
+  CommonLoginPassword,
   UpdateSettingsInput,
-  UpsertCommonLoginProfileInput,
+  UpsertCommonLoginEmailInput,
+  UpsertCommonLoginPasswordInput,
 } from "@/lib/types/settings";
 import type {
   BalanceSnapshot,
@@ -84,6 +87,12 @@ import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { RuntimeStatus } from "@/lib/types/runtimeStatus";
 import type {
+  ProviderDraft,
+  ProviderDraftPatch,
+  ProviderDraftPayload,
+  ProviderDraftPreview,
+} from "@/lib/types/providerDrafts";
+import type {
   ModelAlias,
   RouteSimulationInput,
   RouteSimulationResult,
@@ -104,10 +113,12 @@ export type SettingsDomainClient = {
   updateSettings(input: UpdateSettingsInput): Promise<AppSettings>;
   chooseDataDir(): Promise<AppSettings>;
   resetDataDir(): Promise<AppSettings>;
-  listCommonLoginProfiles(): Promise<CommonLoginProfile[]>;
-  upsertCommonLoginProfile(input: UpsertCommonLoginProfileInput): Promise<CommonLoginProfile>;
-  deleteCommonLoginProfile(id: string): Promise<void>;
-  getCommonLoginProfilePassword(id: string): Promise<string>;
+  listCommonLoginOptions(): Promise<CommonLoginOptions>;
+  upsertCommonLoginEmail(input: UpsertCommonLoginEmailInput): Promise<CommonLoginEmail>;
+  deleteCommonLoginEmail(id: string): Promise<void>;
+  upsertCommonLoginPassword(input: UpsertCommonLoginPasswordInput): Promise<CommonLoginPassword>;
+  deleteCommonLoginPassword(id: string): Promise<void>;
+  getCommonLoginPassword(id: string): Promise<string>;
 };
 
 export type StationsDomainClient = {
@@ -309,6 +320,20 @@ export type CollectorsDomainClient = {
   closeCaptureSession(stationId: string): Promise<CaptureSessionStatus>;
 };
 
+export type ProviderDraftsDomainClient = {
+  createOrResume(input: { baseStationId: string | null; payload: ProviderDraftPayload }): Promise<ProviderDraft>;
+  get(draftId: string): Promise<ProviderDraft>;
+  patch(input: ProviderDraftPatch): Promise<ProviderDraft>;
+  discard(draftId: string): Promise<void>;
+  collectPreview(input: {
+    draftId: string;
+    taskType: "detect" | "balance" | "groups" | "models" | "full";
+  }): Promise<ProviderDraftPreview>;
+  scanRemoteKeys(draftId: string): Promise<RemoteKeyScanResult>;
+  startAuthorization(draftId: string): Promise<CaptureSessionStatus>;
+  commit(input: { draftId: string; expectedRevision: number; commitKey: string }): Promise<Station>;
+};
+
 export type UpdaterDomainClient = {
   currentAppVersion(): Promise<string>;
   checkForAppUpdate(): Promise<AppUpdateCheckResult>;
@@ -333,6 +358,7 @@ export type BackendClient = {
   readonly routing: RoutingDomainClient;
   readonly channels: ChannelsDomainClient;
   readonly collectors: CollectorsDomainClient;
+  readonly providerDrafts?: ProviderDraftsDomainClient;
   readonly updater: UpdaterDomainClient;
   readonly runtime: RuntimeDomainClient;
   handshake(): Promise<RuntimeContractInfo>;

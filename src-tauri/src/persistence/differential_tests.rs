@@ -1111,8 +1111,8 @@ fn binary_031() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=9,
-        writable_schema: BTreeSet::from([9]),
+        readable_schema: 1..=10,
+        writable_schema: BTreeSet::from([10]),
     }
 }
 

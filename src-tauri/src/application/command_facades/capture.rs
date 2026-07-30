@@ -2,18 +2,16 @@ use std::{sync::Arc, time::Duration};
 
 use futures_util::{future::BoxFuture, FutureExt};
 use serde_json::Value;
-#[cfg(test)]
 use tauri::Manager;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-#[cfg(test)]
-use crate::background_tasks::BlockingExecutor;
 use crate::{
     application::{
         collectors::{CaptureSnapshotRequest, CollectorService},
         credentials::CredentialService,
         error::ApplicationError,
+        provider_drafts::ProviderDraftService,
         stations::StationService,
     },
     background_tasks::BlockingExecutorError,
@@ -21,6 +19,7 @@ use crate::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         collector::CollectorRunResult,
         credentials::PersistStationSessionInput,
+        provider_drafts::{ProviderDraftPayload, ProviderDraftPreview},
         stations::Station,
     },
     observability::correlation,
@@ -89,6 +88,7 @@ pub(crate) struct CaptureSessionStartPlan {
 pub(crate) struct CaptureCommandFacade {
     stations: Arc<StationService>,
     credentials: Arc<CredentialService>,
+    drafts: Arc<ProviderDraftService>,
     collectors: Arc<CollectorService>,
     sessions: CaptureSessionStore,
     outbound: AsyncOutboundClient,
@@ -99,6 +99,7 @@ impl CaptureCommandFacade {
     pub(crate) fn new(
         stations: Arc<StationService>,
         credentials: Arc<CredentialService>,
+        drafts: Arc<ProviderDraftService>,
         collectors: Arc<CollectorService>,
         sessions: CaptureSessionStore,
         outbound: AsyncOutboundClient,
@@ -107,6 +108,7 @@ impl CaptureCommandFacade {
         Self {
             stations,
             credentials,
+            drafts,
             collectors,
             sessions,
             outbound,
@@ -116,9 +118,13 @@ impl CaptureCommandFacade {
 
     pub(crate) async fn start_capture_session(
         &self,
+        app: tauri::AppHandle,
         station_id: String,
-    ) -> Result<CaptureSessionStartPlan, CaptureCommandError> {
-        self.prepare_capture_session_start(station_id).await
+    ) -> Result<CaptureSessionStatus, CaptureCommandError> {
+        let plan = self.prepare_capture_session_start(station_id).await?;
+        open_capture_window(app, plan.target, plan.label.clone(), plan.script)?;
+        self.start_prepared_session(plan.station_id, plan.label, plan.endpoint_revision)
+            .map_err(CaptureCommandError::Message)
     }
 
     async fn prepare_capture_session_start(
@@ -157,9 +163,59 @@ impl CaptureCommandFacade {
             &label,
             target.login_username.as_deref(),
             target.login_password.as_ref().map(|value| value.as_str()),
+            "finish_web_authorization_session",
+            "stationId",
         );
         Ok(CaptureSessionStartPlan {
             station_id,
+            label,
+            endpoint_revision,
+            script,
+            target,
+        })
+    }
+
+    pub(crate) async fn start_provider_draft_authorization(
+        &self,
+        app: tauri::AppHandle,
+        draft_id: String,
+    ) -> Result<CaptureSessionStatus, CaptureCommandError> {
+        let plan = self
+            .prepare_provider_draft_capture_session_start(draft_id)
+            .await?;
+        open_capture_window(app, plan.target, plan.label.clone(), plan.script)?;
+        self.start_prepared_session(plan.station_id, plan.label, plan.endpoint_revision)
+            .map_err(CaptureCommandError::Message)
+    }
+
+    async fn prepare_provider_draft_capture_session_start(
+        &self,
+        draft_id: String,
+    ) -> Result<CaptureSessionStartPlan, CaptureCommandError> {
+        let station = self.drafts.station_projection(&draft_id).await?;
+        let credentials = self.drafts.credentials_projection(&draft_id).await?;
+        let login_password = self
+            .drafts
+            .login_password(&draft_id)
+            .await?
+            .map(Zeroizing::new);
+        let target = CaptureSessionStartTarget {
+            station,
+            login_username: credentials.login_username,
+            login_password,
+        };
+        let label = capture_window_label(&draft_id);
+        let endpoint_revision = target.station.endpoint_revision;
+        let script = capture_script(
+            &draft_id,
+            &label,
+            target.login_username.as_deref(),
+            target.login_password.as_ref().map(|value| value.as_str()),
+            "finish_provider_draft_authorization_session",
+            "draftId",
+        );
+        Ok(CaptureSessionStartPlan {
+            station_id: draft_id,
             label,
             endpoint_revision,
             script,
@@ -171,7 +227,8 @@ impl CaptureCommandFacade {
         &self,
         input: CapturedHttpEventInput,
     ) -> Result<CaptureSessionStatus, CaptureCommandError> {
-        let station = self.stations.station_for_capture(&input.station_id).await?;
+        let owner = self.capture_owner(&input.station_id).await?;
+        let station = owner.station();
         if !capture_request_belongs_to_station(
             &station.website_url,
             &station.api_base_url,
@@ -189,9 +246,18 @@ impl CaptureCommandFacade {
             .sessions
             .push_event(&station_id, event, web_authorization_user_id)?;
         if let Some(session) = captured_credentials {
-            self.credentials
-                .persist_station_session_if_revision(session, receipt.endpoint_revision)
-                .await?;
+            match owner {
+                CaptureOwner::Station(_) => {
+                    self.credentials
+                        .persist_station_session_if_revision(session, receipt.endpoint_revision)
+                        .await?;
+                }
+                CaptureOwner::Draft { .. } => {
+                    self.drafts
+                        .persist_session(session, receipt.endpoint_revision)
+                        .await?;
+                }
+            }
         }
         Ok(receipt.status)
     }
@@ -220,6 +286,17 @@ impl CaptureCommandFacade {
     }
 
     pub(crate) async fn finish_web_authorization_session(
+        &self,
+        app: tauri::AppHandle,
+        station_id: String,
+    ) -> Result<CollectorRunResult, CaptureCommandError> {
+        let cookie_url = self.web_authorization_cookie_url(&station_id).await?;
+        let cookie_header = read_capture_window_cookies(app, &station_id, &cookie_url)?;
+        self.finish_web_authorization_session_with_cookie(station_id, cookie_header)
+            .await
+    }
+
+    async fn finish_web_authorization_session_with_cookie(
         &self,
         station_id: String,
         cookie_header: String,
@@ -282,18 +359,72 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) fn web_authorization_cookie_url<'a>(
-        &'a self,
-        station_id: &'a str,
-    ) -> BoxFuture<'a, Result<String, CaptureCommandError>> {
-        async move {
-            let station = self.stations.station_for_capture(station_id).await?;
-            Ok(station.website_url)
-        }
-        .boxed()
+    pub(crate) async fn finish_provider_draft_authorization_session(
+        &self,
+        app: tauri::AppHandle,
+        draft_id: String,
+    ) -> Result<ProviderDraftPreview, CaptureCommandError> {
+        let cookie_url = self.web_authorization_cookie_url(&draft_id).await?;
+        let cookie_header = read_capture_window_cookies(app, &draft_id, &cookie_url)?;
+        self.finish_provider_draft_authorization_session_with_cookie(draft_id, cookie_header)
+            .await
     }
 
-    pub(crate) fn start_prepared_session(
+    async fn finish_provider_draft_authorization_session_with_cookie(
+        &self,
+        draft_id: String,
+        cookie_header: String,
+    ) -> Result<ProviderDraftPreview, CaptureCommandError> {
+        let owner = self.capture_owner(&draft_id).await?;
+        let CaptureOwner::Draft { station, payload } = owner else {
+            return Err(CaptureCommandError::Message(
+                "provider draft authorization requires an active draft".to_string(),
+            ));
+        };
+        let candidate = self
+            .sessions
+            .web_authorization_candidate(&draft_id)?
+            .ok_or_else(|| {
+                CaptureCommandError::Message(
+                    "Web authorization has not captured a user identity yet.".to_string(),
+                )
+            })?;
+        let verified = self
+            .verify_newapi_web_authorization_session(&station, cookie_header, &candidate.user_id)
+            .await?;
+        let commit = self
+            .sessions
+            .begin_web_authorization_commit(&draft_id, &candidate)?;
+        let result = self
+            .persist_provider_draft_authorization_inner(&draft_id, &payload, verified, &commit)
+            .await;
+        match result {
+            Ok(preview) => {
+                self.sessions.complete_commit(&draft_id, &commit)?;
+                Ok(preview)
+            }
+            Err(error) => Err(abort_capture_commit(
+                &self.sessions,
+                &draft_id,
+                &commit,
+                error,
+            )),
+        }
+    }
+
+    async fn web_authorization_cookie_url(
+        &self,
+        station_id: &str,
+    ) -> Result<String, CaptureCommandError> {
+        Ok(self
+            .capture_owner(station_id)
+            .await?
+            .station()
+            .website_url
+            .clone())
+    }
+
+    fn start_prepared_session(
         &self,
         station_id: String,
         label: String,
@@ -409,6 +540,67 @@ impl CaptureCommandFacade {
         Ok(())
     }
 
+    async fn persist_provider_draft_authorization_inner(
+        &self,
+        draft_id: &str,
+        payload: &ProviderDraftPayload,
+        verified: VerifiedWebAuthorizationSession,
+        commit: &CaptureCommit,
+    ) -> Result<ProviderDraftPreview, CaptureCommandError> {
+        self.drafts
+            .persist_session(
+                PersistStationSessionInput {
+                    station_id: draft_id.to_string(),
+                    access_token: None,
+                    refresh_token: None,
+                    cookie: Some(verified.cookie_header),
+                    newapi_user_id: Some(verified.newapi_user_id),
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: verified.session_source,
+                },
+                commit.endpoint_revision,
+            )
+            .await?;
+
+        let (mut summary, normalized, _) = capture::summarize_events(&commit.events);
+        if let Some(summary) = summary.as_object_mut() {
+            summary.insert(
+                "webAuthorization".to_string(),
+                capture::web_authorization_summary("success", Some("web_authorization"), true),
+            );
+            summary.insert("normalized".to_string(), normalized);
+        }
+        let preview = ProviderDraftPreview {
+            draft_id: draft_id.to_string(),
+            kind: "capture".to_string(),
+            runtime_fingerprint: ProviderDraftService::runtime_fingerprint(payload),
+            status: "success".to_string(),
+            groups: Vec::new(),
+            models: Vec::new(),
+            balance: None,
+            summary_json: summary,
+            collected_at: chrono::Utc::now().timestamp_millis().to_string(),
+        };
+        self.drafts.store_preview(preview).await.map_err(Into::into)
+    }
+
+    async fn capture_owner(&self, owner_id: &str) -> Result<CaptureOwner, CaptureCommandError> {
+        match self.stations.station_for_capture(owner_id).await {
+            Ok(station) => Ok(CaptureOwner::Station(station)),
+            Err(ApplicationError::NotFound) => {
+                let draft = self.drafts.get(owner_id.to_string()).await?;
+                if draft.state != "active" {
+                    return Err(ApplicationError::NotFound.into());
+                }
+                let payload = draft.payload.clone();
+                let station = self.drafts.station_projection(owner_id).await?;
+                Ok(CaptureOwner::Draft { station, payload })
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     async fn finish_capture_session_with_events_inner(
         &self,
         station_id: &str,
@@ -444,6 +636,22 @@ impl CaptureCommandFacade {
                 event_count: events.len() as i64,
             })
             .await
+    }
+}
+
+enum CaptureOwner {
+    Station(Station),
+    Draft {
+        station: Station,
+        payload: ProviderDraftPayload,
+    },
+}
+
+impl CaptureOwner {
+    fn station(&self) -> &Station {
+        match self {
+            Self::Station(station) | Self::Draft { station, .. } => station,
+        }
     }
 }
 
@@ -518,50 +726,89 @@ fn capture_window_label(station_id: &str) -> String {
     )
 }
 
-fn current_correlation_id() -> Option<String> {
-    correlation::current().map(|id| id.as_str().to_string())
-}
-
-#[cfg(test)]
-fn open_capture_window_blocking(
+fn open_capture_window(
     app: tauri::AppHandle,
     target: CaptureSessionStartTarget,
     label: String,
     script: String,
-) -> Result<(), String> {
+) -> Result<(), CaptureCommandError> {
     if let Some(window) = app.get_webview_window(&label) {
-        window
-            .set_focus()
-            .map_err(|error| format!("聚焦捕获窗口失败: {error}"))?;
+        window.set_focus().map_err(|error| {
+            CaptureCommandError::Message(format!("Failed to focus capture window: {error}"))
+        })?;
     } else {
         tauri::WebviewWindowBuilder::new(
             &app,
             label.clone(),
-            tauri::WebviewUrl::External(
-                "about:blank"
-                    .parse()
-                    .map_err(|error| format!("捕获窗口初始化失败: {error}"))?,
-            ),
+            tauri::WebviewUrl::External("about:blank".parse().map_err(|error| {
+                CaptureCommandError::Message(format!(
+                    "Failed to initialize capture window: {error}"
+                ))
+            })?),
         )
-        .title(format!("网页登录 / 捕获 - {}", target.station.name))
+        .title(format!("Web authorization - {}", target.station.name))
         .inner_size(1100.0, 760.0)
         .initialization_script(&script)
         .build()
-        .map_err(|error| format!("打开网页登录窗口失败: {error}"))?;
+        .map_err(|error| {
+            CaptureCommandError::Message(format!("Failed to open capture window: {error}"))
+        })?;
         if let Some(window) = app.get_webview_window(&label) {
-            let target_url = target.station.website_url.clone();
-            let target = target_url
-                .parse()
-                .map_err(|error| format!("Base URL 无法作为网页登录地址打开: {error}"))?;
+            let target = target.station.website_url.parse().map_err(|error| {
+                CaptureCommandError::Message(format!(
+                    "Station website URL cannot be opened for authorization: {error}"
+                ))
+            })?;
             let navigator = window.clone();
             window
                 .run_on_main_thread(move || {
                     let _ = navigator.navigate(target);
                 })
-                .map_err(|error| format!("安排捕获窗口导航失败: {error}"))?;
+                .map_err(|error| {
+                    CaptureCommandError::Message(format!(
+                        "Failed to schedule capture window navigation: {error}"
+                    ))
+                })?;
         }
     }
     Ok(())
+}
+
+fn read_capture_window_cookies(
+    app: tauri::AppHandle,
+    owner_id: &str,
+    website_url: &str,
+) -> Result<String, CaptureCommandError> {
+    let label = capture_window_label(owner_id);
+    let window = app.get_webview_window(&label).ok_or_else(|| {
+        CaptureCommandError::Message(
+            "Capture authorization window is not available; reopen it and retry.".to_string(),
+        )
+    })?;
+    let target = tauri::Url::parse(website_url).map_err(|error| {
+        CaptureCommandError::Message(format!(
+            "Station website URL cannot be used for cookie lookup: {error}"
+        ))
+    })?;
+    let cookies = window.cookies_for_url(target).map_err(|error| {
+        CaptureCommandError::Message(format!(
+            "Reading capture authorization cookies failed: {error}"
+        ))
+    })?;
+    let pairs = cookies
+        .into_iter()
+        .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
+        .collect::<Vec<_>>();
+    capture::web_authorization::build_cookie_header_from_pairs(&pairs).ok_or_else(|| {
+        CaptureCommandError::Message(
+            "Capture authorization did not provide usable cookies; finish login in the capture window and retry."
+                .to_string(),
+        )
+    })
+}
+
+fn current_correlation_id() -> Option<String> {
+    correlation::current().map(|id| id.as_str().to_string())
 }
 
 fn capture_script(
@@ -569,6 +816,8 @@ fn capture_script(
     window_label: &str,
     login_username: Option<&str>,
     login_password: Option<&str>,
+    finish_authorization_command: &str,
+    finish_authorization_input_key: &str,
 ) -> String {
     let login_username_json =
         serde_json::to_string(&login_username).unwrap_or_else(|_| "null".to_string());
@@ -599,7 +848,7 @@ fn capture_script(
     if (!invoke || !status || !status.webAuthorizationCandidate) return;
     if (window.__relayPoolAuthorizationFinishInFlight) return;
     window.__relayPoolAuthorizationFinishInFlight = true;
-    invoke("finish_web_authorization_session", {{ stationId }})
+    invoke({finish_authorization_command:?}, {{ [{finish_authorization_input_key:?}]: stationId }})
       .catch(() => undefined)
       .finally(() => {{
         window.__relayPoolAuthorizationFinishInFlight = false;
@@ -757,51 +1006,6 @@ fn capture_script(
     )
 }
 
-#[cfg(test)]
-async fn read_capture_window_cookie_header(
-    app: tauri::AppHandle,
-    blocking: &BlockingExecutor,
-    station_id: &str,
-    station_website_url: &str,
-) -> Result<String, CaptureCommandError> {
-    let label = capture_window_label(station_id);
-    let window = app.get_webview_window(&label).ok_or_else(|| {
-        CaptureCommandError::Message("网页登录授权窗口不存在，请重新打开授权窗口。".to_string())
-    })?;
-    let target = tauri::Url::parse(station_website_url).map_err(|error| {
-        CaptureCommandError::Message(format!("站点管理地址无法用于读取 Cookie: {error}"))
-    })?;
-
-    let cookies = blocking
-        .submit(
-            "capture_window_cookie_read",
-            None,
-            current_correlation_id(),
-            None,
-            move |_| Ok(window.cookies_for_url(target)),
-        )?
-        .result()
-        .await
-        .map_err(|error| {
-            CaptureCommandError::Message(format!("读取网页登录授权 Cookie 任务失败: {error}"))
-        })?
-        .map_err(|error| {
-            CaptureCommandError::Message(format!("读取网页登录授权 Cookie 失败: {error}"))
-        })?;
-
-    let pairs = cookies
-        .into_iter()
-        .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
-        .collect::<Vec<_>>();
-    Ok(
-        capture::web_authorization::build_cookie_header_from_pairs(&pairs).ok_or_else(|| {
-            CaptureCommandError::Message(
-                "网页登录授权未捕获到可用 Cookie，请确认已在授权窗口完成登录。".to_string(),
-            )
-        })?,
-    )
-}
-
 fn capture_request_belongs_to_station(
     station_website_url: &str,
     station_api_base_url: &str,
@@ -850,7 +1054,14 @@ mod tests {
 
     #[test]
     fn capture_script_invokes_web_authorization_finish_after_candidate() {
-        let script = capture_script("station-1", "capture-station-1", None, None);
+        let script = capture_script(
+            "station-1",
+            "capture-station-1",
+            None,
+            None,
+            "finish_web_authorization_session",
+            "stationId",
+        );
 
         assert!(script.contains("finish_web_authorization_session"));
         assert!(script.contains("webAuthorizationCandidate"));

@@ -7,7 +7,7 @@ mod health_check;
 mod inspection;
 pub(crate) mod legacy_import;
 mod migrations;
-pub(crate) use migrations::current_schema_version;
+pub(crate) use migrations::{current_schema_version, upgrade_existing_v2_database};
 mod read_session;
 pub(crate) use read_session::ReadSession;
 pub(crate) mod runtime;
@@ -21,6 +21,7 @@ pub(crate) mod upgrade_recovery_executor;
 pub(crate) mod upgrade_recovery_plan;
 mod write_coordinator;
 mod write_session;
+pub(crate) use write_session::WriteSession;
 
 #[cfg(test)]
 mod performance_tests;

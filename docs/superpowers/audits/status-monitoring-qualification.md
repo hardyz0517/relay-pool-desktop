@@ -85,7 +85,7 @@ Run date: 2026-07-30 Asia/Shanghai.
   - Workload: mixed provider / stream / retry / fallback / missing.
   - Iterations: 513.
   - Failures: 0.
-- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-db.ps1 ...` passed against a fresh migrated v9 temporary database and wrote `docs/superpowers/audits/status-monitoring-db-latest.json`.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-db.ps1 ...` passed against a fresh migrated v10 temporary database and wrote `docs/superpowers/audits/status-monitoring-db-latest.json`.
 - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-monitoring-read-model-performance.ps1 -MonitorRows 500 -TargetResults 500000 -Attempts 100000 -Samples 20 -WorkspaceP95LimitMs 250 -SchedulerLagP95LimitMs 2000` passed and wrote `docs/superpowers/audits/status-monitoring-read-model-performance-latest.json`.
   - Fixture: 500 workspace rows, 500,000 `channel_monitor_target_results`, 100,000 attempts.
   - Workspace p95: 134.93 ms against the 250 ms gate.

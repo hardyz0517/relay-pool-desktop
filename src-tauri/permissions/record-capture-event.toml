@@ -1,4 +1,8 @@
 [[permission]]
 identifier = "record-capture-event"
 description = "Allow manual authorization capture windows to report sanitized HTTP events and finish verified Web authorization."
-commands.allow = ["record_capture_event", "finish_web_authorization_session"]
+commands.allow = [
+  "record_capture_event",
+  "finish_web_authorization_session",
+  "finish_provider_draft_authorization_session",
+]

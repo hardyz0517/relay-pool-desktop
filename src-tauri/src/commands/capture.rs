@@ -2,10 +2,9 @@ use serde_json::Value;
 use tauri::{Manager, State};
 
 use crate::{
-    application::command_facades::{
-        CaptureCommandError, CaptureCommandFacade, CaptureSessionStartTarget,
-    },
+    application::command_facades::{CaptureCommandError, CaptureCommandFacade},
     commands::error,
+    ipc::dto::provider_drafts::{ProviderDraftIdInputDto, ProviderDraftPreviewDto},
     ipc::dto::station_collector_operations::{
         CaptureSessionStatusDto, CaptureStationIdInputDto, CapturedHttpEventInputDto,
         CollectorRunResultDto,
@@ -30,15 +29,25 @@ pub async fn start_capture_session(
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
     correlation::in_command_scope("start_capture_session", async {
         let input = CaptureStationIdInputDto::parse(input)?;
-        let plan = facade
-            .start_capture_session(input.station_id)
-            .await
-            .map_err(capture_command_error)?;
-        open_capture_window(app, plan.target, plan.label.clone(), plan.script)
-            .map_err(capture_command_error)?;
         facade
-            .start_prepared_session(plan.station_id, plan.label, plan.endpoint_revision)
-            .map_err(CaptureCommandError::Message)
+            .start_capture_session(app, input.station_id)
+            .await
+            .map_err(capture_command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn start_provider_draft_authorization(
+    app: tauri::AppHandle,
+    facade: State<'_, CaptureCommandFacade>,
+    input: Value,
+) -> Result<CaptureSessionStatusDto, error::CommandError> {
+    correlation::in_command_scope("start_provider_draft_authorization", async {
+        let input = ProviderDraftIdInputDto::parse(input)?;
+        facade
+            .start_provider_draft_authorization(app, input.draft_id)
+            .await
             .map_err(capture_command_error)
     })
     .await
@@ -95,7 +104,7 @@ pub async fn close_capture_session(
         if let Some(window) = app.get_webview_window(&label) {
             window
                 .close()
-                .map_err(|error| format!("鍏抽棴缃戦〉鐧诲綍绐楀彛澶辫触: {error}"))?;
+                .map_err(|error| format!("关闭网页登录窗口失败: {error}"))?;
         }
         Ok(sessions.clear(&input.station_id)?)
     })
@@ -125,15 +134,24 @@ pub async fn finish_web_authorization_session(
 ) -> Result<CollectorRunResultDto, error::CommandError> {
     correlation::in_command_scope("finish_web_authorization_session", async {
         let input = CaptureStationIdInputDto::parse(input)?;
-        let station_id = input.station_id;
-        let cookie_url = facade
-            .web_authorization_cookie_url(&station_id)
-            .await
-            .map_err(capture_command_error)?;
-        let cookie_header = read_capture_window_cookie_header(app, &station_id, &cookie_url)
-            .map_err(capture_command_error)?;
         facade
-            .finish_web_authorization_session(station_id, cookie_header)
+            .finish_web_authorization_session(app, input.station_id)
+            .await
+            .map_err(capture_command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn finish_provider_draft_authorization_session(
+    app: tauri::AppHandle,
+    facade: State<'_, CaptureCommandFacade>,
+    input: Value,
+) -> Result<ProviderDraftPreviewDto, error::CommandError> {
+    correlation::in_command_scope("finish_provider_draft_authorization_session", async {
+        let input = ProviderDraftIdInputDto::parse(input)?;
+        facade
+            .finish_provider_draft_authorization_session(app, input.draft_id)
             .await
             .map_err(capture_command_error)
     })
@@ -145,95 +163,6 @@ fn capture_window_label(station_id: &str) -> String {
         "capture-{}",
         station_id.replace(|character: char| !character.is_ascii_alphanumeric(), "-")
     )
-}
-
-fn open_capture_window(
-    app: tauri::AppHandle,
-    target: CaptureSessionStartTarget,
-    label: String,
-    script: String,
-) -> Result<(), CaptureCommandError> {
-    if let Some(window) = app.get_webview_window(&label) {
-        window.set_focus().map_err(|error| {
-            CaptureCommandError::Message(format!("閼辨氨鍔嶉幑鏇″箯缁愭褰涙径杈Е: {error}"))
-        })?;
-    } else {
-        tauri::WebviewWindowBuilder::new(
-            &app,
-            label.clone(),
-            tauri::WebviewUrl::External("about:blank".parse().map_err(|error| {
-                CaptureCommandError::Message(format!(
-                    "閹规洝骞忕粣妤€褰涢崚婵嗩潗閸栨牕銇戠拹? {error}"
-                ))
-            })?),
-        )
-        .title(format!(
-            "缂冩垿銆夐惂璇茬秿 / 閹规洝骞?- {}",
-            target.station.name
-        ))
-        .inner_size(1100.0, 760.0)
-        .initialization_script(&script)
-        .build()
-        .map_err(|error| {
-            CaptureCommandError::Message(format!(
-                "閹垫挸绱戠純鎴︺€夐惂璇茬秿缁愭褰涙径杈Е: {error}"
-            ))
-        })?;
-        if let Some(window) = app.get_webview_window(&label) {
-            let target_url = target.station.website_url.clone();
-            let target = target_url.parse().map_err(|error| {
-                CaptureCommandError::Message(format!(
-                    "Base URL 閺冪姵纭舵担婊€璐熺純鎴︺€夐惂璇茬秿閸︽澘娼冮幍鎾崇磻: {error}"
-                ))
-            })?;
-            let navigator = window.clone();
-            window
-                .run_on_main_thread(move || {
-                    let _ = navigator.navigate(target);
-                })
-                .map_err(|error| {
-                    CaptureCommandError::Message(format!(
-                        "鐎瑰甯撻幑鏇″箯缁愭褰涚€佃壈鍩呮径杈Е: {error}"
-                    ))
-                })?;
-        }
-    }
-    Ok(())
-}
-
-fn read_capture_window_cookie_header(
-    app: tauri::AppHandle,
-    station_id: &str,
-    station_website_url: &str,
-) -> Result<String, CaptureCommandError> {
-    let label = capture_window_label(station_id);
-    let window = app.get_webview_window(&label).ok_or_else(|| {
-        CaptureCommandError::Message(
-            "Capture authorization window is not available; reopen it and retry.".to_string(),
-        )
-    })?;
-    let target = tauri::Url::parse(station_website_url).map_err(|error| {
-        CaptureCommandError::Message(format!(
-            "Station website URL cannot be used for cookie lookup: {error}",
-        ))
-    })?;
-    let cookies = window.cookies_for_url(target).map_err(|error| {
-        CaptureCommandError::Message(format!(
-            "Reading capture authorization cookies failed: {error}"
-        ))
-    })?;
-    let pairs = cookies
-        .into_iter()
-        .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
-        .collect::<Vec<_>>();
-    Ok(service_capture::web_authorization::build_cookie_header_from_pairs(&pairs).ok_or_else(
-        || {
-            CaptureCommandError::Message(
-                "Capture authorization did not provide usable cookies; finish login in the capture window and retry."
-                    .to_string(),
-            )
-        },
-    )?)
 }
 
 #[cfg(test)]
@@ -365,21 +294,21 @@ fn capture_script(
         "input[name='username']",
         "input[name='user']",
         "input[autocomplete='username']",
-        "input[placeholder*='閭']",
-        "input[placeholder*='璐﹀彿']",
+        "input[placeholder*='邮箱']",
+        "input[placeholder*='账号']",
         "input[placeholder*='email' i]",
       ]), loginUsername);
       setNativeValue(candidateInput([
         "input[type='password']",
         "input[name='password']",
         "input[autocomplete='current-password']",
-        "input[placeholder*='瀵嗙爜']",
+        "input[placeholder*='密码']",
         "input[placeholder*='password' i]",
       ]), loginPassword);
       for (const checkbox of Array.from(document.querySelectorAll("input[type='checkbox']"))) {{
         const label = checkbox.closest("label") || (checkbox.id ? document.querySelector(`label[for="${{checkbox.id}}"]`) : null);
         const text = `${{checkbox.name || ""}} ${{checkbox.id || ""}} ${{label ? label.textContent || "" : ""}}`.toLowerCase();
-        if (text.includes("agreement") || text.includes("attestation") || text.includes("region") || text.includes("澶ч檰") || text.includes("涓崕浜烘皯鍏卞拰鍥?) || text.includes("鐙珛闄堣堪")) {{
+        if (text.includes("agreement") || text.includes("attestation") || text.includes("region") || text.includes("大陆") || text.includes("中华人民共和国") || text.includes("独立陈述")) {{
           if (!checkbox.checked) {{
             checkbox.checked = true;
             checkbox.dispatchEvent(new Event("input", {{ bubbles: true }}));
@@ -554,5 +483,9 @@ mod tests {
         assert!(script.contains("finish_web_authorization_session"));
         assert!(script.contains("webAuthorizationCandidate"));
         assert!(script.contains("__relayPoolAuthorizationFinishInFlight"));
+        assert!(script.contains("input[placeholder*='邮箱']"));
+        assert!(script.contains("input[placeholder*='账号']"));
+        assert!(script.contains("input[placeholder*='密码']"));
+        assert!(script.contains("text.includes(\"中华人民共和国\")"));
     }
 }

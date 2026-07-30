@@ -1,5 +1,7 @@
 # Phase 3 Collector Prototype
 
+> **归档说明：** 这是早期采集器原型快照，不是当前采集架构说明。当前开发入口见 [`../../README.md`](../../README.md)。
+
 Phase 3 builds the first real collector loop without implementing proxy, routing, or full WebView login capture.
 
 ## Goals

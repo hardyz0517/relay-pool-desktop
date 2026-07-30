@@ -213,21 +213,33 @@ export type DeleteRemoteStationKeyResultDto = {
   message: string;
 };
 
-export type CommonLoginProfileDto = {
+export type CommonLoginEmailDto = {
   id: string;
   email: string;
-  passwordPresent: boolean;
+};
+
+export type CommonLoginPasswordDto = {
+  id: string;
   passwordMasked: string;
 };
 
-export type CommonLoginProfileIdInputDto = {
+export type CommonLoginOptionsDto = {
+  emails: CommonLoginEmailDto[];
+  passwords: CommonLoginPasswordDto[];
+};
+
+export type CommonLoginIdInputDto = {
   id: string;
 };
 
-export type UpsertCommonLoginProfileInputDto = {
+export type UpsertCommonLoginEmailInputDto = {
   id?: string | null;
   email: string;
-  password?: string | null;
+};
+
+export type UpsertCommonLoginPasswordInputDto = {
+  id?: string | null;
+  password: string;
 };
 
 export type SaveStationKeyWithDefaultsResultDto = {

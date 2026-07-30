@@ -8,6 +8,7 @@ mod data_directory;
 mod key_pool;
 mod local_proxy;
 mod pricing;
+mod provider_drafts;
 mod remote_keys;
 mod request_logs;
 mod routing;
@@ -15,7 +16,7 @@ mod settings_stations;
 mod station_collection;
 mod station_key_connectivity;
 
-pub(crate) use capture::{CaptureCommandError, CaptureCommandFacade, CaptureSessionStartTarget};
+pub(crate) use capture::{CaptureCommandError, CaptureCommandFacade};
 pub(crate) use change_events::ChangeEventsCommandFacade;
 pub(crate) use channel_monitoring::ChannelMonitoringCommandFacade;
 pub(crate) use channel_status::ChannelStatusCommandFacade;
@@ -25,6 +26,7 @@ pub(crate) use data_directory::{DataDirectoryCommandError, DataDirectoryCommandF
 pub(crate) use key_pool::KeyPoolCommandFacade;
 pub(crate) use local_proxy::{LocalProxyCommandError, LocalProxyCommandFacade};
 pub(crate) use pricing::PricingCommandFacade;
+pub(crate) use provider_drafts::{ProviderDraftCommandError, ProviderDraftCommandFacade};
 pub(crate) use remote_keys::RemoteKeysCommandFacade;
 pub(crate) use request_logs::RequestLogsCommandFacade;
 pub(crate) use routing::{EndpointPingCommandError, RoutingCommandFacade};

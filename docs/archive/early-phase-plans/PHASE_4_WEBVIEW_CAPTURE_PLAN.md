@@ -1,5 +1,7 @@
 # Phase 4 WebView Capture Implementation Plan
 
+> **归档说明：** 这是已归档的阶段实施计划，文中的任务指令不再有效。当前开发入口见 [`../../README.md`](../../README.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a fallback WebView login-state capture path and a field normalization rule system so Relay Pool Desktop can collect authenticated station information when the login-state mainline is insufficient.

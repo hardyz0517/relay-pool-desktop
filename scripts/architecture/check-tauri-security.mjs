@@ -102,7 +102,11 @@ runMain(() => {
   assert(capture.local === false, "capture capability must not grant local windows");
   assert(capture.windows.every((label) => label === "capture-*"), "capture capability must only match capture-* windows");
   const captureCommands = new Set((capture.permissions ?? []).flatMap((permission) => [...(compiled.get(permission) ?? [])]));
-  const approvedCapture = new Set(["record_capture_event", "finish_web_authorization_session"]);
+  const approvedCapture = new Set([
+    "record_capture_event",
+    "finish_web_authorization_session",
+    "finish_provider_draft_authorization_session",
+  ]);
   assert([...captureCommands].every((command) => approvedCapture.has(command)), `capture capability reaches main commands: ${[...captureCommands].filter((command) => !approvedCapture.has(command)).join(", ")}`);
 
   assert(manifest.demo_entry_reachability === "unreachable" || manifest.demo_entry_reachability?.production === false, "production build must not reach demo entry");
