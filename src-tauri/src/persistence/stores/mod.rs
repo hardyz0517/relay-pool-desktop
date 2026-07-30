@@ -5,6 +5,7 @@ pub(crate) mod health_observation_store;
 pub(crate) mod legacy_monitor_run_store;
 pub(crate) mod monitoring;
 pub(crate) mod monitoring_store;
+pub(crate) mod operational_facts;
 pub(crate) mod pricing_store;
 pub(crate) mod provider_draft_store;
 pub(crate) mod request_log_store;

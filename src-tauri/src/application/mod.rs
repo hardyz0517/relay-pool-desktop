@@ -10,6 +10,7 @@ pub(crate) mod error;
 pub(crate) mod health_transitions;
 pub(crate) mod ids;
 pub(crate) mod monitoring;
+pub(crate) mod operational_facts;
 pub(crate) mod pagination;
 pub(crate) mod pricing;
 pub(crate) mod provider_drafts;
