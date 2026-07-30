@@ -3,6 +3,10 @@ use std::collections::HashSet;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::application::{
+    command_facades::StationKeyConnectivityResult,
+    connectivity_probe::StationKeyConnectivityResponseMode,
+};
 use crate::models::{
     credentials::{
         CommonLoginEmail, CommonLoginOptions, CommonLoginPassword, StationCredentials,
@@ -51,6 +55,34 @@ pub type CommonLoginEmailDto = CommonLoginEmail;
 pub type CommonLoginPasswordDto = CommonLoginPassword;
 pub type CommonLoginOptionsDto = CommonLoginOptions;
 pub type SaveStationKeyWithDefaultsResultDto = SaveStationKeyWithDefaultsResult;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationKeyConnectivityResultDto {
+    station_key_id: String,
+    ok: bool,
+    status_code: u16,
+    duration_ms: i64,
+    model: String,
+    message: String,
+    response_mode: StationKeyConnectivityResponseMode,
+    stream_fallback_reason: Option<String>,
+}
+
+impl From<StationKeyConnectivityResult> for StationKeyConnectivityResultDto {
+    fn from(result: StationKeyConnectivityResult) -> Self {
+        Self {
+            station_key_id: result.station_key_id,
+            ok: result.ok,
+            status_code: result.status_code,
+            duration_ms: result.duration_ms,
+            model: result.model,
+            message: result.message,
+            response_mode: result.response_mode,
+            stream_fallback_reason: result.stream_fallback_reason,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

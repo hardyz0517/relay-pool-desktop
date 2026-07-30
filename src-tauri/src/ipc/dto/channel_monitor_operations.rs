@@ -54,7 +54,7 @@ pub(crate) fn serialization_fixtures() -> Vec<serde_json::Value> {
             "output": {
                 "executionId": "execution-1",
                 "monitorId": "monitor-1",
-                "status": "completed",
+                "status": "queued",
                 "triggerRequestId": "manual:monitor-1:fixture",
                 "reusedExisting": false
             }

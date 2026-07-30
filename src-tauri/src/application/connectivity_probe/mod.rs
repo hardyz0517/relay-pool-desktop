@@ -78,16 +78,6 @@ impl StationKeyConnectivityProbeResult {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub(crate) enum StationKeyConnectivityTestEventPayload {
-    AttemptStarted { model: String, protocol: String },
-    Delta { text: String },
-    Fallback { reason: String },
-    Completed { ok: bool },
-    Failed { message: String },
-}
-
 pub(crate) fn build_station_key_connectivity_probe_url(
     base_url: &str,
     kind: StationKeyConnectivityProbeKind,
@@ -428,58 +418,6 @@ where
             ),
         )
     })
-}
-
-#[cfg(test)]
-pub(crate) fn run_station_key_connectivity_stream_first_probe<F, E>(
-    model: &str,
-    kind: StationKeyConnectivityProbeKind,
-    mut send_attempt: F,
-    mut emit_event: E,
-) -> StationKeyConnectivityProbeResult
-where
-    F: FnMut(StationKeyConnectivityRequestMode) -> StationKeyConnectivityProbeResult,
-    E: FnMut(StationKeyConnectivityTestEventPayload),
-{
-    emit_event(StationKeyConnectivityTestEventPayload::AttemptStarted {
-        model: model.to_string(),
-        protocol: station_key_connectivity_protocol_label(kind),
-    });
-
-    let stream_result = send_attempt(StationKeyConnectivityRequestMode::Stream);
-    if stream_result.ok {
-        return stream_result.with_response_mode(StationKeyConnectivityResponseMode::Stream);
-    }
-
-    let fallback_reason = redact_connectivity_error(&stream_result.message);
-    emit_event(StationKeyConnectivityTestEventPayload::Fallback {
-        reason: fallback_reason.clone(),
-    });
-    let fallback_result = send_attempt(StationKeyConnectivityRequestMode::NonStream);
-    let duration_ms = stream_result
-        .duration_ms
-        .saturating_add(fallback_result.duration_ms);
-
-    if fallback_result.ok {
-        return StationKeyConnectivityProbeResult::success(
-            fallback_result.status_code,
-            duration_ms,
-            fallback_result.message,
-        )
-        .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
-        .with_stream_fallback_reason(Some(fallback_reason));
-    }
-
-    StationKeyConnectivityProbeResult::failure(
-        fallback_result.status_code,
-        duration_ms,
-        format!(
-            "Stream: {}; Non-stream fallback: {}",
-            stream_result.message, fallback_result.message
-        ),
-    )
-    .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
-    .with_stream_fallback_reason(Some(fallback_reason))
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "3dba6bea86aebfe0af99571ac22016d4f1b1992bc3392281511d3271761949e6";
+    "c394e7f643f1cec50272aadc7f3ef0f8b9b1b531f69501ccfa6414fee4bdfab5";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -26,7 +26,6 @@ pub struct CommandDescriptor {
 #[serde(rename_all = "snake_case")]
 pub enum TransportKind {
     Ordinary,
-    Channel,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -39,12 +38,7 @@ pub struct StreamingSurface {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub const STREAMING_SURFACES: &[StreamingSurface] = &[StreamingSurface {
-    command: "test_station_key_connectivity",
-    event: "StationKeyConnectivityTestEvent",
-    event_schema_version: 1,
-    transport: TransportKind::Channel,
-}];
+pub const STREAMING_SURFACES: &[StreamingSurface] = &[];
 
 #[macro_export]
 macro_rules! ipc_command_registry {
@@ -117,8 +111,6 @@ macro_rules! ipc_command_registry {
             list_station_key_health => $crate::commands::routing_health::list_station_key_health,
             list_station_endpoint_health => $crate::commands::routing_health::list_station_endpoint_health,
             list_channel_monitors => $crate::commands::channel_monitoring::list_channel_monitors,
-            list_channel_monitor_summaries => $crate::commands::channel_monitoring::list_channel_monitor_summaries,
-            list_channel_status_summaries => $crate::commands::channel_status::list_channel_status_summaries,
             load_channel_status_workspace => $crate::commands::channel_status::load_channel_status_workspace,
             list_channel_monitor_executions => $crate::commands::channel_status::list_channel_monitor_executions,
             get_channel_monitor_execution => $crate::commands::channel_status::get_channel_monitor_execution,
@@ -140,8 +132,8 @@ macro_rules! ipc_command_registry {
             get_operation_status => $crate::commands::operations::get_operation_status,
             cancel_operation => $crate::commands::operations::cancel_operation,
             start_station_key_connectivity_operation => $crate::commands::station_key_connectivity::start_station_key_connectivity_operation,
+            get_station_key_connectivity_operation_result => $crate::commands::station_key_connectivity::get_station_key_connectivity_operation_result,
             ping_station_endpoint => $crate::commands::endpoint_ping::ping_station_endpoint,
-            test_station_key_connectivity => $crate::commands::station_key_connectivity::test_station_key_connectivity,
             simulate_route => $crate::commands::routing_health::simulate_route,
             list_pricing_rules => $crate::commands::pricing::list_pricing_rules,
             list_model_base_prices => $crate::commands::pricing::list_model_base_prices,
@@ -516,13 +508,6 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_read("CollectorStationIdsInputDto", "Vec<CollectorSnapshotDto>")
         }
         "list_channel_monitors" => migrated_read("EmptyInputDto", "Vec<ChannelMonitorDto>"),
-        "list_channel_monitor_summaries" => migrated_read(
-            "ChannelMonitorSummaryInputDto",
-            "Vec<ChannelMonitorSummaryDto>",
-        ),
-        "list_channel_status_summaries" => {
-            migrated_read("EmptyInputDto", "Vec<ChannelStatusSummaryDto>")
-        }
         "list_channel_monitor_runs" => {
             migrated_read("ChannelMonitorIdInputDto", "Vec<ChannelMonitorRunDto>")
         }
@@ -699,6 +684,9 @@ fn command_contract(name: &str) -> CommandContract {
             "non_idempotent",
             true,
         ),
+        "get_station_key_connectivity_operation_result" => {
+            migrated_read("OperationIdInputDto", "StationKeyConnectivityResultDto")
+        }
         "ping_station_endpoint" => migrated_mutation(
             "StationIdInputDto",
             "EndpointPingResultDto",
@@ -798,12 +786,6 @@ fn command_contract(name: &str) -> CommandContract {
         "inspect_latest_update_manifest" => migrated_read(
             "PublishedUpdateInspectionInputDto",
             "PublishedUpdateInspectionDto",
-        ),
-        "test_station_key_connectivity" => migrated_mutation(
-            "StationKeyConnectivityInputDto",
-            "StationKeyConnectivityTestResult",
-            "non_idempotent",
-            true,
         ),
         "get_runtime_contract_info" => migrated_read("EmptyInputDto", "RuntimeContractInfo"),
         _ => legacy_declared("legacy_unmigrated_input", "legacy_unmigrated_output"),
@@ -1185,14 +1167,6 @@ export function listChannelMonitors(input: EmptyInputDto = {}): Promise<ChannelM
   return invokeCommand<ChannelMonitorDto[]>("list_channel_monitors", { input });
 }
 
-export function listChannelMonitorSummaries(input: ChannelMonitorSummaryInputDto): Promise<ChannelMonitorSummaryDto[]> {
-  return invokeCommand<ChannelMonitorSummaryDto[]>("list_channel_monitor_summaries", { input });
-}
-
-export function listChannelStatusSummaries(input: EmptyInputDto = {}): Promise<ChannelStatusSummaryDto[]> {
-  return invokeCommand<ChannelStatusSummaryDto[]>("list_channel_status_summaries", { input });
-}
-
 export function listChannelMonitorRuns(input: ChannelMonitorIdInputDto): Promise<ChannelMonitorRunDto[]> {
   return invokeCommand<ChannelMonitorRunDto[]>("list_channel_monitor_runs", { input });
 }
@@ -1229,7 +1203,7 @@ export function deleteChannelMonitorTemplate(input: ChannelMonitorMutationIdInpu
   return invokeCommand<void>("delete_channel_monitor_template", { input });
 }
 
-export function loadChannelStatusWorkspace(input: EmptyInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
+export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
   return invokeCommand<ChannelStatusWorkspaceDto>("load_channel_status_workspace", { input });
 }
 
@@ -1363,6 +1337,10 @@ export function cancelOperation(input: CancelOperationInputDto): Promise<CancelO
 
 export function startStationKeyConnectivityOperation(input: StationKeyConnectivityInputDto): Promise<OperationStartedDto> {
   return invokeNonIdempotent<OperationStartedDto>("start_station_key_connectivity_operation", { input });
+}
+
+export function getStationKeyConnectivityOperationResult(input: OperationIdInputDto): Promise<StationKeyConnectivityResultDto> {
+  return invokeCommand<StationKeyConnectivityResultDto>("get_station_key_connectivity_operation_result", { input });
 }
 
 export function simulateRoute(input: RouteSimulationInputDto): Promise<RouteSimulationResultDto> {
@@ -1721,10 +1699,8 @@ mod tests {
             "list_channel_monitor_attempts",
             "list_channel_monitor_executions",
             "list_channel_monitor_runs",
-            "list_channel_monitor_summaries",
             "list_channel_monitor_templates",
             "list_channel_monitors",
-            "list_channel_status_summaries",
             "list_monitoring_capabilities",
         ] {
             let contract = command_contract(name);
@@ -2045,6 +2021,20 @@ mod tests {
         );
         assert!(!start_connectivity.transport_retry);
         assert!(start_connectivity.result_unknown);
+
+        let connectivity_result = command_contract("get_station_key_connectivity_operation_result");
+        assert_eq!(connectivity_result.input, "OperationIdInputDto");
+        assert_eq!(
+            connectivity_result.output,
+            "StationKeyConnectivityResultDto"
+        );
+        assert_eq!(connectivity_result.mutation_kind, "read");
+        assert_eq!(
+            connectivity_result.runtime_validation,
+            "rust_dto_pre_application"
+        );
+        assert!(!connectivity_result.transport_retry);
+        assert!(!connectivity_result.result_unknown);
     }
 
     #[test]
@@ -2203,10 +2193,8 @@ mod tests {
         }
         for wrapper in [
             "listChannelMonitorRuns",
-            "listChannelMonitorSummaries",
             "listChannelMonitorTemplates",
             "listChannelMonitors",
-            "listChannelStatusSummaries",
             "listChannelMonitorExecutions",
             "getChannelMonitorExecution",
             "listChannelMonitorAttempts",

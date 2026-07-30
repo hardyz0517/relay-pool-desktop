@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { createChannelMonitor, updateChannelMonitor } from "@/lib/api/channelMonitors";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
-import { deleteStationKey, reorderKeyPool, saveStationKeyWithDefaults, testStationKeyConnectivity, updateStationKey } from "@/lib/api/stationKeys";
+import { deleteStationKey, reorderKeyPool, saveStationKeyWithDefaults, updateStationKey } from "@/lib/api/stationKeys";
 import {
   createStationKeyMonitorInput,
   findStationKeyMonitor,
@@ -19,10 +19,11 @@ import { channelMonitoringQueryOptions, keyPoolQueryOptions, stationsQueryOption
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
-import type { KeyPoolItem, StationKeyConnectivityTestEvent, StationKeyConnectivityTestResult } from "@/lib/types/stationKeys";
+import type { KeyPoolItem, StationKeyConnectivityProgressEvent, StationKeyConnectivityTestResult } from "@/lib/types/stationKeys";
 import { useToast } from "@/components/ui";
-import { ConnectivityOperationCancelledError } from "./connectivityOperationController";
-import { DEFAULT_KEY_CONNECTIVITY_TEST_MODEL } from "./KeyConnectivityTestDialog";
+import {
+  ConnectivityOperationCancelledError,
+} from "./connectivityOperationController";
 import {
   capabilitiesFromEditForm,
   createFormForStation,
@@ -54,11 +55,7 @@ export function useKeyPoolPageController({
   const connectivityOperation = useConnectivityOperation();
   const stations = stationsQuery.data ?? [];
   const items = keyPoolItemsQuery.data ?? [];
-  const monitorSummaries = channelMonitoringQuery.data?.monitorSummaries ?? [];
-  const monitors = useMemo(
-    () => monitorSummaries.map((summary) => summary.monitor),
-    [monitorSummaries],
-  );
+  const monitors = channelMonitoringQuery.data?.monitors ?? [];
   const monitorTemplates = channelMonitoringQuery.data?.templates ?? [];
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
@@ -278,15 +275,11 @@ export function useKeyPoolPageController({
     setDisplayedResponseText("");
     setConnectivityStreamFallbackReason(null);
     setConnectivityProgressLabel("正在请求流式响应...");
-    const handleConnectivityEvent = (event: StationKeyConnectivityTestEvent) => {
+    const handleConnectivityEvent = (event: StationKeyConnectivityProgressEvent) => {
       if (event.type === "attemptStarted") {
         setDisplayedResponseText("");
         setConnectivityStreamFallbackReason(null);
         setConnectivityProgressLabel(`流式请求：${event.protocol} / ${event.model}`);
-        return;
-      }
-      if (event.type === "delta") {
-        setDisplayedResponseText((current) => current + event.text);
         return;
       }
       if (event.type === "fallback") {
@@ -301,6 +294,7 @@ export function useKeyPoolPageController({
         { onEvent: handleConnectivityEvent },
       );
       setConnectivityTestResult(result);
+      setDisplayedResponseText(result.message);
       setConnectivityProgressLabel(null);
       await invalidateKeyPoolQueries(false);
       if (result.ok) {
@@ -340,12 +334,9 @@ export function useKeyPoolPageController({
           stationUpstreamApiFormat: item.stationUpstreamApiFormat,
           capabilities,
         }) ?? template;
-        const connectivityResult = await testStationKeyConnectivity(item.id, DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
-        const monitorModel = connectivityResult.ok ? connectivityResult.model : null;
-        await createChannelMonitor(createStationKeyMonitorInput(item, preferredTemplate, capabilities, monitorModel));
-        if (!connectivityResult.ok) {
-          toast.info("即时连通性未通过，已创建定时监控", connectivityResult.message);
-        }
+        await createChannelMonitor(
+          createStationKeyMonitorInput(item, preferredTemplate, capabilities),
+        );
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring }),

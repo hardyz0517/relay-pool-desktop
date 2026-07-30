@@ -3,7 +3,6 @@ import type {
   CreateRemoteStationKeyInput,
   CreateStationKeyInput,
   SaveStationKeyWithDefaultsInput,
-  StationKeyConnectivityTestEvent,
   UpdateStationKeyInput,
   UpdateStationSessionInput,
 } from "@/lib/types/stationKeys";
@@ -78,14 +77,6 @@ export function listKeyPoolItems() {
 
 export function reorderKeyPool(keyIds: string[]) {
   return stationKeysClient().reorderKeyPool(keyIds);
-}
-
-export function testStationKeyConnectivity(
-  stationKeyId: string,
-  model: string,
-  options: { onEvent?: (event: StationKeyConnectivityTestEvent) => void } = {},
-) {
-  return stationKeysClient().testStationKeyConnectivity(stationKeyId, model, options);
 }
 
 export function getStationCredentials(stationId: string) {

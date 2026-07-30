@@ -41,19 +41,11 @@ const generated = vi.hoisted(() => ({
   updateStationKeyGroupBinding: vi.fn(),
 }));
 
-const streamingAdapter = vi.hoisted(() => ({
-  invokeStationKeyConnectivityStream: vi.fn(),
-}));
-
 const tauri = vi.hoisted(() => ({
   invoke: vi.fn(),
-  Channel: class<Event> {
-    onmessage?: (event: Event) => void;
-  },
 }));
 
 vi.mock("@/lib/bridge/generated", () => generated);
-vi.mock("@/lib/bridge/streamingAdapter", () => streamingAdapter);
 vi.mock("@tauri-apps/api/core", () => tauri);
 
 import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
@@ -82,7 +74,6 @@ import {
   updateStationKey,
   updateStationKeyGroupBinding,
   updateStationSession,
-  testStationKeyConnectivity,
 } from "./stationKeys";
 
 describe("station key ordinary generated transport cutover", () => {
@@ -92,16 +83,6 @@ describe("station key ordinary generated transport cutover", () => {
       fn.mockReset().mockResolvedValue(undefined);
     }
     generated.listStations.mockResolvedValue([]);
-    streamingAdapter.invokeStationKeyConnectivityStream.mockReset().mockResolvedValue({
-      stationKeyId: "key-1",
-      ok: true,
-      statusCode: 200,
-      durationMs: 42,
-      model: "gpt-4o-mini",
-      message: "ok",
-      responseMode: "stream",
-      streamFallbackReason: null,
-    });
     tauri.invoke.mockReset().mockResolvedValue(undefined);
   });
 
@@ -195,20 +176,6 @@ describe("station key ordinary generated transport cutover", () => {
     expect(generated.clearStationCredentials).toHaveBeenCalledWith({ stationId });
   });
 
-  it("routes connectivity probes through the desktop streaming adapter", async () => {
-    const onEvent = vi.fn();
-
-    await expect(testStationKeyConnectivity("key-1", "gpt-4o-mini", { onEvent })).resolves.toMatchObject({
-      stationKeyId: "key-1",
-      responseMode: "stream",
-    });
-
-    expect(streamingAdapter.invokeStationKeyConnectivityStream).toHaveBeenCalledWith(
-      { stationKeyId: "key-1", model: "gpt-4o-mini" },
-      { onEvent },
-    );
-  });
-
   it("strips output-only fields before updating a station key", async () => {
     const input = {
       id: "key-1",
@@ -266,7 +233,6 @@ describe("station key demo backend unsupported cutover", () => {
     for (const fn of Object.values(generated)) {
       fn.mockReset().mockResolvedValue(undefined);
     }
-    streamingAdapter.invokeStationKeyConnectivityStream.mockReset().mockResolvedValue(undefined);
     tauri.invoke.mockReset().mockResolvedValue(undefined);
   });
 
@@ -281,13 +247,4 @@ describe("station key demo backend unsupported cutover", () => {
     expect(tauri.invoke).not.toHaveBeenCalled();
   });
 
-  it("does not fake connectivity success in demo mode", async () => {
-    await expect(testStationKeyConnectivity("key-1", "gpt-4o-mini")).rejects.toMatchObject({
-      code: "unsupported",
-      capability: "station_keys.connectivity",
-    });
-
-    expect(streamingAdapter.invokeStationKeyConnectivityStream).not.toHaveBeenCalled();
-    expect(tauri.invoke).not.toHaveBeenCalled();
-  });
 });

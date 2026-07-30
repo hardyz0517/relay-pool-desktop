@@ -10,14 +10,11 @@ import type {
 import type {
   ChannelMonitor,
   ChannelMonitorRequestTemplate,
-  ChannelMonitorRun,
-  ChannelMonitorSummary,
   ChannelMonitorAttemptHistoryInput,
   ChannelMonitorAttemptPage,
   ChannelMonitorExecutionDetail,
   ChannelMonitorExecutionListInput,
   ChannelMonitorExecutionPage,
-  ChannelStatusSummary,
   ChannelStatusWorkspace,
   ChannelStatusWorkspaceInput,
   CancelChannelMonitorExecutionReceipt,
@@ -75,8 +72,6 @@ import type {
   SaveStationKeyWithDefaultsResult,
   StationCredentials,
   StationKey,
-  StationKeyConnectivityTestEvent,
-  StationKeyConnectivityTestResult,
   UpdateStationKeyInput,
   UpdateStationSessionInput,
 } from "@/lib/types/stationKeys";
@@ -156,11 +151,6 @@ export type StationKeysDomainClient = {
   reorderStationKeys(stationId: string, keyIds: string[]): Promise<StationKey[]>;
   listKeyPoolItems(): Promise<KeyPoolItem[]>;
   reorderKeyPool(keyIds: string[]): Promise<KeyPoolItem[]>;
-  testStationKeyConnectivity(
-    stationKeyId: string,
-    model: string,
-    options?: { onEvent?: (event: StationKeyConnectivityTestEvent) => void },
-  ): Promise<StationKeyConnectivityTestResult>;
   getStationCredentials(stationId: string): Promise<StationCredentials>;
   updateStationCredentials(input: {
     stationId: string;
@@ -266,13 +256,9 @@ export type RoutingDomainClient = {
   simulateRoute(input: RouteSimulationInput): Promise<RouteSimulationResult>;
 };
 
-export type ChannelMonitorSummaryOptions = {
-  runLimit?: number;
-  runSince?: string;
-};
-
 export type ChannelMonitoringWorkspace = {
-  monitorSummaries: ChannelMonitorSummary[];
+  monitors: ChannelMonitor[];
+  statusWorkspace: ChannelStatusWorkspace;
   stations: Station[];
   keyPoolItems: KeyPoolItem[];
   templates: ChannelMonitorRequestTemplate[];
@@ -280,8 +266,6 @@ export type ChannelMonitoringWorkspace = {
 
 export type ChannelsDomainClient = {
   listChannelMonitors(): Promise<ChannelMonitor[]>;
-  listChannelMonitorSummaries(options?: ChannelMonitorSummaryOptions): Promise<ChannelMonitorSummary[]>;
-  listChannelStatusSummaries(): Promise<ChannelStatusSummary[]>;
   createChannelMonitor(input: CreateChannelMonitorInput): Promise<ChannelMonitor>;
   updateChannelMonitor(input: UpdateChannelMonitorInput): Promise<ChannelMonitor>;
   deleteChannelMonitor(id: string): Promise<void>;
@@ -291,7 +275,6 @@ export type ChannelsDomainClient = {
   getChannelMonitorExecution(executionId: string): Promise<ChannelMonitorExecutionDetail>;
   listChannelMonitorAttempts(input: ChannelMonitorAttemptHistoryInput): Promise<ChannelMonitorAttemptPage>;
   listMonitoringCapabilities(): Promise<MonitoringCapabilityCatalog>;
-  listChannelMonitorRuns(monitorId: string): Promise<ChannelMonitorRun[]>;
   listChannelMonitorTemplates(): Promise<ChannelMonitorRequestTemplate[]>;
   createChannelMonitorTemplate(input: CreateChannelMonitorTemplateInput): Promise<ChannelMonitorRequestTemplate>;
   updateChannelMonitorTemplate(input: UpdateChannelMonitorTemplateInput): Promise<ChannelMonitorRequestTemplate>;

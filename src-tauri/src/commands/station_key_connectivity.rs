@@ -1,15 +1,14 @@
 use http::{header, HeaderValue, Method};
-use serde::Serialize;
 use serde_json::Value;
 use std::time::{Duration, Instant};
-use tauri::{ipc::Channel, State};
+use tauri::State;
 
 use crate::{
     app_composition::ManagedWorkRuntime,
     application::{
         command_facades::{
             StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
-            StationKeyConnectivityProbeTarget,
+            StationKeyConnectivityProbeTarget, StationKeyConnectivityResult,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -19,8 +18,7 @@ use crate::{
             station_key_connectivity_model_candidates, station_key_connectivity_protocol_label,
             StationKeyConnectivityProbeKind, StationKeyConnectivityProbeResult,
             StationKeyConnectivityRequestMode, StationKeyConnectivityResponseMode,
-            StationKeyConnectivitySseDecoder, StationKeyConnectivityTestEventPayload,
-            DEFAULT_STATION_KEY_CONNECTIVITY_MODEL,
+            StationKeyConnectivitySseDecoder, DEFAULT_STATION_KEY_CONNECTIVITY_MODEL,
         },
     },
     background_tasks::{
@@ -28,20 +26,25 @@ use crate::{
         OperationStartRequest, OperationTerminal,
     },
     commands::error,
-    ipc::dto::{operations::OperationStartedDto, station_keys::StationKeyConnectivityInputDto},
+    ipc::dto::{
+        operations::{OperationIdInputDto, OperationStartedDto},
+        station_keys::{StationKeyConnectivityInputDto, StationKeyConnectivityResultDto},
+    },
     models::{proxy::UpstreamApiFormat, routing::StationKeyCapabilities},
     observability::correlation,
     outbound::{
         AsyncOutboundClient, OutboundFailure, OutboundFailureKind, OutboundHeaderPolicy,
         OutboundHeaders, OutboundRequest, ProxyPolicy, RequestBudget, SecretHeaderValue,
     },
-    services::{proxy::redact_error_message, station_endpoints::build_api_url},
+    services::{
+        endpoint_ping::ping_station_endpoint, proxy::redact_error_message,
+        station_endpoints::build_api_url,
+    },
 };
 
 #[cfg(test)]
 use crate::application::connectivity_probe::{
     run_station_key_connectivity_model_attempts, run_station_key_connectivity_single_model_probe,
-    run_station_key_connectivity_stream_first_probe,
 };
 
 #[cfg(test)]
@@ -53,6 +56,7 @@ use serde_json::json;
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const STATION_KEY_CONNECTIVITY_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+const STATION_ENDPOINT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn command_application_error(
     error: crate::application::error::ApplicationError,
@@ -155,141 +159,38 @@ pub async fn start_station_key_connectivity_operation(
     .await
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StationKeyConnectivityTestResult {
-    station_key_id: String,
-    ok: bool,
-    status_code: u16,
-    duration_ms: i64,
-    model: String,
-    message: String,
-    response_mode: StationKeyConnectivityResponseMode,
-    stream_fallback_reason: Option<String>,
-}
-
-const STATION_KEY_CONNECTIVITY_EVENT_SCHEMA_VERSION: u32 = 1;
-const STATION_KEY_CONNECTIVITY_OPERATION_RESULT_PREFIX: &str = "station_key_connectivity.result ";
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StationKeyConnectivityTestEvent {
-    schema_version: u32,
-    run_id: String,
-    sequence: u64,
-    terminal: bool,
-    cancel_capability: StationKeyConnectivityCancelCapability,
-    event: StationKeyConnectivityTestEventPayload,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StationKeyConnectivityCancelCapability {
-    DetachOnly,
-}
-
-struct StationKeyConnectivityProgress {
-    run_id: String,
-    sequence: u64,
-    progress: Channel<StationKeyConnectivityTestEvent>,
-    terminal_sent: bool,
-}
-
-impl StationKeyConnectivityProgress {
-    fn new(progress: Channel<StationKeyConnectivityTestEvent>) -> Self {
-        Self {
-            run_id: uuid::Uuid::now_v7().to_string(),
-            sequence: 0,
-            progress,
-            terminal_sent: false,
-        }
-    }
-
-    fn emit(&mut self, event: StationKeyConnectivityTestEventPayload, terminal: bool) {
-        if self.terminal_sent {
-            return;
-        }
-        let envelope = station_key_connectivity_event_envelope(
-            self.run_id.clone(),
-            self.sequence,
-            terminal,
-            event,
-        );
-        self.sequence = self.sequence.saturating_add(1);
-        if terminal {
-            self.terminal_sent = true;
-        }
-        let _ = self.progress.send(envelope);
-    }
-
-    fn emit_terminal(&mut self, result: &StationKeyConnectivityProbeResult) {
-        if result.ok {
-            self.emit(
-                StationKeyConnectivityTestEventPayload::Completed { ok: true },
-                true,
-            );
-        } else {
-            self.emit(
-                StationKeyConnectivityTestEventPayload::Failed {
-                    message: result.message.clone(),
-                },
-                true,
-            );
-        }
-    }
-}
-
-fn station_key_connectivity_event_envelope(
-    run_id: String,
-    sequence: u64,
-    terminal: bool,
-    event: StationKeyConnectivityTestEventPayload,
-) -> StationKeyConnectivityTestEvent {
-    StationKeyConnectivityTestEvent {
-        schema_version: STATION_KEY_CONNECTIVITY_EVENT_SCHEMA_VERSION,
-        run_id,
-        sequence,
-        terminal,
-        cancel_capability: StationKeyConnectivityCancelCapability::DetachOnly,
-        event,
-    }
-}
-
 #[tauri::command]
-pub async fn test_station_key_connectivity(
+pub async fn get_station_key_connectivity_operation_result(
     facade: State<'_, StationKeyConnectivityCommandFacade>,
+    runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
-    progress: Channel<StationKeyConnectivityTestEvent>,
-) -> Result<StationKeyConnectivityTestResult, error::CommandError> {
-    correlation::in_command_scope("test_station_key_connectivity", async {
-        let input = StationKeyConnectivityInputDto::parse(input)?;
-        let station_key_id = input.station_key_id;
-        let model = input.model;
-        let target = facade
-            .prepare_probe_target(station_key_id.clone())
-            .await
-            .map_err(station_key_connectivity_command_error)?;
-        let station_id = target.key.station_id.clone();
-        let endpoint_revision = target.key.station_endpoint_revision;
-        let result = test_station_key_connectivity_prepared_outbound(
-            facade.outbound_client(),
-            target,
-            model,
-            progress,
-        )
-        .await?;
-        facade
-            .record_station_key_connectivity(
-                station_key_id,
-                station_id,
-                endpoint_revision,
-                result.ok,
-                result.duration_ms,
-                result.message.clone(),
+) -> Result<StationKeyConnectivityResultDto, error::CommandError> {
+    correlation::in_command_scope("get_station_key_connectivity_operation_result", async {
+        let input = OperationIdInputDto::parse(input)?;
+        let operation_id = input.operation_id();
+        let snapshot = runtime
+            .operation
+            .status(operation_id)
+            .map_err(public_operation_registry_error)?;
+        if snapshot.kind != "station_key_connectivity" || snapshot.owner.feature != "key-pool" {
+            return Err(error::CommandError::try_new(
+                error::CommandErrorCode::NotFound,
+                "The connectivity operation was not found.",
+                false,
+                None,
+                None,
             )
-            .await
-            .map_err(command_application_error)?;
-        Ok(result)
+            .expect("connectivity operation not-found error is bounded"));
+        }
+        if snapshot.terminal != Some(OperationTerminal::Completed) {
+            return Err(error::CommandError::from_work(
+                error::WorkFailure::ResultUnknown,
+            ));
+        }
+        facade
+            .get_result(operation_id)
+            .map(StationKeyConnectivityResultDto::from)
+            .ok_or_else(|| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
     })
     .await
 }
@@ -304,13 +205,21 @@ async fn run_station_key_connectivity_operation(
     endpoint_revision: i64,
     model: String,
 ) -> OperationTerminal {
-    let result =
-        match run_station_key_connectivity_prepared_outbound(&context, &outbound, &target, model)
-            .await
-        {
-            Ok(result) => result,
-            Err(terminal) => return terminal,
-        };
+    let ping_future = collect_station_endpoint_ping(
+        &context,
+        &facade,
+        &outbound,
+        station_id.clone(),
+        endpoint_revision,
+        target.key.station_api_base_url.clone(),
+    );
+    let model_probe =
+        run_station_key_connectivity_prepared_outbound(&context, &outbound, &target, model);
+    let (result, _) = tokio::join!(model_probe, ping_future);
+    let result = match result {
+        Ok(result) => result,
+        Err(terminal) => return terminal,
+    };
     if context.cancellation_token.is_cancelled() {
         return OperationTerminal::Cancelled;
     }
@@ -318,9 +227,7 @@ async fn run_station_key_connectivity_operation(
         "completed ok={} status={} model={} mode={:?}",
         result.ok, result.status_code, result.model, result.response_mode
     ));
-    if let Some(message) = station_key_connectivity_operation_result_progress_message(&result) {
-        let _ = context.emit_progress(message);
-    }
+    facade.store_result(context.id, result.clone());
     context.enter_commit_barrier();
     match facade
         .record_station_key_connectivity(
@@ -329,7 +236,7 @@ async fn run_station_key_connectivity_operation(
             endpoint_revision,
             result.ok,
             result.duration_ms,
-            result.message,
+            result.message.clone(),
         )
         .await
     {
@@ -338,12 +245,43 @@ async fn run_station_key_connectivity_operation(
     }
 }
 
+async fn collect_station_endpoint_ping(
+    context: &OperationContext,
+    facade: &StationKeyConnectivityCommandFacade,
+    outbound: &AsyncOutboundClient,
+    station_id: String,
+    endpoint_revision: i64,
+    base_url: String,
+) {
+    let probe = ping_station_endpoint(
+        outbound,
+        &base_url,
+        STATION_ENDPOINT_PING_TIMEOUT,
+        context.cancellation_token.clone(),
+    )
+    .await;
+    if context.cancellation_token.is_cancelled() {
+        return;
+    }
+    let checked_at = chrono::Utc::now().timestamp_millis().to_string();
+    let _ = facade
+        .record_station_endpoint_health(
+            station_id,
+            endpoint_revision,
+            probe.status,
+            probe.latency_ms,
+            checked_at,
+            probe.error_summary,
+        )
+        .await;
+}
+
 async fn run_station_key_connectivity_prepared_outbound(
     context: &OperationContext,
     outbound: &AsyncOutboundClient,
     target: &StationKeyConnectivityProbeTarget,
     model: String,
-) -> Result<StationKeyConnectivityTestResult, OperationTerminal> {
+) -> Result<StationKeyConnectivityResult, OperationTerminal> {
     let upstream_api_format = match target.key.station_upstream_api_format.as_str() {
         "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
         "openai_responses" => UpstreamApiFormat::OpenAiResponses,
@@ -380,7 +318,7 @@ async fn run_station_key_connectivity_prepared_outbound(
         )
         .await?;
         if result.ok {
-            return Ok(StationKeyConnectivityTestResult {
+            return Ok(StationKeyConnectivityResult {
                 station_key_id: target.key.id.clone(),
                 ok: result.ok,
                 status_code: result.status_code,
@@ -403,7 +341,7 @@ async fn run_station_key_connectivity_prepared_outbound(
             ),
         )
     });
-    Ok(StationKeyConnectivityTestResult {
+    Ok(StationKeyConnectivityResult {
         station_key_id: target.key.id.clone(),
         ok: result.ok,
         status_code: result.status_code,
@@ -780,431 +718,6 @@ fn outbound_failure_terminal_or_result(error: OutboundFailure) -> OperationTermi
     }
 }
 
-fn station_key_connectivity_operation_result_progress_message(
-    result: &StationKeyConnectivityTestResult,
-) -> Option<String> {
-    serde_json::to_string(result)
-        .ok()
-        .map(|payload| format!("{STATION_KEY_CONNECTIVITY_OPERATION_RESULT_PREFIX}{payload}"))
-}
-
-async fn test_station_key_connectivity_prepared_outbound(
-    outbound: AsyncOutboundClient,
-    target: StationKeyConnectivityProbeTarget,
-    model: String,
-    progress: Channel<StationKeyConnectivityTestEvent>,
-) -> Result<StationKeyConnectivityTestResult, String> {
-    let mut progress = StationKeyConnectivityProgress::new(progress);
-    let upstream_api_format = match target.key.station_upstream_api_format.as_str() {
-        "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
-        "openai_responses" => UpstreamApiFormat::OpenAiResponses,
-        "custom_openai_compatible" => UpstreamApiFormat::CustomOpenAiCompatible,
-        _ => UpstreamApiFormat::Auto,
-    };
-    let discovered_models = discover_station_key_connectivity_models_outbound(
-        &outbound,
-        &target.key.station_api_base_url,
-        target.api_key.as_str(),
-        tokio_util::sync::CancellationToken::new(),
-    )
-    .await
-    .unwrap_or_default();
-    let requested_model = model.trim().to_string();
-    let candidates = station_key_connectivity_model_candidates(
-        Some(&target.capabilities),
-        Some(requested_model.as_str()),
-        &discovered_models,
-    );
-    let mut last = None;
-    for candidate in &candidates {
-        let result = run_station_key_connectivity_single_model_probe_outbound_channel(
-            &outbound,
-            &target.key.station_api_base_url,
-            target.api_key.as_str(),
-            candidate,
-            &upstream_api_format,
-            Some(&target.capabilities),
-            &mut progress,
-        )
-        .await;
-        if result.ok {
-            progress.emit_terminal(&result);
-            return Ok(StationKeyConnectivityTestResult {
-                station_key_id: target.key.id,
-                ok: result.ok,
-                status_code: result.status_code,
-                duration_ms: result.duration_ms,
-                model: candidate.clone(),
-                message: result.message,
-                response_mode: result.response_mode,
-                stream_fallback_reason: result.stream_fallback_reason,
-            });
-        }
-        last = Some((candidate.clone(), result));
-    }
-    let (model, result) = last.unwrap_or_else(|| {
-        (
-            DEFAULT_STATION_KEY_CONNECTIVITY_MODEL.to_string(),
-            StationKeyConnectivityProbeResult::failure(
-                0,
-                0,
-                "connectivity probe did not run".to_string(),
-            ),
-        )
-    });
-    progress.emit_terminal(&result);
-    Ok(StationKeyConnectivityTestResult {
-        station_key_id: target.key.id,
-        ok: result.ok,
-        status_code: result.status_code,
-        duration_ms: result.duration_ms,
-        model,
-        message: result.message,
-        response_mode: result.response_mode,
-        stream_fallback_reason: result.stream_fallback_reason,
-    })
-}
-
-fn emit_station_key_connectivity_event(
-    progress: &mut StationKeyConnectivityProgress,
-    event: StationKeyConnectivityTestEventPayload,
-) {
-    progress.emit(event, false);
-}
-
-async fn run_station_key_connectivity_single_model_probe_outbound_channel(
-    outbound: &AsyncOutboundClient,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    upstream_api_format: &UpstreamApiFormat,
-    capabilities: Option<&StationKeyCapabilities>,
-    progress: &mut StationKeyConnectivityProgress,
-) -> StationKeyConnectivityProbeResult {
-    let response_result = send_station_key_connectivity_probe_outbound_channel(
-        outbound,
-        base_url,
-        api_key,
-        model,
-        StationKeyConnectivityProbeKind::Responses,
-        progress,
-    )
-    .await;
-    if response_result.ok
-        || !should_try_station_key_connectivity_chat_fallback(
-            upstream_api_format,
-            capabilities,
-            response_result.status_code,
-            &response_result.message,
-        )
-    {
-        return response_result;
-    }
-
-    let chat_result = send_station_key_connectivity_probe_outbound_channel(
-        outbound,
-        base_url,
-        api_key,
-        model,
-        StationKeyConnectivityProbeKind::ChatCompletions,
-        progress,
-    )
-    .await;
-    let duration_ms = response_result
-        .duration_ms
-        .saturating_add(chat_result.duration_ms);
-    if chat_result.ok {
-        let mut chat_result = chat_result;
-        chat_result.duration_ms = duration_ms;
-        return chat_result;
-    }
-
-    StationKeyConnectivityProbeResult::failure(
-        chat_result.status_code,
-        duration_ms,
-        format!(
-            "Responses: {}; Chat Completions: {}",
-            response_result.message, chat_result.message
-        ),
-    )
-}
-
-async fn send_station_key_connectivity_probe_outbound_channel(
-    outbound: &AsyncOutboundClient,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    kind: StationKeyConnectivityProbeKind,
-    progress: &mut StationKeyConnectivityProgress,
-) -> StationKeyConnectivityProbeResult {
-    emit_station_key_connectivity_event(
-        progress,
-        StationKeyConnectivityTestEventPayload::AttemptStarted {
-            model: model.to_string(),
-            protocol: station_key_connectivity_protocol_label(kind),
-        },
-    );
-    let stream_result = send_station_key_connectivity_stream_probe_outbound_channel(
-        outbound, base_url, api_key, model, kind, progress,
-    )
-    .await;
-    if stream_result.ok {
-        return stream_result.with_response_mode(StationKeyConnectivityResponseMode::Stream);
-    }
-
-    let fallback_reason = redact_connectivity_error(&stream_result.message);
-    emit_station_key_connectivity_event(
-        progress,
-        StationKeyConnectivityTestEventPayload::Fallback {
-            reason: fallback_reason.clone(),
-        },
-    );
-    let fallback_result = send_station_key_connectivity_non_stream_probe_outbound_channel(
-        outbound, base_url, api_key, model, kind,
-    )
-    .await;
-    let duration_ms = stream_result
-        .duration_ms
-        .saturating_add(fallback_result.duration_ms);
-    if fallback_result.ok {
-        return StationKeyConnectivityProbeResult::success(
-            fallback_result.status_code,
-            duration_ms,
-            fallback_result.message,
-        )
-        .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
-        .with_stream_fallback_reason(Some(fallback_reason));
-    }
-
-    StationKeyConnectivityProbeResult::failure(
-        fallback_result.status_code,
-        duration_ms,
-        format!(
-            "Stream: {}; Non-stream fallback: {}",
-            stream_result.message, fallback_result.message
-        ),
-    )
-    .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
-    .with_stream_fallback_reason(Some(fallback_reason))
-}
-
-async fn send_station_key_connectivity_non_stream_probe_outbound_channel(
-    outbound: &AsyncOutboundClient,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    kind: StationKeyConnectivityProbeKind,
-) -> StationKeyConnectivityProbeResult {
-    let url = match build_station_key_connectivity_probe_url(base_url, kind) {
-        Ok(url) => url,
-        Err(error) => {
-            return StationKeyConnectivityProbeResult::failure(
-                0,
-                0,
-                redact_error_message(&format!("API Base URL 无效: {error}")),
-            );
-        }
-    };
-    let body = build_station_key_connectivity_probe_body(
-        model,
-        kind,
-        StationKeyConnectivityRequestMode::NonStream,
-    );
-    let started = Instant::now();
-    let request = match outbound_json_request(
-        Method::POST,
-        url,
-        api_key,
-        "application/json",
-        serde_json::to_vec(&body).unwrap_or_default(),
-        STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
-    ) {
-        Ok(request) => request,
-        Err(error) => {
-            return StationKeyConnectivityProbeResult::failure(
-                0,
-                elapsed_ms(started),
-                redact_error_message(&format!("{error}")),
-            );
-        }
-    };
-    let response = match outbound
-        .execute(request, tokio_util::sync::CancellationToken::new())
-        .await
-    {
-        Ok(response) => response,
-        Err(error) => {
-            let duration_ms = elapsed_ms(started);
-            return StationKeyConnectivityProbeResult::failure(
-                0,
-                duration_ms,
-                redact_error_message(&format!("{error}")),
-            );
-        }
-    };
-    let duration_ms = elapsed_ms(started);
-    let status_code = response.status.as_u16();
-    let response_text = String::from_utf8_lossy(&response.body).to_string();
-    if response.status.is_success() {
-        let message =
-            extract_station_key_connectivity_reply(&response_text, kind).unwrap_or_else(|| {
-                match kind {
-                    StationKeyConnectivityProbeKind::Responses => "Responses 连通正常".to_string(),
-                    StationKeyConnectivityProbeKind::ChatCompletions => {
-                        "Chat Completions 连通正常".to_string()
-                    }
-                }
-            });
-        return StationKeyConnectivityProbeResult::success(status_code, duration_ms, message);
-    }
-    StationKeyConnectivityProbeResult::failure(
-        status_code,
-        duration_ms,
-        response_error_message(&response_text, status_code),
-    )
-}
-
-async fn send_station_key_connectivity_stream_probe_outbound_channel(
-    outbound: &AsyncOutboundClient,
-    base_url: &str,
-    api_key: &str,
-    model: &str,
-    kind: StationKeyConnectivityProbeKind,
-    progress: &mut StationKeyConnectivityProgress,
-) -> StationKeyConnectivityProbeResult {
-    let url = match build_station_key_connectivity_probe_url(base_url, kind) {
-        Ok(url) => url,
-        Err(error) => {
-            return StationKeyConnectivityProbeResult::failure(
-                0,
-                0,
-                redact_error_message(&format!("API Base URL 无效: {error}")),
-            );
-        }
-    };
-    let body = build_station_key_connectivity_probe_body(
-        model,
-        kind,
-        StationKeyConnectivityRequestMode::Stream,
-    );
-    let started = Instant::now();
-    let request = match outbound_json_request(
-        Method::POST,
-        url,
-        api_key,
-        "text/event-stream",
-        serde_json::to_vec(&body).unwrap_or_default(),
-        STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
-    ) {
-        Ok(request) => request,
-        Err(error) => {
-            return StationKeyConnectivityProbeResult::failure(
-                0,
-                elapsed_ms(started),
-                redact_error_message(&format!("{error}")),
-            );
-        }
-    };
-    let mut decoder = StationKeyConnectivitySseDecoder::new(kind);
-    let mut decoder_error = None;
-    let mut response_body = Vec::new();
-    let response = match outbound
-        .execute_stream(
-            request,
-            tokio_util::sync::CancellationToken::new(),
-            |chunk| {
-                response_body.extend_from_slice(chunk);
-                match decoder.push(chunk) {
-                    Ok(deltas) => {
-                        for delta in deltas {
-                            emit_station_key_connectivity_event(
-                                progress,
-                                StationKeyConnectivityTestEventPayload::Delta { text: delta },
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(error) => {
-                        decoder_error = Some(error);
-                        Err(OutboundFailure::new(OutboundFailureKind::RequestFailed))
-                    }
-                }
-            },
-        )
-        .await
-    {
-        Ok(response) => response,
-        Err(error) => {
-            if let Some(decoder_error) = decoder_error {
-                return StationKeyConnectivityProbeResult::failure(
-                    0,
-                    elapsed_ms(started),
-                    redact_connectivity_error(&decoder_error),
-                );
-            }
-            return StationKeyConnectivityProbeResult::failure(
-                0,
-                elapsed_ms(started),
-                redact_error_message(&format!("{error}")),
-            );
-        }
-    };
-
-    let status_code = response.status.as_u16();
-    let response_text = String::from_utf8_lossy(&response_body).to_string();
-    if !response.status.is_success() {
-        return StationKeyConnectivityProbeResult::failure(
-            status_code,
-            elapsed_ms(started),
-            response_error_message(&response_text, status_code),
-        );
-    }
-
-    let content_type = response
-        .headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !content_type.contains("text/event-stream") {
-        return StationKeyConnectivityProbeResult::failure(
-            status_code,
-            elapsed_ms(started),
-            redact_connectivity_error(&format!(
-                "Expected text/event-stream response, got {}",
-                if content_type.is_empty() {
-                    "missing content-type"
-                } else {
-                    content_type.as_str()
-                }
-            )),
-        );
-    }
-
-    match decoder.finish() {
-        Ok(message) if !message.trim().is_empty() => {
-            StationKeyConnectivityProbeResult::success(status_code, elapsed_ms(started), message)
-        }
-        Ok(_) => StationKeyConnectivityProbeResult::success(
-            status_code,
-            elapsed_ms(started),
-            match kind {
-                StationKeyConnectivityProbeKind::Responses => {
-                    "Responses streaming connected".to_string()
-                }
-                StationKeyConnectivityProbeKind::ChatCompletions => {
-                    "Chat Completions streaming connected".to_string()
-                }
-            },
-        ),
-        Err(error) => StationKeyConnectivityProbeResult::failure(
-            status_code,
-            elapsed_ms(started),
-            redact_connectivity_error(&error),
-        ),
-    }
-}
-
 fn elapsed_ms(started: Instant) -> i64 {
     started.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
@@ -1246,32 +759,6 @@ mod tests {
         assert_eq!(chat["model"], "gpt-test");
         assert_eq!(chat["messages"][0]["content"], "hi");
         assert_eq!(chat["stream"], true);
-    }
-
-    #[test]
-    fn station_key_connectivity_operation_result_progress_is_parseable_json_projection() {
-        let result = StationKeyConnectivityTestResult {
-            station_key_id: "key-1".to_string(),
-            ok: true,
-            status_code: 200,
-            duration_ms: 42,
-            model: "gpt-test".to_string(),
-            message: "ok".to_string(),
-            response_mode: StationKeyConnectivityResponseMode::Stream,
-            stream_fallback_reason: None,
-        };
-
-        let message = station_key_connectivity_operation_result_progress_message(&result)
-            .expect("result progress serializes");
-        let payload = message
-            .strip_prefix(STATION_KEY_CONNECTIVITY_OPERATION_RESULT_PREFIX)
-            .expect("result progress has stable prefix");
-        let value = serde_json::from_str::<Value>(payload).expect("result progress is JSON");
-
-        assert_eq!(value["stationKeyId"], "key-1");
-        assert_eq!(value["ok"], true);
-        assert_eq!(value["statusCode"], 200);
-        assert_eq!(value["responseMode"], "stream");
     }
 
     #[test]
@@ -1363,108 +850,6 @@ mod tests {
             .expect_err("oversized pending data should fail");
 
         assert!(error.contains("too large"));
-    }
-
-    #[test]
-    fn station_key_connectivity_event_envelope_is_versioned_and_terminal() {
-        let value = serde_json::to_value(station_key_connectivity_event_envelope(
-            "run-1".to_string(),
-            7,
-            true,
-            StationKeyConnectivityTestEventPayload::Completed { ok: true },
-        ))
-        .expect("serialize streaming envelope");
-
-        assert_eq!(value["schemaVersion"], 1);
-        assert_eq!(value["runId"], "run-1");
-        assert_eq!(value["sequence"], 7);
-        assert_eq!(value["terminal"], true);
-        assert_eq!(value["cancelCapability"], "detach_only");
-        assert_eq!(value["event"]["type"], "completed");
-        assert_eq!(value["event"]["ok"], true);
-    }
-
-    #[test]
-    fn station_key_connectivity_stream_success_does_not_retry_non_stream() {
-        let mut attempted_modes = Vec::new();
-        let mut events = Vec::new();
-
-        let result = run_station_key_connectivity_stream_first_probe(
-            "gpt-test",
-            StationKeyConnectivityProbeKind::Responses,
-            |mode| {
-                attempted_modes.push(mode);
-                StationKeyConnectivityProbeResult::success(200, 15, "stream ok".to_string())
-            },
-            |event| events.push(event),
-        );
-
-        assert_eq!(
-            attempted_modes,
-            vec![StationKeyConnectivityRequestMode::Stream]
-        );
-        assert!(result.ok);
-        assert_eq!(
-            result.response_mode,
-            StationKeyConnectivityResponseMode::Stream
-        );
-        assert_eq!(result.stream_fallback_reason, None);
-        assert!(matches!(
-            events.first(),
-            Some(StationKeyConnectivityTestEventPayload::AttemptStarted { model, .. }) if model == "gpt-test"
-        ));
-    }
-
-    #[test]
-    fn station_key_connectivity_stream_failure_retries_once_non_stream() {
-        let mut attempted_modes = Vec::new();
-        let mut events = Vec::new();
-
-        let result = run_station_key_connectivity_stream_first_probe(
-            "gpt-test",
-            StationKeyConnectivityProbeKind::Responses,
-            |mode| {
-                attempted_modes.push(mode);
-                match mode {
-                    StationKeyConnectivityRequestMode::Stream => {
-                        StationKeyConnectivityProbeResult::failure(
-                            200,
-                            9,
-                            "missing terminal signal".to_string(),
-                        )
-                    }
-                    StationKeyConnectivityRequestMode::NonStream => {
-                        StationKeyConnectivityProbeResult::success(
-                            200,
-                            14,
-                            "fallback ok".to_string(),
-                        )
-                    }
-                }
-            },
-            |event| events.push(event),
-        );
-
-        assert_eq!(
-            attempted_modes,
-            vec![
-                StationKeyConnectivityRequestMode::Stream,
-                StationKeyConnectivityRequestMode::NonStream,
-            ]
-        );
-        assert!(result.ok);
-        assert_eq!(
-            result.response_mode,
-            StationKeyConnectivityResponseMode::NonStreamFallback
-        );
-        assert_eq!(
-            result.stream_fallback_reason,
-            Some("missing terminal signal".to_string())
-        );
-        assert!(events.iter().any(|event| matches!(
-            event,
-            StationKeyConnectivityTestEventPayload::Fallback { reason } if reason == "missing terminal signal"
-        )));
     }
 
     #[test]

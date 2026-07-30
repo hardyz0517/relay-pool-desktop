@@ -59,13 +59,10 @@ import {
   inspectLatestUpdateManifest as inspectLatestUpdateManifestBinding,
   listBalanceSnapshots as listBalanceSnapshotsBinding,
   listBalanceSnapshotsForStation as listBalanceSnapshotsForStationBinding,
-  listChannelMonitorRuns as listChannelMonitorRunsBinding,
   listChannelMonitorAttempts as listChannelMonitorAttemptsBinding,
   listChannelMonitorExecutions as listChannelMonitorExecutionsBinding,
-  listChannelMonitorSummaries as listChannelMonitorSummariesBinding,
   listChannelMonitorTemplates as listChannelMonitorTemplatesBinding,
   listChannelMonitors as listChannelMonitorsBinding,
-  listChannelStatusSummaries as listChannelStatusSummariesBinding,
   listCollectorSnapshots as listCollectorSnapshotsBinding,
   listCommonLoginOptions as listCommonLoginOptionsBinding,
   listLatestCollectorSnapshots as listLatestCollectorSnapshotsBinding,
@@ -158,7 +155,6 @@ import {
   toUpdateStationDto,
 } from "./domainMapping";
 import { RuntimeContractMismatchError } from "./runtimeContractError";
-import { invokeStationKeyConnectivityStream } from "./streamingAdapter";
 import { coordinateUpdateCheck } from "./updaterCheckCoordinator";
 
 export class DesktopBackend implements BackendClient {
@@ -403,14 +399,6 @@ export class DesktopBackend implements BackendClient {
   };
   readonly channels = {
     listChannelMonitors: () => listChannelMonitorsBinding(),
-    listChannelMonitorSummaries: (
-      options: Parameters<BackendClient["channels"]["listChannelMonitorSummaries"]>[0] = {},
-    ) =>
-      listChannelMonitorSummariesBinding({
-        runSince: options.runSince ?? null,
-        runLimit: options.runLimit ?? null,
-      }),
-    listChannelStatusSummaries: () => listChannelStatusSummariesBinding(),
     createChannelMonitor: (input: Parameters<BackendClient["channels"]["createChannelMonitor"]>[0]) =>
       createChannelMonitorBinding(input),
     updateChannelMonitor: (input: Parameters<BackendClient["channels"]["updateChannelMonitor"]>[0]) =>
@@ -426,7 +414,6 @@ export class DesktopBackend implements BackendClient {
     listChannelMonitorAttempts: (input: Parameters<BackendClient["channels"]["listChannelMonitorAttempts"]>[0]) =>
       listChannelMonitorAttemptsBinding(input),
     listMonitoringCapabilities: () => listMonitoringCapabilitiesBinding(),
-    listChannelMonitorRuns: (monitorId: string) => listChannelMonitorRunsBinding({ monitorId }),
     listChannelMonitorTemplates: () => listChannelMonitorTemplatesBinding(),
     createChannelMonitorTemplate: (
       input: Parameters<BackendClient["channels"]["createChannelMonitorTemplate"]>[0],
@@ -437,14 +424,15 @@ export class DesktopBackend implements BackendClient {
     duplicateChannelMonitorTemplate: (id: string) => duplicateChannelMonitorTemplateBinding({ id }),
     deleteChannelMonitorTemplate: (id: string) => deleteChannelMonitorTemplateBinding({ id }),
     loadChannelMonitoringWorkspace: async () => {
-      const [monitorSummaries, stations, keyPoolItems, templates] = await Promise.all([
-        listChannelMonitorSummariesBinding({ runSince: null, runLimit: null }),
+      const [monitors, statusWorkspace, stations, keyPoolItems, templates] = await Promise.all([
+        listChannelMonitorsBinding(),
+        loadChannelStatusWorkspaceBinding({ limit: 500 }),
         listStationsBinding().then((stations) => stations.map(normalizeStation)),
         listKeyPoolItemsBinding(),
         listChannelMonitorTemplatesBinding(),
       ]);
 
-      return { monitorSummaries, stations, keyPoolItems, templates };
+      return { monitors, statusWorkspace, stations, keyPoolItems, templates };
     },
     loadChannelStatusWorkspace: (input = {}) => loadChannelStatusWorkspaceBinding(input),
   };
@@ -476,15 +464,6 @@ export class DesktopBackend implements BackendClient {
       reorderStationKeysBinding({ stationId, keyIds }),
     listKeyPoolItems: () => listKeyPoolItemsBinding(),
     reorderKeyPool: (keyIds: string[]) => reorderKeyPoolBinding({ keyIds }),
-    testStationKeyConnectivity: (
-      stationKeyId: string,
-      model: string,
-      options: Parameters<BackendClient["stationKeys"]["testStationKeyConnectivity"]>[2] = {},
-    ) =>
-      invokeStationKeyConnectivityStream(
-        { stationKeyId, model },
-        { onEvent: options.onEvent },
-      ),
     getStationCredentials: (stationId: string) => getStationCredentialsBinding({ stationId }),
     updateStationCredentials: (input: Parameters<BackendClient["stationKeys"]["updateStationCredentials"]>[0]) =>
       updateStationCredentialsBinding(input),

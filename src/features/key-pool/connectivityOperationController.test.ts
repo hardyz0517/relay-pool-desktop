@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const generated = vi.hoisted(() => ({
   cancelOperation: vi.fn(),
   getOperationStatus: vi.fn(),
+  getStationKeyConnectivityOperationResult: vi.fn(),
   startStationKeyConnectivityOperation: vi.fn(),
 }));
 
@@ -41,16 +42,16 @@ describe("connectivity operation controller", () => {
   beforeEach(() => {
     generated.cancelOperation.mockReset().mockResolvedValue({ outcome: "stopped", terminal: { terminal: "cancelled" } });
     generated.getOperationStatus.mockReset();
+    generated.getStationKeyConnectivityOperationResult.mockReset().mockResolvedValue(result);
     generated.startStationKeyConnectivityOperation.mockReset().mockResolvedValue({ operationId: "1" });
   });
 
-  it("resolves the station-key result projected through bounded operation progress", async () => {
+  it("reads the typed station-key result after the operation completes", async () => {
     const onEvent = vi.fn();
     generated.getOperationStatus.mockResolvedValueOnce(
       snapshot(
         [
           { sequence: 1, message: "attempt_started protocol=responses model=gpt-4.1-mini" },
-          { sequence: 2, message: `station_key_connectivity.result ${JSON.stringify(result)}` },
         ],
         true,
       ),
@@ -67,6 +68,7 @@ describe("connectivity operation controller", () => {
       stationKeyId: "key-1",
       model: "gpt-4.1-mini",
     });
+    expect(generated.getStationKeyConnectivityOperationResult).toHaveBeenCalledWith({ operationId: "1" });
     expect(onEvent).toHaveBeenCalledWith({
       type: "attemptStarted",
       protocol: "responses",
@@ -90,5 +92,22 @@ describe("connectivity operation controller", () => {
     ).rejects.toBeInstanceOf(ConnectivityOperationCancelledError);
 
     expect(generated.cancelOperation).toHaveBeenCalledWith({ operationId: "1", waitMs: 1000 });
+  });
+
+  it("does not replay a completed operation when its typed result is unavailable", async () => {
+    generated.getOperationStatus.mockResolvedValueOnce(snapshot([], true));
+    generated.getStationKeyConnectivityOperationResult.mockRejectedValueOnce(
+      new Error("The operation outcome could not be confirmed."),
+    );
+
+    await expect(
+      runStationKeyConnectivityOperation(
+        { stationKeyId: "key-1", model: "gpt-4.1-mini" },
+        { pollIntervalMs: 1 },
+      ),
+    ).rejects.toThrow("The operation outcome could not be confirmed.");
+
+    expect(generated.startStationKeyConnectivityOperation).toHaveBeenCalledTimes(1);
+    expect(generated.getStationKeyConnectivityOperationResult).toHaveBeenCalledTimes(1);
   });
 });

@@ -148,8 +148,6 @@ export class DemoBackend implements BackendClient {
   };
   readonly channels: BackendClient["channels"] = {
     listChannelMonitors: () => this.rejectUnsupported("channels"),
-    listChannelMonitorSummaries: () => this.rejectUnsupported("channels"),
-    listChannelStatusSummaries: () => this.rejectUnsupported("channels"),
     createChannelMonitor: () => this.rejectUnsupported("channels"),
     updateChannelMonitor: () => this.rejectUnsupported("channels"),
     deleteChannelMonitor: (_id: string) => this.rejectUnsupported("channels"),
@@ -159,7 +157,6 @@ export class DemoBackend implements BackendClient {
     getChannelMonitorExecution: (_executionId: string) => this.rejectUnsupported("channels"),
     listChannelMonitorAttempts: () => this.rejectUnsupported("channels"),
     listMonitoringCapabilities: () => this.rejectUnsupported("channels"),
-    listChannelMonitorRuns: (_monitorId: string) => this.rejectUnsupported("channels"),
     listChannelMonitorTemplates: () => this.rejectUnsupported("channels"),
     createChannelMonitorTemplate: () => this.rejectUnsupported("channels"),
     updateChannelMonitorTemplate: () => this.rejectUnsupported("channels"),
@@ -191,8 +188,6 @@ export class DemoBackend implements BackendClient {
     reorderStationKeys: (_stationId: string, _keyIds: string[]) => this.rejectUnsupported("station_keys.reorder"),
     listKeyPoolItems: () => this.rejectUnsupported("station_keys.key_pool"),
     reorderKeyPool: (_keyIds: string[]) => this.rejectUnsupported("station_keys.key_pool"),
-    testStationKeyConnectivity: (_stationKeyId: string, _model: string) =>
-      this.rejectUnsupported("station_keys.connectivity"),
     getStationCredentials: (_stationId: string) => this.rejectUnsupported("station_keys.credentials"),
     updateStationCredentials: () => this.rejectUnsupported("station_keys.credentials"),
     clearStationCredentials: (_stationId: string) => this.rejectUnsupported("station_keys.credentials"),

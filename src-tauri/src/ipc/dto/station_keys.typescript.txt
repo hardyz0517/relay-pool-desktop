@@ -4,6 +4,17 @@ export type RemoteStationKeyInputDto = { remoteKeyId: string; stationId: string 
 export type ReorderKeyPoolInputDto = { keyIds: string[] };
 export type ReorderStationKeysInputDto = { stationId: string; keyIds: string[] };
 export type StationKeyConnectivityInputDto = { stationKeyId: string; model: string };
+export type StationKeyConnectivityResponseMode = "stream" | "non_stream_fallback";
+export type StationKeyConnectivityResultDto = {
+  stationKeyId: string;
+  ok: boolean;
+  statusCode: number;
+  durationMs: number;
+  model: string;
+  message: string;
+  responseMode: StationKeyConnectivityResponseMode;
+  streamFallbackReason: string | null;
+};
 
 export type StationKeyStatusInput = "unchecked" | "healthy" | "warning" | "error" | "disabled";
 

@@ -1,17 +1,17 @@
 import {
   cancelOperation,
   getOperationStatus,
+  getStationKeyConnectivityOperationResult,
   startStationKeyConnectivityOperation,
   type OperationProgressDto,
   type OperationSnapshotDto,
   type OperationTerminalDto,
 } from "@/lib/bridge/generated";
 import type {
-  StationKeyConnectivityTestEvent,
+  StationKeyConnectivityProgressEvent,
   StationKeyConnectivityTestResult,
 } from "@/lib/types/stationKeys";
 
-const RESULT_PREFIX = "station_key_connectivity.result ";
 const DEFAULT_POLL_INTERVAL_MS = 600;
 const DEFAULT_CANCEL_WAIT_MS = 1_000;
 
@@ -23,7 +23,7 @@ export type ConnectivityOperationInput = {
 export type ConnectivityOperationRunOptions = {
   pollIntervalMs?: number;
   signal?: AbortSignal;
-  onEvent?: (event: StationKeyConnectivityTestEvent) => void;
+  onEvent?: (event: StationKeyConnectivityProgressEvent) => void;
   onOperationId?: (operationId: string) => void;
 };
 
@@ -42,7 +42,6 @@ export async function runStationKeyConnectivityOperation(
   const started = await startStationKeyConnectivityOperation(input);
   const operationId = started.operationId;
   options.onOperationId?.(operationId);
-  let projectedResult: StationKeyConnectivityTestResult | null = null;
   let lastProgressSequence = 0;
 
   for (;;) {
@@ -54,12 +53,12 @@ export async function runStationKeyConnectivityOperation(
     const snapshot = await getOperationStatus({ operationId });
     for (const progress of newProgress(snapshot, lastProgressSequence)) {
       lastProgressSequence = Math.max(lastProgressSequence, progress.sequence);
-      projectedResult = handleProgress(progress, projectedResult, options.onEvent);
+      handleProgress(progress, options.onEvent);
     }
 
     const terminal = snapshot.terminal ?? terminalFromState(snapshot);
     if (terminal) {
-      return resolveTerminal(terminal, projectedResult, options.onEvent);
+      return resolveTerminal(operationId, terminal, options.onEvent);
     }
 
     try {
@@ -86,73 +85,31 @@ function newProgress(snapshot: OperationSnapshotDto, afterSequence: number) {
 
 function handleProgress(
   progress: OperationProgressDto,
-  currentResult: StationKeyConnectivityTestResult | null,
-  onEvent: ((event: StationKeyConnectivityTestEvent) => void) | undefined,
+  onEvent: ((event: StationKeyConnectivityProgressEvent) => void) | undefined,
 ) {
-  const result = parseConnectivityResult(progress.message);
-  if (result) {
-    return result;
-  }
-
   const attempt = /^attempt_started protocol=(\S+) model=(.+)$/.exec(progress.message);
   if (attempt) {
     onEvent?.({ type: "attemptStarted", protocol: attempt[1], model: attempt[2] });
-    return currentResult;
+    return;
   }
 
   const fallback = /^fallback reason=(.*)$/.exec(progress.message);
   if (fallback) {
     onEvent?.({ type: "fallback", reason: fallback[1] });
   }
-  return currentResult;
-}
-
-function parseConnectivityResult(message: string): StationKeyConnectivityTestResult | null {
-  if (!message.startsWith(RESULT_PREFIX)) {
-    return null;
-  }
-  try {
-    const raw = JSON.parse(message.slice(RESULT_PREFIX.length)) as Partial<StationKeyConnectivityTestResult>;
-    if (
-      typeof raw.stationKeyId === "string" &&
-      typeof raw.ok === "boolean" &&
-      typeof raw.statusCode === "number" &&
-      typeof raw.durationMs === "number" &&
-      typeof raw.model === "string" &&
-      typeof raw.message === "string" &&
-      (raw.responseMode === "stream" || raw.responseMode === "non_stream_fallback") &&
-      (raw.streamFallbackReason === null || typeof raw.streamFallbackReason === "string")
-    ) {
-      return {
-        stationKeyId: raw.stationKeyId,
-        ok: raw.ok,
-        statusCode: raw.statusCode,
-        durationMs: raw.durationMs,
-        model: raw.model,
-        message: raw.message,
-        responseMode: raw.responseMode,
-        streamFallbackReason: raw.streamFallbackReason ?? null,
-      };
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 function terminalFromState(snapshot: OperationSnapshotDto): OperationTerminalDto | null {
   return snapshot.state.state === "terminal" ? snapshot.state.terminal : null;
 }
 
-function resolveTerminal(
+async function resolveTerminal(
+  operationId: string,
   terminal: OperationTerminalDto,
-  result: StationKeyConnectivityTestResult | null,
-  onEvent: ((event: StationKeyConnectivityTestEvent) => void) | undefined,
-) {
+  onEvent: ((event: StationKeyConnectivityProgressEvent) => void) | undefined,
+): Promise<StationKeyConnectivityTestResult> {
   if (terminal.terminal === "completed") {
-    if (!result) {
-      throw new Error("Connectivity operation completed without a result projection");
-    }
+    const result = await getStationKeyConnectivityOperationResult({ operationId });
     onEvent?.({ type: "completed", ok: result.ok });
     return result;
   }
@@ -175,7 +132,7 @@ function terminalMessage(terminal: OperationTerminalDto) {
     case "cancelled":
       return "Connectivity operation was cancelled";
     case "completed":
-      return "Connectivity operation completed without a result projection";
+      return "Connectivity operation completed without a result";
   }
 }
 

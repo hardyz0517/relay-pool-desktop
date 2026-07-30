@@ -437,10 +437,8 @@ pub fn run() {
                     );
                     let request_logs_command_facade =
                         app_composition::compose_request_logs_command_facade(&app_services);
-                    let monitoring_runner = services::monitoring::runner::compose_monitoring_runner(
-                        &app_services,
-                        outbound_client.clone(),
-                    );
+                    let monitoring_runner =
+                        services::monitoring::runner::compose_monitoring_runner(&app_services);
                     let channel_monitoring_command_facade =
                         app_composition::compose_channel_monitoring_command_facade(
                             &app_services,
@@ -469,7 +467,6 @@ pub fn run() {
                     let station_key_connectivity_command_facade =
                         app_composition::compose_station_key_connectivity_command_facade(
                             &app_services,
-                            outbound_client.clone(),
                         );
                     let capture_command_facade = app_composition::compose_capture_command_facade(
                         &app_services,
@@ -516,14 +513,6 @@ pub fn run() {
                     .map_err(|error| {
                         format!("failed to recover interrupted monitor executions: {error}")
                     })?;
-                    tauri::async_runtime::block_on(
-                        app_services
-                            .monitoring
-                            .repair_pending_monitoring_rollups(1_000),
-                    )
-                    .map_err(|error| {
-                        format!("failed to repair pending monitor rollups: {error}")
-                    })?;
                     let settings = tauri::async_runtime::block_on(app_services.settings.load())
                         .map_err(|error| format!("failed to load application settings: {error}"))?;
                     app.state::<Arc<TrayBehaviorState>>()
@@ -534,6 +523,27 @@ pub fn run() {
                         work_runtime,
                     )
                     .map_err(|error| format!("failed to register work runtime: {error}"))?;
+                    let installation_hash = active_data_dir
+                        .display()
+                        .to_string()
+                        .bytes()
+                        .fold(0xcbf29ce484222325_u64, |hash, byte| hash ^ u64::from(byte));
+                    let maintenance_task =
+                        services::monitoring::maintenance::register_monitoring_maintenance_task(
+                            &supervisor_handle,
+                            app_services.monitoring.clone(),
+                            services::monitoring::maintenance::MonitoringMaintenanceConfig::default(
+                            ),
+                            installation_hash,
+                        )
+                        .map_err(|error| {
+                            format!("failed to register monitoring maintenance: {error}")
+                        })?;
+                    supervisor_handle
+                        .start(&maintenance_task)
+                        .map_err(|error| {
+                            format!("failed to start monitoring maintenance: {error}")
+                        })?;
                     let monitoring_runner_state =
                         services::monitoring::runner::MonitoringRunnerState::start(
                             supervisor_handle.clone(),

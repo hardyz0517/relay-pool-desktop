@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "3dba6bea86aebfe0af99571ac22016d4f1b1992bc3392281511d3271761949e6",
+  "contract_hash": "c394e7f643f1cec50272aadc7f3ef0f8b9b1b531f69501ccfa6414fee4bdfab5",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -643,6 +643,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "get_station_key_connectivity_operation_result",
+      "transport": "ordinary",
+      "input_schema_hash": "66f06d3bb1280295c2d4f5b569d7cc25b99a91b4954cefd6364da6e9706d4ed8",
+      "output_schema_hash": "2279d689dae73ea8a82f0df2cf39c997f4e810a738393335a6f8c8b1a55f138b",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "get_station_key_health",
       "transport": "ordinary",
       "input_schema_hash": "332a4dacba9c9453538fdae465c6148eb13ffdd14796e50d758185fa2b83ff03",
@@ -753,17 +764,6 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
-      "name": "list_channel_monitor_summaries",
-      "transport": "ordinary",
-      "input_schema_hash": "316b67471f448e278bbdfe45f3cf7df8f8d36e3c489f994371200c182d4e847f",
-      "output_schema_hash": "808f0e51fc2a5db9f7587dd0d6d9b5d6c82c8b562dfdbe0f8a97d22a2b622199",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
       "name": "list_channel_monitor_templates",
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
@@ -779,17 +779,6 @@
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "761e459d9df284e55f568bae012718a5c63a7486c47674391bb38995173d21fb",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "list_channel_status_summaries",
-      "transport": "ordinary",
-      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
-      "output_schema_hash": "2d25fe4abafc778c105586f005f010dd10194236cd49fdab49a4a2415f8dd4e2",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -1358,17 +1347,6 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
-      "name": "test_station_key_connectivity",
-      "transport": "ordinary",
-      "input_schema_hash": "37b6b0cff8a3c94f7e463d4b542c569430560b07e7d3b987b11fc0df24e48eb6",
-      "output_schema_hash": "1b31f6336b65f1d3091915c4fbb64eed1a76fef457f78c175ea28c702df3279f",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "non_idempotent",
-      "transport_retry": false,
-      "result_unknown": true,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
       "name": "test_station_login",
       "transport": "ordinary",
       "input_schema_hash": "08e5b676bfd39c5d4107a185f30d66f6475773d99a97718a26a625d8ef2c1847",
@@ -1611,16 +1589,9 @@
       "runtime_validation": "rust_dto_pre_application"
     }
   ],
-  "streaming_surfaces": [
-    {
-      "command": "test_station_key_connectivity",
-      "event": "StationKeyConnectivityTestEvent",
-      "event_schema_version": 1,
-      "transport": "channel"
-    }
-  ],
+  "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "ca0c151500c4ae10b6e6a247efa9a0ea41f81e5b506f9fb2c5f0175a814a4483"
+    "serialization_fixture_hash": "97c09d8392a0c1fdcde0b965d7dec220f17f2c00f6e30347da4c4d2d23ab7508"
   }
 }
