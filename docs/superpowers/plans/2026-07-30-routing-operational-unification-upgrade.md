@@ -33,7 +33,7 @@ Canonical facts/evidence
 - capacity miss、actual attempt failure、wait wake-up 和 execution-fence rebuild 使用不同状态，不互相冒充；
 - attempt/protocol 与 request/delivery 生命周期独立终结且顺序可证明；
 - monitoring、collector、pricing、routing、logs 和 UI 消费同源 facts/projections；
-- 预迁移检查点、正式 cutover、开发期重来恢复策略和 debug-only legacy runtime 均按目标规范执行；
+- 预迁移检查点、正式 cutover 和开发期重来恢复策略均按目标规范执行；已删除的 debug-only legacy runtime、环境入口和 request-coupled finalization 不得回流；
 - Stage 7 的 architecture、migration、fault、concurrency、performance、soak、授权真实客户端和开发期本地自检全部退出 0；这些检查不构成 release gate、安装升级矩阵或旧二进制回滚承诺。
 
 ## 2. 执行纪律
@@ -44,7 +44,7 @@ Canonical facts/evidence
 4. 不使用 `git add .` 或 `git add -A`。提交时只 stage 当前 Task 的明确路径；重叠文件使用 `git add -p`，并检查 `git diff --cached --check` 和 `git diff --cached`。
 5. Stage 1-4 不接 production composition，不对真实请求双 selector、双 acquire、双 feedback 或双写；验证只使用 pure fixtures、read-only diagnostics 和 loopback harness。
 6. Stage 5 与 Stage 6 可以分 commit/review，但不能拆成两个对用户可见的混合版本。cutover candidate 必须同时完成 data-plane cutover、UI 语义切换和 default-v2 旧路径删除。
-7. `RELAY_POOL_PROXY_RUNTIME=legacy` 只按 `PROJECT_PLAN.md` 作为 process-start 级、debug-only 的完整旧 owner；不得拼接新组件、自动 fallback、进入 UI 或掩盖 default v2 红项。
+7. `RELAY_POOL_PROXY_RUNTIME=legacy`、process-start debug legacy runtime 和 request-coupled finalization 已按开发期 reset/reimport/重新配置恢复决策删除；不得重新作为 fallback、UI 设置、诊断捷径或第二 owner 接回。
 8. 所有 queue、registry、candidate set、fan-out、wait、retry、trace、background task 和 response body 都必须有硬上限和 shutdown 行为。
 9. fixture、日志、trace、截图和 self-check artifact 不得包含 API key、Cookie、Authorization、完整 URL query/userinfo、完整 prompt/response 或可还原账号身份的数据。
 10. 真实 provider 验证必须单独授权、低频、有预算、从环境解析 secret，不进入默认 CI，也不能把原始响应保存进仓库。
@@ -68,7 +68,7 @@ Stage 0 baseline + ADR freeze
   -> Stage 6 integrated UI + old default-v2 path deletion
   -> ONE CUTOVER CANDIDATE for Stage 5+6
   -> Stage 7 local self-check/reset-reimport proof
-  -> later debug legacy runtime deletion ticket after required observation or explicit dev reset decision
+  -> Task 28 debug legacy runtime deletion applied under explicit dev reset decision
 ```
 
 以下情况必须停止推进，不得临场绕过：
@@ -112,7 +112,7 @@ Stage 0 baseline + ADR freeze
   -> 25 Security/history migration
   -> 26 Full fault/performance/soak development self-check
   -> 27 Local self-check and reset/reimport proof
-  -> 28 Debug legacy runtime deletion follow-up (separate precondition)
+  -> 28 Debug legacy runtime deletion and anti-regression gate
 ```
 
 Tasks 4-7 可以在 Task 3 后并行开发，但 Task 8 必须等四者的类型和 precedence fixtures 全部冻结。其余 Task 默认按编号顺序执行。
@@ -1155,10 +1155,10 @@ pnpm.cmd test:contracts
 - [ ] default-v2 production test 从真实 ingress 到 loopback upstream，证明只经过新 fact reader/projectors/planner/controller/outcome orchestrator。
 - [ ] 每个 SelectedRoute 都有真实 composite lease、reserved FinishAttempt permit 和 revision-fenced target；任何缺失都 fail closed。
 - [ ] production build 不能引用 test-only scheduler facade、simulated acquire、static ordered candidate fallback 或 preload-secret candidate。
-- [ ] default-v2 每个 terminal 只提交新 typed outcome command；旧 `finish_attempt`/`finish_request` compatibility mapping 只允许 isolated debug legacy owner 调用，不能与新 effect/cost transaction 双写。
+- [ ] default-v2 每个 terminal 只提交新 typed outcome command；旧 `finish_attempt`/`finish_request` compatibility mapping 不得由第二 runtime 调用，也不能与新 effect/cost transaction 双写。
 - [ ] lifecycle writer unhealthy、fact reader unavailable、config required、candidate limit 和 startup invariant 都阻止新 upstream admission。
 - [ ] persistence ready 后先完成 request lifecycle reconciliation，再发布 proxy ready/start admission；reconciliation 失败时 UI 可显示 typed startup failure，但不能启动本地转发。
-- [ ] process-start debug legacy runtime 若仍保留，构造完整旧 composition；它与 default-v2 无共享 selector/lease/feedback/write path，也不是请求级自动 fallback。
+- [ ] process-start debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 入口和 request-coupled finalization 已删除，并由反回流门禁证明不能重新成为 fallback 或第二 owner。
 - [ ] shutdown 严格执行：stop admission -> stop monitor/collector schedule -> wake/cancel waiters -> drain attempts/runs -> release leases -> close producers -> drain writers -> close persistence。
 - [ ] Stage 5 transaction/writer blocker 不自动回到 legacy 或双写。
 
@@ -1274,15 +1274,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operatio
 
 **Deletion checklist:**
 
-- [ ] 删除 default-v2 第二套 selector/score/weighted random/legacy weights reader；保留的 compatibility config 只能供 isolated debug owner 或未来稳定发布 ADR 明确要求的兼容检查使用。
-- [ ] 删除 default-v2 旧 `scheduler/{affinity,metrics,capacity,scoring,selection}` runtime 及其 feedback/bind facade；若观察期仍需 debug legacy，则整套原样移动到 `services/proxy/legacy_runtime/`，只允许 process-start legacy composition import，并登记 Task 28 删除。
+- [ ] 删除 default-v2 第二套 selector/score/weighted random/legacy weights reader；保留的 compatibility config 只能供 import/export、历史只读 projection 或未来稳定发布 ADR 明确要求的兼容检查使用。
+- [ ] 删除 default-v2 旧 `scheduler/{affinity,metrics,capacity,scoring,selection}` runtime 及其 feedback/bind facade；不得把旧 runtime 原样移动成 process-start legacy composition。
 - [ ] 删除 acquire 后立即 release 的 simulated capacity 与 `slot unavailable -> ordered candidate` 语义。
 - [ ] 删除 proxy 对静态 candidate IDs 的遍历 fallback；所有 fallback 由 controller replan 驱动。
 - [ ] 删除 candidate 构造阶段全量 credential 解密、full endpoint URL 携带和 routing DTO 被 monitoring 复用的路径。
 - [ ] 删除 duplicate group/multiplier/pricing/capability resolver 和 frontend authoritative matcher。
 - [ ] 删除 planner failure -> string -> internal 500 与 arbitrary error-body health classification。
 - [ ] 删除已迁移 IPC/read-model adapter、test-only facade、unused fields/imports/feature flags；每项在 ledger 标记 commit 与 gate。
-- [ ] compatibility cache 若因 debug 观察或未来稳定发布 ADR 暂留，必须有只读 owner、expiry condition 和独立删除票据，不能参与 default-v2 truth。
+- [ ] compatibility cache 若因 import/export、历史只读 projection 或未来稳定发布 ADR 暂留，必须有只读 owner、expiry condition 和独立删除票据，不能参与 default-v2 truth。
 
 **Architecture gates:**
 
@@ -1305,7 +1305,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operatio
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-**Exit gate:** default-v2 old paths 物理删除且有反回流门禁；剩余 debug legacy runtime 是完整隔离 owner，并由 Task 28 单独治理。
+**Exit gate:** default-v2 old paths、debug legacy runtime 入口和 request-coupled finalization 物理删除且有反回流门禁；不存在需要 Task 28 另行托管的第二 runtime owner。
 
 **Commit:** `refactor: remove default v2 routing legacy paths`
 
@@ -1494,39 +1494,35 @@ node scripts/routing-operational-qualification.mjs
 
 **Commit:** `docs: record unified routing operational local self-check`
 
-## 35. Task 28：登记并执行 debug legacy runtime 后续删除票据
+## 35. Task 28：执行 debug legacy runtime 删除与反回流门禁
 
-**Depends on:** 不是本次 cutover 的组成部分；必须满足本计划规定的 default-v2 本地 observation/soak、真实客户端、reset/reimport 和 deletion ledger 证据。开发期不要求正式发布后观察门禁，也不要求安装升级矩阵或旧 binary rollback。
+**Depends on:** Tasks 22-27 的可用本地自检证据，以及 2026-07-31 开发期恢复决策。当前项目不是稳定成型产品；不要求正式发布后观察门禁、签名安装包、安装升级矩阵或旧 binary rollback。结构性不可恢复状态的受支持路径是 stop admission 后 reset/reimport/重新配置。
 
 **Files:**
 
-- Create/update: deletion ticket/ledger entry with owner、deadline、evidence and exact paths
-- Later modify/delete: process-start legacy runtime composition and `RELAY_POOL_PROXY_RUNTIME=legacy`
+- Update: deletion ledger entry with owner、evidence、exact deleted paths and anti-regression gates
+- Delete/forbid: process-start legacy runtime composition, `RELAY_POOL_PROXY_RUNTIME=legacy`, request-coupled finalization branch and dedicated tests/docs/dependencies
 - Modify: `docs/PROJECT_PLAN.md`
 - Extend: default-v2 single-owner architecture gates
 
-**Ticket acceptance before code deletion:**
+**Deletion acceptance:**
 
-- [ ] default-v2 完成本地观察期，真实客户端、provider、sleep/resume、reset/reimport 无未决 P0/P1。
-- [ ] support/debug 记录证明 legacy process-start runtime 不再是必要诊断手段。
-- [ ] debug legacy runtime 已不再承担开发期恢复职责；删除不会破坏受支持的 reset/reimport 路径。
-- [ ] ledger 列出 legacy composition、env switch、tests、docs、compat config consumers 与最终 migration owner，不只删除入口字符串。
-
-**Deletion execution:**
-
-- [ ] 删除完整 debug legacy composition、环境开关、专属 tests/docs/dependencies 和仅服务于它的 compatibility adapter。
+- [ ] 删除完整 debug legacy composition、环境开关、专属 tests/docs/dependencies 和仅服务于它的 compatibility adapter，不只删除入口字符串。
+- [ ] 删除 request-coupled finalization；response body 只保留 dual-terminal finalization path。
 - [ ] 保留仍有历史数据语义的 compatibility fields 时，迁移到只读 projection 或明确清理；不得让 default-v2 重读 legacy policy。
-- [ ] architecture gate 禁止 legacy runtime symbol/env/config owner 回流。
-- [ ] 重跑 production composition、upgrade fixture、build/check 和真实客户端 smoke tests。
+- [ ] architecture/doc gate 禁止 legacy runtime symbol/env/config owner、isolated debug legacy owner 叙述和 request-coupled finalization 回流。
+- [ ] manual observations 仍用于信心记录，但不能成为保留第二 runtime/finalizer 的理由。
+- [ ] 重跑 production composition、local proxy boundary、manual observation ledger、build/check 和 local self-check。
 
-**Run when ticket preconditions are met:**
+**Run:**
 
 ```powershell
 node scripts/routing-single-owner.test.mjs
 node scripts/local-proxy-v2-boundary.test.mjs
+node scripts/routing-operational-legacy-doc-consistency.test.mjs
 pnpm.cmd test:contracts
-pnpm.cmd build
 cargo check --locked --manifest-path src-tauri/Cargo.toml
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1
 ```
 
 **Exit gate:** debug legacy runtime 及其专属债务物理删除，support 文档指向受支持的 reset/reimport 流程；稳定产品阶段若需要 binary rollback，另开 ADR 重新定义。
@@ -1599,14 +1595,13 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 - arbitrary string/body failure classification 与 planner string-to-500 路径；
 - 已完成迁移的 temporary adapter、test-only production facade 和 boundary exceptions。
 
-**在 debug 观察窗口或未来稳定发布 ADR 明确要求时允许暂留，但必须隔离：**
+**在 import/export、历史只读 projection 或未来稳定发布 ADR 明确要求时允许暂留，但必须隔离：**
 
 - import/export、debug 观察或未来稳定发布 ADR 可能需要的 legacy config values；
-- debug-only、process-start 级完整 legacy runtime；
 - 只读 legacy request cost/trace compatibility projection；
-- 尚在 debug 观察期或稳定发布 ADR 允许期内的 compatibility cache。
+- 未来稳定发布 ADR 允许期内的 compatibility cache。
 
-允许保留项不得进入 default-v2 selection、pricing、feedback、capacity、read-model truth 或 UI 设置。每项必须在 deletion ledger 有 owner、理由、最后使用者、删除前置条件和截止版本；Task 28 结束后相应项归零。
+允许保留项不得进入 default-v2 selection、pricing、feedback、capacity、read-model truth 或 UI 设置。每项必须在 deletion ledger 有 owner、理由、最后使用者、删除前置条件和截止版本；Task 28 结束后 debug legacy runtime/env/finalizer 项归零。
 
 **明确长期保留并复用：**
 
@@ -1645,7 +1640,7 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 | E 生命周期闭环 | 19-21 | outcome domain 与 harness fixtures 可分工 | 完整 loopback，无 production cutover |
 | F 原子切换 | 22-25 | UI 与 deletion review 可预备，不可提前交付 | 一个 Stage 5+6 cutover candidate，单 owner + security migration |
 | G 本地自检 | 26-27 | performance、security、reset/reimport fixtures 可并行执行 | fault/soak/build/授权真实 E2E 后完成本地 self-check |
-| H 后续清债 | 28 | 无 | 满足观察门禁后删除 debug legacy runtime |
+| H 后续清债 | 28 | 无 | 按开发期 reset/reimport 决策删除 debug legacy runtime 并建立反回流门禁 |
 
 推荐评审至少设置六个强制切点：ADR/ownership、projector contracts、预迁移 checkpoint、planner/capacity kernel、outcome/loopback、production cutover/deletion。F 批次内部可以多 commit，但只能形成一个 production owner；不得为了减少单次 diff 而交付混合 composition。
 
@@ -1653,7 +1648,7 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 
 最终只有以下全部为真才能关闭升级：
 
-- Tasks 0-27 均为 `complete`；Task 28 已有满足格式的独立票据，若其观察前置条件已满足则也完成删除；
+- Tasks 0-28 均为 `complete`；debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 和 request-coupled finalization 已删除且有反回流门禁；
 - 第 37 节 26 行均有实际自动化和 production/E2E 证据；
 - pre-migration checkpoint 与 Stage 5+6 cutover candidate 的顺序可从 commit 证明；
 - Tauri/Rust build checks、local self-check verification、reset/reimport recovery、1 小时 soak 和授权真实客户端验证退出 0；

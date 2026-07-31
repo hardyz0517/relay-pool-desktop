@@ -1126,15 +1126,17 @@ src-tauri/src/application/queries/
 
 `station_keys.rate_multiplier` 等兼容字段继续遵守 field ownership ledger。新 projector 只按批准的 fallback 读取；所有消费者迁移并经过开发期观察窗口、reset/reimport 验证后才能单独提删除票据。未来稳定产品若需要更长兼容期，由发布 ADR 重新定义。
 
-### 14.4 与 debug-only legacy proxy runtime 的边界
+### 14.4 与已删除 debug-only legacy proxy runtime 的边界
 
-`PROJECT_PLAN.md` 当前允许 debug build 通过 `RELAY_POOL_PROXY_RUNTIME=legacy` 回到上一完整 proxy owner。结合 2026-07-31 决策，默认 v2 不再要求先完成一次公开真实发布回归才能删除 debug legacy；删除前只要求本地 observation/soak、reset/reimport 和 deletion ledger 证据。该开发期清理条件必须满足：
+`PROJECT_PLAN.md` 现已明确：默认且唯一运行 v2 runtime。结合 2026-07-31 开发期恢复决策，项目不再为了旧 binary rollback、安装升级矩阵或发布后观察期保留 debug legacy runtime。`RELAY_POOL_PROXY_RUNTIME=legacy`、process-start legacy composition 和 request-coupled finalization 均属于已删除债务；结构性不可恢复状态的受支持路径是 stop admission 后 reset/reimport/重新配置。
 
-- legacy runtime 只能是完整旧 composition，不能拼接新 planner + 旧 feedback、旧 selector + 新 lease 等混合组件；
-- 不按 request 动态切换，不进入 UI，不作为 writer failure 时的自动 fallback，也不扩展其功能；
-- Stage 5/6 必须删除 default v2 内部的旧 selector/score/静态 fallback；“cutover candidate 不留不可达 legacy”特指这些同 composition 残留，不误指由当前 master plan 单独治理的 debug runtime；
-- debug runtime 的真实删除继续遵守本地观察窗口与独立 deletion ticket，完成后同步收紧 architecture gate；
-- 本地自检报告必须分别声明 default v2 与 debug legacy 的可达性，不能用 debug fallback 掩盖 default v2 未通过的测试。
+该边界必须满足：
+
+- 不存在按 request 或 process-start 切回 legacy runtime 的入口；
+- 不存在新 planner + 旧 feedback、旧 selector + 新 lease、旧 finalizer + 新 outcome writer 等混合组件；
+- debug legacy runtime 不进入 UI，不作为 writer/fact reader/capacity failure 的自动 fallback，也不作为诊断捷径保留；
+- Stage 5/6 必须删除 default v2 内部的旧 selector/score/静态 fallback；Task 28 必须删除 debug legacy runtime/env/finalizer 并同步收紧 architecture/doc gates；
+- 本地自检报告只声明 default v2 的可达性；manual observations 仍可作为信心证据，但不能成为保留第二 runtime/finalizer 的理由。
 
 ## 15. 外部项目的取舍
 
@@ -1479,7 +1481,7 @@ Stage 2/3 若进入预迁移 checkpoint，simulator 必须标记 `hierarchical_v
 
 退出条件：用户能从任一异常定位到路由影响和具体请求；仓库内只有一个 production fact resolution、selection、capacity、feedback 和 pricing settlement path。
 
-Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可见版本发布；进入本地自检的 source snapshot 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。这里的 source snapshot 只用于开发期诊断，不冻结发布候选。debug-only legacy runtime 的例外严格按 14.4 管理。
+Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可见版本发布；进入本地自检的 source snapshot 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。这里的 source snapshot 只用于开发期诊断，不冻结发布候选。debug-only legacy runtime 不再是例外项；它按 14.4 删除并由反回流门禁保护。
 
 ### Stage 7：开发期本地自检
 
@@ -1636,7 +1638,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 12. decision trace 能解释每层过滤、选择、slot、wait、fallback 和 outcome。
 13. 状态、价格、采集、Key 池、路由和日志通过后端 read models 与 deep links 一体化。
 14. 所有 queue、wait、retry、trace、registry 和后台 fan-out 有明确上限。
-15. default production composition 不存在第二套 selector、pricing resolver、feedback、capacity 或 frontend truth；既有 debug-only legacy runtime 若仍在观察期，只能作为完全隔离的旧 owner 并有独立删除票据。
+15. default production composition 不存在第二套 selector、pricing resolver、feedback、capacity、frontend truth、debug-only legacy runtime 或 request-coupled finalizer；已删除入口由反回流门禁保护。
 16. legacy weights、compatibility caches 和临时 adapter 均有 deletion ledger，不形成永久双轨。
 17. architecture gates、Rust/TypeScript tests、migration、fault、concurrency、soak、optimized Rust build 和真实 E2E 全部通过。
 18. 日志、trace、UI、错误和快照不泄露 API key、cookie、token、完整 header 或用户 payload。
