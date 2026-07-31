@@ -35,6 +35,7 @@ const serviceBoundaryForbidden = [
 checkFiles(listExistingRustFiles(adapterRoot), serviceBoundaryForbidden);
 checkFiles(listExistingRustFiles(profileRoot), serviceBoundaryForbidden);
 checkProductionMonitorRunnerCutover(monitoringRunnerService);
+checkProductionStatusQueriesCutover();
 checkLegacyRunFrontendIsolation();
 checkLegacyRustFixtureIsolation();
 
@@ -129,7 +130,6 @@ function checkLegacyRustFixtureIsolation() {
   const moduleFiles = [
     [join(root, "src-tauri", "src", "services", "monitoring", "mod.rs"), ["runtime", "scheduler"]],
     [join(root, "src-tauri", "src", "application", "monitoring", "mod.rs"), ["retention"]],
-    [join(root, "src-tauri", "src", "persistence", "stores", "monitoring", "mod.rs"), ["status_queries"]],
   ];
   for (const [file, modules] of moduleFiles) {
     const source = readFileSync(file, "utf8");
@@ -140,6 +140,46 @@ function checkLegacyRustFixtureIsolation() {
       }
     }
   }
+}
+
+function checkProductionStatusQueriesCutover() {
+  const applicationQueries = join(root, "src-tauri", "src", "application", "monitoring", "queries.rs");
+  const persistenceModule = join(root, "src-tauri", "src", "persistence", "stores", "monitoring", "mod.rs");
+  const persistenceQueries = join(root, "src-tauri", "src", "persistence", "stores", "monitoring", "status_queries.rs");
+
+  if (!existsSync(applicationQueries)) {
+    failures.push(`${applicationQueries}: monitoring status read model query boundary is missing`);
+    return;
+  }
+  if (!existsSync(persistenceQueries)) {
+    failures.push(`${persistenceQueries}: production monitoring status query repository is missing`);
+    return;
+  }
+
+  const applicationSource = stripRustCfgTestModule(readFileSync(applicationQueries, "utf8"));
+  if (/\bsqlx\b|sqlx::|QueryBuilder|SqliteConnection/u.test(applicationSource)) {
+    failures.push(`${applicationQueries}: application status read model must use persistence repository instead of SQLx`);
+  }
+  if (!applicationSource.includes("MonitoringStatusQueryRepository")) {
+    failures.push(`${applicationQueries}: application status read model must compose MonitoringStatusQueryRepository`);
+  }
+
+  const moduleSource = readFileSync(persistenceModule, "utf8");
+  if (!/(?:pub(?:\(crate\))?\s+)?mod\s+status_queries\s*;/u.test(moduleSource)) {
+    failures.push(`${persistenceModule}: production monitoring store module must expose status_queries repository`);
+  }
+
+  const persistenceSource = readFileSync(persistenceQueries, "utf8");
+  if (!persistenceSource.includes("pub(crate) struct MonitoringStatusQueryRepository")) {
+    failures.push(`${persistenceQueries}: status_queries must define the production query repository`);
+  }
+  if (!/\bsqlx\b|sqlx::|QueryBuilder|SqliteConnection/u.test(persistenceSource)) {
+    failures.push(`${persistenceQueries}: production query repository must own the monitoring SQL boundary`);
+  }
+}
+
+function stripRustCfgTestModule(source) {
+  return source.replace(/\r?\n#\[cfg\(test\)\]\s*mod\s+tests\s*\{[\s\S]*$/u, "\n");
 }
 
 function listSourceFiles(dir) {

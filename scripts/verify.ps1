@@ -48,6 +48,8 @@ function Invoke-ArchitectureGates {
     Invoke-Checked "Production build entries" node @("scripts/architecture/check-build-entries.mjs")
     Invoke-Checked "Artifact policy" node @("scripts/architecture/check-artifact-policy.mjs")
     Invoke-Checked "Dependency lifecycle" node @("scripts/architecture/check-dependency-lifecycle.mjs")
+    Invoke-Checked "Persistence startup upgrade architecture" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "persistence_architecture", "startup_upgrade", "--", "--nocapture")
+    Invoke-Checked "Persistence normal startup architecture" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "persistence_architecture", "normal_startup", "--", "--nocapture")
 }
 
 function Invoke-PortableMigrationReleaseGates {

@@ -450,7 +450,7 @@ async fn remote_key_binding_rejects_cross_station_keys() {
         .await
         .expect("second key");
     let mut remote_row = remote_key_row(&first_station.id, "remote-a");
-    remote_row.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint("sk-a");
+    remote_row.api_key_fingerprint = crate::models::remote_keys::api_key_fingerprint("sk-a");
     let remote = service
         .upsert_remote_station_key(remote_row)
         .await
@@ -504,7 +504,7 @@ async fn remote_key_relationship_follows_secret_identity_and_cannot_be_manually_
         .await
         .expect("other key");
     let mut remote_row = remote_key_row(&station.id, "remote-identity");
-    remote_row.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint("sk-exact");
+    remote_row.api_key_fingerprint = crate::models::remote_keys::api_key_fingerprint("sk-exact");
     let remote = service
         .upsert_remote_station_key(remote_row)
         .await
@@ -594,7 +594,7 @@ async fn importing_remote_key_preserves_adapter_discovery_order() {
         remote_key_id_hash: Some(format!("{id}-hash")),
         remote_key_name: Some(id.to_string()),
         api_key_masked: Some("sk-***mote".to_string()),
-        api_key_fingerprint: crate::services::remote_keys::api_key_fingerprint(full_key),
+        api_key_fingerprint: crate::models::remote_keys::api_key_fingerprint(full_key),
         group_id_hash: None,
         group_name: None,
         tier_label: None,

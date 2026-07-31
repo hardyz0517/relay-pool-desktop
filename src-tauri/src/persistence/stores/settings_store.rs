@@ -10,7 +10,7 @@ use crate::{
     persistence::{
         error::PersistenceError,
         read_session::ReadSession,
-        settings_compat::{canonical_tray_behavior, repair_legacy_settings},
+        settings_compat::canonical_tray_behavior,
         stores::credential_store::{
             EncryptedSecretRow, StoredEncryptedSecret as CredentialStoredEncryptedSecret,
         },
@@ -41,36 +41,6 @@ impl SettingsStore {
         settings_from_connection(read.connection(), data_dir, pending_data_dir).await
     }
 
-    pub(crate) async fn ensure_local_access_key(
-        &self,
-        write: &mut WriteSession,
-        generated: &str,
-        insecure_placeholder: &str,
-        now: &str,
-    ) -> Result<String, PersistenceError> {
-        sqlx::query_scalar::<_, String>(
-            r#"
-            UPDATE settings
-            SET value = CASE
-                    WHEN TRIM(value) = '' OR value = ?1 THEN ?2
-                    ELSE value
-                END,
-                updated_at = CASE
-                    WHEN TRIM(value) = '' OR value = ?1 THEN ?3
-                    ELSE updated_at
-                END
-            WHERE key = 'local_key'
-            RETURNING value
-            "#,
-        )
-        .bind(insecure_placeholder)
-        .bind(generated)
-        .bind(now)
-        .fetch_optional(write.connection())
-        .await?
-        .ok_or(PersistenceError::NotFound)
-    }
-
     pub(crate) async fn local_access_key_secret(
         &self,
         read: &mut ReadSession,
@@ -85,7 +55,7 @@ impl SettingsStore {
         local_access_key_secret_from_connection(write.connection()).await
     }
 
-    pub(crate) async fn legacy_local_access_key_value(
+    pub(crate) async fn local_access_key_setting_value(
         &self,
         write: &mut WriteSession,
     ) -> Result<String, PersistenceError> {
@@ -321,13 +291,6 @@ impl SettingsStore {
             }
         }
         Ok(())
-    }
-
-    pub(crate) async fn repair_legacy_settings(
-        &self,
-        write: &mut WriteSession,
-    ) -> Result<u64, PersistenceError> {
-        repair_legacy_settings(write).await
     }
 }
 

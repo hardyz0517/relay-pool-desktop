@@ -48,9 +48,22 @@ pub(crate) struct StationKeyConnectivityResult {
     pub(crate) stream_fallback_reason: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct StationKeyModelDiscoveryResult {
+    pub(crate) station_key_id: String,
+    pub(crate) models: Vec<String>,
+}
+
 #[derive(Clone)]
 struct StationKeyConnectivityResultStore {
     inner: Arc<Mutex<StationKeyConnectivityResultStoreInner>>,
+    ttl: Duration,
+    capacity: usize,
+}
+
+#[derive(Clone)]
+struct StationKeyModelDiscoveryResultStore {
+    inner: Arc<Mutex<StationKeyModelDiscoveryResultStoreInner>>,
     ttl: Duration,
     capacity: usize,
 }
@@ -61,8 +74,19 @@ struct StationKeyConnectivityResultStoreInner {
     insertion_order: VecDeque<OperationId>,
 }
 
+#[derive(Default)]
+struct StationKeyModelDiscoveryResultStoreInner {
+    entries: BTreeMap<OperationId, StationKeyModelDiscoveryResultEntry>,
+    insertion_order: VecDeque<OperationId>,
+}
+
 struct StationKeyConnectivityResultEntry {
     result: StationKeyConnectivityResult,
+    recorded_at: Instant,
+}
+
+struct StationKeyModelDiscoveryResultEntry {
+    result: StationKeyModelDiscoveryResult,
     recorded_at: Instant,
 }
 
@@ -70,6 +94,18 @@ impl Default for StationKeyConnectivityResultStore {
     fn default() -> Self {
         Self {
             inner: Arc::new(Mutex::new(StationKeyConnectivityResultStoreInner::default())),
+            ttl: CONNECTIVITY_RESULT_TTL,
+            capacity: CONNECTIVITY_RESULT_CAPACITY,
+        }
+    }
+}
+
+impl Default for StationKeyModelDiscoveryResultStore {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(
+                StationKeyModelDiscoveryResultStoreInner::default(),
+            )),
             ttl: CONNECTIVITY_RESULT_TTL,
             capacity: CONNECTIVITY_RESULT_CAPACITY,
         }
@@ -125,11 +161,67 @@ impl StationKeyConnectivityResultStore {
     }
 }
 
+impl StationKeyModelDiscoveryResultStore {
+    fn insert(&self, operation_id: OperationId, result: StationKeyModelDiscoveryResult) {
+        let now = Instant::now();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("model discovery result store mutex");
+        self.prune_locked(&mut inner, now);
+        if inner.entries.contains_key(&operation_id) {
+            inner
+                .insertion_order
+                .retain(|stored_id| *stored_id != operation_id);
+        }
+        inner.entries.insert(
+            operation_id,
+            StationKeyModelDiscoveryResultEntry {
+                result,
+                recorded_at: now,
+            },
+        );
+        inner.insertion_order.push_back(operation_id);
+        while inner.entries.len() > self.capacity {
+            if let Some(oldest_id) = inner.insertion_order.pop_front() {
+                inner.entries.remove(&oldest_id);
+            }
+        }
+    }
+
+    fn get(&self, operation_id: OperationId) -> Option<StationKeyModelDiscoveryResult> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("model discovery result store mutex");
+        self.prune_locked(&mut inner, Instant::now());
+        inner
+            .entries
+            .get(&operation_id)
+            .map(|entry| entry.result.clone())
+    }
+
+    fn prune_locked(&self, inner: &mut StationKeyModelDiscoveryResultStoreInner, now: Instant) {
+        while let Some(operation_id) = inner.insertion_order.front().copied() {
+            let expired = inner
+                .entries
+                .get(&operation_id)
+                .is_none_or(|entry| now.duration_since(entry.recorded_at) >= self.ttl);
+            if !expired {
+                break;
+            }
+            inner.insertion_order.pop_front();
+            inner.entries.remove(&operation_id);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct StationKeyConnectivityCommandFacade {
     credentials: Arc<CredentialService>,
     routing: Arc<RoutingService>,
     results: StationKeyConnectivityResultStore,
+    model_discovery_results: StationKeyModelDiscoveryResultStore,
 }
 
 impl StationKeyConnectivityCommandFacade {
@@ -138,6 +230,7 @@ impl StationKeyConnectivityCommandFacade {
             credentials,
             routing,
             results: StationKeyConnectivityResultStore::default(),
+            model_discovery_results: StationKeyModelDiscoveryResultStore::default(),
         }
     }
 
@@ -154,6 +247,21 @@ impl StationKeyConnectivityCommandFacade {
         operation_id: OperationId,
     ) -> Option<StationKeyConnectivityResult> {
         self.results.get(operation_id)
+    }
+
+    pub(crate) fn store_model_discovery_result(
+        &self,
+        operation_id: OperationId,
+        result: StationKeyModelDiscoveryResult,
+    ) {
+        self.model_discovery_results.insert(operation_id, result);
+    }
+
+    pub(crate) fn get_model_discovery_result(
+        &self,
+        operation_id: OperationId,
+    ) -> Option<StationKeyModelDiscoveryResult> {
+        self.model_discovery_results.get(operation_id)
     }
 
     pub(crate) async fn prepare_probe_target(

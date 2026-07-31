@@ -15,6 +15,10 @@ export type StationKeyConnectivityResultDto = {
   responseMode: StationKeyConnectivityResponseMode;
   streamFallbackReason: string | null;
 };
+export type StationKeyModelDiscoveryResultDto = {
+  stationKeyId: string;
+  models: string[];
+};
 
 export type StationKeyStatusInput = "unchecked" | "healthy" | "warning" | "error" | "disabled";
 

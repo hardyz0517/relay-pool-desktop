@@ -28,13 +28,13 @@ use crate::{
             UtcTimestamp,
         },
         upgrade_recovery_executor::{
-            journal_artifact_paths_are_safe, observe_backup, observe_baseline_conversion_journal,
-            observe_journal, observe_legacy_source, publish_v2_candidate_with_faults,
+            journal_artifact_paths_are_safe, observe_backup, observe_journal,
+            observe_legacy_source, observe_persistence_journal, publish_v2_candidate_with_faults,
             read_legacy_tombstone, remove_file_and_sync_parent_with_faults,
             replace_legacy_with_tombstone_with_faults, resolve_allowlisted_artifact, sha256_file,
-            write_journal_atomically_with_faults, BaselineConversionJournalState,
-            RecoveryExecution, RecoveryExecutor, UpgradeExecutionError, UpgradeIoOperation,
-            UpgradeRecoveryIo, UPGRADE_JOURNAL_FILE,
+            write_journal_atomically_with_faults, PersistenceJournalKind, RecoveryExecution,
+            RecoveryExecutor, UpgradeExecutionError, UpgradeIoOperation, UpgradeRecoveryIo,
+            UPGRADE_JOURNAL_FILE,
         },
         upgrade_recovery_plan::{
             BackupState, CompatibilityState, ConfigGeneration, JournalState, LegacySidecarState,
@@ -47,11 +47,15 @@ use crate::{
             create_installation_marker, installation_marker_exists, read_config_v3,
             write_config_v3_with_faults, DataDirConfigV3, DatabaseGeneration,
         },
+        data_store::{
+            startup_upgrade_executor::execute_startup_upgrade_plan,
+            startup_upgrade_plan::StartupUpgradeStep,
+            types::{RecoveryReason, StartupUpgradeError},
+        },
         secrets::{
             baseline_conversion::{
-                ensure_active_database_baseline, finalize_pre_baseline_database,
-                initialize_fresh_database_at_baseline, initialize_pre_baseline_runtime_for_import,
-                resolver_from_parts,
+                finalize_pre_baseline_database, initialize_fresh_database_at_baseline,
+                initialize_pre_baseline_runtime_for_import, resolver_from_parts,
             },
             validation::validate_database_secrets,
             DeviceKeyResolver, LEGACY_DEVICE_KEY_ID,
@@ -83,23 +87,25 @@ pub(crate) fn prepare_generation_two(
 ) -> Result<(PersistenceRuntime, PathBuf), String> {
     let transformer = DataKeyLegacyTransformer { data_key };
     let resolver = resolver_from_parts(LEGACY_DEVICE_KEY_ID, data_key);
-    prepare_generation_two_with_device_key_faults(
+    Ok(prepare_generation_two_with_device_key_faults(
         default_data_dir,
         active_data_dir,
         selected_database_path,
+        None,
         data_key,
         &resolver,
         &transformer,
         &NoUpgradeFaults,
-    )
+    )?)
 }
 
 pub(crate) fn prepare_generation_two_with_resolver(
     default_data_dir: &Path,
     active_data_dir: &Path,
     selected_database_path: Option<&Path>,
+    planned_existing_v2_steps: Option<&[StartupUpgradeStep]>,
     device_keys: &DeviceKeyResolver,
-) -> Result<(PersistenceRuntime, PathBuf), String> {
+) -> Result<(PersistenceRuntime, PathBuf), StartupUpgradeError> {
     device_keys
         .with_active_key(|key_bytes| {
             let data_key = *key_bytes;
@@ -108,6 +114,7 @@ pub(crate) fn prepare_generation_two_with_resolver(
                 default_data_dir,
                 active_data_dir,
                 selected_database_path,
+                planned_existing_v2_steps,
                 data_key,
                 device_keys,
                 &transformer,
@@ -291,26 +298,28 @@ pub(crate) fn prepare_generation_two_with_faults(
     faults: &dyn UpgradeFaultInjector,
 ) -> Result<(PersistenceRuntime, PathBuf), String> {
     let resolver = resolver_from_parts(LEGACY_DEVICE_KEY_ID, data_key);
-    prepare_generation_two_with_device_key_faults(
+    Ok(prepare_generation_two_with_device_key_faults(
         default_data_dir,
         active_data_dir,
         selected_database_path,
+        None,
         data_key,
         &resolver,
         transformer,
         faults,
-    )
+    )?)
 }
 
 fn prepare_generation_two_with_device_key_faults(
     default_data_dir: &Path,
     active_data_dir: &Path,
     selected_database_path: Option<&Path>,
+    planned_existing_v2_steps: Option<&[StartupUpgradeStep]>,
     data_key: [u8; 32],
     device_keys: &DeviceKeyResolver,
     transformer: &dyn LegacySecretTransformer,
     faults: &dyn UpgradeFaultInjector,
-) -> Result<(PersistenceRuntime, PathBuf), String> {
+) -> Result<(PersistenceRuntime, PathBuf), StartupUpgradeError> {
     let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
     let source_path = active_data_dir.join(DatabaseGeneration::One.database_file());
     let journal_path = default_data_dir.join(UPGRADE_JOURNAL_FILE);
@@ -327,34 +336,57 @@ fn prepare_generation_two_with_device_key_faults(
         action_error: RefCell::new(None),
     };
 
-    if journal_path.is_file()
-        && matches!(
-            observe_baseline_conversion_journal(&journal_path).state,
-            BaselineConversionJournalState::Valid(_)
-        )
-    {
-        let runtime = open_and_validate_v2(default_data_dir, &final_path, device_keys, faults)?;
-        return Ok((runtime, final_path));
-    }
-
-    if journal_path.is_file() {
-        return resume_journaled_upgrade(&io);
+    match observe_persistence_journal(&journal_path).kind {
+        PersistenceJournalKind::Missing => {}
+        PersistenceJournalKind::BaselineConversion => {
+            let steps = planned_existing_v2_steps.ok_or_else(|| {
+                StartupUpgradeError::new(
+                    RecoveryReason::InternalUpgradeError,
+                    "existing generation 2 startup requires a preplanned startup upgrade plan",
+                )
+            })?;
+            let runtime =
+                open_and_validate_v2(default_data_dir, &final_path, device_keys, faults, steps)?;
+            return Ok((runtime, final_path));
+        }
+        PersistenceJournalKind::GenerationUpgrade => {
+            return resume_journaled_upgrade(&io).map_err(|error| {
+                StartupUpgradeError::new(RecoveryReason::InterruptedUpgrade, error.to_string())
+            });
+        }
+        PersistenceJournalKind::Invalid => {
+            return Err(StartupUpgradeError::new(
+                RecoveryReason::InterruptedUpgrade,
+                "persistence upgrade journal is invalid",
+            ));
+        }
     }
 
     if selected_database_path.is_some_and(|path| path == final_path) {
-        let runtime = open_and_validate_v2(default_data_dir, &final_path, device_keys, faults)?;
+        let steps = planned_existing_v2_steps.ok_or_else(|| {
+            StartupUpgradeError::new(
+                RecoveryReason::InternalUpgradeError,
+                "existing generation 2 startup requires a preplanned startup upgrade plan",
+            )
+        })?;
+        let runtime =
+            open_and_validate_v2(default_data_dir, &final_path, device_keys, faults, steps)?;
         return Ok((runtime, final_path));
     }
 
     if final_path.exists() {
-        return Err("generation 2 candidate exists without an upgrade journal".to_string());
+        return Err(StartupUpgradeError::new(
+            RecoveryReason::InterruptedUpgrade,
+            "generation 2 candidate exists without an upgrade journal",
+        ));
     }
 
     match selected_database_path {
         Some(path) if path == source_path && path.is_file() => start_legacy_upgrade(&io),
-        Some(_) => {
-            Err("selected data store does not match a supported generation file".to_string())
-        }
+        Some(_) => Err(StartupUpgradeError::new(
+            RecoveryReason::InconsistentSchemaMetadata,
+            "selected data store does not match a supported generation file",
+        )),
         None => prepare_fresh_install(
             default_data_dir,
             active_data_dir,
@@ -365,29 +397,50 @@ fn prepare_generation_two_with_device_key_faults(
     }
 }
 
+fn encrypted_baseline_ready_startup_steps() -> Vec<StartupUpgradeStep> {
+    let mut steps = Vec::new();
+    if persistence::current_schema_version()
+        > crate::services::secrets::baseline_conversion::ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION
+    {
+        steps.push(StartupUpgradeStep::EnsureLatestSchema);
+    }
+    steps.extend([
+        StartupUpgradeStep::OpenRuntime,
+        StartupUpgradeStep::VerifyWritableRuntime,
+        StartupUpgradeStep::VerifySecrets,
+    ]);
+    steps
+}
+
 fn prepare_fresh_install(
     default_data_dir: &Path,
     active_data_dir: &Path,
     final_path: &Path,
     device_keys: &DeviceKeyResolver,
     faults: &dyn UpgradeFaultInjector,
-) -> Result<(PersistenceRuntime, PathBuf), String> {
+) -> Result<(PersistenceRuntime, PathBuf), StartupUpgradeError> {
     let staging_path = final_path.with_extension("sqlite3.first-run.tmp");
     remove_database_artifacts(&staging_path)?;
-    initialize_fresh_database_at_baseline(&staging_path, device_keys)?;
+    initialize_fresh_database_at_baseline(&staging_path, device_keys).map_err(|error| {
+        StartupUpgradeError::new(
+            RecoveryReason::SchemaMigrationFailed,
+            format!("failed to initialize encrypted baseline database: {error}"),
+        )
+    })?;
     device_keys
         .with_active_key(|key| validate_v2_artifact(&staging_path, *key, faults))
         .map_err(|error| error.to_string())??;
     publish_v2_candidate_with_faults(&staging_path, final_path, faults)
         .map_err(redacted_execution_error)?;
     commit_generation_two_config(default_data_dir, active_data_dir, faults)?;
-    let runtime = open_and_validate_v2(default_data_dir, final_path, device_keys, faults)?;
+    let steps = encrypted_baseline_ready_startup_steps();
+    let runtime = open_and_validate_v2(default_data_dir, final_path, device_keys, faults, &steps)?;
     Ok((runtime, final_path.to_path_buf()))
 }
 
 fn start_legacy_upgrade(
     io: &ProductionUpgradeRecoveryIo<'_>,
-) -> Result<(PersistenceRuntime, PathBuf), String> {
+) -> Result<(PersistenceRuntime, PathBuf), StartupUpgradeError> {
     check(io.faults, UpgradeFailpoint::SourceOpen)?;
     let profile = block_on(legacy_import::detect_profile(io.source_path))
         .map_err(|error| format!("unsupported v0.3.1 legacy database: {error}"))?;
@@ -408,7 +461,7 @@ fn start_legacy_upgrade(
 
 fn resume_journaled_upgrade(
     io: &ProductionUpgradeRecoveryIo<'_>,
-) -> Result<(PersistenceRuntime, PathBuf), String> {
+) -> Result<(PersistenceRuntime, PathBuf), StartupUpgradeError> {
     let mut deactivated_in_this_run = false;
     loop {
         let observed = io.observe().map_err(redacted_execution_error)?;
@@ -425,19 +478,27 @@ fn resume_journaled_upgrade(
         }
         if let Err(error) = RecoveryExecutor::execute(io, &execution) {
             if let Some(action_error) = io.take_action_error() {
-                return Err(action_error);
+                return Err(StartupUpgradeError::new(
+                    RecoveryReason::InterruptedUpgrade,
+                    action_error,
+                ));
             }
-            return Err(recovery_execution_error(error));
+            return Err(StartupUpgradeError::new(
+                RecoveryReason::InterruptedUpgrade,
+                recovery_execution_error(error),
+            ));
         }
         if plan == RecoveryPlan::ActivateValidatedV2 && source_was_generation_one {
             deactivated_in_this_run = true;
         }
         if plan == RecoveryPlan::CleanupCompletedJournal {
+            let steps = encrypted_baseline_ready_startup_steps();
             let runtime = open_and_validate_v2(
                 io.default_data_dir,
                 io.final_path,
                 io.device_keys,
                 io.faults,
+                &steps,
             )?;
             return Ok((runtime, io.final_path.to_path_buf()));
         }
@@ -447,7 +508,7 @@ fn resume_journaled_upgrade(
 fn run_new_upgrade_attempt(
     io: &ProductionUpgradeRecoveryIo<'_>,
     mut journal: UpgradeJournal,
-) -> Result<(PersistenceRuntime, PathBuf), String> {
+) -> Result<(PersistenceRuntime, PathBuf), StartupUpgradeError> {
     loop {
         match journal.payload().phase {
             UpgradePhase::Prepared => {
@@ -464,22 +525,26 @@ fn run_new_upgrade_attempt(
                 journal = record_generation_committed(io.journal_path, &journal, io.faults)?;
             }
             UpgradePhase::GenerationCommitted => {
+                let steps = encrypted_baseline_ready_startup_steps();
                 let runtime = open_and_validate_v2(
                     io.default_data_dir,
                     io.final_path,
                     io.device_keys,
                     io.faults,
+                    &steps,
                 )?;
                 record_v2_reopened(io.journal_path, &journal, io.faults)?;
                 cleanup_journal(io.journal_path, io.faults)?;
                 return Ok((runtime, io.final_path.to_path_buf()));
             }
             UpgradePhase::V2Reopened => {
+                let steps = encrypted_baseline_ready_startup_steps();
                 let runtime = open_and_validate_v2(
                     io.default_data_dir,
                     io.final_path,
                     io.device_keys,
                     io.faults,
+                    &steps,
                 )?;
                 cleanup_journal(io.journal_path, io.faults)?;
                 return Ok((runtime, io.final_path.to_path_buf()));
@@ -773,14 +838,16 @@ impl UpgradeRecoveryIo for ProductionUpgradeRecoveryIo<'_> {
     }
 
     fn reopen_generation_2(&self, journal: &UpgradeJournal) -> Result<(), UpgradeExecutionError> {
+        let steps = encrypted_baseline_ready_startup_steps();
         let runtime = match open_and_validate_v2(
             self.default_data_dir,
             self.final_path,
             self.device_keys,
             self.faults,
+            &steps,
         ) {
             Ok(runtime) => runtime,
-            Err(error) => return self.record_action_result::<()>(Err(error)),
+            Err(error) => return self.record_action_result::<()>(Err(error.to_string())),
         };
         block_on(runtime.close())
             .map_err(|_| UpgradeExecutionError::Io(UpgradeIoOperation::Write))?;
@@ -951,31 +1018,9 @@ fn open_and_validate_v2(
     final_path: &Path,
     device_keys: &DeviceKeyResolver,
     faults: &dyn UpgradeFaultInjector,
-) -> Result<PersistenceRuntime, String> {
-    check(faults, UpgradeFailpoint::V2Reopen)?;
-    ensure_active_database_baseline(default_data_dir, final_path, device_keys)?;
-    let mut runtime = block_on(PersistenceRuntime::open_current(final_path))
-        .map_err(|error| format!("failed to open generation 2 database: {error}"))?;
-    let mut health = block_on(runtime.health())
-        .map_err(|error| format!("generation 2 health check failed: {error}"))?;
-    if health.open_mode == "inspection_only" {
-        block_on(runtime.close()).map_err(|error| {
-            format!("failed to close generation 2 database for migration: {error}")
-        })?;
-        block_on(persistence::upgrade_existing_v2_database(final_path))
-            .map_err(|error| format!("failed to migrate generation 2 database: {error}"))?;
-        runtime = block_on(PersistenceRuntime::open_current(final_path))
-            .map_err(|error| format!("failed to reopen migrated generation 2 database: {error}"))?;
-        health = block_on(runtime.health())
-            .map_err(|error| format!("migrated generation 2 health check failed: {error}"))?;
-    }
-    if health.open_mode != "writable" {
-        return Err("generation 2 database opened in inspection-only mode".to_string());
-    }
-    device_keys
-        .with_active_key(|key| validate_v2_artifact(final_path, *key, faults))
-        .map_err(|error| error.to_string())??;
-    Ok(runtime)
+    steps: &[StartupUpgradeStep],
+) -> Result<PersistenceRuntime, StartupUpgradeError> {
+    execute_startup_upgrade_plan(default_data_dir, final_path, device_keys, faults, steps)
 }
 
 fn commit_generation_two_config(
@@ -1132,6 +1177,11 @@ fn redacted_execution_error(
 mod tests {
     use std::sync::Mutex;
 
+    use sqlx::{
+        sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+        Connection, Row, SqliteConnection,
+    };
+
     use super::*;
     use crate::{
         persistence::{
@@ -1139,7 +1189,13 @@ mod tests {
             upgrade_recovery_executor::observe_journal,
             upgrade_recovery_plan::JournalState,
         },
-        services::secrets,
+        services::{
+            data_store::{
+                startup_probe::probe_upgrade_state_with_journal,
+                startup_upgrade_plan::{plan_upgrade, StartupUpgradePlan},
+            },
+            secrets,
+        },
     };
 
     #[test]
@@ -1167,6 +1223,400 @@ mod tests {
             .expect("restart generation two");
         assert_eq!(restarted_path, fixture.final_path);
         block_on(restarted.close()).expect("close restarted runtime");
+    }
+
+    #[test]
+    fn schema_15_generation_two_runs_structural_migration_before_secret_baseline() {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-schema15-route-")
+            .tempdir()
+            .expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::create_dir_all(&active_data_dir).expect("active dir");
+        let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
+        let resolver = resolver_from_parts("device-key-v1", [15; 32]);
+
+        block_on(
+            persistence::migrations::initialize_v2_database_at_schema_for_test(&final_path, 15),
+        )
+        .expect("schema 15 database");
+        execute_sql(
+            &final_path,
+            "UPDATE settings SET value = 'sk-schema15-local-canary' WHERE key = 'local_key'",
+        );
+
+        let runtime = planned_open_and_validate_v2(
+            &default_data_dir,
+            &final_path,
+            &resolver,
+            &NoUpgradeFaults,
+        )
+        .expect("schema 15 upgrade route");
+
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT schema_version FROM persistence_schema_compatibility"
+            ),
+            17
+        );
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version DESC LIMIT 1"
+            ),
+            17
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = 'local_key'"
+            ),
+            ""
+        );
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT COUNT(*) FROM secrets WHERE key_id = 'device-key-v1' AND encryption_version = 1"
+            ),
+            1
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__secret_format_version'"
+            ),
+            "1"
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__active_key_id'"
+            ),
+            "device-key-v1"
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__last_successful_startup_version'"
+            ),
+            env!("CARGO_PKG_VERSION")
+        );
+        let key = resolver.with_active_key(|key| *key).expect("active key");
+        validate_database_secrets(&final_path, &key).expect("validate upgraded secrets");
+        block_on(runtime.close()).expect("close runtime");
+    }
+
+    #[test]
+    fn frozen_schema15_fixture_upgrades_to_latest_and_restarts() {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-schema15-fixture-route-")
+            .tempdir()
+            .expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::create_dir_all(&active_data_dir).expect("active dir");
+        let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
+        let manifest = schema15_fixture_manifest();
+        let fixture_path = schema15_fixture_path();
+        assert_eq!(
+            sha256_file(&fixture_path).expect("fixture hash").as_str(),
+            manifest["fixture_sha256"].as_str().expect("manifest hash")
+        );
+        fs::copy(&fixture_path, &final_path).expect("copy schema15 fixture");
+        let resolver = resolver_from_parts("schema15-fixture-device-key", [7; 32]);
+
+        let runtime = planned_open_and_validate_v2(
+            &default_data_dir,
+            &final_path,
+            &resolver,
+            &NoUpgradeFaults,
+        )
+        .expect("frozen schema15 fixture upgrade route");
+
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT schema_version FROM persistence_schema_compatibility"
+            ),
+            persistence::current_schema_version()
+        );
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version DESC LIMIT 1"
+            ),
+            persistence::current_schema_version()
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = 'local_key'"
+            ),
+            ""
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT api_key FROM stations WHERE id = 'fixture-station-001'"
+            ),
+            ""
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT api_key FROM station_keys WHERE id = 'fixture-station-key-001'"
+            ),
+            ""
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT COALESCE(login_password, '') FROM station_credentials WHERE station_id = 'fixture-station-001'"
+            ),
+            ""
+        );
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT COUNT(*) FROM secrets WHERE key_id = 'schema15-fixture-device-key' AND encryption_version = 1"
+            ),
+            5
+        );
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT COUNT(*) FROM app_secret_bindings WHERE binding_scope = 'settings' AND binding_owner_id = 'local_key'"
+            ),
+            1
+        );
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT COUNT(*) FROM secrets WHERE scope = 'station_credentials' AND owner_id = 'fixture-station-001' AND kind = 'cookie'"
+            ),
+            1
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__active_key_id'"
+            ),
+            "schema15-fixture-device-key"
+        );
+        let key = resolver.with_active_key(|key| *key).expect("active key");
+        validate_database_secrets(&final_path, &key).expect("validate upgraded fixture secrets");
+        block_on(runtime.close()).expect("close runtime");
+
+        let restarted = planned_open_and_validate_v2(
+            &default_data_dir,
+            &final_path,
+            &resolver,
+            &NoUpgradeFaults,
+        )
+        .expect("frozen schema15 fixture restart");
+        block_on(restarted.close()).expect("close restarted runtime");
+    }
+
+    #[test]
+    fn schema_16_generation_two_runs_secret_baseline_before_opening_runtime() {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-schema16-route-")
+            .tempdir()
+            .expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::create_dir_all(&active_data_dir).expect("active dir");
+        let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
+        let resolver = resolver_from_parts("device-key-v1", [16; 32]);
+        let prebaseline =
+            initialize_pre_baseline_runtime_for_import(&final_path).expect("schema 16 database");
+        block_on(prebaseline.close()).expect("close prebaseline");
+        execute_sql(
+            &final_path,
+            "UPDATE settings SET value = 'sk-schema16-local-canary' WHERE key = 'local_key'",
+        );
+
+        let runtime = planned_open_and_validate_v2(
+            &default_data_dir,
+            &final_path,
+            &resolver,
+            &NoUpgradeFaults,
+        )
+        .expect("schema 16 upgrade route");
+
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT schema_version FROM persistence_schema_compatibility"
+            ),
+            17
+        );
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT COUNT(*) FROM secrets WHERE key_id = 'device-key-v1' AND encryption_version = 1"
+            ),
+            1
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = 'local_key'"
+            ),
+            ""
+        );
+        block_on(runtime.close()).expect("close runtime");
+    }
+
+    #[test]
+    fn schema_17_generation_two_opens_without_rerunning_secret_baseline() {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-schema17-route-")
+            .tempdir()
+            .expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::create_dir_all(&active_data_dir).expect("active dir");
+        let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
+        let resolver = resolver_from_parts("device-key-v1", [17; 32]);
+        initialize_fresh_database_at_baseline(&final_path, &resolver).expect("schema 17 database");
+
+        let runtime = planned_open_and_validate_v2(
+            &default_data_dir,
+            &final_path,
+            &resolver,
+            &NoUpgradeFaults,
+        )
+        .expect("schema 17 ready route");
+
+        assert_eq!(
+            query_i64(
+                &final_path,
+                "SELECT schema_version FROM persistence_schema_compatibility"
+            ),
+            17
+        );
+        assert!(!default_data_dir.join(UPGRADE_JOURNAL_FILE).exists());
+        assert!(!default_data_dir.join("backups").exists());
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__secret_format_version'"
+            ),
+            "1"
+        );
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__last_successful_startup_version'"
+            ),
+            env!("CARGO_PKG_VERSION")
+        );
+        block_on(runtime.close()).expect("close runtime");
+    }
+
+    #[test]
+    fn encrypted_generation_two_with_wrong_key_routes_to_key_mismatch() {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-wrong-key-route-")
+            .tempdir()
+            .expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::create_dir_all(&active_data_dir).expect("active dir");
+        let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
+        let correct = resolver_from_parts("device-key-v1", [41; 32]);
+        let wrong = resolver_from_parts("device-key-v1", [42; 32]);
+        initialize_fresh_database_at_baseline(&final_path, &correct).expect("schema 17 database");
+        insert_encrypted_secret(&final_path, &correct, "secret-row-wrong-key");
+
+        let error =
+            planned_open_and_validate_v2(&default_data_dir, &final_path, &wrong, &NoUpgradeFaults)
+                .expect_err("wrong key must not open ready runtime");
+
+        assert_eq!(error.recovery_reason(), RecoveryReason::KeyMismatch);
+        assert!(!error.to_string().contains("sk-wrong-key-canary"));
+        assert!(!error.to_string().contains("secret-row-wrong-key"));
+    }
+
+    #[test]
+    fn existing_encrypted_database_without_secret_rows_rejects_mismatched_active_key_id_before_write(
+    ) {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-key-id-route-")
+            .tempdir()
+            .expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::create_dir_all(&active_data_dir).expect("active dir");
+        let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
+        let correct = resolver_from_parts("device-key-a", [51; 32]);
+        let wrong_identity = resolver_from_parts("device-key-b", [51; 32]);
+        initialize_fresh_database_at_baseline(&final_path, &correct).expect("schema 17 database");
+
+        let error = planned_open_and_validate_v2(
+            &default_data_dir,
+            &final_path,
+            &wrong_identity,
+            &NoUpgradeFaults,
+        )
+        .expect_err("mismatched active key id must not open ready runtime");
+
+        assert_eq!(error.recovery_reason(), RecoveryReason::KeyMismatch);
+        assert_eq!(
+            query_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__active_key_id'"
+            ),
+            "device-key-a"
+        );
+        assert_eq!(
+            query_optional_string(
+                &final_path,
+                "SELECT value FROM settings WHERE key = '__last_successful_startup_version'"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn interrupted_secret_baseline_routes_to_interrupted_upgrade() {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-interrupted-baseline-route-")
+            .tempdir()
+            .expect("tempdir");
+        let default_data_dir = root.path().join("default");
+        let active_data_dir = root.path().join("active");
+        fs::create_dir_all(&default_data_dir).expect("default dir");
+        fs::create_dir_all(&active_data_dir).expect("active dir");
+        let final_path = active_data_dir.join(DatabaseGeneration::Two.database_file());
+        let resolver = resolver_from_parts("device-key-v1", [43; 32]);
+        let prebaseline =
+            initialize_pre_baseline_runtime_for_import(&final_path).expect("schema 16 database");
+        block_on(prebaseline.close()).expect("close prebaseline");
+        fs::write(
+            default_data_dir.join(UPGRADE_JOURNAL_FILE),
+            b"not a valid upgrade journal",
+        )
+        .expect("invalid journal");
+
+        let error = planned_open_and_validate_v2(
+            &default_data_dir,
+            &final_path,
+            &resolver,
+            &NoUpgradeFaults,
+        )
+        .expect_err("invalid baseline journal requires recovery");
+
+        assert_eq!(error.recovery_reason(), RecoveryReason::InterruptedUpgrade);
     }
 
     #[test]
@@ -1354,6 +1804,17 @@ mod tests {
             selected: Option<&Path>,
             injector: Option<&dyn UpgradeFaultInjector>,
         ) -> Result<(PersistenceRuntime, PathBuf), String> {
+            if selected == Some(self.final_path.as_path()) {
+                let resolver = resolver_from_parts(LEGACY_DEVICE_KEY_ID, self.data_key);
+                let runtime = planned_open_and_validate_v2(
+                    &self.default_data_dir,
+                    &self.final_path,
+                    &resolver,
+                    injector.unwrap_or(&NoUpgradeFaults),
+                )
+                .map_err(|error| error.to_string())?;
+                return Ok((runtime, self.final_path.clone()));
+            }
             let transformer = DataKeyLegacyTransformer {
                 data_key: self.data_key,
             };
@@ -1402,5 +1863,159 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    fn planned_open_and_validate_v2(
+        default_data_dir: &Path,
+        final_path: &Path,
+        resolver: &DeviceKeyResolver,
+        faults: &dyn UpgradeFaultInjector,
+    ) -> Result<PersistenceRuntime, StartupUpgradeError> {
+        let journal_path = default_data_dir.join(UPGRADE_JOURNAL_FILE);
+        let probe = probe_upgrade_state_with_journal(
+            final_path,
+            Some(&journal_path),
+            Some(resolver.active_key_id().as_str()),
+        )
+        .map_err(|error| {
+            StartupUpgradeError::new(
+                error.recovery_reason(),
+                format!("failed to probe generation 2 database before startup: {error}"),
+            )
+        })?;
+        let steps = match plan_upgrade(&probe) {
+            StartupUpgradePlan::Execute(steps) => steps,
+            StartupUpgradePlan::NeedsRecovery(reason) => {
+                return Err(StartupUpgradeError::new(
+                    reason.recovery_reason(),
+                    reason.message(probe.compatibility_schema_version),
+                ));
+            }
+        };
+        open_and_validate_v2(default_data_dir, final_path, resolver, faults, &steps)
+    }
+
+    fn schema15_fixture_path() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/persistence/schema15/released-schema15.sqlite3")
+    }
+
+    fn schema15_fixture_manifest() -> serde_json::Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/persistence/schema15/manifest.json");
+        serde_json::from_slice(&fs::read(path).expect("schema15 fixture manifest"))
+            .expect("valid schema15 fixture manifest")
+    }
+
+    fn insert_encrypted_secret(path: &Path, resolver: &DeviceKeyResolver, id: &str) {
+        let key = resolver.with_active_key(|key| *key).expect("active key");
+        let aad = crate::models::secrets::canonical_secret_aad(
+            "station_key",
+            "key-1",
+            "api_key",
+            resolver.encryption_version(),
+        );
+        let payload =
+            secrets::crypto::encrypt_secret(&key, "sk-wrong-key-canary", &aad).expect("encrypt");
+        let ciphertext = general_purpose::STANDARD
+            .decode(payload.ciphertext)
+            .expect("ciphertext");
+        let nonce = general_purpose::STANDARD
+            .decode(payload.nonce)
+            .expect("nonce");
+        block_on(async {
+            let mut connection = writable_connection(path).await.expect("connect");
+            sqlx::query(
+                r#"
+                INSERT INTO secrets (
+                    id, scope, owner_id, kind, masked_value, ciphertext, nonce,
+                    key_id, encryption_version, value_hash, created_at, updated_at
+                )
+                VALUES (?1, 'station_key', 'key-1', 'api_key', 'sk-***', ?2, ?3, ?4, ?5, ?6, '1', '1')
+                "#,
+            )
+            .bind(id)
+            .bind(ciphertext)
+            .bind(nonce)
+            .bind(resolver.active_key_id().as_str())
+            .bind(i64::from(resolver.encryption_version()))
+            .bind(payload.value_hash)
+            .execute(&mut connection)
+            .await
+            .expect("insert encrypted secret");
+            connection.close().await.expect("close");
+        });
+    }
+
+    fn execute_sql(path: &Path, sql: &str) {
+        block_on(async {
+            let mut connection = writable_connection(path).await.expect("connect");
+            sqlx::query(sql)
+                .execute(&mut connection)
+                .await
+                .expect("execute");
+            connection.close().await.expect("close");
+        });
+    }
+
+    fn query_i64(path: &Path, sql: &str) -> i64 {
+        block_on(async {
+            let mut connection = readable_connection(path).await.expect("connect");
+            let value = sqlx::query_scalar::<_, i64>(sql)
+                .fetch_one(&mut connection)
+                .await
+                .expect("query");
+            connection.close().await.expect("close");
+            value
+        })
+    }
+
+    fn query_string(path: &Path, sql: &str) -> String {
+        block_on(async {
+            let mut connection = readable_connection(path).await.expect("connect");
+            let row = sqlx::query(sql)
+                .fetch_one(&mut connection)
+                .await
+                .expect("query");
+            connection.close().await.expect("close");
+            row.get(0)
+        })
+    }
+
+    fn query_optional_string(path: &Path, sql: &str) -> Option<String> {
+        block_on(async {
+            let mut connection = readable_connection(path).await.expect("connect");
+            let value = sqlx::query_scalar::<_, String>(sql)
+                .fetch_optional(&mut connection)
+                .await
+                .expect("query");
+            connection.close().await.expect("close");
+            value
+        })
+    }
+
+    async fn readable_connection(path: &Path) -> Result<SqliteConnection, sqlx::Error> {
+        SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(false)
+                .read_only(true)
+                .foreign_keys(true)
+                .busy_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await
+    }
+
+    async fn writable_connection(path: &Path) -> Result<SqliteConnection, sqlx::Error> {
+        SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(false)
+                .journal_mode(SqliteJournalMode::Wal)
+                .synchronous(SqliteSynchronous::Full)
+                .foreign_keys(true)
+                .busy_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await
     }
 }

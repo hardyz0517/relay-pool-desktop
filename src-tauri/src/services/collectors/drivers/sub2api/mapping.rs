@@ -579,7 +579,7 @@ pub(crate) fn remote_key_from_value(
         api_key_masked: masked,
         api_key_fingerprint: full_key
             .as_deref()
-            .and_then(crate::services::remote_keys::api_key_fingerprint),
+            .and_then(crate::models::remote_keys::api_key_fingerprint),
         group_id_hash,
         group_name,
         tier_label: string_field(value, &["tier", "tier_label", "tierLabel", "plan"]),
@@ -646,7 +646,7 @@ pub(crate) fn remote_key_from_create_input(
         remote_key_id_hash: None,
         remote_key_name: Some(input.name.clone()),
         api_key_masked: full_key.map(crate::services::secrets::mask::mask_secret),
-        api_key_fingerprint: full_key.and_then(crate::services::remote_keys::api_key_fingerprint),
+        api_key_fingerprint: full_key.and_then(crate::models::remote_keys::api_key_fingerprint),
         group_id_hash: input.group_id_hash.clone(),
         group_name: input.group_name.clone(),
         tier_label: None,

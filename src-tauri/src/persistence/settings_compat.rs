@@ -1,3 +1,5 @@
+use sqlx::SqliteConnection;
+
 use crate::persistence::{error::PersistenceError, write_session::WriteSession};
 
 const LEGACY_TRAY_BEHAVIOR_ALIASES: [(&str, &str); 2] = [
@@ -17,6 +19,12 @@ pub(crate) fn canonical_tray_behavior(value: &str) -> Option<&str> {
 pub(crate) async fn repair_legacy_settings(
     write: &mut WriteSession,
 ) -> Result<u64, PersistenceError> {
+    repair_legacy_settings_in_connection(write.connection()).await
+}
+
+pub(crate) async fn repair_legacy_settings_in_connection(
+    connection: &mut SqliteConnection,
+) -> Result<u64, PersistenceError> {
     let mut repaired = 0;
     for (legacy, canonical) in LEGACY_TRAY_BEHAVIOR_ALIASES {
         repaired += sqlx::query(
@@ -28,7 +36,7 @@ pub(crate) async fn repair_legacy_settings(
         )
         .bind(canonical)
         .bind(legacy)
-        .execute(write.connection())
+        .execute(&mut *connection)
         .await?
         .rows_affected();
     }

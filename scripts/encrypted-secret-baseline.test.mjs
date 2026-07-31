@@ -16,8 +16,13 @@ const generationUpgrade = await readFile(
   "src-tauri/src/services/data_store/generation_upgrade.rs",
   "utf8",
 );
+const startupUpgradeExecutor = await readFile(
+  "src-tauri/src/services/data_store/startup_upgrade_executor.rs",
+  "utf8",
+);
 const runtime = await readFile("src-tauri/src/persistence/runtime.rs", "utf8");
 const migrations = await readFile("src-tauri/src/persistence/migrations.rs", "utf8");
+const schemaRegistry = await readFile("src-tauri/src/persistence/schema_registry.rs", "utf8");
 const upgradeJournal = await readFile("src-tauri/src/persistence/upgrade_journal.rs", "utf8");
 const recoveryExecutor = await readFile(
   "src-tauri/src/persistence/upgrade_recovery_executor.rs",
@@ -49,11 +54,12 @@ assert.ok(
   upgradeJournal.includes("BaselineConversionPhase") &&
     upgradeJournal.includes("encryptedSecretBaseline") &&
     upgradeJournal.includes("CandidateBuilt") &&
-    recoveryExecutor.includes("observe_baseline_conversion_journal") &&
+    recoveryExecutor.includes("observe_persistence_journal") &&
+    recoveryExecutor.includes("PersistenceJournalKind::BaselineConversion") &&
     recoveryExecutor.includes("write_baseline_conversion_journal_atomically") &&
     baseline.includes("run_journaled_conversion") &&
     baseline.includes("execute_baseline_candidate_validated"),
-  "encrypted-secret baseline conversion must use its own closed journal kind and resumable phase machine",
+  "encrypted-secret baseline conversion must use a distinguishable journal kind and resumable phase machine",
 );
 
 assert.ok(
@@ -71,14 +77,18 @@ assert.ok(
   generationUpgrade.includes("prepare_generation_two_with_resolver") &&
     generationUpgrade.includes("initialize_pre_baseline_runtime_for_import") &&
     generationUpgrade.includes("finalize_pre_baseline_database") &&
-    generationUpgrade.includes("ensure_active_database_baseline") &&
-    generationUpgrade.includes("observe_baseline_conversion_journal"),
+    generationUpgrade.includes("execute_startup_upgrade_plan") &&
+    generationUpgrade.includes("observe_persistence_journal") &&
+    generationUpgrade.includes("PersistenceJournalKind::BaselineConversion") &&
+    startupUpgradeExecutor.includes("StartupUpgradeStep::EnsureSecretBaseline") &&
+    startupUpgradeExecutor.includes("ensure_active_database_baseline"),
   "startup generation preparation should run baseline conversion before opening a writable generation-2 runtime",
 );
 
 assert.ok(
   !runtime.includes("crate::services::secrets") &&
-    migrations.includes("readable_schema: 1..=17") &&
-    migrations.includes("writable_schema: BTreeSet::from([17])"),
-  "persistence runtime must stay service-independent while the current binary only opens the encrypted-secret baseline as writable",
+    migrations.includes("schema_registry::current_binary_compatibility()") &&
+    schemaRegistry.includes("readable_schema: 1..=latest") &&
+    schemaRegistry.includes("writable_schema: BTreeSet::from([latest])"),
+  "persistence runtime must stay service-independent while binary compatibility is derived from registry latest schema",
 );

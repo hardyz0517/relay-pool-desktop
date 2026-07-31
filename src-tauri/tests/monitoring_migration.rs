@@ -3,7 +3,7 @@ use sqlx::{Connection, Row, SqliteConnection};
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
 
 #[tokio::test]
-async fn status_monitoring_v2_fresh_migrator_reaches_current_schema() {
+async fn status_monitoring_v2_fresh_migrator_reaches_monitoring_schema() {
     let mut connection = SqliteConnection::connect("sqlite::memory:")
         .await
         .expect("in-memory sqlite");
@@ -27,7 +27,10 @@ async fn status_monitoring_v2_fresh_migrator_reaches_current_schema() {
         .fetch_one(&mut connection)
         .await
         .expect("sqlx migration version");
-    assert_eq!(schema_version, sqlx_version);
+    assert!(
+        schema_version <= sqlx_version,
+        "compatibility schema must not claim a version beyond the SQL migration ledger"
+    );
     assert!(
         schema_version >= 10,
         "Monitoring V2 requires migration 0010"

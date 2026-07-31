@@ -1,3 +1,4 @@
+use futures_util::future::{BoxFuture, FutureExt};
 use sqlx::{Row, SqliteConnection};
 
 use crate::{
@@ -7,6 +8,172 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct HealthObservationStore;
+
+pub(crate) trait HealthObservationWrite {
+    fn assert_station_key_revision<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        endpoint_revision: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>>;
+
+    fn insert_observation_once<'a>(
+        &'a mut self,
+        observation: &'a HealthObservation,
+        writeback_decision: &'a str,
+    ) -> BoxFuture<'a, Result<bool, PersistenceError>>;
+
+    fn load_station_key_health<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<StationKeyHealthSnapshot, PersistenceError>>;
+
+    fn upsert_station_key_health<'a>(
+        &'a mut self,
+        snapshot: &'a StationKeyHealthSnapshot,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>>;
+
+    fn update_station_key_status<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        status: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>>;
+}
+
+impl HealthObservationWrite for SqliteConnection {
+    fn assert_station_key_revision<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        endpoint_revision: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .assert_station_key_revision(self, station_key_id, endpoint_revision)
+                .await
+        }
+        .boxed()
+    }
+
+    fn insert_observation_once<'a>(
+        &'a mut self,
+        observation: &'a HealthObservation,
+        writeback_decision: &'a str,
+    ) -> BoxFuture<'a, Result<bool, PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .insert_observation_once(self, observation, writeback_decision)
+                .await
+        }
+        .boxed()
+    }
+
+    fn load_station_key_health<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<StationKeyHealthSnapshot, PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .load_station_key_health(self, station_key_id, now_ms)
+                .await
+        }
+        .boxed()
+    }
+
+    fn upsert_station_key_health<'a>(
+        &'a mut self,
+        snapshot: &'a StationKeyHealthSnapshot,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .upsert_station_key_health(self, snapshot)
+                .await
+        }
+        .boxed()
+    }
+
+    fn update_station_key_status<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        status: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .update_station_key_status(self, station_key_id, status, now_ms)
+                .await
+        }
+        .boxed()
+    }
+}
+
+impl HealthObservationWrite for sqlx::Transaction<'_, sqlx::Sqlite> {
+    fn assert_station_key_revision<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        endpoint_revision: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .assert_station_key_revision(&mut *self, station_key_id, endpoint_revision)
+                .await
+        }
+        .boxed()
+    }
+
+    fn insert_observation_once<'a>(
+        &'a mut self,
+        observation: &'a HealthObservation,
+        writeback_decision: &'a str,
+    ) -> BoxFuture<'a, Result<bool, PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .insert_observation_once(&mut *self, observation, writeback_decision)
+                .await
+        }
+        .boxed()
+    }
+
+    fn load_station_key_health<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<StationKeyHealthSnapshot, PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .load_station_key_health(&mut *self, station_key_id, now_ms)
+                .await
+        }
+        .boxed()
+    }
+
+    fn upsert_station_key_health<'a>(
+        &'a mut self,
+        snapshot: &'a StationKeyHealthSnapshot,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .upsert_station_key_health(&mut *self, snapshot)
+                .await
+        }
+        .boxed()
+    }
+
+    fn update_station_key_status<'a>(
+        &'a mut self,
+        station_key_id: &'a str,
+        status: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            HealthObservationStore
+                .update_station_key_status(&mut *self, station_key_id, status, now_ms)
+                .await
+        }
+        .boxed()
+    }
+}
 
 impl HealthObservationStore {
     pub(crate) async fn assert_station_key_revision(

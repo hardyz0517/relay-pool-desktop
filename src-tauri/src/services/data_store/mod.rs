@@ -17,6 +17,9 @@ pub(crate) mod generation_upgrade;
 pub mod inspect;
 pub mod installation_lease;
 pub mod relocation;
+pub(crate) mod startup_probe;
+pub(crate) mod startup_upgrade_executor;
+pub(crate) mod startup_upgrade_plan;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod types;

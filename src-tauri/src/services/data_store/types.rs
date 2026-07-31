@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    fmt,
     path::{Path, PathBuf},
 };
 
@@ -15,6 +16,15 @@ pub enum RecoveryReason {
     InvalidSqlite,
     IntegrityFailed,
     OpenOrMigrationFailed,
+    MissingKey,
+    KeyMismatch,
+    CorruptedDatabase,
+    InterruptedUpgrade,
+    SchemaMigrationFailed,
+    SecretBaselineFailed,
+    InternalUpgradeError,
+    UnsupportedSchemaVersion,
+    InconsistentSchemaMetadata,
     PendingRelocation,
     UpgradeRecoveryRequired,
     SystemCredentialMissing,
@@ -25,6 +35,49 @@ pub enum RecoveryReason {
     SystemCredentialInternal,
     PortableMigrationManualRecoveryRequired,
     PortableMigrationKeyUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StartupUpgradeError {
+    reason: RecoveryReason,
+    message: String,
+}
+
+impl StartupUpgradeError {
+    pub(crate) fn new(reason: RecoveryReason, message: impl Into<String>) -> Self {
+        Self {
+            reason,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn recovery_reason(&self) -> RecoveryReason {
+        self.reason.clone()
+    }
+}
+
+impl fmt::Display for StartupUpgradeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl From<StartupUpgradeError> for String {
+    fn from(error: StartupUpgradeError) -> Self {
+        error.to_string()
+    }
+}
+
+impl From<String> for StartupUpgradeError {
+    fn from(message: String) -> Self {
+        Self::new(RecoveryReason::InternalUpgradeError, message)
+    }
+}
+
+impl From<&str> for StartupUpgradeError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

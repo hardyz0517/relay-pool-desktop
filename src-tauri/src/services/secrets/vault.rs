@@ -88,7 +88,7 @@ mod tests {
             .encrypt(AAD, SecretBytes::from(secret.to_string()))
             .expect("encrypt secret");
 
-        assert_eq!(encrypted.masked_value, "sk-...nary");
+        assert_eq!(encrypted.masked_value, "sk-p********nary");
         assert_ne!(encrypted.ciphertext.as_slice(), secret.as_bytes());
         let decrypted = vault
             .decrypt(

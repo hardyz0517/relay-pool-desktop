@@ -11,6 +11,119 @@ use syn::{
 };
 
 #[test]
+fn schema_registry_owns_latest_schema_literals() {
+    let migrations =
+        fs::read_to_string("src/persistence/migrations.rs").expect("read migrations.rs");
+
+    for forbidden in [
+        "schema_version = 17",
+        "updated_by_migration = 17",
+        "BTreeSet::from([17])",
+    ] {
+        assert!(
+            !migrations.contains(forbidden),
+            "latest schema literal `{forbidden}` must come from schema_registry"
+        );
+    }
+}
+
+#[test]
+fn baseline_conversion_uses_bounded_migrations_before_secret_baseline() {
+    let baseline = fs::read_to_string("src/services/secrets/baseline_conversion.rs")
+        .expect("read baseline_conversion.rs");
+    let compact = baseline.split_whitespace().collect::<String>();
+
+    assert!(
+        !compact.contains("migrations::migrator().run"),
+        "secret baseline conversion must not run the complete migrator"
+    );
+}
+
+#[test]
+fn startup_upgrade_executor_does_not_probe_or_plan() {
+    let executor = fs::read_to_string("src/services/data_store/startup_upgrade_executor.rs")
+        .expect("read startup_upgrade_executor.rs");
+
+    for forbidden in ["probe_upgrade_state", "plan_upgrade"] {
+        assert!(
+            !executor.contains(forbidden),
+            "startup upgrade executor must execute a supplied plan, not call `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+fn startup_coordinator_passes_planned_steps_without_discarding_them() {
+    let startup = fs::read_to_string("src/lib.rs").expect("read lib.rs");
+
+    assert!(
+        !startup.contains("StartupUpgradePlan::Execute(_)"),
+        "startup coordinator must not discard planned upgrade steps"
+    );
+    assert!(
+        startup.contains("StartupUpgradePlan::Execute(steps)") && startup.contains("Some(&steps)"),
+        "startup coordinator must pass planned steps into the generation-2 executor path"
+    );
+}
+
+#[test]
+fn startup_upgrade_planner_is_only_called_by_startup_coordinator() {
+    let source_root = Path::new("src");
+    let mut files = Vec::new();
+    collect_rs_files(source_root, &mut files).expect("collect release Rust sources");
+    let test_only_modules = test_only_file_modules(&files).expect("resolve test-only modules");
+
+    for file in &files {
+        if file == Path::new("src/services/data_store/startup_upgrade_plan.rs")
+            || test_only_modules.contains(&module_name(file))
+        {
+            continue;
+        }
+        let source = fs::read_to_string(file).expect("read release Rust source");
+        let has_production_plan_call = source_has_production_function_call(&source, "plan_upgrade")
+            .expect("parse release Rust source");
+        assert!(
+            !has_production_plan_call || file == Path::new("src/lib.rs"),
+            "startup upgrade planner must only be called by startup coordinator, found in {}",
+            file.display()
+        );
+    }
+}
+
+#[test]
+fn normal_startup_does_not_run_legacy_settings_or_local_key_repairs() {
+    let startup = fs::read_to_string("src/lib.rs").expect("read lib.rs");
+
+    for forbidden in [
+        "repair_legacy_settings",
+        "app_services.settings.ensure_local_access_key",
+    ] {
+        assert!(
+            !startup.contains(forbidden),
+            "normal startup must not run legacy repair hot path `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+fn settings_service_does_not_import_legacy_local_key_plaintext() {
+    let settings = fs::read_to_string("src/application/settings.rs")
+        .expect("read application settings service");
+
+    for forbidden in [
+        "repair_legacy_settings",
+        "legacy_local_access_key_value",
+        "Ok(legacy)",
+        "value = legacy",
+    ] {
+        assert!(
+            !settings.contains(forbidden),
+            "settings service must not preserve legacy local-key import path `{forbidden}`"
+        );
+    }
+}
+
+#[test]
 fn persistence_v2_dependency_edges_match_the_boundary_manifest() {
     let graph = ParsedModuleGraph::load("src").expect("parse Rust module graph");
     let manifest =
@@ -658,6 +771,16 @@ fn source_has_production_identifier(source: &str, target: &str) -> Result<bool, 
     Ok(visitor.found)
 }
 
+fn source_has_production_function_call(source: &str, target: &str) -> Result<bool, String> {
+    let parsed = syn::parse_file(source).map_err(|error| error.to_string())?;
+    let mut visitor = ProductionFunctionCallVisitor {
+        target,
+        found: false,
+    };
+    visitor.visit_file(&parsed);
+    Ok(visitor.found)
+}
+
 fn production_dependency_names_from_metadata(
     metadata: &serde_json::Value,
     package_name: &str,
@@ -776,6 +899,34 @@ impl<'ast> Visit<'ast> for ProductionIdentifierVisitor<'_> {
         if ident == self.target {
             self.found = true;
         }
+    }
+}
+
+struct ProductionFunctionCallVisitor<'a> {
+    target: &'a str,
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for ProductionFunctionCallVisitor<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if item_is_definitely_test_only(item) {
+            return;
+        }
+        syn::visit::visit_item(self, item);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*call.func {
+            if path
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == self.target)
+            {
+                self.found = true;
+            }
+        }
+        syn::visit::visit_expr_call(self, call);
     }
 }
 

@@ -1,12 +1,10 @@
-use sqlx::SqliteConnection;
-
 use crate::{
     models::health::{
         HealthObservation, HealthObservationOutcome, HealthWritebackMode, StationKeyHealthSnapshot,
         TrafficEquivalence,
     },
     persistence::{
-        error::PersistenceError, stores::health_observation_store::HealthObservationStore,
+        error::PersistenceError, stores::health_observation_store::HealthObservationWrite,
     },
 };
 
@@ -37,33 +35,24 @@ impl HealthWritebackDecision {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct HealthTransitionService {
-    store: HealthObservationStore,
-}
+pub(crate) struct HealthTransitionService {}
 
 impl HealthTransitionService {
     pub(crate) fn new() -> Self {
-        Self {
-            store: HealthObservationStore,
-        }
+        Self {}
     }
 
-    pub(crate) async fn record_observation(
+    pub(crate) async fn record_observation<W: HealthObservationWrite + ?Sized>(
         &self,
-        connection: &mut SqliteConnection,
+        write: &mut W,
         observation: HealthObservation,
     ) -> Result<HealthTransitionAck, PersistenceError> {
-        self.store
-            .assert_station_key_revision(
-                &mut *connection,
-                &observation.station_key_id,
-                observation.endpoint_revision,
-            )
+        write
+            .assert_station_key_revision(&observation.station_key_id, observation.endpoint_revision)
             .await?;
         let decision = writeback_decision(&observation);
-        let inserted = self
-            .store
-            .insert_observation_once(&mut *connection, &observation, decision.as_str())
+        let inserted = write
+            .insert_observation_once(&observation, decision.as_str())
             .await?;
         if !inserted || decision != HealthWritebackDecision::Write {
             return Ok(HealthTransitionAck {
@@ -73,13 +62,8 @@ impl HealthTransitionService {
             });
         }
 
-        let mut current = self
-            .store
-            .load_station_key_health(
-                &mut *connection,
-                &observation.station_key_id,
-                observation.observed_at_ms,
-            )
+        let mut current = write
+            .load_station_key_health(&observation.station_key_id, observation.observed_at_ms)
             .await?;
         if current.endpoint_revision != observation.endpoint_revision {
             current = StationKeyHealthSnapshot::empty(
@@ -89,12 +73,9 @@ impl HealthTransitionService {
             );
         }
         let next = reduce_health(current, &observation);
-        self.store
-            .upsert_station_key_health(&mut *connection, &next)
-            .await?;
-        self.store
+        write.upsert_station_key_health(&next).await?;
+        write
             .update_station_key_status(
-                &mut *connection,
                 &observation.station_key_id,
                 station_status(&next),
                 observation.observed_at_ms,

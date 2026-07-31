@@ -7,12 +7,15 @@ mod health_check;
 mod inspection;
 pub(crate) mod legacy_import;
 pub(crate) mod migrations;
-pub(crate) use migrations::{current_schema_version, upgrade_existing_v2_database};
+pub(crate) use migrations::{
+    current_schema_version, upgrade_existing_v2_database, upgrade_existing_v2_database_to_schema,
+};
 mod read_session;
 pub(crate) use read_session::ReadSession;
 pub(crate) mod runtime;
 mod runtime_lifecycle;
 pub(crate) mod schema_compatibility;
+pub(crate) mod schema_registry;
 pub(crate) mod settings_compat;
 pub(crate) mod stores;
 pub(crate) mod upgrade_fault;

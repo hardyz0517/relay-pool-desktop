@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fmt, path::Path};
 
 use crate::persistence::{read_encrypted_secrets, StoredEncryptedSecret};
 
@@ -6,9 +6,38 @@ use super::crypto::{decrypt_secret, EncryptedPayload};
 use super::{DeviceKeyResolver, CURRENT_SECRET_ENCRYPTION_VERSION};
 
 pub fn validate_database_secrets(path: &Path, data_key: &[u8; 32]) -> Result<(), String> {
+    validate_database_secrets_typed(path, data_key).map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SecretValidationError {
+    ReadFailed(String),
+    KeyMismatch { row_id: String },
+}
+
+impl fmt::Display for SecretValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReadFailed(error) => {
+                write!(
+                    formatter,
+                    "failed to read database for secret validation: {error}"
+                )
+            }
+            Self::KeyMismatch { row_id } => {
+                write!(formatter, "secret validation failed for row {row_id}")
+            }
+        }
+    }
+}
+
+pub(crate) fn validate_database_secrets_typed(
+    path: &Path,
+    data_key: &[u8; 32],
+) -> Result<(), SecretValidationError> {
     let records: Vec<StoredEncryptedSecret> =
         tauri::async_runtime::block_on(read_encrypted_secrets(path))
-            .map_err(|error| format!("failed to read database for secret validation: {error}"))?;
+            .map_err(|error| SecretValidationError::ReadFailed(error.to_string()))?;
     for record in records {
         let payload = EncryptedPayload {
             ciphertext: record.ciphertext,
@@ -16,11 +45,8 @@ pub fn validate_database_secrets(path: &Path, data_key: &[u8; 32]) -> Result<(),
             aad: record.aad,
             value_hash: record.value_hash,
         };
-        decrypt_secret(data_key, &payload).map_err(|_| {
-            format!(
-                "secret validation failed for row {}",
-                sanitized_row_identifier(&record.id)
-            )
+        decrypt_secret(data_key, &payload).map_err(|_| SecretValidationError::KeyMismatch {
+            row_id: sanitized_row_identifier(&record.id),
         })?;
     }
     Ok(())

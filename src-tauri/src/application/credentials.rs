@@ -12,7 +12,9 @@ use crate::{
             UpsertCommonLoginEmailInput, UpsertCommonLoginPasswordInput,
         },
         group_facts::UpdateStationKeyGroupBindingInput,
-        remote_keys::{RemoteKeyCapability, RemoteKeyMatchStatus, RemoteStationKey},
+        remote_keys::{
+            api_key_fingerprint, RemoteKeyCapability, RemoteKeyMatchStatus, RemoteStationKey,
+        },
         routing::{StationKeyCapabilities, UpdateStationKeyCapabilitiesInput},
         shared_capabilities::{
             SaveStationKeyMode, SaveStationKeyWithDefaultsInput, SaveStationKeyWithDefaultsResult,
@@ -1061,8 +1063,8 @@ impl CredentialService {
             .await?;
         let secret = std::str::from_utf8(secret.as_bytes())
             .map_err(|_| ApplicationError::SecretValidationFailed)?;
-        let fingerprint = crate::services::remote_keys::api_key_fingerprint(secret)
-            .ok_or(ApplicationError::SecretValidationFailed)?;
+        let fingerprint =
+            api_key_fingerprint(secret).ok_or(ApplicationError::SecretValidationFailed)?;
         let store = self.store;
         let now = self.now_ms_string();
         self.runtime
@@ -1523,9 +1525,7 @@ mod tests {
                 remote_key_id_hash: Some("remote-hash-1".to_string()),
                 remote_key_name: Some("Remote key".to_string()),
                 api_key_masked: Some("sk-***".to_string()),
-                api_key_fingerprint: crate::services::remote_keys::api_key_fingerprint(
-                    "sk-existing",
-                ),
+                api_key_fingerprint: api_key_fingerprint("sk-existing"),
                 group_id_hash: None,
                 group_name: None,
                 tier_label: None,
@@ -1690,8 +1690,9 @@ mod tests {
                         r#"
                         INSERT INTO secrets (
                             id, scope, owner_id, kind, masked_value,
-                            ciphertext, nonce, created_at, updated_at
-                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                            ciphertext, nonce, key_id, encryption_version,
+                            value_hash, created_at, updated_at
+                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
                         "#,
                     )
                     .bind(encrypted.id)
@@ -1701,6 +1702,9 @@ mod tests {
                     .bind(encrypted.masked_value)
                     .bind(encrypted.ciphertext)
                     .bind(encrypted.nonce)
+                    .bind(encrypted.key_id)
+                    .bind(i64::from(encrypted.encryption_version))
+                    .bind(encrypted.value_hash)
                     .bind(encrypted.now)
                     .execute(write.connection())
                     .await?;

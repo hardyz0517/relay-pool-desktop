@@ -4,8 +4,9 @@ use std::{
     time::Duration,
 };
 
-use base64::{engine::general_purpose, Engine as _};
+use base64::{engine::general_purpose, engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{SecondsFormat, Utc};
+use rand::{rngs::OsRng, RngCore};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     Connection, Row, SqliteConnection, SqlitePool,
@@ -14,15 +15,15 @@ use sqlx::{
 use crate::{
     models::secrets::{canonical_secret_aad, mask_secret},
     persistence::{
-        self, migrations,
+        self, migrations, schema_registry,
+        settings_compat::repair_legacy_settings_in_connection,
         upgrade_fault::NoUpgradeFaults,
         upgrade_journal::{
             BaselineConversionJournal, BaselineConversionPhase, UpgradeAttemptId, UtcTimestamp,
         },
         upgrade_recovery_executor::{
-            observe_baseline_conversion_journal, observe_journal,
-            remove_file_and_sync_parent_with_faults, sha256_file,
-            write_baseline_conversion_journal_atomically, BaselineConversionJournalState,
+            observe_persistence_journal, remove_file_and_sync_parent_with_faults, sha256_file,
+            write_baseline_conversion_journal_atomically, PersistenceJournalKind,
             UPGRADE_JOURNAL_FILE,
         },
     },
@@ -34,9 +35,17 @@ use crate::{
 
 use super::{crypto, DeviceKeyId, DeviceKeyResolver, SecretKeyMaterial};
 
-pub(crate) const PRE_BASELINE_SCHEMA_VERSION: i64 = 16;
-pub(crate) const ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION: i64 = 17;
+pub(crate) const PRE_BASELINE_SCHEMA_VERSION: i64 = schema_registry::PRE_SECRET_BASELINE_SCHEMA;
+pub(crate) const ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION: i64 =
+    schema_registry::ENCRYPTED_SECRET_BASELINE_SCHEMA;
 pub(crate) const ENCRYPTED_SECRET_SCHEMA_PROFILE: &str = "encrypted-secrets-v1";
+pub(crate) const ENCRYPTED_SECRET_FORMAT_VERSION: i64 =
+    schema_registry::CURRENT_SECRET_FORMAT_VERSION;
+pub(crate) const SECRET_FORMAT_VERSION_SETTING: &str = "__secret_format_version";
+pub(crate) const ACTIVE_KEY_ID_SETTING: &str = "__active_key_id";
+pub(crate) const LAST_SUCCESSFUL_STARTUP_VERSION_SETTING: &str =
+    "__last_successful_startup_version";
+const INSECURE_LOCAL_KEY_PLACEHOLDER: &str = "sk-local-pool-change-me";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BaselineConversionReport {
@@ -66,20 +75,20 @@ pub(crate) fn ensure_active_database_baseline(
             &journal_path,
         );
     }
-    match schema_state(active_path)? {
-        SchemaState::Baseline => {
+    match baseline_precondition_state(active_path)? {
+        BaselinePreconditionState::EncryptedBaseline => {
             validate_baseline(active_path, resolver)?;
             Ok(BaselineConversionReport {
                 converted: false,
                 backup_path: None,
             })
         }
-        SchemaState::PreBaseline => {
+        BaselinePreconditionState::StructuralPreBaseline => {
             let journal = create_baseline_conversion_journal(&journal_path, active_path)?;
             run_journaled_conversion(default_data_dir, active_path, resolver, &journal_path, journal)
         }
-        SchemaState::Unsupported { schema_version } => Err(format!(
-            "database schema {schema_version} is not eligible for encrypted-secret baseline conversion"
+        BaselinePreconditionState::Invalid { schema_version } => Err(format!(
+            "encrypted-secret baseline requires compatibility schema {PRE_BASELINE_SCHEMA_VERSION} or {ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION}, found {schema_version}"
         )),
     }
 }
@@ -110,15 +119,11 @@ pub(crate) fn initialize_pre_baseline_runtime_for_import(
     }
     let pool = block_on(connect_pool(path, true))?;
     block_on(async {
-        migrations::migrator()
+        migrations::migrator_through(PRE_BASELINE_SCHEMA_VERSION)
+            .map_err(|error| format!("failed to prepare staging migrator: {error}"))?
             .run(&pool)
             .await
             .map_err(|error| format!("failed to run staging migrations: {error}"))?;
-        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ?1")
-            .bind(ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION)
-            .execute(&pool)
-            .await
-            .map_err(|error| format!("failed to mark staging pre-baseline: {error}"))?;
         pool.close().await;
         Ok::<_, String>(())
     })?;
@@ -142,20 +147,52 @@ pub(crate) fn finalize_pre_baseline_database(
     apply_migrations_and_finalize(path, resolver)
 }
 
+pub(crate) fn record_successful_startup_metadata(
+    path: &Path,
+    resolver: &DeviceKeyResolver,
+) -> Result<(), String> {
+    block_on(async {
+        let mut connection = connect_connection(path, false).await?;
+        upsert_setting(
+            &mut connection,
+            SECRET_FORMAT_VERSION_SETTING,
+            &ENCRYPTED_SECRET_FORMAT_VERSION.to_string(),
+        )
+        .await?;
+        upsert_setting(
+            &mut connection,
+            ACTIVE_KEY_ID_SETTING,
+            resolver.active_key_id().as_str(),
+        )
+        .await?;
+        upsert_setting(
+            &mut connection,
+            LAST_SUCCESSFUL_STARTUP_VERSION_SETTING,
+            env!("CARGO_PKG_VERSION"),
+        )
+        .await?;
+        connection
+            .close()
+            .await
+            .map_err(|error| format!("failed to close startup metadata connection: {error}"))?;
+        Ok::<_, String>(())
+    })
+}
+
 fn resume_or_reject_journaled_conversion(
     default_data_dir: &Path,
     active_path: &Path,
     resolver: &DeviceKeyResolver,
     journal_path: &Path,
 ) -> Result<BaselineConversionReport, String> {
-    let observed = observe_baseline_conversion_journal(journal_path);
-    match observed.state {
-        BaselineConversionJournalState::Valid(_) => {
+    let observed = observe_persistence_journal(journal_path);
+    match observed.kind {
+        PersistenceJournalKind::BaselineConversion => {
             let journal = observed
-                .journal
+                .baseline
                 .ok_or_else(|| "baseline conversion journal is unavailable".to_string())?;
-            match schema_state(active_path)? {
-                SchemaState::Baseline => {
+            match baseline_precondition_state(active_path)? {
+                BaselinePreconditionState::EncryptedBaseline => {
                     validate_baseline(active_path, resolver)?;
                     cleanup_baseline_journal(journal_path)?;
                     Ok(BaselineConversionReport {
@@ -163,35 +200,35 @@ fn resume_or_reject_journaled_conversion(
                         backup_path: Some(baseline_backup_path(default_data_dir, &journal)?),
                     })
                 }
-                SchemaState::PreBaseline => {
+                BaselinePreconditionState::StructuralPreBaseline => {
                     run_journaled_conversion(default_data_dir, active_path, resolver, journal_path, journal)
                 }
-                SchemaState::Unsupported { schema_version } => Err(format!(
-                    "baseline conversion journal is active but database schema {schema_version} cannot be recovered automatically"
+                BaselinePreconditionState::Invalid { schema_version } => Err(format!(
+                    "baseline conversion journal is active but compatibility schema {schema_version} does not satisfy the local baseline precondition"
                 )),
             }
         }
-        BaselineConversionJournalState::Missing => unreachable!("caller checks journal existence"),
-        BaselineConversionJournalState::Invalid => {
-            let generation_observed = observe_journal(journal_path);
-            if generation_observed.journal.is_some() {
-                match schema_state(active_path)? {
-                    SchemaState::Baseline => {
-                        validate_baseline(active_path, resolver)?;
-                        Ok(BaselineConversionReport {
-                            converted: false,
-                            backup_path: None,
-                        })
-                    }
-                    SchemaState::PreBaseline => Err("generation upgrade journal is active; encrypted-secret baseline conversion will not run".to_string()),
-                    SchemaState::Unsupported { schema_version } => Err(format!(
-                        "generation upgrade journal is active and database schema {schema_version} is not a valid encrypted-secret baseline"
-                    )),
+        PersistenceJournalKind::GenerationUpgrade => {
+            match baseline_precondition_state(active_path)? {
+                BaselinePreconditionState::EncryptedBaseline => {
+                    validate_baseline(active_path, resolver)?;
+                    Ok(BaselineConversionReport {
+                        converted: false,
+                        backup_path: None,
+                    })
                 }
-            } else {
-                Err("persistence recovery journal is invalid; encrypted-secret baseline conversion requires manual recovery".to_string())
+                BaselinePreconditionState::StructuralPreBaseline => Err(
+                    "generation upgrade journal is active; encrypted-secret baseline conversion will not run".to_string(),
+                ),
+                BaselinePreconditionState::Invalid { schema_version } => Err(format!(
+                    "generation upgrade journal is active and compatibility schema {schema_version} does not satisfy the local baseline precondition"
+                )),
             }
         }
+        PersistenceJournalKind::Missing => unreachable!("caller checks journal existence"),
+        PersistenceJournalKind::Invalid => Err(
+            "persistence recovery journal is invalid; encrypted-secret baseline conversion requires manual recovery".to_string(),
+        ),
     }
 }
 
@@ -367,7 +404,10 @@ fn execute_baseline_candidate_validated(
         remove_sqlite_sidecars(&candidate_path)?;
         publish_prepared_database(&candidate_path, active_path)?;
         remove_sqlite_sidecars(active_path)?;
-    } else if !matches!(schema_state(active_path)?, SchemaState::Baseline) {
+    } else if !matches!(
+        baseline_precondition_state(active_path)?,
+        BaselinePreconditionState::EncryptedBaseline
+    ) {
         return Err("validated encrypted-secret baseline candidate is missing".to_string());
     }
     let next = journal
@@ -405,7 +445,8 @@ fn apply_migrations_and_finalize(path: &Path, resolver: &DeviceKeyResolver) -> R
     let pool = block_on(connect_pool(path, true))?;
     let result = block_on(async {
         if !column_exists(&pool, "secrets", "key_id").await? {
-            migrations::migrator()
+            migrations::migrator_through(ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION)
+                .map_err(|error| format!("failed to prepare baseline migrator: {error}"))?
                 .run(&pool)
                 .await
                 .map_err(|error| format!("failed to run baseline migrations: {error}"))?;
@@ -427,6 +468,9 @@ async fn finalize_open_database(
         .map_err(|error| format!("failed to start baseline conversion: {error}"))?;
     detect_plaintext_secret_conflicts(&mut transaction).await?;
     reencrypt_existing_secrets(&mut transaction, resolver).await?;
+    repair_legacy_settings_in_connection(&mut transaction)
+        .await
+        .map_err(|error| format!("failed to repair legacy settings during baseline: {error}"))?;
     migrate_legacy_plaintext_columns(&mut transaction, resolver).await?;
     rebuild_secrets_with_final_constraints(&mut transaction).await?;
     sqlx::query(
@@ -458,6 +502,7 @@ async fn finalize_open_database(
     .execute(&mut *transaction)
     .await
     .map_err(|error| format!("failed to record baseline migration metadata: {error}"))?;
+    record_secret_format_metadata(&mut transaction, resolver).await?;
     transaction
         .commit()
         .await
@@ -466,6 +511,68 @@ async fn finalize_open_database(
         .execute(pool)
         .await
         .map_err(|error| format!("failed to vacuum baseline database: {error}"))?;
+    Ok(())
+}
+
+async fn record_secret_format_metadata(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    resolver: &DeviceKeyResolver,
+) -> Result<(), String> {
+    upsert_setting_in_transaction(
+        transaction,
+        SECRET_FORMAT_VERSION_SETTING,
+        &ENCRYPTED_SECRET_FORMAT_VERSION.to_string(),
+    )
+    .await?;
+    upsert_setting_in_transaction(
+        transaction,
+        ACTIVE_KEY_ID_SETTING,
+        resolver.active_key_id().as_str(),
+    )
+    .await
+}
+
+async fn upsert_setting_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        r#"
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?1, ?2, strftime('%s', 'now'))
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(key)
+    .bind(value)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| format!("failed to record startup metadata {key}: {error}"))?;
+    Ok(())
+}
+
+async fn upsert_setting(
+    connection: &mut SqliteConnection,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    sqlx::query(
+        r#"
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?1, ?2, strftime('%s', 'now'))
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        "#,
+    )
+    .bind(key)
+    .bind(value)
+    .execute(connection)
+    .await
+    .map_err(|error| format!("failed to record startup metadata {key}: {error}"))?;
     Ok(())
 }
 
@@ -689,9 +796,11 @@ async fn migrate_local_access_key(
         return Ok(());
     };
     let plaintext: String = row.get("value");
-    if plaintext.trim().is_empty() {
-        return Ok(());
-    }
+    let plaintext = if plaintext.trim().is_empty() || plaintext == INSECURE_LOCAL_KEY_PLACEHOLDER {
+        generate_local_access_key()
+    } else {
+        plaintext
+    };
     if local_access_key_binding_exists(connection).await?
         || secret_exists(connection, "settings", "local_key", "local_access_key").await?
     {
@@ -724,6 +833,12 @@ async fn migrate_local_access_key(
         .await
         .map_err(|error| format!("failed to clear legacy local access key: {error}"))?;
     Ok(())
+}
+
+fn generate_local_access_key() -> String {
+    let mut random = [0_u8; 32];
+    OsRng.fill_bytes(&mut random);
+    format!("sk-local-{}", URL_SAFE_NO_PAD.encode(random))
 }
 
 async fn insert_converted_secret(
@@ -1030,7 +1145,7 @@ async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<b
         .any(|row| row.get::<String, _>("name") == column))
 }
 
-fn schema_state(path: &Path) -> Result<SchemaState, String> {
+fn baseline_precondition_state(path: &Path) -> Result<BaselinePreconditionState, String> {
     block_on(async {
         let mut connection = connect_connection(path, false).await?;
         let row = sqlx::query(
@@ -1045,19 +1160,21 @@ fn schema_state(path: &Path) -> Result<SchemaState, String> {
             .await
             .map_err(|error| format!("failed to close schema inspection connection: {error}"))?;
         Ok::<_, String>(match schema_version {
-            ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION => SchemaState::Baseline,
-            PRE_BASELINE_SCHEMA_VERSION => SchemaState::PreBaseline,
-            other => SchemaState::Unsupported {
+            ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION => {
+                BaselinePreconditionState::EncryptedBaseline
+            }
+            PRE_BASELINE_SCHEMA_VERSION => BaselinePreconditionState::StructuralPreBaseline,
+            other => BaselinePreconditionState::Invalid {
                 schema_version: other,
             },
         })
     })
 }
 
-enum SchemaState {
-    PreBaseline,
-    Baseline,
-    Unsupported { schema_version: i64 },
+enum BaselinePreconditionState {
+    StructuralPreBaseline,
+    EncryptedBaseline,
+    Invalid { schema_version: i64 },
 }
 
 fn baseline_migration_metadata() -> Result<(String, Vec<u8>), String> {
@@ -1367,6 +1484,11 @@ mod tests {
                 )
                 .execute(write.connection())
                 .await?;
+                sqlx::query(
+                    "UPDATE settings SET value = 'minimize-to-tray' WHERE key = 'tray_behavior'",
+                )
+                .execute(write.connection())
+                .await?;
                 Ok(())
             })
         }))
@@ -1411,6 +1533,13 @@ mod tests {
             ),
             ""
         );
+        assert_eq!(
+            query_string(
+                &active,
+                "SELECT value FROM settings WHERE key = 'tray_behavior'"
+            ),
+            "minimize_to_tray"
+        );
         assert_eq!(query_i64(&active, "SELECT COUNT(*) FROM app_secret_bindings WHERE binding_scope = 'settings' AND binding_owner_id = 'local_key'"), 1);
         assert!(
             !database_bytes(&active).contains("sk-station-plaintext-canary")
@@ -1420,6 +1549,37 @@ mod tests {
         let key = resolver.with_active_key(|key| *key).expect("active key");
         crate::services::secrets::validation::validate_database_secrets(&active, &key)
             .expect("validate converted secrets");
+    }
+
+    #[test]
+    fn baseline_conversion_replaces_fresh_local_access_key_placeholder() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let app_data = root.path().join("app-data");
+        let active = root.path().join("relay-pool-desktop-v2.sqlite3");
+        let resolver = resolver_from_parts("device-key-v1", [55; 32]);
+        let runtime = initialize_pre_baseline_runtime_for_import(&active).expect("prebaseline db");
+        block_on(runtime.close()).expect("close runtime");
+        drop(runtime);
+
+        ensure_active_database_baseline(&app_data, &active, &resolver).expect("convert");
+
+        let local_key = decrypt_local_access_key(&active, &resolver);
+        assert!(local_key.starts_with("sk-local-"));
+        assert_ne!(local_key, INSECURE_LOCAL_KEY_PLACEHOLDER);
+        assert_eq!(
+            query_string(
+                &active,
+                "SELECT value FROM settings WHERE key = 'local_key'"
+            ),
+            ""
+        );
+        assert_eq!(
+            query_i64(
+                &active,
+                "SELECT COUNT(*) FROM app_secret_bindings WHERE binding_scope = 'settings' AND binding_owner_id = 'local_key' AND binding_kind = 'local_access_key'"
+            ),
+            1
+        );
     }
 
     #[test]
@@ -1576,6 +1736,57 @@ mod tests {
             connection.close().await.expect("close");
             row.get::<String, _>(0)
         })
+    }
+
+    fn decrypt_local_access_key(path: &Path, resolver: &DeviceKeyResolver) -> String {
+        let (ciphertext, nonce, key_id, encryption_version) = block_on(async {
+            let mut connection = connect_connection(path, false).await.expect("connect");
+            let row = sqlx::query(
+                r#"
+                SELECT secrets.ciphertext,
+                       secrets.nonce,
+                       secrets.key_id,
+                       secrets.encryption_version
+                FROM app_secret_bindings
+                JOIN secrets ON secrets.id = app_secret_bindings.secret_id
+                WHERE app_secret_bindings.binding_scope = 'settings'
+                  AND app_secret_bindings.binding_owner_id = 'local_key'
+                  AND app_secret_bindings.binding_kind = 'local_access_key'
+                "#,
+            )
+            .fetch_one(&mut connection)
+            .await
+            .expect("query local access key secret");
+            connection.close().await.expect("close");
+            (
+                row.get::<Vec<u8>, _>("ciphertext"),
+                row.get::<Vec<u8>, _>("nonce"),
+                row.get::<String, _>("key_id"),
+                row.get::<i64, _>("encryption_version"),
+            )
+        });
+        assert_eq!(key_id, resolver.active_key_id().as_str());
+        assert_eq!(encryption_version, i64::from(resolver.encryption_version()));
+        let aad = canonical_secret_aad(
+            "settings",
+            "local_key",
+            "local_access_key",
+            resolver.encryption_version(),
+        );
+        resolver
+            .with_active_key(|key| {
+                crypto::decrypt_secret(
+                    key,
+                    &crypto::EncryptedPayload {
+                        ciphertext: general_purpose::STANDARD.encode(ciphertext),
+                        nonce: general_purpose::STANDARD.encode(nonce),
+                        aad,
+                        value_hash: String::new(),
+                    },
+                )
+            })
+            .expect("active key")
+            .expect("decrypt local access key")
     }
 
     fn database_bytes(path: &Path) -> String {

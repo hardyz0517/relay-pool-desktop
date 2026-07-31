@@ -1,5 +1,3 @@
-use sqlx::SqliteConnection;
-
 use crate::{
     application::health_transitions::{writeback_decision, HealthTransitionService},
     models::{
@@ -14,11 +12,11 @@ use crate::{
     },
     persistence::{
         error::PersistenceError,
+        stores::health_observation_store::HealthObservationWrite,
         stores::monitoring::executions::{
-            ExecutionSummaryRow, FinalizeTargetRow, MonitoringExecutionRepository, NewAttemptRow,
+            ExecutionSummaryRow, FinalizeTargetRow, MonitoringExecutionWrite, NewAttemptRow,
             NewExecutionRow,
         },
-        stores::monitoring::retention::MonitoringRetentionRepository,
     },
 };
 
@@ -29,25 +27,24 @@ use super::{
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MonitoringExecutionCommitter {
-    executions: MonitoringExecutionRepository,
     health: HealthTransitionService,
-    retention: MonitoringRetentionRepository,
 }
 
 impl MonitoringExecutionCommitter {
     pub(crate) fn new() -> Self {
         Self {
-            executions: MonitoringExecutionRepository,
             health: HealthTransitionService::new(),
-            retention: MonitoringRetentionRepository,
         }
     }
 
-    pub(crate) async fn commit(
+    pub(crate) async fn commit<W>(
         &self,
-        connection: &mut SqliteConnection,
+        write: &mut W,
         execution: &BufferedExecution,
-    ) -> Result<ExecutionSummaryRow, PersistenceError> {
+    ) -> Result<ExecutionSummaryRow, PersistenceError>
+    where
+        W: MonitoringExecutionWrite + HealthObservationWrite + ?Sized,
+    {
         let summary = execution
             .summary
             .as_ref()
@@ -59,45 +56,39 @@ impl MonitoringExecutionCommitter {
             .max()
             .unwrap_or(execution.started_at_ms);
 
-        self.executions
-            .insert_execution(
-                &mut *connection,
-                &NewExecutionRow {
-                    id: execution.execution_id.clone(),
-                    monitor_id: execution.plan.monitor_id.clone(),
-                    trigger_kind: execution.plan.trigger_kind.as_str().to_string(),
-                    trigger_request_id: execution.manual_idempotency_key.clone(),
-                    status: "running".to_string(),
-                    planned_at_ms: execution.started_at_ms,
-                    started_at_ms: Some(execution.started_at_ms),
-                    config_revision: execution.plan.revision.0 as i64,
-                    config_snapshot_hash: execution.plan.config_snapshot_hash.clone(),
-                    endpoint_revision: execution_endpoint_revision(&execution.plan),
-                    target_count: i64::from(summary.target_count),
-                    created_at_ms: execution.started_at_ms,
-                },
-            )
+        write
+            .insert_execution_row(&NewExecutionRow {
+                id: execution.execution_id.clone(),
+                monitor_id: execution.plan.monitor_id.clone(),
+                trigger_kind: execution.plan.trigger_kind.as_str().to_string(),
+                trigger_request_id: execution.manual_idempotency_key.clone(),
+                status: "running".to_string(),
+                planned_at_ms: execution.started_at_ms,
+                started_at_ms: Some(execution.started_at_ms),
+                config_revision: execution.plan.revision.0 as i64,
+                config_snapshot_hash: execution.plan.config_snapshot_hash.clone(),
+                endpoint_revision: execution_endpoint_revision(&execution.plan),
+                target_count: i64::from(summary.target_count),
+                created_at_ms: execution.started_at_ms,
+            })
             .await?;
 
         for attempt in &execution.attempts {
-            self.executions
-                .append_attempt(&mut *connection, &attempt_row(&execution.plan, attempt)?)
+            write
+                .append_attempt_row(&attempt_row(&execution.plan, attempt)?)
                 .await?;
         }
 
         for target in &execution.targets {
             let target_row = target_row(execution, target)?;
-            self.executions
-                .finalize_target(&mut *connection, &target_row)
-                .await?;
+            write.finalize_target_row(&target_row).await?;
 
             let observation = health_observation(execution, target, &target_row);
             self.health
-                .record_observation(&mut *connection, observation)
+                .record_observation(&mut *write, observation)
                 .await?;
-            self.retention
-                .mark_dirty_range(
-                    &mut *connection,
+            write
+                .mark_monitoring_rollup_dirty(
                     &format!("dirty:{}", target_row.id),
                     &execution.plan.monitor_id,
                     Some(&target.station_key_id),
@@ -112,9 +103,8 @@ impl MonitoringExecutionCommitter {
                 .await?;
         }
 
-        self.executions
-            .finalize_execution_and_advance_schedule(
-                &mut *connection,
+        write
+            .finalize_execution_and_advance_schedule_row(
                 &execution.execution_id,
                 &execution.plan.monitor_id,
                 finished_at_ms,

@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -8,9 +7,10 @@ use crate::{
     models::{
         group_facts::{GroupRateRecord, StationGroupBinding},
         remote_keys::{
-            CreateLocalStationKeyFromRemoteResult, CreateRemoteStationKeyInput,
-            CreateRemoteStationKeyResult, DeleteRemoteStationKeyResult, RemoteKeyCapability,
-            RemoteKeyScanResult, RemoteStationKey,
+            api_key_fingerprint, CreateLocalStationKeyFromRemoteResult,
+            CreateRemoteStationKeyInput, CreateRemoteStationKeyResult,
+            DeleteRemoteStationKeyResult, RemoteKeyCapability, RemoteKeyScanResult,
+            RemoteStationKey,
         },
         station_keys::{StationKey, UpdateStationKeyInput},
     },
@@ -1312,16 +1312,6 @@ fn names_match(left: Option<&str>, right: Option<&str>) -> bool {
 
 fn normalized_text(value: &str) -> String {
     value.trim().to_lowercase()
-}
-
-pub fn api_key_fingerprint(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(trimmed.as_bytes());
-    Some(format!("{:x}", hasher.finalize()))
 }
 
 fn secret_fingerprint_match_confidence(

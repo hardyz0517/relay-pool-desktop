@@ -346,14 +346,12 @@ pub(crate) fn compose_pricing_command_facade(services: &AppServices) -> PricingC
 
 pub(crate) fn compose_provider_draft_command_facade(
     services: &AppServices,
-    blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
 ) -> ProviderDraftCommandFacade {
     ProviderDraftCommandFacade::new(
         Arc::clone(&services.provider_drafts),
         Arc::clone(&services.settings),
-        blocking,
         outbound,
         providers,
     )

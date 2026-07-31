@@ -4,7 +4,6 @@ use crate::{
     application::{
         error::ApplicationError, provider_drafts::ProviderDraftService, settings::SettingsService,
     },
-    background_tasks::{BlockingExecutor, BlockingExecutorError},
     models::{
         credentials::{
             PersistStationSessionInput, ResolvedSession, StationCredentials,
@@ -33,19 +32,12 @@ use crate::{
 #[derive(Debug)]
 pub(crate) enum ProviderDraftCommandError {
     Application(ApplicationError),
-    Blocking(BlockingExecutorError),
     Remote(RemoteKeyOperationError),
 }
 
 impl From<ApplicationError> for ProviderDraftCommandError {
     fn from(error: ApplicationError) -> Self {
         Self::Application(error)
-    }
-}
-
-impl From<BlockingExecutorError> for ProviderDraftCommandError {
-    fn from(error: BlockingExecutorError) -> Self {
-        Self::Blocking(error)
     }
 }
 
@@ -59,7 +51,6 @@ impl From<RemoteKeyOperationError> for ProviderDraftCommandError {
 pub(crate) struct ProviderDraftCommandFacade {
     drafts: Arc<ProviderDraftService>,
     settings: Arc<SettingsService>,
-    blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
 }
@@ -68,14 +59,12 @@ impl ProviderDraftCommandFacade {
     pub(crate) fn new(
         drafts: Arc<ProviderDraftService>,
         settings: Arc<SettingsService>,
-        blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<ProviderRegistry>,
     ) -> Self {
         Self {
             drafts,
             settings,
-            blocking,
             outbound,
             providers,
         }
@@ -125,21 +114,7 @@ impl ProviderDraftCommandFacade {
         let fingerprint = ProviderDraftService::runtime_fingerprint(&draft.payload);
         let finish_draft_id = draft_id.clone();
         let source = self.source(draft_id.clone());
-        let prepared = self
-            .blocking
-            .submit(
-                "provider_draft_collection_prepare",
-                None,
-                current_correlation_id(),
-                None,
-                move |_| {
-                    Ok(collectors::prepare_station_collection_route_v2(
-                        &source, draft_id, task,
-                    ))
-                },
-            )?
-            .result()
-            .await??;
+        let prepared = collectors::prepare_station_collection_route_v2(&source, draft_id, task)?;
         let prepared = match prepared {
             collectors::PreparedStationCollectionRoute::Sub2Api(prepared) => {
                 collectors::finish_sub2api_collection_v2(
@@ -187,24 +162,8 @@ impl ProviderDraftCommandFacade {
         draft_id: String,
     ) -> Result<RemoteKeyScanResult, ProviderDraftCommandError> {
         let source = self.source(draft_id.clone());
-        let newapi = self
-            .blocking
-            .submit(
-                "provider_draft_remote_key_prepare_newapi",
-                None,
-                current_correlation_id(),
-                None,
-                {
-                    let draft_id = draft_id.clone();
-                    move |_| {
-                        Ok(remote_keys::prepare_newapi_remote_key_driver_context_v2(
-                            &source, draft_id,
-                        ))
-                    }
-                },
-            )?
-            .result()
-            .await??;
+        let newapi =
+            remote_keys::prepare_newapi_remote_key_driver_context_v2(&source, draft_id.clone())?;
         if let Some(prepared) = newapi {
             let prepared = remote_keys::prepare_newapi_remote_key_scan_v2(
                 self.providers.as_ref(),
@@ -218,24 +177,8 @@ impl ProviderDraftCommandFacade {
         }
 
         let source = self.source(draft_id.clone());
-        let sub2api = self
-            .blocking
-            .submit(
-                "provider_draft_remote_key_prepare_sub2api",
-                None,
-                current_correlation_id(),
-                None,
-                {
-                    let draft_id = draft_id.clone();
-                    move |_| {
-                        Ok(remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                            &source, draft_id,
-                        ))
-                    }
-                },
-            )?
-            .result()
-            .await??;
+        let sub2api =
+            remote_keys::prepare_sub2api_remote_key_driver_context_v2(&source, draft_id.clone())?;
         if let Some(prepared) = sub2api {
             let prepared = remote_keys::prepare_sub2api_remote_key_scan_v2(
                 self.providers.as_ref(),
@@ -268,30 +211,28 @@ struct ProviderDraftCollectorSource {
 
 impl CollectorSourcePort for ProviderDraftCollectorSource {
     fn station_for_collector(&self, station_id: &str) -> Result<Station, String> {
-        tauri::async_runtime::block_on(self.drafts.station_projection(station_id))
-            .map_err(app_error)
+        block_on_draft_source(self.drafts.station_projection(station_id)).map_err(app_error)
     }
 
     fn get_settings(&self) -> Result<AppSettings, String> {
-        tauri::async_runtime::block_on(self.settings.load()).map_err(app_error)
+        block_on_draft_source(self.settings.load()).map_err(app_error)
     }
 
     fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
-        tauri::async_runtime::block_on(self.drafts.list_keys(&station_id)).map_err(app_error)
+        block_on_draft_source(self.drafts.list_keys(&station_id)).map_err(app_error)
     }
 
     fn resolve_station_key_secret(&self, station_key_id: &str) -> Result<String, String> {
-        tauri::async_runtime::block_on(self.drafts.key_secret(&self.draft_id, station_key_id))
+        block_on_draft_source(self.drafts.key_secret(&self.draft_id, station_key_id))
             .map_err(app_error)
     }
 
     fn get_station_credentials(&self, station_id: String) -> Result<StationCredentials, String> {
-        tauri::async_runtime::block_on(self.drafts.credentials_projection(&station_id))
-            .map_err(app_error)
+        block_on_draft_source(self.drafts.credentials_projection(&station_id)).map_err(app_error)
     }
 
     fn get_station_login_password(&self, station_id: String) -> Result<Option<String>, String> {
-        tauri::async_runtime::block_on(self.drafts.login_password(&station_id)).map_err(app_error)
+        block_on_draft_source(self.drafts.login_password(&station_id)).map_err(app_error)
     }
 
     fn resolve_station_session(
@@ -299,7 +240,7 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
         station_id: String,
         _now_ms: i64,
     ) -> Result<ResolvedSession, String> {
-        tauri::async_runtime::block_on(self.drafts.resolve_session(&station_id)).map_err(app_error)
+        block_on_draft_source(self.drafts.resolve_session(&station_id)).map_err(app_error)
     }
 
     fn update_station_session(
@@ -307,7 +248,7 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
         input: UpdateStationSessionInput,
         expected_revision: i64,
     ) -> Result<StationCredentials, String> {
-        tauri::async_runtime::block_on(self.drafts.update_session(input, expected_revision))
+        block_on_draft_source(self.drafts.update_session(input, expected_revision))
             .map_err(app_error)
     }
 
@@ -330,7 +271,7 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
         station_id: &str,
         kind: StationSessionCredentialKind,
     ) -> Result<(), String> {
-        tauri::async_runtime::block_on(self.drafts.invalidate_session_credential(station_id, kind))
+        block_on_draft_source(self.drafts.invalidate_session_credential(station_id, kind))
             .map_err(app_error)
     }
 
@@ -338,8 +279,12 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
         &self,
         station_id: String,
     ) -> Result<Vec<StationGroupBinding>, String> {
-        tauri::async_runtime::block_on(self.drafts.list_groups(&station_id)).map_err(app_error)
+        block_on_draft_source(self.drafts.list_groups(&station_id)).map_err(app_error)
     }
+}
+
+fn block_on_draft_source<F: std::future::Future>(future: F) -> F::Output {
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(future))
 }
 
 fn current_correlation_id() -> Option<String> {

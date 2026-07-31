@@ -11,6 +11,32 @@
           "value": "fixture-local-placeholder"
         }
       ]
+    },
+    {
+      "path": "src-tauri/tests/fixtures/persistence/schema15/released-schema15.sqlite3",
+      "manifest": "src-tauri/tests/fixtures/persistence/schema15/manifest.json",
+      "allowedSensitiveValues": [
+        {
+          "table": "settings",
+          "column": "value",
+          "value": "schema15-fixture-local-key"
+        },
+        {
+          "table": "stations",
+          "column": "api_key",
+          "value": "schema15-station-plaintext-key"
+        },
+        {
+          "table": "station_keys",
+          "column": "api_key",
+          "value": "schema15-key-plaintext"
+        },
+        {
+          "table": "station_credentials",
+          "column": "login_password",
+          "value": "schema15-login-password"
+        }
+      ]
     }
   ]
 }

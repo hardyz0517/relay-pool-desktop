@@ -47,6 +47,12 @@ mod persistence {
             "/src/persistence/health_check.rs"
         ));
     }
+    pub(crate) mod schema_registry {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/schema_registry.rs"
+        ));
+    }
     pub(crate) mod migrations {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

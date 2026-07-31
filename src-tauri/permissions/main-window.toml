@@ -101,6 +101,8 @@ commands.allow = [
   "cancel_operation",
   "start_station_key_connectivity_operation",
   "get_station_key_connectivity_operation_result",
+  "start_station_key_model_discovery_operation",
+  "get_station_key_model_discovery_operation_result",
   "ping_station_endpoint",
   "simulate_route",
   "list_pricing_rules",

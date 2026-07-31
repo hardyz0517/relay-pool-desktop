@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "15b400aa4c140e5ea2caa245d8702a2de7eca5c95e55579a021a18bc315605e9";
+    "3115c408311fefdac9c86297e2294c712b6cab5e618903fed6c7fb9cd386baf8";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -193,6 +193,8 @@ macro_rules! ipc_command_registry {
             cancel_operation => $crate::commands::operations::cancel_operation,
             start_station_key_connectivity_operation => $crate::commands::station_key_connectivity::start_station_key_connectivity_operation,
             get_station_key_connectivity_operation_result => $crate::commands::station_key_connectivity::get_station_key_connectivity_operation_result,
+            start_station_key_model_discovery_operation => $crate::commands::station_key_connectivity::start_station_key_model_discovery_operation,
+            get_station_key_model_discovery_operation_result => $crate::commands::station_key_connectivity::get_station_key_model_discovery_operation_result,
             ping_station_endpoint => $crate::commands::endpoint_ping::ping_station_endpoint,
             simulate_route => $crate::commands::routing_health::simulate_route,
             list_pricing_rules => $crate::commands::pricing::list_pricing_rules,
@@ -747,6 +749,15 @@ fn command_contract(name: &str) -> CommandContract {
         ),
         "get_station_key_connectivity_operation_result" => {
             migrated_read("OperationIdInputDto", "StationKeyConnectivityResultDto")
+        }
+        "start_station_key_model_discovery_operation" => migrated_mutation(
+            "RoutingStationKeyIdInputDto",
+            "OperationStartedDto",
+            "non_idempotent",
+            true,
+        ),
+        "get_station_key_model_discovery_operation_result" => {
+            migrated_read("OperationIdInputDto", "StationKeyModelDiscoveryResultDto")
         }
         "ping_station_endpoint" => migrated_mutation(
             "StationIdInputDto",
@@ -1449,6 +1460,14 @@ export function startStationKeyConnectivityOperation(input: StationKeyConnectivi
 
 export function getStationKeyConnectivityOperationResult(input: OperationIdInputDto): Promise<StationKeyConnectivityResultDto> {
   return invokeCommand<StationKeyConnectivityResultDto>("get_station_key_connectivity_operation_result", { input });
+}
+
+export function startStationKeyModelDiscoveryOperation(input: RoutingStationKeyIdInputDto): Promise<OperationStartedDto> {
+  return invokeNonIdempotent<OperationStartedDto>("start_station_key_model_discovery_operation", { input });
+}
+
+export function getStationKeyModelDiscoveryOperationResult(input: OperationIdInputDto): Promise<StationKeyModelDiscoveryResultDto> {
+  return invokeCommand<StationKeyModelDiscoveryResultDto>("get_station_key_model_discovery_operation_result", { input });
 }
 
 export function simulateRoute(input: RouteSimulationInputDto): Promise<RouteSimulationResultDto> {

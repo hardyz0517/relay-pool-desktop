@@ -284,7 +284,11 @@ impl UpsertStationGroupBindingInputDto {
             input.parent_group_binding_id.as_deref(),
         )?;
         validate_id("groupKeyHash", &input.group_key_hash)?;
-        validate_optional_id("groupIdHash", input.group_id_hash.as_deref())?;
+        validate_optional_text(
+            "groupIdHash",
+            input.group_id_hash.as_deref(),
+            MAX_TEXT_BYTES,
+        )?;
         validate_text("groupName", &input.group_name, MAX_TEXT_BYTES, false)?;
         for (field, value) in [
             ("defaultRateMultiplier", input.default_rate_multiplier),
@@ -667,6 +671,32 @@ fn fixture_collector_snapshot() -> CollectorSnapshot {
 mod tests {
     use super::*;
     use crate::commands::error::CommandErrorCode;
+
+    #[test]
+    fn upsert_station_group_binding_accepts_remote_group_id_hash_text() {
+        let input = UpsertStationGroupBindingInputDto::parse(serde_json::json!({
+            "stationId": "station-1",
+            "stationKeyId": null,
+            "bindingKind": "station_group",
+            "parentGroupBindingId": null,
+            "groupKeyHash": "12cb0adf1fef391169d565e9083187ad32c6b083e260bfaffa9ce0699c9a84ad",
+            "groupIdHash": "gpt特价（限时）",
+            "groupName": "gpt特价（限时）",
+            "bindingStatus": "available",
+            "defaultRateMultiplier": 1.0,
+            "userRateMultiplier": null,
+            "effectiveRateMultiplier": 1.0,
+            "inferredGroupCategory": "gpt",
+            "groupCategoryOverride": null,
+            "rateSource": "remote_scan",
+            "confidence": 0.95,
+            "lastSeenAt": "2026-07-31T03:00:00.000Z",
+            "rawJsonRedacted": null
+        }))
+        .expect("remote group identity hash may be provider text");
+
+        assert_eq!(input.group_id_hash.as_deref(), Some("gpt特价（限时）"));
+    }
 
     #[test]
     fn rejects_unknown_fields_invalid_ids_enums_numbers_and_oversized_json() {

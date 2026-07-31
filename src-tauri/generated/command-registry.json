@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "15b400aa4c140e5ea2caa245d8702a2de7eca5c95e55579a021a18bc315605e9",
+  "contract_hash": "3115c408311fefdac9c86297e2294c712b6cab5e618903fed6c7fb9cd386baf8",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -821,6 +821,18 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "get_station_key_model_discovery_operation_result",
+      "transport": "ordinary",
+      "input_schema_hash": "66f06d3bb1280295c2d4f5b569d7cc25b99a91b4954cefd6364da6e9706d4ed8",
+      "output_schema_hash": "b4497a567d876f9bced5d9611ba51019420a36eb9bd313dae40a91c3b16713e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "admission_class": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "import_relay_pool_to_ccswitch",
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
@@ -1580,6 +1592,18 @@
       "name": "start_station_key_connectivity_operation",
       "transport": "ordinary",
       "input_schema_hash": "37b6b0cff8a3c94f7e463d4b542c569430560b07e7d3b987b11fc0df24e48eb6",
+      "output_schema_hash": "fb76f13f8d7673bb657724854c86173a7f8a6ee61d18672ab25aee6f354514dc",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "admission_class": "mutation",
+      "transport_retry": false,
+      "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "start_station_key_model_discovery_operation",
+      "transport": "ordinary",
+      "input_schema_hash": "332a4dacba9c9453538fdae465c6148eb13ffdd14796e50d758185fa2b83ff03",
       "output_schema_hash": "fb76f13f8d7673bb657724854c86173a7f8a6ee61d18672ab25aee6f354514dc",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",

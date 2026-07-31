@@ -144,6 +144,14 @@ async function inspectSqlite(databasePath, allowedSensitiveValues, canaries) {
   return [];
 }
 
+function allowedSensitiveValuesForSqlite(repoRoot, policy, sqlitePath) {
+  const relativePath = normalizePath(relative(repoRoot, sqlitePath));
+  const fixture = policy.trackedDatabaseFixtures.find(
+    (entry) => normalizePath(entry.path) === relativePath,
+  );
+  return fixture?.allowedSensitiveValues ?? [];
+}
+
 async function scanTrackedIndex(repoRoot, policy, canaries) {
   const findings = [];
   const entries = parseIndexEntries(repoRoot);
@@ -300,7 +308,11 @@ export async function main(argv = process.argv.slice(2)) {
     findings.push(...(await scanTrackedIndex(options.repoRoot, policy, canaries)));
   }
   for (const sqlite of options.sqlite) {
-    const sqliteFindings = await inspectSqlite(sqlite, [], canaries);
+    const sqliteFindings = await inspectSqlite(
+      sqlite,
+      allowedSensitiveValuesForSqlite(options.repoRoot, policy, sqlite),
+      canaries,
+    );
     findings.push(...sqliteFindings.map((finding) => `${basename(sqlite)}: ${finding}`));
   }
   for (const artifact of options.artifacts) {

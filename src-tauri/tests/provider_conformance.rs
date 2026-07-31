@@ -314,6 +314,10 @@ mod models {
     }
 
     pub mod remote_keys {
+        pub fn api_key_fingerprint(secret: &str) -> Option<String> {
+            (!secret.trim().is_empty()).then(|| format!("fingerprint:{}", secret.len()))
+        }
+
         #[derive(Debug, Clone, PartialEq)]
         pub struct RemoteStationKey {
             pub id: String,

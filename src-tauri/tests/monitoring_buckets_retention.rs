@@ -4,12 +4,20 @@ pub mod app_retention;
 pub mod buckets;
 #[path = "../src/services/monitoring/maintenance_policy.rs"]
 pub mod maintenance;
+#[path = "../src/models/monitoring/read_model.rs"]
+pub mod monitoring_read_model;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
 pub mod retention;
 #[path = "../src/persistence/stores/monitoring/status_queries.rs"]
 pub mod status_queries;
+
+mod models {
+    pub(crate) mod monitoring {
+        pub(crate) use crate::monitoring_read_model::*;
+    }
+}
 
 mod persistence {
     pub mod error {

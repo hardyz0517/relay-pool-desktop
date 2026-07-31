@@ -20,7 +20,6 @@ use crate::{
         monitoring::CancelChannelMonitorExecutionReceipt,
     },
     persistence::{
-        error::PersistenceError,
         runtime::PersistenceHandle,
         stores::legacy_monitor_run_store::LegacyMonitorRunReader,
         stores::monitoring::{
@@ -211,40 +210,18 @@ impl MonitoringService {
             return Err(ApplicationError::ConstraintViolation);
         }
         let now_ms = self.now_ms();
+        let executions = MonitoringExecutionRepository;
         self.runtime
             .write(move |write| {
                 Box::pin(async move {
-                    let current_status: String = sqlx::query_scalar(
-                        "SELECT status FROM channel_monitor_executions WHERE id = ?1",
-                    )
-                    .bind(&execution_id)
-                    .fetch_one(write.connection())
-                    .await?;
-                    let cancelled = matches!(current_status.as_str(), "queued" | "running");
-                    if cancelled {
-                        sqlx::query(
-                            r#"
-                            UPDATE channel_monitor_executions
-                            SET status = 'cancelled',
-                                finished_at_ms = COALESCE(finished_at_ms, ?1),
-                                summary_failure_kind = COALESCE(summary_failure_kind, 'cancelled')
-                            WHERE id = ?2
-                            "#,
-                        )
-                        .bind(now_ms)
-                        .bind(&execution_id)
-                        .execute(write.connection())
-                        .await?;
-                    }
-                    Ok(CancelChannelMonitorExecutionReceipt {
-                        execution_id,
-                        status: if cancelled {
-                            "cancelled".to_string()
-                        } else {
-                            current_status
-                        },
-                        cancelled,
-                    })
+                    executions
+                        .cancel_execution(write.connection(), &execution_id, now_ms)
+                        .await
+                        .map(|row| CancelChannelMonitorExecutionReceipt {
+                            execution_id: row.execution_id,
+                            status: row.status,
+                            cancelled: row.cancelled,
+                        })
                 })
             })
             .await
@@ -259,20 +236,11 @@ impl MonitoringService {
             return Err(ApplicationError::ConstraintViolation);
         }
         let mut read = self.runtime.begin_read().await?;
-        sqlx::query_as::<_, (String, String, String)>(
-            r#"
-            SELECT id, monitor_id, status
-            FROM channel_monitor_executions
-            WHERE trigger_request_id = ?1
-            ORDER BY created_at_ms DESC, id DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(trigger_request_id)
-        .fetch_optional(read.connection())
-        .await
-        .map_err(PersistenceError::from)
-        .map_err(Into::into)
+        self.execution_store()
+            .find_by_trigger_request_id(read.connection(), trigger_request_id)
+            .await
+            .map(|row| row.map(|row| (row.execution_id, row.monitor_id, row.status)))
+            .map_err(Into::into)
     }
 
     pub(crate) async fn queue_monitoring_execution(
@@ -319,22 +287,13 @@ impl MonitoringService {
         }
         let execution_id = execution_id.to_string();
         let now_ms = self.now_ms();
+        let executions = MonitoringExecutionRepository;
         self.runtime
             .write(|write| {
                 Box::pin(async move {
-                    sqlx::query(
-                        r#"
-                        UPDATE channel_monitor_executions
-                        SET status = 'running', started_at_ms = COALESCE(started_at_ms, ?1)
-                        WHERE id = ?2 AND status = 'queued'
-                        "#,
-                    )
-                    .bind(now_ms)
-                    .bind(execution_id)
-                    .execute(write.connection())
-                    .await
-                    .map(|result| result.rows_affected() == 1)
-                    .map_err(PersistenceError::from)
+                    executions
+                        .start_queued(write.connection(), &execution_id, now_ms)
+                        .await
                 })
             })
             .await
@@ -350,23 +309,13 @@ impl MonitoringService {
         }
         let execution_id = execution_id.to_string();
         let now_ms = self.now_ms();
+        let executions = MonitoringExecutionRepository;
         self.runtime
             .write(|write| {
                 Box::pin(async move {
-                    sqlx::query(
-                        r#"
-                        UPDATE channel_monitor_executions
-                        SET status = 'interrupted', finished_at_ms = COALESCE(finished_at_ms, ?1),
-                            summary_failure_kind = COALESCE(summary_failure_kind, 'interrupted')
-                        WHERE id = ?2 AND status IN ('queued', 'running')
-                        "#,
-                    )
-                    .bind(now_ms)
-                    .bind(execution_id)
-                    .execute(write.connection())
-                    .await
-                    .map(|result| result.rows_affected() == 1)
-                    .map_err(PersistenceError::from)
+                    executions
+                        .interrupt(write.connection(), &execution_id, now_ms)
+                        .await
                 })
             })
             .await
@@ -567,6 +516,10 @@ impl MonitoringService {
 
     fn now_ms_string(&self) -> String {
         self.now_ms().to_string()
+    }
+
+    fn execution_store(&self) -> MonitoringExecutionRepository {
+        MonitoringExecutionRepository
     }
 }
 

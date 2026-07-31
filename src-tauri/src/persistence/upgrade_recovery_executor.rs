@@ -11,10 +11,7 @@ use super::{
     upgrade_fault::{
         AtomicStep, TombstoneStep, UpgradeFailpoint, UpgradeFaultInjector, UpgradeInjectedFailure,
     },
-    upgrade_journal::{
-        BaselineConversionJournal, BaselineConversionPhase, Sha256Digest, UpgradeAttemptId,
-        UpgradeJournal,
-    },
+    upgrade_journal::{BaselineConversionJournal, Sha256Digest, UpgradeAttemptId, UpgradeJournal},
     upgrade_recovery_plan::{
         BackupState, JournalState, LegacySourceState, ObservedUpgradeState, RecoveryHaltReason,
         RecoveryPlan, RecoveryPlanner,
@@ -39,16 +36,18 @@ pub(crate) struct ObservedJournal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BaselineConversionJournalState {
+pub(crate) enum PersistenceJournalKind {
     Missing,
+    GenerationUpgrade,
+    BaselineConversion,
     Invalid,
-    Valid(BaselineConversionPhase),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ObservedBaselineConversionJournal {
-    pub(crate) state: BaselineConversionJournalState,
-    pub(crate) journal: Option<BaselineConversionJournal>,
+pub(crate) struct ObservedPersistenceJournal {
+    pub(crate) kind: PersistenceJournalKind,
+    pub(crate) generation: Option<UpgradeJournal>,
+    pub(crate) baseline: Option<BaselineConversionJournal>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -409,33 +408,42 @@ pub(crate) fn observe_journal(journal_path: &Path) -> ObservedJournal {
     }
 }
 
-pub(crate) fn observe_baseline_conversion_journal(
-    journal_path: &Path,
-) -> ObservedBaselineConversionJournal {
+pub(crate) fn observe_persistence_journal(journal_path: &Path) -> ObservedPersistenceJournal {
     let bytes = match fs::read(journal_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return ObservedBaselineConversionJournal {
-                state: BaselineConversionJournalState::Missing,
-                journal: None,
+            return ObservedPersistenceJournal {
+                kind: PersistenceJournalKind::Missing,
+                generation: None,
+                baseline: None,
             }
         }
         Err(_) => {
-            return ObservedBaselineConversionJournal {
-                state: BaselineConversionJournalState::Invalid,
-                journal: None,
+            return ObservedPersistenceJournal {
+                kind: PersistenceJournalKind::Invalid,
+                generation: None,
+                baseline: None,
             }
         }
     };
-    match BaselineConversionJournal::from_json(&bytes) {
-        Ok(journal) => ObservedBaselineConversionJournal {
-            state: BaselineConversionJournalState::Valid(journal.payload().phase),
-            journal: Some(journal),
-        },
-        Err(_) => ObservedBaselineConversionJournal {
-            state: BaselineConversionJournalState::Invalid,
-            journal: None,
-        },
+    if let Ok(journal) = BaselineConversionJournal::from_json(&bytes) {
+        return ObservedPersistenceJournal {
+            kind: PersistenceJournalKind::BaselineConversion,
+            generation: None,
+            baseline: Some(journal),
+        };
+    }
+    if let Ok(journal) = UpgradeJournal::from_json(&bytes) {
+        return ObservedPersistenceJournal {
+            kind: PersistenceJournalKind::GenerationUpgrade,
+            generation: Some(journal),
+            baseline: None,
+        };
+    }
+    ObservedPersistenceJournal {
+        kind: PersistenceJournalKind::Invalid,
+        generation: None,
+        baseline: None,
     }
 }
 
@@ -668,4 +676,77 @@ fn map_atomic_error(
 fn digest_bytes(bytes: &[u8]) -> Sha256Digest {
     Sha256Digest::parse(&format!("{:x}", Sha256::digest(bytes)))
         .expect("SHA-256 formatter returns a valid lowercase digest")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::persistence::upgrade_journal::{ReleasedSchemaProfile, UtcTimestamp};
+
+    fn attempt_id(value: &str) -> UpgradeAttemptId {
+        UpgradeAttemptId::parse(value).expect("valid attempt id")
+    }
+
+    fn digest() -> Sha256Digest {
+        Sha256Digest::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("valid digest")
+    }
+
+    fn timestamp() -> UtcTimestamp {
+        UtcTimestamp::parse("2026-07-31T00:00:00Z").expect("valid timestamp")
+    }
+
+    #[test]
+    fn observes_persistence_journal_kind_before_recovery_routing() {
+        let root = tempfile::Builder::new()
+            .prefix("persistence-journal-kind-")
+            .tempdir()
+            .expect("tempdir");
+        let journal_path = root.path().join(UPGRADE_JOURNAL_FILE);
+
+        assert_eq!(
+            observe_persistence_journal(&journal_path).kind,
+            PersistenceJournalKind::Missing
+        );
+
+        let baseline = BaselineConversionJournal::prepared(
+            attempt_id("018f0000-0000-7000-8000-000000000001"),
+            digest(),
+            "relay-pool.sqlite3",
+            timestamp(),
+        )
+        .expect("baseline journal");
+        fs::write(
+            &journal_path,
+            baseline.to_canonical_json().expect("baseline json"),
+        )
+        .expect("write baseline journal");
+        let observed = observe_persistence_journal(&journal_path);
+        assert_eq!(observed.kind, PersistenceJournalKind::BaselineConversion);
+        assert!(observed.baseline.is_some());
+        assert!(observed.generation.is_none());
+
+        let generation = UpgradeJournal::prepared(
+            attempt_id("018f0000-0000-7000-8000-000000000002"),
+            ReleasedSchemaProfile::parse("profile_001").expect("profile"),
+            digest(),
+            timestamp(),
+        )
+        .expect("generation journal");
+        fs::write(
+            &journal_path,
+            generation.to_canonical_json().expect("generation json"),
+        )
+        .expect("write generation journal");
+        let observed = observe_persistence_journal(&journal_path);
+        assert_eq!(observed.kind, PersistenceJournalKind::GenerationUpgrade);
+        assert!(observed.generation.is_some());
+        assert!(observed.baseline.is_none());
+
+        fs::write(&journal_path, b"not-json").expect("write invalid journal");
+        assert_eq!(
+            observe_persistence_journal(&journal_path).kind,
+            PersistenceJournalKind::Invalid
+        );
+    }
 }

@@ -29,8 +29,11 @@ pub use services::secrets::{
 
 use crate::background_tasks::{BlockingExecutor, ExitCoordinator, ExitReason};
 use services::data_store::{
+    config::DatabaseGeneration,
     inspect_startup,
     relocation::apply_trusted_relocation,
+    startup_probe::probe_upgrade_state_with_journal,
+    startup_upgrade_plan::{plan_upgrade, StartupUpgradePlan},
     types::{DataStoreStartupState, RecoveryReason, StartupDecision},
 };
 use services::portable_migration::recovery::{
@@ -263,17 +266,61 @@ fn prepare_data_store(
                 };
                 return Ok(PreparedDataStore::Recovery(startup_state));
             };
-            services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
-                &default_data_dir,
-                &active_data_dir,
-                Some(&db_path),
-                device_keys,
-            )
+            if startup_state.database_generation() == DatabaseGeneration::Two {
+                let journal_path = default_data_dir
+                    .join(persistence::upgrade_recovery_executor::UPGRADE_JOURNAL_FILE);
+                match probe_upgrade_state_with_journal(
+                    &db_path,
+                    Some(&journal_path),
+                    Some(device_keys.active_key_id().as_str()),
+                )
+                {
+                    Ok(probe) => match plan_upgrade(&probe) {
+                        StartupUpgradePlan::Execute(steps) => {
+                            services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
+                                &default_data_dir,
+                                &active_data_dir,
+                                Some(&db_path),
+                                Some(&steps),
+                                device_keys,
+                            )
+                        }
+                        StartupUpgradePlan::NeedsRecovery(reason) => {
+                            eprintln!(
+                                "Relay Pool Desktop database startup plan requires recovery: {}",
+                                reason.message(probe.compatibility_schema_version)
+                            );
+                            startup_state.decision = StartupDecision::NeedsRecovery {
+                                reason: reason.recovery_reason(),
+                            };
+                            return Ok(PreparedDataStore::Recovery(startup_state));
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!(
+                            "Relay Pool Desktop database startup probe requires recovery: {error}"
+                        );
+                        startup_state.decision = StartupDecision::NeedsRecovery {
+                            reason: error.recovery_reason(),
+                        };
+                        return Ok(PreparedDataStore::Recovery(startup_state));
+                    }
+                }
+            } else {
+                services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
+                    &default_data_dir,
+                    &active_data_dir,
+                    Some(&db_path),
+                    None,
+                    device_keys,
+                )
+            }
         }
         StartupDecision::FirstRun { default_data_dir } => {
             services::data_store::generation_upgrade::prepare_generation_two_with_resolver(
                 &default_data_dir,
                 &default_data_dir,
+                None,
                 None,
                 device_keys,
             )
@@ -296,16 +343,15 @@ fn prepare_data_store(
                 })
             } else {
                 ready_state.decision = StartupDecision::NeedsRecovery {
-                    reason: RecoveryReason::OpenOrMigrationFailed,
+                    reason: RecoveryReason::InconsistentSchemaMetadata,
                 };
                 Ok(PreparedDataStore::Recovery(ready_state))
             }
         }
         Err(error) => {
             eprintln!("Relay Pool Desktop database startup requires recovery: {error}");
-            startup_state.decision = StartupDecision::NeedsRecovery {
-                reason: RecoveryReason::OpenOrMigrationFailed,
-            };
+            let reason = error.recovery_reason();
+            startup_state.decision = StartupDecision::NeedsRecovery { reason };
             Ok(PreparedDataStore::Recovery(startup_state))
         }
     }
@@ -322,6 +368,16 @@ fn recovery_reason_for_device_key_error(
         DeviceKeyErrorKind::Corrupt => RecoveryReason::SystemCredentialCorrupt,
         DeviceKeyErrorKind::Unsupported => RecoveryReason::SystemCredentialUnsupported,
         DeviceKeyErrorKind::Internal => RecoveryReason::SystemCredentialInternal,
+    }
+}
+
+fn recovery_reason_for_existing_database_device_key_error(
+    error: services::secrets::device_key_store::DeviceKeyErrorKind,
+) -> RecoveryReason {
+    use services::secrets::device_key_store::DeviceKeyErrorKind;
+    match error {
+        DeviceKeyErrorKind::NotFound => RecoveryReason::MissingKey,
+        other => recovery_reason_for_device_key_error(other),
     }
 }
 
@@ -448,9 +504,7 @@ fn initialize_secret_material_for_startup(
                 startup_state,
             })
         }
-        StartupDecision::Ready { .. }
-        | StartupDecision::NeedsRecovery { .. }
-        | StartupDecision::Conflict { .. } => {
+        StartupDecision::Ready { .. } => {
             match tauri::async_runtime::block_on(services::secrets::SecretManager::load_existing(
                 blocking_executor,
             )) {
@@ -461,8 +515,35 @@ fn initialize_secret_material_for_startup(
                 }),
                 Err(error) => {
                     startup_state.decision = StartupDecision::NeedsRecovery {
-                        reason: recovery_reason_for_device_key_error(error.kind()),
+                        reason: recovery_reason_for_existing_database_device_key_error(
+                            error.kind(),
+                        ),
                     };
+                    Ok(StartupSecretMaterial {
+                        manager: None,
+                        first_run_key_id: None,
+                        startup_state,
+                    })
+                }
+            }
+        }
+        StartupDecision::NeedsRecovery { .. } | StartupDecision::Conflict { .. } => {
+            match tauri::async_runtime::block_on(services::secrets::SecretManager::load_existing(
+                blocking_executor,
+            )) {
+                Ok(manager) => Ok(StartupSecretMaterial {
+                    manager: Some(manager),
+                    first_run_key_id: None,
+                    startup_state,
+                }),
+                Err(error) => {
+                    let reason = if startup_has_recovery_evidence(default_data_dir, &startup_state)
+                    {
+                        recovery_reason_for_existing_database_device_key_error(error.kind())
+                    } else {
+                        recovery_reason_for_device_key_error(error.kind())
+                    };
+                    startup_state.decision = StartupDecision::NeedsRecovery { reason };
                     Ok(StartupSecretMaterial {
                         manager: None,
                         first_run_key_id: None,
@@ -781,7 +862,6 @@ pub fn run() {
                         let provider_draft_command_facade =
                             app_composition::compose_provider_draft_command_facade(
                                 &app_services,
-                                blocking_executor.clone(),
                                 outbound_client.clone(),
                                 Arc::clone(&provider_registry),
                             );
@@ -847,18 +927,6 @@ pub fn run() {
                                 Arc::clone(&proxy_runtime),
                                 device_keys.clone(),
                             );
-                        tauri::async_runtime::block_on(
-                            app_services.settings.repair_legacy_settings(),
-                        )
-                        .map_err(|error| {
-                            format!("failed to repair legacy application settings: {error}")
-                        })?;
-                        tauri::async_runtime::block_on(
-                            app_services.settings.ensure_local_access_key(),
-                        )
-                        .map_err(|error| {
-                            format!("failed to initialize the local proxy access key: {error}")
-                        })?;
                         tauri::async_runtime::block_on(
                             app_services.pricing.ensure_builtin_model_base_prices(),
                         )
@@ -1048,10 +1116,14 @@ mod tests {
 
     use super::{
         persistence::runtime::{PersistenceRuntime, RuntimeState},
-        portable_recovery_reason, DataStoreRuntimeOwner, InstallationLease, LeaseError,
-        RecoveryReason, TrayBehavior,
+        portable_recovery_reason, recovery_reason_for_device_key_error,
+        recovery_reason_for_existing_database_device_key_error, DataStoreRuntimeOwner,
+        InstallationLease, LeaseError, RecoveryReason, TrayBehavior,
     };
-    use crate::services::portable_migration::recovery::PortableActivationManualReason;
+    use crate::services::{
+        portable_migration::recovery::PortableActivationManualReason,
+        secrets::device_key_store::DeviceKeyErrorKind,
+    };
 
     #[test]
     fn tray_behavior_maps_window_lifecycle_modes() {
@@ -1148,6 +1220,18 @@ mod tests {
         assert_eq!(
             portable_recovery_reason(PortableActivationManualReason::IdentityMismatch),
             RecoveryReason::PortableMigrationManualRecoveryRequired
+        );
+    }
+
+    #[test]
+    fn startup_device_key_not_found_distinguishes_fresh_install_from_existing_database() {
+        assert_eq!(
+            recovery_reason_for_device_key_error(DeviceKeyErrorKind::NotFound),
+            RecoveryReason::SystemCredentialMissing
+        );
+        assert_eq!(
+            recovery_reason_for_existing_database_device_key_error(DeviceKeyErrorKind::NotFound),
+            RecoveryReason::MissingKey
         );
     }
 }

@@ -1,6 +1,9 @@
+use futures_util::future::{BoxFuture, FutureExt};
 use sqlx::{Row, SqliteConnection};
 
-use crate::persistence::error::PersistenceError;
+use crate::persistence::{
+    error::PersistenceError, stores::monitoring::retention::MonitoringRetentionRepository,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct NewExecutionRow {
@@ -88,8 +91,230 @@ pub(crate) struct ExecutionSummaryRow {
     pub(crate) summary_outcome: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CancelExecutionRow {
+    pub(crate) execution_id: String,
+    pub(crate) status: String,
+    pub(crate) cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecutionTriggerMatchRow {
+    pub(crate) execution_id: String,
+    pub(crate) monitor_id: String,
+    pub(crate) status: String,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MonitoringExecutionRepository;
+
+pub(crate) trait MonitoringExecutionWrite {
+    fn insert_execution_row<'a>(
+        &'a mut self,
+        row: &'a NewExecutionRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>>;
+
+    fn append_attempt_row<'a>(
+        &'a mut self,
+        row: &'a NewAttemptRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>>;
+
+    fn finalize_target_row<'a>(
+        &'a mut self,
+        row: &'a FinalizeTargetRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>>;
+
+    fn mark_monitoring_rollup_dirty<'a>(
+        &'a mut self,
+        id: &'a str,
+        monitor_id: &'a str,
+        station_key_id: Option<&'a str>,
+        range_start_ms: i64,
+        range_end_ms: i64,
+        reason: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>>;
+
+    fn finalize_execution_and_advance_schedule_row<'a>(
+        &'a mut self,
+        execution_id: &'a str,
+        monitor_id: &'a str,
+        finished_at_ms: i64,
+        next_due_at_ms: Option<i64>,
+    ) -> BoxFuture<'a, Result<ExecutionSummaryRow, PersistenceError>>;
+}
+
+impl MonitoringExecutionWrite for SqliteConnection {
+    fn insert_execution_row<'a>(
+        &'a mut self,
+        row: &'a NewExecutionRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .insert_execution(self, row)
+                .await
+        }
+        .boxed()
+    }
+
+    fn append_attempt_row<'a>(
+        &'a mut self,
+        row: &'a NewAttemptRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .append_attempt(self, row)
+                .await
+        }
+        .boxed()
+    }
+
+    fn finalize_target_row<'a>(
+        &'a mut self,
+        row: &'a FinalizeTargetRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .finalize_target(self, row)
+                .await
+        }
+        .boxed()
+    }
+
+    fn mark_monitoring_rollup_dirty<'a>(
+        &'a mut self,
+        id: &'a str,
+        monitor_id: &'a str,
+        station_key_id: Option<&'a str>,
+        range_start_ms: i64,
+        range_end_ms: i64,
+        reason: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringRetentionRepository
+                .mark_dirty_range(
+                    self,
+                    id,
+                    monitor_id,
+                    station_key_id,
+                    range_start_ms,
+                    range_end_ms,
+                    reason,
+                    now_ms,
+                )
+                .await
+        }
+        .boxed()
+    }
+
+    fn finalize_execution_and_advance_schedule_row<'a>(
+        &'a mut self,
+        execution_id: &'a str,
+        monitor_id: &'a str,
+        finished_at_ms: i64,
+        next_due_at_ms: Option<i64>,
+    ) -> BoxFuture<'a, Result<ExecutionSummaryRow, PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .finalize_execution_and_advance_schedule(
+                    self,
+                    execution_id,
+                    monitor_id,
+                    finished_at_ms,
+                    next_due_at_ms,
+                )
+                .await
+        }
+        .boxed()
+    }
+}
+
+impl MonitoringExecutionWrite for sqlx::Transaction<'_, sqlx::Sqlite> {
+    fn insert_execution_row<'a>(
+        &'a mut self,
+        row: &'a NewExecutionRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .insert_execution(&mut *self, row)
+                .await
+        }
+        .boxed()
+    }
+
+    fn append_attempt_row<'a>(
+        &'a mut self,
+        row: &'a NewAttemptRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .append_attempt(&mut *self, row)
+                .await
+        }
+        .boxed()
+    }
+
+    fn finalize_target_row<'a>(
+        &'a mut self,
+        row: &'a FinalizeTargetRow,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .finalize_target(&mut *self, row)
+                .await
+        }
+        .boxed()
+    }
+
+    fn mark_monitoring_rollup_dirty<'a>(
+        &'a mut self,
+        id: &'a str,
+        monitor_id: &'a str,
+        station_key_id: Option<&'a str>,
+        range_start_ms: i64,
+        range_end_ms: i64,
+        reason: &'a str,
+        now_ms: i64,
+    ) -> BoxFuture<'a, Result<(), PersistenceError>> {
+        async move {
+            MonitoringRetentionRepository
+                .mark_dirty_range(
+                    &mut *self,
+                    id,
+                    monitor_id,
+                    station_key_id,
+                    range_start_ms,
+                    range_end_ms,
+                    reason,
+                    now_ms,
+                )
+                .await
+        }
+        .boxed()
+    }
+
+    fn finalize_execution_and_advance_schedule_row<'a>(
+        &'a mut self,
+        execution_id: &'a str,
+        monitor_id: &'a str,
+        finished_at_ms: i64,
+        next_due_at_ms: Option<i64>,
+    ) -> BoxFuture<'a, Result<ExecutionSummaryRow, PersistenceError>> {
+        async move {
+            MonitoringExecutionRepository
+                .finalize_execution_and_advance_schedule(
+                    &mut *self,
+                    execution_id,
+                    monitor_id,
+                    finished_at_ms,
+                    next_due_at_ms,
+                )
+                .await
+        }
+        .boxed()
+    }
+}
 
 impl MonitoringExecutionRepository {
     pub(crate) async fn insert_execution(
@@ -121,6 +346,114 @@ impl MonitoringExecutionRepository {
         .execute(connection)
         .await?;
         Ok(())
+    }
+
+    pub(crate) async fn cancel_execution(
+        &self,
+        connection: &mut SqliteConnection,
+        execution_id: &str,
+        now_ms: i64,
+    ) -> Result<CancelExecutionRow, PersistenceError> {
+        let current_status: String =
+            sqlx::query_scalar("SELECT status FROM channel_monitor_executions WHERE id = ?1")
+                .bind(execution_id)
+                .fetch_one(&mut *connection)
+                .await?;
+        let cancelled = matches!(current_status.as_str(), "queued" | "running");
+        if cancelled {
+            sqlx::query(
+                r#"
+                UPDATE channel_monitor_executions
+                SET status = 'cancelled',
+                    finished_at_ms = COALESCE(finished_at_ms, ?1),
+                    summary_failure_kind = COALESCE(summary_failure_kind, 'cancelled')
+                WHERE id = ?2
+                "#,
+            )
+            .bind(now_ms)
+            .bind(execution_id)
+            .execute(&mut *connection)
+            .await?;
+        }
+        Ok(CancelExecutionRow {
+            execution_id: execution_id.to_string(),
+            status: if cancelled {
+                "cancelled".to_string()
+            } else {
+                current_status
+            },
+            cancelled,
+        })
+    }
+
+    pub(crate) async fn find_by_trigger_request_id(
+        &self,
+        connection: &mut SqliteConnection,
+        trigger_request_id: &str,
+    ) -> Result<Option<ExecutionTriggerMatchRow>, PersistenceError> {
+        sqlx::query(
+            r#"
+            SELECT id, monitor_id, status
+            FROM channel_monitor_executions
+            WHERE trigger_request_id = ?1
+            ORDER BY created_at_ms DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(trigger_request_id)
+        .fetch_optional(connection)
+        .await?
+        .map(|row| {
+            Ok(ExecutionTriggerMatchRow {
+                execution_id: row.try_get("id")?,
+                monitor_id: row.try_get("monitor_id")?,
+                status: row.try_get("status")?,
+            })
+        })
+        .transpose()
+    }
+
+    pub(crate) async fn start_queued(
+        &self,
+        connection: &mut SqliteConnection,
+        execution_id: &str,
+        now_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        sqlx::query(
+            r#"
+            UPDATE channel_monitor_executions
+            SET status = 'running', started_at_ms = COALESCE(started_at_ms, ?1)
+            WHERE id = ?2 AND status = 'queued'
+            "#,
+        )
+        .bind(now_ms)
+        .bind(execution_id)
+        .execute(connection)
+        .await
+        .map(|result| result.rows_affected() == 1)
+        .map_err(PersistenceError::from)
+    }
+
+    pub(crate) async fn interrupt(
+        &self,
+        connection: &mut SqliteConnection,
+        execution_id: &str,
+        now_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        sqlx::query(
+            r#"
+            UPDATE channel_monitor_executions
+            SET status = 'interrupted', finished_at_ms = COALESCE(finished_at_ms, ?1),
+                summary_failure_kind = COALESCE(summary_failure_kind, 'interrupted')
+            WHERE id = ?2 AND status IN ('queued', 'running')
+            "#,
+        )
+        .bind(now_ms)
+        .bind(execution_id)
+        .execute(connection)
+        .await
+        .map(|result| result.rows_affected() == 1)
+        .map_err(PersistenceError::from)
     }
 
     pub(crate) async fn append_attempt(

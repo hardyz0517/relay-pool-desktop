@@ -81,11 +81,6 @@
     },
     {
       "from": "app_composition",
-      "to": "services::channel_monitors",
-      "temporary": false
-    },
-    {
-      "from": "app_composition",
       "to": "services::collectors::drivers",
       "temporary": false
     },
@@ -351,11 +346,6 @@
     },
     {
       "from": "application::command_facades::capture",
-      "to": "background_tasks",
-      "temporary": false
-    },
-    {
-      "from": "application::command_facades::capture",
       "to": "models::capture",
       "temporary": false
     },
@@ -407,11 +397,6 @@
     {
       "from": "application::command_facades::capture",
       "to": "services::station_endpoints",
-      "temporary": false
-    },
-    {
-      "from": "application::command_facades::channel_monitoring",
-      "to": "services::channel_monitors",
       "temporary": false
     },
     {
@@ -517,11 +502,6 @@
     {
       "from": "application::command_facades::station_collection",
       "to": "services::collectors::output",
-      "temporary": false
-    },
-    {
-      "from": "application::command_facades::station_key_connectivity",
-      "to": "outbound",
       "temporary": false
     },
     {
@@ -1420,38 +1400,8 @@
       "temporary": false
     },
     {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "ipc::dto::change_logs",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "ipc::dto::channel_monitor_reads",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "ipc::dto::station_keys",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "models::routing",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "models::shared_capabilities",
-      "temporary": false
-    },
-    {
       "from": "ipc::dto::channel_monitor_reads",
       "to": "models::channel_monitors",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_reads",
-      "to": "models::shared_capabilities",
       "temporary": false
     },
     {
@@ -1701,11 +1651,6 @@
     },
     {
       "from": "lib",
-      "to": "services::channel_monitors",
-      "temporary": false
-    },
-    {
-      "from": "lib",
       "to": "services::data_store",
       "temporary": false
     },
@@ -1777,11 +1722,6 @@
     {
       "from": "lib",
       "to": "services::station_collectors",
-      "temporary": false
-    },
-    {
-      "from": "models",
-      "to": "models::channel_monitors",
       "temporary": false
     },
     {
@@ -1955,11 +1895,6 @@
       "temporary": false
     },
     {
-      "from": "persistence::stores::monitoring_store",
-      "to": "models::secrets",
-      "temporary": false
-    },
-    {
       "from": "persistence::stores::pricing_store",
       "to": "models::secrets",
       "temporary": false
@@ -2022,101 +1957,6 @@
     {
       "from": "services::capture",
       "to": "services::secrets::mask",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::app_services",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::credentials",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::error",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::monitoring",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::pagination",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::pricing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::routing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "background_tasks",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "models::channel_monitors",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "models::pricing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "models::routing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "outbound",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "persistence",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::pricing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::proxy::observability",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::station_endpoints",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::time",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors::probe",
-      "to": "observability::correlation",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors::probe",
-      "to": "outbound",
       "temporary": false
     },
     {
@@ -2192,11 +2032,6 @@
     {
       "from": "services::collectors",
       "to": "services::outbound",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors",
-      "to": "services::remote_keys",
       "temporary": false
     },
     {
@@ -2917,6 +2752,441 @@
     {
       "from": "services::updater",
       "to": "services::outbound",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::monitoring::runner",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::channel_monitoring",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::channel_monitoring",
+      "to": "services::monitoring::runner",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::channel_status",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::collectors::orchestration",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::collectors::output",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_key_connectivity",
+      "to": "application::connectivity_probe",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_key_connectivity",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::health_transitions",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "application::health_transitions",
+      "to": "persistence::stores::health_observation_store",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "application::monitoring::commands",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "application::monitoring::definition_bridge",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "application::monitoring::recorder",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "persistence::stores::health_observation_store",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "persistence::stores::legacy_monitor_run_store",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "persistence::stores::monitoring::budgets",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "persistence::stores::monitoring::definitions",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "persistence::stores::monitoring::executions",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "persistence::stores::monitoring::retention",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "persistence::stores::monitoring::status_queries",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "services::monitoring::adapters::protocol_auto",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring",
+      "to": "services::monitoring::profiles::registry",
+      "temporary": false
+    },
+    {
+      "from": "application::provider_drafts",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "application::provider_drafts",
+      "to": "persistence::stores::provider_draft_store",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::channel_status",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::channel_status",
+      "to": "services::monitoring::profiles::registry",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "commands::capture",
+      "to": "ipc::dto::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_monitoring",
+      "to": "ipc::dto::channel_monitor_operations",
+      "temporary": false
+    },
+    {
+      "from": "commands::provider_drafts",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::provider_drafts",
+      "to": "ipc::dto::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "commands::provider_drafts",
+      "to": "models::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "ipc::dto::routing_health_reads",
+      "temporary": false
+    },
+    {
+      "from": "commands::station_key_connectivity",
+      "to": "services::endpoint_ping",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto",
+      "to": "services::collectors::output",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "application::connectivity_probe",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::config",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::startup_probe",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::data_store::startup_upgrade_plan",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::monitoring::maintenance",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::monitoring::runner",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::health_observation_store",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "persistence::legacy_import",
+      "to": "persistence::settings_compat",
+      "temporary": false
+    },
+    {
+      "from": "persistence::migrations",
+      "to": "persistence::schema_registry",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::monitoring",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::monitoring",
+      "to": "persistence::stores::monitoring::retention",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::settings_store",
+      "to": "persistence::settings_compat",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::provider_draft_store",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::provider_draft_store",
+      "to": "persistence::stores::credential_store",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::collector_apply",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "persistence::schema_registry",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::data_store::startup_probe",
+      "temporary": false
+    },
+    {
+      "from": "services::data_store",
+      "to": "services::data_store::startup_upgrade_plan",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::app_services",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::monitoring::commands",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::monitoring::definition_bridge",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::monitoring::orchestrator",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::monitoring::recorder",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::pagination",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "application::routing",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "services::endpoint_ping",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring",
+      "to": "services::monitoring::profiles::registry",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::schema_registry",
+      "temporary": false
+    },
+    {
+      "from": "services::secrets",
+      "to": "persistence::settings_compat",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "application::settings",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "observability::correlation",
       "temporary": false
     }
   ],

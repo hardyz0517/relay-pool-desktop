@@ -21,7 +21,6 @@ fn command_error(error: ProviderDraftCommandError) -> error::CommandError {
         ProviderDraftCommandError::Application(error) => {
             super::public_command_application_error(error)
         }
-        ProviderDraftCommandError::Blocking(error) => super::public_blocking_executor_error(error),
         ProviderDraftCommandError::Remote(error) => super::key_pool::public_remote_key_error(error),
     }
 }

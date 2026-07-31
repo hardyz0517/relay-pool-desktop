@@ -60,6 +60,9 @@ use crate::models::provider_drafts::{ProviderDraftPreview, ProviderDraftPreviewG
 use collector_apply::CollectorApplyPort;
 use output::{AdapterOutput, CollectorTask};
 
+const SUB2API_CHILD_TASK_TIMEOUT: Duration = Duration::from_secs(30);
+const NEWAPI_CHILD_TASK_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Consumer-owned read/write boundary required by provider collection drivers.
 ///
 /// Production composition supplies this port from catalog, settings, and
@@ -890,7 +893,7 @@ pub(crate) async fn finish_sub2api_collection_v2(
             let driver = registry
                 .collector(contract::ProviderKind::Sub2Api)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let context = contract::CollectorContext {
+            let mut context = contract::CollectorContext {
                 station: contract::StationIdentity {
                     station_id: prepared.station_id.clone(),
                     endpoint_revision: prepared.endpoint_revision,
@@ -905,7 +908,7 @@ pub(crate) async fn finish_sub2api_collection_v2(
                 secrets: &prepared.secret_accessor,
                 outbound,
                 proxy: prepared.proxy,
-                budget: RequestBudget::from_now(Duration::from_secs(30)),
+                budget: RequestBudget::from_now(SUB2API_CHILD_TASK_TIMEOUT),
                 cancellation: cancellation_token,
                 correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
             };
@@ -921,6 +924,7 @@ pub(crate) async fn finish_sub2api_collection_v2(
                 .collect::<Result<Vec<_>, ApplicationError>>()?;
             let mut adapter_outputs = Vec::with_capacity(outputs.len());
             for (child_task, driver_task) in outputs {
+                renew_child_task_budget(&mut context.budget, SUB2API_CHILD_TASK_TIMEOUT);
                 let output = driver
                     .collect(&context, driver_task)
                     .await
@@ -1052,7 +1056,7 @@ pub(crate) async fn finish_newapi_collection_v2(
             let driver = registry
                 .collector(contract::ProviderKind::NewApi)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let context = contract::CollectorContext {
+            let mut context = contract::CollectorContext {
                 station: contract::StationIdentity {
                     station_id: prepared.station_id.clone(),
                     endpoint_revision: prepared.endpoint_revision,
@@ -1067,7 +1071,7 @@ pub(crate) async fn finish_newapi_collection_v2(
                 secrets: &prepared.secret_accessor,
                 outbound,
                 proxy: prepared.proxy,
-                budget: RequestBudget::from_now(Duration::from_secs(20)),
+                budget: RequestBudget::from_now(NEWAPI_CHILD_TASK_TIMEOUT),
                 cancellation: cancellation_token,
                 correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
             };
@@ -1083,6 +1087,7 @@ pub(crate) async fn finish_newapi_collection_v2(
                 .collect::<Result<Vec<_>, ApplicationError>>()?;
             let mut adapter_outputs = Vec::with_capacity(outputs.len());
             for (child_task, driver_task) in outputs {
+                renew_child_task_budget(&mut context.budget, NEWAPI_CHILD_TASK_TIMEOUT);
                 let output = driver
                     .collect(&context, driver_task)
                     .await
@@ -1973,6 +1978,10 @@ fn has_login_credentials(username: &Option<String>, password_present: bool) -> b
         && password_present
 }
 
+fn renew_child_task_budget(budget: &mut RequestBudget, timeout: Duration) {
+    *budget = RequestBudget::from_now(timeout);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2084,5 +2093,17 @@ mod tests {
             full_child_tasks(contract::ProviderKind::OpenAiCompatible),
             vec![CollectorTask::Models],
         );
+    }
+
+    #[test]
+    fn full_collection_renews_request_budget_for_each_child_task() {
+        let mut budget = RequestBudget::from_deadline(std::time::Instant::now());
+        assert!(budget.remaining().is_none());
+
+        renew_child_task_budget(&mut budget, Duration::from_secs(20));
+
+        assert!(budget
+            .remaining()
+            .is_some_and(|remaining| remaining > Duration::from_secs(19)));
     }
 }

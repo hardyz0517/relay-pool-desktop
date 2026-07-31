@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "fixture_id": "released-schema15-baseline-v1",
+  "schema_version": 15,
+  "fixture": "src-tauri/tests/fixtures/persistence/schema15/released-schema15.sqlite3",
+  "fixture_sha256": "bdde72ca38923f11d7a7e24765fed77ea88c4812b77dc6fcefe2f82acdb32fc8",
+  "fixture_key_contract": {
+    "device_key_id": "schema15-fixture-device-key",
+    "device_key_bytes": "32 bytes of 0x07; synthetic test-only material",
+    "legacy_secret_plaintext": "fixture-schema15-secret",
+    "legacy_secret_aad": "station_credentials:fixture-station-001:cookie",
+    "legacy_secret_nonce_base64": "AwMDAwMDAwMDAwMD"
+  },
+  "migration_contract": {
+    "minimum_automatic_schema_baseline": 15,
+    "applied_versions": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "hash_algorithm": "sha256(file bytes) for drift gate; SQLx ledger uses sha384(raw migration file bytes)",
+    "migrations": [
+      {
+        "version": 1,
+        "path": "src-tauri/src/persistence/migrations/0001_v2_initial.sql",
+        "sha256": "3f9162b600b45810decca0b5a6371b51fc00e74f4a383d19e2234cd717657729"
+      },
+      {
+        "version": 2,
+        "path": "src-tauri/src/persistence/migrations/0002_catalog_settings.sql",
+        "sha256": "a2cb8768e63ee8b1c3c886e102e0032c966d3ca64719840c81c3f08c978b3925"
+      },
+      {
+        "version": 3,
+        "path": "src-tauri/src/persistence/migrations/0003_credentials_keys.sql",
+        "sha256": "2dd99ddd89b6776575c33d63f5565a78c7da94d8654dda8e813d456c3c1f5fc5"
+      },
+      {
+        "version": 4,
+        "path": "src-tauri/src/persistence/migrations/0004_routing.sql",
+        "sha256": "218765544ebf82a7a4ceaaacdd33594dc1c42749a01f40cb7efb8680136860b6"
+      },
+      {
+        "version": 5,
+        "path": "src-tauri/src/persistence/migrations/0005_request_logs.sql",
+        "sha256": "9ea0e47f3ee2630b3e8f4de6daf766764da374a71e97930abd43aed588281a44"
+      },
+      {
+        "version": 6,
+        "path": "src-tauri/src/persistence/migrations/0006_collectors_changes.sql",
+        "sha256": "9d79a38970fa47c9e4beb11aeb5c28074e027b12e0cf8472ffc18eda2b681ba9"
+      },
+      {
+        "version": 7,
+        "path": "src-tauri/src/persistence/migrations/0007_pricing_monitoring.sql",
+        "sha256": "9c3cc396e1a43bc715f2bd28c53ba40b67e011ce73e9433853a7459d3e349b57"
+      },
+      {
+        "version": 8,
+        "path": "src-tauri/src/persistence/migrations/0008_legacy_parity.sql",
+        "sha256": "718fc3a7c7796413d3b0f0e1127321cec77881c86635feb85e8ba8477f26d70d"
+      },
+      {
+        "version": 9,
+        "path": "src-tauri/src/persistence/migrations/0009_provider_drafts.sql",
+        "sha256": "f9510dfc71ab191fd4f9c92b92adc8905ba0334cd98b43a42e5ecf6ad1992757"
+      },
+      {
+        "version": 10,
+        "path": "src-tauri/src/persistence/migrations/0010_status_monitoring_v2.sql",
+        "sha256": "c7be3aa27706e398d15779b98169e14359d854a0f784865f007fc4ca6aa7de80"
+      },
+      {
+        "version": 11,
+        "path": "src-tauri/src/persistence/migrations/0011_remote_key_one_to_one.sql",
+        "sha256": "6f15cd2caff43bac68e970e5e23872d9501161e5a081c4cef03fe8b75651134c"
+      },
+      {
+        "version": 12,
+        "path": "src-tauri/src/persistence/migrations/0012_seed_builtin_monitor_templates.sql",
+        "sha256": "e62e56d360d675413e03f9926927b8bb55c1b39fdd224ef62c9756b5b4416f48"
+      },
+      {
+        "version": 13,
+        "path": "src-tauri/src/persistence/migrations/0013_remote_key_discovery_order.sql",
+        "sha256": "ea782d4c2a3451598ab1d5c60a77df3798aa1ad4b825490e7b818ee7d753b158"
+      },
+      {
+        "version": 14,
+        "path": "src-tauri/src/persistence/migrations/0014_monitor_profile_v2.sql",
+        "sha256": "1d98604cf3b161d7afdfdef77733156ca0f09c23682d3ca70da0007e1c3c9660"
+      },
+      {
+        "version": 15,
+        "path": "src-tauri/src/persistence/migrations/0015_monitor_probe_timeout_defaults.sql",
+        "sha256": "2e3f7df7752384a16314a01894f57c85875811f3b66ce772642eb8a0238b9ce8"
+      }
+    ]
+  },
+  "expected_after_upgrade": {
+    "schema_version": "registry latest",
+    "secret_format_version": 1,
+    "active_key_id": "schema15-fixture-device-key",
+    "settings_local_key_value": "",
+    "legacy_station_api_key_value": "",
+    "legacy_station_key_api_key_value": "",
+    "legacy_login_password_value": "",
+    "secret_count": 5,
+    "local_access_key_binding_count": 1
+  }
+}

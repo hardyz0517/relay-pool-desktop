@@ -4,7 +4,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::application::{
-    command_facades::StationKeyConnectivityResult,
+    command_facades::{StationKeyConnectivityResult, StationKeyModelDiscoveryResult},
     connectivity_probe::StationKeyConnectivityResponseMode,
 };
 use crate::models::{
@@ -80,6 +80,22 @@ impl From<StationKeyConnectivityResult> for StationKeyConnectivityResultDto {
             message: result.message,
             response_mode: result.response_mode,
             stream_fallback_reason: result.stream_fallback_reason,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StationKeyModelDiscoveryResultDto {
+    station_key_id: String,
+    models: Vec<String>,
+}
+
+impl From<StationKeyModelDiscoveryResult> for StationKeyModelDiscoveryResultDto {
+    fn from(result: StationKeyModelDiscoveryResult) -> Self {
+        Self {
+            station_key_id: result.station_key_id,
+            models: result.models,
         }
     }
 }
@@ -1354,6 +1370,22 @@ mod tests {
     }
 
     #[test]
+    fn station_credentials_input_accepts_email_password_and_remember_flag() {
+        let input = UpdateStationCredentialsInputDto::parse(serde_json::json!({
+            "stationId": "019fb101-c931-7f41-9990-ac06b6e4f239",
+            "loginUsername": "2869976118@qq.com",
+            "loginPassword": "fixture-password-obviously-fake",
+            "rememberPassword": true
+        }))
+        .expect("normal NewAPI login credentials should be valid");
+
+        assert_eq!(input.station_id, "019fb101-c931-7f41-9990-ac06b6e4f239");
+        assert_eq!(input.login_username.as_deref(), Some("2869976118@qq.com"));
+        assert!(input.login_password.is_some());
+        assert!(input.remember_password);
+    }
+
+    #[test]
     fn save_with_defaults_rejects_unknown_status_and_cross_variant_group_fields() {
         let base = serde_json::json!({
             "mode": "update",
@@ -1472,7 +1504,7 @@ mod tests {
 
         let created_json = serde_json::to_value(&created).expect("serialize created DTO");
         assert_eq!(created_json["apiKeyPresent"], true);
-        assert_eq!(created_json["apiKeyMasked"], "sk-...nary");
+        assert_eq!(created_json["apiKeyMasked"], "sk-c********nary");
         assert!(created_json.get("apiKey").is_none());
         assert!(!created_json.to_string().contains(create_secret));
         assert_secret_storage(&database_path, &created.id, create_secret).await;
@@ -1518,7 +1550,7 @@ mod tests {
             .expect("update station key through application service");
         assert_eq!(updated.name, "Primary updated");
         assert_eq!(updated.max_concurrency, 4);
-        assert_eq!(updated.api_key_masked, "sk-...nary");
+        assert_eq!(updated.api_key_masked, "sk-u********nary");
         assert_secret_storage(&database_path, &updated.id, update_secret).await;
         assert!(!database_contains(&database_path, create_secret).await);
 

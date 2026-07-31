@@ -94,7 +94,7 @@ pub fn mask_secret(value: &str) -> String {
     if trimmed.chars().count() <= 8 {
         return "****".to_string();
     }
-    let prefix: String = trimmed.chars().take(3).collect();
+    let prefix: String = trimmed.chars().take(4).collect();
     let suffix: String = trimmed
         .chars()
         .rev()
@@ -103,7 +103,7 @@ pub fn mask_secret(value: &str) -> String {
         .chars()
         .rev()
         .collect();
-    format!("{prefix}...{suffix}")
+    format!("{prefix}********{suffix}")
 }
 
 pub fn redact_text(text: &str) -> String {
@@ -193,7 +193,7 @@ mod tests {
     fn mask_secret_keeps_prefix_and_suffix_only() {
         let masked = mask_secret("sk-p8-secret-plaintext-canary");
 
-        assert_eq!(masked, "sk-...nary");
+        assert_eq!(masked, "sk-p********nary");
         assert!(!masked.contains("secret-plaintext"));
     }
 

@@ -9,6 +9,7 @@ use crate::{
         command_facades::{
             StationKeyConnectivityCommandError, StationKeyConnectivityCommandFacade,
             StationKeyConnectivityProbeTarget, StationKeyConnectivityResult,
+            StationKeyModelDiscoveryResult,
         },
         connectivity_probe::{
             build_station_key_connectivity_probe_body, build_station_key_connectivity_probe_url,
@@ -28,7 +29,11 @@ use crate::{
     commands::error,
     ipc::dto::{
         operations::{OperationIdInputDto, OperationStartedDto},
-        station_keys::{StationKeyConnectivityInputDto, StationKeyConnectivityResultDto},
+        routing_health_reads::RoutingStationKeyIdInputDto,
+        station_keys::{
+            StationKeyConnectivityInputDto, StationKeyConnectivityResultDto,
+            StationKeyModelDiscoveryResultDto,
+        },
     },
     models::{proxy::UpstreamApiFormat, routing::StationKeyCapabilities},
     observability::correlation,
@@ -56,6 +61,7 @@ use serde_json::json;
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const STATION_KEY_CONNECTIVITY_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+const STATION_KEY_MODEL_DISCOVERY_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 const STATION_ENDPOINT_PING_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn command_application_error(
@@ -201,6 +207,119 @@ pub async fn get_station_key_connectivity_operation_result(
             .ok_or_else(|| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
     })
     .await
+}
+
+#[tauri::command]
+pub async fn start_station_key_model_discovery_operation(
+    facade: State<'_, StationKeyConnectivityCommandFacade>,
+    runtime: State<'_, ManagedWorkRuntime>,
+    input: Value,
+) -> Result<OperationStartedDto, error::CommandError> {
+    correlation::in_command_scope("start_station_key_model_discovery_operation", async {
+        let input = RoutingStationKeyIdInputDto::parse(input)?;
+        let station_key_id = input.station_key_id;
+        let target = facade
+            .prepare_probe_target(station_key_id.clone())
+            .await
+            .map_err(station_key_connectivity_command_error)?;
+        let concurrency_key = format!("station-key-connectivity:{station_key_id}");
+        let operation_station_key_id = station_key_id.clone();
+        let facade = facade.inner().clone();
+        let outbound = runtime.outbound.clone();
+        let operation_id = runtime
+            .operation
+            .start(
+                OperationStartRequest::new(
+                    "station_key_model_discovery",
+                    OperationOwner::new("key-pool"),
+                    move |context| {
+                        Box::pin(async move {
+                            run_station_key_model_discovery_operation(
+                                context,
+                                facade,
+                                outbound,
+                                target,
+                                operation_station_key_id,
+                            )
+                            .await
+                        })
+                    },
+                )
+                .with_deadline(STATION_KEY_MODEL_DISCOVERY_OPERATION_TIMEOUT)
+                .with_concurrency_key(concurrency_key),
+            )
+            .map_err(public_operation_registry_error)?;
+        Ok(OperationStartedDto::from(operation_id))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_station_key_model_discovery_operation_result(
+    facade: State<'_, StationKeyConnectivityCommandFacade>,
+    runtime: State<'_, ManagedWorkRuntime>,
+    input: Value,
+) -> Result<StationKeyModelDiscoveryResultDto, error::CommandError> {
+    correlation::in_command_scope("get_station_key_model_discovery_operation_result", async {
+        let input = OperationIdInputDto::parse(input)?;
+        let operation_id = input.operation_id();
+        let snapshot = runtime
+            .operation
+            .status(operation_id)
+            .map_err(public_operation_registry_error)?;
+        if snapshot.kind != "station_key_model_discovery" || snapshot.owner.feature != "key-pool" {
+            return Err(error::CommandError::try_new(
+                error::CommandErrorCode::NotFound,
+                "The model discovery operation was not found.",
+                false,
+                None,
+                None,
+            )
+            .expect("model discovery not-found error is bounded"));
+        }
+        if snapshot.terminal != Some(OperationTerminal::Completed) {
+            return Err(error::CommandError::from_work(
+                error::WorkFailure::ResultUnknown,
+            ));
+        }
+        facade
+            .get_model_discovery_result(operation_id)
+            .map(StationKeyModelDiscoveryResultDto::from)
+            .ok_or_else(|| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
+    })
+    .await
+}
+
+async fn run_station_key_model_discovery_operation(
+    context: OperationContext,
+    facade: StationKeyConnectivityCommandFacade,
+    outbound: AsyncOutboundClient,
+    target: StationKeyConnectivityProbeTarget,
+    station_key_id: String,
+) -> OperationTerminal {
+    let models = match discover_station_key_connectivity_models_outbound(
+        &outbound,
+        &target.key.station_api_base_url,
+        target.api_key.as_str(),
+        context.cancellation_token.clone(),
+    )
+    .await
+    {
+        Ok(models) => models,
+        Err(terminal) => return terminal,
+    };
+    if context.cancellation_token.is_cancelled() {
+        return OperationTerminal::Cancelled;
+    }
+    let _ = context.emit_progress(format!("discovered_models count={}", models.len()));
+    facade.store_model_discovery_result(
+        context.id,
+        StationKeyModelDiscoveryResult {
+            station_key_id,
+            models,
+        },
+    );
+    OperationTerminal::Completed
 }
 
 async fn run_station_key_connectivity_operation(
@@ -366,8 +485,10 @@ async fn discover_station_key_connectivity_models_outbound(
     base_url: &str,
     api_key: &str,
     cancellation_token: tokio_util::sync::CancellationToken,
-) -> Option<Vec<String>> {
-    let url = build_api_url(base_url, "/v1/models").ok()?;
+) -> Result<Vec<String>, OperationTerminal> {
+    let url = build_api_url(base_url, "/v1/models").map_err(|_| OperationTerminal::Failed {
+        code: OperationFailureCode::new("model-discovery-request-invalid"),
+    })?;
     let response = outbound
         .execute(
             outbound_json_request(
@@ -378,17 +499,21 @@ async fn discover_station_key_connectivity_models_outbound(
                 Vec::new(),
                 STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT,
             )
-            .ok()?,
+            .map_err(outbound_failure_terminal_or_result)?,
             cancellation_token,
         )
         .await
-        .ok()?;
+        .map_err(outbound_failure_terminal_or_result)?;
     if !response.status.is_success() {
-        return None;
+        return Err(OperationTerminal::Failed {
+            code: OperationFailureCode::new("model-discovery-http"),
+        });
     }
-    let value = serde_json::from_slice::<Value>(&response.body).ok()?;
-    let models = model_ids_from_models_response(&value);
-    (!models.is_empty()).then_some(models)
+    let value =
+        serde_json::from_slice::<Value>(&response.body).map_err(|_| OperationTerminal::Failed {
+            code: OperationFailureCode::new("model-discovery-invalid-response"),
+        })?;
+    Ok(model_ids_from_models_response(&value))
 }
 
 async fn run_station_key_connectivity_single_model_probe_outbound(

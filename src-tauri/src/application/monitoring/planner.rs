@@ -1,7 +1,7 @@
 use crate::{
     models::monitoring::{
-        ClientProfileRef, DefinitionRevision, FailureKind, HealthPolicy, ProbeOutcome,
-        ProtocolKind, RetryPolicy, RiskPolicy, SchedulePolicy, TargetScope, TriggerKind,
+        ClientProfileRef, DefinitionRevision, FailureKind, HealthPolicy, ProtocolKind, RetryPolicy,
+        RiskPolicy, SchedulePolicy, TargetScope, TriggerKind,
     },
     services::monitoring::{
         adapters::protocol_auto::{resolve_protocol_auto, ProtocolCapabilityFacts},
@@ -205,26 +205,4 @@ fn stable_plan_hash(parts: &[String]) -> String {
         hasher.update([0]);
     }
     format!("{:x}", hasher.finalize())
-}
-
-pub(crate) fn skipped_target_result(
-    execution_id: &str,
-    target: &ProbeTargetPlan,
-    failure_kind: FailureKind,
-) -> super::recorder::RecordedTargetResult {
-    super::recorder::RecordedTargetResult {
-        execution_id: execution_id.to_string(),
-        station_id: target.station_id.clone(),
-        station_key_id: target.station_key_id.clone(),
-        terminal_outcome: ProbeOutcome::Skipped,
-        terminal_failure_kind: Some(failure_kind),
-        decisive_attempt_id: None,
-        requested_model: None,
-        effective_model: None,
-        used_fallback: false,
-        attempt_count: 0,
-        protocol_kind: target.protocol_kind,
-        request_profile_hash: target.request_profile_hash.clone(),
-        endpoint_revision: target.endpoint_revision,
-    }
 }

@@ -14,19 +14,31 @@ function readText(relativePath) {
 }
 
 function migrationDirectory() {
-  const source = readText("src-tauri/src/persistence/migrations.rs");
+  const source = [
+    readText("src-tauri/src/persistence/schema_registry.rs"),
+    readText("src-tauri/src/persistence/migrations.rs"),
+  ].join("\n");
   const match = source.match(/sqlx::migrate!\("(?<path>[^"]+)"\)/);
   assert(match?.groups?.path, "persistence migrator path must be declared with sqlx::migrate!");
   return path.join(repoRoot, "src-tauri", match.groups.path.replace(/^\.\//, ""));
 }
 
-function runMigrations() {
-  const db = new DatabaseSync(":memory:");
-  db.exec("PRAGMA foreign_keys = ON;");
-  const migrations = fs
+function migrationFiles() {
+  return fs
     .readdirSync(migrationDirectory())
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
     .sort();
+}
+
+function latestMigrationVersion(migrations) {
+  assert(migrations.length > 0, "persistence migration directory must not be empty");
+  return Number(migrations.at(-1).slice(0, 4));
+}
+
+function runMigrations() {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON;");
+  const migrations = migrationFiles();
   assert(
     migrations.includes("0009_provider_drafts.sql"),
     "schema 9 provider drafts migration must be present before portable migration work",
@@ -42,12 +54,13 @@ function runMigrations() {
 }
 
 function currentBinaryCompatibility() {
-  const source = readText("src-tauri/src/persistence/migrations.rs");
+  const source = readText("src-tauri/src/persistence/schema_registry.rs");
   const generation = Number(source.match(/database_generation:\s*(\d+)/)?.[1]);
-  const writable = [...source.matchAll(/writable_schema:\s*BTreeSet::from\(\[(\d+)\]\)/g)].map((match) =>
-    Number(match[1]),
+  assert(
+    /writable_schema:\s*BTreeSet::from\(\[latest\]\)/.test(source),
+    "binary writable schema must be derived from registry latest schema",
   );
-  return { generation, writableSchema: writable.at(-1) };
+  return { generation, writableSchema: latestMigrationVersion(migrationFiles()) };
 }
 
 function currentSchemaTables(db) {

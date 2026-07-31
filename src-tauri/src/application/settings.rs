@@ -69,14 +69,6 @@ impl SettingsService {
             .map_err(Into::into)
     }
 
-    pub(crate) async fn repair_legacy_settings(&self) -> Result<u64, ApplicationError> {
-        let store = self.store;
-        self.runtime
-            .write(|write| Box::pin(async move { store.repair_legacy_settings(write).await }))
-            .await
-            .map_err(Into::into)
-    }
-
     pub(crate) fn set_data_directory_projection(
         &self,
         active: String,
@@ -103,14 +95,16 @@ impl SettingsService {
                     if let Some(secret) = store.local_access_key_secret_for_write(write).await? {
                         return decrypt_local_access_key(&*vault, secret);
                     }
-                    let legacy = store.legacy_local_access_key_value(write).await?;
-                    let value = if legacy.trim().is_empty()
-                        || legacy == Self::INSECURE_LOCAL_KEY_PLACEHOLDER
-                    {
-                        generated
-                    } else {
-                        legacy
-                    };
+                    let legacy = store.local_access_key_setting_value(write).await?;
+                    if !legacy.trim().is_empty() && legacy != Self::INSECURE_LOCAL_KEY_PLACEHOLDER {
+                        return Err(
+                            crate::persistence::error::PersistenceError::InvariantViolation(
+                                "local access key secret is missing after encrypted-secret baseline"
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                    let value = generated;
                     let row = encrypt_local_access_key(&*vault, &*ids, &value, &now)?;
                     store.upsert_local_access_key_secret(write, &row).await?;
                     Ok(value)
@@ -331,7 +325,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_tray_behavior_is_read_compatibly_and_repaired_transactionally() {
+    async fn ensure_local_access_key_rejects_unmigrated_plaintext_after_baseline() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("settings.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE settings SET value = 'sk-legacy-local-canary' WHERE key = 'local_key'",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("seed unmigrated plaintext");
+        let service = SettingsService::new(
+            runtime.handle(),
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+            Arc::new(DataKeyVault::for_test([9; 32])),
+            temp.path().display().to_string(),
+            None,
+        );
+
+        let error = service
+            .ensure_local_access_key()
+            .await
+            .expect_err("unmigrated local key must not be imported on hot path");
+
+        drop(error);
+        assert_eq!(
+            query_local_key_plaintext(&runtime).await,
+            "sk-legacy-local-canary"
+        );
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn legacy_tray_behavior_is_read_compatibly_without_hot_path_repair() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("legacy-settings.sqlite3");
         let runtime = PersistenceRuntime::initialize_new(&path)
@@ -361,20 +397,6 @@ mod tests {
 
         let compatible = service.load().await.expect("compatible settings load");
         assert_eq!(compatible.tray_behavior, "minimize_to_tray");
-        assert_eq!(
-            service
-                .repair_legacy_settings()
-                .await
-                .expect("repair legacy settings"),
-            1
-        );
-        assert_eq!(
-            service
-                .repair_legacy_settings()
-                .await
-                .expect("idempotent repair"),
-            0
-        );
 
         let mut read = runtime.begin_read().await.expect("read repaired setting");
         let persisted: String =
@@ -382,8 +404,18 @@ mod tests {
                 .fetch_one(read.connection())
                 .await
                 .expect("persisted tray behavior");
-        assert_eq!(persisted, "minimize_to_tray");
+        assert_eq!(persisted, "minimize-to-tray");
         drop(read);
         runtime.close().await.expect("close persistence runtime");
+    }
+
+    async fn query_local_key_plaintext(runtime: &PersistenceRuntime) -> String {
+        let mut read = runtime.begin_read().await.expect("read local key");
+        let value = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'local_key'")
+            .fetch_one(read.connection())
+            .await
+            .expect("local key");
+        drop(read);
+        value
     }
 }

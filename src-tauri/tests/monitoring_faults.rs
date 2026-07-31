@@ -28,6 +28,12 @@ mod persistence {
         pub(crate) mod health_observation_store {
             pub(crate) use crate::health_observation_store::*;
         }
+
+        pub(crate) mod monitoring {
+            pub(crate) mod retention {
+                pub(crate) use crate::retention::*;
+            }
+        }
     }
 }
 
