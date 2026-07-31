@@ -47,6 +47,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     handleCreateRemoteKey,
     handleGroupRowsChange,
     handleImportRemoteKey,
+    handleKeyRowsChange,
     handleOpenCreateRemoteKey,
     handleScanRemoteKeys,
     handleStartManualAuthorization,
@@ -58,6 +59,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
     importedLocalKeyPendingDelete,
     loading,
     passwordProfileLoading,
+    pendingUnbindRemoteKeyIds,
     providerDraftId,
     localStationKeys,
     remoteCapability,
@@ -78,7 +80,6 @@ export function AddProviderPage(props: AddProviderPageProps) {
     saving,
     scanRemoteDisabled,
     setForm,
-    setKeyRows,
     startingAuthorization,
     testingConnection,
   } = useAddProviderPageController(props);
@@ -98,10 +99,10 @@ export function AddProviderPage(props: AddProviderPageProps) {
         onSubmit={handleSubmit}
         footer={
           <>
-            <Button variant="secondary" onClick={requestExit} disabled={saving}>
+            <Button variant="secondary" onClick={requestExit} disabled={saving || remoteLoading}>
               取消
             </Button>
-            <Button type="submit" disabled={saving || loading}>
+            <Button type="submit" disabled={saving || loading || remoteLoading}>
               <Check className="h-4 w-4" />
               {saving ? "保存中" : editing ? "保存修改" : "添加供应商"}
             </Button>
@@ -136,7 +137,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
 
             <ProviderGroupsSection
               developerModeEnabled={developerModeEnabled}
-              disabled={saving || loading}
+              disabled={saving || loading || remoteLoading}
               remoteCapabilityUnavailableReason={remoteCapabilityUnavailableReason}
               remoteLoading={remoteLoading}
               rows={groupRows}
@@ -155,6 +156,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
               groupOptions={editableGroupOptions}
               localKeyIdsCreatedByRemote={remoteCreatedLocalKeyIds}
               localKeys={localStationKeys}
+              pendingUnbindRemoteKeyIds={pendingUnbindRemoteKeyIds}
               remoteCapability={remoteCapability}
               remoteCapabilityError={remoteCapabilityError}
               remoteCapabilityUnavailableReason={remoteCapabilityUnavailableReason}
@@ -170,7 +172,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
               onDeleteRemoteKey={requestDeleteRemoteKey}
               onImportRemoteKey={(remoteKey) => void handleImportRemoteKey(remoteKey)}
               onOpenCreateRemoteKey={() => void handleOpenCreateRemoteKey()}
-              onRowsChange={setKeyRows}
+              onRowsChange={handleKeyRowsChange}
               onScanRemoteKeys={() => void handleScanRemoteKeys()}
             />
           </div>

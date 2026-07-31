@@ -14,6 +14,7 @@ type RemoteKeyDiscoveryListProps = {
   readOnly?: boolean;
   deleteDisabled?: boolean;
   localKeyIdsCreatedByRemote?: Record<string, string>;
+  pendingUnbindRemoteKeyIds?: ReadonlySet<string>;
   onDelete: (remoteKey: RemoteStationKey) => void;
   onDeleteImportedLocalKey: (remoteKey: RemoteStationKey) => void;
   onImport: (remoteKey: RemoteStationKey) => void;
@@ -29,6 +30,7 @@ export function RemoteKeyDiscoveryList({
   readOnly = false,
   deleteDisabled = false,
   localKeyIdsCreatedByRemote = {},
+  pendingUnbindRemoteKeyIds = new Set(),
   onDelete,
   onDeleteImportedLocalKey,
   onImport,
@@ -72,6 +74,7 @@ export function RemoteKeyDiscoveryList({
               const hasImportedLocalKey = Boolean(
                 remoteCreatedLocalKeyId && localKeyById.has(remoteCreatedLocalKeyId),
               );
+              const isPendingUnbind = pendingUnbindRemoteKeyIds.has(key.id);
 
               return (
                 <div
@@ -82,10 +85,10 @@ export function RemoteKeyDiscoveryList({
                     {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
                   </span>
                   <StatusBadge
-                    tone={isMatched ? "healthy" : identityVerified ? "disabled" : "warning"}
+                    tone={isPendingUnbind ? "warning" : isMatched ? "healthy" : identityVerified ? "disabled" : "warning"}
                     className="h-5 px-1.5 text-[11px]"
                   >
-                    {isMatched ? "已匹配" : identityVerified ? "无匹配" : "未验证"}
+                    {isPendingUnbind ? "待解绑" : isMatched ? "已匹配" : identityVerified ? "未绑定" : "未验证"}
                   </StatusBadge>
                   <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
                     {key.apiKeyMasked || key.apiKeyFingerprint || "未提供"}
@@ -95,7 +98,11 @@ export function RemoteKeyDiscoveryList({
                     {formatRemoteKeyRate(key.rateMultiplier, creditPerCny)}
                   </span>
                   <div className="flex min-w-0 items-center gap-1">
-                    {isMatched && matchedLocalKey ? (
+                    {isPendingUnbind ? (
+                      <span className="w-full truncate text-center text-warning-foreground">
+                        正在解除绑定
+                      </span>
+                    ) : isMatched && matchedLocalKey ? (
                       <span className="min-w-0 flex-1 truncate text-center text-foreground">
                         {matchedLocalKey.name}
                       </span>
@@ -106,7 +113,9 @@ export function RemoteKeyDiscoveryList({
                     )}
                   </div>
                   <div className="flex min-w-0 justify-center">
-                    {hasImportedLocalKey ? (
+                    {isPendingUnbind ? (
+                      <StatusBadge tone="warning" className="h-5 px-1.5 text-[11px]">删除中</StatusBadge>
+                    ) : hasImportedLocalKey ? (
                       <StatusBadge tone="healthy" className="h-5 px-1.5 text-[11px]">已导入</StatusBadge>
                     ) : isMatched ? (
                       <StatusBadge tone="info" className="h-5 px-1.5 text-[11px]">已存在</StatusBadge>
@@ -134,7 +143,7 @@ export function RemoteKeyDiscoveryList({
                     )}
                     <IconButton
                       className="h-7 w-7 shrink-0 text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"
-                      disabled={loading || readOnly || deleteDisabled}
+                      disabled={loading || readOnly || deleteDisabled || isPendingUnbind}
                       label={`删除远端 Key ${key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名"}`}
                       onClick={() => onDelete(key)}
                     >

@@ -179,7 +179,11 @@ describe("channel monitor V2 view model", () => {
     const input = createStationKeyMonitorInput(
       { id: "key-1", stationId: "station-1", name: "Key A" },
       { id: "builtin-openai-chat-low-token", endpointKind: "chat_completions" },
-      { preferredModels: ["gpt-4o-mini"], modelAllowlist: [], modelBlocklist: [] },
+      {
+        preferredModels: ["gpt-4o-mini"],
+        modelAllowlist: ["gpt-4.1-mini"],
+        modelBlocklist: [],
+      },
     );
 
     expect(input).toMatchObject({

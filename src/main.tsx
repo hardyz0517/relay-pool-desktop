@@ -23,16 +23,16 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <ThemeProvider initialSnapshot={initialTheme}>
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
-          <QueryErrorNotifier />
-          <BackendBootstrap
-            createClient={createDesktopBackendClient}
-            renderDataStoreBootstrap={(renderReady) => <DataStoreBootstrap renderReady={renderReady} />}
-            renderReady={() => (
-              <UpdaterProvider>
+          <UpdaterProvider>
+            <QueryErrorNotifier />
+            <BackendBootstrap
+              createClient={createDesktopBackendClient}
+              renderDataStoreBootstrap={(renderReady) => <DataStoreBootstrap renderReady={renderReady} />}
+              renderReady={() => (
                 <App />
-              </UpdaterProvider>
-            )}
-          />
+              )}
+            />
+          </UpdaterProvider>
         </ToastProvider>
       </QueryClientProvider>
     </ThemeProvider>

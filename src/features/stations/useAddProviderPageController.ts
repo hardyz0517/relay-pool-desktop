@@ -62,7 +62,9 @@ import {
 } from "./pages/add-provider/formModel";
 import {
   collectRemoteGroupOptions,
+  collectNewlyDeletedPersistedKeyIds,
   dedupeGroupRows,
+  deriveRemoteKeyEditorState,
   groupBindingsToCurrentOptions,
   groupBindingsToDrafts,
   groupDraftToOption,
@@ -75,7 +77,6 @@ import {
   normalizeCollectionIntervalMinutes,
   parseCreditPerCny,
   remoteKeyDisplayName,
-  resolveRemoteCreatedLocalKeyIds,
   stationKeyToUpdateInput,
   syncRowsWithGroupRateOptions,
   validateGroupRows,
@@ -133,7 +134,6 @@ export function useAddProviderPageController({
   const [remoteListError, setRemoteListError] = useState<string | null>(null);
   const [remoteKeys, setRemoteKeys] = useState<RemoteStationKey[]>([]);
   const [localStationKeys, setLocalStationKeys] = useState<StationKey[]>([]);
-  const [remoteCreatedLocalKeyIds, setRemoteCreatedLocalKeyIds] = useState<Record<string, string>>({});
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [createRemoteOpen, setCreateRemoteOpen] = useState(false);
   const [remoteKeyPendingDelete, setRemoteKeyPendingDelete] = useState<RemoteStationKey | null>(null);
@@ -154,6 +154,10 @@ export function useAddProviderPageController({
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const currentCreditPerCny = useMemo(() => parseCreditPerCny(form.creditPerCny), [form.creditPerCny]);
   const hasUnsavedChanges = serializeProviderDraft(form, groupRows, keyRows) !== initialDraftSnapshot;
+  const remoteKeyEditorState = useMemo(
+    () => deriveRemoteKeyEditorState(remoteKeys, localStationKeys, keyRows),
+    [keyRows, localStationKeys, remoteKeys],
+  );
 
   async function invalidateProviderWorkspaceCaches() {
     await Promise.all([
@@ -314,7 +318,6 @@ export function useAddProviderPageController({
       setCurrentGroupOptions([]);
       setKeyRows(nextKeyRows);
       setLocalStationKeys([]);
-      setRemoteCreatedLocalKeyIds({});
       setRemoteCapability(draftRemoteCapability(defaultPreset.stationType));
       setRemoteCapabilityError(null);
       setRemoteListError(null);
@@ -392,7 +395,6 @@ export function useAddProviderPageController({
         const nextKeyRows = keys.length ? keys.map(keyToDraft) : [];
         setForm(nextForm);
         setLocalStationKeys(keys);
-        setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(discoveredRemoteKeysResult.keys, keys));
         setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates, station.creditPerCny));
         setGroupRows(nextGroupRows);
         setKeyRows(nextKeyRows);
@@ -458,9 +460,54 @@ export function useAddProviderPageController({
   async function refreshLocalStationKeyState(targetStationId: string) {
     const keys = await listStationKeys(targetStationId);
     setLocalStationKeys(keys);
-    setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(remoteKeys, keys));
     setKeyRows(keys.length ? keys.map(keyToDraft) : []);
     return keys;
+  }
+
+  async function refreshStationKeyState(targetStationId: string) {
+    const [nextRemoteKeys, nextLocalKeys] = await Promise.all([
+      listRemoteStationKeys(targetStationId),
+      listStationKeys(targetStationId),
+    ]);
+    setRemoteKeys(nextRemoteKeys);
+    setLocalStationKeys(nextLocalKeys);
+    setKeyRows(nextLocalKeys.length ? nextLocalKeys.map(keyToDraft) : []);
+    return { remoteKeys: nextRemoteKeys, localKeys: nextLocalKeys };
+  }
+
+  function handleKeyRowsChange(nextRows: StationKeyDraft[]) {
+    const newlyDeletedPersistedKeyIds = collectNewlyDeletedPersistedKeyIds(keyRows, nextRows);
+    setKeyRows(nextRows);
+
+    if (!activeStationId || newlyDeletedPersistedKeyIds.length === 0) {
+      return;
+    }
+    void deletePersistedLocalKeysImmediately(activeStationId, newlyDeletedPersistedKeyIds);
+  }
+
+  async function deletePersistedLocalKeysImmediately(
+    targetStationId: string,
+    stationKeyIds: string[],
+  ) {
+    setRemoteLoading(true);
+    setError(null);
+    try {
+      await Promise.all(stationKeyIds.map((stationKeyId) => deleteStationKey(stationKeyId)));
+      await refreshStationKeyState(targetStationId);
+      await invalidateProviderWorkspaceCaches();
+      toast.success(stationKeyIds.length === 1 ? "本地 Key 已删除" : `已删除 ${stationKeyIds.length} 个本地 Key`);
+    } catch (requestError) {
+      const message = readError(requestError);
+      setError(message);
+      try {
+        await refreshStationKeyState(targetStationId);
+      } catch {
+        // Keep the original mutation error as the actionable failure.
+      }
+      toast.error("删除本地 Key 失败", message);
+    } finally {
+      setRemoteLoading(false);
+    }
   }
 
   async function ensureStationForRemoteKeyActions() {
@@ -472,6 +519,10 @@ export function useAddProviderPageController({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (remoteLoading) {
+      toast.info("请等待 Key 操作完成");
+      return;
+    }
     if (!form.name.trim()) {
       toast.info("请填写供应商名称");
       return;
@@ -521,7 +572,7 @@ export function useAddProviderPageController({
         setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
         setKeyRows(rowsToSave);
         await saveKeyRows(activeStationId, rowsToSave);
-        await refreshLocalStationKeyState(activeStationId);
+        await refreshStationKeyState(activeStationId);
         await invalidateProviderWorkspaceCaches();
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
           await updateStationCredentials({
@@ -550,7 +601,7 @@ export function useAddProviderPageController({
       toast.success("供应商已添加");
       onCreated?.();
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : String(requestError);
+      const message = readError(requestError);
       setError(message);
       toast.error(editing ? "保存供应商失败" : "添加供应商失败", message);
     } finally {
@@ -630,10 +681,7 @@ export function useAddProviderPageController({
       setRemoteCapabilityError(null);
       setRemoteKeys(result.keys);
       if (activeStationId) {
-        const keys = await refreshLocalStationKeyState(activeStationId);
-        setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(result.keys, keys));
-      } else {
-        setRemoteCreatedLocalKeyIds({});
+        await refreshLocalStationKeyState(activeStationId);
       }
       toast.success("远端 Key 已更新", result.message || `发现 ${result.keys.length} 个远端 Key`);
     } catch (requestError) {
@@ -747,7 +795,7 @@ export function useAddProviderPageController({
   }
 
   function requestDeleteImportedLocalKey(remoteKey: RemoteStationKey) {
-    const stationKeyId = remoteCreatedLocalKeyIds[remoteKey.id];
+    const stationKeyId = remoteKeyEditorState.localKeyIdsCreatedByRemote[remoteKey.id];
     if (!stationKeyId || remoteLoading) {
       return;
     }
@@ -785,13 +833,8 @@ export function useAddProviderPageController({
     await updateStationKey(stationKeyToUpdateInput(result.stationKey, {
       rateMultiplier: effectiveRateMultiplierForCredit(remoteKey.rateMultiplier, currentCreditPerCny),
     }));
-    const [nextRemoteKeys, nextLocalKeys] = await Promise.all([
-      listRemoteStationKeys(targetStationId),
-      refreshLocalStationKeyState(targetStationId),
-    ]);
+    await refreshStationKeyState(targetStationId);
     await invalidateProviderWorkspaceCaches();
-    setRemoteKeys(nextRemoteKeys);
-    setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
     toast.success("已创建本地 Key", result.message || `${remoteKeyDisplayName(remoteKey)} 已保存为本地 Key。`);
   }
 
@@ -805,13 +848,8 @@ export function useAddProviderPageController({
     }
 
     await deleteStationKey(expectedStationKeyId);
-    const [nextRemoteKeys, nextLocalKeys] = await Promise.all([
-      listRemoteStationKeys(remoteKey.stationId),
-      refreshLocalStationKeyState(remoteKey.stationId),
-    ]);
+    await refreshStationKeyState(remoteKey.stationId);
     await invalidateProviderWorkspaceCaches();
-    setRemoteKeys(nextRemoteKeys);
-    setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(nextRemoteKeys, nextLocalKeys));
     toast.success("已删除导入的本地 Key");
   }
 
@@ -840,7 +878,6 @@ export function useAddProviderPageController({
     try {
       const result = await deleteRemoteStationKey(remoteKey.id, remoteKey.stationId);
       setRemoteKeys(result.keys);
-      setRemoteCreatedLocalKeyIds(resolveRemoteCreatedLocalKeyIds(result.keys, localStationKeys));
       await invalidateProviderWorkspaceCaches();
       toast.success(
         result.alreadyAbsent ? "远端 Key 已不存在" : "远端 Key 已删除",
@@ -983,6 +1020,7 @@ export function useAddProviderPageController({
     handleGroupRowsChange,
     handleOpenCreateRemoteKey,
     handleImportRemoteKey,
+    handleKeyRowsChange,
     handleScanRemoteKeys,
     handleStartManualAuthorization,
     handleStationTypeChange,
@@ -993,15 +1031,16 @@ export function useAddProviderPageController({
     importedLocalKeyPendingDelete,
     loading,
     passwordProfileLoading,
+    pendingUnbindRemoteKeyIds: remoteKeyEditorState.pendingUnbindRemoteKeyIds,
     providerDraftId,
-    localStationKeys,
+    localStationKeys: remoteKeyEditorState.localKeys,
     remoteCapability,
     remoteCapabilityError,
     remoteCapabilityUnavailableReason: remoteActionUnavailableReason,
-    remoteCreatedLocalKeyIds,
+    remoteCreatedLocalKeyIds: remoteKeyEditorState.localKeyIdsCreatedByRemote,
     remoteDiscoveryReason,
     remoteGroupOptions,
-    remoteKeys,
+    remoteKeys: remoteKeyEditorState.remoteKeys,
     remoteKeyPendingDelete,
     remoteListError,
     remoteLoading,
@@ -1013,7 +1052,6 @@ export function useAddProviderPageController({
     saving,
     scanRemoteDisabled,
     setForm,
-    setKeyRows,
     testingConnection,
     startingAuthorization,
     handleCopyWebsiteUrl,

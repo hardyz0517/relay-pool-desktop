@@ -89,7 +89,8 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
   }, [toast]);
 
   useEffect(() => {
-    void currentAppVersion()
+    void Promise.resolve()
+      .then(() => currentAppVersion())
       .then((version) => dispatch({ type: "CURRENT_VERSION", version }))
       .catch(() => undefined);
     const timer = window.setTimeout(() => void checkNow({ notify: false }), 5_000);

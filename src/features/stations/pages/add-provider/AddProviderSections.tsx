@@ -370,6 +370,7 @@ type ProviderKeysSectionProps = {
   groupOptions: StationKeyGroupOption[];
   localKeyIdsCreatedByRemote: Record<string, string>;
   localKeys: StationKey[];
+  pendingUnbindRemoteKeyIds: ReadonlySet<string>;
   remoteCapability: RemoteKeyCapability | null;
   remoteCapabilityError: string | null;
   remoteCapabilityUnavailableReason: string | null;
@@ -398,6 +399,7 @@ export function ProviderKeysSection({
   groupOptions,
   localKeyIdsCreatedByRemote,
   localKeys,
+  pendingUnbindRemoteKeyIds,
   remoteCapability,
   remoteCapabilityError,
   remoteCapabilityUnavailableReason,
@@ -479,6 +481,7 @@ export function ProviderKeysSection({
                 readOnly={!activeStationId}
                 localKeyIdsCreatedByRemote={localKeyIdsCreatedByRemote}
                 localKeys={localKeys}
+                pendingUnbindRemoteKeyIds={pendingUnbindRemoteKeyIds}
                 onDelete={onDeleteRemoteKey}
                 onDeleteImportedLocalKey={onDeleteImportedLocalKey}
                 onImport={onImportRemoteKey}

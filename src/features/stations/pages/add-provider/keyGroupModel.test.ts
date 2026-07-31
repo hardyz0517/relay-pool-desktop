@@ -5,8 +5,11 @@ import type { StationGroupBinding } from "@/lib/types/groupFacts";
 import type { RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import {
   collectRemoteGroupOptions,
+  collectNewlyDeletedPersistedKeyIds,
   dedupeGroupRows,
+  deriveRemoteKeyEditorState,
   groupBindingsToDrafts,
+  keyToDraft,
   legacyRemoteLocalKeyNote,
   remoteLocalKeyNote,
   resolveRemoteCreatedLocalKeyIds,
@@ -213,6 +216,62 @@ describe("add provider key/group model", () => {
         [legacyLocal],
       ),
     ).toEqual({});
+  });
+
+  it("projects a remotely imported key as unbound as soon as its local row is deleted", () => {
+    const remote = remoteKey({
+      matchStatus: "matched",
+      matchedStationKeyId: "local-1",
+      matchConfidence: 1,
+    });
+    const local = stationKey({
+      id: "local-1",
+      note: remoteLocalKeyNote(remote),
+    });
+    const activeRow = keyToDraft(local);
+
+    expect(deriveRemoteKeyEditorState([remote], [local], [activeRow])).toMatchObject({
+      remoteKeys: [expect.objectContaining({ matchStatus: "matched" })],
+      localKeys: [local],
+      pendingUnbindRemoteKeyIds: new Set(),
+      localKeyIdsCreatedByRemote: { "remote-1": "local-1" },
+    });
+
+    const deletedState = deriveRemoteKeyEditorState(
+      [remote],
+      [local],
+      [{ ...activeRow, deleteRequested: true }],
+    );
+    expect(deletedState.remoteKeys).toEqual([
+      expect.objectContaining({
+        matchStatus: "unbound",
+        matchedStationKeyId: null,
+        matchConfidence: 0,
+      }),
+    ]);
+    expect(deletedState.localKeys).toEqual([]);
+    expect(deletedState.pendingUnbindRemoteKeyIds).toEqual(new Set(["remote-1"]));
+    expect(deletedState.localKeyIdsCreatedByRemote).toEqual({});
+  });
+
+  it("detects only persisted keys that newly entered the deletion state", () => {
+    const persistedRow = keyToDraft(stationKey({ id: "persisted" }));
+    const alreadyDeletingRow = {
+      ...keyToDraft(stationKey({ id: "already-deleting" })),
+      deleteRequested: true,
+    };
+    const unsavedRow = { ...keyToDraft(stationKey()), id: null, clientId: "unsaved" };
+
+    expect(
+      collectNewlyDeletedPersistedKeyIds(
+        [persistedRow, alreadyDeletingRow, unsavedRow],
+        [
+          { ...persistedRow, deleteRequested: true },
+          alreadyDeletingRow,
+          { ...unsavedRow, deleteRequested: true },
+        ],
+      ),
+    ).toEqual(["persisted"]);
   });
 
   it("builds an update payload without read-only station key fields", () => {

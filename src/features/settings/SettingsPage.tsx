@@ -463,9 +463,8 @@ export function SettingsPage() {
             description={restartRequired ? "重启后使用新的数据目录；当前运行仍使用原数据库。" : undefined}
             label="数据目录"
           />
+          <DataMigrationSection />
         </SectionCard>
-
-        <DataMigrationSection />
 
         <SectionCard contentClassName="p-0" title="高级">
           <SettingRow

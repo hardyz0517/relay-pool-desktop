@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, KeyRound } from "lucide-react";
+import { ArrowLeft, Check, KeyRound, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
@@ -20,6 +20,15 @@ import {
   findMatchingGroupOption,
 } from "@/lib/groupOptionViewModels";
 import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "./stationKeyCapabilityDefaults";
+import { runStationKeyModelDiscoveryOperation } from "./modelDiscoveryOperationController";
+import {
+  addModelToList,
+  applyDiscoveredModels,
+  defaultModelFromPreferred,
+  modelLines,
+  preferredModelsFromDefault,
+  removeModelFromList,
+} from "./keyModelConfiguration";
 
 type EditKeyPageProps = {
   stationKeyId: string | null;
@@ -102,8 +111,10 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadedStationKeyIdRef = useRef<string | null>(null);
+  const modelDiscoveryAbortRef = useRef<AbortController | null>(null);
   const hasUnsavedChanges = serializeEditKeyForm(form) !== initialFormSnapshot;
 
   const bindingOptions = [
@@ -191,6 +202,55 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
       alive = false;
     };
   }, [keyPoolItems, keyPoolItemsQuery.error, keyPoolItemsQuery.isLoading, stationKeyId, toast]);
+
+  useEffect(() => () => modelDiscoveryAbortRef.current?.abort(), []);
+
+  async function handleFetchModels() {
+    if (!sourceItem || fetchingModels) {
+      return;
+    }
+    if (form.apiKey.trim()) {
+      toast.info("请先保存密钥", "获取模型列表会使用当前已保存的密钥。");
+      return;
+    }
+
+    const abortController = new AbortController();
+    modelDiscoveryAbortRef.current?.abort();
+    modelDiscoveryAbortRef.current = abortController;
+    setFetchingModels(true);
+    try {
+      const result = await runStationKeyModelDiscoveryOperation(sourceItem.id, {
+        signal: abortController.signal,
+      });
+      if (result.models.length === 0) {
+        toast.info("未获取到模型", "接口返回了空模型列表。");
+        return;
+      }
+      const update = applyDiscoveredModels(
+        result.models,
+        defaultModelFromPreferred(form.preferredModels),
+      );
+      setForm((current) => ({
+        ...current,
+        modelAllowlist: update.modelAllowlist,
+        preferredModels: update.preferredModels,
+      }));
+      if (update.defaultModelRemoved) {
+        toast.info("模型列表已更新", `已获取 ${result.models.length} 个模型，原默认模型已不可用，请重新选择。`);
+      } else {
+        toast.success("模型列表已更新", `已获取 ${result.models.length} 个模型。`);
+      }
+    } catch (requestError) {
+      if (!abortController.signal.aborted) {
+        toast.error("获取模型列表失败", readError(requestError));
+      }
+    } finally {
+      if (modelDiscoveryAbortRef.current === abortController) {
+        modelDiscoveryAbortRef.current = null;
+        setFetchingModels(false);
+      }
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -374,18 +434,32 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
                 </div>
               </SectionCard>
 
-              <SectionCard title="模型范围">
-                <div className="grid gap-3">
-                  <Field label="允许模型">
-                    <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.modelAllowlist} onChange={(event) => setForm({ ...form, modelAllowlist: event.target.value })} placeholder="每行一个模型；留空表示全部模型" />
-                  </Field>
-                  <Field label="禁止模型">
-                    <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.modelBlocklist} onChange={(event) => setForm({ ...form, modelBlocklist: event.target.value })} placeholder="每行一个模型" />
-                  </Field>
-                  <Field label="优先模型">
-                    <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.preferredModels} onChange={(event) => setForm({ ...form, preferredModels: event.target.value })} placeholder="每行一个模型" />
-                  </Field>
-                </div>
+              <SectionCard title="模型配置">
+                <KeyModelConfigurationEditor
+                  defaultModel={defaultModelFromPreferred(form.preferredModels)}
+                  modelList={form.modelAllowlist}
+                  modelListAction={
+                    <Button
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                      disabled={fetchingModels || saving}
+                      title={form.apiKey.trim() ? "请先保存新密钥" : "使用当前密钥获取模型列表"}
+                      onClick={() => void handleFetchModels()}
+                    >
+                      {fetchingModels ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                      {fetchingModels ? "获取中" : "获取模型"}
+                    </Button>
+                  }
+                  onDefaultModelChange={(defaultModel) =>
+                    setForm({ ...form, preferredModels: preferredModelsFromDefault(defaultModel) })
+                  }
+                  onModelListChange={(modelAllowlist) => setForm({ ...form, modelAllowlist })}
+                />
               </SectionCard>
             </aside>
           </section>
@@ -404,6 +478,115 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         }}
       />
     </PageScaffold>
+  );
+}
+
+function KeyModelConfigurationEditor({
+  defaultModel,
+  modelList,
+  modelListAction,
+  onDefaultModelChange,
+  onModelListChange,
+}: {
+  defaultModel: string;
+  modelList: string;
+  modelListAction: React.ReactNode;
+  onDefaultModelChange: (model: string) => void;
+  onModelListChange: (models: string) => void;
+}) {
+  const dataListId = useId();
+  const [newModel, setNewModel] = useState("");
+  const models = modelLines(modelList);
+
+  function addModel() {
+    const model = newModel.trim();
+    if (!model) {
+      return;
+    }
+    onModelListChange(addModelToList(modelList, model));
+    if (!defaultModel.trim()) {
+      onDefaultModelChange(model);
+    }
+    setNewModel("");
+  }
+
+  function removeModel(model: string) {
+    onModelListChange(removeModelFromList(modelList, model));
+    if (defaultModel.trim().toLowerCase() === model.toLowerCase()) {
+      onDefaultModelChange("");
+    }
+  }
+
+  return (
+    <div className="grid gap-4">
+      <Field label="默认模型">
+        <input
+          className={inputClassName}
+          list={dataListId}
+          placeholder="输入模型名称或从列表选择"
+          value={defaultModel}
+          onChange={(event) => onDefaultModelChange(event.target.value)}
+        />
+        <datalist id={dataListId}>
+          {models.map((model) => <option key={model} value={model} />)}
+        </datalist>
+      </Field>
+
+      <div className="grid gap-2">
+        <div className="flex min-h-5 items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">模型列表</span>
+            <span className="text-xs tabular-nums text-muted-foreground">{models.length}</span>
+          </div>
+          {modelListAction}
+        </div>
+        <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
+          <div className="flex min-w-0 items-center gap-1.5 border-b border-border bg-surface-subtle p-2">
+            <input
+              className={`${inputClassName} min-w-0 flex-1`}
+              placeholder="添加模型"
+              value={newModel}
+              onChange={(event) => setNewModel(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  addModel();
+                }
+              }}
+            />
+            <IconButton label="添加模型" disabled={!newModel.trim()} onClick={addModel}>
+              <Plus className="h-4 w-4" />
+            </IconButton>
+          </div>
+          {models.length === 0 ? (
+            <div className="flex min-h-20 items-center justify-center px-3 py-4 text-sm text-muted-foreground">
+              暂无模型
+            </div>
+          ) : (
+            <div className="grid max-h-60 overflow-y-auto sm:grid-cols-2">
+              {models.map((model) => (
+                <div
+                  key={model}
+                  className="flex min-w-0 items-center gap-2 border-b border-border px-3 py-1.5 last:border-b-0 sm:odd:border-r"
+                >
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={model}>
+                    {model}
+                  </span>
+                  {defaultModel.trim().toLowerCase() === model.toLowerCase() && (
+                    <span className="shrink-0 rounded-[var(--surface-radius)] bg-info-surface px-1.5 py-0.5 text-[11px] font-medium text-info-foreground">
+                      默认
+                    </span>
+                  )}
+                  <IconButton label={`移除模型 ${model}`} variant="ghost" onClick={() => removeModel(model)}>
+                    <X className="h-3.5 w-3.5" />
+                  </IconButton>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

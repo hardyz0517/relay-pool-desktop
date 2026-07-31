@@ -461,6 +461,67 @@ export function resolveRemoteCreatedLocalKeyIds(
   );
 }
 
+export function deriveRemoteKeyEditorState(
+  remoteKeys: RemoteStationKey[],
+  localKeys: StationKey[],
+  keyRows: StationKeyDraft[],
+) {
+  const pendingInvalidatedLocalKeyIds = new Set(
+    keyRows.flatMap((row) =>
+      row.id && row.deleteRequested ? [row.id] : [],
+    ),
+  );
+  const importedLocalKeyIds = resolveRemoteCreatedLocalKeyIds(remoteKeys, localKeys);
+  const pendingUnbindRemoteKeyIds = new Set(
+    remoteKeys.flatMap((remoteKey) => {
+      const linkedLocalKeyId =
+        importedLocalKeyIds[remoteKey.id] ?? remoteKey.matchedStationKeyId;
+      return linkedLocalKeyId && pendingInvalidatedLocalKeyIds.has(linkedLocalKeyId)
+        ? [remoteKey.id]
+        : [];
+    }),
+  );
+  const effectiveLocalKeys = localKeys.filter(
+    (key) => !pendingInvalidatedLocalKeyIds.has(key.id),
+  );
+  const effectiveLocalKeyIds = new Set(effectiveLocalKeys.map((key) => key.id));
+  const effectiveRemoteKeys = remoteKeys.map((remoteKey) =>
+    remoteKey.matchedStationKeyId && !effectiveLocalKeyIds.has(remoteKey.matchedStationKeyId)
+      ? {
+          ...remoteKey,
+          matchStatus: "unbound" as const,
+          matchedStationKeyId: null,
+          matchConfidence: 0,
+        }
+      : remoteKey,
+  );
+
+  return {
+    remoteKeys: effectiveRemoteKeys,
+    localKeys: effectiveLocalKeys,
+    pendingUnbindRemoteKeyIds,
+    localKeyIdsCreatedByRemote: resolveRemoteCreatedLocalKeyIds(
+      effectiveRemoteKeys,
+      effectiveLocalKeys,
+    ),
+  };
+}
+
+export function collectNewlyDeletedPersistedKeyIds(
+  currentRows: StationKeyDraft[],
+  nextRows: StationKeyDraft[],
+) {
+  const currentRowsByClientId = new Map(
+    currentRows.map((row) => [row.clientId, row] as const),
+  );
+  return nextRows.flatMap((row) => {
+    const previousRow = currentRowsByClientId.get(row.clientId);
+    return row.id && row.deleteRequested && previousRow?.deleteRequested !== true
+      ? [row.id]
+      : [];
+  });
+}
+
 export function isRemoteCreatedLocalKey(remoteKey: RemoteStationKey, localKey: StationKey) {
   return (
     localKey.note === remoteLocalKeyNote(remoteKey) ||

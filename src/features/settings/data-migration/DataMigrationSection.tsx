@@ -1,5 +1,5 @@
 import { ArrowDownToLine, ArrowUpFromLine, RefreshCw, ShieldCheck } from "lucide-react";
-import { Button, SectionCard, StatusBadge } from "@/components/ui";
+import { Button, StatusBadge } from "@/components/ui";
 import { describeCapability, operationProgressLabel, terminalLabel } from "./migrationViewModel";
 import { ExportMigrationDialog } from "./ExportMigrationDialog";
 import { ImportMigrationDialog } from "./ImportMigrationDialog";
@@ -9,22 +9,24 @@ export function DataMigrationSection() {
   const controller = useDataMigrationController();
   const capability = describeCapability(controller.capability);
   return (
-    <SectionCard
-      contentClassName="p-0"
-      title="跨设备搬家"
-      action={<StatusBadge tone={capability.tone}>{capability.title}</StatusBadge>}
-    >
+    <div className="border-t border-border">
       <div className="grid gap-4 px-5 py-4 text-sm">
-        <div className="flex gap-3">
-          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-info-surface text-info-foreground">
-            <ShieldCheck className="h-4 w-4" />
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 gap-3">
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-info-surface text-info-foreground">
+              <ShieldCheck className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-medium text-foreground">跨设备搬家</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                用密码保护的搬家包把本机数据带到另一台电脑
+              </p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                {capability.detail}
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="font-medium text-foreground">用密码保护的搬家包把本机数据带到另一台电脑</p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {capability.detail}
-            </p>
-          </div>
+          <StatusBadge tone={capability.tone}>{capability.title}</StatusBadge>
         </div>
         <div className="grid gap-2 rounded-[var(--surface-radius)] border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <div>导出流程：选择位置 → 设置密码 → 生成加密包 → 校验完成。</div>
@@ -65,6 +67,6 @@ export function DataMigrationSection() {
         open={controller.importOpen}
         onClose={controller.closeImportDialog}
       />
-    </SectionCard>
+    </div>
   );
 }

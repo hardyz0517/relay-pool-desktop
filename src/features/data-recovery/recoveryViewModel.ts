@@ -115,6 +115,42 @@ function describeRecoveryReason(reason: RecoveryReason) {
       title: "数据库打开或迁移失败",
       description: "应用无法安全打开当前数据库，因此已停在恢复模式，避免创建空数据或继续写入。",
     },
+    missingKey: {
+      title: "本机数据密钥缺失",
+      description: "当前数据库需要已有的本机密钥才能打开。Relay Pool 不会为已有数据创建新密钥，请先恢复系统凭据或原设备数据。",
+    },
+    keyMismatch: {
+      title: "本机数据密钥不匹配",
+      description: "系统中找到的密钥无法解密当前数据库中的密文。应用已停止启动，避免用错误密钥继续写入并破坏数据。",
+    },
+    corruptedDatabase: {
+      title: "数据库无法安全读取",
+      description: "启动检查无法可靠读取当前 SQLite 数据库。请保留原文件并导出诊断，再尝试从健康备份恢复。",
+    },
+    interruptedUpgrade: {
+      title: "数据库升级未完成",
+      description: "检测到未完成或无法确认的升级步骤。应用不会跳过 journal 继续启动，请先保留现场并按恢复流程处理。",
+    },
+    schemaMigrationFailed: {
+      title: "数据库结构升级失败",
+      description: "普通 schema 迁移没有完成验证。应用已停止正常启动，避免在半升级结构上继续写入。",
+    },
+    secretBaselineFailed: {
+      title: "密钥加密基线升级失败",
+      description: "加密密钥基线转换没有完成验证。应用不会清除旧数据或重置密钥，请保留数据库和诊断信息。",
+    },
+    internalUpgradeError: {
+      title: "数据库升级内部错误",
+      description: "升级流程遇到未预期的内部错误。应用已进入恢复模式，避免继续写入不确定状态。",
+    },
+    unsupportedSchemaVersion: {
+      title: "数据库版本低于自动升级基线",
+      description: "当前数据库低于 schema 15，Relay Pool 不会猜测式升级或静默改写。请先保留原文件并导出诊断，再按发布说明选择人工迁移路径。",
+    },
+    inconsistentSchemaMetadata: {
+      title: "数据库版本元数据不一致",
+      description: "SQL 迁移记录和兼容性 schema 元数据不匹配，应用已停止正常启动以避免继续写入不确定状态。请保留现场并导出诊断。",
+    },
     pendingRelocation: {
       title: "数据目录迁移未完成",
       description: "检测到未完成的数据目录迁移。Relay Pool 不会自动覆盖任何现有数据库，需要你确认后续恢复动作。",

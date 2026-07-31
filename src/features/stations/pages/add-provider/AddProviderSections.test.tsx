@@ -206,6 +206,7 @@ describe("AddProviderSections", () => {
           groupOptions={[]}
           localKeyIdsCreatedByRemote={{}}
           localKeys={[]}
+          pendingUnbindRemoteKeyIds={new Set()}
           remoteCapability={null}
           remoteCapabilityError={null}
           remoteCapabilityUnavailableReason={null}
@@ -283,6 +284,7 @@ describe("AddProviderSections", () => {
           groupOptions={[]}
           localKeyIdsCreatedByRemote={{}}
           localKeys={[]}
+          pendingUnbindRemoteKeyIds={new Set()}
           remoteCapability={{
             stationId: "station-1",
             stationType: "newapi",
@@ -395,7 +397,7 @@ describe("AddProviderSections", () => {
     expect(layoutClassNames).not.toContain("min-w-[1000px]");
     expect(host.textContent).not.toContain("已匹配");
     expect(host.textContent).not.toContain("已关联");
-    expect(host.textContent).toContain("无匹配");
+    expect(host.textContent).toContain("未绑定");
     expect(host.textContent).toContain("Key 池");
     expect(host.textContent).toContain("无对应本地 Key");
     expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).not.toBeNull();
@@ -434,6 +436,29 @@ describe("AddProviderSections", () => {
     );
     expect(host.textContent).toContain("已导入");
     expect(host.querySelector('button[aria-label="从 Key 池移除 Matched remote"]')).not.toBeNull();
+
+    await act(async () =>
+      root.render(
+        <RemoteKeyDiscoveryList
+          keys={[{
+            ...matchedRemoteKey,
+            matchStatus: "unbound",
+            matchedStationKeyId: null,
+            matchConfidence: 0,
+          }]}
+          localKeys={[]}
+          pendingUnbindRemoteKeyIds={new Set([matchedRemoteKey.id])}
+          onDelete={vi.fn()}
+          onDeleteImportedLocalKey={vi.fn()}
+          onImport={vi.fn()}
+        />,
+      ),
+    );
+    expect(host.textContent).not.toContain("已导入");
+    expect(host.textContent).toContain("待解绑");
+    expect(host.textContent).toContain("删除中");
+    expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除远端 Key Matched remote"]')?.disabled).toBe(true);
 
     await act(async () => root.unmount());
   });

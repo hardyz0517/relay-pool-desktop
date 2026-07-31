@@ -124,11 +124,12 @@ export function selectStationKeyMonitorModel(
   capabilities?: Pick<StationKeyCapabilities, "modelAllowlist" | "modelBlocklist" | "preferredModels"> | null,
 ) {
   const blockedModels = new Set((capabilities?.modelBlocklist ?? []).map(normalizeModelName));
-  const explicitModels = capabilities?.modelAllowlist?.length
-    ? capabilities.modelAllowlist
-    : capabilities?.preferredModels ?? [];
+  const explicitModels = [
+    ...(capabilities?.preferredModels ?? []),
+    ...(capabilities?.modelAllowlist ?? []),
+  ];
   const candidates = uniqueModels(explicitModels).filter((model) => !blockedModels.has(normalizeModelName(model)));
-  const selected = candidates.sort(compareMonitorModelPriority)[0];
+  const selected = candidates[0];
   return selected ?? (blockedModels.has(normalizeModelName(DEFAULT_STATION_KEY_MONITOR_MODEL))
     ? candidates[0] ?? DEFAULT_STATION_KEY_MONITOR_MODEL
     : DEFAULT_STATION_KEY_MONITOR_MODEL);
@@ -542,22 +543,6 @@ function uniqueModels(models: string[]) {
     result.push(trimmed);
   }
   return result;
-}
-
-function compareMonitorModelPriority(left: string, right: string) {
-  return monitorModelPriority(left) - monitorModelPriority(right);
-}
-
-function monitorModelPriority(model: string) {
-  const normalized = normalizeModelName(model);
-  if (normalized.includes("nano")) return 0;
-  if (normalized.includes("mini")) return 1;
-  if (normalized.includes("lite")) return 2;
-  if (normalized.includes("flash")) return 3;
-  if (normalized.includes("haiku")) return 4;
-  if (normalized.includes("turbo")) return 5;
-  if (normalized === "deepseek-chat" || normalized.endsWith("-chat")) return 6;
-  return 20;
 }
 
 function normalizeModelName(model: string) {
