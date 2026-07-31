@@ -43,7 +43,7 @@ Canonical facts/evidence
 3. 严格 RED-GREEN-REFACTOR。行为任务必须先观察指定测试因缺失能力失败，再做最小完整实现，再运行任务回归。
 4. 不使用 `git add .` 或 `git add -A`。提交时只 stage 当前 Task 的明确路径；重叠文件使用 `git add -p`，并检查 `git diff --cached --check` 和 `git diff --cached`。
 5. Stage 1-4 不接 production composition，不对真实请求双 selector、双 acquire、双 feedback 或双写；验证只使用 pure fixtures、read-only diagnostics 和 loopback harness。
-6. Stage 5 与 Stage 6 可以分 commit/review，但不能拆成两个用户可见的混合版本。开发期 cutover candidate 必须同时完成 data-plane cutover、UI 语义切换和 default-v2 旧路径删除。
+6. Stage 5 与 Stage 6 可以分 commit/review，但不能拆成两个对用户可见的混合版本。cutover candidate 必须同时完成 data-plane cutover、UI 语义切换和 default-v2 旧路径删除。
 7. `RELAY_POOL_PROXY_RUNTIME=legacy` 只按 `PROJECT_PLAN.md` 作为 process-start 级、debug-only 的完整旧 owner；不得拼接新组件、自动 fallback、进入 UI 或掩盖 default v2 红项。
 8. 所有 queue、registry、candidate set、fan-out、wait、retry、trace、background task 和 response body 都必须有硬上限和 shutdown 行为。
 9. fixture、日志、trace、截图和 qualification artifact 不得包含 API key、Cookie、Authorization、完整 URL query/userinfo、完整 prompt/response 或可还原账号身份的数据。
@@ -615,14 +615,13 @@ pnpm.cmd build
 
 **Commit:** `feat: add hierarchical routing migration readiness`
 
-## 18. Task 11：预迁移开发检查点资格
+## 18. Task 11：预迁移 checkpoint 与本地资格
 
 **Files:**
 
-- Create: `docs/release/routing-hierarchical-premigration-qualification.md`
-- Modify: development qualification metadata for the pre-migration checkpoint when needed
-- Modify: `scripts/run-install-upgrade-matrix.ps1`，将 `OldInstaller`/`NewInstaller`/`OldVersion`/`NewVersion`/`OutputPath` 全部改为 mandatory 且无版本化默认值，并移除 0.3.2/0.3.3 labels/assertions
-- Create: `scripts/install-upgrade-matrix-contract.test.mjs`，证明版本、installer 和 output path 均来自显式参数
+- Create: `docs/superpowers/audits/routing-hierarchical-premigration-qualification.md`
+- Modify: local candidate/checkpoint metadata for the authorized pre-migration checkpoint
+- Optional only for future stable-release ADR: install/upgrade matrix scripts may be kept as non-blocking contract checks, but they are not part of this development gate
 - Modify: `scripts/run-contract-tests.mjs`
 - Modify: `src-tauri/src/application/request_finalization.rs` 与 request-log write/query DTO，停止对新 request 持久化完整 `upstream_base_url`
 - Modify: `scripts/local-routing-redaction.test.mjs`
@@ -652,13 +651,8 @@ pnpm.cmd build
 ```powershell
 pnpm.cmd verify:fast
 pnpm.cmd verify:full
-node scripts/install-upgrade-matrix-contract.test.mjs
 node scripts/local-routing-redaction.test.mjs
 cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
-# Optional only when installer artifacts are explicitly provided:
-# pnpm.cmd verify:release-version --require-tag
-# pnpm.cmd verify:release
-# powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-install-upgrade-matrix.ps1 -OldInstaller $env:RELAY_BASELINE_INSTALLER -NewInstaller $env:RELAY_CANDIDATE_INSTALLER -OldVersion $env:RELAY_BASELINE_VERSION -NewVersion $env:RELAY_CANDIDATE_VERSION -OutputPath $env:RELAY_UPGRADE_REPORT
 ```
 
 **Exit gate:** 本地 qualification 证明旧 production behavior 未变、用户能完成所有 cutover-required config、新 request log 不再写完整 upstream URL、fresh/known schema 与导入导出合同仍通过。开发期不要求签名发布或 installer 升级矩阵；Task 12 可在上述本地 gate 通过后开始。若重新启用稳定发布策略，必须恢复 tag、签名 bundle、install/upgrade matrix 和发布渠道证据。
@@ -1162,7 +1156,7 @@ pnpm.cmd test:contracts
 
 - [ ] composition root 唯一构造 fact/runtime/capacity/finalization registries 并交给 `TaskSupervisor`；planner 仍只看 immutable input。
 - [ ] 切换与 legacy compatibility config 保留分开；开发期恢复依赖 reset/reinstall/reimport，而不是同 binary 混合 owner。若未来进入稳定产品阶段，再用独立发布 ADR 恢复完整 rollback 合同。
-- [ ] 本 Task 可以合并到 release-candidate branch，但在 Tasks 23-26 完成前不得发布正式版本。
+- [ ] 本 Task 可以合并到 cutover-candidate branch，但在 Tasks 23-26 完成前不得交付为默认可用路径。
 
 **Run:**
 
@@ -1236,7 +1230,7 @@ pnpm.cmd build
 
 ## 31. Task 24：删除 default-v2 旧 selector、static fallback、frontend matcher 与临时 facade
 
-**Depends on:** Tasks 22、23；同一个 release-candidate 已完成稳定观察窗口，deletion ledger 获得批准。
+**Depends on:** Tasks 22、23；同一个 cutover candidate 已完成稳定观察窗口，deletion ledger 获得批准。
 
 **Files:**
 
@@ -1250,9 +1244,9 @@ pnpm.cmd build
 - Modify: `scripts/routing-operational-architecture.test.mjs`
 - Modify: Rust production-composition/architecture tests
 
-**Pre-deletion release-candidate gate:**
+**Pre-deletion cutover-candidate gate:**
 
-- [ ] 从 Tasks 22-23 的同一 commit 构建未公开的内部 release-candidate；它不是独立正式版本，也不允许用户在 old/new owner 间切换。
+- [ ] 从 Tasks 22-23 的同一 commit 构建未公开的内部 cutover candidate；它不是独立正式版本，也不允许用户在 old/new owner 间切换。
 - [ ] 使用 Task 21 runner 完成一次至少 1 小时的代表性 loopback soak，并运行 production composition、stream/drop、writer fault 和 redaction tests。
 - [ ] 观察窗口内 lease/waiter/writer/task gauges 归零，无未决 P0/P1；结果写入 deletion ledger approval。
 - [ ] 删除完成后仍必须按 Task 26 对最终代码重新执行完整 1 小时 soak；删除前结果不能替代最终资格。
@@ -1580,7 +1574,7 @@ Stage 7 qualification audit 必须逐行填写实际 commit/test/report 链接�
 
 **在 debug 观察窗口或未来稳定发布 ADR 明确要求时允许暂留，但必须隔离：**
 
-- 上一完整 binary 所需 legacy config values；
+- import/export、debug 观察或未来稳定发布 ADR 可能需要的 legacy config values；
 - debug-only、process-start 级完整 legacy runtime；
 - 只读 legacy request cost/trace compatibility projection；
 - 尚在 debug 观察期或稳定发布 ADR 允许期内的 compatibility cache。
@@ -1615,18 +1609,18 @@ Stage 7 qualification audit 必须逐行填写实际 commit/test/report 链接�
 
 ## 40. 推荐执行批次与评审切点
 
-| 批次 | Tasks | 可并行项 | 评审/发布结果 |
+| 批次 | Tasks | 可并行项 | 评审/资格结果 |
 |---|---|---|---|
 | A 基线冻结 | 0-2 | 无 | ADR、ownership、纯类型；不改运行行为 |
 | B 事实投影 | 3-7 | 4/5/6/7 可在 Task 3 后并行 | canonical facts/projectors；不接 data-plane |
-| C 控制面预迁移 | 8-11 | 9/10 在 8 后部分并行 | backend preview/readiness + 一次预迁移开发检查点 |
+| C 控制面预迁移 | 8-11 | 9/10 在 8 后部分并行 | backend preview/readiness + 一次预迁移 checkpoint |
 | D 决策与运行内核 | 12-18 | 13/14 可在 12 后并行；15 依赖 runtime contract | non-production planner/capacity/failure kernel |
 | E 生命周期闭环 | 19-21 | outcome domain 与 harness fixtures 可分工 | 完整 loopback，无 production cutover |
-| F 原子切换 | 22-25 | UI 与 deletion review 可预备，不可提前暴露为用户可见混合版本 | 一个 Stage 5+6 cutover candidate，单 owner + security migration |
+| F 原子切换 | 22-25 | UI 与 deletion review 可预备，不可提前交付 | 一个 Stage 5+6 cutover candidate，单 owner + security migration |
 | G 本地资格 | 26-27 | performance、security、reset/reinstall fixtures 可并行执行 | fault/soak/build/授权真实 E2E 后完成本地 package qualification |
-| H 后续清债 | 28 | 无 | 满足观察门禁或显式开发期 reset 决策后删除 debug legacy runtime |
+| H 后续清债 | 28 | 无 | 满足观察门禁后删除 debug legacy runtime |
 
-推荐评审至少设置六个强制切点：ADR/ownership、projector contracts、预迁移检查点、planner/capacity kernel、outcome/loopback、production cutover/deletion。F 批次内部可以多 commit，但只能形成一个用户可见 default-v2 owner；不得为了减少单次 diff 而暴露混合 composition。
+推荐评审至少设置六个强制切点：ADR/ownership、projector contracts、预迁移 checkpoint、planner/capacity kernel、outcome/loopback、production cutover/deletion。F 批次内部可以多 commit，但只能形成一个 production owner；不得为了减少单次 diff 而交付混合 composition。
 
 ## 41. 整体 Definition of Done
 
@@ -1635,8 +1629,8 @@ Stage 7 qualification audit 必须逐行填写实际 commit/test/report 链接�
 - Tasks 0-27 均为 `complete`；Task 28 已有满足格式的独立票据，若其观察前置条件已满足则也完成删除；
 - 第 37 节 26 行均有实际自动化和 production/E2E 证据；
 - pre-migration checkpoint 与 Stage 5+6 cutover candidate 的顺序可从 commit 证明；
-- Tauri release build、local package verification、reset/reinstall recovery、1 小时 soak 和授权真实客户端验证退出 0；
-- fresh/released schema、sanitizer resume、reset/reimport recovery、new binary re-open 均通过；
+- Tauri release-mode build、local package verification、reset/reinstall recovery、1 小时 soak 和授权真实客户端验证退出 0；
+- fresh/known schema、sanitizer resume、reset/reimport recovery、new binary re-open 均通过；
 - default-v2 source/composition 没有第二 truth/selector/capacity/feedback；
 - 所有瞬态资源在测试与 shutdown 后归零，持久化 totals/journal/trace 可核对；
 - secret/full URL/header/payload canary 扫描无泄漏；

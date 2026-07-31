@@ -1416,7 +1416,7 @@ metric label 禁止 station/key/model 原始 ID、URL、错误正文和任意高
 
 退出条件：UI 与 simulator 完全消费后端 projection，旧页面拼装无生产消费者。
 
-Stage 2/3 若进入预迁移版本，simulator 必须标记 `hierarchical_v1_preview`，不能把预览结果描述为当前 production decision；真实请求日志仍按当时唯一 production owner 展示。正式 UI 语义与 data-plane 的同版切换仍受 Stage 5/6 原子发布约束。
+Stage 2/3 若进入预迁移 checkpoint，simulator 必须标记 `hierarchical_v1_preview`，不能把预览结果描述为当前 production decision；真实请求日志仍按当时唯一 production owner 展示。正式 UI 语义与 data-plane 的同版切换仍受 Stage 5/6 原子 cutover 约束。
 
 ### Stage 3：Hierarchical planner 与 capacity lease kernel
 
@@ -1588,7 +1588,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - 1 小时 soak 后 active request、attempt、lease、waiter、body budget、writer job 和 task 计数全部归零；
 - tracing 关闭与开启时都不得输出 secret 或完整用户 payload。
 
-## 21. 发布、迁移与回滚
+## 21. 交付、迁移与恢复边界
 
 ### 21.1 提交策略
 
@@ -1731,11 +1731,11 @@ Relay Pool 仍是本地桌面工具：一个固定 OpenAI-compatible 入口、�
 | endpoint/account health schema 需要扩展 | 当前 durable reducer 主要围绕 Station Key | Persistence ADR 冻结 scoped observation、表 owner、migration 与 revision fencing 后再实现 effect writer |
 | per-attempt cost 与多币种 aggregate 需要 schema | 当前 request log 以请求级兼容字段为主 | migration/known-schema fixture、new binary reset/reimport、新旧 read projection 测试必须先通过 |
 | `CostFirst` 对 token 单价缺少 reference usage | 当前实现直接相加 input/output，会制造任意权重 | v1 只用 exact scalar context 或明确 multiplier proxy；UI/trace 标 basis，reference usage 另立 ADR |
-| runtime outlier 默认值缺少本项目生产样本 | 参数来自成熟网关原则但 Relay Pool 流量更小 | 固定 v1 默认先通过 deterministic/soak；发布后只基于脱敏本地统计和具名 ADR 调整，不在线学习 |
-| decision trace 可能增加 SQLite 体积 | 最坏约 32 candidate rows/round | retention/索引/100 万级 fixture performance 与 maintenance fault test 为发布门禁 |
+| runtime outlier 默认值缺少本项目生产样本 | 参数来自成熟网关原则但 Relay Pool 流量更小 | 固定 v1 默认先通过 deterministic/soak；交付后只基于脱敏本地统计和具名 ADR 调整，不在线学习 |
+| decision trace 可能增加 SQLite 体积 | 最坏约 32 candidate rows/round | retention/索引/100 万级 fixture performance 与 maintenance fault test 为本地 qualification 门禁 |
 | 不引入 durable outbox 会留下 crash gap | terminal observation 到 SQLite commit 间强杀进程可能丢 usage/cost/health effect | fail-stop writer、启动 reconciliation 与 `trace_incomplete` 是明确降级；若真实故障数据证明不可接受，再单独评估轻量 local WAL，不先上分布式 outbox |
 | runtime generation churn 可能反复推翻 plan | 并发失败/恢复会让 immutable overlay 很快过期 | acquire 前 runtime fence、最多 8 次 runtime-only replan 与 monotonic deadline；超过返回 typed temporary failure |
-| legacy policy 用户迁移可能中断代理 | 旧安装可能没有 multiplier ceiling | 必须先发布预迁移 UI；正式 cutover 前统计本地 configuration readiness，不静默自动转换 |
+| legacy policy 用户迁移可能中断代理 | 旧安装可能没有 multiplier ceiling | 必须先完成预迁移 checkpoint/readiness UI；正式 cutover 前统计本地 configuration readiness，不静默自动转换 |
 | 真实 provider 错误语义不统一 | generic 403/404 无法可靠判断 credential/model | provider fixture + 用户授权 live test；无 adapter signal 时保持 Uncertain/neutral |
 | streaming 双终态改造复杂 | 当前 selected attempt 与 request 多在同一 body finalization 点提交 | upstream/downstream 独立状态测试、slow client、drop、idle timeout、writer failure 和 soak 全通过后才能 cutover |
 
