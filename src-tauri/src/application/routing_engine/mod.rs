@@ -1,3 +1,4 @@
+pub(crate) mod affinity;
 pub(crate) mod eligibility;
 pub(crate) mod planner;
 pub(crate) mod request;
@@ -7,5 +8,6 @@ pub(crate) mod routing_health;
 pub(crate) mod routing_policy;
 pub(crate) mod routing_snapshot;
 pub(crate) mod routing_types;
+pub(crate) mod runtime_metrics;
 pub(crate) mod scheduler;
 pub(crate) mod selector;
