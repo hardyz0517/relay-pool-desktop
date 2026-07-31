@@ -67,6 +67,7 @@ Task 28 debug legacy runtime deletion ticket:
   - The runner reuses existing suites for known-schema import, upgrade recovery, fresh generation-two config, sanitizer resume/startup readiness, startup lifecycle reconciliation, configured routing fields, catalog decision/cost persistence, redaction boundaries, and Task 26 self-check wiring.
   - Local OpenAI-compatible client smoke harness `scripts/verify-local-routing-lifecycle.ps1` now requires `-AuthorizeLocalClientSmoke`, writes ignored redacted evidence under `output/routing-operational/qualification/local-client-smoke/`, and verifies request lifecycle rows through `scripts/verify-request-lifecycle-db.ps1` when DB verification is enabled.
   - Live OpenAI-compatible provider harness `scripts/run-openai-compatible-live-qualification.ps1` now fails closed without `RELAY_POOL_LIVE_API_KEY` and records only redacted endpoint evidence in ignored output rather than the raw provider URL.
+  - Manual observation writer `scripts/write-routing-operational-manual-observation.ps1` now provides an authorization-gated, record-only, ignored JSON index for CCSwitch, Windows sleep/resume, UI timeline reconciliation, and final no-P0/P1 confirmation.
 - Missing preconditions before physical deletion:
   - authorized real OpenAI-compatible client smoke for buffered, streaming, cancel, model listing, fallback, and stable error body;
   - authorized low-frequency real provider semantic fixture for auth/model errors where adapter evidence exists;

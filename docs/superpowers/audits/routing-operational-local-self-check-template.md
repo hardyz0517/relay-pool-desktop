@@ -38,6 +38,8 @@ The runner uses existing Rust/contract checks for:
 
 ## Manual / authorization-gated observations
 
+After each real/manual check below, record the observation with `scripts/write-routing-operational-manual-observation.ps1 -AuthorizeManualObservation -Scenario <scenario> -Status <passed|failed|blocked|not_run> -EvidenceIndex <ignored-output-or-audit-reference>`. The writer records references only; do not copy secrets, raw logs, local databases, or private screenshots into git.
+
 - Real OpenAI-compatible client smoke:
   - Use `scripts/verify-local-routing-lifecycle.ps1 -AuthorizeLocalClientSmoke` against the running Relay Pool local entry.
   - Requires `RELAY_POOL_LOCAL_BEARER` and `RELAY_POOL_E2E_MODEL`; full mode also requires `RELAY_POOL_E2E_EMBEDDINGS_MODEL` unless `-SkipEmbeddings` is intentional.
