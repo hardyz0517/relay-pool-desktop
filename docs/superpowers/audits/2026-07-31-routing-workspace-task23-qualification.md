@@ -30,7 +30,7 @@ Commands run on this source snapshot:
 
 | Command | Result | Notes |
 |---|---:|---|
-| `pnpm.cmd test -- src/features/routing/RoutingOperationalPreviewPanel.test.tsx` | Pass | Vitest script executed the full frontend suite: 59 files, 214 tests. |
+| `pnpm.cmd test -- src/features/routing/RoutingOperationalPreviewPanel.test.tsx` | Pass | Vitest script executed the full frontend suite: 59 files, 216 tests. |
 | `pnpm.cmd exec tsc --noEmit` | Pass | TypeScript compile check. |
 | `pnpm.cmd generate:bindings --check` | Pass | IPC bindings deterministic check; existing Rust warnings only. |
 | `node scripts/routing-workspace-integration.test.mjs` | Pass | Source contract for workspace query keys, read-model usage, deep links and no raw planning JSON. |
@@ -47,6 +47,8 @@ Commands run on this source snapshot:
 - Pricing-style simulate-model deep links call `simulateRouteQuery` with the policy, multiplier ceiling and routing group filter from the backend workspace snapshot.
 - Candidate rows show backend-supplied price basis, capability evidence, runtime overlay health/in-flight data and snapshot-only capacity without inventing zero price or fake health.
 - Workspace layout includes bounded candidate-table scrolling, fixed minimum table width, `min-w-0`, wrapping for long detail codes/key ids and wrapped typed error text.
+- Loading, unavailable and typed backend error states stay explicit and do not fall back to fake healthy candidates or zero-price output.
+- Routing workspace refresh/invalidation remains query-scoped; the page does not call `cancelQueries`, `removeQueries` or `resetQueries` for monitoring/collector authority.
 - The frontend still uses backend read-model aliases and query functions; it does not import pricing/group/capability projectors as routing truth.
 
 ## Pending Tauri dev manual verification

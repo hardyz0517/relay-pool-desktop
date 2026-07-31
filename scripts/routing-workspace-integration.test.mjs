@@ -44,6 +44,13 @@ assertIncludes(routingPage, "routingQueryKeys.workspaceSnapshot({ limit: 50 })",
 assertIncludes(routingPage, "routingQueryKeys.runtimeOverlay()", "RoutingPage");
 assertIncludes(routingPage, "routingQueryKeys.recentDecisions({ limit: 8 })", "RoutingPage");
 assertExcludes(routingPage, "loadRoutingWorkspace()", "RoutingPage");
+assertExcludes(routingPage, "cancelQueries", "RoutingPage");
+assertExcludes(routingPage, "removeQueries", "RoutingPage");
+assertExcludes(routingPage, "resetQueries", "RoutingPage");
+assertExcludes(routingPage, "setQueryData(routingQueryKeys.runtimeOverlay()", "RoutingPage");
+assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.workspaceSnapshot({ limit: 50 }) })", "RoutingPage");
+assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.runtimeOverlay() })", "RoutingPage");
+assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.recentDecisions({ limit: 8 }) })", "RoutingPage");
 
 assertIncludes(workspacePanel, "DataTableLite", "RoutingOperationalPreviewPanel");
 assertIncludes(workspacePanel, "getStationKeyOperationalDetailQuery", "RoutingOperationalPreviewPanel");

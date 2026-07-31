@@ -203,7 +203,19 @@ function simulation(overrides: Partial<RouteSimulationResult> = {}): RouteSimula
   };
 }
 
-async function renderPanel(deepLink?: VersionedRoutingDeepLink) {
+async function renderPanel({
+  deepLink,
+  panelDecisions = decisions(),
+  panelLoading = false,
+  panelRuntimeOverlay = runtimeOverlay(),
+  panelSnapshot = snapshot(),
+}: {
+  deepLink?: VersionedRoutingDeepLink;
+  panelDecisions?: RecentRouteDecisionsPage | null;
+  panelLoading?: boolean;
+  panelRuntimeOverlay?: RoutingRuntimeOverlay | null;
+  panelSnapshot?: RoutingWorkspaceSnapshot | null;
+} = {}) {
   const host = document.createElement("div");
   const root = createRoot(host);
   const onOpenRequestLog = vi.fn();
@@ -211,12 +223,12 @@ async function renderPanel(deepLink?: VersionedRoutingDeepLink) {
   await act(async () =>
     root.render(
       <RoutingOperationalPreviewPanel
-        decisions={decisions()}
+        decisions={panelDecisions}
         deepLink={deepLink}
-        loading={false}
+        loading={panelLoading}
         onOpenRequestLog={onOpenRequestLog}
-        runtimeOverlay={runtimeOverlay()}
-        snapshot={snapshot()}
+        runtimeOverlay={panelRuntimeOverlay}
+        snapshot={panelSnapshot}
       />,
     ),
   );
@@ -235,10 +247,12 @@ describe("RoutingOperationalPreviewPanel", () => {
     queryMocks.simulateRouteQuery.mockResolvedValue(simulation());
 
     const { host, root, onOpenRequestLog } = await renderPanel({
-      kind: "request",
-      requestLogId: "request-log-1",
-      source: "request_log",
-      sequence: 1,
+      deepLink: {
+        kind: "request",
+        requestLogId: "request-log-1",
+        source: "request_log",
+        sequence: 1,
+      },
     });
 
     await act(async () => undefined);
@@ -265,11 +279,13 @@ describe("RoutingOperationalPreviewPanel", () => {
     queryMocks.simulateRouteQuery.mockResolvedValueOnce(simulation());
 
     const { host, root } = await renderPanel({
-      kind: "simulate-model",
-      model: "gpt-4.1-mini",
-      endpoint: "responses",
-      source: "pricing",
-      sequence: 2,
+      deepLink: {
+        kind: "simulate-model",
+        model: "gpt-4.1-mini",
+        endpoint: "responses",
+        source: "pricing",
+        sequence: 2,
+      },
     });
 
     await act(async () => undefined);
@@ -289,6 +305,58 @@ describe("RoutingOperationalPreviewPanel", () => {
     expect(host.textContent).toContain("simulation came from backend planner");
     expect(host.textContent).toContain("unpriced");
     expect(host.textContent).toContain("balance unknown");
+
+    await act(async () => root.unmount());
+  });
+
+  it("keeps loading and unavailable states explicit without fake health or zero price", async () => {
+    const loading = await renderPanel({
+      panelDecisions: null,
+      panelLoading: true,
+      panelRuntimeOverlay: null,
+      panelSnapshot: null,
+    });
+
+    expect(loading.host.textContent).toContain("routing read model");
+    expect(loading.host.textContent).not.toContain("ready");
+    expect(loading.host.textContent).not.toContain("exact");
+    expect(loading.host.textContent).not.toContain("0.000000");
+    await act(async () => loading.root.unmount());
+
+    const unavailable = await renderPanel({
+      panelDecisions: decisions({ decisions: [], readModelStatus: "unavailable" }),
+      panelRuntimeOverlay: null,
+      panelSnapshot: snapshot({
+        candidates: [],
+        page: { limit: 50, returned: 0, nextCursor: null },
+        readModelStatus: "unavailable",
+      }),
+    });
+
+    expect(unavailable.host.textContent).toContain("unavailable");
+    expect(unavailable.host.textContent).toContain("暂无候选");
+    expect(unavailable.host.textContent).not.toContain("ready");
+    expect(unavailable.host.textContent).not.toContain("0/4");
+    expect(unavailable.host.textContent).not.toContain("$0");
+    await act(async () => unavailable.root.unmount());
+  });
+
+  it("renders typed backend errors without falling back to stale candidate facts", async () => {
+    queryMocks.getRequestDecisionTraceQuery.mockResolvedValue(trace());
+    queryMocks.getStationKeyOperationalDetailQuery.mockResolvedValue(detail());
+    queryMocks.simulateRouteQuery.mockRejectedValueOnce(new Error("route_config_required_for_fixture"));
+
+    const { host, root } = await renderPanel();
+    const simulateButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      button.textContent?.includes("模拟"),
+    );
+    expect(simulateButton).toBeTruthy();
+
+    await act(async () => simulateButton!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    expect(host.textContent).toContain("route_config_required_for_fixture");
+    expect(host.textContent).toContain("unpriced");
+    expect(host.textContent).not.toContain("0.000000");
 
     await act(async () => root.unmount());
   });
