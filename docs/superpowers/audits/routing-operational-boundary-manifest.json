@@ -69,6 +69,12 @@
       "owner": "Task 1 architecture gate",
       "consumer": "scripts/routing-operational-architecture.test.mjs",
       "deletion_status": "permanent_gate_metadata"
+    },
+    {
+      "id": "display-only-routing-truth-compat",
+      "owner": "Task 24 default-v2 single-owner cutover",
+      "consumer": "src/lib/projections/pricingFacts.ts and src/lib/projections/groupFacts.ts UI display paths only",
+      "deletion_status": "temporary_display_compat_until_backend_read_model_consumers_replace_frontend_projection_pages"
     }
   ],
   "production_forbidden_symbols": [

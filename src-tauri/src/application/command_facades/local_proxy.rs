@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     application::{
+        credentials::CredentialService,
         error::ApplicationError, request_finalization::RequestFinalizationService,
         request_lifecycle::ports::LifecycleWriteError, request_logs::RequestLogService,
         routing::RoutingService, settings::SettingsService,
@@ -42,6 +43,7 @@ pub(crate) struct CcswitchImportProxyTarget {
 pub(crate) struct LocalProxyCommandFacade {
     settings: Arc<SettingsService>,
     routing: Arc<RoutingService>,
+    credentials: Arc<CredentialService>,
     request_logs: Arc<RequestLogService>,
     request_finalization: Arc<RequestFinalizationService>,
     proxy: Arc<ProxyRuntimeState>,
@@ -52,6 +54,7 @@ impl LocalProxyCommandFacade {
     pub(crate) fn new(
         settings: Arc<SettingsService>,
         routing: Arc<RoutingService>,
+        credentials: Arc<CredentialService>,
         request_logs: Arc<RequestLogService>,
         request_finalization: Arc<RequestFinalizationService>,
         proxy: Arc<ProxyRuntimeState>,
@@ -60,6 +63,7 @@ impl LocalProxyCommandFacade {
         Self {
             settings,
             routing,
+            credentials,
             request_logs,
             request_finalization,
             proxy,
@@ -173,6 +177,7 @@ impl LocalProxyCommandFacade {
         let lifecycle_store: Arc<dyn RequestLifecycleStore> = self.request_finalization.clone();
         let config = ProxyStartConfig::new_v2(
             routing_repository,
+            self.credentials.clone(),
             lifecycle_store,
             local_access_key.clone(),
             settings.local_proxy_port,

@@ -258,12 +258,13 @@ pub(crate) fn schedule_once(
                 .find(|source| source.station_key_id == candidate.station_key_id)
                 .map(|source| source.max_concurrency)
                 .unwrap_or(0);
-            let mut guard = capacity.try_acquire(&candidate.station_key_id, max_concurrency);
-            decision.slot_result = if guard.acquired() {
-                guard.release();
-                Some("acquired_simulated".to_string())
+            let snapshot = capacity.snapshot(&candidate.station_key_id);
+            decision.slot_result = if max_concurrency <= 0
+                || snapshot.in_flight < max_concurrency as u64
+            {
+                Some("snapshot_available".to_string())
             } else {
-                Some("slot_unavailable".to_string())
+                Some("snapshot_unavailable".to_string())
             };
         }
     }

@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+    application::operational_facts::target_resolver::ExecutionCredentialResolver,
     models::proxy::{ProxyLifecycle, ProxyStatus},
     observability::correlation,
     services::{
@@ -40,6 +41,7 @@ use futures_util::future::BoxFuture;
 #[derive(Clone)]
 pub struct ProxyStartConfig {
     pub(crate) routing_repository: Arc<dyn RoutingRepository>,
+    pub(crate) credential_resolver: Arc<dyn ExecutionCredentialResolver>,
     pub(crate) lifecycle_store: Arc<dyn RequestLifecycleStore>,
     pub(crate) local_access_key: String,
     pub(crate) port: u16,
@@ -56,12 +58,14 @@ pub(crate) enum ProxyFinalizationMode {
 impl ProxyStartConfig {
     pub(crate) fn new_v2(
         routing_repository: Arc<dyn RoutingRepository>,
+        credential_resolver: Arc<dyn ExecutionCredentialResolver>,
         lifecycle_store: Arc<dyn RequestLifecycleStore>,
         local_access_key: String,
         port: u16,
     ) -> Self {
         Self {
             routing_repository,
+            credential_resolver,
             lifecycle_store,
             local_access_key,
             port,
@@ -202,6 +206,7 @@ impl ProxyRuntimeState {
         let active_requests = Arc::new(AtomicU32::new(0));
         let request_count = Arc::new(AtomicU64::new(0));
         let repository = Arc::clone(&config.routing_repository);
+        let credential_resolver = Arc::clone(&config.credential_resolver);
         let upstream_pool = UpstreamClientPool::new(config.limits.clone()).map_err(|failure| {
             let message = failure.public_message.clone();
             let failed = failed_status(config.port, message.clone());
@@ -218,6 +223,7 @@ impl ProxyRuntimeState {
                 })?;
         let executor = Arc::new(V2ProxyExecutor::new(
             repository,
+            credential_resolver,
             upstream_pool,
             config.limits.clone(),
             lifecycle_writer.clone(),
@@ -399,6 +405,7 @@ struct V2ProxyExecutor {
 impl V2ProxyExecutor {
     fn new(
         repository: Arc<dyn RoutingRepository>,
+        credential_resolver: Arc<dyn ExecutionCredentialResolver>,
         upstream_pool: UpstreamClientPool,
         limits: ProxyServerLimits,
         lifecycle_writer: LifecycleWriter,
@@ -409,6 +416,7 @@ impl V2ProxyExecutor {
         Self {
             engine: ExecutionEngine::new_with_limits_and_lifecycle(
                 repository,
+                credential_resolver,
                 attempts,
                 &limits,
                 lifecycle_writer.clone(),
@@ -796,6 +804,12 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use crate::{
+        application::{
+            credentials::{SecretBytes, SecretRef},
+            operational_facts::target_resolver::{
+                ExecutionCredentialResolver, ExecutionTargetError,
+            },
+        },
         models::routing::RouteEndpointKind,
         services::proxy::{
             lifecycle::{
@@ -805,7 +819,7 @@ mod tests {
             },
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestLifecycleAdmission, RequestRequirements},
-            routing_types::RichRouteCandidate,
+            routing_repository::OperationalRouteSnapshot,
             test_support::{LoopbackUpstream, ScriptedResponse, V2ProxyTestFixture},
         },
     };
@@ -880,15 +894,35 @@ mod tests {
     }
 
     impl RoutingRepository for CorrelationCapturingRepository {
-        fn load_runtime_candidates(
+        fn load_operational_route_snapshot(
             &self,
-        ) -> BoxFuture<'static, Result<Vec<RichRouteCandidate>, String>> {
+            _request: crate::application::routing_engine::request::RouteRequestFacts,
+        ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
             let captured = Arc::clone(&self.captured);
             Box::pin(async move {
                 *captured.lock().expect("captured correlation lock") =
                     correlation::current_id_string();
-                Ok(Vec::new())
+                Ok(OperationalRouteSnapshot {
+                    candidates: Vec::new(),
+                    targets: Default::default(),
+                    profiles: Default::default(),
+                    snapshot_id: "correlation-test-empty-snapshot".to_string(),
+                    runtime_overlay_revision: 1,
+                    durable_generation: 1,
+                })
             })
+        }
+    }
+
+    struct TestCredentialResolver;
+
+    impl ExecutionCredentialResolver for TestCredentialResolver {
+        fn resolve_station_key_secret_ref(
+            &self,
+            _station_key_id: String,
+            _secret_ref: SecretRef,
+        ) -> BoxFuture<'static, Result<SecretBytes, ExecutionTargetError>> {
+            Box::pin(async { Ok("test-api-key".to_string().into()) })
         }
     }
 
@@ -910,6 +944,7 @@ mod tests {
         .expect("lifecycle writer");
         let executor = V2ProxyExecutor::new(
             repository,
+            Arc::new(TestCredentialResolver),
             upstream_pool,
             limits,
             writer.clone(),

@@ -22,6 +22,8 @@ pub(crate) struct ExecutionTargetRef {
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
+    pub(crate) collector_proxy_mode: String,
+    pub(crate) collector_proxy_url: Option<String>,
     pub(crate) enabled: bool,
     pub(crate) api_key_secret_ref: Option<SecretRef>,
     pub(crate) inline_api_key_present: bool,
@@ -52,7 +54,7 @@ impl ExecutionTargetResolver {
         credentials: &C,
     ) -> Result<ExecutionTargetHandle, ExecutionTargetError>
     where
-        C: ExecutionCredentialResolver,
+        C: ExecutionCredentialResolver + ?Sized,
     {
         if selected.station_key_id != current.station_key_id
             || selected.expected_endpoint_revision != current.endpoint_revision
@@ -98,6 +100,8 @@ impl ExecutionTargetResolver {
             endpoint_revision: current.endpoint_revision,
             api_base_url: normalized_api_base_url,
             upstream_api_format: current.upstream_api_format,
+            collector_proxy_mode: current.collector_proxy_mode,
+            collector_proxy_url: current.collector_proxy_url,
             api_key,
             lease: selected.lease,
         })
@@ -110,6 +114,8 @@ pub(crate) struct ExecutionTargetHandle {
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
+    pub(crate) collector_proxy_mode: String,
+    pub(crate) collector_proxy_url: Option<String>,
     pub(crate) api_key: SecretBytes,
     pub(crate) lease: CapacityLease,
 }

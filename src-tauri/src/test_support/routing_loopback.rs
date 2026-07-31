@@ -534,6 +534,7 @@ impl RoutingLoopbackHarness {
         > = self.services.request_finalization.clone();
         ProxyStartConfig::new_v2(
             routing_repository,
+            self.services.credentials.clone(),
             lifecycle_store,
             LOCAL_ACCESS_KEY.to_string(),
             port,

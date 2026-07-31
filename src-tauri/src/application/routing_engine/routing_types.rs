@@ -14,8 +14,6 @@ pub(crate) struct RouteCandidate {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) station_endpoint_revision: i64,
-    pub(crate) upstream_base_url: String,
-    pub(crate) api_key: String,
     pub(crate) collector_proxy_mode: String,
     pub(crate) collector_proxy_url: Option<String>,
     pub(crate) upstream_api_format: UpstreamApiFormat,

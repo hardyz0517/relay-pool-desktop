@@ -400,6 +400,7 @@ pub(crate) fn compose_local_proxy_command_facade(
     LocalProxyCommandFacade::new(
         Arc::clone(&services.settings),
         Arc::clone(&services.routing),
+        Arc::clone(&services.credentials),
         Arc::clone(&services.request_logs),
         Arc::clone(&services.request_finalization),
         proxy,

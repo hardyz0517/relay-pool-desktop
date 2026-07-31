@@ -243,6 +243,14 @@ impl RouteAdmissionController {
     ) -> Result<(), ControllerFailure> {
         let station_key_id = selected.candidate.station_key_id.clone();
         drop(selected);
+        self.record_actual_terminal_for_station_key(station_key_id, outcome)
+    }
+
+    pub(crate) fn record_actual_terminal_for_station_key(
+        &mut self,
+        station_key_id: String,
+        outcome: ActualAttemptTerminal,
+    ) -> Result<(), ControllerFailure> {
         self.progress.record_actual_attempt(station_key_id);
         self.pass_capacity.clear();
         self.trace_event(ControllerTransition::AttemptTerminal, outcome.as_code());

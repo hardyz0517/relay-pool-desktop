@@ -16,9 +16,7 @@ pub mod request;
 pub mod response_body;
 pub mod responses_chat_fallback;
 pub mod responses_chat_stream;
-pub(crate) use crate::application::routing_engine::{
-    router, routing_failure, routing_types, scheduler,
-};
+pub(crate) use crate::application::routing_engine::{routing_failure, routing_types};
 pub mod routing_repository;
 pub mod runtime;
 pub mod server;

@@ -459,8 +459,6 @@ fn rich_route_candidate_from_runtime(candidate: RuntimeRoutingCandidate) -> Rich
             station_key_id: candidate.station_key_id,
             station_id: candidate.station_id,
             station_endpoint_revision: candidate.station_endpoint_revision,
-            upstream_base_url: candidate.upstream_base_url,
-            api_key: String::new(),
             collector_proxy_mode: candidate.collector_proxy_mode,
             collector_proxy_url: candidate.collector_proxy_url,
             upstream_api_format: candidate.upstream_api_format,

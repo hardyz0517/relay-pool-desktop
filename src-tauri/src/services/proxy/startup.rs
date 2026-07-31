@@ -52,7 +52,13 @@ pub(crate) fn config_from_v2_services(
         data_key,
     ));
     let lifecycle_store: Arc<dyn RequestLifecycleStore> = services.request_finalization.clone();
-    ProxyStartConfig::new_v2(routing_repository, lifecycle_store, local_access_key, port)
+    ProxyStartConfig::new_v2(
+        routing_repository,
+        services.credentials.clone(),
+        lifecycle_store,
+        local_access_key,
+        port,
+    )
 }
 
 #[cfg(test)]

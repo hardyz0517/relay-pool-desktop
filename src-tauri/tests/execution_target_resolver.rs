@@ -119,6 +119,8 @@ fn target_ref(
         endpoint_revision,
         api_base_url: "https://relay.example/proxy/v1".to_string(),
         upstream_api_format: UpstreamApiFormat::Auto,
+        collector_proxy_mode: "direct".to_string(),
+        collector_proxy_url: None,
         enabled: true,
         api_key_secret_ref,
         inline_api_key_present: false,

@@ -89,6 +89,7 @@ impl V2ProxyTestFixture {
         > = self.services.request_finalization.clone();
         ProxyStartConfig::new_v2(
             routing_repository,
+            self.services.credentials.clone(),
             lifecycle_store,
             "relay-local-secret".to_string(),
             port,
