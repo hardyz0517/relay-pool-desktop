@@ -31,6 +31,7 @@ const contracts = [
   ["node", ["scripts/routing-error-contract.test.mjs"]],
   ["node", ["scripts/routing-dto-completeness.test.mjs"]],
   ["node", ["scripts/routing-read-model-architecture.test.mjs"]],
+  ["node", ["scripts/routing-workspace-integration.test.mjs"]],
   ["node", ["scripts/routing-migration-readiness.test.mjs"]],
   ["node", ["scripts/routing-operational-loopback-contract.test.mjs"]],
   ["node", ["scripts/install-upgrade-matrix-contract.test.mjs"]],

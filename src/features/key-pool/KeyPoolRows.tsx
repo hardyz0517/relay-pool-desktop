@@ -1,7 +1,7 @@
 import type { DraggableAttributes } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Activity, Edit3, GripVertical, KeyRound, Loader2, Trash2 } from "lucide-react";
+import { Activity, Edit3, GripVertical, KeyRound, Loader2, Route, Trash2 } from "lucide-react";
 import { IconButton, StatusBadge, SwitchControl, type StatusTone } from "@/components/ui";
 import { parseTimestampLikeDate } from "@/lib/time";
 import type { ChannelMonitor } from "@/lib/types/channelMonitors";
@@ -37,6 +37,7 @@ export function SortableKeyRow({
   onTestConnectivity,
   onToggleEnabled,
   onToggleMonitoring,
+  onOpenRoutingImpact,
   onDelete,
 }: {
   item: KeyPoolItem;
@@ -48,12 +49,13 @@ export function SortableKeyRow({
   onTestConnectivity: (item: KeyPoolItem) => void;
   onToggleEnabled: (item: KeyPoolItem) => void;
   onToggleMonitoring: (item: KeyPoolItem) => void;
+  onOpenRoutingImpact?: (item: KeyPoolItem) => void;
   onDelete: (item: KeyPoolItem) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: !dragEnabled });
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("will-change-transform", isDragging && "opacity-35")}>
-      <KeyRowContent item={item} testing={testing} monitor={monitor} monitoring={monitoring} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onToggleMonitoring={onToggleMonitoring} onDelete={onDelete} />
+      <KeyRowContent item={item} testing={testing} monitor={monitor} monitoring={monitoring} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onToggleMonitoring={onToggleMonitoring} onOpenRoutingImpact={onOpenRoutingImpact} onDelete={onDelete} />
     </div>
   );
 }
@@ -71,6 +73,7 @@ export function KeyRowContent({
   onTestConnectivity,
   onToggleEnabled,
   onToggleMonitoring,
+  onOpenRoutingImpact,
   onDelete,
 }: {
   item: KeyPoolItem;
@@ -85,6 +88,7 @@ export function KeyRowContent({
   onTestConnectivity?: (item: KeyPoolItem) => void;
   onToggleEnabled?: (item: KeyPoolItem) => void;
   onToggleMonitoring?: (item: KeyPoolItem) => void;
+  onOpenRoutingImpact?: (item: KeyPoolItem) => void;
   onDelete?: (item: KeyPoolItem) => void;
 }) {
   const cooldownActive = isFutureTime(item.cooldownUntil);
@@ -186,6 +190,15 @@ export function KeyRowContent({
         >
           <Activity className="h-4 w-4" />
         </IconButton>
+        {onOpenRoutingImpact ? (
+          <IconButton
+            className="text-muted-foreground hover:bg-info-surface hover:text-info-foreground"
+            label={`查看路由影响 ${item.name}`}
+            onClick={() => onOpenRoutingImpact(item)}
+          >
+            <Route className="h-4 w-4" />
+          </IconButton>
+        ) : null}
         <IconButton className="text-muted-foreground hover:bg-muted hover:text-foreground" label={`编辑 ${item.name}`} onClick={() => onEdit?.(item)}>
           <Edit3 className="h-4 w-4" />
         </IconButton>

@@ -7,6 +7,7 @@ import { KeyPoolPage } from "@/features/key-pool";
 import { LogsPage } from "@/features/logs";
 import { PricingPage } from "@/features/pricing";
 import { RoutingPage } from "@/features/routing";
+import type { VersionedRoutingDeepLink, RoutingDeepLink } from "@/features/routing/routingDeepLinks";
 import { SettingsPage } from "@/features/settings";
 import { StationsPage } from "@/features/stations";
 import type { AppRouteId } from "@/lib/types/navigation";
@@ -19,6 +20,8 @@ export type ShellPageActions = {
   addKey: (stationId: string | null) => void;
   editKey: (stationKeyId: string) => void;
   openModelBasePrices: () => void;
+  openRoutingDeepLink: (link: RoutingDeepLink) => void;
+  routingDeepLink: VersionedRoutingDeepLink | null;
 };
 
 export const ShellPageContent = memo(function ShellPageContent({
@@ -38,7 +41,13 @@ export const ShellPageContent = memo(function ShellPageContent({
         />
       );
     case "keyPool":
-      return <KeyPoolPage onAddKey={actions.addKey} onEditKey={actions.editKey} />;
+      return (
+        <KeyPoolPage
+          onAddKey={actions.addKey}
+          onEditKey={actions.editKey}
+          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
+        />
+      );
     case "channels":
       return <ChannelStatusPage />;
     case "collectors":
@@ -48,9 +57,9 @@ export const ShellPageContent = memo(function ShellPageContent({
     case "pricing":
       return <PricingPage onOpenModelBasePrices={actions.openModelBasePrices} />;
     case "routing":
-      return <RoutingPage />;
+      return <RoutingPage deepLink={actions.routingDeepLink} />;
     case "logs":
-      return <LogsPage />;
+      return <LogsPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
     case "settings":
       return <SettingsPage />;
     case "dashboard":

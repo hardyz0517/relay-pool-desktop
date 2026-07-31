@@ -37,6 +37,7 @@ const editSurface = editTab + settingsEditor + settingsFields;
 
 assertIncludes(routingPage, "SegmentedControl", "RoutingPage");
 assertIncludes(routingPage, "activeTab", "RoutingPage");
+assertIncludes(routingPage, "工作台", "RoutingPage");
 assertIncludes(routingPage, "状态", "RoutingPage");
 assertIncludes(routingPage, "编辑", "RoutingPage");
 assertIncludes(statusTab, "本地路由状态", "LocalRoutingStatusTab");

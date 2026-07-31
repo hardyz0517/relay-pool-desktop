@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Route, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -37,7 +37,11 @@ import {
   statusFallback,
 } from "./requestLogViewModels";
 
-export function LogsPage() {
+type LogsPageProps = {
+  onOpenRoutingDeepLink?: (link: { kind: "request"; requestLogId: string; source: "request_log" }) => void;
+};
+
+export function LogsPage({ onOpenRoutingDeepLink }: LogsPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
@@ -159,6 +163,24 @@ export function LogsPage() {
           <InspectorPanel
             title="日志详情"
             description={selected ? `${selected.method} ${selected.path}` : "未选择请求"}
+            actions={
+              selected && onOpenRoutingDeepLink ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    onOpenRoutingDeepLink({
+                      kind: "request",
+                      requestLogId: selected.id,
+                      source: "request_log",
+                    })
+                  }
+                >
+                  <Route className="h-4 w-4" />
+                  查看路由链路
+                </Button>
+              ) : null
+            }
           >
             {selected ? (
               <div className="space-y-4 p-4">

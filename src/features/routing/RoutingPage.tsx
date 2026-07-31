@@ -21,19 +21,20 @@ import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
 import { RoutingMigrationReadinessPanel } from "./RoutingMigrationReadinessPanel";
 import { RoutingOperationalPreviewPanel } from "./RoutingOperationalPreviewPanel";
+import type { VersionedRoutingDeepLink } from "./routingDeepLinks";
 import {
   evaluateRoutingMigrationReadiness,
   type RoutingMigrationReadinessDraft,
 } from "./routingMigrationReadiness";
 import { useCooldownClock } from "./useCooldownClock";
 
-type LocalRoutingTab = "status" | "edit" | "migration";
+type LocalRoutingTab = "workspace" | "status" | "edit" | "migration";
 
-export function RoutingPage() {
+export function RoutingPage({ deepLink }: { deepLink?: VersionedRoutingDeepLink | null }) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const queryEnabled = usePageQueryEnabled();
-  const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
+  const [activeTab, setActiveTab] = useState<LocalRoutingTab>("workspace");
   const [proxyActionPending, setProxyActionPending] = useState(false);
   const [migrationSaving, setMigrationSaving] = useState(false);
   const workspaceQuery = useActivityQuery(localRoutingWorkspaceQueryOptions());
@@ -46,7 +47,8 @@ export function RoutingPage() {
   const routingRuntimeQuery = useActivityQuery({
     queryKey: routingQueryKeys.runtimeOverlay(),
     queryFn: loadRoutingRuntimeOverlayQuery,
-    staleTime: 2_000,
+    staleTime: 1_000,
+    refetchInterval: queryEnabled && activeTab === "workspace" ? 1_000 : false,
   });
   const routeDecisionsQuery = useActivityQuery({
     queryKey: routingQueryKeys.recentDecisions({ limit: 8 }),
@@ -143,6 +145,12 @@ export function RoutingPage() {
     if (error) toast.error("刷新本地路由状态失败", error);
   }, [error, toast]);
 
+  useEffect(() => {
+    if (deepLink) {
+      setActiveTab("workspace");
+    }
+  }, [deepLink?.sequence]);
+
   return (
     <PageScaffold
       title="路由规则"
@@ -152,6 +160,7 @@ export function RoutingPage() {
             ariaLabel="本地路由页面"
             value={activeTab}
             options={[
+              { value: "workspace", label: "工作台" },
               { value: "status", label: "状态" },
               { value: "edit", label: "编辑" },
               { value: "migration", label: "迁移" },
@@ -169,7 +178,15 @@ export function RoutingPage() {
         </div>
       }
     >
-      {activeTab === "status" ? (
+      {activeTab === "workspace" ? (
+        <RoutingOperationalPreviewPanel
+          snapshot={routingSnapshotQuery.data ?? null}
+          runtimeOverlay={routingRuntimeQuery.data ?? null}
+          decisions={routeDecisionsQuery.data ?? null}
+          loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
+          deepLink={deepLink}
+        />
+      ) : activeTab === "status" ? (
         <LocalRoutingStatusTab
           loading={loading}
           workspace={workspace}
@@ -192,6 +209,7 @@ export function RoutingPage() {
             runtimeOverlay={routingRuntimeQuery.data ?? null}
             decisions={routeDecisionsQuery.data ?? null}
             loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
+            deepLink={deepLink}
           />
         </div>
       )}
