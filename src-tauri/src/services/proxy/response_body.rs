@@ -10,6 +10,10 @@ use futures_util::Stream;
 use tokio::time::Sleep;
 
 use super::{
+    attempt::{
+        DownstreamRequestFinalizationLease, DualTerminalFinalizationLease,
+        UpstreamAttemptFinalizationLease,
+    },
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     lifecycle::{
         attempt::{
@@ -66,6 +70,11 @@ pub(crate) enum FinalizationOutcome {
 
 enum FinalizationTarget {
     Lifecycle(LifecycleFinalizationLease),
+    #[allow(
+        dead_code,
+        reason = "Task 20 exposes this for explicit loopback composition; Task 22 owns production cutover"
+    )]
+    DualTerminal(DualTerminalFinalizationLease),
 }
 
 impl LifecycleFinalizationLease {
@@ -121,10 +130,20 @@ impl FinalizationTarget {
         delivery: DeliveryTerminal,
         outcome: FinalizationOutcome,
         attempt_terminal: Option<AttemptTerminal>,
+        output_committed: bool,
     ) {
         match (self, state) {
             (Self::Lifecycle(lease), FinalizationState::Lifecycle(record)) => {
                 lease.finalize(record, delivery, outcome, attempt_terminal)
+            }
+            (Self::DualTerminal(lease), FinalizationState::Lifecycle(record)) => {
+                let _join = lease.finalize(
+                    record,
+                    delivery,
+                    outcome,
+                    attempt_terminal,
+                    output_committed,
+                );
             }
         }
     }
@@ -189,6 +208,55 @@ pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout(
         FinalizationState::Lifecycle(record),
         FinalizationTarget::Lifecycle(lease),
         Some(request_lease),
+        idle_timeout,
+        correlation::current(),
+    )
+}
+
+#[allow(
+    dead_code,
+    reason = "Task 20 exposes this for explicit loopback composition; Task 22 owns production cutover"
+)]
+pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
+    body: Bytes,
+    record: PendingFinalRequestRecord,
+    request_terminal: RequestTerminalReservation,
+    selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    request_lease: RequestLease,
+) -> ByteStream {
+    dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+        Box::pin(futures_util::stream::once(async move { Ok(body) })),
+        record,
+        request_terminal,
+        selected_attempt,
+        request_lease,
+        DEFAULT_STREAM_IDLE_TIMEOUT,
+    )
+}
+
+#[allow(
+    dead_code,
+    reason = "Task 20 exposes this for explicit loopback composition; Task 22 owns production cutover"
+)]
+pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+    stream: ByteStream,
+    record: PendingFinalRequestRecord,
+    request_terminal: RequestTerminalReservation,
+    selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    request_lease: RequestLease,
+    idle_timeout: Duration,
+) -> ByteStream {
+    let request = DownstreamRequestFinalizationLease::new(request_terminal, request_lease);
+    let selected_attempt = selected_attempt
+        .map(|(reservation, context)| UpstreamAttemptFinalizationLease::new(reservation, context));
+    finalizing_stream_with_target(
+        stream,
+        FinalizationState::Lifecycle(record),
+        FinalizationTarget::DualTerminal(DualTerminalFinalizationLease::new(
+            request,
+            selected_attempt,
+        )),
+        None,
         idle_timeout,
         correlation::current(),
     )
@@ -337,8 +405,9 @@ impl LifecycleBody {
         attempt_terminal: Option<AttemptTerminal>,
     ) {
         self.apply_observations();
+        let output_committed = self.body_bytes > 0;
         if let (Some(state), Some(target)) = (self.state.take(), self.target.take()) {
-            target.finalize(state, delivery, outcome, attempt_terminal);
+            target.finalize(state, delivery, outcome, attempt_terminal, output_committed);
         }
         self.request_lease.take();
     }
@@ -502,7 +571,7 @@ mod tests {
 
     use bytes::Bytes;
     use futures_util::{future::BoxFuture, stream, StreamExt};
-    use tokio::sync::Semaphore;
+    use tokio::sync::{Notify, Semaphore};
 
     use crate::services::proxy::{
         error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
@@ -528,6 +597,7 @@ mod tests {
     use super::{
         buffered_lifecycle_finalizing_stream,
         correlated_lifecycle_finalizing_stream_with_idle_timeout,
+        dual_terminal_buffered_lifecycle_finalizing_stream,
         lifecycle_finalizing_stream_with_idle_timeout, LifecycleFinalizationLease,
         SelectedAttemptFinalization,
     };
@@ -967,10 +1037,282 @@ mod tests {
         worker.join().await.expect("worker join");
     }
 
+    #[tokio::test]
+    async fn dual_terminal_finalizer_waits_for_attempt_ack_before_request_terminal() {
+        let store = Arc::new(AckGatedStore::new());
+        let (writer, worker) = LifecycleWriter::start(4, store.clone()).expect("writer");
+        let context = context("dual-terminal-ack", "/v1/chat/completions");
+        let request = writer.try_reserve_request().expect("request reservation");
+        let (terminal, start_ack) = request.send_start(RequestStartRecord {
+            context: context.clone(),
+        });
+        start_ack
+            .await
+            .expect("start ack channel")
+            .expect("start ack");
+        let attempt_reservation = writer.try_reserve_attempt().expect("attempt reservation");
+        let attempt_context = attempt_context("dual-terminal-ack", context.received_at_ms);
+        let active_requests = Arc::new(AtomicU32::new(0));
+        let request_permit = Arc::new(Semaphore::new(1))
+            .acquire_owned()
+            .await
+            .expect("request permit");
+        let request_lease = RequestLease::new(request_permit, Arc::clone(&active_requests));
+        let record = PendingFinalRequestRecord::new(
+            context,
+            Some(AttemptId::new("dual-terminal-ack", 0)),
+            1,
+            0,
+            annotations(),
+        );
+
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(b"ok"),
+            record,
+            terminal,
+            Some((attempt_reservation, attempt_context)),
+            request_lease,
+        );
+        assert_eq!(
+            body.next().await.unwrap().unwrap(),
+            Bytes::from_static(b"ok")
+        );
+        assert!(body.next().await.is_none());
+        store.wait_for_attempt_started().await;
+
+        assert_eq!(store.request_calls(), 0);
+        assert_eq!(
+            writer.snapshot().submitted,
+            2,
+            "only start + attempt terminal may be submitted before attempt ack"
+        );
+        assert_eq!(
+            active_requests.load(Ordering::SeqCst),
+            1,
+            "request lease is held until request terminal ack"
+        );
+
+        store.release_attempt_ack();
+        store.wait_for_request_calls(1).await;
+        assert_eq!(writer.snapshot().submitted, 3);
+        assert_eq!(
+            store.events(),
+            vec![
+                "start:dual-terminal-ack",
+                "attempt:dual-terminal-ack:0",
+                "request:dual-terminal-ack",
+            ]
+        );
+        assert_eq!(active_requests.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn dual_terminal_downstream_drop_waits_for_attempt_ack_before_request_interrupted() {
+        let store = Arc::new(AckGatedStore::new());
+        let (writer, worker) = LifecycleWriter::start(4, store.clone()).expect("writer");
+        let context = context("dual-terminal-drop", "/v1/chat/completions");
+        let request = writer.try_reserve_request().expect("request reservation");
+        let (terminal, start_ack) = request.send_start(RequestStartRecord {
+            context: context.clone(),
+        });
+        start_ack
+            .await
+            .expect("start ack channel")
+            .expect("start ack");
+        let attempt_reservation = writer.try_reserve_attempt().expect("attempt reservation");
+        let attempt_context = attempt_context("dual-terminal-drop", context.received_at_ms);
+        let active_requests = Arc::new(AtomicU32::new(0));
+        let request_permit = Arc::new(Semaphore::new(1))
+            .acquire_owned()
+            .await
+            .expect("request permit");
+        let request_lease = RequestLease::new(request_permit, Arc::clone(&active_requests));
+        let record = PendingFinalRequestRecord::new(
+            context,
+            Some(AttemptId::new("dual-terminal-drop", 0)),
+            1,
+            0,
+            annotations(),
+        );
+
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(b"ok"),
+            record,
+            terminal,
+            Some((attempt_reservation, attempt_context)),
+            request_lease,
+        );
+        assert_eq!(
+            body.next().await.unwrap().unwrap(),
+            Bytes::from_static(b"ok")
+        );
+        drop(body);
+        store.wait_for_attempt_started().await;
+        assert_eq!(store.request_calls(), 0);
+        assert_eq!(writer.snapshot().submitted, 2);
+
+        store.release_attempt_ack();
+        store.wait_for_request_calls(1).await;
+        let request = store.last_request().expect("request");
+        assert!(matches!(
+            request.terminal.terminal,
+            RequestTerminal::Interrupted(_)
+        ));
+        assert_eq!(
+            request.terminal.delivery,
+            DeliveryTerminal::DownstreamDropped
+        );
+        let attempt = store.last_attempt().expect("attempt");
+        assert!(matches!(
+            attempt.terminal,
+            AttemptTerminal::Failed(ref failure)
+                if failure.kind == AttemptFailureKind::DownstreamDrop
+                    && failure.blame == FailureBlame::Downstream
+        ));
+        assert!(attempt.output_committed);
+        assert_eq!(active_requests.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
     struct RecordingStore {
         start_records: Arc<Mutex<Vec<RequestStartRecord>>>,
         attempt_records: Arc<Mutex<Vec<AttemptTerminalRecord>>>,
         request_records: Arc<Mutex<Vec<FinalRequestRecord>>>,
+    }
+
+    struct AckGatedStore {
+        events: Arc<Mutex<Vec<String>>>,
+        attempt_records: Arc<Mutex<Vec<AttemptTerminalRecord>>>,
+        request_records: Arc<Mutex<Vec<FinalRequestRecord>>>,
+        attempt_started: Arc<Notify>,
+        attempt_release: Arc<Notify>,
+    }
+
+    impl AckGatedStore {
+        fn new() -> Self {
+            Self {
+                events: Arc::new(Mutex::new(Vec::new())),
+                attempt_records: Arc::new(Mutex::new(Vec::new())),
+                request_records: Arc::new(Mutex::new(Vec::new())),
+                attempt_started: Arc::new(Notify::new()),
+                attempt_release: Arc::new(Notify::new()),
+            }
+        }
+
+        async fn wait_for_attempt_started(&self) {
+            for _ in 0..1_000 {
+                if self.attempt_calls() > 0 {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            assert!(
+                self.attempt_calls() > 0,
+                "attempt terminal was not submitted"
+            );
+        }
+
+        fn release_attempt_ack(&self) {
+            self.attempt_release.notify_waiters();
+        }
+
+        fn attempt_calls(&self) -> usize {
+            self.attempt_records.lock().expect("attempt lock").len()
+        }
+
+        fn request_calls(&self) -> usize {
+            self.request_records.lock().expect("request lock").len()
+        }
+
+        fn last_request(&self) -> Option<FinalRequestRecord> {
+            self.request_records
+                .lock()
+                .expect("request lock")
+                .last()
+                .cloned()
+        }
+
+        fn last_attempt(&self) -> Option<AttemptTerminalRecord> {
+            self.attempt_records
+                .lock()
+                .expect("attempt lock")
+                .last()
+                .cloned()
+        }
+
+        fn events(&self) -> Vec<String> {
+            self.events.lock().expect("events lock").clone()
+        }
+
+        async fn wait_for_request_calls(&self, expected: usize) {
+            for _ in 0..1_000 {
+                if self.request_calls() >= expected {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            assert_eq!(self.request_calls(), expected);
+        }
+    }
+
+    impl RequestLifecycleStore for AckGatedStore {
+        fn start_request(
+            &self,
+            record: RequestStartRecord,
+        ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
+            let events = Arc::clone(&self.events);
+            Box::pin(async move {
+                events
+                    .lock()
+                    .expect("events lock")
+                    .push(format!("start:{}", record.context.request_id));
+                Ok(RequestStartAck { inserted: true })
+            })
+        }
+
+        fn finish_attempt(
+            &self,
+            record: AttemptTerminalRecord,
+        ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
+            let events = Arc::clone(&self.events);
+            let records = Arc::clone(&self.attempt_records);
+            let started = Arc::clone(&self.attempt_started);
+            let release = Arc::clone(&self.attempt_release);
+            Box::pin(async move {
+                events.lock().expect("events lock").push(format!(
+                    "attempt:{}:{}",
+                    record.context.attempt_id.request_id, record.context.attempt_id.ordinal
+                ));
+                records.lock().expect("attempt lock").push(record);
+                started.notify_waiters();
+                release.notified().await;
+                Ok(AttemptCommitAck {
+                    inserted: true,
+                    health_applied: true,
+                })
+            })
+        }
+
+        fn finish_request(
+            &self,
+            record: FinalRequestRecord,
+        ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
+            let events = Arc::clone(&self.events);
+            let records = Arc::clone(&self.request_records);
+            Box::pin(async move {
+                events
+                    .lock()
+                    .expect("events lock")
+                    .push(format!("request:{}", record.context.request_id));
+                records.lock().expect("request lock").push(record);
+                Ok(RequestCommitAck { finalized: true })
+            })
+        }
     }
 
     impl RecordingStore {
@@ -1176,5 +1518,42 @@ mod tests {
             http::StatusCode::BAD_GATEWAY,
             "upstream stream failed",
         )
+    }
+
+    fn context(request_id: &str, local_path: &str) -> RequestContextSnapshot {
+        let received_at_ms = crate::services::time::now_millis_for_services() as i64;
+        RequestContextSnapshot {
+            request_id: request_id.to_string(),
+            method: "POST".to_string(),
+            local_path: local_path.to_string(),
+            endpoint: local_path.to_string(),
+            received_at_ms,
+        }
+    }
+
+    fn attempt_context(request_id: &str, started_at_ms: i64) -> AttemptContext {
+        AttemptContext {
+            attempt_id: AttemptId::new(request_id, 0),
+            station_id: "station-test".to_string(),
+            station_key_id: "key-test".to_string(),
+            endpoint_revision: 1,
+            started_at_ms,
+        }
+    }
+
+    fn annotations() -> RequestLogAnnotations {
+        RequestLogAnnotations {
+            model: Some("gpt-test".to_string()),
+            stream: true,
+            selected_station_key_id: Some("key-test".to_string()),
+            selected_station_id: Some("station-test".to_string()),
+            upstream_base_url: Some("https://example.test/v1".to_string()),
+            route_policy: Some("priority_fallback".to_string()),
+            route_reason: Some("selected test key".to_string()),
+            rejected_candidates_json: Some("[]".to_string()),
+            route_wait_ms: Some(0),
+            completion_source: Some("upstream".to_string()),
+            ..RequestLogAnnotations::default()
+        }
     }
 }

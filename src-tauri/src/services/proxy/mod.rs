@@ -1,4 +1,5 @@
 pub mod adapters;
+pub(crate) mod attempt;
 pub mod endpoint_adapter;
 pub mod error;
 pub mod execution;

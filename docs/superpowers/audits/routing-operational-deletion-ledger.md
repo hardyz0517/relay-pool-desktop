@@ -18,11 +18,12 @@ Each entry must either be deleted by its owner task or converted into a document
 | Monitoring candidate DTO dependency | `monitoring/runner.rs`, `monitoring/orchestrator_transport.rs`, `application/monitoring/definition_bridge.rs` | Dependency direction is reversed; monitoring consumes routing candidate instead of shared facts | Task 3/6/24 | Transitional read-only adapter with owner and single consumer |
 | Frontend pricing/group matcher | `src/lib/projections/pricingFacts.ts`, `src/lib/projections/groupFacts.ts` | UI can disagree with backend route/pricing semantics | Task 9/23/24 | Display-only until backend read model lands |
 | Arbitrary string planner errors | routing string errors and `InternalProxyError` flattening | Public client cannot distinguish config, capacity, capability, transient, and internal errors | Task 18/22 | Existing proxy error mapping before typed taxonomy |
-| Legacy policy config values | routing settings enum values | Missing multiplier ceiling cannot be silently upgraded | Task 10/11/22 | Pre-migration readiness UI and rollback window |
-| Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Process-start full old owner only after default-v2 release observation |
+| Legacy policy config values | routing settings enum values | Missing multiplier ceiling cannot be silently upgraded | Task 10/11/22 | Pre-migration readiness UI and development reset/reimport window |
+| Old request-coupled response finalizer | `response_body.rs::LifecycleFinalizationLease`, default `lifecycle_finalizing_stream*` constructors | Attempt terminal and request terminal can be sent from one finalizer without an explicit durable attempt ack barrier | Task 22 | Default production constructor only until atomic dual-terminal cutover; never active together with the new dual-terminal constructor for the same request |
+| Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Process-start full old owner only until default-v2 local observation proves reset/reinstall/reimport recovery |
 
 Deletion gate:
 
 - Task 24 must prove default-v2 has no second selector, capacity, pricing, feedback, or frontend truth path.
-- Task 28 may delete debug legacy only after the separate observation and rollback preconditions in the plan are met.
+- Task 28 may delete debug legacy only after the separate local observation and reset/reinstall/reimport preconditions in the plan are met.
 - Any new temporary adapter must add owner, consumer, expiry task, and forbidden scopes to this ledger in the same commit.
