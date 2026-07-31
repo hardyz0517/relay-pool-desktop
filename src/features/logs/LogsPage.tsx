@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Route, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
@@ -23,6 +23,7 @@ import {
   settingsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
+import type { VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import { RequestLogPagination, RequestLogTable } from "./RequestLogTable";
 import {
   formatKeyName,
@@ -38,10 +39,11 @@ import {
 } from "./requestLogViewModels";
 
 type LogsPageProps = {
+  deepLink?: VersionedRequestLogDeepLink | null;
   onOpenRoutingDeepLink?: (link: { kind: "request"; requestLogId: string; source: "request_log" }) => void;
 };
 
-export function LogsPage({ onOpenRoutingDeepLink }: LogsPageProps = {}) {
+export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
@@ -65,8 +67,19 @@ export function LogsPage({ onOpenRoutingDeepLink }: LogsPageProps = {}) {
     () => paginateRequestLogs(logs, page, pageSize),
     [logs, page, pageSize],
   );
-  const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? pageInfo.logs[0] ?? null;
+  const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? (selectedId ? null : pageInfo.logs[0] ?? null);
   const keyById = useMemo(() => new Map(keys.map((key) => [key.id, key] as const)), [keys]);
+
+  useEffect(() => {
+    if (!deepLink || deepLink.kind !== "request-log") {
+      return;
+    }
+    const index = logs.findIndex((log) => log.id === deepLink.requestLogId);
+    if (index >= 0) {
+      setPage(Math.floor(index / pageSize) + 1);
+    }
+    setSelectedId(deepLink.requestLogId);
+  }, [deepLink?.sequence, logs, pageSize]);
 
   async function refreshLogs(showSuccess = false) {
     setPage(1);

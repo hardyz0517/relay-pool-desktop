@@ -13,6 +13,7 @@ import {
 } from "@/app/pageTransitionPolicy";
 import { AddKeyPage, EditKeyPage } from "@/features/key-pool";
 import { ModelBasePricesPage } from "@/features/pricing";
+import type { RequestLogDeepLink, VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import type { RoutingDeepLink, VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { AddProviderPage, StationDetailPage } from "@/features/stations";
 import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
@@ -40,7 +41,9 @@ export function App() {
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const [routingDeepLink, setRoutingDeepLink] = useState<VersionedRoutingDeepLink | null>(null);
+  const [requestLogDeepLink, setRequestLogDeepLink] = useState<VersionedRequestLogDeepLink | null>(null);
   const routingDeepLinkSequenceRef = useRef(0);
+  const requestLogDeepLinkSequenceRef = useRef(0);
   const lastShellFocusTargetRef = useRef<HTMLElement | null>(null);
   const transientReturnFocusRef = useRef<HTMLElement | null>(null);
   const activeRouteIdRef = useRef<AppPageId>(activeRouteId);
@@ -193,6 +196,12 @@ export function App() {
     navigateTo("routing");
   }, [navigateTo]);
 
+  const openRequestLogDeepLink = useCallback((link: RequestLogDeepLink) => {
+    requestLogDeepLinkSequenceRef.current += 1;
+    setRequestLogDeepLink({ ...link, sequence: requestLogDeepLinkSequenceRef.current });
+    navigateTo("logs");
+  }, [navigateTo]);
+
   const shellPageActions = useMemo<ShellPageActions>(
     () => ({
       addProvider: openAddProvider,
@@ -203,6 +212,8 @@ export function App() {
       openModelBasePrices,
       openRoutingDeepLink,
       routingDeepLink,
+      openRequestLogDeepLink,
+      requestLogDeepLink,
     }),
     [
       openAddProvider,
@@ -213,6 +224,8 @@ export function App() {
       openModelBasePrices,
       openRoutingDeepLink,
       routingDeepLink,
+      openRequestLogDeepLink,
+      requestLogDeepLink,
     ],
   );
 

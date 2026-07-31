@@ -7,6 +7,7 @@ import { KeyPoolPage } from "@/features/key-pool";
 import { LogsPage } from "@/features/logs";
 import { PricingPage } from "@/features/pricing";
 import { RoutingPage } from "@/features/routing";
+import type { VersionedRequestLogDeepLink, RequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import type { VersionedRoutingDeepLink, RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { SettingsPage } from "@/features/settings";
 import { StationsPage } from "@/features/stations";
@@ -22,6 +23,8 @@ export type ShellPageActions = {
   openModelBasePrices: () => void;
   openRoutingDeepLink: (link: RoutingDeepLink) => void;
   routingDeepLink: VersionedRoutingDeepLink | null;
+  openRequestLogDeepLink: (link: RequestLogDeepLink) => void;
+  requestLogDeepLink: VersionedRequestLogDeepLink | null;
 };
 
 export const ShellPageContent = memo(function ShellPageContent({
@@ -58,9 +61,25 @@ export const ShellPageContent = memo(function ShellPageContent({
     case "pricing":
       return <PricingPage onOpenModelBasePrices={actions.openModelBasePrices} />;
     case "routing":
-      return <RoutingPage deepLink={actions.routingDeepLink} />;
+      return (
+        <RoutingPage
+          deepLink={actions.routingDeepLink}
+          onOpenRequestLog={(requestLogId) =>
+            actions.openRequestLogDeepLink({
+              kind: "request-log",
+              requestLogId,
+              source: "routing_decision_trace",
+            })
+          }
+        />
+      );
     case "logs":
-      return <LogsPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
+      return (
+        <LogsPage
+          deepLink={actions.requestLogDeepLink}
+          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
+        />
+      );
     case "settings":
       return <SettingsPage />;
     case "dashboard":

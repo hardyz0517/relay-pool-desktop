@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, GitBranch, Route, Search } from "lucide-react";
+import { Activity, FileText, GitBranch, Route, Search } from "lucide-react";
 import {
   Button,
   DataTableLite,
@@ -32,6 +32,7 @@ type RoutingOperationalPreviewPanelProps = {
   decisions: RecentRouteDecisionsPage | null;
   loading: boolean;
   deepLink?: VersionedRoutingDeepLink | null;
+  onOpenRequestLog?: (requestLogId: string) => void;
 };
 
 export function RoutingOperationalPreviewPanel({
@@ -40,6 +41,7 @@ export function RoutingOperationalPreviewPanel({
   decisions,
   loading,
   deepLink,
+  onOpenRequestLog,
 }: RoutingOperationalPreviewPanelProps) {
   const [selectedStationKeyId, setSelectedStationKeyId] = useState<string | null>(null);
   const [stationScopeId, setStationScopeId] = useState<string | null>(null);
@@ -352,7 +354,15 @@ export function RoutingOperationalPreviewPanel({
               </div>
             )}
           </div>
-          {trace ? <DecisionTracePanel trace={trace} selectedRequestLogId={selectedRequestLogId} /> : <EmptyState title="暂无 timeline" description="选择一条最近决策，或从使用记录 deep link 进入。" />}
+          {trace ? (
+            <DecisionTracePanel
+              trace={trace}
+              selectedRequestLogId={selectedRequestLogId}
+              onOpenRequestLog={onOpenRequestLog}
+            />
+          ) : (
+            <EmptyState title="暂无 timeline" description="选择一条最近决策，或从使用记录 deep link 进入。" />
+          )}
         </div>
       </SectionCard>
 
@@ -424,9 +434,11 @@ function SimulationResult({ simulation }: { simulation: RouteSimulationResult })
 function DecisionTracePanel({
   trace,
   selectedRequestLogId,
+  onOpenRequestLog,
 }: {
   trace: RequestDecisionTrace;
   selectedRequestLogId: string | null;
+  onOpenRequestLog?: (requestLogId: string) => void;
 }) {
   const rows =
     trace.timeline.length > 0
@@ -463,7 +475,19 @@ function DecisionTracePanel({
           </div>
           <div className="text-xs text-muted-foreground">{trace.traceVersion}</div>
         </div>
-        <StatusBadge tone={trace.status === "legacy_summary" ? "info" : "warning"}>{trace.status}</StatusBadge>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {onOpenRequestLog ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onOpenRequestLog(trace.requestLogId)}
+            >
+              <FileText className="h-4 w-4" />
+              查看使用记录
+            </Button>
+          ) : null}
+          <StatusBadge tone={trace.status === "legacy_summary" ? "info" : "warning"}>{trace.status}</StatusBadge>
+        </div>
       </div>
       <div className="grid gap-2">
         {rows.map((row) => (

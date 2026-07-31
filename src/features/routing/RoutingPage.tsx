@@ -30,7 +30,13 @@ import { useCooldownClock } from "./useCooldownClock";
 
 type LocalRoutingTab = "workspace" | "status" | "edit" | "migration";
 
-export function RoutingPage({ deepLink }: { deepLink?: VersionedRoutingDeepLink | null }) {
+export function RoutingPage({
+  deepLink,
+  onOpenRequestLog,
+}: {
+  deepLink?: VersionedRoutingDeepLink | null;
+  onOpenRequestLog?: (requestLogId: string) => void;
+}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const queryEnabled = usePageQueryEnabled();
@@ -185,6 +191,7 @@ export function RoutingPage({ deepLink }: { deepLink?: VersionedRoutingDeepLink 
           decisions={routeDecisionsQuery.data ?? null}
           loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
           deepLink={deepLink}
+          onOpenRequestLog={onOpenRequestLog}
         />
       ) : activeTab === "status" ? (
         <LocalRoutingStatusTab
@@ -210,6 +217,7 @@ export function RoutingPage({ deepLink }: { deepLink?: VersionedRoutingDeepLink 
             decisions={routeDecisionsQuery.data ?? null}
             loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
             deepLink={deepLink}
+            onOpenRequestLog={onOpenRequestLog}
           />
         </div>
       )}
