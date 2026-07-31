@@ -7,6 +7,7 @@
 - [`PROJECT_PLAN.md`](PROJECT_PLAN.md)：项目定位、能力边界与当前阶段方向。
 - [`PRODUCT_MODEL.md`](PRODUCT_MODEL.md)：核心领域术语与对象职责。
 - [`SECURITY_EXPORT_IMPORT.md`](SECURITY_EXPORT_IMPORT.md)：导入、导出与敏感数据边界。
+- [`SCHEMA_UPGRADE_AUTHORING.md`](SCHEMA_UPGRADE_AUTHORING.md)：schema `15` 之后的数据升级 authoring contract。
 - [`../AGENTS.md`](../AGENTS.md)：仓库级开发、验证与交付规则。
 
 发生冲突时，优先级依次为：`AGENTS.md`、当前代码与自动化约束、上述当前规范、带日期的设计记录、历史阶段计划。

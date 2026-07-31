@@ -1,0 +1,162 @@
+{
+  "audit_id": "2026-07-31-schema15-upgrade-debt-cleanup",
+  "status": "schema15_source_and_production_architecture_qualified_pending_release_gate",
+  "created_at": "2026-07-31",
+  "scope": [
+    "generation-2 SQLite startup",
+    "schema 15 to latest automatic upgrade",
+    "encrypted secret baseline conversion",
+    "device key identity validation",
+    "startup recovery routing"
+  ],
+  "baseline_evidence": [
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml startup_upgrade_plan -- --nocapture",
+      "result": "passed",
+      "evidence": "6 startup_upgrade_plan tests passed"
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml schema_15_generation_two_runs_structural_migration_before_secret_baseline -- --nocapture",
+      "result": "passed",
+      "evidence": "schema_15_generation_two_runs_structural_migration_before_secret_baseline passed"
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml encrypted_generation_two_with_wrong_key_routes_to_key_mismatch -- --nocapture",
+      "result": "passed",
+      "evidence": "encrypted_generation_two_with_wrong_key_routes_to_key_mismatch passed"
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml observes_persistence_journal_kind_before_recovery_routing -- --nocapture",
+      "result": "passed",
+      "evidence": "observes_persistence_journal_kind_before_recovery_routing passed"
+    },
+    {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture -- --nocapture --test-threads=1",
+      "result": "passed",
+      "evidence": "42 persistence_architecture tests passed; production application-to-sqlx forbidden edge absent"
+    }
+  ],
+  "debts": [
+    {
+      "id": "D-01",
+      "severity": "P0",
+      "owner_file": "src-tauri/src/persistence/migrations.rs",
+      "evidence": "Latest schema is duplicated across migration registry, initialization SQL, and binary compatibility declarations.",
+      "target_task": "Task 1",
+      "status": "closed",
+      "closure_evidence": [
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture schema_registry -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml persistence::migrations -- --nocapture",
+        "rg -n \"schema_version = 17|updated_by_migration = 17|BTreeSet::from\\(\\[17\\]\\)\" src-tauri/src"
+      ]
+    },
+    {
+      "id": "D-02",
+      "severity": "P0",
+      "owner_file": "src-tauri/src/services/secrets/baseline_conversion.rs",
+      "evidence": "__active_key_id is written but not read and compared before existing database writes.",
+      "target_task": "Task 2",
+      "status": "closed",
+      "closure_evidence": [
+        "cargo test --manifest-path src-tauri/Cargo.toml startup_probe -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml startup_upgrade_plan -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml existing_encrypted_database_without_secret_rows_rejects_mismatched_active_key_id_before_write -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml encrypted_generation_two_with_wrong_key_routes_to_key_mismatch -- --nocapture"
+      ]
+    },
+    {
+      "id": "D-03",
+      "severity": "P1",
+      "owner_file": "src-tauri/src/lib.rs",
+      "evidence": "Startup planning happens before execution, but planned steps are discarded and generation_upgrade probes/plans again.",
+      "target_task": "Task 3-4",
+      "status": "closed",
+      "closure_evidence": [
+        "cargo test --manifest-path src-tauri/Cargo.toml startup_upgrade_executor -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture startup_upgrade -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture startup_coordinator -- --nocapture",
+        "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+        "cargo check --manifest-path src-tauri/Cargo.toml"
+      ]
+    },
+    {
+      "id": "D-04",
+      "severity": "P1",
+      "owner_file": "src-tauri/src/services/data_store/generation_upgrade.rs",
+      "evidence": "Schema 15 regression coverage is derived dynamically from the current migration registry instead of a frozen released fixture.",
+      "target_task": "Task 5",
+      "status": "closed",
+      "closure_evidence": [
+        "node scripts/verify-persistence-v2-artifacts.mjs --sqlite src-tauri/tests/fixtures/persistence/schema15/released-schema15.sqlite3 --canary sk-live-canary",
+        "cargo test --manifest-path src-tauri/Cargo.toml --test schema15_upgrade_fixture -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml frozen_schema15_fixture_upgrades_to_latest_and_restarts -- --nocapture"
+      ]
+    },
+    {
+      "id": "D-05",
+      "severity": "P1",
+      "owner_file": "src-tauri/src/services/data_store/startup_probe.rs",
+      "evidence": "Probe failures are still too broadly mapped to corrupted database recovery in some startup paths.",
+      "target_task": "Task 2",
+      "status": "closed",
+      "closure_evidence": [
+        "cargo test --manifest-path src-tauri/Cargo.toml startup_probe -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml startup_upgrade_plan -- --nocapture",
+        "cargo check --manifest-path src-tauri/Cargo.toml"
+      ]
+    },
+    {
+      "id": "D-06",
+      "severity": "P2",
+      "owner_file": "src-tauri/src/lib.rs",
+      "evidence": "Normal startup still invokes repair_legacy_settings as a hot-path service repair.",
+      "target_task": "Task 6-7",
+      "status": "closed",
+      "closure_evidence": [
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture normal_startup -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml baseline_conversion -- --nocapture",
+        "rg -n \"repair_legacy_settings|legacy_local_access_key_value|INSECURE_LOCAL_KEY_PLACEHOLDER\" src-tauri/src"
+      ]
+    },
+    {
+      "id": "D-07",
+      "severity": "P2",
+      "owner_file": "src-tauri/src/application/settings.rs",
+      "evidence": "ensure_local_access_key still reads legacy plaintext settings instead of limiting legacy conversion to an upgrade step.",
+      "target_task": "Task 6-7",
+      "status": "closed",
+      "closure_evidence": [
+        "cargo test --manifest-path src-tauri/Cargo.toml baseline_conversion -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture normal_startup -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml ensure_local_access_key_rejects_unmigrated_plaintext_after_baseline -- --nocapture"
+      ]
+    },
+    {
+      "id": "D-08",
+      "severity": "P2",
+      "owner_file": "src-tauri/tests/persistence_architecture.rs",
+      "evidence": "No architecture gate prevents legacy startup paths and per-version branches from being reintroduced.",
+      "target_task": "Task 8",
+      "status": "closed",
+      "closure_evidence": [
+        "docs/SCHEMA_UPGRADE_AUTHORING.md",
+        "pnpm verify:fast",
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture startup_upgrade -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture normal_startup -- --nocapture"
+      ]
+    },
+    {
+      "id": "D-09",
+      "severity": "P0",
+      "owner_file": "src-tauri/src/services/secrets/baseline_conversion.rs",
+      "evidence": "Baseline conversion can run the complete migrator, so a future schema 18 could execute before secret baseline schema 17 is committed.",
+      "target_task": "Task 1",
+      "status": "closed",
+      "closure_evidence": [
+        "cargo test --manifest-path src-tauri/Cargo.toml --test persistence_architecture baseline_conversion_uses_bounded_migrations_before_secret_baseline -- --nocapture",
+        "cargo test --manifest-path src-tauri/Cargo.toml persistence::migrations -- --nocapture",
+        "rg -n -U \"migrator\\(\\).*\\.run\" src-tauri/src/services/secrets/baseline_conversion.rs"
+      ]
+    }
+  ]
+}
