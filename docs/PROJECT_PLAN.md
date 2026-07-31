@@ -32,7 +32,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - P7 已完成价格归一化、余额快照、请求成本和 cheap_first 路由展示。
 - P8 正在推进安全与凭据治理。
 - P9 真实站点采集与路由事实层：补齐 Sub2API / NewAPI / OpenAI-compatible adapter，建立 group binding、倍率历史、collector run、价格归一化和路由经济解释，让 UI 和路由消费稳定事实而不是 raw snapshot JSON。
-- P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；release 级 live provider、soak、签名包、升级和休眠恢复验证仍是发布门禁。
+- P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；当前非稳定产品阶段只要求本地资格验证、必要 smoke/soak 与 reset/reimport 恢复证明，不维护 release gate、签名包、安装升级矩阵或旧二进制回滚门禁。
 
 ## 2.1 信息架构
 
