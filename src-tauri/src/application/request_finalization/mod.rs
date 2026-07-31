@@ -2,6 +2,9 @@ use std::sync::Arc;
 
 pub(crate) mod effect_planner;
 pub(crate) mod failure;
+pub(crate) mod outcome;
+pub(crate) mod outcome_orchestrator;
+pub(crate) mod reconciliation;
 
 use futures_util::future::BoxFuture;
 
@@ -9,8 +12,9 @@ use crate::{
     application::request_lifecycle::{
         attempt::{AttemptTerminal, AttemptTerminalRecord, HealthEffect},
         ports::{
-            AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestLifecycleStore,
-            RequestStartAck,
+            AttemptCommitAck, AttemptCostCommitAck, AttemptCostCommitRecord, LifecycleWriteError,
+            RequestCommitAck, RequestCostAggregateCommitAck, RequestCostAggregateCommitRecord,
+            RequestLifecycleStore, RequestStartAck,
         },
         request::{FinalRequestRecord, RequestStartRecord, RequestTerminal},
     },
@@ -33,7 +37,15 @@ use crate::{
             AttemptHealthUpdate, AttemptTerminalWrite, RequestLogAnnotationsWrite,
             RequestStartWrite, RequestTerminalWrite,
         },
+        stores::request_outcome_store::{
+            AttemptCostWrite, RequestCostAggregateWrite, RequestOutcomeStore,
+        },
     },
+};
+
+use self::reconciliation::{
+    default_startup_reconciliation_batch_size, reconcile_startup_interrupted_batch,
+    StartupReconciliationReport,
 };
 
 #[derive(Clone)]
@@ -49,6 +61,33 @@ impl RequestFinalizationService {
             runtime,
             clock: Arc::new(SystemClock),
             health: HealthTransitionService::new(),
+        }
+    }
+
+    pub(crate) async fn reconcile_startup_interrupted_request_lifecycle(
+        &self,
+    ) -> Result<StartupReconciliationReport, LifecycleWriteError> {
+        let mut total = StartupReconciliationReport::empty();
+        loop {
+            let now_ms = self.clock.now_utc().timestamp_millis();
+            let mut session = self
+                .runtime
+                .begin_write()
+                .await
+                .map_err(map_persistence_error)?;
+            let batch = reconcile_startup_interrupted_batch(
+                session.connection(),
+                now_ms,
+                default_startup_reconciliation_batch_size(),
+            )
+            .await
+            .map_err(map_persistence_error)?;
+            session.commit().await.map_err(map_persistence_error)?;
+            let has_more = batch.has_more;
+            total.add_batch(batch);
+            if !has_more {
+                return Ok(total);
+            }
         }
     }
 }
@@ -121,6 +160,45 @@ impl RequestLifecycleStore for RequestFinalizationService {
             session.commit().await.map_err(map_persistence_error)?;
             Ok(RequestCommitAck {
                 finalized: outcome.finalized,
+            })
+        })
+    }
+
+    fn finish_attempt_cost(
+        &self,
+        record: AttemptCostCommitRecord,
+    ) -> BoxFuture<'static, Result<AttemptCostCommitAck, LifecycleWriteError>> {
+        let runtime = self.runtime.clone();
+        Box::pin(async move {
+            let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
+            let outcome = RequestOutcomeStore
+                .insert_attempt_cost(session.connection(), &map_attempt_cost(record))
+                .await
+                .map_err(map_persistence_error)?;
+            session.commit().await.map_err(map_persistence_error)?;
+            Ok(AttemptCostCommitAck {
+                inserted: outcome.inserted,
+            })
+        })
+    }
+
+    fn finish_request_cost_aggregate(
+        &self,
+        record: RequestCostAggregateCommitRecord,
+    ) -> BoxFuture<'static, Result<RequestCostAggregateCommitAck, LifecycleWriteError>> {
+        let runtime = self.runtime.clone();
+        Box::pin(async move {
+            let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
+            let outcome = RequestOutcomeStore
+                .insert_request_cost_aggregate(
+                    session.connection(),
+                    &map_request_cost_aggregate(record),
+                )
+                .await
+                .map_err(map_persistence_error)?;
+            session.commit().await.map_err(map_persistence_error)?;
+            Ok(RequestCostAggregateCommitAck {
+                inserted: outcome.inserted,
             })
         })
     }
@@ -324,6 +402,40 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
             reasoning_effort: annotations.reasoning_effort,
             first_token_ms: annotations.first_token_ms,
         },
+    }
+}
+
+fn map_attempt_cost(record: AttemptCostCommitRecord) -> AttemptCostWrite {
+    AttemptCostWrite {
+        request_id: record.request_id,
+        ordinal: record.ordinal,
+        pricing_context_id: record.pricing_context_id,
+        pricing_basis: record.pricing_basis,
+        pricing_status_label: record.pricing_status_label,
+        usage_status: record.usage_status,
+        input_tokens: record.input_tokens,
+        output_tokens: record.output_tokens,
+        total_tokens: record.total_tokens,
+        cache_creation_tokens: record.cache_creation_tokens,
+        cache_read_tokens: record.cache_read_tokens,
+        cost_status: record.cost_status,
+        currency: record.currency,
+        total_cost_micro: record.total_cost_micro,
+        created_at_ms: record.created_at_ms,
+    }
+}
+
+fn map_request_cost_aggregate(
+    record: RequestCostAggregateCommitRecord,
+) -> RequestCostAggregateWrite {
+    RequestCostAggregateWrite {
+        request_id: record.request_id,
+        status: record.status,
+        totals_by_currency_json: record.totals_by_currency_json,
+        compatibility_currency: record.compatibility_currency,
+        compatibility_total_cost_micro: record.compatibility_total_cost_micro,
+        incomplete_attempts_json: record.incomplete_attempts_json,
+        written_at_ms: record.written_at_ms,
     }
 }
 

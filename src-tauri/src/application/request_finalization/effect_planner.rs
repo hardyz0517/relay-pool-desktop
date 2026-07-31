@@ -5,9 +5,13 @@ use crate::application::{
         CanonicalFailure, CapabilityEffect, FailureClass, FailureTarget, HealthEffect,
         PublicErrorCode, RetryDisposition,
     },
-    request_lifecycle::attempt::{
-        AttemptFailureKind, ClassifiedAttemptFailure, FailureBlame,
-        HealthEffect as LifecycleHealthEffect, RetryDisposition as LifecycleRetryDisposition,
+    request_finalization::outcome::{AttemptOutcome, UpstreamProtocolOutcome},
+    request_lifecycle::{
+        attempt::{
+            AttemptFailureKind, ClassifiedAttemptFailure, FailureBlame,
+            HealthEffect as LifecycleHealthEffect, RetryDisposition as LifecycleRetryDisposition,
+        },
+        request::AttemptId,
     },
 };
 
@@ -42,6 +46,37 @@ pub(crate) fn classified_attempt_failure_from_canonical(
         health: lifecycle_health(failure.health),
         public_code: failure.public.code.as_str().to_string(),
         sanitized_detail: Some(failure.public.message.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AttemptEffectPlan {
+    pub(crate) attempt_id: AttemptId,
+    pub(crate) failure: Option<FailureEffectPlan>,
+    pub(crate) output_committed: bool,
+}
+
+pub(crate) fn plan_attempt_outcome_effects(outcome: &AttemptOutcome) -> AttemptEffectPlan {
+    match &outcome.protocol {
+        UpstreamProtocolOutcome::Succeeded { output_committed } => AttemptEffectPlan {
+            attempt_id: outcome.attempt_id.clone(),
+            failure: None,
+            output_committed: *output_committed,
+        },
+        UpstreamProtocolOutcome::Failed {
+            failure,
+            output_committed,
+        } => AttemptEffectPlan {
+            attempt_id: outcome.attempt_id.clone(),
+            failure: Some(plan_failure_effects(failure)),
+            output_committed: *output_committed,
+        },
+        UpstreamProtocolOutcome::NotStarted { .. }
+        | UpstreamProtocolOutcome::Interrupted { .. } => AttemptEffectPlan {
+            attempt_id: outcome.attempt_id.clone(),
+            failure: None,
+            output_committed: false,
+        },
     }
 }
 

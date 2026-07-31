@@ -1,6 +1,6 @@
 use super::delivery::DeliveryTerminal;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct AttemptId {
     pub request_id: String,
     pub ordinal: u16,

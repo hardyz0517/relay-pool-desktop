@@ -9,6 +9,10 @@ mod application {
             #[allow(unused_imports)]
             pub(crate) use crate::effect_planner::*;
         }
+        pub(crate) mod outcome {
+            #[allow(unused_imports)]
+            pub(crate) use crate::outcome::*;
+        }
     }
 
     pub(crate) mod request_lifecycle {
@@ -44,6 +48,8 @@ mod delivery;
 mod effect_planner;
 #[path = "../src/application/request_finalization/failure.rs"]
 mod failure;
+#[path = "../src/application/request_finalization/outcome.rs"]
+mod outcome;
 #[path = "../src/services/proxy/error.rs"]
 mod proxy_error;
 #[path = "../src/application/request_lifecycle/request.rs"]

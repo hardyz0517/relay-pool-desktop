@@ -10,6 +10,7 @@ pub(crate) mod pricing_store;
 pub(crate) mod provider_draft_store;
 pub(crate) mod request_log_store;
 pub(crate) mod request_log_write;
+pub(crate) mod request_outcome_store;
 pub(crate) mod routing_decisions;
 pub(crate) mod routing_store;
 pub(crate) mod settings_store;

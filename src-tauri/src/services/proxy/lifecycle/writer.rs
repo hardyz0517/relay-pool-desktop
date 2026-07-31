@@ -11,8 +11,9 @@ use tokio::{
 use super::{
     attempt::AttemptTerminalRecord,
     ports::{
-        AttemptCommitAck, LifecycleWriteError, RequestCommitAck, RequestLifecycleStore,
-        RequestStartAck,
+        AttemptCommitAck, AttemptCostCommitAck, AttemptCostCommitRecord, LifecycleWriteError,
+        RequestCommitAck, RequestCostAggregateCommitAck, RequestCostAggregateCommitRecord,
+        RequestLifecycleStore, RequestStartAck,
     },
     request::{FinalRequestRecord, RequestStartRecord},
 };
@@ -87,9 +88,17 @@ pub(crate) enum LifecycleWriteCommand {
         record: Box<AttemptTerminalRecord>,
         ack: oneshot::Sender<Result<AttemptCommitAck, LifecycleWriteError>>,
     },
+    FinishAttemptCost {
+        record: Box<AttemptCostCommitRecord>,
+        ack: oneshot::Sender<Result<AttemptCostCommitAck, LifecycleWriteError>>,
+    },
     FinishRequest {
         record: Box<FinalRequestRecord>,
         ack: oneshot::Sender<Result<RequestCommitAck, LifecycleWriteError>>,
+    },
+    FinishRequestCostAggregate {
+        record: Box<RequestCostAggregateCommitRecord>,
+        ack: oneshot::Sender<Result<RequestCostAggregateCommitAck, LifecycleWriteError>>,
     },
 }
 
@@ -110,6 +119,14 @@ pub(crate) struct RequestWriteReservation {
 }
 
 pub(crate) struct AttemptWriteReservation {
+    terminal: ReservationSlot,
+}
+
+pub(crate) struct AttemptCostWriteReservation {
+    terminal: ReservationSlot,
+}
+
+pub(crate) struct RequestCostAggregateWriteReservation {
     terminal: ReservationSlot,
 }
 
@@ -160,8 +177,26 @@ impl LifecycleWriter {
                         completion.finish(failed);
                         let _ = ack.send(result);
                     }
+                    LifecycleWriteCommand::FinishAttemptCost { record, ack } => {
+                        let result = store.finish_attempt_cost(*record).await;
+                        let failed = result.is_err();
+                        if failed {
+                            worker_health.mark_unhealthy();
+                        }
+                        completion.finish(failed);
+                        let _ = ack.send(result);
+                    }
                     LifecycleWriteCommand::FinishRequest { record, ack } => {
                         let result = store.finish_request(*record).await;
+                        let failed = result.is_err();
+                        if failed {
+                            worker_health.mark_unhealthy();
+                        }
+                        completion.finish(failed);
+                        let _ = ack.send(result);
+                    }
+                    LifecycleWriteCommand::FinishRequestCostAggregate { record, ack } => {
+                        let result = store.finish_request_cost_aggregate(*record).await;
                         let failed = result.is_err();
                         if failed {
                             worker_health.mark_unhealthy();
@@ -207,6 +242,24 @@ impl LifecycleWriter {
     ) -> Result<AttemptWriteReservation, WriterAdmissionError> {
         self.ensure_healthy()?;
         Ok(AttemptWriteReservation {
+            terminal: reserve(&self.sender, &self.metrics)?,
+        })
+    }
+
+    pub(crate) fn try_reserve_attempt_cost(
+        &self,
+    ) -> Result<AttemptCostWriteReservation, WriterAdmissionError> {
+        self.ensure_healthy()?;
+        Ok(AttemptCostWriteReservation {
+            terminal: reserve(&self.sender, &self.metrics)?,
+        })
+    }
+
+    pub(crate) fn try_reserve_request_cost_aggregate(
+        &self,
+    ) -> Result<RequestCostAggregateWriteReservation, WriterAdmissionError> {
+        self.ensure_healthy()?;
+        Ok(RequestCostAggregateWriteReservation {
             terminal: reserve(&self.sender, &self.metrics)?,
         })
     }
@@ -270,6 +323,36 @@ impl AttemptWriteReservation {
             record: Box::new(record),
             ack,
         });
+        receiver
+    }
+}
+
+impl AttemptCostWriteReservation {
+    pub(crate) fn send(
+        self,
+        record: AttemptCostCommitRecord,
+    ) -> oneshot::Receiver<Result<AttemptCostCommitAck, LifecycleWriteError>> {
+        let (ack, receiver) = oneshot::channel();
+        self.terminal
+            .send(LifecycleWriteCommand::FinishAttemptCost {
+                record: Box::new(record),
+                ack,
+            });
+        receiver
+    }
+}
+
+impl RequestCostAggregateWriteReservation {
+    pub(crate) fn send(
+        self,
+        record: RequestCostAggregateCommitRecord,
+    ) -> oneshot::Receiver<Result<RequestCostAggregateCommitAck, LifecycleWriteError>> {
+        let (ack, receiver) = oneshot::channel();
+        self.terminal
+            .send(LifecycleWriteCommand::FinishRequestCostAggregate {
+                record: Box::new(record),
+                ack,
+            });
         receiver
     }
 }
@@ -468,6 +551,35 @@ mod tests {
                 Ok(RequestCommitAck { finalized: true })
             })
         }
+
+        fn finish_attempt_cost(
+            &self,
+            record: AttemptCostCommitRecord,
+        ) -> BoxFuture<'static, Result<AttemptCostCommitAck, LifecycleWriteError>> {
+            let calls = Arc::clone(&self.calls);
+            Box::pin(async move {
+                calls
+                    .lock()
+                    .expect("calls")
+                    .push(format!("cost:{}:{}", record.request_id, record.ordinal));
+                Ok(AttemptCostCommitAck { inserted: true })
+            })
+        }
+
+        fn finish_request_cost_aggregate(
+            &self,
+            record: RequestCostAggregateCommitRecord,
+        ) -> BoxFuture<'static, Result<RequestCostAggregateCommitAck, LifecycleWriteError>>
+        {
+            let calls = Arc::clone(&self.calls);
+            Box::pin(async move {
+                calls
+                    .lock()
+                    .expect("calls")
+                    .push(format!("aggregate:{}", record.request_id));
+                Ok(RequestCostAggregateCommitAck { inserted: true })
+            })
+        }
     }
 
     struct FailingStore;
@@ -505,6 +617,17 @@ mod tests {
                 ))
             })
         }
+
+        fn finish_attempt_cost(
+            &self,
+            _record: AttemptCostCommitRecord,
+        ) -> BoxFuture<'static, Result<AttemptCostCommitAck, LifecycleWriteError>> {
+            Box::pin(async {
+                Err(LifecycleWriteError::Unavailable(
+                    "test persistence failure".to_string(),
+                ))
+            })
+        }
     }
 
     fn context() -> RequestContextSnapshot {
@@ -514,6 +637,38 @@ mod tests {
             local_path: "/v1/chat/completions".to_string(),
             endpoint: "chat_completions".to_string(),
             received_at_ms: 1,
+        }
+    }
+
+    fn attempt_cost_record(request_id: &str, ordinal: u16) -> AttemptCostCommitRecord {
+        AttemptCostCommitRecord {
+            request_id: request_id.to_string(),
+            ordinal,
+            pricing_context_id: format!("pricing-{request_id}-{ordinal}"),
+            pricing_basis: "exact_price".to_string(),
+            pricing_status_label: "exact".to_string(),
+            usage_status: "complete".to_string(),
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            total_tokens: Some(15),
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+            cost_status: "priced".to_string(),
+            currency: Some("USD".to_string()),
+            total_cost_micro: Some(123),
+            created_at_ms: 10,
+        }
+    }
+
+    fn request_cost_aggregate_record(request_id: &str) -> RequestCostAggregateCommitRecord {
+        RequestCostAggregateCommitRecord {
+            request_id: request_id.to_string(),
+            status: "complete_single_currency".to_string(),
+            totals_by_currency_json: r#"{"USD":123}"#.to_string(),
+            compatibility_currency: Some("USD".to_string()),
+            compatibility_total_cost_micro: Some(123),
+            incomplete_attempts_json: "[]".to_string(),
+            written_at_ms: 20,
         }
     }
 
@@ -608,6 +763,69 @@ mod tests {
         assert!(!writer.health().is_healthy());
         assert!(matches!(
             writer.try_reserve_request(),
+            Err(WriterAdmissionError::Unhealthy)
+        ));
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(2), worker.join())
+            .await
+            .expect("worker join timeout")
+            .expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn cost_commands_use_the_same_bounded_writer_and_ack_path() {
+        let store = Arc::new(RecordingStore::default());
+        let calls = Arc::clone(&store.calls);
+        let (writer, worker) = LifecycleWriter::start(2, store).expect("writer");
+        let attempt_cost = writer.try_reserve_attempt_cost().expect("attempt cost");
+        let aggregate = writer
+            .try_reserve_request_cost_aggregate()
+            .expect("aggregate cost");
+        assert!(matches!(
+            writer.try_reserve_attempt_cost(),
+            Err(WriterAdmissionError::Full)
+        ));
+
+        let cost_ack = attempt_cost.send(attempt_cost_record("req-cost-writer", 0));
+        assert!(
+            cost_ack
+                .await
+                .expect("attempt cost ack channel")
+                .expect("attempt cost ack")
+                .inserted
+        );
+        let aggregate_ack = aggregate.send(request_cost_aggregate_record("req-cost-writer"));
+        assert!(
+            aggregate_ack
+                .await
+                .expect("aggregate ack channel")
+                .expect("aggregate ack")
+                .inserted
+        );
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            vec!["cost:req-cost-writer:0", "aggregate:req-cost-writer"]
+        );
+    }
+
+    #[tokio::test]
+    async fn cost_command_store_error_marks_writer_unhealthy() {
+        let (writer, worker) = LifecycleWriter::start(2, Arc::new(FailingStore)).expect("writer");
+        let attempt_cost = writer.try_reserve_attempt_cost().expect("attempt cost");
+        let ack = attempt_cost.send(attempt_cost_record("req-cost-fail", 0));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), ack)
+                .await
+                .expect("attempt cost ack timeout")
+                .expect("ack channel"),
+            Err(LifecycleWriteError::Unavailable(_))
+        ));
+        assert!(!writer.health().is_healthy());
+        assert!(matches!(
+            writer.try_reserve_attempt_cost(),
             Err(WriterAdmissionError::Unhealthy)
         ));
         drop(writer);
