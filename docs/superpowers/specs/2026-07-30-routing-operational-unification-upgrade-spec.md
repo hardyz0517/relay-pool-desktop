@@ -52,7 +52,7 @@ Canonical Facts / Evidence
 
 发生冲突时优先级遵守 `docs/README.md`：`AGENTS.md` 与安全约束、根目录当前规范和明确冻结合同、当前代码/自动化中仍有效的外部兼容与发布约束、本 spec 的目标合同、较早设计记录。当前代码中的现有缺陷是审计基线而不是永久目标；但实现者也不能用本 spec 绕过现有测试、协议或迁移约束。若本 spec 与 `PROJECT_PLAN.md`、状态监控 V2、Persistence V2 或请求生命周期冻结合同存在真实冲突，Stage 0 必须形成具名 ADR，并先同步修订权威规范、相关测试与双方条款后才能实现，不能由实现者临场选择。
 
-`PROJECT_PLAN.md` 已把状态监控 V2 implementation cutover 作为当前主线，但当前工作区仍有后续改动，且 live provider/soak/升级等发布资格尚未全部关闭。Stage 1 开始前必须以已合并或明确冻结的 monitoring baseline 为前置条件；本 spec 只通过共享 fact/observation port 与它集成，不重写其 scheduler、profile、transport、retention 或 read model。
+`PROJECT_PLAN.md` 已把状态监控 V2 implementation cutover 作为当前主线，但当前工作区仍有后续改动，且 live provider/soak/升级等本地资格尚未全部关闭。Stage 1 开始前必须以已合并或明确冻结的 monitoring baseline 为前置条件；本 spec 只通过共享 fact/observation port 与它集成，不重写其 scheduler、profile、transport、retention 或 read model。
 
 ## 3. 审计问题总表
 
@@ -581,7 +581,7 @@ stale policy 必须由各 projector 明确：过期倍率 fail closed，过期 m
 
 credential handle 只活到 request build/send 所需的最短边界；response body wrapper、AttemptOutcome、retry state 和 read model 都不得持有它。需要重试时必须对新 SelectedRoute 重新 fenced resolve，不能缓存 plaintext credential 到 request-scoped candidate 列表。
 
-现有 request log 中的完整 upstream URL 按潜在敏感数据处理：新 schema/projection 不复制原值；读取一律经 URL-aware sanitizer，解析失败返回 redacted sentinel；在 released-schema fixture 验证后执行独立、有备份提示的 bounded migration，把可识别 userinfo/query/fragment 清除或将整值置空。清理流程按 `SECURITY_EXPORT_IMPORT.md` 另行验证 WAL checkpoint/compaction 边界，并明确外部备份不会被应用自动改写，不能把普通 UPDATE 宣称为取证级擦除。export、diagnostic bundle 和新 decision trace 从第一天起只允许 EndpointRef/sanitized origin，不能等历史清理完成后再补安全边界。
+现有 request log 中的完整 upstream URL 按潜在敏感数据处理：新 schema/projection 不复制原值；读取一律经 URL-aware sanitizer，解析失败返回 redacted sentinel；在 known-schema fixture 验证后执行独立、有备份提示的 bounded migration，把可识别 userinfo/query/fragment 清除或将整值置空。清理流程按 `SECURITY_EXPORT_IMPORT.md` 另行验证 WAL checkpoint/compaction 边界，并明确外部备份不会被应用自动改写，不能把普通 UPDATE 宣称为取证级擦除。export、diagnostic bundle 和新 decision trace 从第一天起只允许 EndpointRef/sanitized origin，不能等历史清理完成后再补安全边界。
 
 ## 9. 路由决策算法
 
@@ -1133,7 +1133,7 @@ src-tauri/src/application/queries/
 - 不按 request 动态切换，不进入 UI，不作为 writer failure 时的自动 fallback，也不扩展其功能；
 - Stage 5/6 必须删除 default v2 内部的旧 selector/score/静态 fallback；“release candidate 不留不可达 legacy”特指这些同 composition 残留，不误指由当前 master plan 单独治理的 debug runtime；
 - debug runtime 的真实删除继续遵守已有观察周期与独立 deletion ticket，完成后同步收紧 architecture gate；
-- 发布资格报告必须分别声明 default v2 与 debug legacy 的可达性，不能用 debug fallback 掩盖 default v2 未通过的测试。
+- 本地资格报告必须分别声明 default v2 与 debug legacy 的可达性，不能用 debug fallback 掩盖 default v2 未通过的测试。
 
 ## 15. 外部项目的取舍
 
@@ -1274,7 +1274,7 @@ stop new proxy admission
 - incomplete admitted request 通过 lifecycle reconciliation 标记 interrupted；
 - cooldown 使用 wall-clock durable time 时必须容忍时钟回拨，runtime duration 使用 monotonic time；
 - matching revision 且 traffic-equivalent 的 monitor success 可以恢复普通 endpoint/Key 被动状态，但 diagnostic/CLI-compatible probe 不能恢复，任何 monitor success 都不能恢复已确认无效 credential；
-- schema migration forward-only，旧 binary 可以忽略新表但不得删除。
+- schema migration forward-only；开发期恢复由 new binary 的 reset/reinstall/reimport 路径承担，不要求旧 binary 忽略新表。
 
 ### 16.6 可观测性合同
 
@@ -1478,19 +1478,19 @@ Stage 2/3 若进入预迁移版本，simulator 必须标记 `hierarchical_v1_pre
 
 退出条件：用户能从任一异常定位到路由影响和具体请求；仓库内只有一个 production fact resolution、selection、capacity、feedback 和 pricing settlement path。
 
-Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立正式版本发布；release candidate 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。debug-only legacy runtime 的例外严格按 14.4 管理。
+Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可见版本发布；本地 qualification candidate 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。debug-only legacy runtime 的例外严格按 14.4 管理。
 
-### Stage 7：发布资格
+### Stage 7：开发期本地资格
 
 交付：
 
 - 完整 Rust/frontend/contracts checks；
-- migration/released-schema fixtures；
+- migration/known-schema fixtures；
 - concurrency/fault/restart/stream-drop tests；
 - 1 小时 mixed workload soak；
 - release build 与真实客户端 E2E；
 - SQLite journal、decision、health、cost 和资源计数核对；
-- Windows sleep/resume、graceful shutdown 和升级/回滚验证。
+- Windows sleep/resume、graceful shutdown 和 reset/reinstall/reimport 验证。
 
 ## 20. 测试矩阵
 
@@ -1600,22 +1600,22 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立正式版
 
 ### 21.2 数据迁移
 
-- migration forward-only、幂等并加入 fresh/released-schema fixtures；
-- 新 decision/cost 字段允许旧 binary 忽略；
+- migration forward-only、幂等并加入 fresh/known-schema fixtures；
+- 新 decision/cost 字段允许当前 new binary 在缺失、旧数据或重装后保持明确 unavailable/ignored 状态；开发期不承诺旧 binary rollback；
 - 不把旧 request logs 用当前价格静默回填为权威历史；
 - legacy row 显式标记 `legacy_estimate` 或 `trace_unavailable`；
 - 不在迁移中删除 compatibility cache。
 - 历史完整 upstream URL 使用独立、可恢复且有进度记录的 sanitizer migration；解析失败宁可置空/标记 redacted，也不把潜在 query/userinfo 复制到新列；
-- 在完整 binary rollback 窗口结束前保留旧 binary 所需的 legacy config 值；released-schema fixture 必须证明旧 binary 能忽略新表并按上一完整 owner 启动，不能只验证 schema 可打开。
+- legacy config 值只为 import/export、debug 观察和未来稳定发布 ADR 可能需要的兼容检查暂留；开发期 fixture 证明 new binary 可从 fresh/known schema、reset/reinstall/reimport 路径恢复，不要求旧 binary 打开或回滚新数据。
 
-### 21.3 回滚
+### 21.3 开发期恢复与稳定期回滚边界
 
-- Stage 1-4 不激活新 data-plane；domain/harness 可直接回滚，已启用的 read model/UI 必须按完整 owner 一起回滚；
-- Stage 5 production cutover 只能回到上一完整 owner，不能按请求双 selector：正式包使用完整 binary rollback；在 `PROJECT_PLAN.md` 既有 debug 观察门禁存续期间，process-start 级 legacy debug runtime 也必须切换整个旧 composition，且不得成为自动 fallback；
-- 已创建的新表由旧 binary 忽略，不反向 drop；
-- Stage 5 后 writer/transaction blocker 必须停止 admission，不能自动回到旧双写；
-- UI/read-model 迁移必须按完整 owner 回滚，不能在同一 binary 中让部分页面用后端 projection、部分页面恢复前端权威公式；紧急完整 binary rollback 可暂时恢复上一发布行为，但不改变最终删除目标；
-- Stage 6 删除前至少完成一个稳定 release-candidate 观察/soak 窗口和 deletion ledger approval；该窗口不等于先发布一个保留 legacy production code 的正式版本。
+- Stage 1-4 不激活新 data-plane；domain/harness 失败时修复或丢弃本地升级分支，不对用户暴露混合 owner；
+- Stage 5 production cutover 后，结构性 writer/transaction blocker 必须停止 admission，开发期恢复手册是 reset/reinstall/reimport 到一致状态，不能自动回到旧双写或按请求双 selector；
+- 已创建的新表不反向 drop；reset 可以丢弃本地开发数据，import/reimport 必须走显式导入流程并保留 redaction 边界；
+- UI/read-model 迁移必须按完整 owner 切换，不能在同一 binary 中让部分页面用后端 projection、部分页面恢复前端权威公式；
+- Stage 6 删除前至少完成本地 observation/soak 和 deletion ledger approval；该窗口不等于先发布一个保留 legacy production code 的正式版本；
+- 若项目未来进入稳定产品阶段，binary rollback、自动更新、安装/升级矩阵和支持窗口必须由新的发布 ADR 重新定义，不从本开发期 spec 默认继承。
 
 ## 22. 验收标准
 
@@ -1729,7 +1729,7 @@ Relay Pool 仍是本地桌面工具：一个固定 OpenAI-compatible 入口、�
 | capability evidence 来源不足 | 现有 capability 多为 boolean/manual list，collector inventory coverage 未建模 | 先迁移 tri-state/source/coverage；unknown 按本 spec provisional/strict policy 处理，不伪造 collected truth |
 | provider account concurrency scope 不明确 | balance snapshot 有 limit 字段但未必能区分 Station/Key scope | 首版只启用 scope 可信的 constraint；其他只展示 evidence gap，不参与 lease |
 | endpoint/account health schema 需要扩展 | 当前 durable reducer 主要围绕 Station Key | Persistence ADR 冻结 scoped observation、表 owner、migration 与 revision fencing 后再实现 effect writer |
-| per-attempt cost 与多币种 aggregate 需要 schema | 当前 request log 以请求级兼容字段为主 | migration/released-schema fixture、旧 binary ignore、新旧 read projection 测试必须先通过 |
+| per-attempt cost 与多币种 aggregate 需要 schema | 当前 request log 以请求级兼容字段为主 | migration/known-schema fixture、new binary reset/reimport、新旧 read projection 测试必须先通过 |
 | `CostFirst` 对 token 单价缺少 reference usage | 当前实现直接相加 input/output，会制造任意权重 | v1 只用 exact scalar context 或明确 multiplier proxy；UI/trace 标 basis，reference usage 另立 ADR |
 | runtime outlier 默认值缺少本项目生产样本 | 参数来自成熟网关原则但 Relay Pool 流量更小 | 固定 v1 默认先通过 deterministic/soak；发布后只基于脱敏本地统计和具名 ADR 调整，不在线学习 |
 | decision trace 可能增加 SQLite 体积 | 最坏约 32 candidate rows/round | retention/索引/100 万级 fixture performance 与 maintenance fault test 为发布门禁 |

@@ -53,7 +53,7 @@ Canonical facts/evidence
 
 ## 3. 开发期序列与不可跨越门禁
 
-**2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，不要求维护公开签名预迁移版本或正式 release/rollback 交付链路。用户可接受通过重装、清空本地配置或重新导入来恢复。因此，本计划中的 release gate 降级为开发期本地 qualification gate：保留架构、schema、redaction、build、soak、真实客户端 smoke 和安装脚本合同；移除“必须公开发布签名 installer/tag 后才能继续下一 Task”的硬门禁。后续若项目进入稳定产品阶段，需要重新启用发布 ADR，并补回 signed installer、自动更新、升级/回滚矩阵与支持窗口要求。
+**2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，不要求维护公开签名预迁移版本或正式 release/rollback 交付链路。用户可接受通过重装、清空本地配置或重新导入来恢复。因此，本计划中的 release gate 降级为开发期本地 qualification gate：保留架构、schema、redaction、build、soak 和真实客户端 smoke；安装/升级脚本若保留，只作为“不写死版本/路径”的可选合同检查，不作为当前升级阻塞项。移除“必须公开发布签名 installer/tag 后才能继续下一 Task”的硬门禁。后续若项目进入稳定产品阶段，需要重新启用发布 ADR，并补回 signed installer、自动更新、升级/回滚矩阵与支持窗口要求。
 
 ```text
 Stage 0 baseline + ADR freeze
@@ -109,7 +109,7 @@ Stage 0 baseline + ADR freeze
   -> 24 Default-v2 legacy deletion and architecture gates
   -> 25 Security/history migration
   -> 26 Full fault/performance/soak qualification
-  -> 27 Release and rollback proof
+  -> 27 Local package and reset/reinstall proof
   -> 28 Debug legacy runtime deletion follow-up (separate precondition)
 ```
 
@@ -157,7 +157,7 @@ Tasks 4-7 可以在 Task 3 后并行开发，但 Task 8 必须等四者的类型
 | backend read models/UI 贯通 | 9, 10, 23 | no frontend truth、deep links、preview/production parity |
 | legacy policy migration | 10, 11, 22 | readiness fixture、user-confirmed config、fail-closed cutover |
 | default-v2 单 owner/deletion | 22-24 | production composition and source gates |
-| release reliability/security | 25-28 | migration matrix、fault/soak/live/rollback evidence |
+| local qualification/security | 25-28 | migration fixtures、fault/soak/live/reset-reinstall evidence |
 
 ## 7. Task 0：冻结基线、冲突清单与四份 ADR
 
@@ -634,12 +634,12 @@ pnpm.cmd build
 - [ ] 未迁移用户继续使用旧 router 原行为；readiness 只读检查不得改变 selection。
 - [ ] 已迁移 config 被完整保存，但本版本不让新 selector接真实流量。
 - [ ] import/export 保留 legacy fields 并标记 ignored-after-cutover，不丢用户数据。
-- [ ] 预迁移 binary 能容忍历史 `request_logs.upstream_base_url` 为 NULL/redacted；这是 Task 25 清洗后仍可完整 binary rollback 的前置合同。
+- [ ] 新 binary 能容忍历史 `request_logs.upstream_base_url` 为 NULL/redacted；这是 Task 25 清洗后开发期 reset/reinstall/reimport 恢复的前置合同，不再作为旧 binary rollback 合同。
 - [ ] 预迁移 binary 对所有新 request 将 legacy `upstream_base_url` 写为 NULL，只保留已有 station/key identity 和安全 path/endpoint classification；UI/query 不用当前 Station URL 回填历史显示。
 - [ ] 记录本地 configuration readiness 统计时只保存低基数聚合，不记录实体 ID/模型/URL。
 - [ ] 冻结 checkpoint revision；开发期不要求 release tag、签名 installer 或公开更新渠道。
-- [ ] install/upgrade matrix 不包含写死版本；调用者显式提供 baseline/new installer 与两个版本，报告记录其 hash/version。
-- [ ] 若维护者显式提供 installer artifacts，可运行 install/upgrade matrix；否则开发期以 fresh/released schema、readiness、redaction、import/export 和 local build 证据作为本 Task gate。
+- [ ] 开发期不要求 install/upgrade matrix；若脚本保留，只作为稳定产品阶段的可选合同测试，且不得写死版本或 artifact 路径。
+- [ ] 开发期以 fresh/known schema、readiness、redaction、import/export 和 local build 证据作为本 Task gate。
 - [ ] 不发布预迁移版本；Task 12 可在本地 qualification 通过后继续。用户恢复策略为重装、清空本地数据或重新导入配置，不承诺旧 binary rollback。
 
 **Pre-migration development freeze:**
@@ -661,7 +661,7 @@ cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86
 # powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-install-upgrade-matrix.ps1 -OldInstaller $env:RELAY_BASELINE_INSTALLER -NewInstaller $env:RELAY_CANDIDATE_INSTALLER -OldVersion $env:RELAY_BASELINE_VERSION -NewVersion $env:RELAY_CANDIDATE_VERSION -OutputPath $env:RELAY_UPGRADE_REPORT
 ```
 
-**Exit gate:** 本地 qualification 证明旧 production behavior 未变、用户能完成所有 cutover-required config、新 request log 不再写完整 upstream URL、fresh/released schema 与导入导出合同仍通过。开发期不要求签名发布或 installer 升级矩阵；Task 12 可在上述本地 gate 通过后开始。若重新启用稳定发布策略，必须恢复 tag、签名 bundle、install/upgrade matrix 和发布渠道证据。
+**Exit gate:** 本地 qualification 证明旧 production behavior 未变、用户能完成所有 cutover-required config、新 request log 不再写完整 upstream URL、fresh/known schema 与导入导出合同仍通过。开发期不要求签名发布或 installer 升级矩阵；Task 12 可在上述本地 gate 通过后开始。若重新启用稳定发布策略，必须恢复 tag、签名 bundle、install/upgrade matrix 和发布渠道证据。
 
 **Commit:** `chore: qualify hierarchical routing premigration checkpoint`
 
@@ -720,7 +720,7 @@ node scripts/routing-operational-architecture.test.mjs
 - Create: `src-tauri/src/persistence/stores/routing_decisions/retention.rs`
 - Modify: persistence store registry/runtime wiring in non-production test composition
 - Create: `src-tauri/tests/routing_decision_store.rs`
-- Create: released-schema fixtures/SQLx metadata required by repository rules
+- Create: known-schema fixtures/SQLx metadata required by repository rules
 
 **RED:**
 
@@ -735,7 +735,7 @@ node scripts/routing-operational-architecture.test.mjs
 **GREEN:**
 
 - [ ] decision evidence 先保存在 bounded request memory，后续随 AttemptOutcome/RequestOutcome transaction upsert；本 Task 不添加 pre-upstream decision DB barrier。
-- [ ] migration forward-only/idempotent；旧 binary 可忽略新表。
+- [ ] migration forward-only/idempotent；new binary 对缺失或旧数据给出明确 unavailable/ignored 状态，开发期不承诺旧 binary 回滚。
 - [ ] maintenance 与 request-log retention 同 owner 编排。
 
 **Run:**
@@ -747,7 +747,7 @@ pnpm.cmd test:contracts
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-**Exit gate:** fresh/released schema、retention、pagination、redaction 和 million-row query fixture 全绿；尚未接 production writer。
+**Exit gate:** fresh/known schema、retention、pagination、redaction 和 million-row query fixture 全绿；尚未接 production writer。
 
 **Commit:** `feat: add bounded routing decision persistence`
 
@@ -978,7 +978,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - Create: `src-tauri/tests/routing_outcome_domain.rs`
 - Create: `src-tauri/tests/routing_outcome_persistence.rs`
 - Create: `src-tauri/tests/routing_lifecycle_reconciliation.rs`
-- Create: released-schema fixtures and SQLx metadata required by repository rules
+- Create: known-schema fixtures and SQLx metadata required by repository rules
 
 **RED:**
 
@@ -1002,7 +1002,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] 复用 Request Lifecycle 的 Start/Finish writer、permit reservation、bounded queue、ack 与 shutdown owner；不创建第二个 routing writer。
 - [ ] 旧 production lifecycle command 在 Task 22 前继续走兼容 transaction；新 `AttemptOutcome`/`RequestOutcome` command 只由 harness composition 提交，二者共享同一 writer capacity/health gate 但绝不双写同一 terminal。
 - [ ] 显式 orchestrator 固定调用 journal、scoped observation、cost 和 decision store ports；不实现动态 handler/event bus。
-- [ ] transaction schema 使用稳定 unique key 和 CAS；migration forward-only、幂等，旧 binary 可忽略新表/列。
+- [ ] transaction schema 使用稳定 unique key 和 CAS；migration forward-only、幂等；new binary 对旧数据/缺失列有明确 projection fallback，开发期不承诺旧 binary 回滚。
 - [ ] runtime feedback 仍由 AttemptLifecycle 唯一 owner apply once；durable transaction 不反向操作 runtime registry。
 - [ ] `/v1/models` outcome 的 pricing/cost sealed 为 `NotApplicable`，不进入 inference cost aggregation。
 - [ ] reconciliation 由 `RequestFinalizationService` 的窄 startup method 拥有，不另建后台 writer；完成后返回明确 ack 供 composition gate 使用。
@@ -1143,7 +1143,7 @@ pnpm.cmd test:contracts
 **Pre-cutover checklist:**
 
 - [ ] 对所有本地 profiles 执行 readiness scan；缺少 ordering profile、可信 multiplier ceiling 或 required migration confirmation 时停止，不能静默猜测。
-- [ ] 保存 cutover 前 `verify:full`、released-schema、loopback、redaction 和 rollback compatibility 证据。
+- [ ] 保存 cutover 前 `verify:full`、known-schema、loopback、redaction 和 reset/reimport compatibility 证据。
 - [ ] 审核 composition diff，确认 selector、capacity、writer、feedback、pricing、target resolver 与 shutdown 是一个完整 owner 组合。
 
 **RED:**
@@ -1161,7 +1161,7 @@ pnpm.cmd test:contracts
 **GREEN:**
 
 - [ ] composition root 唯一构造 fact/runtime/capacity/finalization registries 并交给 `TaskSupervisor`；planner 仍只看 immutable input。
-- [ ] 切换与 legacy compatibility config 保留分开；rollback 依赖上一完整 binary，而不是同 binary 混合 owner。
+- [ ] 切换与 legacy compatibility config 保留分开；开发期恢复依赖 reset/reinstall/reimport，而不是同 binary 混合 owner。若未来进入稳定产品阶段，再用独立发布 ADR 恢复完整 rollback 合同。
 - [ ] 本 Task 可以合并到 release-candidate branch，但在 Tasks 23-26 完成前不得发布正式版本。
 
 **Run:**
@@ -1268,7 +1268,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operatio
 
 **Deletion checklist:**
 
-- [ ] 删除 default-v2 第二套 selector/score/weighted random/legacy weights reader；保留的 compatibility config 只能供完整 old binary rollback 或 isolated debug owner 使用。
+- [ ] 删除 default-v2 第二套 selector/score/weighted random/legacy weights reader；保留的 compatibility config 只能供 isolated debug owner 或未来稳定发布 ADR 明确要求的兼容检查使用。
 - [ ] 删除 default-v2 旧 `scheduler/{affinity,metrics,capacity,scoring,selection}` runtime 及其 feedback/bind facade；若观察期仍需 debug legacy，则整套原样移动到 `services/proxy/legacy_runtime/`，只允许 process-start legacy composition import，并登记 Task 28 删除。
 - [ ] 删除 acquire 后立即 release 的 simulated capacity 与 `slot unavailable -> ordered candidate` 语义。
 - [ ] 删除 proxy 对静态 candidate IDs 的遍历 fallback；所有 fallback 由 controller replan 驱动。
@@ -1276,7 +1276,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operatio
 - [ ] 删除 duplicate group/multiplier/pricing/capability resolver 和 frontend authoritative matcher。
 - [ ] 删除 planner failure -> string -> internal 500 与 arbitrary error-body health classification。
 - [ ] 删除已迁移 IPC/read-model adapter、test-only facade、unused fields/imports/feature flags；每项在 ledger 标记 commit 与 gate。
-- [ ] compatibility cache 若 rollback window 尚需保留，必须有只读 owner、expiry condition 和独立删除票据，不能参与 default-v2 truth。
+- [ ] compatibility cache 若因 debug 观察或未来稳定发布 ADR 暂留，必须有只读 owner、expiry condition 和独立删除票据，不能参与 default-v2 truth。
 
 **Architecture gates:**
 
@@ -1319,7 +1319,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - Create: `src-tauri/tests/routing_url_sanitizer_migration.rs`
 - Create: `src-tauri/tests/routing_security_boundaries.rs`
 - Extend: `scripts/local-routing-redaction.test.mjs`
-- Modify: released-schema fixtures and persistence artifact manifest
+- Modify: known-schema fixtures and persistence artifact manifest
 
 **RED:**
 
@@ -1332,7 +1332,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] 全部 logical rows 完成后执行受控 WAL checkpoint/truncate 与 SQLite rebuild/`VACUUM`，清理 free pages；关闭相关 producers 后再处理 `-wal`/`-shm` sidecars。
 - [ ] 枚举并清理应用管理范围内由本次升级产生的 pre-sanitization backup/temp artifact；路径必须由 persistence artifact policy 验证，不能递归删除用户目录或外部备份。
 - [ ] canary fixture 对主 DB、WAL、SHM、upgrade journal 和应用管理 backup 做原始字节扫描；发布证据明确这只是应用管理存储范围内的 best-effort purge，不宣称 SSD/文件系统级不可恢复。
-- [ ] fresh schema、每个 released schema 和中断恢复 fixture 均可升级；Task 11 预迁移 binary 必须能在清洗后忽略新列、容忍原字段 NULL，并启动完整旧 owner。
+- [ ] fresh schema、known schema 和中断恢复 fixture 均可升级；开发期不承诺旧 binary rollback，清洗后的恢复路径是 new binary reset/reinstall/reimport。
 - [ ] source/runtime scan 证明 candidate、outcome、decision、IPC、UI、trace、error、snapshot 和 qualification artifact 不含 secret/full URL/user payload。
 - [ ] redaction 对 Authorization、API key、Cookie、token、完整 headers 和 prompt/response 同样生效。
 
@@ -1359,7 +1359,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 **Commit:** `security: sanitize persisted upstream routing metadata`
 
-## 33. Task 26：执行 fault、并发、性能与 soak 发布资格
+## 33. Task 26：执行 fault、并发、性能与 soak 本地资格
 
 **Depends on:** Tasks 22-25；release build 配置与最终 schema 已冻结。
 
@@ -1443,7 +1443,7 @@ node scripts/routing-operational-qualification.mjs
 **Reinstall/reset matrix:**
 
 - [ ] fresh local data -> new binary；legacy fixture DB -> new binary；configured/unconfigured profiles -> new binary。
-- [ ] released-schema fixtures 升级后 route readiness、monitoring facts、pricing、request logs 和 decision/cost stores 正常。
+- [ ] known-schema fixtures 升级后 route readiness、monitoring facts、pricing、request logs 和 decision/cost stores 正常。
 - [ ] unconfigured legacy policy 明确阻止 routing admission，但 UI 仍可打开并完成配置或提示 reset/reimport；不 panic、不静默自动映射。
 - [ ] sanitizer migration 中断、resume、完成后的 startup 行为可证明。
 
@@ -1487,9 +1487,9 @@ node scripts/routing-operational-qualification.mjs
 
 **Ticket acceptance before code deletion:**
 
-- [ ] 至少一个 default-v2 正式版本完成规定观察期，真实客户端、provider、sleep/resume、upgrade/rollback 无未决 P0/P1。
+- [ ] default-v2 完成本地观察期，真实客户端、provider、sleep/resume、reset/reinstall/reimport 无未决 P0/P1。
 - [ ] support/debug 记录证明 legacy process-start runtime 不再是必要诊断手段。
-- [ ] binary rollback window 已关闭或有新的完整 rollback 版本；删除不会破坏受支持回滚路径。
+- [ ] debug legacy runtime 已不再承担开发期恢复职责；删除不会破坏受支持的 reset/reinstall/reimport 路径。
 - [ ] ledger 列出 legacy composition、env switch、tests、docs、compat config consumers 与最终 migration owner，不只删除入口字符串。
 
 **Deletion execution:**
@@ -1508,13 +1508,13 @@ pnpm.cmd verify:full
 cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 ```
 
-**Exit gate:** debug legacy runtime 及其专属债务物理删除，rollback/support 文档指向受支持的完整 binary 流程。
+**Exit gate:** debug legacy runtime 及其专属债务物理删除，support 文档指向受支持的 reset/reinstall/reimport 流程；稳定产品阶段若需要 binary rollback，另开 ADR 重新定义。
 
 **Commit:** `refactor: remove debug legacy proxy runtime`
 
 ## 36. 每个 Task 的执行、提交与证据模板
 
-每个 Task 必须按以下顺序执行，不能把“实现完成”和“发布资格”混为一谈：
+每个 Task 必须按以下顺序执行，不能把“实现完成”和“本地资格”混为一谈：
 
 1. **Preflight**：运行 `git status --short --branch`，确认依赖 Task 的 exit gate 和证据；枚举 migration 最大编号；记录重叠 dirty files 与 owner。
 2. **Scope freeze**：从本计划复制该 Task 的 files、RED、Run、Exit gate 到工作记录；新增文件或行为必须说明为何仍在 spec 范围内。
@@ -1578,12 +1578,12 @@ Stage 7 qualification audit 必须逐行填写实际 commit/test/report 链接�
 - arbitrary string/body failure classification 与 planner string-to-500 路径；
 - 已完成迁移的 temporary adapter、test-only production facade 和 boundary exceptions。
 
-**在 rollback/观察窗口内允许保留，但必须隔离：**
+**在 debug 观察窗口或未来稳定发布 ADR 明确要求时允许暂留，但必须隔离：**
 
 - 上一完整 binary 所需 legacy config values；
 - debug-only、process-start 级完整 legacy runtime；
 - 只读 legacy request cost/trace compatibility projection；
-- 尚在 rollback window 的 compatibility cache。
+- 尚在 debug 观察期或稳定发布 ADR 允许期内的 compatibility cache。
 
 允许保留项不得进入 default-v2 selection、pricing、feedback、capacity、read-model truth 或 UI 设置。每项必须在 deletion ledger 有 owner、理由、最后使用者、删除前置条件和截止版本；Task 28 结束后相应项归零。
 
