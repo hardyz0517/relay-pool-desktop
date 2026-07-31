@@ -25,6 +25,8 @@ for (const text of [
   "sourceRevision",
   "worktreeCleanAtStart",
   "worktreeCleanAtFinish",
+  "legacy-doc-anti-regression",
+  "scripts/routing-operational-legacy-doc-consistency.test.mjs",
   "realProviderStatus",
   "not-run-without-user-authorization",
   "reset/reimport/reconfigure with the current dev binary",
@@ -45,6 +47,7 @@ for (const forbidden of [
 assert.ok(
   plan.includes("reset/reimport/重新配置") &&
     plan.includes("不维护公开签名预迁移版本") &&
+    plan.includes("反回流门禁") &&
     plan.includes("本地自检"),
   "Task 27 plan must preserve development reset/reimport boundary",
 );

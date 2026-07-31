@@ -28,7 +28,8 @@ The runner uses existing Rust/contract checks for:
 - request-log URL sanitizer interruption/resume/startup readiness;
 - startup lifecycle reconciliation before proxy admission;
 - configured profile routing fields, model alias and catalog decision/cost stores;
-- local routing redaction boundaries.
+- local routing redaction boundaries;
+- debug legacy runtime / env switch doc anti-regression.
 
 ## Recovery boundary
 

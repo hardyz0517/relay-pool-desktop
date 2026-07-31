@@ -76,6 +76,7 @@ $commandPlan = @(
   [pscustomobject]@{ id = "configured-policy-fields"; command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_policy_field_e2e", "--", "--nocapture"); proves = @("configured profile uses alias/preferred/backup fields in real route execution") },
   [pscustomobject]@{ id = "catalog-decision-cost"; command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_catalog_loopback", "--", "--nocapture"); proves = @("model listing fallback persists outcomes", "decision/cost stores remain queryable") },
   [pscustomobject]@{ id = "redaction-boundary"; command = "node"; arguments = @("scripts/local-routing-redaction.test.mjs"); proves = @("local self-check logs/traces/errors do not rehydrate full URL or secrets") },
+  [pscustomobject]@{ id = "legacy-doc-anti-regression"; command = "node"; arguments = @("scripts/routing-operational-legacy-doc-consistency.test.mjs"); proves = @("debug legacy runtime deletion is reflected in current docs", "legacy env switch is not documented as a supported fallback") },
   [pscustomobject]@{ id = "task26-self-check-preflight"; command = "node"; arguments = @("scripts/routing-operational-qualification.mjs", "--preflight"); proves = @("Task 26 self-check wiring remains available without release gate") }
 )
 
