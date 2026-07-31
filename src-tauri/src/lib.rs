@@ -9,6 +9,8 @@ pub mod outbound;
 mod persistence;
 mod runtime_composition;
 mod services;
+#[cfg(debug_assertions)]
+pub mod test_support;
 
 use std::path::{Path, PathBuf};
 use std::sync::{

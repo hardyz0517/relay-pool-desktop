@@ -782,7 +782,7 @@ impl ProxyExecutionResponse {
         headers: HeaderMap,
         body: Bytes,
         request: &CanonicalProxyRequest,
-        _lifecycle_status: &str,
+        completion_source: &str,
         fallback_count: i64,
         attempt_count: i64,
     ) -> Self {
@@ -809,7 +809,7 @@ impl ProxyExecutionResponse {
                     upstream_headers_ms: None,
                     failure_source: None,
                     attempts_json: None,
-                    completion_source: Some("local".to_string()),
+                    completion_source: Some(completion_source.to_string()),
                     prompt_tokens: None,
                     completion_tokens: None,
                     total_tokens: None,

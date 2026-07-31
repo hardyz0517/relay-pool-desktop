@@ -11,8 +11,8 @@ use tokio::time::Sleep;
 
 use super::{
     attempt::{
-        DownstreamRequestFinalizationLease, DualTerminalFinalizationLease,
-        UpstreamAttemptFinalizationLease,
+        CostFinalizationReservations, DownstreamRequestFinalizationLease,
+        DualTerminalFinalizationLease, UpstreamAttemptFinalizationLease,
     },
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     lifecycle::{
@@ -222,6 +222,7 @@ pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
     record: PendingFinalRequestRecord,
     request_terminal: RequestTerminalReservation,
     selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    costs: Option<CostFinalizationReservations>,
     request_lease: RequestLease,
 ) -> ByteStream {
     dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
@@ -229,6 +230,7 @@ pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
         record,
         request_terminal,
         selected_attempt,
+        costs,
         request_lease,
         DEFAULT_STREAM_IDLE_TIMEOUT,
     )
@@ -243,6 +245,7 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
     record: PendingFinalRequestRecord,
     request_terminal: RequestTerminalReservation,
     selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    costs: Option<CostFinalizationReservations>,
     request_lease: RequestLease,
     idle_timeout: Duration,
 ) -> ByteStream {
@@ -255,6 +258,7 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
         FinalizationTarget::DualTerminal(DualTerminalFinalizationLease::new(
             request,
             selected_attempt,
+            costs,
         )),
         None,
         idle_timeout,
@@ -1071,6 +1075,7 @@ mod tests {
             record,
             terminal,
             Some((attempt_reservation, attempt_context)),
+            None,
             request_lease,
         );
         assert_eq!(
@@ -1143,6 +1148,7 @@ mod tests {
             record,
             terminal,
             Some((attempt_reservation, attempt_context)),
+            None,
             request_lease,
         );
         assert_eq!(
