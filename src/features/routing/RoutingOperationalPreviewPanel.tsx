@@ -24,7 +24,7 @@ import type {
   RouteEndpointKind,
   StationKeyOperationalDetail,
 } from "@/lib/types/routing";
-import type { VersionedRoutingDeepLink } from "./routingDeepLinks";
+import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 
 type RoutingOperationalPreviewPanelProps = {
   snapshot: RoutingWorkspaceSnapshot | null;

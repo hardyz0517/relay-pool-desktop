@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, Edit3, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Copy, Edit3, Play, Plus, RefreshCw, Route, Trash2 } from "lucide-react";
 import { Button, ConfirmDialog, EmptyState, IconButton, StatusBadge, useToast } from "@/components/ui";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
@@ -19,6 +19,7 @@ import type {
   ChannelStatusOutcome,
   CreateChannelMonitorInput,
 } from "@/lib/types/channelMonitors";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import { profileLabel, protocolLabel } from "@/lib/channelMonitorDisplay";
@@ -34,6 +35,11 @@ import {
 type ChannelMonitoringTabProps = {
   headerActions?: ReactNode;
   onHealthChanged: () => void;
+  onOpenRoutingDeepLink?: (link: MonitoringRoutingDeepLink) => void;
+};
+
+type MonitoringRoutingDeepLink = Extract<RoutingDeepLink, { kind: "station-key" }> & {
+  source: "monitoring";
 };
 
 type ActionState = {
@@ -44,7 +50,11 @@ type ActionState = {
 const monitorGridClassName =
   "w-full grid-cols-[minmax(0,0.9fr)_minmax(0,1.15fr)_minmax(0,1.15fr)_minmax(0,0.75fr)_minmax(0,0.75fr)] items-center gap-3";
 
-export function ChannelMonitoringTab({ headerActions, onHealthChanged }: ChannelMonitoringTabProps) {
+export function ChannelMonitoringTab({
+  headerActions,
+  onHealthChanged,
+  onOpenRoutingDeepLink,
+}: ChannelMonitoringTabProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const workspaceQuery = useActivityQuery(channelMonitoringQueryOptions());
@@ -266,6 +276,7 @@ export function ChannelMonitoringTab({ headerActions, onHealthChanged }: Channel
           onDelete={handleDelete}
           onDuplicate={handleDuplicate}
           onEdit={openEdit}
+          onOpenRoutingDeepLink={onOpenRoutingDeepLink}
           onRunNow={handleRunNow}
         />
       )}
@@ -292,6 +303,7 @@ function MonitorList({
   onDelete,
   onDuplicate,
   onEdit,
+  onOpenRoutingDeepLink,
   onRunNow,
 }: {
   actionState: ActionState;
@@ -302,6 +314,7 @@ function MonitorList({
   onDelete: (monitor: ChannelMonitor) => void;
   onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
   onEdit: (monitor: ChannelMonitor) => void;
+  onOpenRoutingDeepLink?: (link: MonitoringRoutingDeepLink) => void;
   onRunNow: (monitor: ChannelMonitor) => void | Promise<void>;
 }) {
   return (
@@ -325,6 +338,7 @@ function MonitorList({
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEdit={onEdit}
+            onOpenRoutingDeepLink={onOpenRoutingDeepLink}
             onRunNow={onRunNow}
           />
         ))}
@@ -342,6 +356,7 @@ function MonitorRow({
   onDelete,
   onDuplicate,
   onEdit,
+  onOpenRoutingDeepLink,
   onRunNow,
 }: {
   actionState: ActionState;
@@ -352,6 +367,7 @@ function MonitorRow({
   onDelete: (monitor: ChannelMonitor) => void;
   onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
   onEdit: (monitor: ChannelMonitor) => void;
+  onOpenRoutingDeepLink?: (link: MonitoringRoutingDeepLink) => void;
   onRunNow: (monitor: ChannelMonitor) => void | Promise<void>;
 }) {
   const running = actionState?.monitorId === monitor.id && actionState.kind === "run";
@@ -361,6 +377,7 @@ function MonitorRow({
   const targetLabel = formatTargetLabel(monitor.targetType, monitor.stationId, monitor.stationKeyId, stations, keys);
   const intervalLabel = formatInterval(monitor.intervalSeconds, monitor.jitterSeconds);
   const primaryModelStatus = getPrimaryModelStatusView(latestStatus, modelLabel);
+  const routingLink = createMonitoringRoutingLink(monitor);
   return (
     <>
       <div className={`hidden lg:grid ${monitorGridClassName} group min-h-[62px] px-3 py-2.5 text-left text-[13px] text-foreground transition-colors hover:bg-surface-subtle`}>
@@ -393,10 +410,12 @@ function MonitorRow({
           deleting={deleting}
           duplicating={duplicating}
           monitor={monitor}
+          routingLink={routingLink}
           running={running}
           onDelete={onDelete}
           onDuplicate={onDuplicate}
           onEdit={onEdit}
+          onOpenRoutingDeepLink={onOpenRoutingDeepLink}
           onRunNow={onRunNow}
         />
       </div>
@@ -435,6 +454,17 @@ function MonitorRow({
             <Copy className="h-3.5 w-3.5" />
             {duplicating ? "复制中" : "复制"}
           </Button>
+          {onOpenRoutingDeepLink && routingLink ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={Boolean(actionState)}
+              onClick={() => onOpenRoutingDeepLink(routingLink)}
+            >
+              <Route className="h-3.5 w-3.5" />
+              路由影响
+            </Button>
+          ) : null}
           <Button size="sm" variant="ghost" className="text-danger-foreground hover:bg-danger-surface hover:text-danger-foreground" disabled={Boolean(actionState)} onClick={() => void onDelete(monitor)}>
             <Trash2 className="h-3.5 w-3.5" />
             {deleting ? "删除中" : "删除"}
@@ -450,20 +480,24 @@ function MonitorDesktopActions({
   deleting,
   duplicating,
   monitor,
+  routingLink,
   running,
   onDelete,
   onDuplicate,
   onEdit,
+  onOpenRoutingDeepLink,
   onRunNow,
 }: {
   actionState: ActionState;
   deleting: boolean;
   duplicating: boolean;
   monitor: ChannelMonitor;
+  routingLink: MonitoringRoutingDeepLink | null;
   running: boolean;
   onDelete: (monitor: ChannelMonitor) => void;
   onDuplicate: (monitor: ChannelMonitor) => void | Promise<void>;
   onEdit: (monitor: ChannelMonitor) => void;
+  onOpenRoutingDeepLink?: (link: MonitoringRoutingDeepLink) => void;
   onRunNow: (monitor: ChannelMonitor) => void | Promise<void>;
 }) {
   return (
@@ -486,6 +520,16 @@ function MonitorDesktopActions({
       <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-muted-foreground hover:bg-muted hover:text-foreground" disabled={Boolean(actionState)} label={duplicating ? `复制中 ${monitor.name}` : `复制 ${monitor.name}`} onClick={() => void onDuplicate(monitor)}>
         <Copy className="h-4 w-4" />
       </IconButton>
+      {onOpenRoutingDeepLink && routingLink ? (
+        <IconButton
+          className="h-7 w-7 shrink-0 rounded-[7px] text-muted-foreground hover:bg-selected hover:text-primary"
+          disabled={Boolean(actionState)}
+          label={`查看路由影响 ${monitor.name}`}
+          onClick={() => onOpenRoutingDeepLink(routingLink)}
+        >
+          <Route className="h-4 w-4" />
+        </IconButton>
+      ) : null}
       <IconButton className="h-7 w-7 shrink-0 rounded-[7px] text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground" disabled={Boolean(actionState)} label={deleting ? `删除中 ${monitor.name}` : `删除 ${monitor.name}`} onClick={() => void onDelete(monitor)}>
         <Trash2 className="h-4 w-4" />
       </IconButton>
@@ -576,6 +620,17 @@ function getPrimaryModelStatusView(
 
 function normalizeModelName(model: string | null) {
   return (model ?? "").trim().toLowerCase();
+}
+
+function createMonitoringRoutingLink(monitor: ChannelMonitor): MonitoringRoutingDeepLink | null {
+  if (monitor.targetType !== "station_key" || !monitor.stationKeyId) {
+    return null;
+  }
+  return {
+    kind: "station-key",
+    stationKeyId: monitor.stationKeyId,
+    source: "monitoring",
+  };
 }
 
 function SummaryPill({

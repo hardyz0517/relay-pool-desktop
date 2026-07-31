@@ -21,7 +21,7 @@ import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
 import { RoutingMigrationReadinessPanel } from "./RoutingMigrationReadinessPanel";
 import { RoutingOperationalPreviewPanel } from "./RoutingOperationalPreviewPanel";
-import type { VersionedRoutingDeepLink } from "./routingDeepLinks";
+import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import {
   evaluateRoutingMigrationReadiness,
   type RoutingMigrationReadinessDraft,

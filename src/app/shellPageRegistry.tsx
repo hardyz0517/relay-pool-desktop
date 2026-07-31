@@ -7,7 +7,7 @@ import { KeyPoolPage } from "@/features/key-pool";
 import { LogsPage } from "@/features/logs";
 import { PricingPage } from "@/features/pricing";
 import { RoutingPage } from "@/features/routing";
-import type { VersionedRoutingDeepLink, RoutingDeepLink } from "@/features/routing/routingDeepLinks";
+import type { VersionedRoutingDeepLink, RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { SettingsPage } from "@/features/settings";
 import { StationsPage } from "@/features/stations";
 import type { AppRouteId } from "@/lib/types/navigation";
@@ -49,7 +49,7 @@ export const ShellPageContent = memo(function ShellPageContent({
         />
       );
     case "channels":
-      return <ChannelStatusPage />;
+      return <ChannelStatusPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
     case "collectors":
       return <CollectorsPage />;
     case "changes":

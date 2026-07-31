@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Plus, RefreshCw, RotateCcw, Search } from "lucide-react";
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Plus, RefreshCw, RotateCcw, Route, Search } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, Dialog, IconButton, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { useInteractionActivity } from "@/components/ui/InteractionActivity";
@@ -11,10 +11,16 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { modelBasePricesQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { ModelBasePrice } from "@/lib/types/economics";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
+
+type PricingRoutingDeepLink = Extract<RoutingDeepLink, { kind: "simulate-model" }> & {
+  source: "pricing";
+};
 
 type ModelBasePricesPageProps = {
   backLabel: string;
   onBack: () => void;
+  onOpenRoutingDeepLink?: (link: PricingRoutingDeepLink) => void;
 };
 
 type DraftRow = {
@@ -82,7 +88,11 @@ function createEmptyDraft(): DraftRow {
   };
 }
 
-export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPageProps) {
+export function ModelBasePricesPage({
+  backLabel,
+  onBack,
+  onOpenRoutingDeepLink,
+}: ModelBasePricesPageProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const modelBasePricesQuery = useActivityQuery(modelBasePricesQueryOptions());
@@ -289,7 +299,7 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
                   </div>
 
                   <div className="overflow-x-auto border-y border-border">
-                    <table className="w-full min-w-[820px] table-fixed text-left text-[13px]">
+                    <table className="w-full min-w-[900px] table-fixed text-left text-[13px]">
                       <TableColumnHeaderRow />
                       <tbody className="divide-y divide-border">
                         {group.rows.map((row) => (
@@ -328,6 +338,24 @@ export function ModelBasePricesPage({ backLabel, onBack }: ModelBasePricesPagePr
                                 />
                                 {row.builtIn && <StatusBadge tone="info">内置</StatusBadge>}
                               </div>
+                            </td>
+                            <td className="px-2 text-right">
+                              {onOpenRoutingDeepLink ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() =>
+                                    onOpenRoutingDeepLink({
+                                      kind: "simulate-model",
+                                      model: row.model,
+                                      source: "pricing",
+                                    })
+                                  }
+                                >
+                                  <Route className="h-3.5 w-3.5" />
+                                  模拟
+                                </Button>
+                              ) : null}
                             </td>
                           </tr>
                         ))}
@@ -389,6 +417,7 @@ function TableColumnHeaderRow() {
         <th className="h-7 px-2 text-right">输入价</th>
         <th className="h-7 px-2 text-right">输出价</th>
         <th className="h-7 px-2">状态</th>
+        <th className="h-7 px-2 text-right">路由</th>
       </tr>
     </thead>
   );

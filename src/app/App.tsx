@@ -13,7 +13,7 @@ import {
 } from "@/app/pageTransitionPolicy";
 import { AddKeyPage, EditKeyPage } from "@/features/key-pool";
 import { ModelBasePricesPage } from "@/features/pricing";
-import type { RoutingDeepLink, VersionedRoutingDeepLink } from "@/features/routing/routingDeepLinks";
+import type { RoutingDeepLink, VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { AddProviderPage, StationDetailPage } from "@/features/stations";
 import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
@@ -283,6 +283,7 @@ export function App() {
             <ModelBasePricesPage
               backLabel={`返回${activeShellRouteLabel}`}
               onBack={() => navigateTo(activeShellRouteId)}
+              onOpenRoutingDeepLink={openRoutingDeepLink}
             />
           ),
         };
