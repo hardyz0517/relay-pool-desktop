@@ -105,6 +105,7 @@ pub(crate) struct ProxyExecutionResponse {
 pub(crate) struct ExecutionLifecycleEvidence {
     pub annotations: RequestLogAnnotations,
     pub selected_attempt: Option<AttemptContext>,
+    pub selected_attempt_cost: Option<super::attempt::SelectedAttemptCostSnapshot>,
     pub attempt_count: u16,
     pub fallback_count: u16,
 }
@@ -218,7 +219,9 @@ impl ExecutionEngine {
             .repository
             .load_operational_route_snapshot(route_facts.clone())
             .await
-            .map_err(|error| internal_failure(format!("load operational route snapshot failed: {error}")))?;
+            .map_err(|error| {
+                internal_failure(format!("load operational route snapshot failed: {error}"))
+            })?;
 
         if matches!(request.endpoint, RouteEndpointKind::Models) {
             return self
@@ -298,7 +301,9 @@ impl ExecutionEngine {
                             candidate.station_key_id.clone(),
                             ActualAttemptTerminal::Succeeded,
                         )
-                        .map_err(|failure| controller_failure(failure, &execution_settings.policy))?;
+                        .map_err(|failure| {
+                            controller_failure(failure, &execution_settings.policy)
+                        })?;
                     let first_token_ms = precommit_started.elapsed().as_millis() as i64;
                     return Ok(ProxyExecutionResponse::from_prepared(
                         prepared,
@@ -335,7 +340,9 @@ impl ExecutionEngine {
                                 ActualAttemptTerminal::PossiblyAccepted
                             },
                         )
-                        .map_err(|failure| controller_failure(failure, &execution_settings.policy))?;
+                        .map_err(|failure| {
+                            controller_failure(failure, &execution_settings.policy)
+                        })?;
                     last_failure = Some(failure);
                     if decision == RetryDecision::Stop {
                         break;
@@ -474,20 +481,23 @@ impl ExecutionEngine {
 
         for attempt_index in 0..self.retry_policy.max_candidate_attempts {
             let decision = match controller.next(ControllerPlanningInput {
-                    candidates: &snapshot.candidates,
-                    affinity_station_key_id: None,
-                    profiles: &snapshot.profiles,
-                    capacity: &self.capacity,
-                    current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
-                    now_ms: now_millis_for_services() as i64,
-                    max_waiters_per_constraint: 0,
-                }) {
+                candidates: &snapshot.candidates,
+                affinity_station_key_id: None,
+                profiles: &snapshot.profiles,
+                capacity: &self.capacity,
+                current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                now_ms: now_millis_for_services() as i64,
+                max_waiters_per_constraint: 0,
+            }) {
                 Ok(decision) => decision,
                 Err(failure) if attempted_count > 0 && catalog_planning_exhausted(&failure) => {
                     break;
                 }
                 Err(failure) => {
-                    return Err(controller_failure(failure, &RoutingPolicy::PriorityFallback));
+                    return Err(controller_failure(
+                        failure,
+                        &RoutingPolicy::PriorityFallback,
+                    ));
                 }
             };
             let ControllerDecision::Selected(selected) = decision else {
@@ -549,7 +559,10 @@ impl ExecutionEngine {
                                         ActualAttemptTerminal::Succeeded,
                                     )
                                     .map_err(|failure| {
-                                        controller_failure(failure, &RoutingPolicy::PriorityFallback)
+                                        controller_failure(
+                                            failure,
+                                            &RoutingPolicy::PriorityFallback,
+                                        )
                                     })?;
                             }
                             Err(error) => {
@@ -572,7 +585,10 @@ impl ExecutionEngine {
                                         ActualAttemptTerminal::FailedBeforeCommit,
                                     )
                                     .map_err(|failure| {
-                                        controller_failure(failure, &RoutingPolicy::PriorityFallback)
+                                        controller_failure(
+                                            failure,
+                                            &RoutingPolicy::PriorityFallback,
+                                        )
                                     })?;
                             }
                         },
@@ -930,6 +946,16 @@ impl ProxyExecutionResponse {
                     first_token_ms: Some(timings.first_token_ms.max(0)),
                 },
                 selected_attempt: Some(selected_attempt),
+                selected_attempt_cost: Some(super::attempt::SelectedAttemptCostSnapshot {
+                    ordinal: fallback_count as u16,
+                    pricing_basis: pricing_basis_label(candidate.pricing.basis).to_string(),
+                    pricing_status_label: candidate.pricing.status_label.clone(),
+                    currency: candidate.pricing.currency.clone(),
+                    unit: candidate.pricing.unit.clone(),
+                    estimated_input_price: candidate.pricing.estimated_input_price,
+                    estimated_output_price: candidate.pricing.estimated_output_price,
+                    estimated_fixed_price: candidate.pricing.estimated_fixed_price,
+                }),
                 attempt_count: (fallback_count + 1).max(1) as u16,
                 fallback_count: fallback_count.max(0) as u16,
             },
@@ -999,6 +1025,7 @@ impl ProxyExecutionResponse {
                     first_token_ms: None,
                 },
                 selected_attempt: None,
+                selected_attempt_cost: None,
                 attempt_count: attempt_count.max(0) as u16,
                 fallback_count: fallback_count.max(0) as u16,
             },
@@ -1025,8 +1052,11 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
     ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>> {
         Box::pin(async move {
             let adapter = EndpointAdapter::for_endpoint(&request.endpoint);
-            let prepared =
-                adapter.prepare_for_format(request, target.upstream_api_format.clone(), mapped_model)?;
+            let prepared = adapter.prepare_for_format(
+                request,
+                target.upstream_api_format.clone(),
+                mapped_model,
+            )?;
             let response_plan = prepared.response_plan;
             let attempt = self.pool.send_resolved(prepared, target).await?;
             match attempt {
@@ -1381,6 +1411,25 @@ fn controller_failure(failure: ControllerFailure, policy: &RoutingPolicy) -> Pro
     );
     proxy_failure.context_mut().route_policy = Some(routing_policy_label(policy).to_string());
     proxy_failure
+}
+
+fn pricing_basis_label(
+    basis: crate::application::operational_facts::pricing_projector::RoutingCostBasis,
+) -> &'static str {
+    match basis {
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::ExactPrice => {
+            "exact_price"
+        }
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::MultiplierProxy => {
+            "multiplier_proxy"
+        }
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::Unpriced => {
+            "unpriced"
+        }
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::NotApplicable => {
+            "not_applicable"
+        }
+    }
 }
 
 fn catalog_planning_exhausted(failure: &ControllerFailure) -> bool {
@@ -1742,14 +1791,13 @@ mod tests {
             ],
             Duration::from_millis(20),
         ));
-        let engine = test_engine(repository, attempts.clone()).with_retry_policy(
-            RetryPolicy::for_tests(
+        let engine =
+            test_engine(repository, attempts.clone()).with_retry_policy(RetryPolicy::for_tests(
                 3,
                 Duration::from_millis(5),
                 Duration::from_secs(120),
                 Duration::from_secs(300),
-            ),
-        );
+            ));
 
         let failure = engine
             .execute(canonical_chat_request().await)

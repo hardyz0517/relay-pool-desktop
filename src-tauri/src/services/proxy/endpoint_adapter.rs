@@ -126,7 +126,10 @@ fn prepare_responses(
     upstream_api_format: UpstreamApiFormat,
     mapped_model: Option<&str>,
 ) -> Result<PreparedUpstreamRequest, ProxyFailure> {
-    if matches!(upstream_api_format, UpstreamApiFormat::OpenAiChatCompletions) {
+    if matches!(
+        upstream_api_format,
+        UpstreamApiFormat::OpenAiChatCompletions
+    ) {
         let body = parse_json_body(&request.body)?;
         let normalized = if request.stream {
             normalize_for_chat_streaming(&body)
@@ -350,7 +353,11 @@ mod tests {
         .await;
 
         let prepared = EndpointAdapter::Responses
-            .prepare_for_format(&request, UpstreamApiFormat::OpenAiResponses, Some("upstream-model"))
+            .prepare_for_format(
+                &request,
+                UpstreamApiFormat::OpenAiResponses,
+                Some("upstream-model"),
+            )
             .expect("prepared");
 
         assert_eq!(prepared.method, Method::POST);
@@ -576,5 +583,4 @@ mod tests {
         );
         output
     }
-
 }

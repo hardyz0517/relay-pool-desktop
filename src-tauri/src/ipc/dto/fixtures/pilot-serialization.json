@@ -2669,6 +2669,15 @@
               "tools": false,
               "vision": false
             },
+            "capabilityVerdicts": {
+              "model": "allow",
+              "protocol": "allow",
+              "reasoning": "reject",
+              "rejectionSubjects": [],
+              "stream": "allow",
+              "tools": "reject",
+              "vision": "reject"
+            },
             "capacity": {
               "acquired": false,
               "inFlight": 1,
@@ -2676,13 +2685,42 @@
               "mode": "snapshot_only"
             },
             "endpointRevision": 1,
+            "group": {
+              "available": true,
+              "displayName": "Group 1",
+              "reason": "bound_group",
+              "stableKey": "binding:group-1"
+            },
+            "hardRejectionCodes": [],
             "healthState": "ready",
             "keyName": "Key",
+            "multiplier": {
+              "ceilingRejected": false,
+              "multiplier": null,
+              "reason": "multiplier_missing",
+              "selectedSource": null,
+              "status": "missing"
+            },
             "priceBasis": "unpriced",
+            "pricing": {
+              "basis": "unpriced",
+              "comparisonValue": null,
+              "confidence": null,
+              "currency": null,
+              "observedAt": null,
+              "reason": "pricing_context_missing",
+              "sourceChain": [
+                "pricing_projector"
+              ],
+              "unit": null
+            },
             "priority": 10,
             "schedulable": true,
             "sourceRefs": {
               "endpointRevision": 1,
+              "factVersionVector": "endpoint:1",
+              "projectorVersion": "route_candidate_projection_v1",
+              "snapshotId": "snapshot-1",
               "stationId": "station-1",
               "stationKeyId": "key-1"
             },

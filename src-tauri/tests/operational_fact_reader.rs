@@ -121,21 +121,16 @@ mod services {
     }
 }
 
-#[path = "../src/application/operational_facts/mod.rs"]
-mod app_operational_facts;
-#[path = "../src/application/routing_engine/request.rs"]
-mod routing_request;
+#[path = "../src/application/operational_facts/assembler.rs"]
+mod operational_fact_assembler;
 
 mod application {
-    pub(crate) mod routing_engine {
-        pub(crate) mod request {
-            pub(crate) use crate::routing_request::*;
-        }
-    }
-
     pub(crate) mod operational_facts {
-        pub(crate) use crate::app_operational_facts::assembler;
-        pub(crate) use crate::app_operational_facts::*;
+        pub(crate) mod assembler {
+            pub(crate) use crate::operational_fact_assembler::*;
+        }
+
+        pub(crate) use crate::operational_fact_assembler::*;
     }
 }
 

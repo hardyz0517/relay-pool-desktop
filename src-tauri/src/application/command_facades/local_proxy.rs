@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::{
     application::{
-        credentials::CredentialService,
-        error::ApplicationError, request_finalization::RequestFinalizationService,
+        credentials::CredentialService, error::ApplicationError,
+        request_finalization::RequestFinalizationService,
         request_lifecycle::ports::LifecycleWriteError, request_logs::RequestLogService,
         routing::RoutingService, settings::SettingsService,
     },

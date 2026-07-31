@@ -9,12 +9,12 @@ mod models {
     }
 }
 
+#[path = "../src/application/operational_facts/balance_projector.rs"]
+mod balance_projector;
 #[path = "../src/application/operational_facts/group_projector.rs"]
 mod group_projector;
 #[path = "../src/application/operational_facts/multiplier_projector.rs"]
 mod multiplier_projector;
-#[path = "../src/application/operational_facts/balance_projector.rs"]
-mod balance_projector;
 
 use balance_projector::{
     project_balance, BalanceEvidenceStatus, BalanceObservation, BalanceProjectionStatus,
@@ -44,7 +44,13 @@ fn confidence(value: f64) -> PriceConfidence {
 }
 
 fn trace(reason: &'static str) -> ProjectionTrace {
-    ProjectionTrace::new(vec!["test"], confidence(1.0), now(), reason, vec![revision(1)])
+    ProjectionTrace::new(
+        vec!["test"],
+        confidence(1.0),
+        now(),
+        reason,
+        vec![revision(1)],
+    )
 }
 
 fn multiplier(kind: MultiplierEvidenceKind, value: f64, fresh: bool) -> MultiplierEvidence {
@@ -94,7 +100,10 @@ fn group_identity_prefers_binding_then_group_key_then_group_id_then_legacy_name(
         trace: trace("binding"),
     })
     .expect("group");
-    assert_eq!(with_all.identity, GroupIdentity::BindingId("binding-a".to_string()));
+    assert_eq!(
+        with_all.identity,
+        GroupIdentity::BindingId("binding-a".to_string())
+    );
     assert_eq!(with_all.identity.stable_key(), "binding:binding-a");
 
     let key_hash = project_group(GroupProjectionInput {
@@ -162,21 +171,40 @@ fn multiplier_manual_override_beats_latest_and_current_values() {
     let projection = project_multiplier(MultiplierProjectionInput {
         disabled: false,
         ambiguous: false,
-        manual_override: Some(multiplier(MultiplierEvidenceKind::ManualOverride, 0.5, true)),
-        binding_latest_user: Some(multiplier(MultiplierEvidenceKind::BindingLatestUser, 0.6, true)),
+        manual_override: Some(multiplier(
+            MultiplierEvidenceKind::ManualOverride,
+            0.5,
+            true,
+        )),
+        binding_latest_user: Some(multiplier(
+            MultiplierEvidenceKind::BindingLatestUser,
+            0.6,
+            true,
+        )),
         binding_latest_effective: Some(multiplier(
             MultiplierEvidenceKind::BindingLatestEffective,
             0.7,
             true,
         )),
         current_user: Some(multiplier(MultiplierEvidenceKind::CurrentUser, 0.8, true)),
-        current_effective: Some(multiplier(MultiplierEvidenceKind::CurrentEffective, 0.9, true)),
-        current_default: Some(multiplier(MultiplierEvidenceKind::CurrentDefault, 1.0, true)),
+        current_effective: Some(multiplier(
+            MultiplierEvidenceKind::CurrentEffective,
+            0.9,
+            true,
+        )),
+        current_default: Some(multiplier(
+            MultiplierEvidenceKind::CurrentDefault,
+            1.0,
+            true,
+        )),
         resolved_at: now(),
     });
 
     assert_eq!(projection.status, MultiplierResolutionStatus::Resolved);
-    assert_eq!(projection.selected_kind, Some(MultiplierEvidenceKind::ManualOverride));
+    assert_eq!(
+        projection.selected_kind,
+        Some(MultiplierEvidenceKind::ManualOverride)
+    );
     assert_eq!(projection.multiplier.expect("value").get(), 0.5);
 }
 
@@ -193,8 +221,16 @@ fn multiplier_uses_documented_latest_user_effective_default_fallback_order() {
             true,
         )),
         current_user: Some(multiplier(MultiplierEvidenceKind::CurrentUser, 0.8, true)),
-        current_effective: Some(multiplier(MultiplierEvidenceKind::CurrentEffective, 0.9, true)),
-        current_default: Some(multiplier(MultiplierEvidenceKind::CurrentDefault, 1.0, true)),
+        current_effective: Some(multiplier(
+            MultiplierEvidenceKind::CurrentEffective,
+            0.9,
+            true,
+        )),
+        current_default: Some(multiplier(
+            MultiplierEvidenceKind::CurrentDefault,
+            1.0,
+            true,
+        )),
         resolved_at: now(),
     });
 
@@ -225,7 +261,11 @@ fn multiplier_missing_stale_untrusted_disabled_and_ambiguous_fail_closed() {
         disabled: false,
         ambiguous: false,
         manual_override: None,
-        binding_latest_user: Some(multiplier(MultiplierEvidenceKind::BindingLatestUser, 1.0, false)),
+        binding_latest_user: Some(multiplier(
+            MultiplierEvidenceKind::BindingLatestUser,
+            1.0,
+            false,
+        )),
         binding_latest_effective: None,
         current_user: None,
         current_effective: None,
@@ -248,13 +288,20 @@ fn multiplier_missing_stale_untrusted_disabled_and_ambiguous_fail_closed() {
         current_default: Some(untrusted),
         resolved_at: now(),
     });
-    assert_eq!(untrusted_projection.status, MultiplierResolutionStatus::Untrusted);
+    assert_eq!(
+        untrusted_projection.status,
+        MultiplierResolutionStatus::Untrusted
+    );
     assert!(untrusted_projection.multiplier.is_none());
 
     let disabled = project_multiplier(MultiplierProjectionInput {
         disabled: true,
         ambiguous: false,
-        manual_override: Some(multiplier(MultiplierEvidenceKind::ManualOverride, 0.5, true)),
+        manual_override: Some(multiplier(
+            MultiplierEvidenceKind::ManualOverride,
+            0.5,
+            true,
+        )),
         binding_latest_user: None,
         binding_latest_effective: None,
         current_user: None,
@@ -268,7 +315,11 @@ fn multiplier_missing_stale_untrusted_disabled_and_ambiguous_fail_closed() {
     let ambiguous = project_multiplier(MultiplierProjectionInput {
         disabled: false,
         ambiguous: true,
-        manual_override: Some(multiplier(MultiplierEvidenceKind::ManualOverride, 0.5, true)),
+        manual_override: Some(multiplier(
+            MultiplierEvidenceKind::ManualOverride,
+            0.5,
+            true,
+        )),
         binding_latest_user: None,
         binding_latest_effective: None,
         current_user: None,
@@ -310,7 +361,10 @@ fn balance_key_scope_and_station_scope_do_not_override_each_other_by_timestamp()
 #[test]
 fn balance_unknown_not_supported_and_not_applicable_are_not_depleted() {
     for (status, expected) in [
-        (BalanceEvidenceStatus::Unknown, BalanceProjectionStatus::Unknown),
+        (
+            BalanceEvidenceStatus::Unknown,
+            BalanceProjectionStatus::Unknown,
+        ),
         (
             BalanceEvidenceStatus::NotSupported,
             BalanceProjectionStatus::NotSupported,
@@ -321,7 +375,14 @@ fn balance_unknown_not_supported_and_not_applicable_are_not_depleted() {
         ),
     ] {
         let projection = project_balance(
-            Some(balance(BalanceScope::StationKey, status, Some(0.0), Some(10.0), true, 1)),
+            Some(balance(
+                BalanceScope::StationKey,
+                status,
+                Some(0.0),
+                Some(10.0),
+                true,
+                1,
+            )),
             None,
             now(),
         );
@@ -369,5 +430,8 @@ fn balance_depleted_emergency_requires_authoritative_scope_matched_fresh_evidenc
     );
     untrusted.authoritative = false;
     let untrusted_projection = project_balance(Some(untrusted), None, now());
-    assert_eq!(untrusted_projection.status, BalanceProjectionStatus::Untrusted);
+    assert_eq!(
+        untrusted_projection.status,
+        BalanceProjectionStatus::Untrusted
+    );
 }

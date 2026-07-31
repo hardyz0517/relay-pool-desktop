@@ -532,7 +532,11 @@ impl IngressExecutor for V2ProxyExecutor {
                     &lifecycle_writer,
                     lifecycle.selected_attempt.as_ref(),
                 )?;
-                let costs = dual_cost_finalization(&lifecycle_writer, lifecycle.attempt_count)?;
+                let costs = dual_cost_finalization(
+                    &lifecycle_writer,
+                    lifecycle.attempt_count,
+                    lifecycle.selected_attempt_cost,
+                )?;
                 let payload = match response.body {
                     super::execution::ProxyExecutionBody::Buffered(body) => {
                         ProxyResponsePayload::Stream(
@@ -595,6 +599,7 @@ fn dual_selected_attempt_finalization(
 fn dual_cost_finalization(
     lifecycle_writer: &LifecycleWriter,
     attempt_count: u16,
+    selected_attempt_cost: Option<crate::services::proxy::attempt::SelectedAttemptCostSnapshot>,
 ) -> Result<crate::services::proxy::attempt::CostFinalizationReservations, super::error::ProxyFailure>
 {
     let mut attempt_costs = Vec::with_capacity(usize::from(attempt_count));
@@ -613,6 +618,7 @@ fn dual_cost_finalization(
         crate::services::proxy::attempt::CostFinalizationReservations::new(
             attempt_costs,
             aggregate,
+            selected_attempt_cost,
         ),
     )
 }

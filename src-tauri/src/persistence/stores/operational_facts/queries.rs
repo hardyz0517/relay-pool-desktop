@@ -16,7 +16,9 @@ pub(crate) enum OperationalFactQueryError {
     #[error("{0}")]
     Persistence(#[from] PersistenceError),
     #[error("{0}")]
-    Assembly(#[from] crate::application::operational_facts::assembler::OperationalFactAssemblyError),
+    Assembly(
+        #[from] crate::application::operational_facts::assembler::OperationalFactAssemblyError,
+    ),
 }
 
 impl From<sqlx::Error> for OperationalFactQueryError {

@@ -259,13 +259,12 @@ pub(crate) fn schedule_once(
                 .map(|source| source.max_concurrency)
                 .unwrap_or(0);
             let snapshot = capacity.snapshot(&candidate.station_key_id);
-            decision.slot_result = if max_concurrency <= 0
-                || snapshot.in_flight < max_concurrency as u64
-            {
-                Some("snapshot_available".to_string())
-            } else {
-                Some("snapshot_unavailable".to_string())
-            };
+            decision.slot_result =
+                if max_concurrency <= 0 || snapshot.in_flight < max_concurrency as u64 {
+                    Some("snapshot_available".to_string())
+                } else {
+                    Some("snapshot_unavailable".to_string())
+                };
         }
     }
 

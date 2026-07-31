@@ -124,10 +124,7 @@ impl UpstreamClientPool {
         api_base_url: &str,
         api_key: &[u8],
     ) -> Result<UpstreamAttempt, ProxyFailure> {
-        let route = ProxyRoute::from_candidate_parts(
-            collector_proxy_mode,
-            collector_proxy_url,
-        )?;
+        let route = ProxyRoute::from_candidate_parts(collector_proxy_mode, collector_proxy_url)?;
         let url = build_api_url(api_base_url, &prepared.path).map_err(internal_proxy_failure)?;
         let client = self.client(&route).await?;
         let method = reqwest::Method::from_bytes(prepared.method.as_str().as_bytes())

@@ -55,6 +55,7 @@ if (/Some\(401\s*\|\s*403\)/u.test(routingFailure) || /RouteFailureKind::ModelUn
 const proxyError = readFileSync(proxyErrorFile, "utf8");
 for (const text of [
   "RouteConfigRequired",
+  "routing_configuration_required",
   "RouteEconomicsUnavailable",
   "RouteHealthUnavailable",
   "RouteCapacityExhausted",
@@ -65,6 +66,11 @@ for (const text of [
   "pub(crate) fn from_public_error",
 ]) {
   if (!proxyError.includes(text)) throw new Error(`Missing proxy error mapping contract text: ${text}`);
+}
+for (const source of [failure, routingFailure, proxyError]) {
+  if (source.includes('"route_config_required"')) {
+    throw new Error("routing configuration admission must use routing_configuration_required, not the legacy route_config_required code");
+  }
 }
 
 console.log("routing error contract ok");

@@ -10,6 +10,7 @@ pub(crate) mod health_projector;
 pub(crate) mod multiplier_projector;
 pub(crate) mod pricing_projector;
 pub(crate) mod reader;
+pub(crate) mod runtime_candidate_adapter;
 pub(crate) mod runtime_health_port;
 pub(crate) mod target_resolver;
 

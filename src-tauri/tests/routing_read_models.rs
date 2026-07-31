@@ -24,14 +24,94 @@ mod application {
                 Inference,
                 ModelCatalog,
             }
+
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum GroupFilterMode {
+                Any,
+                Required,
+            }
         }
     }
 
     pub(crate) mod operational_facts {
+        pub(crate) mod balance_projector {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum BalanceProjectionStatus {
+                Healthy,
+                Missing,
+                DepletedEmergency,
+            }
+        }
+
+        pub(crate) mod capability_projector {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum CapabilityDecision {
+                Allow,
+                Reject,
+                RequireStrictConfirmation,
+            }
+        }
+
+        pub(crate) mod health_projector {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum HealthAdmission {
+                Admit,
+                AdmitDegraded,
+                SuppressOrdinaryRuntime,
+                SuppressDurableCooldown,
+                HardReject,
+                Unknown,
+            }
+        }
+
+        pub(crate) mod multiplier_projector {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum MultiplierResolutionStatus {
+                Resolved,
+                Missing,
+                Disabled,
+                Stale,
+                Ambiguous,
+            }
+        }
+
+        pub(crate) mod pricing_projector {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum RoutingCostBasis {
+                ExactPrice,
+                MultiplierProxy,
+                Unpriced,
+                NotApplicable,
+            }
+        }
+
         pub(crate) mod candidate_projector {
+            use crate::application::{
+                operational_facts::{
+                    balance_projector::BalanceProjectionStatus,
+                    capability_projector::CapabilityDecision, health_projector::HealthAdmission,
+                    multiplier_projector::MultiplierResolutionStatus,
+                    pricing_projector::RoutingCostBasis,
+                },
+                routing_engine::request::{GroupFilterMode, RouteKind},
+            };
+
             #[derive(Debug, Clone, PartialEq)]
             pub(crate) struct RouteCandidateProjection {
                 pub(crate) identity: CandidateIdentityProjection,
+                pub(crate) priority: i64,
+                pub(crate) route_kind: RouteKind,
+                pub(crate) requested_model: Option<String>,
+                pub(crate) resolved_model: Option<String>,
+                pub(crate) policy: CandidatePolicyProjection,
+                pub(crate) group: Option<CandidateGroupProjection>,
+                pub(crate) multiplier: CandidateMultiplierProjection,
+                pub(crate) pricing: CandidatePricingProjection,
+                pub(crate) balance: CandidateBalanceProjection,
+                pub(crate) capability: CandidateCapabilityProjection,
+                pub(crate) health: CandidateHealthProjection,
+                pub(crate) capacity: CapacityProjection,
+                pub(crate) provenance: CandidateProvenanceProjection,
                 pub(crate) hard_rejection_codes: Vec<&'static str>,
             }
 
@@ -39,6 +119,104 @@ mod application {
             pub(crate) struct CandidateIdentityProjection {
                 pub(crate) station_key_id: String,
                 pub(crate) station_id: String,
+                pub(crate) endpoint_revision: i64,
+                pub(crate) sanitized_origin: String,
+                pub(crate) credential_available: bool,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidatePolicyProjection {
+                pub(crate) group_filter_mode: GroupFilterMode,
+                pub(crate) required_group_stable_key: Option<String>,
+                pub(crate) group_matches: bool,
+                pub(crate) backup_only: bool,
+                pub(crate) preferred_model_match: bool,
+                pub(crate) tag_filter_match: bool,
+                pub(crate) allow_depleted_fallback: bool,
+                pub(crate) affinity_eligible: bool,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidateGroupProjection {
+                pub(crate) stable_key: String,
+                pub(crate) display_name: String,
+                pub(crate) available: bool,
+                pub(crate) reason: &'static str,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidateMultiplierProjection {
+                pub(crate) status: MultiplierResolutionStatus,
+                pub(crate) multiplier: Option<f64>,
+                pub(crate) selected_source: Option<&'static str>,
+                pub(crate) ceiling_rejected: bool,
+                pub(crate) reason: &'static str,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidatePricingProjection {
+                pub(crate) basis: RoutingCostBasis,
+                pub(crate) comparison_value: Option<f64>,
+                pub(crate) reason: Option<&'static str>,
+                pub(crate) currency: Option<String>,
+                pub(crate) unit: Option<String>,
+                pub(crate) source_chain: Vec<String>,
+                pub(crate) observed_at: Option<String>,
+                pub(crate) confidence: Option<f64>,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidateBalanceProjection {
+                pub(crate) status: BalanceProjectionStatus,
+                pub(crate) selected_scope: Option<String>,
+                pub(crate) reason: &'static str,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidateCapabilityProjection {
+                pub(crate) protocol: CapabilityDecision,
+                pub(crate) model: CapabilityDecision,
+                pub(crate) stream: CapabilityDecision,
+                pub(crate) tools: CapabilityDecision,
+                pub(crate) vision: CapabilityDecision,
+                pub(crate) reasoning: CapabilityDecision,
+                pub(crate) rejection_subjects: Vec<String>,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidateHealthProjection {
+                pub(crate) station_key: HealthAdmission,
+                pub(crate) station_account: HealthAdmission,
+                pub(crate) endpoint: HealthAdmission,
+                pub(crate) model: HealthAdmission,
+                pub(crate) runtime_overlay_applied: bool,
+                pub(crate) reasons: Vec<&'static str>,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CapacityProjection {
+                pub(crate) scopes: Vec<CapacityScopeSnapshot>,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CapacityScopeSnapshot {
+                pub(crate) scope: CapacityScope,
+                pub(crate) limit: Option<u32>,
+                pub(crate) in_flight: u32,
+                pub(crate) available: bool,
+                pub(crate) source_revision: Option<i64>,
+            }
+
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum CapacityScope {
+                StationKey,
+            }
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub(crate) struct CandidateProvenanceProjection {
+                pub(crate) snapshot_id: String,
+                pub(crate) fact_version_vector: String,
+                pub(crate) projector_version: &'static str,
                 pub(crate) endpoint_revision: i64,
             }
         }
@@ -53,8 +231,17 @@ mod routing_runtime;
 mod routing_workspace;
 
 use application::operational_facts::candidate_projector::{
-    CandidateIdentityProjection, RouteCandidateProjection,
+    CandidateBalanceProjection, CandidateCapabilityProjection, CandidateGroupProjection,
+    CandidateHealthProjection, CandidateIdentityProjection, CandidateMultiplierProjection,
+    CandidatePolicyProjection, CandidatePricingProjection, CandidateProvenanceProjection,
+    CapacityProjection, CapacityScope, CapacityScopeSnapshot, RouteCandidateProjection,
 };
+use application::operational_facts::{
+    balance_projector::BalanceProjectionStatus, capability_projector::CapabilityDecision,
+    health_projector::HealthAdmission, multiplier_projector::MultiplierResolutionStatus,
+    pricing_projector::RoutingCostBasis,
+};
+use application::routing_engine::request::{GroupFilterMode, RouteKind};
 use models::{
     proxy::RequestLog,
     routing::{
@@ -68,8 +255,9 @@ use request_decision_trace::{
 };
 use routing_runtime::runtime_overlay_from_candidates;
 use routing_workspace::{
-    simulate_preview_from_candidate_projections, workspace_snapshot_from_runtime,
-    RoutePreviewSimulationInput, RoutingCapacityReadMode, RoutingWorkspaceSnapshotInput,
+    simulate_preview_from_candidate_projections, workspace_snapshot_from_projection_candidates,
+    workspace_snapshot_from_runtime, RoutePreviewSimulationInput, RoutingCapacityReadMode,
+    RoutingWorkspaceProjectionCandidate, RoutingWorkspaceSnapshotInput,
     ROUTING_PREVIEW_POLICY_VERSION,
 };
 
@@ -192,6 +380,97 @@ fn settings() -> RuntimeRoutingSettings {
     }
 }
 
+fn projection(
+    id: &str,
+    station_id: &str,
+    hard_rejection_codes: Vec<&'static str>,
+) -> RouteCandidateProjection {
+    RouteCandidateProjection {
+        identity: CandidateIdentityProjection {
+            station_key_id: id.to_string(),
+            station_id: station_id.to_string(),
+            endpoint_revision: 1,
+            sanitized_origin: "https://redacted.example".to_string(),
+            credential_available: true,
+        },
+        priority: 1,
+        route_kind: RouteKind::Inference,
+        requested_model: Some("gpt-5-mini".to_string()),
+        resolved_model: Some("gpt-5-mini".to_string()),
+        policy: CandidatePolicyProjection {
+            group_filter_mode: GroupFilterMode::Any,
+            required_group_stable_key: None,
+            group_matches: true,
+            backup_only: false,
+            preferred_model_match: false,
+            tag_filter_match: true,
+            allow_depleted_fallback: false,
+            affinity_eligible: true,
+        },
+        group: Some(CandidateGroupProjection {
+            stable_key: "binding:group-1".to_string(),
+            display_name: "Group 1".to_string(),
+            available: true,
+            reason: "bound_group",
+        }),
+        multiplier: CandidateMultiplierProjection {
+            status: MultiplierResolutionStatus::Missing,
+            multiplier: None,
+            selected_source: None,
+            ceiling_rejected: false,
+            reason: "multiplier_missing",
+        },
+        pricing: CandidatePricingProjection {
+            basis: RoutingCostBasis::Unpriced,
+            comparison_value: None,
+            reason: Some("pricing_context_missing"),
+            currency: None,
+            unit: None,
+            source_chain: vec!["pricing_projector".to_string()],
+            observed_at: None,
+            confidence: None,
+        },
+        balance: CandidateBalanceProjection {
+            status: BalanceProjectionStatus::Missing,
+            selected_scope: None,
+            reason: "balance_missing",
+        },
+        capability: CandidateCapabilityProjection {
+            protocol: CapabilityDecision::Allow,
+            model: CapabilityDecision::Allow,
+            stream: CapabilityDecision::Allow,
+            tools: CapabilityDecision::Reject,
+            vision: CapabilityDecision::Reject,
+            reasoning: CapabilityDecision::Reject,
+            rejection_subjects: Vec::new(),
+        },
+        health: CandidateHealthProjection {
+            station_key: HealthAdmission::Admit,
+            station_account: HealthAdmission::Admit,
+            endpoint: HealthAdmission::Admit,
+            model: HealthAdmission::Admit,
+            runtime_overlay_applied: false,
+            reasons: Vec::new(),
+        },
+        capacity: CapacityProjection {
+            scopes: vec![CapacityScopeSnapshot {
+                scope: CapacityScope::StationKey,
+                limit: Some(8),
+                in_flight: 1,
+                available: true,
+                source_revision: Some(1),
+            }],
+        },
+        provenance: CandidateProvenanceProjection {
+            snapshot_id: "snapshot-1".to_string(),
+            fact_version_vector: "endpoint:1".to_string(),
+            projector_version: "route_candidate_projection_v1",
+            endpoint_revision: 1,
+        },
+        hard_rejection_codes,
+    }
+}
+
 #[test]
 fn workspace_snapshot_is_backend_owned_paginated_and_secret_free() {
     let snapshot = workspace_snapshot_from_runtime(
@@ -243,24 +522,47 @@ fn runtime_overlay_is_separate_low_cardinality_and_does_not_refresh_workspace_fa
 }
 
 #[test]
+fn workspace_snapshot_from_projection_exposes_unified_operational_fields() {
+    let snapshot = workspace_snapshot_from_projection_candidates(
+        &settings(),
+        vec![RoutingWorkspaceProjectionCandidate {
+            station_name: "Station".to_string(),
+            key_name: "Key".to_string(),
+            projection: projection("key-1", "station-1", Vec::new()),
+        }],
+        RoutingWorkspaceSnapshotInput {
+            limit: Some(10),
+            cursor: None,
+        },
+        1234,
+    );
+
+    let candidate = &snapshot.candidates[0];
+    assert_eq!(
+        candidate
+            .group
+            .as_ref()
+            .map(|group| group.stable_key.as_str()),
+        Some("binding:group-1")
+    );
+    assert_eq!(candidate.multiplier.reason, "multiplier_missing");
+    assert_eq!(
+        candidate.pricing.reason.as_deref(),
+        Some("pricing_context_missing")
+    );
+    assert_eq!(candidate.capability_verdicts.tools, "reject");
+    assert_eq!(
+        candidate.source_refs.projector_version,
+        "route_candidate_projection_v1"
+    );
+    assert!(candidate.hard_rejection_codes.is_empty());
+}
+
+#[test]
 fn preview_simulation_uses_projection_input_and_snapshot_only_capacity() {
     let projections = vec![
-        RouteCandidateProjection {
-            identity: CandidateIdentityProjection {
-                station_key_id: "key-1".to_string(),
-                station_id: "station-1".to_string(),
-                endpoint_revision: 1,
-            },
-            hard_rejection_codes: vec!["health_hard_reject"],
-        },
-        RouteCandidateProjection {
-            identity: CandidateIdentityProjection {
-                station_key_id: "key-2".to_string(),
-                station_id: "station-2".to_string(),
-                endpoint_revision: 1,
-            },
-            hard_rejection_codes: Vec::new(),
-        },
+        projection("key-1", "station-1", vec!["health_hard_reject"]),
+        projection("key-2", "station-2", Vec::new()),
     ];
 
     let simulation = simulate_preview_from_candidate_projections(

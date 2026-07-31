@@ -36,7 +36,19 @@ pub(crate) struct RoutePlanCandidate {
     pub(crate) endpoint_revision: i64,
     pub(crate) priority: i64,
     pub(crate) tier: AvailabilityTier,
+    pub(crate) pricing: RoutePlanPricingSnapshot,
     pub(crate) evidence: Vec<DecisionEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RoutePlanPricingSnapshot {
+    pub(crate) basis: RoutingCostBasis,
+    pub(crate) currency: Option<String>,
+    pub(crate) unit: Option<String>,
+    pub(crate) estimated_input_price: Option<f64>,
+    pub(crate) estimated_output_price: Option<f64>,
+    pub(crate) estimated_fixed_price: Option<f64>,
+    pub(crate) status_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -293,6 +305,15 @@ fn plan_candidate(
         endpoint_revision: candidate.identity.endpoint_revision,
         priority: candidate.priority,
         tier,
+        pricing: RoutePlanPricingSnapshot {
+            basis: candidate.pricing.basis,
+            currency: candidate.pricing.currency.clone(),
+            unit: candidate.pricing.unit.clone(),
+            estimated_input_price: candidate.pricing.estimated_input_price,
+            estimated_output_price: candidate.pricing.estimated_output_price,
+            estimated_fixed_price: candidate.pricing.estimated_fixed_price,
+            status_label: candidate.pricing.status_label.clone(),
+        },
         evidence: bounded_evidence(candidate, context),
     }
 }

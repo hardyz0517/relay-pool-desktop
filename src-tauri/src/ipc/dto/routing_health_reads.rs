@@ -439,6 +439,19 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
                     "priority":10,
                     "schedulable":true,
                     "healthState":"ready",
+                    "group":{
+                        "stableKey":"binding:group-1",
+                        "displayName":"Group 1",
+                        "available":true,
+                        "reason":"bound_group"
+                    },
+                    "multiplier":{
+                        "status":"missing",
+                        "multiplier":null,
+                        "selectedSource":null,
+                        "ceilingRejected":false,
+                        "reason":"multiplier_missing"
+                    },
                     "capabilitySummary":{
                         "chatCompletions":true,
                         "responses":true,
@@ -448,10 +461,37 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
                         "vision":false,
                         "reasoning":false
                     },
+                    "capabilityVerdicts":{
+                        "protocol":"allow",
+                        "model":"allow",
+                        "stream":"allow",
+                        "tools":"reject",
+                        "vision":"reject",
+                        "reasoning":"reject",
+                        "rejectionSubjects":[]
+                    },
                     "priceBasis":"unpriced",
+                    "pricing":{
+                        "basis":"unpriced",
+                        "comparisonValue":null,
+                        "reason":"pricing_context_missing",
+                        "currency":null,
+                        "unit":null,
+                        "sourceChain":["pricing_projector"],
+                        "observedAt":null,
+                        "confidence":null
+                    },
                     "balanceStatus":null,
                     "capacity":{"mode":"snapshot_only","maxConcurrency":8,"inFlight":1,"acquired":false},
-                    "sourceRefs":{"stationKeyId":"key-1","stationId":"station-1","endpointRevision":1}
+                    "sourceRefs":{
+                        "stationKeyId":"key-1",
+                        "stationId":"station-1",
+                        "endpointRevision":1,
+                        "snapshotId":"snapshot-1",
+                        "factVersionVector":"endpoint:1",
+                        "projectorVersion":"route_candidate_projection_v1"
+                    },
+                    "hardRejectionCodes":[]
                 }],
                 "readModelStatus":"available"
             }

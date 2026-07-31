@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const runner = readFileSync("scripts/run-routing-operational-local-self-check.ps1", "utf8");
-const plan = readFileSync(
-  "docs/superpowers/plans/2026-07-30-routing-operational-unification-upgrade.md",
-  "utf8",
+const manifest = JSON.parse(
+  readFileSync("docs/superpowers/audits/routing-operational-qualification-manifest.json", "utf8"),
 );
+const deletionLedger = readFileSync("docs/superpowers/audits/routing-operational-deletion-ledger.md", "utf8");
 
 for (const suite of [
+  "operational_fact_reader",
   "persistence_upgrade",
   "persistence_upgrade_recovery",
   "persistence_startup_cutover",
@@ -44,10 +45,26 @@ for (const forbidden of [
   assert.ok(!runner.includes(forbidden), `local self-check must not require ${forbidden}`);
 }
 
+assert.equal(manifest.owner_task, 26, "Task 26 manifest remains the aggregate development self-check owner");
 assert.ok(
-  plan.includes("reset/reimport/重新配置") &&
-    plan.includes("不维护公开签名预迁移版本") &&
-    plan.includes("反回流门禁") &&
-    plan.includes("本地自检"),
-  "Task 27 plan must preserve development reset/reimport boundary",
+  manifest.required_development_commands.includes(
+    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke",
+  ),
+  "Task 26 manifest must require only the single-pass deterministic soak by default",
+);
+assert.ok(
+  !manifest.required_development_commands.some((command) => command.includes("DurationMinutes 60")),
+  "Task 26 required commands must not make the optional long soak a development blocker",
+);
+assert.ok(
+  manifest.optional_confidence_commands.some((command) => command.includes("DurationMinutes 60")),
+  "optional long soak should remain documented as confidence evidence",
+);
+assert.ok(
+  deletionLedger.includes("Supported recovery after deletion: stop admission, reset local data, reimport config, or reconfigure with the current dev binary."),
+  "Task 27/28 recovery boundary must be recorded in the deletion ledger as reset/reimport/reconfigure",
+);
+assert.ok(
+  deletionLedger.includes("Old binary rollback remains outside the development-phase contract."),
+  "Task 27/28 deletion ledger must not promise old binary rollback",
 );

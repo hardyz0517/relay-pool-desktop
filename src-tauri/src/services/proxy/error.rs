@@ -113,7 +113,7 @@ impl ProxyFailureCode {
             Self::LocalAuthInvalid => "local_auth_invalid",
             Self::RouteNoCandidate => "route_no_candidate",
             Self::RouteWaitTimeout => "route_wait_timeout",
-            Self::RouteConfigRequired => "route_config_required",
+            Self::RouteConfigRequired => "routing_configuration_required",
             Self::RoutePolicyRejected => "route_policy_rejected",
             Self::RouteEconomicsUnavailable => "route_economics_unavailable",
             Self::RouteHealthUnavailable => "route_health_unavailable",

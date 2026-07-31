@@ -164,7 +164,7 @@ pub(crate) enum PublicErrorCode {
 impl PublicErrorCode {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::ConfigRequired => "route_config_required",
+            Self::ConfigRequired => "routing_configuration_required",
             Self::PolicyRejected => "route_policy_rejected",
             Self::EconomicsUnavailable => "route_economics_unavailable",
             Self::HealthUnavailable => "route_health_unavailable",

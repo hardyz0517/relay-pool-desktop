@@ -34,6 +34,19 @@ function candidate(overrides: Partial<RoutingWorkspaceCandidate> = {}): RoutingW
     priority: 1,
     schedulable: true,
     healthState: "ready",
+    group: {
+      stableKey: "default",
+      displayName: "Default group",
+      available: true,
+      reason: "group_resolved",
+    },
+    multiplier: {
+      status: "missing",
+      multiplier: null,
+      selectedSource: null,
+      ceilingRejected: false,
+      reason: "multiplier_missing",
+    },
     capabilitySummary: {
       chatCompletions: true,
       responses: true,
@@ -43,7 +56,30 @@ function candidate(overrides: Partial<RoutingWorkspaceCandidate> = {}): RoutingW
       vision: false,
       reasoning: false,
     },
+    capabilityVerdicts: {
+      protocol: "allow",
+      model: "allow",
+      stream: "allow",
+      tools: "allow",
+      vision: "unknown",
+      reasoning: "unknown",
+      rejectionSubjects: [],
+    },
     priceBasis: "unpriced",
+    pricing: {
+      basis: "unpriced",
+      comparisonValue: null,
+      reason: "pricing unavailable",
+      currency: null,
+      unit: null,
+      estimatedInputPrice: null,
+      estimatedOutputPrice: null,
+      estimatedFixedPrice: null,
+      statusLabel: "unavailable",
+      sourceChain: [],
+      observedAt: null,
+      confidence: null,
+    },
     balanceStatus: null,
     capacity: {
       mode: "snapshot_only",
@@ -55,7 +91,11 @@ function candidate(overrides: Partial<RoutingWorkspaceCandidate> = {}): RoutingW
       stationKeyId: "key-long-local-name-abcdefghijklmnopqrstuvwxyz-0123456789",
       stationId: "station-1",
       endpointRevision: 7,
+      snapshotId: "snapshot-a",
+      factVersionVector: "station=1,key=2,settings=3",
+      projectorVersion: "route_candidate_projection_v1",
     },
+    hardRejectionCodes: [],
     ...overrides,
   };
 }
@@ -304,7 +344,7 @@ describe("RoutingOperationalPreviewPanel", () => {
     expect(host.textContent).toContain("snapshot_only");
     expect(host.textContent).toContain("simulation came from backend planner");
     expect(host.textContent).toContain("unpriced");
-    expect(host.textContent).toContain("balance unknown");
+    expect(host.textContent).toContain("pricing unavailable");
 
     await act(async () => root.unmount());
   });
@@ -344,7 +384,7 @@ describe("RoutingOperationalPreviewPanel", () => {
   it("renders typed backend errors without falling back to stale candidate facts", async () => {
     queryMocks.getRequestDecisionTraceQuery.mockResolvedValue(trace());
     queryMocks.getStationKeyOperationalDetailQuery.mockResolvedValue(detail());
-    queryMocks.simulateRouteQuery.mockRejectedValueOnce(new Error("route_config_required_for_fixture"));
+    queryMocks.simulateRouteQuery.mockRejectedValueOnce(new Error("routing_configuration_required_for_fixture"));
 
     const { host, root } = await renderPanel();
     const simulateButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
@@ -354,7 +394,7 @@ describe("RoutingOperationalPreviewPanel", () => {
 
     await act(async () => simulateButton!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
-    expect(host.textContent).toContain("route_config_required_for_fixture");
+    expect(host.textContent).toContain("routing_configuration_required_for_fixture");
     expect(host.textContent).toContain("unpriced");
     expect(host.textContent).not.toContain("0.000000");
 

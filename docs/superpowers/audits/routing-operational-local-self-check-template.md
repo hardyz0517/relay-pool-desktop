@@ -23,6 +23,7 @@ Runtime output belongs under ignored `output/routing-operational/qualification/l
 The runner uses existing Rust/contract checks for:
 
 - known-schema legacy fixture import into the current dev schema;
+- snapshot-consistent operational fact reader assembly, fixed query count and fact-bundle secret/full-URL boundary;
 - interrupted upgrade recovery planning and fail-closed unsafe observations;
 - fresh generation-two data store config;
 - request-log URL sanitizer interruption/resume/startup readiness;

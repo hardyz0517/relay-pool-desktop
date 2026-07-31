@@ -50,16 +50,26 @@ pub(crate) fn project_balance(
 ) -> BalanceProjection {
     let selected = key_scope
         .filter(|observation| observation.scope == BalanceScope::StationKey)
-        .or_else(|| station_scope.filter(|observation| observation.scope == BalanceScope::StationAccount));
+        .or_else(|| {
+            station_scope.filter(|observation| observation.scope == BalanceScope::StationAccount)
+        });
     let Some(observation) = selected else {
-        return balance_projection(resolved_at, BalanceProjectionStatus::Missing, None, "balance_missing", Vec::new());
+        return balance_projection(
+            resolved_at,
+            BalanceProjectionStatus::Missing,
+            None,
+            "balance_missing",
+            Vec::new(),
+        );
     };
 
     let status = match observation.status {
         BalanceEvidenceStatus::Unknown => BalanceProjectionStatus::Unknown,
         BalanceEvidenceStatus::NotSupported => BalanceProjectionStatus::NotSupported,
         BalanceEvidenceStatus::NotApplicable => BalanceProjectionStatus::NotApplicable,
-        BalanceEvidenceStatus::Available if !observation.authoritative => BalanceProjectionStatus::Untrusted,
+        BalanceEvidenceStatus::Available if !observation.authoritative => {
+            BalanceProjectionStatus::Untrusted
+        }
         BalanceEvidenceStatus::Available if !observation.fresh => BalanceProjectionStatus::Stale,
         BalanceEvidenceStatus::Available => {
             if is_depleted(&observation) {
@@ -71,7 +81,13 @@ pub(crate) fn project_balance(
     };
     let scope = Some(observation.scope);
     let revision = observation.revision;
-    balance_projection(resolved_at, status, scope, balance_reason(status), vec![revision])
+    balance_projection(
+        resolved_at,
+        status,
+        scope,
+        balance_reason(status),
+        vec![revision],
+    )
 }
 
 fn is_depleted(observation: &BalanceObservation) -> bool {

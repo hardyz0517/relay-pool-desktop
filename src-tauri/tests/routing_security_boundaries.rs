@@ -8,15 +8,17 @@ fn repo_path(relative: &str) -> PathBuf {
 }
 
 fn read_repo_file(relative: &str) -> String {
-    fs::read_to_string(repo_path(relative)).unwrap_or_else(|error| panic!("read {relative}: {error}"))
+    fs::read_to_string(repo_path(relative))
+        .unwrap_or_else(|error| panic!("read {relative}: {error}"))
 }
 
 #[test]
 fn request_log_writes_and_dtos_never_rehydrate_full_upstream_url() {
     let finalization = read_repo_file("src-tauri/src/application/request_finalization/mod.rs");
     assert!(finalization.contains("upstream_base_url: None"));
-    assert!(finalization
-        .contains("request_terminal_mapping_preserves_safe_annotations_and_redacts_upstream_base_url"));
+    assert!(finalization.contains(
+        "request_terminal_mapping_preserves_safe_annotations_and_redacts_upstream_base_url"
+    ));
     assert!(!finalization.contains("upstream_base_url: annotations.upstream_base_url"));
 
     let store = read_repo_file("src-tauri/src/persistence/stores/request_log_store.rs");
@@ -32,7 +34,8 @@ fn request_log_writes_and_dtos_never_rehydrate_full_upstream_url() {
 
 #[test]
 fn sanitizer_lifecycle_is_owned_by_persistence_upgrade_and_runtime_ready_gate() {
-    let sanitizer = read_repo_file("src-tauri/src/persistence/maintenance/request_log_url_sanitizer.rs");
+    let sanitizer =
+        read_repo_file("src-tauri/src/persistence/maintenance/request_log_url_sanitizer.rs");
     assert!(sanitizer.contains("CAST(upstream_base_url AS BLOB)"));
     assert!(sanitizer.contains("std::str::from_utf8(input)"));
     assert!(sanitizer.contains("url.set_query(None)"));

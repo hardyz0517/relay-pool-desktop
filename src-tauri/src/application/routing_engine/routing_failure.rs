@@ -266,7 +266,7 @@ impl RoutePlanningFailure {
 
     pub(crate) fn stable_code(&self) -> &'static str {
         match self {
-            Self::ConfigRequired => "route_config_required",
+            Self::ConfigRequired => "routing_configuration_required",
             Self::PolicyRejected { code } => code,
             Self::EconomicsUnavailable => "route_economics_unavailable",
             Self::HealthUnavailable => "route_health_unavailable",

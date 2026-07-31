@@ -222,6 +222,49 @@ export type RoutingCandidateSourceRefsDto = {
   stationKeyId: string;
   stationId: string;
   endpointRevision: number;
+  snapshotId: string;
+  factVersionVector: string;
+  projectorVersion: string;
+};
+
+export type RoutingCandidateGroupSnapshotDto = {
+  stableKey: string;
+  displayName: string;
+  available: boolean;
+  reason: string;
+};
+
+export type RoutingCandidateMultiplierSnapshotDto = {
+  status: string;
+  multiplier: number | null;
+  selectedSource: string | null;
+  ceilingRejected: boolean;
+  reason: string;
+};
+
+export type RoutingCapabilityVerdictSnapshotDto = {
+  protocol: string;
+  model: string;
+  stream: string;
+  tools: string;
+  vision: string;
+  reasoning: string;
+  rejectionSubjects: string[];
+};
+
+export type RoutingCandidatePricingSnapshotDto = {
+  basis: string;
+  comparisonValue: number | null;
+  reason: string | null;
+  currency: string | null;
+  unit: string | null;
+  estimatedInputPrice: number | null;
+  estimatedOutputPrice: number | null;
+  estimatedFixedPrice: number | null;
+  statusLabel: string;
+  sourceChain: string[];
+  observedAt: string | null;
+  confidence: number | null;
 };
 
 export type RoutingWorkspaceCandidateDto = {
@@ -233,11 +276,16 @@ export type RoutingWorkspaceCandidateDto = {
   priority: number;
   schedulable: boolean;
   healthState: string;
+  group: RoutingCandidateGroupSnapshotDto | null;
+  multiplier: RoutingCandidateMultiplierSnapshotDto;
   capabilitySummary: RoutingCapabilitySummaryDto;
+  capabilityVerdicts: RoutingCapabilityVerdictSnapshotDto;
   priceBasis: string;
+  pricing: RoutingCandidatePricingSnapshotDto;
   balanceStatus: string | null;
   capacity: RoutingCandidateCapacitySnapshotDto;
   sourceRefs: RoutingCandidateSourceRefsDto;
+  hardRejectionCodes: string[];
 };
 
 export type RoutingReadPageDto = {

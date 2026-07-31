@@ -54,10 +54,18 @@ pub(crate) struct MultiplierProjection {
 
 pub(crate) fn project_multiplier(input: MultiplierProjectionInput) -> MultiplierProjection {
     if input.disabled {
-        return unresolved(input.resolved_at, MultiplierResolutionStatus::Disabled, "multiplier_disabled");
+        return unresolved(
+            input.resolved_at,
+            MultiplierResolutionStatus::Disabled,
+            "multiplier_disabled",
+        );
     }
     if input.ambiguous {
-        return unresolved(input.resolved_at, MultiplierResolutionStatus::Ambiguous, "multiplier_ambiguous");
+        return unresolved(
+            input.resolved_at,
+            MultiplierResolutionStatus::Ambiguous,
+            "multiplier_ambiguous",
+        );
     }
 
     let ordered = [
@@ -69,7 +77,11 @@ pub(crate) fn project_multiplier(input: MultiplierProjectionInput) -> Multiplier
         input.current_default,
     ];
     let Some(evidence) = ordered.into_iter().flatten().next() else {
-        return unresolved(input.resolved_at, MultiplierResolutionStatus::Missing, "multiplier_missing");
+        return unresolved(
+            input.resolved_at,
+            MultiplierResolutionStatus::Missing,
+            "multiplier_missing",
+        );
     };
     if !evidence.authoritative {
         return unresolved(
@@ -79,7 +91,11 @@ pub(crate) fn project_multiplier(input: MultiplierProjectionInput) -> Multiplier
         );
     }
     if !evidence.fresh {
-        return unresolved(input.resolved_at, MultiplierResolutionStatus::Stale, "multiplier_stale");
+        return unresolved(
+            input.resolved_at,
+            MultiplierResolutionStatus::Stale,
+            "multiplier_stale",
+        );
     }
 
     MultiplierProjection {

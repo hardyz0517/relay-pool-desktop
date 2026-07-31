@@ -17,7 +17,13 @@ pub(crate) trait OperationalFactSource {
     fn load_raw_operational_facts<'a>(
         &'a self,
         options: &'a OperationalFactReadOptions,
-    ) -> Pin<Box<dyn Future<Output = Result<RawOperationalFactRows, OperationalFactReadError>> + Send + 'a>>;
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<RawOperationalFactRows, OperationalFactReadError>>
+                + Send
+                + 'a,
+        >,
+    >;
 }
 
 #[derive(Debug, Clone)]

@@ -18,12 +18,21 @@ impl fmt::Display for EconomicsValidationError {
         match self {
             Self::InvalidCurrency(value) => write!(formatter, "unsupported currency code: {value}"),
             Self::InvalidUnit(value) => write!(formatter, "unsupported pricing unit: {value}"),
-            Self::InvalidMoney(value) => write!(formatter, "money must be finite and non-negative, got {value}"),
+            Self::InvalidMoney(value) => write!(
+                formatter,
+                "money must be finite and non-negative, got {value}"
+            ),
             Self::InvalidMultiplier(value) => {
-                write!(formatter, "multiplier must be finite and positive, got {value}")
+                write!(
+                    formatter,
+                    "multiplier must be finite and positive, got {value}"
+                )
             }
             Self::InvalidConfidence(value) => {
-                write!(formatter, "confidence must be finite between 0 and 1, got {value}")
+                write!(
+                    formatter,
+                    "confidence must be finite between 0 and 1, got {value}"
+                )
             }
         }
     }

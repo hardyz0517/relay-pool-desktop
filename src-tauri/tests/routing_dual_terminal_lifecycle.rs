@@ -13,34 +13,14 @@ mod application {
     pub(crate) mod request_lifecycle;
 
     pub(crate) mod request_finalization {
-        pub(crate) mod outcome_orchestrator {
-            use crate::services::proxy::lifecycle::{
-                ports::AttemptCostCommitRecord, request::AttemptId,
-            };
+        #[path = "../../../src/application/request_finalization/failure.rs"]
+        pub(crate) mod failure;
 
-            pub(crate) fn interrupted_attempt_cost(
-                attempt_id: AttemptId,
-                created_at_ms: i64,
-            ) -> AttemptCostCommitRecord {
-                AttemptCostCommitRecord {
-                    request_id: attempt_id.request_id,
-                    ordinal: attempt_id.ordinal,
-                    pricing_context_id: "trace_incomplete".to_string(),
-                    pricing_basis: "unpriced".to_string(),
-                    pricing_status_label: "trace_incomplete".to_string(),
-                    usage_status: "missing_usage".to_string(),
-                    input_tokens: None,
-                    output_tokens: None,
-                    total_tokens: None,
-                    cache_creation_tokens: None,
-                    cache_read_tokens: None,
-                    cost_status: "missing_usage".to_string(),
-                    currency: None,
-                    total_cost_micro: None,
-                    created_at_ms,
-                }
-            }
-        }
+        #[path = "../../../src/application/request_finalization/outcome.rs"]
+        pub(crate) mod outcome;
+
+        #[path = "../../../src/application/request_finalization/outcome_orchestrator.rs"]
+        pub(crate) mod outcome_orchestrator;
     }
 }
 

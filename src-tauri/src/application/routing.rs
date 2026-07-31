@@ -11,15 +11,19 @@ use crate::{
     application::{
         error::ApplicationError,
         health_transitions::HealthTransitionService,
+        operational_facts::runtime_candidate_adapter::{
+            route_projection_from_runtime_candidate, route_request_facts_for_read_model,
+        },
         queries::{
             operational_detail::{
-                operational_detail_from_runtime_candidate, unavailable_operational_detail,
+                operational_detail_from_projection, unavailable_operational_detail,
                 StationKeyOperationalDetail,
             },
             routing_runtime::{runtime_overlay_from_candidates, RoutingRuntimeOverlay},
             routing_workspace::{
-                workspace_snapshot_from_runtime, RoutingWorkspaceSnapshot,
-                RoutingWorkspaceSnapshotInput, ROUTING_PREVIEW_POLICY_VERSION,
+                workspace_snapshot_from_projection_candidates, RoutingWorkspaceProjectionCandidate,
+                RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput,
+                ROUTING_PREVIEW_POLICY_VERSION,
             },
         },
     },
@@ -98,11 +102,25 @@ impl RoutingService {
         let mut read = self.runtime.begin_read().await?;
         let settings = self.store.load_execution_settings(&mut read).await?;
         let candidates = self.store.load_runtime_candidates(&mut read).await?;
-        Ok(workspace_snapshot_from_runtime(
-            &settings,
-            candidates,
-            input,
-            chrono::Utc::now().timestamp_millis(),
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let request = route_request_facts_for_read_model(&settings, now_ms);
+        let projected = candidates
+            .into_iter()
+            .map(|candidate| {
+                let station_name = candidate.station_name.clone();
+                let key_name = candidate.key_name.clone();
+                route_projection_from_runtime_candidate(&request, candidate).map(|projection| {
+                    RoutingWorkspaceProjectionCandidate {
+                        station_name,
+                        key_name,
+                        projection,
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map_err(|_| ApplicationError::ConstraintViolation)?;
+        Ok(workspace_snapshot_from_projection_candidates(
+            &settings, projected, input, now_ms,
         ))
     }
 
@@ -124,12 +142,18 @@ impl RoutingService {
         station_key_id: String,
     ) -> Result<StationKeyOperationalDetail, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
+        let settings = self.store.load_execution_settings(&mut read).await?;
         let candidates = self.store.load_runtime_candidates(&mut read).await?;
-        Ok(candidates
-            .into_iter()
-            .find(|candidate| candidate.station_key_id == station_key_id)
-            .map(operational_detail_from_runtime_candidate)
-            .unwrap_or_else(|| unavailable_operational_detail(station_key_id)))
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let request = route_request_facts_for_read_model(&settings, now_ms);
+        for candidate in candidates {
+            if candidate.station_key_id == station_key_id {
+                let projection = route_projection_from_runtime_candidate(&request, candidate)
+                    .map_err(|_| ApplicationError::ConstraintViolation)?;
+                return Ok(operational_detail_from_projection(&projection));
+            }
+        }
+        Ok(unavailable_operational_detail(station_key_id))
     }
 
     pub(crate) async fn load_proxy_defaults(

@@ -110,17 +110,30 @@ export function RoutingOperationalPreviewPanel({
       {
         key: "group",
         header: "Group",
-        render: () => <StatusBadge tone="disabled">backend detail</StatusBadge>,
+        render: (candidate) =>
+          candidate.group ? (
+            <div className="grid min-w-0 gap-0.5">
+              <span className="truncate">{candidate.group.displayName}</span>
+              <span className="truncate text-xs text-muted-foreground">{candidate.group.reason}</span>
+            </div>
+          ) : (
+            <StatusBadge tone="disabled">group missing</StatusBadge>
+          ),
       },
       {
         key: "price",
         header: "价格/倍率",
-        render: (candidate) => (
-          <div className="grid min-w-0 gap-0.5">
-            <span>{formatPriceBasis(candidate.priceBasis)}</span>
-            <span className="text-xs text-muted-foreground">{candidate.balanceStatus ?? "balance unknown"}</span>
-          </div>
-        ),
+        render: (candidate) => {
+          const pricing = candidatePricing(candidate);
+          return (
+            <div className="grid min-w-0 gap-0.5">
+              <span>{formatPriceBasis(pricing.basis)}</span>
+              <span className="text-xs text-muted-foreground">
+                {pricing.reason ?? candidate.balanceStatus ?? pricing.statusLabel ?? "pricing unavailable"}
+              </span>
+            </div>
+          );
+        },
       },
       {
         key: "capability",
@@ -128,7 +141,7 @@ export function RoutingOperationalPreviewPanel({
         className: "w-[18rem] max-w-[18rem]",
         render: (candidate) => (
           <div className="flex max-w-[18rem] flex-wrap gap-1">
-            {capabilityLabels(candidate).map((label) => (
+            {capabilityVerdictLabels(candidate).map((label) => (
               <StatusBadge key={label} className="h-5 px-1.5" tone="info">
                 {label}
               </StatusBadge>
@@ -146,7 +159,11 @@ export function RoutingOperationalPreviewPanel({
               <StatusBadge tone={healthTone(overlay?.healthState ?? candidate.healthState)}>
                 {overlay?.healthState ?? candidate.healthState}
               </StatusBadge>
-              <span className="text-xs text-muted-foreground">endpoint rev {candidate.endpointRevision}</span>
+              <span className="text-xs text-muted-foreground">
+                {(candidate.hardRejectionCodes ?? []).length > 0
+                  ? (candidate.hardRejectionCodes ?? []).join(", ")
+                  : `endpoint rev ${candidate.endpointRevision}`}
+              </span>
             </div>
           );
         },
@@ -546,26 +563,65 @@ function formatTimelineKind(kind: RequestDecisionTrace["timeline"][number]["kind
   return kind.replace(/_/g, " ");
 }
 
-function capabilityLabels(candidate: RoutingWorkspaceCandidate) {
-  const labels: string[] = [];
-  if (candidate.capabilitySummary.chatCompletions) labels.push("chat");
-  if (candidate.capabilitySummary.responses) labels.push("responses");
-  if (candidate.capabilitySummary.embeddings) labels.push("embeddings");
-  if (candidate.capabilitySummary.stream) labels.push("stream");
-  if (candidate.capabilitySummary.tools) labels.push("tools");
-  if (candidate.capabilitySummary.vision) labels.push("vision");
-  if (candidate.capabilitySummary.reasoning) labels.push("reasoning");
-  return labels.length > 0 ? labels : ["capability unknown"];
+function capabilityVerdictLabels(candidate: RoutingWorkspaceCandidate) {
+  const verdicts =
+    candidate.capabilityVerdicts ??
+    ({
+      protocol: candidate.capabilitySummary.chatCompletions ? "allow" : "unknown",
+      model: "unknown",
+      stream: candidate.capabilitySummary.stream ? "allow" : "unknown",
+      tools: candidate.capabilitySummary.tools ? "allow" : "unknown",
+      vision: candidate.capabilitySummary.vision ? "allow" : "unknown",
+      reasoning: candidate.capabilitySummary.reasoning ? "allow" : "unknown",
+      rejectionSubjects: [],
+    } satisfies RoutingWorkspaceCandidate["capabilityVerdicts"]);
+  const labels = [
+    `protocol:${verdicts.protocol}`,
+    `model:${verdicts.model}`,
+    `stream:${verdicts.stream}`,
+    `tools:${verdicts.tools}`,
+    `vision:${verdicts.vision}`,
+    `reasoning:${verdicts.reasoning}`,
+  ];
+  return verdicts.rejectionSubjects.length > 0
+    ? [...labels, `reject:${verdicts.rejectionSubjects.join(",")}`]
+    : labels;
+}
+
+function candidatePricing(candidate: RoutingWorkspaceCandidate): RoutingWorkspaceCandidate["pricing"] {
+  return (
+    candidate.pricing ?? {
+      basis: candidate.priceBasis ?? "unpriced",
+      comparisonValue: null,
+      reason: "pricing unavailable",
+      currency: null,
+      unit: null,
+      estimatedInputPrice: null,
+      estimatedOutputPrice: null,
+      estimatedFixedPrice: null,
+      statusLabel: "unavailable",
+      sourceChain: [],
+      observedAt: null,
+      confidence: null,
+    }
+  );
 }
 
 function healthTone(value: string) {
-  if (value === "ready") return "healthy";
-  if (value === "cooldown" || value === "degraded") return "warning";
+  if (value === "ready" || value === "admit") return "healthy";
+  if (
+    value === "cooldown" ||
+    value === "degraded" ||
+    value === "admitdegraded" ||
+    value === "suppressdurablecooldown" ||
+    value === "suppressordinaryruntime"
+  )
+    return "warning";
   return "disabled";
 }
 
 function formatPriceBasis(value: string) {
-  if (value === "exact") return "exact";
+  if (value === "exact" || value === "exact_price") return "exact";
   if (value === "multiplier_proxy" || value === "balance_only") return "multiplier proxy";
   if (value === "unpriced") return "unpriced";
   return value;

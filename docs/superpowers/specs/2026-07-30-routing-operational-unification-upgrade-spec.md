@@ -36,6 +36,8 @@ Canonical Facts / Evidence
 8. 学习 Sub2API、claude-code-hub、LiteLLM、Envoy 和 HAProxy 的必要工程原则，不复制其分布式复杂度、胖对象或巨型 selector。
 9. 当前项目仍处于非稳定成型阶段，不做 release gate、签名安装包、安装升级矩阵或旧二进制回滚承诺；结构性不可恢复状态的开发期恢复方式是停止 admission，并让用户 reset/reimport/重新配置后继续。
 
+本 spec 后续保留的 `architecture gate`、类型边界门禁、source gate 和自检脚本，均是开发期工程护栏：它们只证明职责边界、可复用事实链路、生命周期和安全约束没有回流或断裂，不代表稳定产品发布放行、安装升级资格或旧 binary rollback 能力。
+
 ## 2. 与现有规范的关系
 
 本 spec 是跨域整合规范，不重新设计已经完成的基础设施。

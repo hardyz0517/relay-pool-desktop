@@ -20,6 +20,17 @@ pub(crate) enum RoutingCostBasis {
     NotApplicable,
 }
 
+impl RoutingCostBasis {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ExactPrice => "exact_price",
+            Self::MultiplierProxy => "multiplier_proxy",
+            Self::Unpriced => "unpriced",
+            Self::NotApplicable => "not_applicable",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RequestCostComparisonContext {
     pub(crate) route_kind: PricingRouteKind,
@@ -28,6 +39,10 @@ pub(crate) struct RequestCostComparisonContext {
     pub(crate) reason: Option<&'static str>,
     pub(crate) currency: Option<String>,
     pub(crate) unit: Option<String>,
+    pub(crate) estimated_input_price: Option<f64>,
+    pub(crate) estimated_output_price: Option<f64>,
+    pub(crate) estimated_fixed_price: Option<f64>,
+    pub(crate) status_label: String,
     pub(crate) source_chain: Vec<String>,
     pub(crate) observed_at: Option<String>,
     pub(crate) confidence: Option<f64>,
@@ -45,6 +60,10 @@ pub(crate) fn request_cost_comparison_context(
             reason: Some("model_catalog_has_no_request_cost"),
             currency: None,
             unit: None,
+            estimated_input_price: None,
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            status_label: "not_applicable".to_string(),
             source_chain: Vec::new(),
             observed_at: None,
             confidence: None,
@@ -58,6 +77,10 @@ pub(crate) fn request_cost_comparison_context(
             reason: Some("pricing_context_missing"),
             currency: None,
             unit: None,
+            estimated_input_price: None,
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            status_label: "unpriced".to_string(),
             source_chain: Vec::new(),
             observed_at: None,
             confidence: None,
@@ -93,6 +116,10 @@ pub(crate) fn request_cost_comparison_context(
         reason,
         currency: known_field(&pricing.currency),
         unit: known_field(&pricing.unit),
+        estimated_input_price: pricing.estimated_input_price,
+        estimated_output_price: pricing.estimated_output_price,
+        estimated_fixed_price: pricing.estimated_fixed_price,
+        status_label: pricing.pricing_status.as_str().to_string(),
         source_chain: pricing.source_chain.clone(),
         observed_at: pricing
             .rate_collected_at

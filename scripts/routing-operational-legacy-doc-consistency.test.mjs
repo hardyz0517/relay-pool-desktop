@@ -1,70 +1,71 @@
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const checkedFiles = [
-  "docs/PROJECT_PLAN.md",
-  "docs/superpowers/specs/2026-07-30-routing-operational-unification-upgrade-spec.md",
-  "docs/superpowers/plans/2026-07-30-routing-operational-unification-upgrade.md",
-  "docs/superpowers/audits/routing-operational-deletion-ledger.md",
-  "docs/superpowers/audits/routing-operational-boundary-manifest.json",
-];
+const manifest = JSON.parse(
+  readFileSync("docs/superpowers/audits/routing-operational-boundary-manifest.json", "utf8"),
+);
+const deletionLedger = readFileSync("docs/superpowers/audits/routing-operational-deletion-ledger.md", "utf8");
+const runtimeSource = readFileSync("src-tauri/src/services/proxy/runtime.rs", "utf8");
+const responseBodySource = readFileSync("src-tauri/src/services/proxy/response_body.rs", "utf8");
 
-const stalePatterns = [
-  {
-    pattern: /`RELAY_POOL_PROXY_RUNTIME=legacy`\s*只按/,
-    reason: "legacy runtime env switch must not be documented as an allowed process-start owner",
-  },
-  {
-    pattern: /RELAY_POOL_PROXY_RUNTIME=legacy[^。\n]*(允许|回到上一完整|作为 process-start|process-start 级、debug-only 的完整旧 owner)/,
-    reason: "legacy runtime env switch must not be documented as an allowed fallback",
-  },
-  {
-    pattern: /debug-only legacy runtime[^。\n]*(均按目标规范执行|若仍保留|若仍在观察期|是完整隔离 owner|允许暂留)/,
-    reason: "debug-only legacy runtime must be deleted, not conditionally retained",
-  },
-  {
-    pattern: /process-start debug legacy runtime 若仍保留/,
-    reason: "process-start debug legacy runtime must not remain as a conditional checklist item",
-  },
-  {
-    pattern: /isolated debug legacy owner 调用/,
-    reason: "request finalization compatibility must not depend on an isolated debug legacy owner",
-  },
-  {
-    pattern: /若观察期仍需 debug legacy/,
-    reason: "observation must not preserve a debug legacy runtime",
-  },
-  {
-    pattern: /later debug legacy runtime deletion ticket/,
-    reason: "Task 28 deletion has been applied and is no longer a later ticket",
-  },
-  {
-    pattern: /debug runtime 的真实删除继续遵守/,
-    reason: "debug runtime deletion is no longer deferred",
-  },
-  {
-    pattern: /debug-only、process-start 级完整 legacy runtime/,
-    reason: "the allowed-temporary list must not include a full debug legacy runtime",
-  },
-];
+assert.equal(
+  manifest.status,
+  "task28_debug_legacy_runtime_deleted",
+  "boundary manifest must record Task 28 debug legacy runtime deletion",
+);
 
-const allowedDeletionContext = /(已删除|删除|Deleted|deleted|forbid|forbidden|must not return|不得|禁止|不再|no longer|反回流|回流|not reintroduced|removed)/;
+const forbiddenSymbols = new Map(
+  (manifest.production_forbidden_symbols ?? []).map((entry) => [entry.symbol, entry]),
+);
+const requestCoupledFinalizer = forbiddenSymbols.get("default-v2 request-coupled response finalization");
+assert.ok(requestCoupledFinalizer, "request-coupled finalization must stay registered as a forbidden production symbol");
+assert.equal(requestCoupledFinalizer.delete_by_task, 28, "request-coupled finalization must be owned by Task 28 deletion");
+assert.deepEqual(
+  new Set(requestCoupledFinalizer.paths),
+  new Set(["src-tauri/src/services/proxy/runtime.rs", "src-tauri/src/services/proxy/response_body.rs"]),
+  "request-coupled finalization forbidden symbol must cover runtime and response body owners",
+);
+assert.match(
+  requestCoupledFinalizer.reason,
+  /dual-terminal finalization path|must not return/u,
+  "request-coupled finalization reason must point to the dual-terminal replacement and anti-regression intent",
+);
 
-const failures = [];
-
-for (const file of checkedFiles) {
-  const lines = readFileSync(file, "utf8").split(/\r?\n/);
-
-  lines.forEach((line, index) => {
-    for (const { pattern, reason } of stalePatterns) {
-      if (pattern.test(line) && !allowedDeletionContext.test(line)) {
-        failures.push(`${file}:${index + 1}: ${reason}: ${line.trim()}`);
-      }
-    }
-  });
+for (const exception of manifest.temporary_allowed_exceptions ?? []) {
+  const haystack = JSON.stringify(exception);
+  assert.doesNotMatch(
+    haystack,
+    /RELAY_POOL_PROXY_RUNTIME=legacy|debug legacy runtime|request-coupled finalization/u,
+    `temporary exception ${exception.id ?? "<unknown>"} must not preserve the deleted runtime/finalizer`,
+  );
 }
 
-if (failures.length > 0) {
-  throw new Error(`routing legacy doc consistency failed:\n${failures.join("\n")}`);
+for (const [sourceName, source, forbidden] of [
+  [
+    "runtime.rs",
+    runtimeSource,
+    /RELAY_POOL_PROXY_RUNTIME|LegacyRequestCoupled|with_legacy_request_coupled_finalization/u,
+  ],
+  [
+    "response_body.rs",
+    responseBodySource,
+    /LifecycleFinalizationLease|SelectedAttemptFinalization|FinalizationTarget::Lifecycle/u,
+  ],
+]) {
+  assert.doesNotMatch(source, forbidden, `${sourceName} must not contain deleted legacy runtime/finalizer symbols`);
+}
+
+for (const requiredLedgerText of [
+  "Old request-coupled response finalizer",
+  "Debug legacy runtime",
+  "Deleted;",
+  "Supported recovery after deletion: stop admission, reset local data, reimport config, or reconfigure with the current dev binary.",
+  "Old binary rollback remains outside the development-phase contract.",
+]) {
+  assert.ok(
+    deletionLedger.includes(requiredLedgerText),
+    `deletion ledger must include structured Task 28 evidence: ${requiredLedgerText}`,
+  );
 }
 
 console.log("routing operational legacy doc consistency ok");

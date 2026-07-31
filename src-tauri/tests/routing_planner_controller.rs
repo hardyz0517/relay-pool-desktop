@@ -47,6 +47,10 @@ mod application {
                 pub(crate) comparison_value: Option<f64>,
                 pub(crate) currency: Option<String>,
                 pub(crate) unit: Option<String>,
+                pub(crate) estimated_input_price: Option<f64>,
+                pub(crate) estimated_output_price: Option<f64>,
+                pub(crate) estimated_fixed_price: Option<f64>,
+                pub(crate) status_label: String,
             }
 
             #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +199,10 @@ fn candidate(id: &str, priority: i64) -> RouteCandidateProjection {
             comparison_value: Some(1.0),
             currency: Some("USD".to_string()),
             unit: Some("per_1m_tokens".to_string()),
+            estimated_input_price: Some(1.0),
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            status_label: "priced".to_string(),
         },
         balance: CandidateBalanceProjection {
             status: BalanceProjectionStatus::Healthy,
@@ -279,6 +287,15 @@ fn capacity_miss_continues_plan_without_attempt_progress_or_retry_token() {
                 endpoint_revision: 3,
                 priority: 10,
                 tier: selector::AvailabilityTier::Primary,
+                pricing: selector::RoutePlanPricingSnapshot {
+                    basis: RoutingCostBasis::ExactPrice,
+                    currency: Some("USD".to_string()),
+                    unit: Some("per_1m_tokens".to_string()),
+                    estimated_input_price: Some(1.0),
+                    estimated_output_price: None,
+                    estimated_fixed_price: None,
+                    status_label: "priced".to_string(),
+                },
                 evidence: Vec::new(),
             }),
         )
@@ -350,6 +367,15 @@ fn wait_wakeup_clears_pass_state_refreshes_overlay_and_allows_unattempted_key() 
                 endpoint_revision: 3,
                 priority: 10,
                 tier: selector::AvailabilityTier::Primary,
+                pricing: selector::RoutePlanPricingSnapshot {
+                    basis: RoutingCostBasis::ExactPrice,
+                    currency: Some("USD".to_string()),
+                    unit: Some("per_1m_tokens".to_string()),
+                    estimated_input_price: Some(1.0),
+                    estimated_output_price: None,
+                    estimated_fixed_price: None,
+                    status_label: "priced".to_string(),
+                },
                 evidence: Vec::new(),
             }),
         )

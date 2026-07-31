@@ -64,11 +64,35 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) priority: i64,
     pub(crate) schedulable: bool,
     pub(crate) health_state: String,
+    pub(crate) group: Option<RoutingCandidateGroupSnapshot>,
+    pub(crate) multiplier: RoutingCandidateMultiplierSnapshot,
     pub(crate) capability_summary: RoutingCapabilitySummary,
+    pub(crate) capability_verdicts: RoutingCapabilityVerdictSnapshot,
     pub(crate) price_basis: String,
+    pub(crate) pricing: RoutingCandidatePricingSnapshot,
     pub(crate) balance_status: Option<String>,
     pub(crate) capacity: RoutingCandidateCapacitySnapshot,
     pub(crate) source_refs: RoutingCandidateSourceRefs,
+    pub(crate) hard_rejection_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateGroupSnapshot {
+    pub(crate) stable_key: String,
+    pub(crate) display_name: String,
+    pub(crate) available: bool,
+    pub(crate) reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateMultiplierSnapshot {
+    pub(crate) status: String,
+    pub(crate) multiplier: Option<f64>,
+    pub(crate) selected_source: Option<String>,
+    pub(crate) ceiling_rejected: bool,
+    pub(crate) reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +105,35 @@ pub(crate) struct RoutingCapabilitySummary {
     pub(crate) tools: bool,
     pub(crate) vision: bool,
     pub(crate) reasoning: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCapabilityVerdictSnapshot {
+    pub(crate) protocol: String,
+    pub(crate) model: String,
+    pub(crate) stream: String,
+    pub(crate) tools: String,
+    pub(crate) vision: String,
+    pub(crate) reasoning: String,
+    pub(crate) rejection_subjects: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidatePricingSnapshot {
+    pub(crate) basis: String,
+    pub(crate) comparison_value: Option<f64>,
+    pub(crate) reason: Option<String>,
+    pub(crate) currency: Option<String>,
+    pub(crate) unit: Option<String>,
+    pub(crate) estimated_input_price: Option<f64>,
+    pub(crate) estimated_output_price: Option<f64>,
+    pub(crate) estimated_fixed_price: Option<f64>,
+    pub(crate) status_label: String,
+    pub(crate) source_chain: Vec<String>,
+    pub(crate) observed_at: Option<String>,
+    pub(crate) confidence: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,6 +151,16 @@ pub(crate) struct RoutingCandidateSourceRefs {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
+    pub(crate) snapshot_id: String,
+    pub(crate) fact_version_vector: String,
+    pub(crate) projector_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RoutingWorkspaceProjectionCandidate {
+    pub(crate) station_name: String,
+    pub(crate) key_name: String,
+    pub(crate) projection: RouteCandidateProjection,
 }
 
 #[cfg_attr(
@@ -155,6 +218,45 @@ pub(crate) fn workspace_snapshot_from_runtime(
         .skip(start)
         .take(limit)
         .map(candidate_from_runtime)
+        .collect::<Vec<_>>();
+    let next = start + rows.len();
+    RoutingWorkspaceSnapshot {
+        read_model_version: ROUTING_WORKSPACE_READ_MODEL_VERSION,
+        generated_at_ms,
+        production_policy: settings.policy.clone(),
+        preview_policy_version: ROUTING_PREVIEW_POLICY_VERSION,
+        max_rate_multiplier: settings.max_rate_multiplier,
+        routing_group_filter: settings.routing_group_filter.clone(),
+        capacity_mode: RoutingCapacityReadMode::SnapshotOnly,
+        page: RoutingReadPage {
+            limit,
+            returned: rows.len(),
+            next_cursor: (next < total).then(|| format!("offset:{next}")),
+        },
+        candidates: rows,
+        read_model_status: RoutingReadModelStatus::Available,
+    }
+}
+
+pub(crate) fn workspace_snapshot_from_projection_candidates(
+    settings: &crate::models::routing::RuntimeRoutingSettings,
+    candidates: Vec<RoutingWorkspaceProjectionCandidate>,
+    input: RoutingWorkspaceSnapshotInput,
+    generated_at_ms: i64,
+) -> RoutingWorkspaceSnapshot {
+    let limit = input.limit.unwrap_or(128).clamp(1, 1024);
+    let start = input
+        .cursor
+        .as_deref()
+        .and_then(|cursor| cursor.strip_prefix("offset:"))
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    let total = candidates.len();
+    let rows = candidates
+        .into_iter()
+        .skip(start)
+        .take(limit)
+        .map(candidate_from_projection)
         .collect::<Vec<_>>();
     let next = start + rows.len();
     RoutingWorkspaceSnapshot {
@@ -254,6 +356,14 @@ fn candidate_from_runtime(candidate: RuntimeRoutingCandidate) -> RoutingWorkspac
         priority: candidate.routing_order.unwrap_or(candidate.priority),
         schedulable: candidate.schedulable,
         health_state,
+        group: None,
+        multiplier: RoutingCandidateMultiplierSnapshot {
+            status: "missing".to_string(),
+            multiplier: None,
+            selected_source: None,
+            ceiling_rejected: false,
+            reason: "compatibility_runtime_candidate".to_string(),
+        },
         capability_summary: RoutingCapabilitySummary {
             chat_completions: candidate.capabilities.supports_chat_completions,
             responses: candidate.capabilities.supports_responses,
@@ -263,7 +373,30 @@ fn candidate_from_runtime(candidate: RuntimeRoutingCandidate) -> RoutingWorkspac
             vision: candidate.capabilities.supports_vision,
             reasoning: candidate.capabilities.supports_reasoning,
         },
+        capability_verdicts: RoutingCapabilityVerdictSnapshot {
+            protocol: "allow".to_string(),
+            model: "allow".to_string(),
+            stream: capability_label(candidate.capabilities.supports_stream),
+            tools: capability_label(candidate.capabilities.supports_tools),
+            vision: capability_label(candidate.capabilities.supports_vision),
+            reasoning: capability_label(candidate.capabilities.supports_reasoning),
+            rejection_subjects: Vec::new(),
+        },
         price_basis,
+        pricing: RoutingCandidatePricingSnapshot {
+            basis: "unpriced".to_string(),
+            comparison_value: None,
+            reason: Some("compatibility_runtime_candidate".to_string()),
+            currency: None,
+            unit: None,
+            estimated_input_price: None,
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            status_label: "unpriced".to_string(),
+            source_chain: Vec::new(),
+            observed_at: None,
+            confidence: None,
+        },
         balance_status,
         capacity: RoutingCandidateCapacitySnapshot {
             mode: RoutingCapacityReadMode::SnapshotOnly,
@@ -275,6 +408,118 @@ fn candidate_from_runtime(candidate: RuntimeRoutingCandidate) -> RoutingWorkspac
             station_key_id: candidate.station_key_id,
             station_id: candidate.station_id,
             endpoint_revision: candidate.station_endpoint_revision,
+            snapshot_id: format!("endpoint-revision-{}", candidate.station_endpoint_revision),
+            fact_version_vector: format!("endpoint:{}", candidate.station_endpoint_revision),
+            projector_version: "compatibility_runtime_candidate".to_string(),
         },
+        hard_rejection_codes: Vec::new(),
+    }
+}
+
+fn candidate_from_projection(
+    row: RoutingWorkspaceProjectionCandidate,
+) -> RoutingWorkspaceCandidate {
+    let projection = row.projection;
+    let max_concurrency = projection
+        .capacity
+        .scopes
+        .iter()
+        .find_map(|scope| scope.limit.map(i64::from))
+        .unwrap_or(0);
+    let in_flight = projection
+        .capacity
+        .scopes
+        .iter()
+        .map(|scope| i64::from(scope.in_flight))
+        .max();
+    RoutingWorkspaceCandidate {
+        station_key_id: projection.identity.station_key_id.clone(),
+        station_id: projection.identity.station_id.clone(),
+        station_name: row.station_name,
+        key_name: row.key_name,
+        endpoint_revision: projection.identity.endpoint_revision,
+        priority: projection.priority,
+        schedulable: projection.hard_rejection_codes.is_empty(),
+        health_state: format!("{:?}", projection.health.station_key).to_lowercase(),
+        group: projection.group.as_ref().map(|group| RoutingCandidateGroupSnapshot {
+            stable_key: group.stable_key.clone(),
+            display_name: group.display_name.clone(),
+            available: group.available,
+            reason: group.reason.to_string(),
+        }),
+        multiplier: RoutingCandidateMultiplierSnapshot {
+            status: format!("{:?}", projection.multiplier.status).to_lowercase(),
+            multiplier: projection.multiplier.multiplier,
+            selected_source: projection.multiplier.selected_source.map(ToString::to_string),
+            ceiling_rejected: projection.multiplier.ceiling_rejected,
+            reason: projection.multiplier.reason.to_string(),
+        },
+        capability_summary: RoutingCapabilitySummary {
+            chat_completions: projection.capability.protocol
+                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
+            responses: projection.capability.protocol
+                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
+            embeddings: false,
+            stream: projection.capability.stream
+                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
+            tools: projection.capability.tools
+                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
+            vision: projection.capability.vision
+                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
+            reasoning: projection.capability.reasoning
+                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
+        },
+        capability_verdicts: RoutingCapabilityVerdictSnapshot {
+            protocol: format!("{:?}", projection.capability.protocol).to_lowercase(),
+            model: format!("{:?}", projection.capability.model).to_lowercase(),
+            stream: format!("{:?}", projection.capability.stream).to_lowercase(),
+            tools: format!("{:?}", projection.capability.tools).to_lowercase(),
+            vision: format!("{:?}", projection.capability.vision).to_lowercase(),
+            reasoning: format!("{:?}", projection.capability.reasoning).to_lowercase(),
+            rejection_subjects: projection.capability.rejection_subjects.clone(),
+        },
+        price_basis: projection.pricing.basis.as_str().to_string(),
+        pricing: RoutingCandidatePricingSnapshot {
+            basis: projection.pricing.basis.as_str().to_string(),
+            comparison_value: projection.pricing.comparison_value,
+            reason: projection.pricing.reason.map(ToString::to_string),
+            currency: projection.pricing.currency.clone(),
+            unit: projection.pricing.unit.clone(),
+            estimated_input_price: projection.pricing.estimated_input_price,
+            estimated_output_price: projection.pricing.estimated_output_price,
+            estimated_fixed_price: projection.pricing.estimated_fixed_price,
+            status_label: projection.pricing.status_label.clone(),
+            source_chain: projection.pricing.source_chain.clone(),
+            observed_at: projection.pricing.observed_at.clone(),
+            confidence: projection.pricing.confidence,
+        },
+        balance_status: Some(format!("{:?}", projection.balance.status).to_lowercase()),
+        capacity: RoutingCandidateCapacitySnapshot {
+            mode: RoutingCapacityReadMode::SnapshotOnly,
+            max_concurrency,
+            in_flight,
+            acquired: false,
+        },
+        source_refs: RoutingCandidateSourceRefs {
+            station_key_id: projection.identity.station_key_id.clone(),
+            station_id: projection.identity.station_id.clone(),
+            endpoint_revision: projection.identity.endpoint_revision,
+            snapshot_id: projection.provenance.snapshot_id.clone(),
+            fact_version_vector: projection.provenance.fact_version_vector.clone(),
+            projector_version: projection.provenance.projector_version.to_string(),
+        },
+        hard_rejection_codes: projection
+            .hard_rejection_codes
+            .iter()
+            .map(|code| (*code).to_string())
+            .collect(),
+    }
+}
+
+fn capability_label(supported: bool) -> String {
+    if supported {
+        "allow".to_string()
+    } else {
+        "reject".to_string()
     }
 }
