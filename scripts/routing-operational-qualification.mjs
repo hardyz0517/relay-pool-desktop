@@ -48,7 +48,38 @@ function assertVerifyPreflightIsWired() {
 function assertManifestShape(manifest) {
   assert(manifest.schema_version === 1, "self-check manifest schema_version must be 1");
   assert(manifest.owner_task === 26, "self-check manifest owner_task must be 26");
-  assert(Array.isArray(manifest.recommended_local_commands), "manifest requires recommended local commands");
+  assert(Array.isArray(manifest.required_development_commands), "manifest requires development commands");
+  assert(Array.isArray(manifest.optional_aggregate_commands), "manifest requires optional aggregate commands");
+  assert(
+    new Set(manifest.required_development_commands).size === manifest.required_development_commands.length,
+    "required development commands must not contain duplicates",
+  );
+  for (const command of [
+    "pnpm.cmd architecture:fixtures",
+    "pnpm.cmd architecture:typescript",
+    "pnpm.cmd architecture:commands",
+    "pnpm.cmd architecture:security",
+    "pnpm.cmd architecture:artifacts",
+    "pnpm.cmd test:contracts",
+    "pnpm.cmd build",
+    "cargo check --locked --manifest-path src-tauri/Cargo.toml",
+    "pnpm.cmd architecture:scale-baseline",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60",
+    "node scripts/routing-operational-qualification.mjs",
+  ]) {
+    assert(
+      manifest.required_development_commands.includes(command),
+      `manifest required development commands missing ${command}`,
+    );
+  }
+  assert(
+    !manifest.required_development_commands.includes("pnpm.cmd verify:full"),
+    "verify:full is optional and must not be part of required development commands",
+  );
+  assert(
+    manifest.optional_aggregate_commands.includes("pnpm.cmd verify:full"),
+    "verify:full should remain documented as an optional aggregate check",
+  );
   assert(Array.isArray(manifest.required_soak_suites), "manifest requires soak suites");
   assert(manifest.required_soak_suites.length >= 10, "manifest must cover the final routing/proxy fault mix");
   assert(manifest.required_thresholds?.recommended_duration_minutes === 60, "manifest recommended soak duration must be 60 minutes");

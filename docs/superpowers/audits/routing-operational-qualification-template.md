@@ -14,12 +14,23 @@ This file defines the human-readable checklist for a development-period local se
 - Machine/OS:
 - Rust/Node/pnpm versions:
 
-## Recommended local commands
+## Required development commands
 
-- `pnpm.cmd verify:full`
+- `pnpm.cmd architecture:fixtures`
+- `pnpm.cmd architecture:typescript`
+- `pnpm.cmd architecture:commands`
+- `pnpm.cmd architecture:security`
+- `pnpm.cmd architecture:artifacts`
+- `pnpm.cmd test:contracts`
+- `pnpm.cmd build`
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`
 - `pnpm.cmd architecture:scale-baseline`
 - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60`
 - `node scripts/routing-operational-qualification.mjs`
+
+Optional aggregate check, only when the local Node/toolchain lifecycle ledger matches:
+
+- `pnpm.cmd verify:full`
 
 ## Evidence boundaries
 

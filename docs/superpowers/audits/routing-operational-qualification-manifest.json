@@ -10,11 +10,21 @@
     "scale_baseline_output_root": "output/architecture-scale/baseline/",
     "secret_policy": "no API keys, cookies, authorization headers, full upstream URLs, prompts, responses, provider payloads, local database files, WAL/SHM files, screenshots, or raw logs are tracked"
   },
-  "recommended_local_commands": [
-    "pnpm.cmd verify:full",
+  "required_development_commands": [
+    "pnpm.cmd architecture:fixtures",
+    "pnpm.cmd architecture:typescript",
+    "pnpm.cmd architecture:commands",
+    "pnpm.cmd architecture:security",
+    "pnpm.cmd architecture:artifacts",
+    "pnpm.cmd test:contracts",
+    "pnpm.cmd build",
+    "cargo check --locked --manifest-path src-tauri/Cargo.toml",
     "pnpm.cmd architecture:scale-baseline",
     "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60",
     "node scripts/routing-operational-qualification.mjs"
+  ],
+  "optional_aggregate_commands": [
+    "pnpm.cmd verify:full"
   ],
   "required_soak_suites": [
     "routing_production_composition",
