@@ -100,8 +100,20 @@ runMain(() => {
       const block = commandBlock(sourceCache.get(sourcePath), entry.command, sourcePath);
       const signature = commandSignature(block, entry.command);
       const stateMatches = [...signature.matchAll(/State\s*<\s*'_\s*,\s*([^>]+?)\s*>/g)].map((match) => match[1].trim());
-      assert(stateMatches.length === 1, `${entry.command} must inject exactly one Tauri State`);
-      assert(stateMatches[0] === facade.state_type, `${entry.command} must inject State<'_, ${facade.state_type}>`);
+      const allowedExtraStates = entry.allowed_extra_states ?? [];
+      assert(Array.isArray(allowedExtraStates), `${entry.command}.allowed_extra_states must be an array when present`);
+      const expectedStates = [facade.state_type, ...allowedExtraStates];
+      assert(
+        stateMatches.length === expectedStates.length,
+        `${entry.command} must inject exactly ${expectedStates.length} Tauri State value(s)`,
+      );
+      assert(stateMatches[0] === facade.state_type, `${entry.command} must inject State<'_, ${facade.state_type}> first`);
+      for (const extraState of allowedExtraStates) {
+        assert(
+          stateMatches.includes(extraState),
+          `${entry.command} must declare allowed extra State<'_, ${extraState}> in its signature`,
+        );
+      }
       assert(!signature.includes("AppServices"), `${entry.command} must not inject AppServices`);
       assert(!/\bservices\s*\./.test(block), `${entry.command} must call the facade, not AppServices services.*`);
     }

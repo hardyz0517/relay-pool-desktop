@@ -9,6 +9,7 @@ const runtimeSnapshot = read("src/lib/projections/runtimeSnapshot.ts");
 const generated = read("src/lib/bridge/generated.ts");
 const registry = read("src-tauri/src/ipc/registry.rs");
 const settingsStore = read("src-tauri/src/persistence/stores/settings_store.rs");
+const commandFacadeMatrix = JSON.parse(read("docs/superpowers/audits/architecture-scale-command-facade-matrix.json"));
 
 for (const [legacy, profile] of [
   ["priority_fallback", "priority_first"],
@@ -91,6 +92,17 @@ assert.match(
   settingsStore,
   /hierarchical_routing_migration_v1_json/u,
   "settings store must persist one complete hierarchical migration config",
+);
+assert.ok(
+  commandFacadeMatrix.facades
+    ?.find((facade) => facade.state_type === "SettingsStationsCommandFacade")
+    ?.commands?.some(
+      (entry) =>
+        entry.command === "confirm_hierarchical_routing_migration" &&
+        entry.use_case === "confirm_hierarchical_routing_migration" &&
+        entry.dependencies?.includes("SettingsService"),
+    ),
+  "command facade matrix must register migration confirmation as a SettingsService use case",
 );
 
 console.log("routing migration readiness architecture checks passed");
