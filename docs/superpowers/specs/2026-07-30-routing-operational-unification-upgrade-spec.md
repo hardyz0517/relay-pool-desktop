@@ -46,11 +46,11 @@ Canonical Facts / Evidence
 - `2026-07-17-local-routing-reliability-upgrade-design.md` 的 async transport、统一执行循环、commit point、超时预算和 finalization-once；
 - `2026-07-19-request-lifecycle-architecture-upgrade-design.md` 的 Request/Attempt/Protocol/Delivery 所有权、逐 attempt journal、幂等终结和有界 writer；
 - `2026-07-22-architecture-scale-upgrade-design.md` 的窄 facade、composition root、consumer-owned ports、单一状态 owner 和 architecture fitness gates；
-- 状态监控 V2 的 planning snapshot、执行/target/attempt 分层、健康写回、read model、retention 和发布门禁。
+- 状态监控 V2 的 planning snapshot、执行/target/attempt 分层、健康写回、read model、retention 和本地资格门禁。
 
 本 spec 修订 `2026-07-11-sub2api-style-automatic-routing-design.md` 的生产选择部分：保留倍率硬上限、group scope、容量、等待、affinity、低价路由和解释能力；不再把复杂多权重总分与 TopK weighted order 作为默认生产算法。已有 scheduler weight 配置进入兼容迁移，不继续扩充；`cheap_first` 的产品意图由 `CostFirst` 的明确词典序合同承接，而不是被 priority-first 静默替代。
 
-发生冲突时优先级遵守 `docs/README.md`：`AGENTS.md` 与安全约束、根目录当前规范和明确冻结合同、当前代码/自动化中仍有效的外部兼容与发布约束、本 spec 的目标合同、较早设计记录。当前代码中的现有缺陷是审计基线而不是永久目标；但实现者也不能用本 spec 绕过现有测试、协议或迁移约束。若本 spec 与 `PROJECT_PLAN.md`、状态监控 V2、Persistence V2 或请求生命周期冻结合同存在真实冲突，Stage 0 必须形成具名 ADR，并先同步修订权威规范、相关测试与双方条款后才能实现，不能由实现者临场选择。
+发生冲突时优先级遵守 `docs/README.md`：`AGENTS.md` 与安全约束、根目录当前规范和明确冻结合同、当前代码/自动化中仍有效的外部兼容与本地资格约束、本 spec 的目标合同、较早设计记录。当前代码中的现有缺陷是审计基线而不是永久目标；但实现者也不能用本 spec 绕过现有测试、协议或迁移约束。若本 spec 与 `PROJECT_PLAN.md`、状态监控 V2、Persistence V2 或请求生命周期冻结合同存在真实冲突，Stage 0 必须形成具名 ADR，并先同步修订权威规范、相关测试与双方条款后才能实现，不能由实现者临场选择。
 
 `PROJECT_PLAN.md` 已把状态监控 V2 implementation cutover 作为当前主线，但当前工作区仍有后续改动，且 live provider/soak/升级等本地资格尚未全部关闭。Stage 1 开始前必须以已合并或明确冻结的 monitoring baseline 为前置条件；本 spec 只通过共享 fact/observation port 与它集成，不重写其 scheduler、profile、transport、retention 或 read model。
 
@@ -1104,9 +1104,9 @@ src-tauri/src/application/queries/
 1. 新增明确 `routing_policy_version = hierarchical_v1`；
 2. migration 保留旧字段，不把值映射成未经证明的新语义；
 3. UI cutover 后停止编辑旧 weights，并显示一次迁移说明；
-4. import/export 在一个发布观察周期内保留字段但标记 legacy ignored；
+4. import/export 在开发期观察窗口内保留字段但标记 legacy ignored；
 5. architecture gate 禁止 production selector 重新读取 legacy weights；
-6. 一个稳定发布周期后，通过独立 deletion ledger 决定删除 schema/DTO 字段。
+6. 开发期观察窗口和 reset/reinstall/reimport 路径验证后，通过独立 deletion ledger 决定删除 schema/DTO 字段；若未来进入稳定产品阶段，再由发布 ADR 重新定义保留周期。
 
 旧 `score/scheduler_score/factors` 数值不映射到新算法。新 decision DTO 返回 availability/priority/preference/cost/utilization/LRU tiers 与最终 rank；兼容字段在一个观察周期内为 null/legacy label，UI 不再展示一个容易被误读为全局质量的“智能分”。
 
@@ -1114,25 +1114,25 @@ src-tauri/src/application/queries/
 
 现有安装可能仍使用 `PriorityFallback/StableFirst/BackupOnly/CheapFirst/CostStableFirst` 且没有 multiplier ceiling，迁移不能静默改变成本边界：
 
-1. cutover 前一个发布版本加入只读资格检查和显式迁移 UI，旧 production router 在该预迁移版本内保持原行为；
+1. cutover 前在同一开发分支内加入只读资格检查、显式迁移 UI 和本地 checkpoint；旧 production router 在正式切换前保持原行为，但不要求公开预迁移版本；
 2. 迁移 UI 可以提出但不能静默提交以下语义映射：`PriorityFallback/StableFirst -> PriorityFirst`，`CheapFirst/CostStableFirst -> CostFirst`；stable 类旧策略同时展示 affinity 开关/TTL 的确认。`BackupOnly` 因当前名称与实际 penalty 语义容易误读，不自动映射，必须让用户明确选择 primary/backup tier 行为；
 3. 用户确认 ordering profile、max multiplier、group scope、backup/depleted policy 与 affinity 后，保存完整 `hierarchical_v1` config；
 4. 新安装在启用本地自动路由前必须完成同一配置；
-5. 正式 cutover 版本只执行 `hierarchical_v1`。仍未配置的安装保持 proxy route admission disabled，并返回可操作的 `routing_configuration_required`，不得使用无限倍率、默认 1.0 或暗中回退 legacy；
-6. legacy enum/字段可以为 import/read compatibility 保留一个观察周期，但 architecture gate 证明它们不再进入 production execution。
+5. default-v2 cutover 后只执行 `hierarchical_v1`。仍未配置的安装保持 proxy route admission disabled，并返回可操作的 `routing_configuration_required`，不得使用无限倍率、默认 1.0 或暗中回退 legacy；
+6. legacy enum/字段可以为 import/read compatibility 和开发期观察保留，但 architecture gate 证明它们不再进入 production execution；删除时以本地 qualification、reset/reimport 证据和 deletion ledger 为准。
 
 ### 14.3 Compatibility caches
 
-`station_keys.rate_multiplier` 等兼容字段继续遵守 field ownership ledger。新 projector 只按批准的 fallback 读取；所有消费者迁移并经过一个发布观察周期后才能单独提删除票据。
+`station_keys.rate_multiplier` 等兼容字段继续遵守 field ownership ledger。新 projector 只按批准的 fallback 读取；所有消费者迁移并经过开发期观察窗口、reset/reimport 验证后才能单独提删除票据。未来稳定产品若需要更长兼容期，由发布 ADR 重新定义。
 
 ### 14.4 与 debug-only legacy proxy runtime 的边界
 
-`PROJECT_PLAN.md` 当前允许 debug build 通过 `RELAY_POOL_PROXY_RUNTIME=legacy` 回到上一完整 proxy owner，并要求默认 v2 完成一次真实发布回归后再删除。该既有迁移门禁不由本 spec 提前取消，但必须满足：
+`PROJECT_PLAN.md` 当前允许 debug build 通过 `RELAY_POOL_PROXY_RUNTIME=legacy` 回到上一完整 proxy owner。结合 2026-07-31 决策，默认 v2 不再要求先完成一次公开真实发布回归才能删除 debug legacy；删除前只要求本地 observation/soak、reset/reinstall/reimport 和 deletion ledger 证据。该开发期迁移门禁必须满足：
 
 - legacy runtime 只能是完整旧 composition，不能拼接新 planner + 旧 feedback、旧 selector + 新 lease 等混合组件；
 - 不按 request 动态切换，不进入 UI，不作为 writer failure 时的自动 fallback，也不扩展其功能；
-- Stage 5/6 必须删除 default v2 内部的旧 selector/score/静态 fallback；“release candidate 不留不可达 legacy”特指这些同 composition 残留，不误指由当前 master plan 单独治理的 debug runtime；
-- debug runtime 的真实删除继续遵守已有观察周期与独立 deletion ticket，完成后同步收紧 architecture gate；
+- Stage 5/6 必须删除 default v2 内部的旧 selector/score/静态 fallback；“cutover candidate 不留不可达 legacy”特指这些同 composition 残留，不误指由当前 master plan 单独治理的 debug runtime；
+- debug runtime 的真实删除继续遵守本地观察窗口与独立 deletion ticket，完成后同步收紧 architecture gate；
 - 本地资格报告必须分别声明 default v2 与 debug legacy 的可达性，不能用 debug fallback 掩盖 default v2 未通过的测试。
 
 ## 15. 外部项目的取舍
@@ -1723,7 +1723,7 @@ Relay Pool 仍是本地桌面工具：一个固定 OpenAI-compatible 入口、�
 
 ## 26. 辩证审查后的剩余风险与开工门禁
 
-| 风险 | 当前事实 | 开工/发布门禁 |
+| 风险 | 当前事实 | 开工/本地资格门禁 |
 |---|---|---|
 | 状态监控 V2 已 cutover 但仍在收口 | 当前工作区存在后续改动，live/soak/升级资格未完全关闭，health/target port 仍可能变化 | Stage 1 前冻结/合并 monitoring baseline，只通过批准的 observation/target port 集成 |
 | capability evidence 来源不足 | 现有 capability 多为 boolean/manual list，collector inventory coverage 未建模 | 先迁移 tri-state/source/coverage；unknown 按本 spec provisional/strict policy 处理，不伪造 collected truth |

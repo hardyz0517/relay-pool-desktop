@@ -1119,7 +1119,7 @@ pnpm.cmd test:contracts
 
 ## 29. Task 22：原子切换 default-v2 production composition
 
-**Depends on:** Task 21 全绿；预迁移版本已发布且本机 readiness 没有未确认 blocker。
+**Depends on:** Task 21 全绿；本地 pre-cutover readiness/checkpoint 没有未确认 blocker。开发期不要求预迁移版本发布。
 
 **Files:**
 
@@ -1355,19 +1355,19 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 ## 33. Task 26：执行 fault、并发、性能与 soak 本地资格
 
-**Depends on:** Tasks 22-25；release build 配置与最终 schema 已冻结。
+**Depends on:** Tasks 22-25；release-mode build 配置与最终 schema 已冻结。
 
 **Files:**
 
 - Create/extend: routing fault/concurrency/performance integration tests
 - Extend: `scripts/run-routing-operational-soak.ps1` with final fault mix、metrics and report output
 - Create: `scripts/routing-operational-qualification.mjs`
-- Modify: `scripts/verify.ps1` release profile，只增加 deterministic routing qualification/artifact validator；1 小时 soak 保持独立显式 step
-- Modify: `.github/workflows/release.yml` 与 `scripts/release-verification-entrypoint.test.mjs`，在 signed bundle 前运行同 revision soak + qualification artifact validation
+- Modify: `scripts/verify.ps1` release-mode/local qualification profile，只增加 deterministic routing qualification/artifact validator；1 小时 soak 保持独立显式 step
+- Do not modify for this development upgrade: `.github/workflows/release.yml` 与 release verification entrypoint。未来稳定发布 ADR 才可把同 revision soak + qualification artifact validation 接入 signed bundle 前置验证
 - Modify: architecture scale baseline datasets/reports
-- Modify: version/changelog/release metadata，和实现/门禁脚本一起形成最终 candidate commit
+- Modify: version/changelog/local qualification metadata，和实现/门禁脚本一起形成最终 candidate commit
 - Create: `docs/superpowers/audits/` 下不含运行结果的 qualification manifest/template
-- Do not commit: 最终运行结果；写入现有 ignored `output/architecture-scale/qualification/release/` 并由 CI 上传 artifact
+- Do not commit: 最终运行结果；写入现有 ignored `output/architecture-scale/qualification/local/` 或 CI artifact path
 
 **Candidate freeze before final qualification:**
 
@@ -1454,7 +1454,7 @@ node scripts/routing-operational-qualification.mjs
 - [ ] 真实 provider 验证低频、有预算，覆盖 adapter-confirmed auth/model semantic fixture；无法确认的 403/404 仍为 Uncertain/neutral。
 - [ ] CCSwitch 配合场景验证固定本地入口、启动/停止、端口占用、sleep/resume 和 upgrade 后配置不漂移。
 - [ ] 核对 SQLite journal/decision/health/cost 与 UI timeline；所有数量、attempt order、currency aggregate 和 selected route 一致。
-- [ ] 检查 release logs、trace、UI、errors 和 support snapshot 无 secret、完整 headers/URL 或 payload。
+- [ ] 检查 local qualification logs、trace、UI、errors 和 support snapshot 无 secret、完整 headers/URL 或 payload。
 
 **Run:**
 
@@ -1470,7 +1470,7 @@ node scripts/routing-operational-qualification.mjs
 
 ## 35. Task 28：登记并执行 debug legacy runtime 后续删除票据
 
-**Depends on:** 不是本次 cutover 的组成部分；必须满足 `PROJECT_PLAN.md` 规定的 default-v2 正式发布后真实客户端观察门禁。
+**Depends on:** 不是本次 cutover 的组成部分；必须满足本计划规定的 default-v2 本地 observation/soak、真实客户端、reset/reinstall/reimport 和 deletion ledger 证据。开发期不要求正式发布后观察门禁。
 
 **Files:**
 
@@ -1491,7 +1491,7 @@ node scripts/routing-operational-qualification.mjs
 - [ ] 删除完整 debug legacy composition、环境开关、专属 tests/docs/dependencies 和仅服务于它的 compatibility adapter。
 - [ ] 保留仍有历史数据语义的 compatibility fields 时，迁移到只读 projection 或明确清理；不得让 default-v2 重读 legacy policy。
 - [ ] architecture gate 禁止 legacy runtime symbol/env/config owner 回流。
-- [ ] 重跑 production composition、upgrade fixture、release 和真实客户端 smoke tests。
+- [ ] 重跑 production composition、upgrade fixture、release-mode build 和真实客户端 smoke tests。
 
 **Run when ticket preconditions are met:**
 
@@ -1637,4 +1637,4 @@ Stage 7 qualification audit 必须逐行填写实际 commit/test/report 链接�
 - deletion ledger 无无 owner、无期限的临时项；
 - `docs/PROJECT_PLAN.md`、相关 ADR/spec、命令/IPC fixtures 与实现一致。
 
-本计划不以算法复杂度作为先进性目标。完成后的技术路线是成熟工程软件常用的 deterministic layered eligibility、lexicographic ordering、bounded retry/wait、RAII admission、outlier/half-open、immutable snapshot、typed outcomes 和 request-time settlement；其优势来自单一事实所有权、可证明生命周期、可解释决策和完整发布闭环，而不是 LLM 或不可审计的在线学习。
+本计划不以算法复杂度作为先进性目标。完成后的技术路线是成熟工程软件常用的 deterministic layered eligibility、lexicographic ordering、bounded retry/wait、RAII admission、outlier/half-open、immutable snapshot、typed outcomes 和 request-time settlement；其优势来自单一事实所有权、可证明生命周期、可解释决策和本地 qualification 闭环，而不是 LLM、不可审计的在线学习或当前阶段不需要的稳定发布/回滚体系。
