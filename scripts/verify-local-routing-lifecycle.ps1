@@ -4,6 +4,8 @@ param(
     [string]$Bearer = $env:RELAY_POOL_LOCAL_BEARER,
     [string]$Model = $env:RELAY_POOL_E2E_MODEL,
     [string]$EmbeddingsModel = $env:RELAY_POOL_E2E_EMBEDDINGS_MODEL,
+    [string]$OutputPath = "output\routing-operational\qualification\local-client-smoke\routing-local-client-smoke-summary.json",
+    [switch]$AuthorizeLocalClientSmoke,
     [switch]$Smoke,
     [switch]$SkipEmbeddings,
     [switch]$SkipDbVerify
@@ -24,7 +26,56 @@ function Mask-Text($Value) {
     $text = $text -replace '(?i)bearer\s+[A-Za-z0-9._~+/=-]+', 'Bearer [REDACTED]'
     $text = $text -replace 'sk-[A-Za-z0-9._~+/=-]{8,}', 'sk-[REDACTED]'
     $text = $text -replace '(?i)(authorization|cookie)\s*[:=]\s*[^,\s}]+', '$1=[REDACTED]'
+    $text = $text -replace 'https?://[^\s`"''\)\]\}]+', '[url-redacted]'
     return $text
+}
+
+function Get-Sha256Hex {
+    param([string]$Value)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-EndpointEvidence {
+    param([string]$RawBaseUrl)
+    $normalized = $RawBaseUrl.TrimEnd("/")
+    $uri = $null
+    $parseOk = [System.Uri]::TryCreate($normalized, [System.UriKind]::Absolute, [ref]$uri)
+    return [ordered]@{
+        redacted = $true
+        raw_url_stored = $false
+        sha256 = Get-Sha256Hex $normalized
+        scheme = if ($parseOk) { $uri.Scheme } else { "invalid" }
+        local_loopback = if ($parseOk) {
+            $host = $uri.Host.ToLowerInvariant()
+            $host -in @("localhost", "127.0.0.1", "::1")
+        } else {
+            $false
+        }
+        explicit_port = if ($parseOk) { -not $uri.IsDefaultPort } else { $false }
+    }
+}
+
+function Write-SmokeSummary {
+    param([object]$Summary)
+
+    $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+    $resolvedOutputPath = if ([System.IO.Path]::IsPathRooted($OutputPath)) {
+        $OutputPath
+    } else {
+        Join-Path $repoRoot $OutputPath
+    }
+    $outputDirectory = Split-Path -Parent $resolvedOutputPath
+    if ($outputDirectory -and -not (Test-Path -LiteralPath $outputDirectory)) {
+        New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+    }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($resolvedOutputPath, ($Summary | ConvertTo-Json -Depth 10), $utf8NoBom)
 }
 
 function Read-ProxyPort($Path) {
@@ -123,6 +174,9 @@ function Invoke-LifecycleRequest($Name, $Method, $Path, $BodyObject, [switch]$St
     }
 }
 
+if (-not $AuthorizeLocalClientSmoke) {
+    Fail "Local routing lifecycle smoke is disabled by default. Re-run with -AuthorizeLocalClientSmoke after confirming the configured station/key may receive low-frequency synthetic requests."
+}
 if (-not $Bearer) {
     Fail "Set RELAY_POOL_LOCAL_BEARER in the process environment; this script never reads or prints the bearer from SQLite."
 }
@@ -175,3 +229,32 @@ foreach ($case in $matrix) {
 
 $safe = $results | ConvertTo-Json -Depth 8
 Write-Output (Mask-Text $safe)
+
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$sourceRevision = try { (& git -C $repoRoot rev-parse HEAD).Trim() } catch { $null }
+$resolvedDatabasePath = Resolve-Path -LiteralPath $DatabasePath -ErrorAction SilentlyContinue
+$databasePathForHash = if ($resolvedDatabasePath) { $resolvedDatabasePath.Path } else { $DatabasePath }
+$summary = [ordered]@{
+    schemaVersion = 1
+    kind = "routing-operational-local-client-smoke"
+    sourceRevision = $sourceRevision
+    generatedAt = (Get-Date).ToString("o")
+    authorized = $true
+    boundaries = [ordered]@{
+        realProviderCredentialRead = $false
+        localBearerPrinted = $false
+        rawBaseUrlStored = $false
+        outputPathTracked = $false
+    }
+    endpoint = Get-EndpointEvidence $BaseUrl
+    database = [ordered]@{
+        pathStored = $false
+        pathSha256 = Get-Sha256Hex $databasePathForHash
+        lifecycleRowsVerified = -not $SkipDbVerify
+    }
+    mode = if ($Smoke) { "smoke" } else { "full" }
+    skippedEmbeddings = [bool]$SkipEmbeddings
+    results = @($results.ToArray())
+}
+Write-SmokeSummary -Summary $summary
+Write-Host "local routing lifecycle smoke summary written to $OutputPath"

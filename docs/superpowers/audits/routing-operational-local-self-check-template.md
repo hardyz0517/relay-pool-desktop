@@ -39,6 +39,9 @@ The runner uses existing Rust/contract checks for:
 ## Manual / authorization-gated observations
 
 - Real OpenAI-compatible client smoke:
+  - Use `scripts/verify-local-routing-lifecycle.ps1 -AuthorizeLocalClientSmoke` against the running Relay Pool local entry.
+  - Requires `RELAY_POOL_LOCAL_BEARER` and `RELAY_POOL_E2E_MODEL`; full mode also requires `RELAY_POOL_E2E_EMBEDDINGS_MODEL` unless `-SkipEmbeddings` is intentional.
+  - Summary output defaults to ignored `output/routing-operational/qualification/local-client-smoke/` and records only redacted endpoint/database evidence plus request ids.
 - Real provider semantic fixture:
   - Use `scripts/run-openai-compatible-live-qualification.ps1 -BaseUrl <approved endpoint>`.
   - Requires `RELAY_POOL_LIVE_API_KEY`; without it the script fails closed.

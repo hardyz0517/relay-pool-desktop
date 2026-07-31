@@ -15,7 +15,7 @@ Unit tests, loopback executor tests, fake upstream-only fixtures, or smoke-only 
 ```powershell
 $env:RELAY_POOL_LOCAL_BEARER = "<redacted local bearer>"
 $env:RELAY_POOL_E2E_MODEL = "<model served by the configured station>"
-powershell -ExecutionPolicy Bypass -File scripts/verify-local-routing-lifecycle.ps1
+powershell -ExecutionPolicy Bypass -File scripts/verify-local-routing-lifecycle.ps1 -AuthorizeLocalClientSmoke
 ```
 
 For focused SQLite verification of a captured request id:
@@ -62,5 +62,5 @@ No real authenticated run has been recorded in this audit file yet. The gate rem
 
 - `RELAY_POOL_LOCAL_BEARER` was not present in the current process environment.
 - `RELAY_POOL_E2E_MODEL` was not present in the current process environment.
-- `scripts/verify-local-routing-lifecycle.ps1 -Smoke -SkipDbVerify` correctly failed before sending HTTP because the bearer was missing.
+- `scripts/verify-local-routing-lifecycle.ps1 -Smoke -SkipDbVerify` correctly failed before sending HTTP because the bearer was missing. Current reruns should pass `-AuthorizeLocalClientSmoke`; without it the script now fails closed even earlier.
 - `scripts/verify-request-lifecycle-db.ps1` connected to the real app SQLite path but failed closed because the currently initialized live database did not yet expose the new terminal columns (`terminal_kind`, `terminal_code`, `terminal_detail`, `protocol_completed`, `delivery_terminal`, `selected_attempt_ordinal`). This indicates the live app/schema must be started/migrated from the upgraded build before Task 16 can pass.
