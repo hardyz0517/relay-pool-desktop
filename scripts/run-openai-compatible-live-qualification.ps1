@@ -31,10 +31,62 @@ function Redact-Text {
     param([AllowNull()][string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
     $redacted = $Value -replace "sk-[A-Za-z0-9_-]+", "sk-redacted"
+    $redacted = $redacted -replace "(?i)bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]"
+    $redacted = $redacted -replace "(?i)(authorization|cookie|api[-_]?key|token)\s*[:=]\s*[^,\s}]+", '$1=[REDACTED]'
+    $redacted = $redacted -replace "https?://[^\s`"')\]}]+", "[url-redacted]"
     if ($redacted.Length -gt 240) {
         return $redacted.Substring(0, 240)
     }
     return $redacted
+}
+
+function Get-Sha256Hex {
+    param([string]$Value)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return (($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-EndpointHostClass {
+    param([AllowNull()][string]$Host)
+    if ([string]::IsNullOrWhiteSpace($Host)) { return "unknown" }
+    $normalized = $Host.Trim().ToLowerInvariant()
+    if ($normalized -in @("localhost", "127.0.0.1", "::1")) { return "loopback" }
+    $ip = $null
+    if ([System.Net.IPAddress]::TryParse($normalized, [ref]$ip)) {
+        $bytes = $ip.GetAddressBytes()
+        if ($ip.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork) {
+            if ($bytes[0] -eq 10) { return "private" }
+            if ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) { return "private" }
+            if ($bytes[0] -eq 192 -and $bytes[1] -eq 168) { return "private" }
+            if ($bytes[0] -eq 127) { return "loopback" }
+            return "public-ip"
+        }
+        if ($ip.IsIPv6LinkLocal -or $ip.IsIPv6SiteLocal) { return "private" }
+        if ([System.Net.IPAddress]::IsLoopback($ip)) { return "loopback" }
+        return "public-ip"
+    }
+    return "hostname-redacted"
+}
+
+function Get-EndpointEvidence {
+    param([string]$RawBaseUrl)
+    $normalized = $RawBaseUrl.TrimEnd("/")
+    $uri = $null
+    $parseOk = [System.Uri]::TryCreate($normalized, [System.UriKind]::Absolute, [ref]$uri)
+    return [ordered]@{
+        redacted = $true
+        raw_url_stored = $false
+        sha256 = Get-Sha256Hex $normalized
+        scheme = if ($parseOk) { $uri.Scheme } else { "invalid" }
+        host_class = if ($parseOk) { Get-EndpointHostClass $uri.Host } else { "invalid" }
+        explicit_port = if ($parseOk) { -not $uri.IsDefaultPort } else { $false }
+        path_present = if ($parseOk) { -not [string]::IsNullOrWhiteSpace($uri.AbsolutePath.Trim("/")) } else { $false }
+    }
 }
 
 function Invoke-JsonGet {
@@ -221,7 +273,7 @@ $summary = [ordered]@{
     kind = "product-shaped station key connectivity live probe"
     generated_at_local = (Get-Date).ToString("yyyy-MM-ddTHH:mm:sszzz")
     source_revision = (& git -C $repoRoot rev-parse HEAD).Trim()
-    endpoint = $BaseUrl.TrimEnd("/")
+    endpoint = Get-EndpointEvidence $BaseUrl
     auth = [ordered]@{
         scheme = "bearer"
         credential = "redacted"
