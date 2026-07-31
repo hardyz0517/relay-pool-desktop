@@ -1,3 +1,14 @@
+mod services {
+    pub(crate) mod time {
+        pub(crate) fn now_millis_for_services() -> u128 {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time after epoch")
+                .as_millis()
+        }
+    }
+}
+
 mod persistence {
     pub(crate) mod error {
         include!(concat!(
@@ -41,6 +52,14 @@ mod persistence {
             "/src/persistence/schema_compatibility.rs"
         ));
     }
+    pub(crate) mod maintenance {
+        pub(crate) mod request_log_url_sanitizer {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/maintenance/request_log_url_sanitizer.rs"
+            ));
+        }
+    }
     pub(crate) mod health_check {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -82,9 +101,7 @@ use legacy_import::{
     detect_profile, import_profile, source_candidate_identity, validate_import,
     ExpectedImportManifest, UpgradeError,
 };
-use persistence::{
-    migrations::migrator, runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility,
-};
+use persistence::{runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility};
 use semver::Version;
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteConnectOptions, Connection, Executor, Row, SqliteConnection};
@@ -881,17 +898,9 @@ fn released_profile_ids_from_manifest() -> BTreeSet<String> {
 }
 
 async fn create_v2_target(path: &Path) {
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true);
-    let mut connection = SqliteConnection::connect_with(&options)
+    persistence::migrations::initialize_v2_database(path)
         .await
-        .expect("target connection");
-    migrator()
-        .run_direct(&mut connection)
-        .await
-        .expect("V2 migrations");
-    connection.close().await.expect("close target");
+        .expect("initialize V2 target through production migration path");
 }
 
 fn binary_v2_schema_8() -> BinaryCompatibility {

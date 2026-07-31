@@ -1426,6 +1426,8 @@ node scripts/routing-operational-qualification.mjs
 **Files:**
 
 - Produce: local self-check/reset-reimport evidence under ignored output/CI artifact path
+- Create/extend: `scripts/run-routing-operational-local-self-check.ps1` and a contract test that verifies it reuses existing deterministic recovery/routing suites and does not become a release gate
+- Create: `docs/superpowers/audits/routing-operational-local-self-check-template.md` without filled runtime results
 - After successful local self-check only: Modify `docs/PROJECT_PLAN.md` completion status and remaining debug-legacy cleanup note in a separate documentation commit
 - Do not commit: real credentials、local DB、raw logs、screenshots containing private data
 
@@ -1462,6 +1464,7 @@ node scripts/routing-operational-qualification.mjs
 ```powershell
 pnpm.cmd verify:full
 cargo check --locked --manifest-path src-tauri/Cargo.toml
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1
 node scripts/routing-operational-qualification.mjs
 ```
 
