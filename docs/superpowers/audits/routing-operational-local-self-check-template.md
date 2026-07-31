@@ -40,6 +40,9 @@ The runner uses existing Rust/contract checks for:
 
 - Real OpenAI-compatible client smoke:
 - Real provider semantic fixture:
+  - Use `scripts/run-openai-compatible-live-qualification.ps1 -BaseUrl <approved endpoint>`.
+  - Requires `RELAY_POOL_LIVE_API_KEY`; without it the script fails closed.
+  - Summary output defaults to ignored `output/architecture-scale/qualification/live-provider/` and records redacted endpoint evidence (`sha256`, scheme, host class, path/port booleans) instead of the raw provider URL.
 - CCSwitch fixed local entry:
 - Windows sleep/resume:
 - UI timeline versus SQLite journal/decision/health/cost:

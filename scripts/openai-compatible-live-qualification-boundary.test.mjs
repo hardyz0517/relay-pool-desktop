@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync("scripts/run-openai-compatible-live-qualification.ps1", "utf8");
 const contracts = readFileSync("scripts/run-contract-tests.mjs", "utf8");
+const task27Template = readFileSync(
+  "docs/superpowers/audits/routing-operational-local-self-check-template.md",
+  "utf8",
+);
 
 assert.ok(
   source.includes("[string]$OutputPath = \"output\\architecture-scale\\qualification\\live-provider\\openai-compatible-live-qualification-summary.json\""),
@@ -38,4 +42,11 @@ for (const redaction of [
 assert.ok(
   contracts.includes('["node", ["scripts/openai-compatible-live-qualification-boundary.test.mjs"]]'),
   "live provider boundary contract must be part of pnpm test:contracts",
+);
+
+assert.ok(
+  task27Template.includes("scripts/run-openai-compatible-live-qualification.ps1") &&
+    task27Template.includes("RELAY_POOL_LIVE_API_KEY") &&
+    task27Template.includes("redacted endpoint evidence"),
+  "Task 27 template must route real provider verification through the redacted live harness",
 );
