@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::{
     application::{
         error::ApplicationError, request_finalization::RequestFinalizationService,
-        request_logs::RequestLogService, routing::RoutingService, settings::SettingsService,
+        request_lifecycle::ports::LifecycleWriteError, request_logs::RequestLogService,
+        routing::RoutingService, settings::SettingsService,
     },
     models::proxy::ProxyStatus,
     services::proxy::{
@@ -157,10 +158,14 @@ impl LocalProxyCommandFacade {
             String,
             ProxyStartConfig,
         ),
-        ApplicationError,
+        LocalProxyCommandError,
     > {
         let settings = self.settings.load().await?;
         let local_access_key = self.settings.ensure_local_access_key().await?;
+        self.request_finalization
+            .reconcile_startup_interrupted_request_lifecycle()
+            .await
+            .map_err(local_proxy_startup_reconciliation_error)?;
         let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
             self.routing.as_ref().clone(),
             self.data_key,
@@ -173,5 +178,16 @@ impl LocalProxyCommandFacade {
             settings.local_proxy_port,
         );
         Ok((settings, local_access_key, config))
+    }
+}
+
+fn local_proxy_startup_reconciliation_error(error: LifecycleWriteError) -> LocalProxyCommandError {
+    match error {
+        LifecycleWriteError::Unavailable(_) => {
+            LocalProxyCommandError::Application(ApplicationError::Unavailable)
+        }
+        LifecycleWriteError::CommitOutcomeUnknown(_) => {
+            LocalProxyCommandError::Application(ApplicationError::CommitOutcomeUnknown)
+        }
     }
 }

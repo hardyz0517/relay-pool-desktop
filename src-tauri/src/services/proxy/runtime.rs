@@ -66,12 +66,18 @@ impl ProxyStartConfig {
             local_access_key,
             port,
             limits: ProxyServerLimits::default(),
-            finalization_mode: ProxyFinalizationMode::LegacyRequestCoupled,
+            finalization_mode: ProxyFinalizationMode::DualTerminal,
         }
     }
 
     pub(crate) fn with_dual_terminal_finalization(mut self) -> Self {
         self.finalization_mode = ProxyFinalizationMode::DualTerminal;
+        self
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn with_legacy_request_coupled_finalization(mut self) -> Self {
+        self.finalization_mode = ProxyFinalizationMode::LegacyRequestCoupled;
         self
     }
 }

@@ -22,12 +22,12 @@ assert.ok(
 
 assert.match(
   runtimeSource,
-  /finalization_mode:\s*ProxyFinalizationMode::LegacyRequestCoupled/,
-  "ProxyStartConfig::new_v2 must keep legacy request-coupled finalization as the production default during Task 21",
+  /finalization_mode:\s*ProxyFinalizationMode::DualTerminal/,
+  "ProxyStartConfig::new_v2 must use dual-terminal finalization as the default-v2 production finalizer after Task 22",
 );
 assert.ok(
-  runtimeSource.includes("with_dual_terminal_finalization"),
-  "dual-terminal finalization must require explicit non-production opt-in during Task 21",
+  runtimeSource.includes("with_legacy_request_coupled_finalization"),
+  "legacy request-coupled finalization may only remain as an explicit debug/test opt-in before Task 28 deletion",
 );
 assert.ok(
   runtimeSource.includes("dual_cost_finalization"),
@@ -56,8 +56,8 @@ for (const [name, source] of [
 assert.ok(
   supportSource.includes("compose_app_services") &&
     supportSource.includes("V2RoutingRepository::new") &&
-    supportSource.includes("with_dual_terminal_finalization"),
-  "loopback harness must compose real application services, V2 routing repository and explicit dual-terminal finalization",
+    supportSource.includes("start_proxy_with_production_startup"),
+  "loopback harness must compose real application services, V2 routing repository and a production startup path",
 );
 assert.ok(
   !supportSource.includes("RELAY_POOL_PROXY_RUNTIME"),

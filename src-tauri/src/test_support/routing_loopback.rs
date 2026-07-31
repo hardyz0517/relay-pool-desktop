@@ -25,7 +25,7 @@ use crate::{
         routing::{RoutingGroupFilter, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
         settings::{
             ConfirmHierarchicalRoutingMigrationInput, HierarchicalRoutingAffinityMode,
-            HierarchicalRoutingOrderingProfile,
+            HierarchicalRoutingOrderingProfile, UpdateSettingsInput,
         },
         station_keys::CreateStationKeyInput,
         stations::CreateStationInput,
@@ -43,7 +43,7 @@ const LOCAL_ACCESS_KEY: &str = "relay-local-secret";
 pub struct RoutingLoopbackHarness {
     services: AppServices,
     runtime: PersistenceRuntime,
-    proxy: ProxyRuntimeState,
+    proxy: Arc<ProxyRuntimeState>,
     data_key: [u8; 32],
     root: TempRoot,
 }
@@ -97,7 +97,7 @@ impl RoutingLoopbackHarness {
         Self {
             services,
             runtime,
-            proxy: ProxyRuntimeState::default(),
+            proxy: Arc::new(ProxyRuntimeState::default()),
             data_key,
             root,
         }
@@ -109,6 +109,42 @@ impl RoutingLoopbackHarness {
             .start(self.proxy_config(0))
             .await
             .expect("start loopback proxy");
+        ProxyEndpoint {
+            base_url: format!("http://127.0.0.1:{}", started.port),
+            local_access_key: LOCAL_ACCESS_KEY.to_string(),
+        }
+    }
+
+    pub async fn start_proxy_with_production_startup(&self) -> ProxyEndpoint {
+        let port = next_free_port();
+        self.update_proxy_port(port).await;
+        let started = crate::services::proxy::startup::start_from_v2_persisted_settings(
+            &self.services,
+            self.data_key,
+            self.proxy.as_ref(),
+        )
+        .await
+        .expect("start proxy from production startup composition");
+        assert_eq!(started.port, port);
+        ProxyEndpoint {
+            base_url: format!("http://127.0.0.1:{}", started.port),
+            local_access_key: LOCAL_ACCESS_KEY.to_string(),
+        }
+    }
+
+    pub async fn start_proxy_with_command_facade(&self) -> ProxyEndpoint {
+        let port = next_free_port();
+        self.update_proxy_port(port).await;
+        let facade = app_composition::compose_local_proxy_command_facade(
+            &self.services,
+            Arc::clone(&self.proxy),
+            self.data_key,
+        );
+        let started = facade
+            .start_local_proxy()
+            .await
+            .expect("start proxy through production command facade");
+        assert_eq!(started.port, port);
         ProxyEndpoint {
             base_url: format!("http://127.0.0.1:{}", started.port),
             local_access_key: LOCAL_ACCESS_KEY.to_string(),
@@ -407,6 +443,83 @@ impl RoutingLoopbackHarness {
         })
     }
 
+    pub async fn seed_in_progress_request_lifecycle(&self, request_id: &str) {
+        let request_id = request_id.to_string();
+        self.runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT INTO request_logs (
+                            id, request_id, started_at, method, path, endpoint, status,
+                            lifecycle_status, created_at
+                         ) VALUES (?1, ?1, '1000', 'POST', '/v1/chat/completions',
+                                   'chat_completions', 'in_progress', 'admitted', '1000')",
+                    )
+                    .bind(&request_id)
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        "INSERT INTO request_attempts (
+                            request_id, ordinal, station_id, station_key_id, endpoint_revision,
+                            started_at_ms, terminal_kind, health_effect, output_committed, terminal_at_ms
+                         ) VALUES (?1, 0, 'station-startup', 'key-startup', 1,
+                                   1000, 'succeeded', 'success', 1, 1100)",
+                    )
+                    .bind(&request_id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("seed in-progress request lifecycle");
+    }
+
+    pub async fn request_lifecycle_status(
+        &self,
+        request_id: &str,
+    ) -> RequestLifecycleStatusSummary {
+        let mut read = self
+            .runtime
+            .handle()
+            .begin_read()
+            .await
+            .expect("begin request lifecycle status read");
+        let row = sqlx::query(
+            "SELECT status, lifecycle_status, terminal_kind, terminal_code, terminal_at_ms
+             FROM request_logs WHERE request_id = ?",
+        )
+        .bind(request_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("request lifecycle status row");
+        RequestLifecycleStatusSummary {
+            status: row.get("status"),
+            lifecycle_status: row.get("lifecycle_status"),
+            terminal_kind: row.get("terminal_kind"),
+            terminal_code: row.get("terminal_code"),
+            terminal_at_ms: row.get("terminal_at_ms"),
+        }
+    }
+
+    pub async fn startup_reconciliation_requests_interrupted(&self) -> i64 {
+        let mut read = self
+            .runtime
+            .handle()
+            .begin_read()
+            .await
+            .expect("begin reconciliation progress read");
+        sqlx::query_scalar(
+            "SELECT requests_interrupted
+             FROM routing_lifecycle_reconciliation_progress
+             WHERE singleton_key = 1",
+        )
+        .fetch_one(read.connection())
+        .await
+        .expect("reconciliation progress row")
+    }
+
     fn proxy_config(&self, port: u16) -> ProxyStartConfig {
         let routing_repository: Arc<
             dyn crate::services::proxy::routing_repository::RoutingRepository,
@@ -427,6 +540,39 @@ impl RoutingLoopbackHarness {
         )
         .with_dual_terminal_finalization()
     }
+
+    async fn update_proxy_port(&self, port: u16) {
+        let settings = self.services.settings.load().await.expect("settings");
+        self.services
+            .settings
+            .update(UpdateSettingsInput {
+                local_proxy_port: port,
+                default_routing_strategy: settings.default_routing_strategy,
+                collector_proxy_mode: settings.collector_proxy_mode,
+                collector_proxy_url: settings.collector_proxy_url,
+                max_rate_multiplier: Some(settings.max_rate_multiplier),
+                default_routing_group_filter: Some(settings.default_routing_group_filter),
+                scheduler_advanced_settings: Some(settings.scheduler_advanced_settings),
+                low_balance_threshold_cny: settings.low_balance_threshold_cny,
+                collector_interval_minutes: settings.collector_interval_minutes,
+                balance_interval_minutes: settings.balance_interval_minutes,
+                group_rate_interval_minutes: settings.group_rate_interval_minutes,
+                model_list_interval_minutes: settings.model_list_interval_minutes,
+                pricing_refresh_interval_minutes: settings.pricing_refresh_interval_minutes,
+                collector_timeout_seconds: settings.collector_timeout_seconds,
+                collector_max_concurrency: settings.collector_max_concurrency,
+                allow_depleted_fallback: settings.allow_depleted_fallback,
+                developer_mode_enabled: settings.developer_mode_enabled,
+                tray_behavior: Some(settings.tray_behavior),
+            })
+            .await
+            .expect("update proxy port");
+    }
+}
+
+fn next_free_port() -> u16 {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind free port");
+    listener.local_addr().expect("free port address").port()
 }
 
 pub struct ProxyEndpoint {
@@ -529,6 +675,15 @@ pub struct ProxyStatusSummary {
     pub running: bool,
     pub active_requests: u32,
     pub request_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestLifecycleStatusSummary {
+    pub status: String,
+    pub lifecycle_status: Option<String>,
+    pub terminal_kind: Option<String>,
+    pub terminal_code: Option<String>,
+    pub terminal_at_ms: Option<i64>,
 }
 
 #[derive(Clone, PartialEq, Eq)]

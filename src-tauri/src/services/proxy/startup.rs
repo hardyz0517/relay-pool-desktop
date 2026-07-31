@@ -26,6 +26,11 @@ pub(crate) async fn start_from_v2_persisted_settings(
         .ensure_local_access_key()
         .await
         .map_err(|error| error.to_string())?;
+    services
+        .request_finalization
+        .reconcile_startup_interrupted_request_lifecycle()
+        .await
+        .map_err(|error| format!("startup request lifecycle reconciliation failed: {error:?}"))?;
     proxy
         .start(config_from_v2_services(
             services,

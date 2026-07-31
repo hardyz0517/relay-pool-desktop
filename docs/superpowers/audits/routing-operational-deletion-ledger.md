@@ -1,7 +1,7 @@
 # Routing Operational Deletion Ledger
 
-Status: Task 0 initial ledger
-Date: 2026-07-30
+Status: Task 22 default-v2 production finalization cutover in progress
+Date: 2026-07-31
 
 Each entry must either be deleted by its owner task or converted into a documented, isolated compatibility projection. No entry may become a permanent second production path.
 
@@ -19,7 +19,7 @@ Each entry must either be deleted by its owner task or converted into a document
 | Frontend pricing/group matcher | `src/lib/projections/pricingFacts.ts`, `src/lib/projections/groupFacts.ts` | UI can disagree with backend route/pricing semantics | Task 9/23/24 | Display-only until backend read model lands |
 | Arbitrary string planner errors | routing string errors and `InternalProxyError` flattening | Public client cannot distinguish config, capacity, capability, transient, and internal errors | Task 18/22 | Existing proxy error mapping before typed taxonomy |
 | Legacy policy config values | routing settings enum values | Missing multiplier ceiling cannot be silently upgraded | Task 10/11/22 | Pre-migration readiness UI and development reset/reimport window |
-| Old request-coupled response finalizer | `response_body.rs::LifecycleFinalizationLease`, default `lifecycle_finalizing_stream*` constructors | Attempt terminal and request terminal can be sent from one finalizer without an explicit durable attempt ack barrier | Task 22 | Default production constructor only until atomic dual-terminal cutover; never active together with the new dual-terminal constructor for the same request |
+| Old request-coupled response finalizer | `response_body.rs::LifecycleFinalizationLease`, `ProxyStartConfig::with_legacy_request_coupled_finalization` | Attempt terminal and request terminal can be sent from one finalizer without an explicit durable attempt ack barrier | Task 28 | Removed from default-v2 production config in Task 22; remaining use must be explicit debug/test-only isolation and never share a request with dual-terminal finalization |
 | Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Process-start full old owner only until default-v2 local observation proves reset/reimport recovery |
 
 Deletion gate:
