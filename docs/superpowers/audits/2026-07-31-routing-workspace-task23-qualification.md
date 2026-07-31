@@ -56,6 +56,8 @@ Commands run on this source snapshot:
 The following plan items are still not complete:
 
 - Run the real Tauri dev application with a redacted/synthetic fixture data directory.
+- Recommended launcher: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-workspace-tauri-manual.ps1`.
+  It starts `pnpm.cmd tauri:dev` with process-local `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` under ignored `output/manual-routing-workspace/<profile>`, and disables proxy auto-start by environment.
 - Walk the workflow: monitoring -> Key detail -> route simulation -> decision trace -> request log -> routing workspace.
 - Check 1280x800, 1024x768 and the minimum supported window.
 - Confirm table, drawer/detail, tooltip, typed error and long text states do not overlap.

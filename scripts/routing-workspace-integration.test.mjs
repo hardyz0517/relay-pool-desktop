@@ -37,6 +37,7 @@ const stationsPage = read("src/features/stations/StationsPage.tsx");
 const stationAssetRows = read("src/features/stations/pages/stations/StationAssetRows.tsx");
 const stationDetailPage = read("src/features/stations/StationDetailPage.tsx");
 const stationDetailContent = read("src/features/stations/components/StationDetailContent.tsx");
+const manualTauriScript = read("scripts/run-routing-workspace-tauri-manual.ps1");
 
 assertIncludes(routingPage, '{ value: "workspace", label: "工作台" }', "RoutingPage");
 assertIncludes(routingPage, "refetchInterval: queryEnabled && activeTab === \"workspace\" ? 1_000 : false", "RoutingPage");
@@ -130,5 +131,15 @@ assertIncludes(stationAssetRows, 'kind: "station"', "StationAssetRows");
 assertIncludes(stationAssetRows, "查看路由影响", "StationAssetRows");
 assertIncludes(stationDetailPage, 'source: "station_endpoint_health"', "StationDetailPage");
 assertIncludes(stationDetailContent, "查看路由影响", "StationDetailContent");
+
+assertIncludes(manualTauriScript, "output\\manual-routing-workspace\\$ProfileName", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "$env:APPDATA = $appData", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "$env:LOCALAPPDATA = $localAppData", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, '$env:RELAY_POOL_DEV_AUTO_START_PROXY = "0"', "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, '$env:RELAY_POOL_START_PROXY_ON_LAUNCH = "0"', "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "pnpm.cmd tauri:dev", "manual Tauri routing workspace script");
+assertExcludes(manualTauriScript, "Remove-Item", "manual Tauri routing workspace script");
+assertExcludes(manualTauriScript, "rm -", "manual Tauri routing workspace script");
+assertExcludes(manualTauriScript, "git add", "manual Tauri routing workspace script");
 
 console.log("routing workspace integration contract ok");
