@@ -28,6 +28,7 @@ const contracts = [
   ["node", ["scripts/request-lifecycle-architecture.test.mjs"]],
   ["node", ["scripts/monitoring-architecture.test.mjs"]],
   ["node", ["scripts/routing-operational-architecture.test.mjs"]],
+  ["node", ["scripts/routing-error-contract.test.mjs"]],
   ["node", ["scripts/routing-dto-completeness.test.mjs"]],
   ["node", ["scripts/routing-read-model-architecture.test.mjs"]],
   ["node", ["scripts/routing-migration-readiness.test.mjs"]],

@@ -568,6 +568,15 @@ fn attempt_failure_kind(failure: &ProxyFailure) -> AttemptFailureKind {
         ProxyFailureCode::ResponsesChatFallbackIncompatible => {
             AttemptFailureKind::MalformedResponse
         }
+        ProxyFailureCode::UpstreamMalformedResponse => AttemptFailureKind::MalformedResponse,
+        ProxyFailureCode::UpstreamAuthenticationFailed => AttemptFailureKind::Authentication,
+        ProxyFailureCode::UpstreamInsufficientBalance => AttemptFailureKind::Balance,
+        ProxyFailureCode::UpstreamRateLimited => AttemptFailureKind::RateLimit,
+        ProxyFailureCode::UpstreamModelUnavailable
+        | ProxyFailureCode::UpstreamCapabilityMismatch => AttemptFailureKind::CapabilityMismatch,
+        ProxyFailureCode::UpstreamUnavailable | ProxyFailureCode::UpstreamUncertain => {
+            AttemptFailureKind::HttpStatus
+        }
         ProxyFailureCode::UpstreamHttpError => match failure.http_status.as_u16() {
             401 | 403 => AttemptFailureKind::Authentication,
             402 => AttemptFailureKind::Balance,
@@ -577,6 +586,17 @@ fn attempt_failure_kind(failure: &ProxyFailure) -> AttemptFailureKind {
             _ => AttemptFailureKind::HttpStatus,
         },
         ProxyFailureCode::RouteNoCandidate => AttemptFailureKind::CapabilityMismatch,
+        ProxyFailureCode::RouteConfigRequired
+        | ProxyFailureCode::RoutePolicyRejected
+        | ProxyFailureCode::RouteEconomicsUnavailable
+        | ProxyFailureCode::RouteHealthUnavailable
+        | ProxyFailureCode::RouteCandidateLimitExceeded => AttemptFailureKind::CapabilityMismatch,
+        ProxyFailureCode::RouteCapacityExhausted
+        | ProxyFailureCode::RouteFactsUnavailable
+        | ProxyFailureCode::RouteConfigUnstable
+        | ProxyFailureCode::RouteLifecycleUnavailable
+        | ProxyFailureCode::RouteDeadlineExceeded
+        | ProxyFailureCode::RouteInvariantViolation => AttemptFailureKind::LocalAdapter,
         ProxyFailureCode::RequestBodyInvalid
         | ProxyFailureCode::RequestBodyTooLarge
         | ProxyFailureCode::RequestBodyTimeout => AttemptFailureKind::BadRequest,
@@ -605,6 +625,21 @@ fn failure_blame(source: FailureSource) -> FailureBlame {
 fn health_effect(failure: &ProxyFailure) -> HealthEffect {
     if failure.source != FailureSource::Upstream {
         return HealthEffect::Neutral;
+    }
+    match failure.code {
+        ProxyFailureCode::UpstreamAuthenticationFailed
+        | ProxyFailureCode::UpstreamInsufficientBalance => return HealthEffect::HardFail,
+        ProxyFailureCode::UpstreamRateLimited => {
+            return HealthEffect::Cooldown {
+                retry_after_ms: None,
+            };
+        }
+        ProxyFailureCode::UpstreamModelUnavailable
+        | ProxyFailureCode::UpstreamCapabilityMismatch
+        | ProxyFailureCode::UpstreamMalformedResponse
+        | ProxyFailureCode::UpstreamUncertain => return HealthEffect::Neutral,
+        ProxyFailureCode::UpstreamUnavailable => return HealthEffect::ObserveFailure,
+        _ => {}
     }
     match failure.http_status.as_u16() {
         401..=403 => HealthEffect::HardFail,

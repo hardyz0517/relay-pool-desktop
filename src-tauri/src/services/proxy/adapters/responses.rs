@@ -1,5 +1,8 @@
 use serde_json::{json, Value};
 
+use crate::application::request_finalization::failure::{
+    CapabilityApplicabilitySet, ProviderErrorSemanticSignal,
+};
 use crate::models::proxy::UpstreamApiFormat;
 
 use super::{
@@ -7,7 +10,7 @@ use super::{
         AdapterCapabilityFeature, AdapterCapabilityProtocol, AdapterCapabilitySignal,
         AdapterCapabilitySubject, AdapterCapabilityVerdict,
     },
-    openai::{extract_choice_text, wrap_chat_response_as_responses},
+    openai::{extract_choice_text, openai_error_semantic_signal, wrap_chat_response_as_responses},
 };
 
 pub fn upstream_responses_path(format: &UpstreamApiFormat) -> &'static str {
@@ -82,6 +85,24 @@ pub(crate) fn responses_capability_signals(
             "responses_reasoning_is_protocol_capable",
         ),
     ]
+}
+
+pub(crate) fn responses_error_semantic_signal(
+    status: u16,
+    body: Option<&Value>,
+    station_key_id: &str,
+    station_id: &str,
+    model: Option<&str>,
+    applicability: CapabilityApplicabilitySet,
+) -> ProviderErrorSemanticSignal {
+    openai_error_semantic_signal(
+        status,
+        body,
+        station_key_id,
+        station_id,
+        model,
+        applicability,
+    )
 }
 
 #[cfg(test)]

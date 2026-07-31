@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+pub(crate) mod effect_planner;
+pub(crate) mod failure;
+
 use futures_util::future::BoxFuture;
 
 use crate::{

@@ -1,6 +1,8 @@
 use http::StatusCode;
 use serde_json::Value;
 
+use crate::application::request_finalization::failure::{PublicError, PublicErrorCode};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureSource {
     Local,
@@ -57,9 +59,28 @@ pub enum ProxyFailureCode {
     LocalAuthInvalid,
     RouteNoCandidate,
     RouteWaitTimeout,
+    RouteConfigRequired,
+    RoutePolicyRejected,
+    RouteEconomicsUnavailable,
+    RouteHealthUnavailable,
+    RouteCapacityExhausted,
+    RouteCandidateLimitExceeded,
+    RouteFactsUnavailable,
+    RouteConfigUnstable,
+    RouteLifecycleUnavailable,
+    RouteDeadlineExceeded,
+    RouteInvariantViolation,
     UpstreamConnectFailed,
     UpstreamFirstByteTimeout,
     UpstreamHttpError,
+    UpstreamAuthenticationFailed,
+    UpstreamInsufficientBalance,
+    UpstreamRateLimited,
+    UpstreamModelUnavailable,
+    UpstreamCapabilityMismatch,
+    UpstreamUnavailable,
+    UpstreamMalformedResponse,
+    UpstreamUncertain,
     UpstreamStreamFailed,
     #[cfg_attr(
         not(test),
@@ -92,9 +113,28 @@ impl ProxyFailureCode {
             Self::LocalAuthInvalid => "local_auth_invalid",
             Self::RouteNoCandidate => "route_no_candidate",
             Self::RouteWaitTimeout => "route_wait_timeout",
+            Self::RouteConfigRequired => "route_config_required",
+            Self::RoutePolicyRejected => "route_policy_rejected",
+            Self::RouteEconomicsUnavailable => "route_economics_unavailable",
+            Self::RouteHealthUnavailable => "route_health_unavailable",
+            Self::RouteCapacityExhausted => "route_capacity_exhausted",
+            Self::RouteCandidateLimitExceeded => "route_candidate_limit_exceeded",
+            Self::RouteFactsUnavailable => "route_facts_unavailable",
+            Self::RouteConfigUnstable => "route_config_unstable",
+            Self::RouteLifecycleUnavailable => "route_lifecycle_unavailable",
+            Self::RouteDeadlineExceeded => "route_deadline_exceeded",
+            Self::RouteInvariantViolation => "route_invariant_violation",
             Self::UpstreamConnectFailed => "upstream_connect_failed",
             Self::UpstreamFirstByteTimeout => "upstream_first_byte_timeout",
             Self::UpstreamHttpError => "upstream_http_error",
+            Self::UpstreamAuthenticationFailed => "upstream_authentication_failed",
+            Self::UpstreamInsufficientBalance => "upstream_insufficient_balance",
+            Self::UpstreamRateLimited => "upstream_rate_limited",
+            Self::UpstreamModelUnavailable => "upstream_model_unavailable",
+            Self::UpstreamCapabilityMismatch => "upstream_capability_mismatch",
+            Self::UpstreamUnavailable => "upstream_unavailable",
+            Self::UpstreamMalformedResponse => "upstream_malformed_response",
+            Self::UpstreamUncertain => "upstream_uncertain",
             Self::UpstreamStreamFailed => "upstream_stream_failed",
             Self::DownstreamDisconnected => "downstream_disconnected",
             Self::ResponsesChatFallbackIncompatible => "responses_chat_fallback_incompatible",
@@ -191,5 +231,102 @@ impl ProxyFailure {
                 }
             }),
         )
+    }
+
+    pub(crate) fn from_public_error(error: PublicError) -> Self {
+        Self::new(
+            proxy_failure_code_for_public_error(error.code),
+            failure_source_for_public_error(error.code),
+            retry_class_for_public_error(error.code),
+            error.http_status,
+            error.message,
+        )
+    }
+}
+
+fn proxy_failure_code_for_public_error(code: PublicErrorCode) -> ProxyFailureCode {
+    match code {
+        PublicErrorCode::ConfigRequired => ProxyFailureCode::RouteConfigRequired,
+        PublicErrorCode::PolicyRejected => ProxyFailureCode::RoutePolicyRejected,
+        PublicErrorCode::EconomicsUnavailable => ProxyFailureCode::RouteEconomicsUnavailable,
+        PublicErrorCode::HealthUnavailable => ProxyFailureCode::RouteHealthUnavailable,
+        PublicErrorCode::AuthenticationFailed => ProxyFailureCode::UpstreamAuthenticationFailed,
+        PublicErrorCode::InsufficientBalance => ProxyFailureCode::UpstreamInsufficientBalance,
+        PublicErrorCode::RateLimited => ProxyFailureCode::UpstreamRateLimited,
+        PublicErrorCode::ModelUnavailable => ProxyFailureCode::UpstreamModelUnavailable,
+        PublicErrorCode::CapabilityMismatch => ProxyFailureCode::UpstreamCapabilityMismatch,
+        PublicErrorCode::UpstreamUnavailable => ProxyFailureCode::UpstreamUnavailable,
+        PublicErrorCode::UpstreamUncertain => ProxyFailureCode::UpstreamUncertain,
+        PublicErrorCode::BadRequest => ProxyFailureCode::RequestBodyInvalid,
+        PublicErrorCode::Timeout => ProxyFailureCode::UpstreamFirstByteTimeout,
+        PublicErrorCode::TransportFailure => ProxyFailureCode::UpstreamConnectFailed,
+        PublicErrorCode::MalformedResponse => ProxyFailureCode::UpstreamMalformedResponse,
+        PublicErrorCode::StreamInterrupted => ProxyFailureCode::UpstreamStreamFailed,
+        PublicErrorCode::DownstreamDisconnected => ProxyFailureCode::DownstreamDisconnected,
+        PublicErrorCode::CapacityExhausted => ProxyFailureCode::RouteCapacityExhausted,
+        PublicErrorCode::CandidateLimitExceeded => ProxyFailureCode::RouteCandidateLimitExceeded,
+        PublicErrorCode::FactsUnavailable => ProxyFailureCode::RouteFactsUnavailable,
+        PublicErrorCode::ConfigUnstable => ProxyFailureCode::RouteConfigUnstable,
+        PublicErrorCode::LifecycleUnavailable => ProxyFailureCode::RouteLifecycleUnavailable,
+        PublicErrorCode::DeadlineExceeded => ProxyFailureCode::RouteDeadlineExceeded,
+        PublicErrorCode::InvariantViolation => ProxyFailureCode::RouteInvariantViolation,
+    }
+}
+
+fn failure_source_for_public_error(code: PublicErrorCode) -> FailureSource {
+    match code {
+        PublicErrorCode::AuthenticationFailed
+        | PublicErrorCode::InsufficientBalance
+        | PublicErrorCode::RateLimited
+        | PublicErrorCode::ModelUnavailable
+        | PublicErrorCode::CapabilityMismatch
+        | PublicErrorCode::Timeout
+        | PublicErrorCode::TransportFailure
+        | PublicErrorCode::UpstreamUnavailable
+        | PublicErrorCode::MalformedResponse
+        | PublicErrorCode::StreamInterrupted
+        | PublicErrorCode::UpstreamUncertain => FailureSource::Upstream,
+        PublicErrorCode::DownstreamDisconnected => FailureSource::Downstream,
+        PublicErrorCode::InvariantViolation => FailureSource::Internal,
+        PublicErrorCode::ConfigRequired
+        | PublicErrorCode::PolicyRejected
+        | PublicErrorCode::EconomicsUnavailable
+        | PublicErrorCode::HealthUnavailable
+        | PublicErrorCode::BadRequest
+        | PublicErrorCode::CapacityExhausted
+        | PublicErrorCode::CandidateLimitExceeded
+        | PublicErrorCode::FactsUnavailable
+        | PublicErrorCode::ConfigUnstable
+        | PublicErrorCode::LifecycleUnavailable
+        | PublicErrorCode::DeadlineExceeded => FailureSource::Routing,
+    }
+}
+
+fn retry_class_for_public_error(code: PublicErrorCode) -> RetryClass {
+    match code {
+        PublicErrorCode::RateLimited
+        | PublicErrorCode::Timeout
+        | PublicErrorCode::TransportFailure
+        | PublicErrorCode::UpstreamUnavailable
+        | PublicErrorCode::StreamInterrupted
+        | PublicErrorCode::CapacityExhausted
+        | PublicErrorCode::EconomicsUnavailable
+        | PublicErrorCode::HealthUnavailable
+        | PublicErrorCode::FactsUnavailable
+        | PublicErrorCode::ConfigUnstable
+        | PublicErrorCode::LifecycleUnavailable
+        | PublicErrorCode::DeadlineExceeded => RetryClass::BeforeOutput,
+        PublicErrorCode::ConfigRequired
+        | PublicErrorCode::PolicyRejected
+        | PublicErrorCode::AuthenticationFailed
+        | PublicErrorCode::InsufficientBalance
+        | PublicErrorCode::ModelUnavailable
+        | PublicErrorCode::CapabilityMismatch
+        | PublicErrorCode::BadRequest
+        | PublicErrorCode::MalformedResponse
+        | PublicErrorCode::DownstreamDisconnected
+        | PublicErrorCode::CandidateLimitExceeded
+        | PublicErrorCode::InvariantViolation
+        | PublicErrorCode::UpstreamUncertain => RetryClass::Never,
     }
 }

@@ -91,11 +91,11 @@ mod tests {
     fn should_fallback_only_for_retryable_upstream_statuses() {
         assert!(should_fallback(401));
         assert!(should_fallback(402));
-        assert!(should_fallback(403));
         assert!(should_fallback(429));
         assert!(should_fallback(500));
         assert!(should_fallback(503));
         assert!(!should_fallback(400));
+        assert!(!should_fallback(403));
         assert!(!should_fallback(404));
         assert!(!should_fallback(200));
     }

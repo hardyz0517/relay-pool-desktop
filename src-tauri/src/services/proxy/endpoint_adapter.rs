@@ -2,7 +2,13 @@ use bytes::Bytes;
 use http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use serde_json::Value;
 
-use crate::models::{proxy::UpstreamApiFormat, routing::RouteEndpointKind};
+use crate::{
+    application::request_finalization::failure::{
+        planning_failure, CanonicalFailure, FailureClass, FailureTarget, LocalAdapterComponent,
+        RetryDisposition,
+    },
+    models::{proxy::UpstreamApiFormat, routing::RouteEndpointKind},
+};
 
 use super::{
     adapters::responses::upstream_responses_path,
@@ -292,6 +298,26 @@ fn responses_chat_fallback_failure(message: impl Into<String>) -> ProxyFailure {
         StatusCode::BAD_REQUEST,
         message,
     )
+}
+
+pub(crate) fn endpoint_adapter_error_semantic(code: ProxyFailureCode) -> Option<CanonicalFailure> {
+    match code {
+        ProxyFailureCode::RequestBodyInvalid
+        | ProxyFailureCode::RequestBodyTooLarge
+        | ProxyFailureCode::RequestBodyTimeout => Some(planning_failure(
+            FailureClass::BadRequest,
+            FailureTarget::Request,
+            RetryDisposition::StopRequest,
+        )),
+        ProxyFailureCode::ResponsesChatFallbackIncompatible => Some(planning_failure(
+            FailureClass::MalformedResponse,
+            FailureTarget::LocalAdapter {
+                component: LocalAdapterComponent::ResponseTransform,
+            },
+            RetryDisposition::StopRequest,
+        )),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
