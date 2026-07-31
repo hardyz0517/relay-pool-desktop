@@ -32,7 +32,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - P7 已完成价格归一化、余额快照、请求成本和 cheap_first 路由展示。
 - P8 正在推进安全与凭据治理。
 - P9 真实站点采集与路由事实层：补齐 Sub2API / NewAPI / OpenAI-compatible adapter，建立 group binding、倍率历史、collector run、价格归一化和路由经济解释，让 UI 和路由消费稳定事实而不是 raw snapshot JSON。
-- P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；当前非稳定产品阶段只要求本地资格验证、必要 smoke/soak 与 reset/reimport 恢复证明，不维护 release gate、签名包、安装升级矩阵或旧二进制回滚门禁。
+- P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；当前非稳定产品阶段只要求本地自检、必要 smoke/soak 与 reset/reimport/重新配置恢复证明，不维护 release gate、签名包、安装升级矩阵或旧二进制回滚门禁。Routing operational Task 27 已建立 deterministic local self-check runner，用现有 known-schema fixture、upgrade recovery、fresh generation-two、sanitizer resume、startup reconciliation、configured routing 和 catalog loopback 检查证明 current dev binary 的 reset/reimport 基础链路；真实客户端/provider、CCSwitch、sleep/resume 和 UI timeline 核对仍需用户授权或实机观察，不能用本地 fixture 冒充。
 
 ## 2.1 信息架构
 
@@ -189,7 +189,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 
 当前本地 OpenAI-compatible 网关使用 Rust async HTTP 栈承载：本地入口由 Tokio / Hyper / Axum 处理连接、HTTP framing、CORS、认证、请求体限制和 graceful drain；上游转发统一使用 Reqwest client pool；候选选择、fallback、健康反馈和请求日志进入同一条 proxy execution pipeline。
 
-本地网关默认运行 v2 runtime。短期 debug 构建保留 `RELAY_POOL_PROXY_RUNTIME=legacy` 作为迁移观察期回退入口；它不是 UI 设置，也不是长期产品能力。当前项目仍处于非稳定成型阶段，不维护 signed installer、安装升级矩阵或旧二进制 rollback gate；删除 legacy runtime 前以本地 observation/soak、reset/reimport 恢复验证和 deletion ledger approval 为准。若未来进入稳定产品阶段，再由独立发布 ADR 重新定义真实发布、升级和回滚要求。
+本地网关默认运行 v2 runtime。短期 debug 构建保留 `RELAY_POOL_PROXY_RUNTIME=legacy` 作为迁移观察期回退入口；它不是 UI 设置，也不是长期产品能力。当前项目仍处于非稳定成型阶段，不维护 signed installer、安装升级矩阵或旧二进制 rollback gate；删除 legacy runtime 前以本地 observation/soak、reset/reimport/重新配置恢复验证、授权/实机 smoke 记录和 deletion ledger approval 为准。若未来进入稳定产品阶段，再由独立发布 ADR 重新定义真实发布、升级和回滚要求。
 
 当前本地 OpenAI-compatible 网关只路由以下端点：
 
