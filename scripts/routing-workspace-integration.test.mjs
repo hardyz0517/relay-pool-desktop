@@ -50,7 +50,11 @@ assertIncludes(workspacePanel, "getStationKeyOperationalDetailQuery", "RoutingOp
 assertIncludes(workspacePanel, "getRequestDecisionTraceQuery", "RoutingOperationalPreviewPanel");
 assertIncludes(workspacePanel, "simulateRouteQuery", "RoutingOperationalPreviewPanel");
 assertIncludes(workspacePanel, "snapshot-only", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "Downstream / cost aggregate", "RoutingOperationalPreviewPanel");
+assertIncludes(workspacePanel, "trace.timeline", "RoutingOperationalPreviewPanel");
+assertIncludes(workspacePanel, "timelineStatusTone", "RoutingOperationalPreviewPanel");
+assertIncludes(workspacePanel, "formatTimelineKind", "RoutingOperationalPreviewPanel");
+assertExcludes(workspacePanel, "trace.planningRounds", "RoutingOperationalPreviewPanel");
+assertExcludes(workspacePanel, "JSON.stringify", "RoutingOperationalPreviewPanel");
 assertIncludes(workspacePanel, "deepLink.kind === \"station-key\"", "RoutingOperationalPreviewPanel");
 assertIncludes(workspacePanel, "deepLink.kind === \"station\"", "RoutingOperationalPreviewPanel");
 assertIncludes(workspacePanel, "deepLink.kind === \"request\"", "RoutingOperationalPreviewPanel");

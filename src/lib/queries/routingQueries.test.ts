@@ -60,6 +60,7 @@ describe("routing query owner", () => {
       status: "legacy_summary" as const,
       reason: "legacy_summary_only_before_cutover",
       legacySummary: null,
+      timeline: [],
       planningRounds: [],
     })),
     getStationKeyHealth: vi.fn(),

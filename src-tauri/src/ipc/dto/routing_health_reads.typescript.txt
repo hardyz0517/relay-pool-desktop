@@ -12,6 +12,8 @@ export type RoutingReadModelStatusDto = "available" | "unavailable";
 export type RouteDecisionReadModelStatusDto = "available" | "unavailable";
 export type OperationalDetailReadModelStatusDto = "available" | "unavailable";
 export type RequestDecisionTraceStatusDto = "legacy_summary" | "trace_unavailable";
+export type RequestDecisionTimelineKindDto = "legacy_summary" | "planning_round" | "slot_wait" | "attempt_protocol" | "fallback" | "downstream_delivery" | "cost_aggregate" | "unavailable";
+export type RequestDecisionTimelineStatusDto = "available" | "legacy_summary" | "unavailable" | "skipped";
 
 export type StationKeyCapabilitiesDto = {
   stationKeyId: string;
@@ -170,12 +172,32 @@ export type LegacyDecisionSummaryDto = {
   fallbackCount: number;
 };
 
+export type RequestDecisionTimelineItemDto = {
+  ordinal: number;
+  kind: RequestDecisionTimelineKindDto;
+  status: RequestDecisionTimelineStatusDto;
+  title: string;
+  summary: string;
+  detailCode: string;
+  routePolicy: string | null;
+  routeReason: string | null;
+  stationKeyId: string | null;
+  stationId: string | null;
+  attemptCount: number | null;
+  fallbackCount: number | null;
+  durationMs: number | null;
+  costStatus: string | null;
+  estimatedTotalCost: number | null;
+  costCurrency: string | null;
+};
+
 export type RequestDecisionTraceDto = {
   traceVersion: string;
   requestLogId: string;
   status: RequestDecisionTraceStatusDto;
   reason: string;
   legacySummary: LegacyDecisionSummaryDto | null;
+  timeline: RequestDecisionTimelineItemDto[];
   planningRounds: unknown[];
 };
 

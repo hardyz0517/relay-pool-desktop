@@ -55,11 +55,17 @@ mod routing_workspace;
 use application::operational_facts::candidate_projector::{
     CandidateIdentityProjection, RouteCandidateProjection,
 };
-use models::routing::{
-    RouteEndpointKind, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingCandidate,
-    RuntimeRoutingSettings, StationKeyCapabilities, StationKeyHealth,
+use models::{
+    proxy::RequestLog,
+    routing::{
+        RouteEndpointKind, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingCandidate,
+        RuntimeRoutingSettings, StationKeyCapabilities, StationKeyHealth,
+    },
 };
-use request_decision_trace::{decision_trace_from_legacy_log, RequestDecisionTraceStatus};
+use request_decision_trace::{
+    decision_trace_from_legacy_log, RequestDecisionTimelineKind, RequestDecisionTimelineStatus,
+    RequestDecisionTraceStatus,
+};
 use routing_runtime::runtime_overlay_from_candidates;
 use routing_workspace::{
     simulate_preview_from_candidate_projections, workspace_snapshot_from_runtime,
@@ -118,6 +124,61 @@ fn candidate(id: &str, load: Option<i64>) -> RuntimeRoutingCandidate {
         balance_snapshot: None,
         api_key: Some("sk-secret".to_string()),
         api_key_secret: None,
+    }
+}
+
+fn legacy_request_log() -> RequestLog {
+    RequestLog {
+        id: "request-log-1".to_string(),
+        request_id: Some("request-1".to_string()),
+        started_at: "1700000000000".to_string(),
+        finished_at: Some("1700000000100".to_string()),
+        duration_ms: Some(100),
+        method: "POST".to_string(),
+        path: "/v1/chat/completions".to_string(),
+        model: Some("gpt-5-mini".to_string()),
+        stream: true,
+        status: "success".to_string(),
+        lifecycle_status: Some("completed".to_string()),
+        station_key_id: Some("key-1".to_string()),
+        station_id: Some("station-1".to_string()),
+        upstream_base_url: None,
+        fallback_count: 1,
+        error_message: None,
+        route_policy: Some("cost_stable_first".to_string()),
+        route_reason: Some("selected".to_string()),
+        rejected_candidates_json: None,
+        body_bytes: Some(512),
+        attempt_count: Some(2),
+        route_wait_ms: Some(7),
+        upstream_headers_ms: Some(20),
+        failure_source: Some("upstream".to_string()),
+        attempts_json: None,
+        completion_source: Some("stream_eof".to_string()),
+        prompt_tokens: Some(10),
+        completion_tokens: Some(20),
+        total_tokens: Some(30),
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+        reasoning_effort: None,
+        first_token_ms: Some(40),
+        billing_mode: Some("estimated".to_string()),
+        estimated_input_cost: Some(0.001),
+        estimated_output_cost: Some(0.002),
+        estimated_total_cost: Some(0.003),
+        base_input_cost: Some(0.001),
+        base_output_cost: Some(0.002),
+        base_fixed_cost: None,
+        base_total_cost: Some(0.003),
+        cost_currency: Some("USD".to_string()),
+        pricing_rule_id: Some("rule-1".to_string()),
+        pricing_source: Some("fixture".to_string()),
+        cost_status: Some("estimated".to_string()),
+        group_binding_id: Some("group-1".to_string()),
+        normalization_status: Some("exact".to_string()),
+        balance_scope: Some("key".to_string()),
+        economic_context_json: None,
+        created_at: "1700000000000".to_string(),
     }
 }
 
@@ -231,5 +292,64 @@ fn request_decision_trace_does_not_fake_planning_rounds_before_cutover() {
 
     assert_eq!(trace.status, RequestDecisionTraceStatus::TraceUnavailable);
     assert_eq!(trace.reason, "trace_unavailable");
+    assert_eq!(trace.timeline.len(), 1);
+    assert_eq!(
+        trace.timeline[0].kind,
+        RequestDecisionTimelineKind::Unavailable
+    );
+    assert_eq!(
+        trace.timeline[0].status,
+        RequestDecisionTimelineStatus::Unavailable
+    );
     assert!(trace.planning_rounds.is_empty());
+}
+
+#[test]
+fn legacy_request_decision_trace_exposes_typed_timeline_without_json_ui_contract() {
+    let trace = decision_trace_from_legacy_log(Some(legacy_request_log()));
+
+    assert_eq!(trace.status, RequestDecisionTraceStatus::LegacySummary);
+    assert!(trace.planning_rounds.is_empty());
+    assert_eq!(trace.timeline.len(), 7);
+    assert_eq!(
+        trace.timeline[0].kind,
+        RequestDecisionTimelineKind::LegacySummary
+    );
+    assert_eq!(
+        trace.timeline[1].kind,
+        RequestDecisionTimelineKind::PlanningRound
+    );
+    assert_eq!(
+        trace.timeline[1].status,
+        RequestDecisionTimelineStatus::Unavailable
+    );
+    assert_eq!(
+        trace.timeline[2].kind,
+        RequestDecisionTimelineKind::SlotWait
+    );
+    assert_eq!(
+        trace.timeline[2].status,
+        RequestDecisionTimelineStatus::Available
+    );
+    assert_eq!(trace.timeline[2].duration_ms, Some(7));
+    assert_eq!(
+        trace.timeline[3].kind,
+        RequestDecisionTimelineKind::AttemptProtocol
+    );
+    assert_eq!(trace.timeline[3].attempt_count, Some(2));
+    assert_eq!(
+        trace.timeline[4].kind,
+        RequestDecisionTimelineKind::Fallback
+    );
+    assert_eq!(trace.timeline[4].fallback_count, Some(1));
+    assert_eq!(
+        trace.timeline[5].kind,
+        RequestDecisionTimelineKind::DownstreamDelivery
+    );
+    assert_eq!(
+        trace.timeline[6].kind,
+        RequestDecisionTimelineKind::CostAggregate
+    );
+    assert_eq!(trace.timeline[6].cost_status.as_deref(), Some("estimated"));
+    assert_eq!(trace.timeline[6].cost_currency.as_deref(), Some("USD"));
 }

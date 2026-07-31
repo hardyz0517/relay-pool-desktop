@@ -429,19 +429,28 @@ function DecisionTracePanel({
   selectedRequestLogId: string | null;
 }) {
   const rows =
-    trace.planningRounds.length > 0
-      ? trace.planningRounds.map((round, index) => ({
-          id: `round-${index}`,
-          label: `Planning round ${index + 1}`,
-          value: JSON.stringify(round),
-        }))
+    trace.timeline.length > 0
+      ? trace.timeline
       : [
           {
-            id: "legacy",
-            label: trace.status === "legacy_summary" ? "Legacy summary" : "Trace unavailable",
-            value: trace.legacySummary
+            ordinal: 1,
+            kind: "unavailable" as const,
+            status: "unavailable" as const,
+            title: trace.status === "legacy_summary" ? "Legacy summary" : "Trace unavailable",
+            summary: trace.legacySummary
               ? `policy ${trace.legacySummary.routePolicy ?? "unknown"} · fallback ${trace.legacySummary.fallbackCount} · selected ${trace.legacySummary.stationKeyId ?? "none"}`
               : trace.reason,
+            detailCode: trace.reason,
+            routePolicy: trace.legacySummary?.routePolicy ?? null,
+            routeReason: trace.legacySummary?.routeReason ?? null,
+            stationKeyId: trace.legacySummary?.stationKeyId ?? null,
+            stationId: trace.legacySummary?.stationId ?? null,
+            attemptCount: null,
+            fallbackCount: trace.legacySummary?.fallbackCount ?? null,
+            durationMs: null,
+            costStatus: null,
+            estimatedTotalCost: null,
+            costCurrency: null,
           },
         ];
 
@@ -458,24 +467,59 @@ function DecisionTracePanel({
       </div>
       <div className="grid gap-2">
         {rows.map((row) => (
-          <div key={row.id} className="grid gap-1 rounded-lg border border-border bg-surface-subtle px-2 py-1.5 text-xs">
-            <div className="flex items-center gap-1.5 font-medium text-foreground">
-              <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-              {row.label}
+          <div
+            key={`${row.ordinal}-${row.kind}`}
+            className="grid gap-1 rounded-lg border border-border bg-surface-subtle px-2 py-1.5 text-xs"
+          >
+            <div className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
+              {row.kind === "planning_round" || row.kind === "fallback" ? (
+                <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              <span>{row.title}</span>
+              <StatusBadge tone={timelineStatusTone(row.status)} className="h-5 px-1.5">
+                {formatTimelineStatus(row.status)}
+              </StatusBadge>
             </div>
-            <div className="break-words text-muted-foreground">{row.value}</div>
+            <div className="break-words text-muted-foreground">{row.summary}</div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              <span>{formatTimelineKind(row.kind)}</span>
+              <span>{row.detailCode}</span>
+              {row.durationMs != null ? <span>{row.durationMs} ms</span> : null}
+              {row.attemptCount != null ? <span>{row.attemptCount} attempt(s)</span> : null}
+              {row.fallbackCount != null ? <span>{row.fallbackCount} fallback(s)</span> : null}
+              {row.stationKeyId ? <span>key {row.stationKeyId}</span> : null}
+              {row.costStatus ? (
+                <span>
+                  cost {row.costStatus}
+                  {row.estimatedTotalCost != null
+                    ? ` ${row.estimatedTotalCost.toFixed(6)} ${row.costCurrency ?? ""}`.trimEnd()
+                    : ""}
+                </span>
+              ) : null}
+            </div>
           </div>
         ))}
-        <div className="grid gap-1 rounded-lg border border-border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5 font-medium text-foreground">
-            <Activity className="h-3.5 w-3.5 text-muted-foreground" />
-            Downstream / cost aggregate
-          </div>
-          <div>当前 trace read model 未伪造缺失字段；cutover 后由 typed attempt/outcome rows 填充。</div>
-        </div>
       </div>
     </div>
   );
+}
+
+function timelineStatusTone(status: RequestDecisionTrace["timeline"][number]["status"]) {
+  if (status === "available") return "healthy";
+  if (status === "legacy_summary") return "info";
+  if (status === "skipped") return "disabled";
+  return "warning";
+}
+
+function formatTimelineStatus(status: RequestDecisionTrace["timeline"][number]["status"]) {
+  if (status === "legacy_summary") return "legacy";
+  return status.replace(/_/g, " ");
+}
+
+function formatTimelineKind(kind: RequestDecisionTrace["timeline"][number]["kind"]) {
+  return kind.replace(/_/g, " ");
 }
 
 function capabilityLabels(candidate: RoutingWorkspaceCandidate) {

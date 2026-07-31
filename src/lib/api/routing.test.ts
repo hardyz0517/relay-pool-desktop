@@ -76,6 +76,7 @@ describe("routing backend cutover", () => {
       status: "trace_unavailable" as const,
       reason: "trace_unavailable",
       legacySummary: null,
+      timeline: [],
       planningRounds: [],
     })),
     getStationKeyHealth: vi.fn(async (stationKeyId: string) => ({
