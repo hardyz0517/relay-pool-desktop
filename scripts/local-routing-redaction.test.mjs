@@ -8,7 +8,7 @@ const targets = [
 
 const requestLogTargets = [
   {
-    target: resolve("src-tauri/src/application/request_finalization.rs"),
+    target: resolve("src-tauri/src/application/request_finalization/mod.rs"),
     required: [
       "upstream_base_url: None",
       "request_terminal_mapping_preserves_safe_annotations_and_redacts_upstream_base_url",

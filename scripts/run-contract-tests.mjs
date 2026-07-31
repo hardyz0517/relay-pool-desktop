@@ -34,6 +34,7 @@ const contracts = [
   ["node", ["scripts/routing-workspace-integration.test.mjs"]],
   ["node", ["scripts/routing-migration-readiness.test.mjs"]],
   ["node", ["scripts/routing-operational-loopback-contract.test.mjs"]],
+  ["node", ["scripts/routing-task24-predeletion-gate.test.mjs"]],
   ["node", ["scripts/install-upgrade-matrix-contract.test.mjs"]],
 ];
 

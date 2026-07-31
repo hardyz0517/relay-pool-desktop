@@ -1,6 +1,6 @@
 # Routing Operational Deletion Ledger
 
-Status: Task 22 default-v2 production finalization cutover in progress
+Status: Task 23 Tauri dev workflow qualified; Task 24 pre-deletion observation tooling added, clean 60-minute approval run pending
 Date: 2026-07-31
 
 Each entry must either be deleted by its owner task or converted into a documented, isolated compatibility projection. No entry may become a permanent second production path.
@@ -25,5 +25,10 @@ Each entry must either be deleted by its owner task or converted into a document
 Deletion gate:
 
 - Task 24 must prove default-v2 has no second selector, capacity, pricing, feedback, or frontend truth path.
+- Task 24 pre-deletion approval must be produced by a clean, non-smoke run of
+  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-task24-predeletion-gate.ps1 -DurationMinutes 60`.
+  The runner executes production composition, stream/drop lifecycle faults, redaction contracts and the Task 21 loopback soak, then writes ignored evidence under
+  `output/routing-operational/qualification/task24-predeletion/`.
+  A smoke run on 2026-07-31 passed the command chain and report shape, but correctly set `deletionApproved = false` because the worktree was dirty and the run was not a clean 60-minute observation.
 - Task 28 may delete debug legacy only after the separate local observation and reset/reimport preconditions in the plan are met.
 - Any new temporary adapter must add owner, consumer, expiry task, and forbidden scopes to this ledger in the same commit.
