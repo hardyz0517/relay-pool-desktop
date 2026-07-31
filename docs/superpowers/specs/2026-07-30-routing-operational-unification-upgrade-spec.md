@@ -1,7 +1,7 @@
 # Relay Pool 路由与运行事实一体化升级 Spec
 
 Date: 2026-07-30
-Status: Normative architecture upgrade spec; implementation starts at Stage 0 gates and must not skip directly to production cutover
+Status: Normative architecture upgrade spec; implementation starts at Stage 0 development checks and must not skip directly to production cutover
 Scope: 本地路由、运行事实、状态监控、采集、价格、请求生命周期、请求日志、聚合 read model 与相关桌面 UI
 
 ## 1. 执行摘要
@@ -28,7 +28,7 @@ Canonical Facts / Evidence
 
 1. 不引入 LLM 路由、强化学习、bandit、在线训练或复杂自适应算法。
 2. 选择算法从“多因子归一化总分 + TopK weighted order”收敛为同一个 hierarchical kernel 下的两个 sealed lexicographic profile：`PriorityFirst` 与 `CostFirst`；二者都使用硬过滤、availability tier、成本/优先级层、最低利用率、LRU 和确定性打散，不复制 selector。
-3. 路由生产资格必须持有真实 `CapacityLease`；capacity miss 只推进当前 `RoutePlan`，真实 attempt 失败才加入 request exclusion，事实代际变化或 wait 唤醒才触发重规划。没有 lease 的 candidate 永远不能成为 `SelectedRoute`。
+3. 路由生产执行资格必须持有真实 `CapacityLease`；capacity miss 只推进当前 `RoutePlan`，真实 attempt 失败才加入 request exclusion，事实代际变化或 wait 唤醒才触发重规划。没有 lease 的 candidate 永远不能成为 `SelectedRoute`。
 4. 分组、倍率、价格、能力、Key 健康、endpoint 健康和余额由共享 projector 统一解析；页面和 scheduler 不再直接解释底层表。
 5. 请求内 snapshot 只读，热运行状态单独存放，凭据只在选中后交给 executor。
 6. 复用现有 request finalization lease，把一次终结扩展为显式、幂等的 outcome consumers，不引入通用事件总线。

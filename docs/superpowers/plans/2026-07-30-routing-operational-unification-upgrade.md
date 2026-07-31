@@ -651,11 +651,19 @@ pnpm.cmd build
 **Run:**
 
 ```powershell
-pnpm.cmd verify:fast
-pnpm.cmd verify:full
+pnpm.cmd architecture:fixtures
+pnpm.cmd architecture:typescript
+pnpm.cmd generate:bindings --check
+pnpm.cmd architecture:commands
+pnpm.cmd architecture:security
+pnpm.cmd architecture:artifacts
+pnpm.cmd test:contracts
+pnpm.cmd build
 node scripts/local-routing-redaction.test.mjs
-cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
+
+若本机 Node/工具链版本满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full`；版本不匹配时记录环境限制，不把发布期依赖门禁作为本开发 checkpoint 的阻塞项。
 
 **完成条件:** 开发期自检证明旧 production behavior 未变、用户能完成所有 cutover-required config、新 request log 不再写完整 upstream URL、fresh/known schema 与导入导出合同仍通过。开发期不要求签名发布或 installer 升级矩阵；Task 12 可在上述本地自检通过后开始。若重新启用稳定发布策略，必须恢复 tag、签名 bundle、install/upgrade matrix 和发布渠道证据。
 
@@ -1139,7 +1147,7 @@ pnpm.cmd test:contracts
 **Pre-cutover checklist:**
 
 - [ ] 对所有本地 profiles 执行 readiness scan；缺少 ordering profile、可信 multiplier ceiling 或 required migration confirmation 时停止，不能静默猜测。
-- [ ] 保存 cutover 前 `verify:full`、known-schema、loopback、redaction 和 reset/reimport compatibility 证据。
+- [ ] 保存 cutover 前开发期目标检查集、known-schema、loopback、redaction 和 reset/reimport compatibility 证据；本机工具链版本满足 ledger 时可附加 `verify:full` 聚合证据。
 - [ ] 审核 composition diff，确认 selector、capacity、writer、feedback、pricing、target resolver 与 shutdown 是一个完整 owner 组合。
 
 **RED:**
@@ -1167,7 +1175,9 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_producti
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_production_startup_shutdown -- --nocapture
 node scripts/local-proxy-v2-boundary.test.mjs
 node scripts/manual-proxy-default.test.mjs
-pnpm.cmd verify:full
+pnpm.cmd test:contracts
+pnpm.cmd build
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
 **Exit gate:** default-v2 只有一个完整 production owner；未满足 readiness 的本地配置明确拒绝新 admission；不等待正式版本发布。
@@ -1376,7 +1386,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] 先完成所有实现、tests、workflow 和 self-check manifest，运行 focused tests 后提交 `test: qualify routing operational cutover`。
 - [ ] soak/performance/security 输出携带 source revision、工具版本和参数，只写 ignored output/CI artifact；source revision 仅用于诊断，不代表发布候选冻结。
 - [ ] 不要求 release tag、签名 installer、安装升级矩阵、旧 binary rollback、release exe artifact 校验或同 revision 发布候选门禁。
-- [ ] 若自检后继续修改 tracked 文件，只需针对修改范围重跑对应检查；影响路由闭环、schema、安全或生命周期时重跑完整 `verify:full` 与 soak。
+- [ ] 若自检后继续修改 tracked 文件，只需针对修改范围重跑对应检查；影响路由闭环、schema、安全或生命周期时重跑完整开发期目标检查集与 soak；本机工具链版本满足 ledger 时可附加 `verify:full`。
 
 **Fault and concurrency matrix:**
 
@@ -1409,11 +1419,20 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 **Run:**
 
 ```powershell
-pnpm.cmd verify:full
+pnpm.cmd architecture:fixtures
+pnpm.cmd architecture:typescript
+pnpm.cmd architecture:commands
+pnpm.cmd architecture:security
+pnpm.cmd architecture:artifacts
+pnpm.cmd test:contracts
+pnpm.cmd build
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 pnpm.cmd architecture:scale-baseline
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60
 node scripts/routing-operational-qualification.mjs
 ```
+
+若本机 Node/工具链版本恰好满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full` 作为聚合检查；当前开发期不把它作为 release gate，也不为了通过它放宽依赖 ledger。
 
 **完成条件:** fault/concurrency/performance/soak 全绿，ignored/CI self-check artifact 记录 source revision、命令、版本、环境、阈值与脱敏结果；任一红项阻止 Task 27。开发期不要求 release tag、签名密钥、本地安装包、升级矩阵、release binary artifact 或旧 binary rollback；Task 27 负责 reset/reimport 重来恢复和授权客户端 smoke。
 
@@ -1421,7 +1440,7 @@ node scripts/routing-operational-qualification.mjs
 
 ## 34. Task 27：开发期本地自检、重来恢复与真实客户端验证
 
-**Depends on:** Task 26；开发期不要求公开发布、签名 installer、本地安装包、自动更新渠道、安装升级矩阵或旧 binary rollback。若项目进入稳定产品阶段，本 Task 必须由新的发布 ADR 重新升级为正式 release/upgrade/rollback 流程。
+**Depends on:** Task 26；开发期不要求公开发布、签名 installer、本地安装包、自动更新渠道、安装升级矩阵或旧 binary rollback。恢复策略是停止 admission 后 reset local data、reimport config 或重新配置；若项目进入稳定产品阶段，本 Task 才由新的发布 ADR 重新升级为正式 release/upgrade/rollback 流程。
 
 **Files:**
 
@@ -1455,18 +1474,21 @@ node scripts/routing-operational-qualification.mjs
 
 - [ ] 使用用户授权的至少一种真实 OpenAI-compatible 客户端验证 buffered、streaming、cancel、model listing、fallback 和稳定错误 body。
 - [ ] 真实 provider 验证低频、有预算，覆盖 adapter-confirmed auth/model semantic fixture；无法确认的 403/404 仍为 Uncertain/neutral。
-- [ ] CCSwitch 配合场景验证固定本地入口、启动/停止、端口占用、sleep/resume 和 upgrade 后配置不漂移。
+- [ ] CCSwitch 配合场景验证固定本地入口、启动/停止、端口占用、sleep/resume，以及 reset/reimport 后配置来源明确、不静默漂移。
 - [ ] 核对 SQLite journal/decision/health/cost 与 UI timeline；所有数量、attempt order、currency aggregate 和 selected route 一致。
 - [ ] 检查 local self-check logs、trace、UI、errors 和 support snapshot 无 secret、完整 headers/URL 或 payload。
 
 **Run:**
 
 ```powershell
-pnpm.cmd verify:full
+pnpm.cmd test:contracts
+pnpm.cmd build
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1
 node scripts/routing-operational-qualification.mjs
 ```
+
+`pnpm.cmd verify:full` 只在本机 Node/依赖生命周期版本满足 ledger 时作为额外聚合检查；版本不匹配时记录环境限制并使用上面的开发期目标检查集，不把发布期门禁带进 Task 27。
 
 **完成条件:** 本地自检、reset/reimport recovery、授权真实客户端与安全核对全部通过；保存版本/commit/证据索引，不保存秘密或原始 provider payload。公开签名 release、本地安装包、安装/升级矩阵和旧 binary rollback 仅在稳定产品阶段由新 ADR 恢复。
 
@@ -1474,7 +1496,7 @@ node scripts/routing-operational-qualification.mjs
 
 ## 35. Task 28：登记并执行 debug legacy runtime 后续删除票据
 
-**Depends on:** 不是本次 cutover 的组成部分；必须满足本计划规定的 default-v2 本地 observation/soak、真实客户端、reset/reimport 和 deletion ledger 证据。开发期不要求正式发布后观察门禁。
+**Depends on:** 不是本次 cutover 的组成部分；必须满足本计划规定的 default-v2 本地 observation/soak、真实客户端、reset/reimport 和 deletion ledger 证据。开发期不要求正式发布后观察门禁，也不要求安装升级矩阵或旧 binary rollback。
 
 **Files:**
 
@@ -1502,8 +1524,9 @@ node scripts/routing-operational-qualification.mjs
 ```powershell
 node scripts/routing-single-owner.test.mjs
 node scripts/local-proxy-v2-boundary.test.mjs
-pnpm.cmd verify:full
-cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+pnpm.cmd test:contracts
+pnpm.cmd build
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
 **Exit gate:** debug legacy runtime 及其专属债务物理删除，support 文档指向受支持的 reset/reimport 流程；稳定产品阶段若需要 binary rollback，另开 ADR 重新定义。
@@ -1519,7 +1542,7 @@ cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86
 3. **RED evidence**：先增加行为测试/contract fixture，保存预期失败的测试名与原因；不是编译错误凑 RED。
 4. **GREEN**：实现最小完整 vertical slice；不得临时接 production 双轨绕过尚未完成的 owner。
 5. **Focused verification**：运行 Task 列出的全部命令；失败必须修复或保持 Task 未完成。
-6. **Regression**：至少运行受影响模块的 Rust/TS/contract tests；跨 stage、composition、schema 或 security 的 Task 运行 `verify:full`。
+6. **Regression**：至少运行受影响模块的 Rust/TS/contract tests；跨 stage、composition、schema 或 security 的 Task 运行开发期目标检查集；本机工具链版本满足 dependency lifecycle ledger 时可附加 `verify:full`。
 7. **Diff review**：运行 `git diff --check`、`git diff --stat`、`git diff -- <明确路径>`，检查 secret、generated churn、临时 allow 和未登记 adapter。
 8. **Stage**：只用 `git add <明确路径>`；重叠 dirty file 使用 `git add -p`。禁止 `git add .`、`git add -A`。
 9. **Cached review**：运行 `git diff --cached --check` 和 `git diff --cached`；确认没有 stage 用户的无关 monitoring/UI 改动、local DB、日志或 credentials。

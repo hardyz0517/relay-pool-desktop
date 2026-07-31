@@ -1,6 +1,6 @@
 # Routing Operational Deletion Ledger
 
-Status: Task 24 default-v2 single-owner cutover applied; clean 60-minute pre-deletion approval passed; Task 26 final qualification must rerun after deletion/cutover commits
+Status: Task 24 default-v2 single-owner cutover applied; clean 60-minute pre-deletion approval passed; Task 26 development self-check must rerun after deletion/cutover commits
 Date: 2026-07-31
 
 Each entry must either be deleted by its owner task or converted into a documented, isolated compatibility projection. No entry may become a permanent second production path.
@@ -22,7 +22,7 @@ Each entry must either be deleted by its owner task or converted into a document
 | Old request-coupled response finalizer | `response_body.rs::LifecycleFinalizationLease`, `ProxyStartConfig::with_legacy_request_coupled_finalization` | Attempt terminal and request terminal can be sent from one finalizer without an explicit durable attempt ack barrier | Task 28 | Removed from default-v2 production config in Task 22; remaining use must be explicit debug/test-only isolation and never share a request with dual-terminal finalization |
 | Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Process-start full old owner only until default-v2 local observation proves reset/reimport recovery |
 
-Deletion gate:
+Deletion readiness check:
 
 - Task 24 must prove default-v2 has no second selector, capacity, pricing, feedback, or frontend truth path.
 - Task 24 pre-deletion approval was produced by a clean, non-smoke run of
@@ -53,7 +53,7 @@ Deletion gate:
   The schema17 fixture seeds a URL canary plus invalid UTF-8 and scans active DB, WAL, SHM and the app-generated schema backup for the canary after upgrade.
 - Task 25 also fixed the architecture security build-entry gate by keeping `src/demo.tsx` isolated from desktop backend/generated transport imports; this was required for the plan's security command to pass and does not change production entry behavior.
 - Earlier smoke run on 2026-07-31 passed the command chain and report shape, but correctly set `deletionApproved = false` because the worktree was dirty and the run was not a clean 60-minute observation.
-- Task 28 may delete debug legacy only after the separate local observation and reset/reimport preconditions in the plan are met.
+- Task 28 may delete debug legacy only after the separate local observation and reset/reimport preconditions in the plan are met. This is a development safety check, not a release gate: unsupported recovery remains reset local data, reimport config, or reconfigure with the current dev binary.
 - Any new temporary adapter must add owner, consumer, expiry task, and forbidden scopes to this ledger in the same commit.
 
 Task 28 debug legacy runtime deletion ticket:
