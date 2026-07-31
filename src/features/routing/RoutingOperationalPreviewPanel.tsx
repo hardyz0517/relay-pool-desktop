@@ -90,12 +90,12 @@ export function RoutingOperationalPreviewPanel({
       {
         key: "candidate",
         header: "Key / Station",
-        className: "max-w-[16rem]",
+        className: "w-[16rem] max-w-[16rem]",
         render: (candidate) => (
           <div className="grid min-w-0 gap-0.5">
             <button
               type="button"
-              className="truncate text-left font-medium text-foreground hover:text-primary"
+              className="min-w-0 truncate text-left font-medium text-foreground hover:text-primary"
               onClick={(event) => {
                 event.stopPropagation();
                 void openDetail(candidate.stationKeyId);
@@ -116,7 +116,7 @@ export function RoutingOperationalPreviewPanel({
         key: "price",
         header: "价格/倍率",
         render: (candidate) => (
-          <div className="grid gap-0.5">
+          <div className="grid min-w-0 gap-0.5">
             <span>{formatPriceBasis(candidate.priceBasis)}</span>
             <span className="text-xs text-muted-foreground">{candidate.balanceStatus ?? "balance unknown"}</span>
           </div>
@@ -125,7 +125,7 @@ export function RoutingOperationalPreviewPanel({
       {
         key: "capability",
         header: "能力证据",
-        className: "max-w-[18rem]",
+        className: "w-[18rem] max-w-[18rem]",
         render: (candidate) => (
           <div className="flex max-w-[18rem] flex-wrap gap-1">
             {capabilityLabels(candidate).map((label) => (
@@ -142,7 +142,7 @@ export function RoutingOperationalPreviewPanel({
         render: (candidate) => {
           const overlay = overlayByKey.get(candidate.stationKeyId);
           return (
-            <div className="grid gap-0.5">
+            <div className="grid min-w-0 gap-0.5">
               <StatusBadge tone={healthTone(overlay?.healthState ?? candidate.healthState)}>
                 {overlay?.healthState ?? candidate.healthState}
               </StatusBadge>
@@ -247,14 +247,14 @@ export function RoutingOperationalPreviewPanel({
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4">
       <SectionCard
         title="综合路由工作台"
         description="候选、运行时 overlay、最近决策、detail 和 simulation 使用独立后端 read model。"
         action={<StatusBadge tone={snapshot.readModelStatus === "available" ? "healthy" : "warning"}>{snapshot.readModelStatus}</StatusBadge>}
-        contentClassName="grid gap-3"
+        contentClassName="grid min-w-0 gap-3"
       >
-        <div className="grid gap-2 text-sm sm:grid-cols-5">
+        <div className="grid min-w-0 gap-2 text-sm sm:grid-cols-5">
           <ReadModelMetric label="候选" value={stationScopeId ? `${scopedCandidates.length}/${snapshot.candidates.length}` : `${snapshot.page.returned}/${snapshot.page.limit}`} />
           <ReadModelMetric label="Preview policy" value={snapshot.previewPolicyVersion} />
           <ReadModelMetric label="Capacity" value={snapshot.capacityMode} />
@@ -263,8 +263,8 @@ export function RoutingOperationalPreviewPanel({
         </div>
 
         {stationScopeId ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface px-3 py-2 text-xs text-info-foreground">
-            <span>
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface px-3 py-2 text-xs text-info-foreground">
+            <span className="min-w-0 break-words">
               Station scope: {stationScopeName ?? stationScopeId} · {scopedCandidates.length} candidates from backend snapshot
             </span>
             <Button size="sm" variant="ghost" onClick={() => setStationScopeId(null)}>
@@ -282,20 +282,20 @@ export function RoutingOperationalPreviewPanel({
             getRowKey={(candidate) => candidate.stationKeyId}
             selectedKey={selectedStationKeyId ?? undefined}
             onRowClick={(candidate) => void openDetail(candidate.stationKeyId)}
-            className="max-h-[420px] [&_table]:min-w-[980px]"
+            className="max-h-[420px] min-w-0 [&_table]:min-w-[980px]"
           />
         )}
       </SectionCard>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(23rem,0.7fr)]">
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(23rem,0.7fr)]">
         <SectionCard
           title="路由模拟器"
           description="调用同一后端 planner；capacity 明确为 snapshot-only，不获取真实 lease。"
           action={<StatusBadge tone="info">snapshot only</StatusBadge>}
-          contentClassName="grid gap-3"
+          contentClassName="grid min-w-0 gap-3"
         >
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-[14rem] flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 basis-[14rem]">
               <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
               <input
                 className="h-8 w-full rounded-[var(--surface-radius)] border border-border bg-surface pl-8 pr-3 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20"
@@ -316,7 +316,7 @@ export function RoutingOperationalPreviewPanel({
           title="Operational detail"
           description={selectedStationKeyId ? `Station Key: ${selectedStationKeyId}` : "从候选表或 Key 池 deep link 打开"}
           action={detailLoadingId ? <StatusBadge tone="info">读取中</StatusBadge> : null}
-          contentClassName="grid gap-2"
+          contentClassName="grid min-w-0 gap-2"
         >
           {detail ? <OperationalDetailPanel detail={detail} /> : <EmptyState title="暂无详情" description="选择一个候选查看事实来源、revision、新鲜度和影响。" />}
         </SectionCard>
@@ -326,9 +326,9 @@ export function RoutingOperationalPreviewPanel({
         title="最近决策与 decision timeline"
         description="timeline 区分 planning round、fallback、downstream delivery 和 cost aggregate；旧日志显示 legacy summary。"
         action={<StatusBadge tone={decisions?.readModelStatus === "available" ? "healthy" : "warning"}>{decisions?.readModelStatus ?? "unavailable"}</StatusBadge>}
-        contentClassName="grid gap-3"
+        contentClassName="grid min-w-0 gap-3"
       >
-        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,0.8fr)]">
+        <div className="grid min-w-0 gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,0.8fr)]">
           <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border">
             {(decisions?.decisions.length ?? 0) === 0 ? (
               <EmptyState title="暂无最近决策" description="有请求经过本地代理后，这里会显示 request scope。" />
@@ -338,7 +338,7 @@ export function RoutingOperationalPreviewPanel({
                   <button
                     key={decision.requestLogId}
                     type="button"
-                    className="grid w-full gap-1 px-3 py-2 text-left text-sm hover:bg-hover"
+                    className="grid w-full min-w-0 gap-1 px-3 py-2 text-left text-sm hover:bg-hover"
                     onClick={() => void openTrace(decision.requestLogId)}
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -367,7 +367,7 @@ export function RoutingOperationalPreviewPanel({
       </SectionCard>
 
       {error && (
-        <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-xs text-danger-foreground">
+        <div className="break-words rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-xs text-danger-foreground">
           {error}
         </div>
       )}
@@ -377,7 +377,7 @@ export function RoutingOperationalPreviewPanel({
 
 function ReadModelMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2">
+    <div className="min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-0.5 truncate font-medium text-foreground">{value}</div>
     </div>
@@ -386,21 +386,21 @@ function ReadModelMetric({ label, value }: { label: string; value: string }) {
 
 function OperationalDetailPanel({ detail }: { detail: StationKeyOperationalDetail }) {
   return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-foreground">
+    <div className="grid min-w-0 gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <span className="min-w-0 break-words text-sm font-semibold text-foreground">
           endpoint rev {detail.endpointRevision}
         </span>
         <StatusBadge tone={detail.readModelStatus === "available" ? "healthy" : "warning"}>{detail.readModelStatus}</StatusBadge>
       </div>
       <div className="grid gap-1 text-xs text-muted-foreground">
         {detail.facts.map((fact) => (
-          <div key={`${fact.scope}-${fact.name}-${fact.source}`} className="grid gap-1 rounded-lg border border-border bg-surface-subtle px-2 py-1.5">
-            <div className="flex justify-between gap-3">
-              <span>{fact.scope}.{fact.name}</span>
-              <span className="text-right text-foreground">{fact.value}</span>
+          <div key={`${fact.scope}-${fact.name}-${fact.source}`} className="grid min-w-0 gap-1 rounded-lg border border-border bg-surface-subtle px-2 py-1.5">
+            <div className="flex min-w-0 flex-wrap justify-between gap-3">
+              <span className="min-w-0 break-words">{fact.scope}.{fact.name}</span>
+              <span className="min-w-0 break-words text-right text-foreground">{fact.value}</span>
             </div>
-            <div className="truncate">
+            <div className="break-words">
               source {fact.source} · freshness {fact.freshness}
               {fact.reason ? ` · ${fact.reason}` : ""}
             </div>
@@ -413,15 +413,15 @@ function OperationalDetailPanel({ detail }: { detail: StationKeyOperationalDetai
 
 function SimulationResult({ simulation }: { simulation: RouteSimulationResult }) {
   return (
-    <div className="grid gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface px-3 py-2 text-xs text-info-foreground">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="grid min-w-0 gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface px-3 py-2 text-xs text-info-foreground">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <StatusBadge tone={simulation.selectedCapacityAcquired ? "warning" : "info"}>
           {simulation.capacityMode}
         </StatusBadge>
-        <span>policy {simulation.policy}</span>
-        <span>selected {simulation.selectedStationKeyId ?? "none"}</span>
+        <span className="min-w-0 break-words">policy {simulation.policy}</span>
+        <span className="min-w-0 break-words">selected {simulation.selectedStationKeyId ?? "none"}</span>
       </div>
-      <div>{simulation.message}</div>
+      <div className="break-words">{simulation.message}</div>
       <div>
         candidates {simulation.candidates.length} · accepted{" "}
         {simulation.candidates.filter((candidate) => candidate.accepted).length} · rejected{" "}
@@ -467,7 +467,7 @@ function DecisionTracePanel({
         ];
 
   return (
-    <div className="grid gap-2 rounded-[var(--surface-radius)] border border-border bg-surface p-3">
+    <div className="grid min-w-0 gap-2 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-foreground">
@@ -475,7 +475,7 @@ function DecisionTracePanel({
           </div>
           <div className="text-xs text-muted-foreground">{trace.traceVersion}</div>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           {onOpenRequestLog ? (
             <Button
               size="sm"
@@ -489,19 +489,19 @@ function DecisionTracePanel({
           <StatusBadge tone={trace.status === "legacy_summary" ? "info" : "warning"}>{trace.status}</StatusBadge>
         </div>
       </div>
-      <div className="grid gap-2">
+      <div className="grid min-w-0 gap-2">
         {rows.map((row) => (
           <div
             key={`${row.ordinal}-${row.kind}`}
-            className="grid gap-1 rounded-lg border border-border bg-surface-subtle px-2 py-1.5 text-xs"
+            className="grid min-w-0 gap-1 rounded-lg border border-border bg-surface-subtle px-2 py-1.5 text-xs"
           >
-            <div className="flex flex-wrap items-center gap-1.5 font-medium text-foreground">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 font-medium text-foreground">
               {row.kind === "planning_round" || row.kind === "fallback" ? (
                 <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
               ) : (
                 <Activity className="h-3.5 w-3.5 text-muted-foreground" />
               )}
-              <span>{row.title}</span>
+              <span className="min-w-0 break-words">{row.title}</span>
               <StatusBadge tone={timelineStatusTone(row.status)} className="h-5 px-1.5">
                 {formatTimelineStatus(row.status)}
               </StatusBadge>
@@ -509,11 +509,11 @@ function DecisionTracePanel({
             <div className="break-words text-muted-foreground">{row.summary}</div>
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
               <span>{formatTimelineKind(row.kind)}</span>
-              <span>{row.detailCode}</span>
+              <span className="break-all">{row.detailCode}</span>
               {row.durationMs != null ? <span>{row.durationMs} ms</span> : null}
               {row.attemptCount != null ? <span>{row.attemptCount} attempt(s)</span> : null}
               {row.fallbackCount != null ? <span>{row.fallbackCount} fallback(s)</span> : null}
-              {row.stationKeyId ? <span>key {row.stationKeyId}</span> : null}
+              {row.stationKeyId ? <span className="break-all">key {row.stationKeyId}</span> : null}
               {row.costStatus ? (
                 <span>
                   cost {row.costStatus}
