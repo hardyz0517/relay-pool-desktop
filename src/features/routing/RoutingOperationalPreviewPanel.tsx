@@ -42,6 +42,7 @@ export function RoutingOperationalPreviewPanel({
   deepLink,
 }: RoutingOperationalPreviewPanelProps) {
   const [selectedStationKeyId, setSelectedStationKeyId] = useState<string | null>(null);
+  const [stationScopeId, setStationScopeId] = useState<string | null>(null);
   const [selectedRequestLogId, setSelectedRequestLogId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StationKeyOperationalDetail | null>(null);
   const [trace, setTrace] = useState<RequestDecisionTrace | null>(null);
@@ -56,10 +57,22 @@ export function RoutingOperationalPreviewPanel({
     () => new Map((runtimeOverlay?.candidates ?? []).map((candidate) => [candidate.stationKeyId, candidate])),
     [runtimeOverlay?.candidates],
   );
+  const scopedCandidates = useMemo(
+    () => stationScopeId
+      ? snapshot?.candidates.filter((candidate) => candidate.stationId === stationScopeId) ?? []
+      : snapshot?.candidates ?? [],
+    [snapshot?.candidates, stationScopeId],
+  );
+  const stationScopeName = useMemo(
+    () => snapshot?.candidates.find((candidate) => candidate.stationId === stationScopeId)?.stationName ?? stationScopeId,
+    [snapshot?.candidates, stationScopeId],
+  );
 
   useEffect(() => {
     if (!deepLink) return;
-    if (deepLink.kind === "station-key") {
+    if (deepLink.kind === "station") {
+      openStationScope(deepLink.stationId);
+    } else if (deepLink.kind === "station-key") {
       void openDetail(deepLink.stationKeyId);
     } else if (deepLink.kind === "request") {
       void openTrace(deepLink.requestLogId);
@@ -170,6 +183,13 @@ export function RoutingOperationalPreviewPanel({
     }
   }
 
+  function openStationScope(stationId: string) {
+    setStationScopeId(stationId);
+    setSelectedStationKeyId(null);
+    setDetail(null);
+    setError(null);
+  }
+
   async function openTrace(requestLogId: string) {
     setSelectedRequestLogId(requestLogId);
     setTraceLoadingId(requestLogId);
@@ -233,19 +253,30 @@ export function RoutingOperationalPreviewPanel({
         contentClassName="grid gap-3"
       >
         <div className="grid gap-2 text-sm sm:grid-cols-5">
-          <ReadModelMetric label="候选" value={`${snapshot.page.returned}/${snapshot.page.limit}`} />
+          <ReadModelMetric label="候选" value={stationScopeId ? `${scopedCandidates.length}/${snapshot.candidates.length}` : `${snapshot.page.returned}/${snapshot.page.limit}`} />
           <ReadModelMetric label="Preview policy" value={snapshot.previewPolicyVersion} />
           <ReadModelMetric label="Capacity" value={snapshot.capacityMode} />
           <ReadModelMetric label="Runtime rev" value={runtimeOverlay?.revision.toString() ?? "snapshot-only"} />
           <ReadModelMetric label="价格缺口" value={`${snapshot.candidates.filter((candidate) => candidate.priceBasis === "unpriced").length}`} />
         </div>
 
-        {snapshot.candidates.length === 0 ? (
+        {stationScopeId ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface px-3 py-2 text-xs text-info-foreground">
+            <span>
+              Station scope: {stationScopeName ?? stationScopeId} · {scopedCandidates.length} candidates from backend snapshot
+            </span>
+            <Button size="sm" variant="ghost" onClick={() => setStationScopeId(null)}>
+              清除过滤
+            </Button>
+          </div>
+        ) : null}
+
+        {scopedCandidates.length === 0 ? (
           <EmptyState title="暂无候选" description="当前后端 snapshot 没有可展示候选。" />
         ) : (
           <DataTableLite
             columns={columns}
-            rows={snapshot.candidates}
+            rows={scopedCandidates}
             getRowKey={(candidate) => candidate.stationKeyId}
             selectedKey={selectedStationKeyId ?? undefined}
             onRowClick={(candidate) => void openDetail(candidate.stationKeyId)}

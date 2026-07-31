@@ -7,6 +7,7 @@ import {
   Database,
   Radar,
   RefreshCcw,
+  Route,
   ShieldCheck,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
@@ -38,6 +39,7 @@ import type {
   CollectorSummary,
 } from "@/lib/types/collector";
 import type { CollectorRun, CollectorTaskType } from "@/lib/types/collectorRuns";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import { CollectorAdvancedSettings } from "./CollectorAdvancedSettings";
@@ -52,7 +54,15 @@ type TaskStatus =
   | "success"
   | "failed";
 
-export function CollectorsPage() {
+type CollectorRoutingDeepLink = Extract<RoutingDeepLink, { kind: "station" }> & {
+  source: "collector";
+};
+
+type CollectorsPageProps = {
+  onOpenRoutingDeepLink?: (link: CollectorRoutingDeepLink) => void;
+};
+
+export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const stationsQuery = useActivityQuery(stationsQueryOptions());
@@ -350,6 +360,21 @@ export function CollectorsPage() {
             <RefreshCcw className="h-4 w-4" />
             刷新
           </Button>
+          {onOpenRoutingDeepLink && selectedStation ? (
+            <Button
+              variant="secondary"
+              onClick={() =>
+                onOpenRoutingDeepLink({
+                  kind: "station",
+                  stationId: selectedStation.id,
+                  source: "collector",
+                })
+              }
+            >
+              <Route className="h-4 w-4" />
+              查看路由影响
+            </Button>
+          ) : null}
         </div>
       }
     >

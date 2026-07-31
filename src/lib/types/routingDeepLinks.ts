@@ -2,14 +2,19 @@ import type { RouteEndpointKind } from "@/lib/types/routing";
 
 export type RoutingDeepLink =
   | {
+      kind: "station";
+      stationId: string;
+      source?: "collector" | "station_endpoint_health" | "change_center";
+    }
+  | {
       kind: "station-key";
       stationKeyId: string;
-      source?: "key_pool" | "monitoring" | "collector" | "station_endpoint_health";
+      source?: "key_pool" | "monitoring" | "collector" | "station_endpoint_health" | "change_center";
     }
   | {
       kind: "request";
       requestLogId: string;
-      source?: "request_log";
+      source?: "request_log" | "change_center";
     }
   | {
       kind: "simulate-model";

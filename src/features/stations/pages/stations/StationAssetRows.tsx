@@ -1,8 +1,9 @@
 import type { DraggableAttributes } from "@dnd-kit/core";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Clock3, Edit3, GripVertical, KeyRound, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Clock3, Edit3, GripVertical, KeyRound, RefreshCw, Route, ShieldCheck, Trash2 } from "lucide-react";
 import { IconButton } from "@/components/ui";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
 import {
@@ -18,6 +19,9 @@ const shouldAnimateStationAssetLayoutChanges: AnimateLayoutChanges = ({ isSortin
   isSorting || wasDragging;
 
 type StationAction = "collect" | "balance" | "authorize";
+type StationRoutingDeepLink = Extract<RoutingDeepLink, { kind: "station" }> & {
+  source: "station_endpoint_health";
+};
 
 export type StationAssetListRowProps = {
   row: StationAssetRow;
@@ -32,6 +36,7 @@ export type StationAssetListRowProps = {
   onAuthorize: (station: Station) => void;
   onCollect: (station: Station) => void;
   onDelete: (station: Station) => void;
+  onOpenRoutingDeepLink?: (link: StationRoutingDeepLink) => void;
   onOpenWebsite: (station: Station) => void;
   onRefreshBalance: (station: Station) => void;
 };
@@ -70,6 +75,7 @@ export function StationAssetListRow({
   onAuthorize,
   onCollect,
   onDelete,
+  onOpenRoutingDeepLink,
   onOpenWebsite,
   onRefreshBalance,
 }: StationAssetListRowProps) {
@@ -208,6 +214,21 @@ export function StationAssetListRow({
         >
           <RefreshCw className={cn("h-4 w-4", loadingAction === "collect" && "animate-spin")} />
         </IconButton>
+        {onOpenRoutingDeepLink ? (
+          <IconButton
+            className="text-muted-foreground hover:bg-selected hover:text-primary"
+            label={`查看路由影响 ${station.name}`}
+            onClick={() =>
+              onOpenRoutingDeepLink({
+                kind: "station",
+                stationId: station.id,
+                source: "station_endpoint_health",
+              })
+            }
+          >
+            <Route className="h-4 w-4" />
+          </IconButton>
+        ) : null}
         <IconButton
           className="text-muted-foreground/70 hover:bg-danger-surface hover:text-danger-foreground"
           label={`删除 ${station.name}`}

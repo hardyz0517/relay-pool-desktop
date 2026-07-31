@@ -248,6 +248,7 @@ export function App() {
               initialStation={detailStationPreview}
               onBack={returnToStations}
               onEditProvider={openEditProvider}
+              onOpenRoutingDeepLink={openRoutingDeepLink}
             />
           ),
         };

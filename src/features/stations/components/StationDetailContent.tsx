@@ -10,6 +10,7 @@ import {
   KeyRound,
   Layers3,
   RefreshCw,
+  Route,
   RotateCw,
   Server,
   ShieldCheck,
@@ -35,6 +36,7 @@ export type StationDetailContentProps = {
   sectionError: string | null;
   onBack: () => void;
   onEdit: () => void;
+  onOpenRoutingDeepLink?: () => void;
   onAuthorize: () => void;
   onRefresh: (action: StationDetailRefreshAction) => void;
 };
@@ -115,6 +117,7 @@ export function StationDetailContent({
   sectionError,
   onBack,
   onEdit,
+  onOpenRoutingDeepLink,
   onAuthorize,
   onRefresh,
 }: StationDetailContentProps) {
@@ -168,6 +171,12 @@ export function StationDetailContent({
             <Edit3 className="h-3.5 w-3.5" />
             编辑供应商
           </Button>
+          {onOpenRoutingDeepLink ? (
+            <Button variant="ghost" size="sm" onClick={onOpenRoutingDeepLink}>
+              <Route className="h-3.5 w-3.5" />
+              查看路由影响
+            </Button>
+          ) : null}
         </>
       }
     >

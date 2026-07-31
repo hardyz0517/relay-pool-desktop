@@ -37,6 +37,7 @@ export const ShellPageContent = memo(function ShellPageContent({
         <StationsPage
           onAddProvider={actions.addProvider}
           onEditProvider={actions.editProvider}
+          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
           onOpenStation={actions.openStation}
         />
       );
@@ -51,9 +52,9 @@ export const ShellPageContent = memo(function ShellPageContent({
     case "channels":
       return <ChannelStatusPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
     case "collectors":
-      return <CollectorsPage />;
+      return <CollectorsPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
     case "changes":
-      return <ChangeCenterPage />;
+      return <ChangeCenterPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
     case "pricing":
       return <PricingPage onOpenModelBasePrices={actions.openModelBasePrices} />;
     case "routing":
