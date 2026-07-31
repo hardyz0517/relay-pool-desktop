@@ -1,4 +1,5 @@
 pub(crate) mod affinity;
+pub(crate) mod capacity;
 pub(crate) mod eligibility;
 pub(crate) mod planner;
 pub(crate) mod request;

@@ -122,9 +122,17 @@ fn bytes_to_permits(bytes: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::{
+            atomic::{AtomicU32, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
 
-    use super::{BodyBudget, ProxyServerLimits};
+    use tokio::sync::Semaphore;
+
+    use super::{BodyBudget, ProxyServerLimits, RequestLease};
 
     #[tokio::test]
     async fn body_budget_holds_bytes_until_last_request_owner_drops() {
@@ -135,6 +143,22 @@ mod tests {
         assert_eq!(budget.available_bytes(), 1024);
         drop(clone);
         assert_eq!(budget.available_bytes(), 4096);
+    }
+
+    #[tokio::test]
+    async fn request_lease_tracks_active_downstream_requests_until_drop() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let active = Arc::new(AtomicU32::new(0));
+        let permit = Arc::clone(&semaphore)
+            .try_acquire_owned()
+            .expect("request permit");
+        let lease = RequestLease::new(permit, Arc::clone(&active));
+
+        assert_eq!(active.load(Ordering::Relaxed), 1);
+        assert_eq!(semaphore.available_permits(), 0);
+        drop(lease);
+        assert_eq!(active.load(Ordering::Relaxed), 0);
+        assert_eq!(semaphore.available_permits(), 1);
     }
 
     #[test]
