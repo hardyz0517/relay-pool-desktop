@@ -56,8 +56,16 @@ Commands run on this source snapshot:
 The following plan items are still not complete:
 
 - Run the real Tauri dev application with a redacted/synthetic fixture data directory.
+- Start the local fixture upstream first: `node scripts/routing-workspace-fixture-server.mjs`.
+  It listens only on `http://127.0.0.1:18181/v1`, supports models/chat/responses/embeddings, and does not log request bodies or headers.
 - Recommended launcher: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-workspace-tauri-manual.ps1`.
   It starts `pnpm.cmd tauri:dev` with process-local `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` under ignored `output/manual-routing-workspace/<profile>`, and disables proxy auto-start by environment.
+- Synthetic station values for the manual profile:
+  - Station type: OpenAI-compatible.
+  - Website/API base URL: `http://127.0.0.1:18181/v1`.
+  - Synthetic local key value: any non-secret placeholder, for example `fixture-local-key`.
+  - Chat model: `routing-fixture-chat`.
+  - Embedding model: `routing-fixture-embedding`.
 - Walk the workflow: monitoring -> Key detail -> route simulation -> decision trace -> request log -> routing workspace.
 - Check 1280x800, 1024x768 and the minimum supported window.
 - Confirm table, drawer/detail, tooltip, typed error and long text states do not overlap.

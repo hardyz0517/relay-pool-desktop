@@ -38,6 +38,7 @@ const stationAssetRows = read("src/features/stations/pages/stations/StationAsset
 const stationDetailPage = read("src/features/stations/StationDetailPage.tsx");
 const stationDetailContent = read("src/features/stations/components/StationDetailContent.tsx");
 const manualTauriScript = read("scripts/run-routing-workspace-tauri-manual.ps1");
+const fixtureServer = read("scripts/routing-workspace-fixture-server.mjs");
 
 assertIncludes(routingPage, '{ value: "workspace", label: "工作台" }', "RoutingPage");
 assertIncludes(routingPage, "refetchInterval: queryEnabled && activeTab === \"workspace\" ? 1_000 : false", "RoutingPage");
@@ -141,5 +142,15 @@ assertIncludes(manualTauriScript, "pnpm.cmd tauri:dev", "manual Tauri routing wo
 assertExcludes(manualTauriScript, "Remove-Item", "manual Tauri routing workspace script");
 assertExcludes(manualTauriScript, "rm -", "manual Tauri routing workspace script");
 assertExcludes(manualTauriScript, "git add", "manual Tauri routing workspace script");
+assertIncludes(fixtureServer, 'const host = "127.0.0.1"', "routing workspace fixture server");
+assertIncludes(fixtureServer, 'url.pathname === "/v1/models"', "routing workspace fixture server");
+assertIncludes(fixtureServer, 'url.pathname === "/v1/chat/completions"', "routing workspace fixture server");
+assertIncludes(fixtureServer, 'url.pathname === "/v1/responses"', "routing workspace fixture server");
+assertIncludes(fixtureServer, 'url.pathname === "/v1/embeddings"', "routing workspace fixture server");
+assertIncludes(fixtureServer, "This server does not log request bodies or headers", "routing workspace fixture server");
+assertExcludes(fixtureServer, "console.log(request", "routing workspace fixture server");
+assertExcludes(fixtureServer, "console.log(body", "routing workspace fixture server");
+assertExcludes(fixtureServer, "Authorization", "routing workspace fixture server");
+assertExcludes(fixtureServer, "https://", "routing workspace fixture server");
 
 console.log("routing workspace integration contract ok");
