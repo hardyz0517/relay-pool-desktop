@@ -11,6 +11,37 @@ use tokio::sync::{Notify, Semaphore};
 mod application {
     #[path = "../../src/application/request_lifecycle/mod.rs"]
     pub(crate) mod request_lifecycle;
+
+    pub(crate) mod request_finalization {
+        pub(crate) mod outcome_orchestrator {
+            use crate::services::proxy::lifecycle::{
+                ports::AttemptCostCommitRecord, request::AttemptId,
+            };
+
+            pub(crate) fn interrupted_attempt_cost(
+                attempt_id: AttemptId,
+                created_at_ms: i64,
+            ) -> AttemptCostCommitRecord {
+                AttemptCostCommitRecord {
+                    request_id: attempt_id.request_id,
+                    ordinal: attempt_id.ordinal,
+                    pricing_context_id: "trace_incomplete".to_string(),
+                    pricing_basis: "unpriced".to_string(),
+                    pricing_status_label: "trace_incomplete".to_string(),
+                    usage_status: "missing_usage".to_string(),
+                    input_tokens: None,
+                    output_tokens: None,
+                    total_tokens: None,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                    cost_status: "missing_usage".to_string(),
+                    currency: None,
+                    total_cost_micro: None,
+                    created_at_ms,
+                }
+            }
+        }
+    }
 }
 
 mod services {
@@ -222,6 +253,7 @@ async fn request_terminal_waits_for_selected_attempt_durable_ack() {
             attempt_reservation,
             attempt_context(&context),
         )),
+        None,
     );
     let join = finalizer
         .finalize(
@@ -289,6 +321,7 @@ async fn attempt_ack_failure_releases_request_lease_without_request_terminal() {
             attempt_reservation,
             attempt_context(&context),
         )),
+        None,
     );
     let join = finalizer
         .finalize(
@@ -320,18 +353,23 @@ async fn attempt_ack_failure_releases_request_lease_without_request_terminal() {
 }
 
 #[test]
-fn production_constructor_still_uses_old_finalizer_until_atomic_cutover() {
+fn production_constructor_has_deleted_old_request_coupled_finalizer() {
     let source_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/services/proxy/response_body.rs");
     let source = std::fs::read_to_string(source_path).expect("response_body source");
 
-    let lifecycle_constructor = function_body(
-        &source,
-        "pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout",
+    assert!(
+        !source.contains("LifecycleFinalizationLease"),
+        "Task 28 removes the request-coupled finalizer type instead of hiding it behind debug/test code"
     );
-    assert!(lifecycle_constructor.contains("FinalizationTarget::Lifecycle(lease)"));
-    assert!(lifecycle_constructor.contains("Some(request_lease)"));
-    assert!(!lifecycle_constructor.contains("FinalizationTarget::DualTerminal"));
+    assert!(
+        !source.contains("FinalizationTarget::Lifecycle"),
+        "Task 28 keeps only the dual-terminal finalization target"
+    );
+    assert!(
+        !source.contains("pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout"),
+        "Task 28 removes the old request-coupled stream constructor"
+    );
 
     let dual_constructor = function_body(
         &source,

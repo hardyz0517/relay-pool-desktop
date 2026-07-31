@@ -22,12 +22,14 @@ assert.ok(
 
 assert.match(
   runtimeSource,
-  /finalization_mode:\s*ProxyFinalizationMode::DualTerminal/,
-  "ProxyStartConfig::new_v2 must use dual-terminal finalization as the default-v2 production finalizer after Task 22",
+  /dual_terminal_(buffered_)?lifecycle_finalizing_stream/,
+  "ProxyStartConfig::new_v2 must use the single dual-terminal finalization path after Task 28",
 );
 assert.ok(
-  runtimeSource.includes("with_legacy_request_coupled_finalization"),
-  "legacy request-coupled finalization may only remain as an explicit debug/test opt-in before Task 28 deletion",
+  !/ProxyFinalizationMode|LegacyRequestCoupled|with_legacy_request_coupled_finalization/.test(
+    runtimeSource,
+  ),
+  "legacy request-coupled finalization must not remain as a debug/test opt-in after Task 28 deletion",
 );
 assert.ok(
   runtimeSource.includes("dual_cost_finalization"),

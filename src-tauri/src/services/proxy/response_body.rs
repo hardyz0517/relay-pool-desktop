@@ -17,8 +17,8 @@ use super::{
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     lifecycle::{
         attempt::{
-            AttemptContext, AttemptFailureKind, AttemptTerminal, AttemptTerminalRecord,
-            ClassifiedAttemptFailure, FailureBlame, HealthEffect, RetryDisposition,
+            AttemptContext, AttemptFailureKind, AttemptTerminal, ClassifiedAttemptFailure,
+            FailureBlame, HealthEffect, RetryDisposition,
         },
         delivery::DeliveryTerminal,
         request::PendingFinalRequestRecord,
@@ -32,26 +32,6 @@ use super::{
 use crate::{observability::correlation, services::time::now_millis_for_services};
 
 const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
-
-pub(crate) struct SelectedAttemptFinalization {
-    reservation: AttemptWriteReservation,
-    context: AttemptContext,
-}
-
-impl SelectedAttemptFinalization {
-    pub(crate) fn new(reservation: AttemptWriteReservation, context: AttemptContext) -> Self {
-        Self {
-            reservation,
-            context,
-        }
-    }
-}
-
-pub(crate) struct LifecycleFinalizationLease {
-    terminal: Option<RequestTerminalReservation>,
-    selected_attempt: Option<SelectedAttemptFinalization>,
-    finalized: bool,
-}
 
 enum FinalizationState {
     Lifecycle(PendingFinalRequestRecord),
@@ -69,58 +49,7 @@ pub(crate) enum FinalizationOutcome {
 }
 
 enum FinalizationTarget {
-    Lifecycle(LifecycleFinalizationLease),
-    #[allow(
-        dead_code,
-        reason = "Task 20 exposes this for explicit loopback composition; Task 22 owns production cutover"
-    )]
     DualTerminal(DualTerminalFinalizationLease),
-}
-
-impl LifecycleFinalizationLease {
-    pub(crate) fn new(
-        terminal: RequestTerminalReservation,
-        selected_attempt: Option<SelectedAttemptFinalization>,
-    ) -> Self {
-        Self {
-            terminal: Some(terminal),
-            selected_attempt,
-            finalized: false,
-        }
-    }
-
-    pub(crate) fn finalize(
-        mut self,
-        record: PendingFinalRequestRecord,
-        delivery: DeliveryTerminal,
-        outcome: FinalizationOutcome,
-        attempt_terminal: Option<AttemptTerminal>,
-    ) {
-        if self.finalized {
-            return;
-        }
-        self.finalized = true;
-        let Some(terminal) = self.terminal.take() else {
-            return;
-        };
-        if let Some(selected_attempt) = self.selected_attempt.take() {
-            if let Some(attempt_terminal) = attempt_terminal {
-                let record = AttemptTerminalRecord {
-                    context: selected_attempt.context,
-                    terminal: attempt_terminal,
-                    output_committed: record.annotations().body_bytes.unwrap_or_default() > 0,
-                    terminal_at_ms: now_millis_for_services() as i64,
-                };
-                let _attempt_ack = selected_attempt.reservation.send(record);
-            }
-        }
-        let final_record = match outcome {
-            FinalizationOutcome::Completed => record.complete(delivery),
-            FinalizationOutcome::Failed { code, detail } => record.fail(code, detail, delivery),
-            FinalizationOutcome::Interrupted { detail } => record.interrupt(delivery, detail),
-        };
-        let _ack = terminal.send(final_record);
-    }
 }
 
 impl FinalizationTarget {
@@ -133,9 +62,6 @@ impl FinalizationTarget {
         output_committed: bool,
     ) {
         match (self, state) {
-            (Self::Lifecycle(lease), FinalizationState::Lifecycle(record)) => {
-                lease.finalize(record, delivery, outcome, attempt_terminal)
-            }
             (Self::DualTerminal(lease), FinalizationState::Lifecycle(record)) => {
                 let _join = lease.finalize(
                     record,
@@ -149,74 +75,6 @@ impl FinalizationTarget {
     }
 }
 
-pub(crate) fn buffered_lifecycle_finalizing_stream(
-    body: Bytes,
-    record: PendingFinalRequestRecord,
-    lease: LifecycleFinalizationLease,
-    request_lease: RequestLease,
-) -> ByteStream {
-    lifecycle_finalizing_stream(
-        Box::pin(futures_util::stream::once(async move { Ok(body) })),
-        record,
-        lease,
-        request_lease,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn correlated_buffered_lifecycle_finalizing_stream(
-    body: Bytes,
-    record: PendingFinalRequestRecord,
-    lease: LifecycleFinalizationLease,
-    request_lease: RequestLease,
-    correlation_id: correlation::CorrelationId,
-) -> ByteStream {
-    correlated_lifecycle_finalizing_stream_with_idle_timeout(
-        Box::pin(futures_util::stream::once(async move { Ok(body) })),
-        record,
-        lease,
-        request_lease,
-        DEFAULT_STREAM_IDLE_TIMEOUT,
-        correlation_id,
-    )
-}
-
-pub(crate) fn lifecycle_finalizing_stream(
-    stream: ByteStream,
-    record: PendingFinalRequestRecord,
-    lease: LifecycleFinalizationLease,
-    request_lease: RequestLease,
-) -> ByteStream {
-    lifecycle_finalizing_stream_with_idle_timeout(
-        stream,
-        record,
-        lease,
-        request_lease,
-        DEFAULT_STREAM_IDLE_TIMEOUT,
-    )
-}
-
-pub(crate) fn lifecycle_finalizing_stream_with_idle_timeout(
-    stream: ByteStream,
-    record: PendingFinalRequestRecord,
-    lease: LifecycleFinalizationLease,
-    request_lease: RequestLease,
-    idle_timeout: Duration,
-) -> ByteStream {
-    finalizing_stream_with_target(
-        stream,
-        FinalizationState::Lifecycle(record),
-        FinalizationTarget::Lifecycle(lease),
-        Some(request_lease),
-        idle_timeout,
-        correlation::current(),
-    )
-}
-
-#[allow(
-    dead_code,
-    reason = "Task 20 exposes this for explicit loopback composition; Task 22 owns production cutover"
-)]
 pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
     body: Bytes,
     record: PendingFinalRequestRecord,
@@ -236,10 +94,6 @@ pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
     )
 }
 
-#[allow(
-    dead_code,
-    reason = "Task 20 exposes this for explicit loopback composition; Task 22 owns production cutover"
-)]
 pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
     stream: ByteStream,
     record: PendingFinalRequestRecord,
@@ -263,25 +117,6 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
         None,
         idle_timeout,
         correlation::current(),
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn correlated_lifecycle_finalizing_stream_with_idle_timeout(
-    stream: ByteStream,
-    record: PendingFinalRequestRecord,
-    lease: LifecycleFinalizationLease,
-    request_lease: RequestLease,
-    idle_timeout: Duration,
-    correlation_id: correlation::CorrelationId,
-) -> ByteStream {
-    finalizing_stream_with_target(
-        stream,
-        FinalizationState::Lifecycle(record),
-        FinalizationTarget::Lifecycle(lease),
-        Some(request_lease),
-        idle_timeout,
-        Some(correlation_id),
     )
 }
 
@@ -593,17 +428,17 @@ mod tests {
                 AttemptId, FinalRequestRecord, PendingFinalRequestRecord, RequestContextSnapshot,
                 RequestLogAnnotations, RequestStartRecord, RequestTerminal,
             },
-            writer::{LifecycleWriter, LifecycleWriterWorker},
+            writer::{
+                AttemptWriteReservation, LifecycleWriter, LifecycleWriterWorker,
+                RequestTerminalReservation,
+            },
         },
         limits::RequestLease,
     };
 
     use super::{
-        buffered_lifecycle_finalizing_stream,
-        correlated_lifecycle_finalizing_stream_with_idle_timeout,
         dual_terminal_buffered_lifecycle_finalizing_stream,
-        lifecycle_finalizing_stream_with_idle_timeout, LifecycleFinalizationLease,
-        SelectedAttemptFinalization,
+        dual_terminal_lifecycle_finalizing_stream_with_idle_timeout,
     };
 
     #[tokio::test]
@@ -613,15 +448,18 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             active_requests,
         } = fixture;
-        let mut body = buffered_lifecycle_finalizing_stream(
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
             Bytes::from_static(b"ok"),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
         );
 
@@ -661,7 +499,8 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             ..
@@ -678,13 +517,20 @@ mod tests {
                 crate::observability::correlation::current_id_string();
             Ok(Bytes::from_static(b"ok"))
         });
-        let mut body = correlated_lifecycle_finalizing_stream_with_idle_timeout(
-            Box::pin(inner),
-            record,
-            lease,
-            request_lease,
-            std::time::Duration::from_secs(1),
+        let mut body = crate::observability::correlation::with_scope(
+            "proxy.request.body",
             correlation_id.clone(),
+            || {
+                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+                    Box::pin(inner),
+                    record,
+                    request_terminal,
+                    selected_attempt,
+                    None,
+                    request_lease,
+                    std::time::Duration::from_secs(1),
+                )
+            },
         );
 
         assert_eq!(
@@ -722,15 +568,18 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             ..
         } = fixture;
-        let mut body = buffered_lifecycle_finalizing_stream(
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
             Bytes::from_static(b"ok"),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
         );
 
@@ -762,15 +611,18 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             active_requests,
         } = fixture;
-        let mut body = buffered_lifecycle_finalizing_stream(
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
             Bytes::from_static(b"ok"),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
         );
 
@@ -825,15 +677,18 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             active_requests,
         } = fixture;
-        let body = buffered_lifecycle_finalizing_stream(
+        let body = dual_terminal_buffered_lifecycle_finalizing_stream(
             Bytes::from_static(b"ok"),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
         );
 
@@ -864,15 +719,18 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             ..
         } = fixture;
-        let mut body = lifecycle_finalizing_stream_with_idle_timeout(
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
             Box::pin(stream::iter(vec![Err(stream_failure())])),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
             std::time::Duration::from_secs(1),
         );
@@ -910,15 +768,18 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             ..
         } = fixture;
-        let mut body = lifecycle_finalizing_stream_with_idle_timeout(
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
             Box::pin(stream::pending()),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
             std::time::Duration::from_millis(1),
         );
@@ -955,19 +816,22 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             record,
             ..
         } = fixture;
-        let mut body = buffered_lifecycle_finalizing_stream(
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
             Bytes::from_static(
                 br#"data: {"type":"response.completed","response":{"id":"resp_v2","usage":{"input_tokens":9,"output_tokens":4,"total_tokens":13}}}
 
 "#,
             ),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
         );
 
@@ -997,20 +861,23 @@ mod tests {
             store,
             writer,
             worker,
-            lease,
+            request_terminal,
+            selected_attempt,
             request_lease,
             mut record,
             ..
         } = fixture;
         record.annotations_mut().stream = true;
-        let mut body = buffered_lifecycle_finalizing_stream(
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
             Bytes::from_static(
                 br#"data: {"type":"response.created","response":{"id":"resp_incomplete"}}
 
 "#,
             ),
             record,
-            lease,
+            request_terminal,
+            selected_attempt,
+            None,
             request_lease,
         );
 
@@ -1407,7 +1274,8 @@ mod tests {
         store: Arc<RecordingStore>,
         writer: LifecycleWriter,
         worker: LifecycleWriterWorker,
-        lease: LifecycleFinalizationLease,
+        request_terminal: RequestTerminalReservation,
+        selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
         request_lease: RequestLease,
         record: PendingFinalRequestRecord,
         active_requests: Arc<AtomicU32>,
@@ -1490,19 +1358,20 @@ mod tests {
                     endpoint_revision: 1,
                     started_at_ms: received_at_ms,
                 };
-                Some(SelectedAttemptFinalization::new(reservation, context))
+                Some((reservation, context))
             } else {
                 None
             };
             let selected_attempt_id = selected_attempt
                 .as_ref()
-                .map(|attempt| attempt.context.attempt_id.clone());
+                .map(|(_, context)| context.attempt_id.clone());
 
             Self {
                 store,
                 writer,
                 worker,
-                lease: LifecycleFinalizationLease::new(terminal, selected_attempt),
+                request_terminal: terminal,
+                selected_attempt,
                 request_lease,
                 record: PendingFinalRequestRecord::new(
                     context,

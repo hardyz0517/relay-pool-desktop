@@ -1,6 +1,6 @@
 # Routing Operational Deletion Ledger
 
-Status: Task 24 default-v2 single-owner cutover applied; clean 60-minute pre-deletion approval passed; Task 26 development self-check must rerun after deletion/cutover commits
+Status: Task 28 debug legacy/request-coupled runtime deletion applied under the development reset/reimport recovery decision; Task 26/27 development self-checks must rerun after this deletion commit
 Date: 2026-07-31
 
 Each entry must either be deleted by its owner task or converted into a documented, isolated compatibility projection. No entry may become a permanent second production path.
@@ -19,8 +19,8 @@ Each entry must either be deleted by its owner task or converted into a document
 | Frontend pricing/group matcher | `src/lib/projections/pricingFacts.ts`, `src/lib/projections/groupFacts.ts` marked `RPD_ROUTING_BOUNDARY:display-only-routing-truth-compat` | UI can disagree with backend route/pricing semantics | Task 9/23/24 | Display-only UI compatibility until backend read model lands; not a production routing truth owner |
 | Arbitrary string planner errors | routing string errors and `InternalProxyError` flattening | Public client cannot distinguish config, capacity, capability, transient, and internal errors | Task 18/22 | Existing proxy error mapping before typed taxonomy |
 | Legacy policy config values | routing settings enum values | Missing multiplier ceiling cannot be silently upgraded | Task 10/11/22 | Pre-migration readiness UI and development reset/reimport window |
-| Old request-coupled response finalizer | `response_body.rs::LifecycleFinalizationLease`, `ProxyStartConfig::with_legacy_request_coupled_finalization` | Attempt terminal and request terminal can be sent from one finalizer without an explicit durable attempt ack barrier | Task 28 | Removed from default-v2 production config in Task 22; remaining use must be explicit debug/test-only isolation and never share a request with dual-terminal finalization |
-| Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Process-start full old owner only until default-v2 local observation proves reset/reimport recovery |
+| Old request-coupled response finalizer | `response_body.rs::LifecycleFinalizationLease`, `ProxyStartConfig::with_legacy_request_coupled_finalization` | Attempt terminal and request terminal can be sent from one finalizer without an explicit durable attempt ack barrier | Task 28 | Deleted; `runtime.rs` and `response_body.rs` keep only the dual-terminal finalization path with anti-regression contracts |
+| Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Deleted; supported development recovery is stop admission plus reset local data, reimport config, or reconfigure with the current dev binary |
 
 Deletion readiness check:
 
@@ -53,12 +53,12 @@ Deletion readiness check:
   The schema17 fixture seeds a URL canary plus invalid UTF-8 and scans active DB, WAL, SHM and the app-generated schema backup for the canary after upgrade.
 - Task 25 also fixed the architecture security build-entry gate by keeping `src/demo.tsx` isolated from desktop backend/generated transport imports; this was required for the plan's security command to pass and does not change production entry behavior.
 - Earlier smoke run on 2026-07-31 passed the command chain and report shape, but correctly set `deletionApproved = false` because the worktree was dirty and the run was not a clean 60-minute observation.
-- Task 28 may delete debug legacy only after the separate local observation and reset/reimport preconditions in the plan are met. This is a development safety check, not a release gate: unsupported recovery remains reset local data, reimport config, or reconfigure with the current dev binary.
+- Task 28 deletion is allowed by the 2026-07-31 development recovery decision: this is not a stable product, so the supported recovery remains reset local data, reimport config, or reconfigure with the current dev binary. Real/manual observations still improve confidence but no longer keep a second runtime/finalizer alive.
 - Any new temporary adapter must add owner, consumer, expiry task, and forbidden scopes to this ledger in the same commit.
 
 Task 28 debug legacy runtime deletion ticket:
 
-- Status: registered only; code deletion is not approved yet.
+- Status: deletion applied; rerun Task 26/27 focused self-checks after this commit.
 - Owner: Task 28.
 - Created: 2026-07-31 on `codex/routing-operational-upgrade`.
 - Current automated evidence:
@@ -68,16 +68,18 @@ Task 28 debug legacy runtime deletion ticket:
   - Local OpenAI-compatible client smoke harness `scripts/verify-local-routing-lifecycle.ps1` now requires `-AuthorizeLocalClientSmoke`, writes ignored redacted evidence under `output/routing-operational/qualification/local-client-smoke/`, and verifies request lifecycle rows through `scripts/verify-request-lifecycle-db.ps1` when DB verification is enabled.
   - Live OpenAI-compatible provider harness `scripts/run-openai-compatible-live-qualification.ps1` now fails closed without `RELAY_POOL_LIVE_API_KEY` and records only redacted endpoint evidence in ignored output rather than the raw provider URL.
   - Manual observation writer `scripts/write-routing-operational-manual-observation.ps1` now provides an authorization-gated, record-only, ignored JSON index for CCSwitch, Windows sleep/resume, UI timeline reconciliation, and final no-P0/P1 confirmation.
-- Missing preconditions before physical deletion:
-  - authorized real OpenAI-compatible client smoke for buffered, streaming, cancel, model listing, fallback, and stable error body;
-  - authorized low-frequency real provider semantic fixture for auth/model errors where adapter evidence exists;
+- Physical deletion scope:
+  - removed `ProxyFinalizationMode::LegacyRequestCoupled` and `ProxyStartConfig::with_legacy_request_coupled_finalization` from `src-tauri/src/services/proxy/runtime.rs`;
+  - removed runtime branches in `src-tauri/src/services/proxy/runtime.rs` that dispatched to request-coupled finalization instead of dual-terminal finalization;
+  - removed `LifecycleFinalizationLease`, `SelectedAttemptFinalization`, old request-coupled stream constructors, and `FinalizationTarget::Lifecycle` from `src-tauri/src/services/proxy/response_body.rs`;
+  - rewrote tests/contracts so body success/drop/error/idle/SSE behavior goes through the dual-terminal finalizer and legacy symbols are forbidden from returning;
+  - updated `scripts/local-proxy-v2-boundary.test.mjs`, `scripts/local-proxy-auth-contract.test.mjs`, `scripts/routing-operational-loopback-contract.test.mjs`, `docs/PROJECT_PLAN.md`, and this ledger so no debug legacy process-start owner is advertised as a supported recovery path.
+- Manual/authorization-gated observations still not committed as source truth:
+  - authorized real OpenAI-compatible client smoke;
+  - authorized low-frequency real provider semantic fixture;
   - CCSwitch fixed-local-entry cooperation check;
   - Windows sleep/resume and UI timeline versus SQLite journal/decision/health/cost reconciliation;
   - explicit confirmation that no P0/P1 remains in default-v2 observation.
-- Future deletion/adaptation scope, once the missing preconditions are satisfied:
-  - remove `ProxyFinalizationMode::LegacyRequestCoupled` and `ProxyStartConfig::with_legacy_request_coupled_finalization` from `src-tauri/src/services/proxy/runtime.rs`;
-  - remove runtime branches in `src-tauri/src/services/proxy/runtime.rs` that dispatch to request-coupled finalization instead of dual-terminal finalization;
-  - remove or rewrite tests that only prove legacy request-coupled finalization, keeping dual-terminal lifecycle tests;
-  - update `scripts/local-proxy-v2-boundary.test.mjs`, `scripts/routing-single-owner.test.mjs`, `docs/PROJECT_PLAN.md`, and this ledger so no debug legacy process-start owner is advertised as a supported recovery path.
-- Forbidden deletion shortcut: do not remove only the env/documentation string or enum name while leaving an unreachable request-coupled finalization branch behind.
+- These observations should be recorded with `scripts/write-routing-operational-manual-observation.ps1` when available, but they no longer justify preserving request-coupled finalization or a debug legacy runtime.
+- Forbidden deletion shortcut remains: do not remove only the env/documentation string or enum name while leaving an unreachable request-coupled finalization branch behind.
 - Supported recovery after deletion: stop admission, reset local data, reimport config, or reconfigure with the current dev binary. Old binary rollback remains outside the development-phase contract.

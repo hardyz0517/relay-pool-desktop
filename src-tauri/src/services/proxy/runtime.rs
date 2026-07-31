@@ -23,11 +23,8 @@ use crate::{
             limits::ProxyServerLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
-                buffered_lifecycle_finalizing_stream,
                 dual_terminal_buffered_lifecycle_finalizing_stream,
-                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout,
-                lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
-                LifecycleFinalizationLease, SelectedAttemptFinalization,
+                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
             },
             routing_repository::RoutingRepository,
             server::{self, RunningServer},
@@ -46,13 +43,6 @@ pub struct ProxyStartConfig {
     pub(crate) local_access_key: String,
     pub(crate) port: u16,
     pub(crate) limits: ProxyServerLimits,
-    pub(crate) finalization_mode: ProxyFinalizationMode,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ProxyFinalizationMode {
-    LegacyRequestCoupled,
-    DualTerminal,
 }
 
 impl ProxyStartConfig {
@@ -70,19 +60,7 @@ impl ProxyStartConfig {
             local_access_key,
             port,
             limits: ProxyServerLimits::default(),
-            finalization_mode: ProxyFinalizationMode::DualTerminal,
         }
-    }
-
-    pub(crate) fn with_dual_terminal_finalization(mut self) -> Self {
-        self.finalization_mode = ProxyFinalizationMode::DualTerminal;
-        self
-    }
-
-    #[cfg(any(test, debug_assertions))]
-    pub(crate) fn with_legacy_request_coupled_finalization(mut self) -> Self {
-        self.finalization_mode = ProxyFinalizationMode::LegacyRequestCoupled;
-        self
     }
 }
 
@@ -227,7 +205,6 @@ impl ProxyRuntimeState {
             upstream_pool,
             config.limits.clone(),
             lifecycle_writer.clone(),
-            config.finalization_mode,
         ));
         let ingress_state = Arc::new(IngressState::with_active_requests(
             local_access_key,
@@ -399,7 +376,6 @@ struct V2ProxyExecutor {
     engine: ExecutionEngine,
     stream_idle_timeout: std::time::Duration,
     lifecycle_writer: LifecycleWriter,
-    finalization_mode: ProxyFinalizationMode,
 }
 
 impl V2ProxyExecutor {
@@ -409,7 +385,6 @@ impl V2ProxyExecutor {
         upstream_pool: UpstreamClientPool,
         limits: ProxyServerLimits,
         lifecycle_writer: LifecycleWriter,
-        finalization_mode: ProxyFinalizationMode,
     ) -> Self {
         let attempts = Arc::new(UpstreamAttemptExecutor::new(upstream_pool));
         let stream_idle_timeout = limits.stream_idle_timeout;
@@ -423,7 +398,6 @@ impl V2ProxyExecutor {
             ),
             stream_idle_timeout,
             lifecycle_writer,
-            finalization_mode,
         }
     }
 }
@@ -437,7 +411,6 @@ impl IngressExecutor for V2ProxyExecutor {
         let lifecycle_writer = self.lifecycle_writer.clone();
         let engine = self.engine.clone();
         let stream_idle_timeout = self.stream_idle_timeout;
-        let finalization_mode = self.finalization_mode;
         let Some(admission) = request.take_lifecycle_admission() else {
             return Box::pin(correlation::in_scope(
                 "proxy.request",
@@ -524,36 +497,21 @@ impl IngressExecutor for V2ProxyExecutor {
                             code: failure.code.as_str().to_string(),
                             detail: Some(failure.public_message.clone()),
                         };
-                        match finalization_mode {
-                            ProxyFinalizationMode::LegacyRequestCoupled => {
-                                let finalization_lease =
-                                    LifecycleFinalizationLease::new(admission.terminal, None);
-                                finalization_lease.finalize(
-                                    pending_record,
-                                    DeliveryTerminal::NotStarted,
-                                    outcome,
-                                    None,
-                                );
-                                drop(request_lease);
-                            }
-                            ProxyFinalizationMode::DualTerminal => {
-                                let _join = super::attempt::DualTerminalFinalizationLease::new(
-                                    super::attempt::DownstreamRequestFinalizationLease::new(
-                                        admission.terminal,
-                                        request_lease,
-                                    ),
-                                    None,
-                                    None,
-                                )
-                                .finalize(
-                                    pending_record,
-                                    DeliveryTerminal::NotStarted,
-                                    outcome,
-                                    None,
-                                    false,
-                                );
-                            }
-                        }
+                        let _join = super::attempt::DualTerminalFinalizationLease::new(
+                            super::attempt::DownstreamRequestFinalizationLease::new(
+                                admission.terminal,
+                                request_lease,
+                            ),
+                            None,
+                            None,
+                        )
+                        .finalize(
+                            pending_record,
+                            DeliveryTerminal::NotStarted,
+                            outcome,
+                            None,
+                            false,
+                        );
                         return Err(failure);
                     }
                 };
@@ -570,85 +528,37 @@ impl IngressExecutor for V2ProxyExecutor {
                     lifecycle.fallback_count,
                     lifecycle.annotations,
                 );
+                let selected_attempt = dual_selected_attempt_finalization(
+                    &lifecycle_writer,
+                    lifecycle.selected_attempt.as_ref(),
+                )?;
+                let costs = dual_cost_finalization(&lifecycle_writer, lifecycle.attempt_count)?;
                 let payload = match response.body {
-                    super::execution::ProxyExecutionBody::Buffered(body) => match finalization_mode
-                    {
-                        ProxyFinalizationMode::LegacyRequestCoupled => {
-                            let selected_attempt = selected_attempt_finalization(
-                                &lifecycle_writer,
-                                lifecycle.selected_attempt.as_ref(),
-                            )?;
-                            let finalization_lease = LifecycleFinalizationLease::new(
-                                admission.terminal,
-                                selected_attempt,
-                            );
-                            ProxyResponsePayload::Stream(buffered_lifecycle_finalizing_stream(
+                    super::execution::ProxyExecutionBody::Buffered(body) => {
+                        ProxyResponsePayload::Stream(
+                            dual_terminal_buffered_lifecycle_finalizing_stream(
                                 body,
                                 pending_record,
-                                finalization_lease,
-                                request_lease,
-                            ))
-                        }
-                        ProxyFinalizationMode::DualTerminal => {
-                            let selected_attempt = dual_selected_attempt_finalization(
-                                &lifecycle_writer,
-                                lifecycle.selected_attempt.as_ref(),
-                            )?;
-                            let costs =
-                                dual_cost_finalization(&lifecycle_writer, lifecycle.attempt_count)?;
-                            ProxyResponsePayload::Stream(
-                                dual_terminal_buffered_lifecycle_finalizing_stream(
-                                    body,
-                                    pending_record,
-                                    admission.terminal,
-                                    selected_attempt,
-                                    Some(costs),
-                                    request_lease,
-                                ),
-                            )
-                        }
-                    },
-                    super::execution::ProxyExecutionBody::Stream(chunks) => match finalization_mode
-                    {
-                        ProxyFinalizationMode::LegacyRequestCoupled => {
-                            let selected_attempt = selected_attempt_finalization(
-                                &lifecycle_writer,
-                                lifecycle.selected_attempt.as_ref(),
-                            )?;
-                            let finalization_lease = LifecycleFinalizationLease::new(
                                 admission.terminal,
                                 selected_attempt,
-                            );
-                            ProxyResponsePayload::Stream(
-                                lifecycle_finalizing_stream_with_idle_timeout(
-                                    chunks,
-                                    pending_record,
-                                    finalization_lease,
-                                    request_lease,
-                                    stream_idle_timeout,
-                                ),
-                            )
-                        }
-                        ProxyFinalizationMode::DualTerminal => {
-                            let selected_attempt = dual_selected_attempt_finalization(
-                                &lifecycle_writer,
-                                lifecycle.selected_attempt.as_ref(),
-                            )?;
-                            let costs =
-                                dual_cost_finalization(&lifecycle_writer, lifecycle.attempt_count)?;
-                            ProxyResponsePayload::Stream(
-                                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
-                                    chunks,
-                                    pending_record,
-                                    admission.terminal,
-                                    selected_attempt,
-                                    Some(costs),
-                                    request_lease,
-                                    stream_idle_timeout,
-                                ),
-                            )
-                        }
-                    },
+                                Some(costs),
+                                request_lease,
+                            ),
+                        )
+                    }
+                    super::execution::ProxyExecutionBody::Stream(chunks) => {
+                        ProxyResponsePayload::Stream(
+                            dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+                                chunks,
+                                pending_record,
+                                admission.terminal,
+                                selected_attempt,
+                                Some(costs),
+                                request_lease,
+                                stream_idle_timeout,
+                            ),
+                        )
+                    }
                 };
                 Ok(ProxyHttpResponse {
                     status,
@@ -658,22 +568,6 @@ impl IngressExecutor for V2ProxyExecutor {
             },
         ))
     }
-}
-
-fn selected_attempt_finalization(
-    lifecycle_writer: &LifecycleWriter,
-    selected_attempt: Option<&crate::services::proxy::lifecycle::attempt::AttemptContext>,
-) -> Result<Option<SelectedAttemptFinalization>, super::error::ProxyFailure> {
-    selected_attempt
-        .map(|selected_attempt| {
-            Ok(SelectedAttemptFinalization::new(
-                lifecycle_writer
-                    .try_reserve_attempt()
-                    .map_err(lifecycle_admission_failure)?,
-                selected_attempt.clone(),
-            ))
-        })
-        .transpose()
 }
 
 fn dual_selected_attempt_finalization(
@@ -948,7 +842,6 @@ mod tests {
             upstream_pool,
             limits,
             writer.clone(),
-            ProxyFinalizationMode::LegacyRequestCoupled,
         );
         let request_id = "req_0198108c8411_00003039_0000000000000001".to_string();
         let expected = correlation::CorrelationId::for_proxy_request(&request_id);

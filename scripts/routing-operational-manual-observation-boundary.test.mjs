@@ -39,6 +39,14 @@ assert.ok(
   "manual observation writer must default to ignored routing operational output",
 );
 
+assert.ok(
+  source.includes("routing-operational-manual-observation-index.json") &&
+    source.includes("routing-operational-manual-observation-$Scenario-$recordTimestamp.json") &&
+    source.includes('kind = "routing-operational-manual-observation-index"') &&
+    source.includes("missingPassedScenarios"),
+  "manual observation writer must retain immutable records and an aggregate index",
+);
+
 for (const boundary of [
   "recordOnly = $true",
   "copiesEvidenceFiles = $false",

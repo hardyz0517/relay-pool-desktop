@@ -539,7 +539,6 @@ impl RoutingLoopbackHarness {
             LOCAL_ACCESS_KEY.to_string(),
             port,
         )
-        .with_dual_terminal_finalization()
     }
 
     async fn update_proxy_port(&self, port: u16) {

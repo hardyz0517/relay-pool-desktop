@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "task22_default_v2_finalization_cutover_in_progress",
+  "status": "task28_debug_legacy_runtime_deleted",
   "captured_at": "2026-07-31",
   "branch": "codex/routing-operational-upgrade",
   "commit": "ef2d3815726c4734e77ff44a5ff3ecf26a6173b9",
@@ -116,7 +116,7 @@
         "src-tauri/src/services/proxy/response_body.rs"
       ],
       "delete_by_task": 28,
-      "reason": "default-v2 production must use dual-terminal finalization; request-coupled finalization may remain only as explicit debug/test isolation until the debug legacy cleanup ticket"
+      "reason": "default-v2 must use the single dual-terminal finalization path; request-coupled finalization was deleted in Task 28 and must not return"
     },
     {
       "symbol": "frontend pricing/group matcher",
@@ -139,18 +139,6 @@
     }
   ],
   "temporary_allowed_exceptions": [
-    {
-      "id": "debug_legacy_runtime",
-      "owner_task": 28,
-      "scope": "process-start full legacy proxy owner only",
-      "forbidden_uses": ["ui_setting", "request_dynamic_fallback", "mixed_new_old_components", "default_v2_truth"]
-    },
-    {
-      "id": "request_coupled_finalizer_debug_test_only",
-      "owner_task": 28,
-      "scope": "explicit debug/test opt-in only after default-v2 production cutover",
-      "forbidden_uses": ["default_v2_production", "request_dynamic_fallback", "dual_write_with_dual_terminal", "shared_selected_route_owner"]
-    },
     {
       "id": "legacy_policy_values_until_migration",
       "owner_task": 10,

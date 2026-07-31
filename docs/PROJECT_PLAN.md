@@ -189,7 +189,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 
 当前本地 OpenAI-compatible 网关使用 Rust async HTTP 栈承载：本地入口由 Tokio / Hyper / Axum 处理连接、HTTP framing、CORS、认证、请求体限制和 graceful drain；上游转发统一使用 Reqwest client pool；候选选择、fallback、健康反馈和请求日志进入同一条 proxy execution pipeline。
 
-本地网关默认运行 v2 runtime。短期 debug 构建保留 `RELAY_POOL_PROXY_RUNTIME=legacy` 作为迁移观察期回退入口；它不是 UI 设置，也不是长期产品能力。当前项目仍处于非稳定成型阶段，不维护 signed installer、安装升级矩阵或旧二进制 rollback gate；删除 legacy runtime 前以本地 observation/soak、reset/reimport/重新配置恢复验证、授权/实机 smoke 记录和 deletion ledger approval 为准。若未来进入稳定产品阶段，再由独立发布 ADR 重新定义真实发布、升级和回滚要求。
+本地网关默认且唯一运行 v2 runtime。旧 debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 入口和 request-coupled finalization 分支已按开发期 reset/reimport/重新配置恢复策略删除；它们不是 UI 设置、不是长期产品能力，也不作为结构性 blocker 的自动 fallback。当前项目仍处于非稳定成型阶段，不维护 signed installer、安装升级矩阵或旧二进制 rollback gate；若未来进入稳定产品阶段，再由独立发布 ADR 重新定义真实发布、升级和回滚要求。
 
 当前本地 OpenAI-compatible 网关只路由以下端点：
 

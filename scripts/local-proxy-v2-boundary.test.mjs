@@ -34,10 +34,15 @@ assert.match(
   /reconcile_startup_interrupted_request_lifecycle\(\)/,
   "manual start/restart/import facade must reconcile interrupted request lifecycle before proxy admission",
 );
+assert.doesNotMatch(
+  runtime,
+  /ProxyFinalizationMode|LegacyRequestCoupled|with_legacy_request_coupled_finalization/,
+  "default-v2 runtime must not keep a second request-coupled finalization mode after Task 28",
+);
 assert.match(
   runtime,
-  /finalization_mode:\s*ProxyFinalizationMode::DualTerminal/,
-  "default-v2 production startup config must use dual-terminal finalization",
+  /dual_terminal_(buffered_)?lifecycle_finalizing_stream/,
+  "default-v2 runtime must use the single dual-terminal finalization path",
 );
 assert.doesNotMatch(runtime, /ProxyRuntimeMode/);
 assert.ok(
