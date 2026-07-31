@@ -55,6 +55,8 @@ Canonical facts/evidence
 
 **2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，不维护公开签名预迁移版本、正式 release/rollback 交付链路、安装升级矩阵或旧二进制回滚。用户可接受“重来”：清空本地开发数据、重新导入/重新配置后继续使用。因此，本计划中的 release gate 取消，不再作为当前升级概念存在；只保留开发期本地 qualification：架构、schema、redaction、build/check、soak、真实客户端 smoke，以及 reset/reimport 重来证明。安装/升级脚本若保留，只作为“不写死版本/路径”的可选静态合同检查，不作为当前升级阻塞项。后续若项目进入稳定产品阶段，需要重新启用发布 ADR，并另行补回 signed installer、自动更新、升级/回滚矩阵与支持窗口要求。
 
+执行含义：当前路由升级不再产出或等待任何“发布门禁”工件；遇到结构性不可恢复状态时停止 admission，并要求用户 reset/reimport/重新配置。不要为开发期体验保留双 owner、旧 binary rollback 或按请求回退链路。
+
 ```text
 Stage 0 baseline + ADR freeze
   -> Stage 1 canonical facts/projectors
@@ -629,7 +631,7 @@ pnpm.cmd build
 
 **Steps:**
 
-- [ ] fresh schema、released schema、已有五种 legacy policy fixtures 均能启动。
+- [ ] fresh schema、known schema、已有五种 legacy policy fixtures 均能启动。
 - [ ] 未迁移用户继续使用旧 router 原行为；readiness 只读检查不得改变 selection。
 - [ ] 已迁移 config 被完整保存，但本版本不让新 selector接真实流量。
 - [ ] import/export 保留 legacy fields 并标记 ignored-after-cutover，不丢用户数据。
@@ -1168,7 +1170,7 @@ node scripts/manual-proxy-default.test.mjs
 pnpm.cmd verify:full
 ```
 
-**Exit gate:** default-v2 只有一个完整 production owner；未满足 readiness 的安装明确拒绝新 admission；尚未发布正式版本。
+**Exit gate:** default-v2 只有一个完整 production owner；未满足 readiness 的本地配置明确拒绝新 admission；不等待正式版本发布。
 
 **Commit:** `feat: cut over default v2 routing composition`
 
@@ -1325,7 +1327,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] “可恢复”严格指 crash/resume，不指把敏感原 URL 反向恢复；不得在日志、升级 journal 或 error 中打印 before/after raw value。
 - [ ] 全部 logical rows 完成后执行受控 WAL checkpoint/truncate 与 SQLite rebuild/`VACUUM`，清理 free pages；关闭相关 producers 后再处理 `-wal`/`-shm` sidecars。
 - [ ] 枚举并清理应用管理范围内由本次升级产生的 pre-sanitization backup/temp artifact；路径必须由 persistence artifact policy 验证，不能递归删除用户目录或外部备份。
-- [ ] canary fixture 对主 DB、WAL、SHM、upgrade journal 和应用管理 backup 做原始字节扫描；发布证据明确这只是应用管理存储范围内的 best-effort purge，不宣称 SSD/文件系统级不可恢复。
+- [ ] canary fixture 对主 DB、WAL、SHM、upgrade journal 和应用管理 backup 做原始字节扫描；本地资格证据明确这只是应用管理存储范围内的 best-effort purge，不宣称 SSD/文件系统级不可恢复。
 - [ ] fresh schema、known schema 和中断恢复 fixture 均可升级；开发期不承诺旧 binary rollback，清洗后的恢复路径是 new binary reset/reimport。
 - [ ] source/runtime scan 证明 candidate、outcome、decision、IPC、UI、trace、error、snapshot 和 qualification artifact 不含 secret/full URL/user payload。
 - [ ] redaction 对 Authorization、API key、Cookie、token、完整 headers 和 prompt/response 同样生效。

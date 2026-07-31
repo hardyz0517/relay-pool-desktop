@@ -1289,7 +1289,7 @@ stop new proxy admission
 - pricing resolved/gap、usage missing、mixed-currency request；
 - decision trace truncated/retained/deleted 与 runtime overlay lag。
 
-metric label 禁止 station/key/model 原始 ID、URL、错误正文和任意高基数字符串。结构化诊断日志用 request_id、attempt_id、decision_id、稳定 error/reason code 和必要的本地 entity hash 关联；public error 只返回 correlation ID。资源 gauge 在正常 shutdown/soak 后必须回到零，underflow/negative/impossible transition 是 release blocker，不得只打 warning。
+metric label 禁止 station/key/model 原始 ID、URL、错误正文和任意高基数字符串。结构化诊断日志用 request_id、attempt_id、decision_id、稳定 error/reason code 和必要的本地 entity hash 关联；public error 只返回 correlation ID。资源 gauge 在正常 shutdown/soak 后必须回到零，underflow/negative/impossible transition 是开发期本地资格 blocker，不得只打 warning。
 
 ## 17. 可维护性设计
 
