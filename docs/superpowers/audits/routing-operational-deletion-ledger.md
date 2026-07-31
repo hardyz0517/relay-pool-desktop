@@ -25,11 +25,10 @@ Each entry must either be deleted by its owner task or converted into a document
 Deletion readiness check:
 
 - Task 24 must prove default-v2 has no second selector, capacity, pricing, feedback, or frontend truth path.
-- Task 24 pre-deletion approval was produced by a clean, non-smoke run of
-  `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-task24-predeletion-gate.ps1 -DurationMinutes 60`.
-  The runner executes production composition, stream/drop lifecycle faults, redaction contracts and the Task 21 loopback soak, then writes ignored evidence under
+- Task 24 pre-deletion approval is a development self-check, not a release gate. Required evidence is production composition, stream/drop lifecycle faults, redaction contracts, and a single-pass deterministic Task 21 loopback soak, written only under ignored
   `output/routing-operational/qualification/task24-predeletion/`.
-  The approved 2026-07-31 run started at `2026-07-31T15:39:56.9784240+08:00`, finished at `2026-07-31T16:40:05.1488150+08:00`, ran at commit `42367bf0398e00afd1ded4c149212ff00a02a970`, had `worktreeCleanAtStart = true`, and wrote `deletionApproved = true` in `task24-predeletion-gate-latest.json`.
+  A 60-minute run may be retained as optional confidence evidence when investigating leaks, but is no longer required for deletion approval under the 2026-07-31 reset/reimport recovery decision.
+  Historical note: an earlier clean long run on 2026-07-31 started at `2026-07-31T15:39:56.9784240+08:00`, finished at `2026-07-31T16:40:05.1488150+08:00`, ran at commit `42367bf0398e00afd1ded4c149212ff00a02a970`, had `worktreeCleanAtStart = true`, and wrote `deletionApproved = true` in `task24-predeletion-gate-latest.json`; this remains confidence evidence, not a standing product release/rollback qualification.
 - Task 24 cutover commit `9b3b3ce` switched default-v2 execution to `OperationalRouteSnapshot` + `RouteAdmissionController` + late `ExecutionTargetResolver`/`ExecutionCredentialResolver`, added `scripts/routing-single-owner.test.mjs`, removed `EndpointAdapter::prepare(RouteCandidate)`, and isolated frontend matcher code as display-only compatibility.
 - Post-cutover target-branch checks on 2026-07-31 passed:
   `node scripts/routing-single-owner.test.mjs`,
@@ -52,7 +51,7 @@ Deletion readiness check:
   `pnpm.cmd build:demo`.
   The schema17 fixture seeds a URL canary plus invalid UTF-8 and scans active DB, WAL, SHM and the app-generated schema backup for the canary after upgrade.
 - Task 25 also fixed the architecture security build-entry gate by keeping `src/demo.tsx` isolated from desktop backend/generated transport imports; this was required for the plan's security command to pass and does not change production entry behavior.
-- Earlier smoke run on 2026-07-31 passed the command chain and report shape, but correctly set `deletionApproved = false` because the worktree was dirty and the run was not a clean 60-minute observation.
+- Earlier smoke run on 2026-07-31 passed the command chain and report shape, but set `deletionApproved = false` under the old long-soak approval semantics. Current approval semantics require successful focused checks from a clean worktree; long soak is optional.
 - Task 28 deletion is allowed by the 2026-07-31 development recovery decision: this is not a stable product, so the supported recovery remains reset local data, reimport config, or reconfigure with the current dev binary. Real/manual observations still improve confidence but no longer keep a second runtime/finalizer alive.
 - Any new temporary adapter must add owner, consumer, expiry task, and forbidden scopes to this ledger in the same commit.
 

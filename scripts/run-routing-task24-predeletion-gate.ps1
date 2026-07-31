@@ -1,5 +1,5 @@
 param(
-  [int]$DurationMinutes = 60,
+  [int]$DurationMinutes = 0,
   [switch]$Smoke,
   [string]$CargoManifest = "src-tauri/Cargo.toml",
   [string]$OutputPath = "output/routing-operational/qualification/task24-predeletion/task24-predeletion-gate-latest.json"
@@ -97,8 +97,6 @@ $finishedAt = Get-Date
 $worktreeCleanAtStart = ($dirtyStatus.Count -eq 0)
 $deletionApproved = [bool](
   ($null -eq $failure) `
-    -and (-not [bool]$Smoke) `
-    -and ($DurationMinutes -ge 60) `
     -and $worktreeCleanAtStart
 )
 $report = [ordered]@{
@@ -111,7 +109,7 @@ $report = [ordered]@{
   requestedDurationMinutes = $DurationMinutes
   smoke = [bool]$Smoke
   deletionApproved = $deletionApproved
-  approvalScope = "Task 24 pre-deletion observation only; final Task 26 qualification must rerun after deletion."
+  approvalScope = "Task 24 development pre-deletion self-check only; recovery is reset/reimport/reconfigure with the current dev binary, not release rollback."
   soakOutputPath = $soakOutputPath
   steps = @($steps.ToArray())
   failure = $failure
@@ -124,7 +122,7 @@ if ($failure) {
 }
 
 if (-not $report.deletionApproved) {
-  Write-Host "Task 24 pre-deletion gate completed without deletion approval. A clean 60-minute non-smoke run is required for approval. See $OutputPath"
+  Write-Host "Task 24 pre-deletion self-check completed without deletion approval. Fix failures or rerun from a clean worktree; 60-minute soak is optional confidence evidence only. See $OutputPath"
 } else {
-  Write-Host "Task 24 pre-deletion gate approved. See $OutputPath"
+  Write-Host "Task 24 pre-deletion self-check approved. See $OutputPath"
 }

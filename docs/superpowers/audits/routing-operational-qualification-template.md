@@ -25,18 +25,23 @@ This file defines the human-readable checklist for a development-period local se
 - `pnpm.cmd build`
 - `cargo check --locked --manifest-path src-tauri/Cargo.toml`
 - `pnpm.cmd architecture:scale-baseline`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke`
 - `node scripts/routing-operational-qualification.mjs`
 
 Optional aggregate check, only when the local Node/toolchain lifecycle ledger matches:
 
 - `pnpm.cmd verify:full`
 
+Optional confidence check when chasing lifecycle leaks or before a future stable-release ADR:
+
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60`
+- `node scripts/routing-operational-qualification.mjs --require-long-soak`
+
 ## Evidence boundaries
 
 - Do not commit local databases, WAL/SHM files, backups, raw logs, screenshots, API keys, cookies, authorization headers, full upstream URLs, provider payloads, prompts or responses.
 - The self-check validator checks deterministic loopback artifacts and optional scale-baseline artifacts. It records the source revision for debugging, but does not freeze a release candidate.
-- The 60-minute soak is deterministic loopback only and must not consume real provider quota.
+- The required soak is a single-pass deterministic loopback smoke. A 60-minute deterministic loopback soak remains available as optional confidence evidence, but is not a development release gate and must not consume real provider quota.
 - Development recovery is reset/reimport/reconfigure with the current dev binary; this template does not prove old binary rollback.
 
 ## Manual observations

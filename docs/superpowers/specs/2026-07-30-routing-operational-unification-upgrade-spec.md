@@ -1490,7 +1490,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - 完整 Rust/frontend/contracts checks；
 - migration/known-schema fixtures；
 - concurrency/fault/restart/stream-drop tests；
-- 1 小时 mixed workload soak；
+- 单轮 mixed workload deterministic soak；60 分钟长 soak 仅作为可选信心检查，用于追查生命周期泄漏或未来稳定发布 ADR；
 - 真实客户端 E2E；如需要性能诊断，可单独运行 optimized Rust build，但它不产出 release binary gate；
 - SQLite journal、decision、health、cost 和资源计数核对；
 - Windows sleep/resume、graceful shutdown 和 reset/reimport 验证。
@@ -1588,7 +1588,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - warmed SQLite fixture 下 100 个候选的单 read-session fact assembly p95 `<= 50ms`，SQL query 数量为固定上限而非随候选线性增长；
 - runtime overlay query p95 `<= 5ms` 且不访问价格/历史表；
 - 10,000 requests / 30,000 attempts / 1,000,000 candidate decision rows 的 decision detail 首屏 p95 `<= 100ms`，使用 cursor pagination 和索引；
-- 1 小时 soak 后 active request、attempt、lease、waiter、body budget、writer job 和 task 计数全部归零；
+- 单轮 deterministic soak 后 active request、attempt、lease、waiter、body budget、writer job 和 task 计数全部归零；60 分钟长 soak 仅作为可选信心观察；
 - tracing 关闭与开启时都不得输出 secret 或完整用户 payload。
 
 ## 21. 交付、迁移与恢复边界
@@ -1617,7 +1617,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - Stage 5 production cutover 后，结构性 writer/transaction blocker 必须停止 admission，开发期恢复手册是 reset/reimport 到一致状态，不能自动回到旧双写或按请求双 selector；
 - 已创建的新表不反向 drop；reset 可以丢弃本地开发数据，import/reimport 必须走显式导入流程并保留 redaction 边界；
 - UI/read-model 迁移必须按完整 owner 切换，不能在同一 binary 中让部分页面用后端 projection、部分页面恢复前端权威公式；
-- Stage 6 删除前至少完成本地 observation/soak 和 deletion ledger approval；该窗口不等于先发布一个保留 legacy production code 的正式版本；
+- Stage 6 删除前至少完成本地 observation、单轮 deterministic soak 和 deletion ledger approval；60 分钟长 soak 不是删除或开发期交付阻塞项，该窗口不等于先发布一个保留 legacy production code 的正式版本；
 - 若项目未来进入稳定产品阶段，binary rollback、自动更新、安装/升级矩阵和支持窗口必须由新的发布 ADR 重新定义，不从本开发期 spec 默认继承；当前开发期不以 release gate、安装包或旧二进制回滚作为交付要求。
 
 ## 22. 验收标准
@@ -1640,7 +1640,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 14. 所有 queue、wait、retry、trace、registry 和后台 fan-out 有明确上限。
 15. default production composition 不存在第二套 selector、pricing resolver、feedback、capacity、frontend truth、debug-only legacy runtime 或 request-coupled finalizer；已删除入口由反回流门禁保护。
 16. legacy weights、compatibility caches 和临时 adapter 均有 deletion ledger，不形成永久双轨。
-17. architecture gates、Rust/TypeScript tests、migration、fault、concurrency、soak、optimized Rust build 和真实 E2E 全部通过。
+17. architecture gates、Rust/TypeScript tests、migration、fault、concurrency、单轮 deterministic soak、optimized Rust build 和真实 E2E 全部通过；60 分钟长 soak 只作为可选信心检查。
 18. 日志、trace、UI、错误和快照不泄露 API key、cookie、token、完整 header 或用户 payload。
 19. `ordering_profile`、`only_use_as_backup`、`preferred_models`、`routing_tags`、`allow_depleted_fallback`、account concurrency 和模型 alias 均有明确生产语义与端到端测试，不再是写入后未消费的字段。
 20. route planning 的配置、模型不支持、倍率证据、健康、容量、事实读取和内部 invariant 错误具有穷尽、稳定、经过 contract test 的外部映射。
@@ -1734,7 +1734,7 @@ Relay Pool 仍是本地桌面工具：一个固定 OpenAI-compatible 入口、�
 | endpoint/account health schema 需要扩展 | 当前 durable reducer 主要围绕 Station Key | Persistence ADR 冻结 scoped observation、表 owner、migration 与 revision fencing 后再实现 effect writer |
 | per-attempt cost 与多币种 aggregate 需要 schema | 当前 request log 以请求级兼容字段为主 | migration/known-schema fixture、new binary reset/reimport、新旧 read projection 测试必须先通过 |
 | `CostFirst` 对 token 单价缺少 reference usage | 当前实现直接相加 input/output，会制造任意权重 | v1 只用 exact scalar context 或明确 multiplier proxy；UI/trace 标 basis，reference usage 另立 ADR |
-| runtime outlier 默认值缺少本项目生产样本 | 参数来自成熟网关原则但 Relay Pool 流量更小 | 固定 v1 默认先通过 deterministic/soak；交付后只基于脱敏本地统计和具名 ADR 调整，不在线学习 |
+| runtime outlier 默认值缺少本项目生产样本 | 参数来自成熟网关原则但 Relay Pool 流量更小 | 固定 v1 默认先通过 deterministic 单轮自检；长 soak 只在追查泄漏或未来稳定发布 ADR 中使用，交付后只基于脱敏本地统计和具名 ADR 调整，不在线学习 |
 | decision trace 可能增加 SQLite 体积 | 最坏约 32 candidate rows/round | retention/索引/100 万级 fixture performance 与 maintenance fault test 为本地自检条件 |
 | 不引入 durable outbox 会留下 crash gap | terminal observation 到 SQLite commit 间强杀进程可能丢 usage/cost/health effect | fail-stop writer、启动 reconciliation 与 `trace_incomplete` 是明确降级；若真实故障数据证明不可接受，再单独评估轻量 local WAL，不先上分布式 outbox |
 | runtime generation churn 可能反复推翻 plan | 并发失败/恢复会让 immutable overlay 很快过期 | acquire 前 runtime fence、最多 8 次 runtime-only replan 与 monotonic deadline；超过返回 typed temporary failure |

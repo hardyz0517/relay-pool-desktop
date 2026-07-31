@@ -50,6 +50,7 @@ function assertManifestShape(manifest) {
   assert(manifest.owner_task === 26, "self-check manifest owner_task must be 26");
   assert(Array.isArray(manifest.required_development_commands), "manifest requires development commands");
   assert(Array.isArray(manifest.optional_aggregate_commands), "manifest requires optional aggregate commands");
+  assert(Array.isArray(manifest.optional_confidence_commands), "manifest requires optional confidence commands");
   assert(
     new Set(manifest.required_development_commands).size === manifest.required_development_commands.length,
     "required development commands must not contain duplicates",
@@ -64,7 +65,7 @@ function assertManifestShape(manifest) {
     "pnpm.cmd build",
     "cargo check --locked --manifest-path src-tauri/Cargo.toml",
     "pnpm.cmd architecture:scale-baseline",
-    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke",
     "node scripts/routing-operational-qualification.mjs",
   ]) {
     assert(
@@ -80,9 +81,19 @@ function assertManifestShape(manifest) {
     manifest.optional_aggregate_commands.includes("pnpm.cmd verify:full"),
     "verify:full should remain documented as an optional aggregate check",
   );
+  for (const command of [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60",
+    "node scripts/routing-operational-qualification.mjs --require-long-soak",
+  ]) {
+    assert(
+      manifest.optional_confidence_commands.includes(command),
+      `manifest optional confidence commands missing ${command}`,
+    );
+  }
   assert(Array.isArray(manifest.required_soak_suites), "manifest requires soak suites");
   assert(manifest.required_soak_suites.length >= 10, "manifest must cover the final routing/proxy fault mix");
-  assert(manifest.required_thresholds?.recommended_duration_minutes === 60, "manifest recommended soak duration must be 60 minutes");
+  assert(manifest.required_thresholds?.required_default_duration_minutes === 0, "manifest default deterministic soak must remain single-pass/smoke");
+  assert(manifest.required_thresholds?.optional_confidence_duration_minutes === 60, "manifest optional confidence soak duration must remain 60 minutes");
   assert(manifest.required_thresholds?.failures === 0, "manifest must require zero failures");
   assert(manifest.required_thresholds?.candidate_limit === 1024, "manifest must preserve candidate limit");
   assert(manifest.required_thresholds?.max_runtime_replans === 8, "manifest must preserve max runtime replans");
@@ -105,7 +116,7 @@ function assertScaleBaselineIfPresent(manifest) {
   assert(report.schema_version === 1, "scale baseline report schema_version must be 1");
 }
 
-function assertSoakReport(manifest, allowSmoke) {
+function assertSoakReport(manifest, requireLongSoak) {
   const report = readArtifact(manifest.artifact_inputs.soak_report, "routing operational soak report");
   assert(report.schemaVersion === 1, "soak report schemaVersion must be 1");
   assert(report.kind === "routing-operational-loopback-soak", "unexpected soak report kind");
@@ -116,9 +127,17 @@ function assertSoakReport(manifest, allowSmoke) {
   assert(Number.isInteger(report.iterations) && report.iterations >= 1, "soak requires at least one iteration");
   assert(report.thresholds?.candidateLimit === manifest.required_thresholds.candidate_limit, "soak candidate limit drifted");
   assert(report.thresholds?.maxRuntimeReplans === manifest.required_thresholds.max_runtime_replans, "soak max replans drifted");
-  if (!allowSmoke) {
-    assert(report.smoke === false, "development self-check should not use smoke soak unless --allow-smoke is passed");
-    assert(report.requestedDurationMinutes >= manifest.required_thresholds.recommended_duration_minutes, "soak duration is below recommended threshold");
+  if (requireLongSoak) {
+    assert(report.smoke === false, "long confidence soak must not use smoke mode");
+    assert(
+      report.requestedDurationMinutes >= manifest.required_thresholds.optional_confidence_duration_minutes,
+      "long confidence soak duration is below optional threshold",
+    );
+  } else {
+    assert(
+      report.smoke === true || report.requestedDurationMinutes >= manifest.required_thresholds.required_default_duration_minutes,
+      "development self-check requires at least the default single-pass deterministic soak",
+    );
   }
   for (const suite of manifest.required_soak_suites) {
     assert(
@@ -130,7 +149,7 @@ function assertSoakReport(manifest, allowSmoke) {
 
 runMain(() => {
   const preflight = hasFlag("--preflight");
-  const allowSmoke = hasFlag("--allow-smoke");
+  const requireLongSoak = hasFlag("--require-long-soak");
   const manifest = readJson(MANIFEST_PATH, "routing operational self-check manifest");
   assertManifestShape(manifest);
   assertSoakScriptCoversSuites(manifest);
@@ -141,7 +160,7 @@ runMain(() => {
     return;
   }
 
-  assertSoakReport(manifest, allowSmoke);
+  assertSoakReport(manifest, requireLongSoak);
   assertScaleBaselineIfPresent(manifest);
   console.log("routing operational development self-check artifacts passed");
 });

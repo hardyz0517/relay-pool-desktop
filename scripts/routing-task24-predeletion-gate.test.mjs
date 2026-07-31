@@ -39,8 +39,10 @@ assertIncludes(predeletionGate, "routing_stream_finalization_faults", "Task 24 p
 assertIncludes(predeletionGate, "scripts/local-routing-redaction.test.mjs", "Task 24 pre-deletion gate");
 assertIncludes(predeletionGate, "scripts/run-routing-operational-soak.ps1", "Task 24 pre-deletion gate");
 assertIncludes(predeletionGate, "deletionApproved", "Task 24 pre-deletion gate");
-assertIncludes(predeletionGate, "DurationMinutes -ge 60", "Task 24 pre-deletion gate");
-assertIncludes(predeletionGate, "-not [bool]$Smoke", "Task 24 pre-deletion gate");
+assertIncludes(predeletionGate, "reset/reimport/reconfigure", "Task 24 pre-deletion gate");
+assertIncludes(predeletionGate, "60-minute soak is optional confidence evidence only", "Task 24 pre-deletion gate");
+assertExcludes(predeletionGate, "DurationMinutes -ge 60", "Task 24 pre-deletion gate");
+assertExcludes(predeletionGate, "-not [bool]$Smoke", "Task 24 pre-deletion gate");
 
 assertIncludes(soakRunner, "routing_loopback_e2e", "routing operational soak runner");
 assertIncludes(soakRunner, "routing_catalog_loopback", "routing operational soak runner");

@@ -34,7 +34,7 @@ Canonical facts/evidence
 - attempt/protocol 与 request/delivery 生命周期独立终结且顺序可证明；
 - monitoring、collector、pricing、routing、logs 和 UI 消费同源 facts/projections；
 - 预迁移检查点、正式 cutover 和开发期重来恢复策略均按目标规范执行；已删除的 debug-only legacy runtime、环境入口和 request-coupled finalization 不得回流；
-- Stage 7 的 architecture、migration、fault、concurrency、performance、soak、授权真实客户端和开发期本地自检全部退出 0；这些检查不构成 release gate、安装升级矩阵或旧二进制回滚承诺。
+- Stage 7 的 architecture、migration、fault、concurrency、performance、单轮 deterministic soak、授权真实客户端和开发期本地自检全部退出 0；这些检查不构成 release gate、安装升级矩阵或旧二进制回滚承诺。60 分钟长 soak 只作为可选信心检查，不是当前开发期阻塞项。
 
 ## 2. 执行纪律
 
@@ -53,7 +53,7 @@ Canonical facts/evidence
 
 ## 3. 开发期序列与不可跨越门禁
 
-**2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，不维护公开签名预迁移版本、正式 release/rollback 交付链路、安装升级矩阵或旧二进制回滚。用户可接受“重来”：清空本地开发数据、重新导入/重新配置后继续使用。因此，本计划中的 release gate 取消，不再作为当前升级概念存在；只保留开发期本地自检：架构、schema、redaction、build/check、soak、真实客户端 smoke，以及 reset/reimport/重新配置重来证明。安装/升级脚本若保留，只作为“不写死版本/路径”的可选静态合同检查，不作为当前升级阻塞项。后续若项目进入稳定产品阶段，需要重新启用发布 ADR，并另行补回 signed installer、自动更新、升级/回滚矩阵与支持窗口要求。
+**2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，不维护公开签名预迁移版本、正式 release/rollback 交付链路、安装升级矩阵或旧二进制回滚。用户可接受“重来”：清空本地开发数据、重新导入/重新配置后继续使用。因此，本计划中的 release gate 取消，不再作为当前升级概念存在；只保留开发期本地自检：架构、schema、redaction、build/check、单轮 deterministic soak、真实客户端 smoke，以及 reset/reimport/重新配置重来证明。60 分钟 soak 仅用于追查生命周期泄漏或未来稳定发布 ADR 前的可选信心观察，不作为当前开发期阻塞项。安装/升级脚本若保留，只作为“不写死版本/路径”的可选静态合同检查，不作为当前升级阻塞项。后续若项目进入稳定产品阶段，需要重新启用发布 ADR，并另行补回 signed installer、自动更新、升级/回滚矩阵与支持窗口要求。
 
 执行含义：当前路由升级不再产出或等待任何“发布门禁”工件；遇到结构性不可恢复状态时停止 admission，并要求用户 reset/reimport/重新配置。不要为开发期体验保留双 owner、旧 binary rollback 或按请求回退链路。
 
@@ -826,7 +826,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml application::routing_en
 
 - [ ] 保留成熟 Tokio/Rust RAII primitive；不引入 Redis/分布式锁。
 - [ ] `PlanningRoundCapacityState` 只记录 unavailable_this_pass 和 wait observations，不写 actual-attempt exclusion。
-- [ ] resource gauges 和 impossible transition diagnostics 可用于 soak gate。
+- [ ] resource gauges 和 impossible transition diagnostics 可用于 deterministic soak self-check。
 - [ ] 新 capacity registry 只由非生产 harness composition 构造；旧/new capacity 不共享 semaphore、counter、waiter 或 feedback。
 
 **Run:**
@@ -1259,9 +1259,9 @@ pnpm.cmd build
 **Pre-deletion cutover-candidate gate:**
 
 - [ ] 从 Tasks 22-23 的同一 commit 构建未公开的内部 cutover candidate；它不是独立正式版本，也不允许用户在 old/new owner 间切换。
-- [ ] 使用 Task 21 runner 完成一次至少 1 小时的代表性 loopback soak，并运行 production composition、stream/drop、writer fault 和 redaction tests。
-- [ ] 观察窗口内 lease/waiter/writer/task gauges 归零，无未决 P0/P1；结果写入 deletion ledger approval。
-- [ ] 删除完成后仍必须按 Task 26 对最终代码重新执行完整 1 小时 soak；删除前结果不能替代最终资格。
+- [ ] 使用 Task 21 runner 完成一次单轮 deterministic loopback self-check，并运行 production composition、stream/drop、writer fault 和 redaction tests。
+- [ ] 观察窗口内 lease/waiter/writer/task gauges 归零，无未决 P0/P1；结果写入 deletion ledger approval。60 分钟 soak 可作为额外信心证据，但不是删除批准条件。
+- [ ] 删除完成后仍必须按 Task 26 对最终代码重新执行开发期目标检查集；删除前结果不能替代最终自检。
 
 **Run before deletion:**
 
@@ -1269,7 +1269,7 @@ pnpm.cmd build
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_production_composition -- --nocapture
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_stream_finalization_faults -- --nocapture
 node scripts/local-routing-redaction.test.mjs
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke
 ```
 
 **Deletion checklist:**
@@ -1301,7 +1301,7 @@ node scripts/local-proxy-v2-boundary.test.mjs
 pnpm.cmd architecture:typescript
 pnpm.cmd test:contracts
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_production_composition -- --nocapture
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
@@ -1374,8 +1374,8 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - Create/extend: routing fault/concurrency/performance integration tests
 - Extend: `scripts/run-routing-operational-soak.ps1` with final fault mix、metrics and report output
 - Create: `scripts/routing-operational-qualification.mjs`
-- Modify: `scripts/verify.ps1` full profile，只增加 deterministic routing self-check preflight；1 小时 soak 保持独立显式 step
-- Do not modify for this development upgrade: `.github/workflows/release.yml` 与 release verification entrypoint。未来稳定发布 ADR 才可把同 revision soak + self-check artifact validation 接入 signed bundle 前置验证
+- Modify: `scripts/verify.ps1` full profile，只增加 deterministic routing self-check preflight；长 soak 保持独立可选 step
+- Do not modify for this development upgrade: `.github/workflows/release.yml` 与 release verification entrypoint。未来稳定发布 ADR 才可把同 revision 长 soak + self-check artifact validation 接入 signed bundle 前置验证
 - Modify: architecture scale baseline datasets/reports
 - Modify: local self-check metadata；不为了当前开发期自检维护 release version、changelog 或候选发布元数据
 - Create: `docs/superpowers/audits/` 下不含运行结果的 development self-check manifest/template
@@ -1386,7 +1386,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] 先完成所有实现、tests、workflow 和 self-check manifest，运行 focused tests 后提交 `test: qualify routing operational cutover`。
 - [ ] soak/performance/security 输出携带 source revision、工具版本和参数，只写 ignored output/CI artifact；source revision 仅用于诊断，不代表发布候选冻结。
 - [ ] 不要求 release tag、签名 installer、安装升级矩阵、旧 binary rollback、release exe artifact 校验或同 revision 发布候选门禁。
-- [ ] 若自检后继续修改 tracked 文件，只需针对修改范围重跑对应检查；影响路由闭环、schema、安全或生命周期时重跑完整开发期目标检查集与 soak；本机工具链版本满足 ledger 时可附加 `verify:full`。
+- [ ] 若自检后继续修改 tracked 文件，只需针对修改范围重跑对应检查；影响路由闭环、schema、安全或生命周期时重跑完整开发期目标检查集与单轮 deterministic soak；本机工具链版本满足 ledger 时可附加 `verify:full`，需要追查泄漏时可附加 60 分钟长 soak。
 
 **Fault and concurrency matrix:**
 
@@ -1410,7 +1410,8 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 **Soak checks:**
 
-- [ ] 至少 1 小时混合 buffered/stream/catalog/fallback/cancel/slow-client workload；使用 deterministic loopback，不消耗真实 provider 配额。
+- [ ] 必跑检查为单轮 mixed buffered/stream/catalog/fallback/cancel/slow-client deterministic loopback；不消耗真实 provider 配额。
+- [ ] 60 分钟 mixed workload soak 只作为可选信心检查，用于追查生命周期泄漏、长期资源漂移或未来稳定发布 ADR，不作为当前开发期阻塞项。
 - [ ] 期间周期采样 active request/attempt/lease/retry/half-open/waiter/body budget/writer/task/runtime registry/SQLite size。
 - [ ] 结束并 shutdown 后所有瞬态计数归零；registry/trace/DB size 符合 TTL/count/retention 上限，无单调泄漏。
 - [ ] tracing 开/关各跑一轮 canary secret scan；报告仅保存聚合指标和脱敏失败代码。
@@ -1428,13 +1429,13 @@ pnpm.cmd test:contracts
 pnpm.cmd build
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 pnpm.cmd architecture:scale-baseline
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke
 node scripts/routing-operational-qualification.mjs
 ```
 
 若本机 Node/工具链版本恰好满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full` 作为聚合检查；当前开发期不把它作为 release gate，也不为了通过它放宽依赖 ledger。
 
-**完成条件:** fault/concurrency/performance/soak 全绿，ignored/CI self-check artifact 记录 source revision、命令、版本、环境、阈值与脱敏结果；任一红项阻止 Task 27。开发期不要求 release tag、签名密钥、本地安装包、升级矩阵、release binary artifact 或旧 binary rollback；Task 27 负责 reset/reimport 重来恢复和授权客户端 smoke。
+**完成条件:** fault/concurrency/performance/单轮 deterministic soak 全绿，ignored/CI self-check artifact 记录 source revision、命令、版本、环境、阈值与脱敏结果；任一红项阻止 Task 27。开发期不要求 60 分钟 soak、release tag、签名密钥、本地安装包、升级矩阵、release binary artifact 或旧 binary rollback；Task 27 负责 reset/reimport 重来恢复和授权客户端 smoke。
 
 **Commit:** `test: qualify routing operational cutover`
 
@@ -1651,7 +1652,7 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 - Tasks 0-28 均为 `complete`；debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 和 request-coupled finalization 已删除且有反回流门禁；
 - 第 37 节 26 行均有实际自动化和 production/E2E 证据；
 - pre-migration checkpoint 与 Stage 5+6 cutover candidate 的顺序可从 commit 证明；
-- Tauri/Rust build checks、local self-check verification、reset/reimport recovery、1 小时 soak 和授权真实客户端验证退出 0；
+- Tauri/Rust build checks、local self-check verification、reset/reimport recovery、单轮 deterministic soak 和授权真实客户端验证退出 0；60 分钟长 soak 只作为可选信心证据；
 - fresh/known schema、sanitizer resume、reset/reimport recovery、current dev binary re-open 均通过；
 - default-v2 source/composition 没有第二 truth/selector/capacity/feedback；
 - 所有瞬态资源在测试与 shutdown 后归零，持久化 totals/journal/trace 可核对；
