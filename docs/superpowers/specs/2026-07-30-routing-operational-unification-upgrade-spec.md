@@ -34,6 +34,7 @@ Canonical Facts / Evidence
 6. 复用现有 request finalization lease，把一次终结扩展为显式、幂等的 outcome consumers，不引入通用事件总线。
 7. 各页面保持职责独立，但通过同源后端 read model、实体 deep link 和统一 decision trace 融汇贯通。
 8. 学习 Sub2API、claude-code-hub、LiteLLM、Envoy 和 HAProxy 的必要工程原则，不复制其分布式复杂度、胖对象或巨型 selector。
+9. 当前项目仍处于非稳定成型阶段，不做 release gate、签名安装包、安装升级矩阵或旧二进制回滚承诺；结构性不可恢复状态的开发期恢复方式是停止 admission，并让用户 reset/reimport/重新配置后继续。
 
 ## 2. 与现有规范的关系
 
