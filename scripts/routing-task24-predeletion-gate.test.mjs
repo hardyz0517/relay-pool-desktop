@@ -22,7 +22,6 @@ for (const [source, label] of [
 ]) {
   assertIncludes(source, "git rev-parse HEAD", label);
   assertIncludes(source, "git status --porcelain", label);
-  assertIncludes(source, "candidateRevision", label);
   assertIncludes(source, "worktreeCleanAtStart", label);
   assertIncludes(source, "ConvertTo-Json", label);
   assertIncludes(source, "output/routing-operational/qualification", label);
@@ -30,6 +29,10 @@ for (const [source, label] of [
   assertExcludes(source, "rm -", label);
   assertExcludes(source, "git add", label);
 }
+
+assertIncludes(predeletionGate, "candidateRevision", "Task 24 pre-deletion gate");
+assertIncludes(soakRunner, "sourceRevision", "routing operational soak runner");
+assertExcludes(soakRunner, "candidateRevision", "routing operational soak runner");
 
 assertIncludes(predeletionGate, "routing_production_composition", "Task 24 pre-deletion gate");
 assertIncludes(predeletionGate, "routing_stream_finalization_faults", "Task 24 pre-deletion gate");

@@ -47,13 +47,13 @@ Canonical Facts / Evidence
 - `2026-07-17-local-routing-reliability-upgrade-design.md` 的 async transport、统一执行循环、commit point、超时预算和 finalization-once；
 - `2026-07-19-request-lifecycle-architecture-upgrade-design.md` 的 Request/Attempt/Protocol/Delivery 所有权、逐 attempt journal、幂等终结和有界 writer；
 - `2026-07-22-architecture-scale-upgrade-design.md` 的窄 facade、composition root、consumer-owned ports、单一状态 owner 和 architecture fitness gates；
-- 状态监控 V2 的 planning snapshot、执行/target/attempt 分层、健康写回、read model、retention 和本地资格门禁。
+- 状态监控 V2 的 planning snapshot、执行/target/attempt 分层、健康写回、read model、retention 和开发期本地自检。
 
 本 spec 修订 `2026-07-11-sub2api-style-automatic-routing-design.md` 的生产选择部分：保留倍率硬上限、group scope、容量、等待、affinity、低价路由和解释能力；不再把复杂多权重总分与 TopK weighted order 作为默认生产算法。已有 scheduler weight 配置进入兼容迁移，不继续扩充；`cheap_first` 的产品意图由 `CostFirst` 的明确词典序合同承接，而不是被 priority-first 静默替代。
 
-发生冲突时优先级遵守 `docs/README.md`：`AGENTS.md` 与安全约束、根目录当前规范和明确冻结合同、当前代码/自动化中仍有效的外部兼容与本地资格约束、本 spec 的目标合同、较早设计记录。当前代码中的现有缺陷是审计基线而不是永久目标；但实现者也不能用本 spec 绕过现有测试、协议或迁移约束。若本 spec 与 `PROJECT_PLAN.md`、状态监控 V2、Persistence V2 或请求生命周期冻结合同存在真实冲突，Stage 0 必须形成具名 ADR，并先同步修订权威规范、相关测试与双方条款后才能实现，不能由实现者临场选择。
+发生冲突时优先级遵守 `docs/README.md`：`AGENTS.md` 与安全约束、根目录当前规范和明确冻结合同、当前代码/自动化中仍有效的外部兼容与开发期自检约束、本 spec 的目标合同、较早设计记录。当前代码中的现有缺陷是审计基线而不是永久目标；但实现者也不能用本 spec 绕过现有测试、协议或迁移约束。若本 spec 与 `PROJECT_PLAN.md`、状态监控 V2、Persistence V2 或请求生命周期冻结合同存在真实冲突，Stage 0 必须形成具名 ADR，并先同步修订权威规范、相关测试与双方条款后才能实现，不能由实现者临场选择。
 
-`PROJECT_PLAN.md` 已把状态监控 V2 implementation cutover 作为当前主线，但当前工作区仍有后续改动，且 live provider/soak/升级等本地资格尚未全部关闭。Stage 1 开始前必须以已合并或明确冻结的 monitoring baseline 为前置条件；本 spec 只通过共享 fact/observation port 与它集成，不重写其 scheduler、profile、transport、retention 或 read model。
+`PROJECT_PLAN.md` 已把状态监控 V2 implementation cutover 作为当前主线，但当前工作区仍有后续改动，且 live provider/soak 等开发期自检尚未全部关闭。Stage 1 开始前必须以已合并或明确冻结的 monitoring baseline 为前置条件；本 spec 只通过共享 fact/observation port 与它集成，不重写其 scheduler、profile、transport、retention 或 read model。
 
 ## 3. 审计问题总表
 
@@ -1120,7 +1120,7 @@ src-tauri/src/application/queries/
 3. 用户确认 ordering profile、max multiplier、group scope、backup/depleted policy 与 affinity 后，保存完整 `hierarchical_v1` config；
 4. 新安装在启用本地自动路由前必须完成同一配置；
 5. default-v2 cutover 后只执行 `hierarchical_v1`。仍未配置的安装保持 proxy route admission disabled，并返回可操作的 `routing_configuration_required`，不得使用无限倍率、默认 1.0 或暗中回退 legacy；
-6. legacy enum/字段可以为 import/read compatibility 和开发期观察保留，但 architecture gate 证明它们不再进入 production execution；删除时以本地 qualification、reset/reimport 证据和 deletion ledger 为准。
+6. legacy enum/字段可以为 import/read compatibility 和开发期观察保留，但 architecture gate 证明它们不再进入 production execution；删除时以本地自检、reset/reimport 证据和 deletion ledger 为准。
 
 ### 14.3 Compatibility caches
 
@@ -1128,13 +1128,13 @@ src-tauri/src/application/queries/
 
 ### 14.4 与 debug-only legacy proxy runtime 的边界
 
-`PROJECT_PLAN.md` 当前允许 debug build 通过 `RELAY_POOL_PROXY_RUNTIME=legacy` 回到上一完整 proxy owner。结合 2026-07-31 决策，默认 v2 不再要求先完成一次公开真实发布回归才能删除 debug legacy；删除前只要求本地 observation/soak、reset/reimport 和 deletion ledger 证据。该开发期迁移门禁必须满足：
+`PROJECT_PLAN.md` 当前允许 debug build 通过 `RELAY_POOL_PROXY_RUNTIME=legacy` 回到上一完整 proxy owner。结合 2026-07-31 决策，默认 v2 不再要求先完成一次公开真实发布回归才能删除 debug legacy；删除前只要求本地 observation/soak、reset/reimport 和 deletion ledger 证据。该开发期清理条件必须满足：
 
 - legacy runtime 只能是完整旧 composition，不能拼接新 planner + 旧 feedback、旧 selector + 新 lease 等混合组件；
 - 不按 request 动态切换，不进入 UI，不作为 writer failure 时的自动 fallback，也不扩展其功能；
 - Stage 5/6 必须删除 default v2 内部的旧 selector/score/静态 fallback；“cutover candidate 不留不可达 legacy”特指这些同 composition 残留，不误指由当前 master plan 单独治理的 debug runtime；
 - debug runtime 的真实删除继续遵守本地观察窗口与独立 deletion ticket，完成后同步收紧 architecture gate；
-- 本地资格报告必须分别声明 default v2 与 debug legacy 的可达性，不能用 debug fallback 掩盖 default v2 未通过的测试。
+- 本地自检报告必须分别声明 default v2 与 debug legacy 的可达性，不能用 debug fallback 掩盖 default v2 未通过的测试。
 
 ## 15. 外部项目的取舍
 
@@ -1290,7 +1290,7 @@ stop new proxy admission
 - pricing resolved/gap、usage missing、mixed-currency request；
 - decision trace truncated/retained/deleted 与 runtime overlay lag。
 
-metric label 禁止 station/key/model 原始 ID、URL、错误正文和任意高基数字符串。结构化诊断日志用 request_id、attempt_id、decision_id、稳定 error/reason code 和必要的本地 entity hash 关联；public error 只返回 correlation ID。资源 gauge 在正常 shutdown/soak 后必须回到零，underflow/negative/impossible transition 是开发期本地资格 blocker，不得只打 warning。
+metric label 禁止 station/key/model 原始 ID、URL、错误正文和任意高基数字符串。结构化诊断日志用 request_id、attempt_id、decision_id、稳定 error/reason code 和必要的本地 entity hash 关联；public error 只返回 correlation ID。资源 gauge 在正常 shutdown/soak 后必须回到零，underflow/negative/impossible transition 是开发期本地自检 blocker，不得只打 warning。
 
 ## 17. 可维护性设计
 
@@ -1479,9 +1479,9 @@ Stage 2/3 若进入预迁移 checkpoint，simulator 必须标记 `hierarchical_v
 
 退出条件：用户能从任一异常定位到路由影响和具体请求；仓库内只有一个 production fact resolution、selection、capacity、feedback 和 pricing settlement path。
 
-Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可见版本发布；本地 qualification candidate 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。debug-only legacy runtime 的例外严格按 14.4 管理。
+Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可见版本发布；进入本地自检的 source snapshot 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。这里的 source snapshot 只用于开发期诊断，不冻结发布候选。debug-only legacy runtime 的例外严格按 14.4 管理。
 
-### Stage 7：开发期本地资格
+### Stage 7：开发期本地自检
 
 交付：
 
@@ -1489,7 +1489,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - migration/known-schema fixtures；
 - concurrency/fault/restart/stream-drop tests；
 - 1 小时 mixed workload soak；
-- optimized Rust build 与真实客户端 E2E；
+- 真实客户端 E2E；如需要性能诊断，可单独运行 optimized Rust build，但它不产出 release binary gate；
 - SQLite journal、decision、health、cost 和资源计数核对；
 - Windows sleep/resume、graceful shutdown 和 reset/reimport 验证。
 
@@ -1607,7 +1607,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - legacy row 显式标记 `legacy_estimate` 或 `trace_unavailable`；
 - 不在迁移中删除 compatibility cache。
 - 历史完整 upstream URL 使用独立、可恢复且有进度记录的 sanitizer migration；解析失败宁可置空/标记 redacted，也不把潜在 query/userinfo 复制到新列；
-- legacy config 值只为 import/export、debug 观察和未来稳定发布 ADR 可能需要的兼容检查暂留；开发期 fixture 证明 current dev binary 可从 fresh/known schema、reset/reimport 路径恢复，不要求旧 binary 打开或回滚新数据。
+- legacy config 值只为 import/export、debug 观察和未来稳定发布 ADR 可能需要的兼容检查暂留；开发期 fixture 证明 current dev binary 可从 fresh/known schema、reset/reimport/重新配置路径恢复，不要求旧 binary 打开或回滚新数据。
 
 ### 21.3 开发期恢复与稳定期回滚边界
 
@@ -1724,7 +1724,7 @@ Relay Pool 仍是本地桌面工具：一个固定 OpenAI-compatible 入口、�
 
 ## 26. 辩证审查后的剩余风险与开工门禁
 
-| 风险 | 当前事实 | 开工/本地资格门禁 |
+| 风险 | 当前事实 | 开工/本地自检条件 |
 |---|---|---|
 | 状态监控 V2 已 cutover 但仍在收口 | 当前工作区存在后续改动，live/soak/升级资格未完全关闭，health/target port 仍可能变化 | Stage 1 前冻结/合并 monitoring baseline，只通过批准的 observation/target port 集成 |
 | capability evidence 来源不足 | 现有 capability 多为 boolean/manual list，collector inventory coverage 未建模 | 先迁移 tri-state/source/coverage；unknown 按本 spec provisional/strict policy 处理，不伪造 collected truth |
@@ -1733,7 +1733,7 @@ Relay Pool 仍是本地桌面工具：一个固定 OpenAI-compatible 入口、�
 | per-attempt cost 与多币种 aggregate 需要 schema | 当前 request log 以请求级兼容字段为主 | migration/known-schema fixture、new binary reset/reimport、新旧 read projection 测试必须先通过 |
 | `CostFirst` 对 token 单价缺少 reference usage | 当前实现直接相加 input/output，会制造任意权重 | v1 只用 exact scalar context 或明确 multiplier proxy；UI/trace 标 basis，reference usage 另立 ADR |
 | runtime outlier 默认值缺少本项目生产样本 | 参数来自成熟网关原则但 Relay Pool 流量更小 | 固定 v1 默认先通过 deterministic/soak；交付后只基于脱敏本地统计和具名 ADR 调整，不在线学习 |
-| decision trace 可能增加 SQLite 体积 | 最坏约 32 candidate rows/round | retention/索引/100 万级 fixture performance 与 maintenance fault test 为本地 qualification 门禁 |
+| decision trace 可能增加 SQLite 体积 | 最坏约 32 candidate rows/round | retention/索引/100 万级 fixture performance 与 maintenance fault test 为本地自检条件 |
 | 不引入 durable outbox 会留下 crash gap | terminal observation 到 SQLite commit 间强杀进程可能丢 usage/cost/health effect | fail-stop writer、启动 reconciliation 与 `trace_incomplete` 是明确降级；若真实故障数据证明不可接受，再单独评估轻量 local WAL，不先上分布式 outbox |
 | runtime generation churn 可能反复推翻 plan | 并发失败/恢复会让 immutable overlay 很快过期 | acquire 前 runtime fence、最多 8 次 runtime-only replan 与 monotonic deadline；超过返回 typed temporary failure |
 | legacy policy 用户迁移可能中断代理 | 旧安装可能没有 multiplier ceiling | 必须先完成预迁移 checkpoint/readiness UI；正式 cutover 前统计本地 configuration readiness，不静默自动转换 |

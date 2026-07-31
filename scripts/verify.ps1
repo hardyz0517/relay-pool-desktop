@@ -93,6 +93,7 @@ try {
         Invoke-Checked "Deterministic frontend scale baseline" $pnpm @("architecture:scale-baseline")
         Invoke-Checked "Advisory, license and source policy" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/check-advisories.ps1")
         Invoke-Checked "Frontend contract tests" $pnpm @("test:contracts")
+        Invoke-Checked "Routing operational self-check preflight" node @("scripts/routing-operational-qualification.mjs", "--preflight")
         Invoke-Checked "Frontend unit tests" $pnpm @("test")
         Invoke-Checked "Frontend production build" $pnpm @("build")
         Invoke-Checked "Rust formatting" cargo @("fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check")

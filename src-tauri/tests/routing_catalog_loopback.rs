@@ -28,7 +28,12 @@ async fn models_catalog_aggregates_partial_loopback_success_and_persists_outcome
 
     let proxy = harness.start_proxy().await;
     let response = proxy.get("/v1/models").await;
-    assert_eq!(response.status, reqwest::StatusCode::OK);
+    assert_eq!(
+        response.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        response.body_text()
+    );
     let body: serde_json::Value =
         serde_json::from_slice(&response.body).expect("models response json");
     let model_ids = body["data"]

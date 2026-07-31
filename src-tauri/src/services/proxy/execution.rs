@@ -207,8 +207,13 @@ impl ExecutionEngine {
             .load_execution_settings()
             .await
             .map_err(|error| internal_failure(format!("load routing settings failed: {error}")))?;
-        let route_facts = route_request_facts(&request, &execution_settings, request_started_at_ms);
         let mapped_model = routing_policy::mapped_model(request.model.as_deref(), &aliases);
+        let route_facts = route_request_facts(
+            &request,
+            &execution_settings,
+            request_started_at_ms,
+            mapped_model.as_deref(),
+        );
         let snapshot = self
             .repository
             .load_operational_route_snapshot(route_facts.clone())
@@ -468,8 +473,7 @@ impl ExecutionEngine {
         );
 
         for attempt_index in 0..self.retry_policy.max_candidate_attempts {
-            let decision = controller
-                .next(ControllerPlanningInput {
+            let decision = match controller.next(ControllerPlanningInput {
                     candidates: &snapshot.candidates,
                     affinity_station_key_id: None,
                     profiles: &snapshot.profiles,
@@ -477,8 +481,15 @@ impl ExecutionEngine {
                     current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
                     now_ms: now_millis_for_services() as i64,
                     max_waiters_per_constraint: 0,
-                })
-                .map_err(|failure| controller_failure(failure, &RoutingPolicy::PriorityFallback))?;
+                }) {
+                Ok(decision) => decision,
+                Err(failure) if attempted_count > 0 && catalog_planning_exhausted(&failure) => {
+                    break;
+                }
+                Err(failure) => {
+                    return Err(controller_failure(failure, &RoutingPolicy::PriorityFallback));
+                }
+            };
             let ControllerDecision::Selected(selected) = decision else {
                 break;
             };
@@ -1210,6 +1221,7 @@ fn route_request_facts(
     request: &CanonicalProxyRequest,
     settings: &RoutingExecutionSettings,
     admitted_at_ms: i64,
+    mapped_model: Option<&str>,
 ) -> RouteRequestFacts {
     RouteRequestClassifier::classify(
         CanonicalRouteRequest {
@@ -1218,7 +1230,7 @@ fn route_request_facts(
             } else {
                 RouteKind::Inference
             },
-            requested_model: request.model.clone(),
+            requested_model: mapped_model.map(ToString::to_string),
             stream: request.stream,
             uses_tools: request.requirements.uses_tools,
             uses_vision: request.requirements.uses_vision,
@@ -1369,6 +1381,13 @@ fn controller_failure(failure: ControllerFailure, policy: &RoutingPolicy) -> Pro
     );
     proxy_failure.context_mut().route_policy = Some(routing_policy_label(policy).to_string());
     proxy_failure
+}
+
+fn catalog_planning_exhausted(failure: &ControllerFailure) -> bool {
+    matches!(
+        failure.kind,
+        ControllerFailureKind::NoEligible | ControllerFailureKind::AttemptLimit
+    )
 }
 
 fn attach_failure_candidate(failure: &mut ProxyFailure, candidate: &RoutePlanCandidate) {

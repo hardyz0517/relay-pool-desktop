@@ -62,7 +62,12 @@ async fn model_alias_allowlist_and_backup_field_shape_real_route_execution() {
             }),
         )
         .await;
-    assert_eq!(response.status, reqwest::StatusCode::OK);
+    assert_eq!(
+        response.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        response.body_text()
+    );
     assert!(response.body_text().contains("chatcmpl-primary"));
 
     primary.wait_for_requests(1);
