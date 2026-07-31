@@ -39,6 +39,7 @@ const stationDetailPage = read("src/features/stations/StationDetailPage.tsx");
 const stationDetailContent = read("src/features/stations/components/StationDetailContent.tsx");
 const manualTauriScript = read("scripts/run-routing-workspace-tauri-manual.ps1");
 const fixtureServer = read("scripts/routing-workspace-fixture-server.mjs");
+const tauriCdpVerifier = read("scripts/verify-routing-workspace-tauri-cdp.mjs");
 
 assertIncludes(routingPage, '{ value: "workspace", label: "工作台" }', "RoutingPage");
 assertIncludes(routingPage, "refetchInterval: queryEnabled && activeTab === \"workspace\" ? 1_000 : false", "RoutingPage");
@@ -134,11 +135,16 @@ assertIncludes(stationDetailPage, 'source: "station_endpoint_health"', "StationD
 assertIncludes(stationDetailContent, "查看路由影响", "StationDetailContent");
 
 assertIncludes(manualTauriScript, "output\\manual-routing-workspace\\$ProfileName", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, 'dev.relaypool.desktop.routing-workspace-manual', "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "tauri-dev-overlay.json", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "beforeDevCommand", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "pnpm dev --port $DevServerPort --strictPort", "manual Tauri routing workspace script");
 assertIncludes(manualTauriScript, "$env:APPDATA = $appData", "manual Tauri routing workspace script");
 assertIncludes(manualTauriScript, "$env:LOCALAPPDATA = $localAppData", "manual Tauri routing workspace script");
 assertIncludes(manualTauriScript, '$env:RELAY_POOL_DEV_AUTO_START_PROXY = "0"', "manual Tauri routing workspace script");
 assertIncludes(manualTauriScript, '$env:RELAY_POOL_START_PROXY_ON_LAUNCH = "0"', "manual Tauri routing workspace script");
-assertIncludes(manualTauriScript, "pnpm.cmd tauri:dev", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "manual Tauri routing workspace script");
+assertIncludes(manualTauriScript, "pnpm.cmd tauri dev --config $overlayPath", "manual Tauri routing workspace script");
 assertExcludes(manualTauriScript, "Remove-Item", "manual Tauri routing workspace script");
 assertExcludes(manualTauriScript, "rm -", "manual Tauri routing workspace script");
 assertExcludes(manualTauriScript, "git add", "manual Tauri routing workspace script");
@@ -152,5 +158,15 @@ assertExcludes(fixtureServer, "console.log(request", "routing workspace fixture 
 assertExcludes(fixtureServer, "console.log(body", "routing workspace fixture server");
 assertExcludes(fixtureServer, "Authorization", "routing workspace fixture server");
 assertExcludes(fixtureServer, "https://", "routing workspace fixture server");
+assertIncludes(tauriCdpVerifier, "output\", \"manual-routing-workspace", "routing workspace Tauri CDP verifier");
+assertIncludes(tauriCdpVerifier, "dev.relaypool.desktop.routing-workspace-cdp", "routing workspace Tauri CDP verifier");
+assertIncludes(tauriCdpVerifier, "scripts/routing-workspace-fixture-server.mjs", "routing workspace Tauri CDP verifier");
+assertIncludes(tauriCdpVerifier, "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "routing workspace Tauri CDP verifier");
+assertIncludes(tauriCdpVerifier, "[980, 640]", "routing workspace Tauri CDP verifier");
+assertIncludes(tauriCdpVerifier, "routing-workspace-${width}x${height}.png", "routing workspace Tauri CDP verifier");
+assertIncludes(tauriCdpVerifier, "request-log-opened-1024x768.png", "routing workspace Tauri CDP verifier");
+assertExcludes(tauriCdpVerifier, "Remove-Item", "routing workspace Tauri CDP verifier");
+assertExcludes(tauriCdpVerifier, "git add", "routing workspace Tauri CDP verifier");
+assertExcludes(tauriCdpVerifier, "https://", "routing workspace Tauri CDP verifier");
 
 console.log("routing workspace integration contract ok");

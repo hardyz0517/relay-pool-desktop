@@ -1,6 +1,6 @@
 # Routing Operational Task 23 Qualification
 
-Status: partial; automated workspace/deep-link/layout evidence passed, Tauri dev visual workflow verification pending
+Status: Task 23 Tauri dev qualification passed with synthetic fixture evidence; not a Task 24 deletion approval
 Date: 2026-07-31
 Branch: `codex/routing-operational-upgrade`
 
@@ -15,7 +15,7 @@ This audit records the current evidence for Task 23 of
 - source/layout contracts for narrow windows, long local names and bounded candidate tables;
 - frontend-only responsibility boundary: display/navigation/formatting only, with authoritative facts from backend read models.
 
-It intentionally does not mark Task 23 complete yet. The plan still requires Tauri dev manual verification with redacted fixture data.
+It marks the Task 23 routing workspace workflow as verified on a real Tauri dev run with synthetic fixture data. It intentionally does not approve Task 24 deletion; local observation/soak and deletion-ledger approval remain separate prerequisites.
 
 ## Automated evidence already collected
 
@@ -23,6 +23,7 @@ Latest relevant commits:
 
 - `88987e6 test: cover routing workspace deep link flow`
 - `cfb0aeb test: harden routing workspace layout contract`
+- `f9acf12 chore: add routing workspace fixture upstream`
 - `bcaf378 feat: link routing trace back to request logs`
 - `e372732 feat: render typed request decision timeline`
 
@@ -34,6 +35,8 @@ Commands run on this source snapshot:
 | `pnpm.cmd exec tsc --noEmit` | Pass | TypeScript compile check. |
 | `pnpm.cmd generate:bindings --check` | Pass | IPC bindings deterministic check; existing Rust warnings only. |
 | `node scripts/routing-workspace-integration.test.mjs` | Pass | Source contract for workspace query keys, read-model usage, deep links and no raw planning JSON. |
+| `node --check scripts/verify-routing-workspace-tauri-cdp.mjs` | Pass | Verifier syntax check. |
+| `node scripts/verify-routing-workspace-tauri-cdp.mjs` | Pass | Real Tauri dev + WebView2 CDP + synthetic fixture workflow; evidence JSON/screenshots under ignored `output/manual-routing-workspace/task23-routing-workspace-cdp/evidence/`. |
 | `node scripts/local-routing-page-layout.test.mjs` | Pass | Source contract for bounded table, `min-w-0`, wrapping/truncation and error layout guards. |
 | `pnpm.cmd architecture:typescript` | Pass | TypeScript boundary gate. |
 | `pnpm.cmd lint` | Pass | Existing 82 warnings remain; no new lint error. |
@@ -51,25 +54,51 @@ Commands run on this source snapshot:
 - Routing workspace refresh/invalidation remains query-scoped; the page does not call `cancelQueries`, `removeQueries` or `resetQueries` for monitoring/collector authority.
 - The frontend still uses backend read-model aliases and query functions; it does not import pricing/group/capability projectors as routing truth.
 
-## Pending Tauri dev manual verification
+## Tauri dev synthetic workflow verification
 
-The following plan items are still not complete:
+Command run:
 
-- Run the real Tauri dev application with a redacted/synthetic fixture data directory.
-- Start the local fixture upstream first: `node scripts/routing-workspace-fixture-server.mjs`.
-  It listens only on `http://127.0.0.1:18181/v1`, supports models/chat/responses/embeddings, and does not log request bodies or headers.
-- Recommended launcher: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-workspace-tauri-manual.ps1`.
-  It starts `pnpm.cmd tauri:dev` with process-local `APPDATA`, `LOCALAPPDATA`, `TEMP` and `TMP` under ignored `output/manual-routing-workspace/<profile>`, and disables proxy auto-start by environment.
-- Synthetic station values for the manual profile:
-  - Station type: OpenAI-compatible.
-  - Website/API base URL: `http://127.0.0.1:18181/v1`.
-  - Synthetic local key value: any non-secret placeholder, for example `fixture-local-key`.
-  - Chat model: `routing-fixture-chat`.
-  - Embedding model: `routing-fixture-embedding`.
-- Walk the workflow: monitoring -> Key detail -> route simulation -> decision trace -> request log -> routing workspace.
-- Check 1280x800, 1024x768 and the minimum supported window.
-- Confirm table, drawer/detail, tooltip, typed error and long text states do not overlap.
-- Capture or record only redacted fixture evidence; do not store real provider URLs, API keys, cookies, request/response bodies, local user database paths or screenshots containing private data.
+```powershell
+node scripts/verify-routing-workspace-tauri-cdp.mjs
+```
+
+The verifier:
+
+- starts `scripts/routing-workspace-fixture-server.mjs` on `http://127.0.0.1:18181/v1`;
+- starts a real Tauri dev app with a temporary app identifier `dev.relaypool.desktop.routing-workspace-cdp`, Vite port `1431`, and WebView2 CDP port `9236`;
+- creates a synthetic OpenAI-compatible station and station key using only `fixture-local-key`;
+- records capabilities for `routing-fixture-chat` and `routing-fixture-embedding`;
+- starts the local proxy, sends one synthetic `/v1/chat/completions` request, then stops the proxy;
+- reads backend-owned `load_routing_workspace_snapshot`, `load_routing_runtime_overlay`, `simulate_route`, `list_recent_route_decisions`, `get_request_decision_trace`, and `list_request_logs`;
+- opens the real routing workspace UI, opens the recent decision timeline, then opens the request log from the timeline;
+- captures synthetic-only screenshots at 1280x800, 1024x768, and 980x640.
+
+Evidence artifact:
+
+- `output/manual-routing-workspace/task23-routing-workspace-cdp/evidence/routing-workspace-tauri-cdp-evidence.json`
+- `output/manual-routing-workspace/task23-routing-workspace-cdp/evidence/routing-workspace-1280x800.png`
+- `output/manual-routing-workspace/task23-routing-workspace-cdp/evidence/routing-workspace-1024x768.png`
+- `output/manual-routing-workspace/task23-routing-workspace-cdp/evidence/routing-workspace-980x640.png`
+- `output/manual-routing-workspace/task23-routing-workspace-cdp/evidence/request-log-opened-1024x768.png`
+
+Observed evidence:
+
+- workspace snapshot returned one backend candidate, not a frontend-reconstructed row;
+- simulator selected the synthetic station key with `capacityMode = snapshot_only`;
+- proxy request succeeded through `http://127.0.0.1:8787/v1/chat/completions`;
+- request log stored `upstreamBaseUrl = null` and masked key data only;
+- recent decision rendered in the routing workspace;
+- decision trace rendered typed timeline sections: `legacy_summary`, `planning_round`, `slot_wait`, `attempt_protocol`, `fallback`, `downstream_delivery`, and `cost_aggregate`;
+- the timeline's request-log action opened the real request log page;
+- all three checked window sizes reported `viewportOverflowX = false`, while the candidate table used its bounded internal horizontal scroll at the minimum window.
+
+Manual fallback launcher remains available:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-workspace-tauri-manual.ps1
+```
+
+The launcher uses a temporary app identifier and Vite port overlay so it can run beside another Relay Pool dev instance without disabling the normal single-instance or installation-lease protections.
 
 Important boundary: the current `DemoBackend` returns unsupported for routing workspace APIs, so a browser demo page cannot prove the Task 23 Tauri workflow. A real desktop run must use an isolated fixture profile or explicitly redacted disposable local data.
 
@@ -77,8 +106,7 @@ Important boundary: the current `DemoBackend` returns unsupported for routing wo
 
 Do not start Task 24 deletion from this audit alone. Task 24 still requires:
 
-- Task 23 manual Tauri evidence above;
 - same-candidate local observation/soak evidence;
 - deletion ledger approval showing default-v2 has no second selector, capacity, pricing, feedback or frontend truth path.
 
-This audit is therefore a progress checkpoint, not a deletion approval.
+This audit is therefore a Task 23 qualification record, not a Task 24 deletion approval.
