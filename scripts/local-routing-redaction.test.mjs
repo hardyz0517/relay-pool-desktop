@@ -65,6 +65,63 @@ const executionTargetContracts = [
   },
 ];
 
+const requestLogSanitizerContracts = [
+  {
+    target: resolve("src-tauri/src/persistence/migrations/0018_request_log_url_sanitizer.sql"),
+    required: [
+      "CREATE TABLE IF NOT EXISTS request_log_url_sanitizer_progress",
+      "request_logs_upstream_base_url_v1",
+      "UPDATE persistence_schema_compatibility",
+      "SET schema_version = 18",
+    ],
+    forbidden: [
+      "UPDATE schema_compatibility",
+      "upstream_base_url TEXT",
+    ],
+  },
+  {
+    target: resolve("src-tauri/src/persistence/maintenance/request_log_url_sanitizer.rs"),
+    required: [
+      "pub(crate) fn sanitize_legacy_upstream_url",
+      "pub(crate) fn sanitize_legacy_upstream_url_bytes",
+      "Url::parse(input.trim())",
+      "CAST(upstream_base_url AS BLOB)",
+      "url.set_query(None)",
+      "url.set_fragment(None)",
+      "url.set_path(\"\")",
+      "SET upstream_base_url = NULL",
+      "PRAGMA wal_checkpoint(TRUNCATE)",
+      "VACUUM",
+      "request_log_url_sanitizer_progress",
+    ],
+    forbidden: [
+      "SET upstream_base_url = ?",
+      "set_query(Some",
+      "set_fragment(Some",
+    ],
+  },
+  {
+    target: resolve("src-tauri/src/persistence/migrations.rs"),
+    required: [
+      "sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default()).await?",
+      "sanitize_request_log_upstream_urls_before_schema18",
+      "if (5..18).contains(&schema_version)",
+      "if schema_version >= 18",
+      "readable_schema: 1..=18",
+      "writable_schema: BTreeSet::from([18])",
+    ],
+    forbidden: [],
+  },
+  {
+    target: resolve("src-tauri/src/persistence/runtime.rs"),
+    required: [
+      "if sqlx_version >= 18",
+      "assert_request_log_url_sanitizer_complete_on_connection",
+    ],
+    forbidden: [],
+  },
+];
+
 const requiredSubstrings = [
   "export type LocalRoutingWorkspace =",
   "proxyStatus: ProxyStatus",
@@ -138,6 +195,20 @@ for (const contract of executionTargetContracts) {
   for (const text of contract.forbidden) {
     if (source.includes(text)) {
       throw new Error(`Forbidden execution-target secret/serialization text in ${contract.target}: ${text}`);
+    }
+  }
+}
+
+for (const contract of requestLogSanitizerContracts) {
+  const source = readFileSync(contract.target, "utf8");
+  for (const text of contract.required) {
+    if (!source.includes(text)) {
+      throw new Error(`Missing request-log sanitizer contract text in ${contract.target}: ${text}`);
+    }
+  }
+  for (const text of contract.forbidden) {
+    if (source.includes(text)) {
+      throw new Error(`Forbidden request-log sanitizer contract text in ${contract.target}: ${text}`);
     }
   }
 }

@@ -1,12 +1,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { BackendBootstrap } from "@/app/bootstrap/BackendBootstrap";
 import { ToastProvider } from "@/components/ui";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/Card";
-import { DemoBackend, createDemoBackendClient } from "@/lib/bridge/DemoBackend";
-import { queryClient } from "@/lib/query/queryClient";
 import { initializeTheme } from "@/theme/themeBootstrap";
 import "@/styles.css";
 
@@ -14,22 +10,14 @@ initializeTheme();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <BackendBootstrap
-          createClient={createDemoBackendClient}
-          renderReady={({ client }) => (
-            <DemoApp onReset={() => {
-              if (client instanceof DemoBackend) client.reset();
-            }} />
-          )}
-        />
-      </ToastProvider>
-    </QueryClientProvider>
+    <ToastProvider>
+      <DemoApp />
+    </ToastProvider>
   </React.StrictMode>,
 );
 
-function DemoApp({ onReset }: { onReset: () => void }) {
+function DemoApp() {
+  const [resetCount, setResetCount] = React.useState(0);
   return (
     <main className="min-h-screen bg-app px-8 py-8 text-foreground" data-runtime-mode="demo">
       <div className="mx-auto flex w-full max-w-[960px] flex-col gap-4">
@@ -42,7 +30,10 @@ function DemoApp({ onReset }: { onReset: () => void }) {
           <p className="mt-2 text-sm text-muted-foreground">
             This entry uses deterministic demo state only. Desktop commands, data recovery, credentials, files, network calls, and updates are unavailable here.
           </p>
-          <Button className="mt-4" variant="secondary" onClick={onReset}>Reset demo</Button>
+          <Button className="mt-4" variant="secondary" onClick={() => setResetCount((value) => value + 1)}>Reset demo</Button>
+          {resetCount > 0 ? (
+            <p className="mt-3 text-xs text-muted-foreground">Demo reset locally ({resetCount}).</p>
+          ) : null}
         </Card>
       </div>
     </main>

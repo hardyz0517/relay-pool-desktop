@@ -13,6 +13,10 @@ use sqlx::{
 use crate::persistence::{
     backup::{create_verified_backup_from_path, validate_read_only_sqlite},
     error::PersistenceError,
+    maintenance::request_log_url_sanitizer::{
+        sanitize_request_log_upstream_urls, sanitize_request_log_upstream_urls_before_schema18,
+        RequestLogUrlSanitizerOptions,
+    },
     schema_compatibility::{decide_open_mode, load_schema_compatibility, BinaryCompatibility},
 };
 
@@ -51,6 +55,7 @@ pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), Persistenc
     }
     let pool = migration_pool_create(path).await?;
     migrator().run(&pool).await?;
+    sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default()).await?;
     let compatibility = load_schema_compatibility(&pool).await?;
     let schema_version = applied_schema_version(&pool).await?;
     decide_open_mode(
@@ -75,6 +80,10 @@ pub(crate) async fn upgrade_existing_v2_database(
     let binary = current_binary_compatibility();
     let open_mode = decide_open_mode(&binary, &compatibility, schema_version)?;
     if open_mode == crate::persistence::schema_compatibility::OpenMode::Writable {
+        if schema_version >= 18 {
+            sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default())
+                .await?;
+        }
         pool.close().await;
         return Ok(None);
     }
@@ -86,6 +95,13 @@ pub(crate) async fn upgrade_existing_v2_database(
             "generation 2 schema is not eligible for an in-place upgrade".to_string(),
         ));
     }
+    if (5..18).contains(&schema_version) {
+        sanitize_request_log_upstream_urls_before_schema18(
+            &pool,
+            RequestLogUrlSanitizerOptions::default(),
+        )
+        .await?;
+    }
     pool.close().await;
 
     let backup_path = schema_upgrade_backup_path(path, schema_version)?;
@@ -96,6 +112,7 @@ pub(crate) async fn upgrade_existing_v2_database(
         pool.close().await;
         return Err(error.into());
     }
+    sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default()).await?;
     let compatibility = load_schema_compatibility(&pool).await?;
     let schema_version = applied_schema_version(&pool).await?;
     let mode = decide_open_mode(&binary, &compatibility, schema_version)?;
@@ -113,8 +130,8 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
     BinaryCompatibility {
         app_version: Version::new(0, 3, 3),
         database_generation: 2,
-        readable_schema: 1..=17,
-        writable_schema: BTreeSet::from([17]),
+        readable_schema: 1..=18,
+        writable_schema: BTreeSet::from([18]),
     }
 }
 

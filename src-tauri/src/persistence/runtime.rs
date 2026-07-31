@@ -167,6 +167,12 @@ impl PersistenceRuntime {
         )
         .as_code();
         let open_mode = decide_open_mode(&binary, &compatibility, sqlx_version)?;
+        if sqlx_version >= 18 {
+            crate::persistence::maintenance::request_log_url_sanitizer::assert_request_log_url_sanitizer_complete_on_connection(
+                &mut connection,
+            )
+            .await?;
+        }
         connection.close().await?;
 
         let pool = SqlitePoolOptions::new()
