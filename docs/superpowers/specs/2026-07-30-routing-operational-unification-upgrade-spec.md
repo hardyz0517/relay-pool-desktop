@@ -1106,7 +1106,7 @@ src-tauri/src/application/queries/
 3. UI cutover 后停止编辑旧 weights，并显示一次迁移说明；
 4. import/export 在开发期观察窗口内保留字段但标记 legacy ignored；
 5. architecture gate 禁止 production selector 重新读取 legacy weights；
-6. 开发期观察窗口和 reset/reinstall/reimport 路径验证后，通过独立 deletion ledger 决定删除 schema/DTO 字段；若未来进入稳定产品阶段，再由发布 ADR 重新定义保留周期。
+6. 开发期观察窗口和 reset/reimport 路径验证后，通过独立 deletion ledger 决定删除 schema/DTO 字段；若未来进入稳定产品阶段，再由发布 ADR 重新定义保留周期。
 
 旧 `score/scheduler_score/factors` 数值不映射到新算法。新 decision DTO 返回 availability/priority/preference/cost/utilization/LRU tiers 与最终 rank；兼容字段在一个观察周期内为 null/legacy label，UI 不再展示一个容易被误读为全局质量的“智能分”。
 
@@ -1127,7 +1127,7 @@ src-tauri/src/application/queries/
 
 ### 14.4 与 debug-only legacy proxy runtime 的边界
 
-`PROJECT_PLAN.md` 当前允许 debug build 通过 `RELAY_POOL_PROXY_RUNTIME=legacy` 回到上一完整 proxy owner。结合 2026-07-31 决策，默认 v2 不再要求先完成一次公开真实发布回归才能删除 debug legacy；删除前只要求本地 observation/soak、reset/reinstall/reimport 和 deletion ledger 证据。该开发期迁移门禁必须满足：
+`PROJECT_PLAN.md` 当前允许 debug build 通过 `RELAY_POOL_PROXY_RUNTIME=legacy` 回到上一完整 proxy owner。结合 2026-07-31 决策，默认 v2 不再要求先完成一次公开真实发布回归才能删除 debug legacy；删除前只要求本地 observation/soak、reset/reimport 和 deletion ledger 证据。该开发期迁移门禁必须满足：
 
 - legacy runtime 只能是完整旧 composition，不能拼接新 planner + 旧 feedback、旧 selector + 新 lease 等混合组件；
 - 不按 request 动态切换，不进入 UI，不作为 writer failure 时的自动 fallback，也不扩展其功能；
@@ -1274,7 +1274,7 @@ stop new proxy admission
 - incomplete admitted request 通过 lifecycle reconciliation 标记 interrupted；
 - cooldown 使用 wall-clock durable time 时必须容忍时钟回拨，runtime duration 使用 monotonic time；
 - matching revision 且 traffic-equivalent 的 monitor success 可以恢复普通 endpoint/Key 被动状态，但 diagnostic/CLI-compatible probe 不能恢复，任何 monitor success 都不能恢复已确认无效 credential；
-- schema migration forward-only；开发期恢复由 new binary 的 reset/reinstall/reimport 路径承担，不要求旧 binary 忽略新表。
+- schema migration forward-only；开发期恢复由 current dev binary 的 reset/reimport 路径承担，不要求旧 binary 忽略新表。
 
 ### 16.6 可观测性合同
 
@@ -1488,9 +1488,9 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - migration/known-schema fixtures；
 - concurrency/fault/restart/stream-drop tests；
 - 1 小时 mixed workload soak；
-- release build 与真实客户端 E2E；
+- optimized Rust build 与真实客户端 E2E；
 - SQLite journal、decision、health、cost 和资源计数核对；
-- Windows sleep/resume、graceful shutdown 和 reset/reinstall/reimport 验证。
+- Windows sleep/resume、graceful shutdown 和 reset/reimport 验证。
 
 ## 20. 测试矩阵
 
@@ -1581,7 +1581,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 实施 Stage 0 记录基线，Stage 7 固化实际阈值。最低合同：
 
 - 小规模候选 full scan 不产生网络或逐候选数据库 I/O；
-- release build 下 100 个候选的 pure planning p95 `<= 2ms`，并记录测试 CPU/OS；
+- optimized Rust build 下 100 个候选的 pure planning p95 `<= 2ms`，并记录测试 CPU/OS；
 - warmed SQLite fixture 下 100 个候选的单 read-session fact assembly p95 `<= 50ms`，SQL query 数量为固定上限而非随候选线性增长；
 - runtime overlay query p95 `<= 5ms` 且不访问价格/历史表；
 - 10,000 requests / 30,000 attempts / 1,000,000 candidate decision rows 的 decision detail 首屏 p95 `<= 100ms`，使用 cursor pagination 和索引；
@@ -1601,21 +1601,21 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 ### 21.2 数据迁移
 
 - migration forward-only、幂等并加入 fresh/known-schema fixtures；
-- 新 decision/cost 字段允许当前 new binary 在缺失、旧数据或重装后保持明确 unavailable/ignored 状态；开发期不承诺旧 binary rollback；
+- 新 decision/cost 字段允许当前 dev binary 在缺失、旧数据或 reset 后保持明确 unavailable/ignored 状态；开发期不承诺旧 binary rollback；
 - 不把旧 request logs 用当前价格静默回填为权威历史；
 - legacy row 显式标记 `legacy_estimate` 或 `trace_unavailable`；
 - 不在迁移中删除 compatibility cache。
 - 历史完整 upstream URL 使用独立、可恢复且有进度记录的 sanitizer migration；解析失败宁可置空/标记 redacted，也不把潜在 query/userinfo 复制到新列；
-- legacy config 值只为 import/export、debug 观察和未来稳定发布 ADR 可能需要的兼容检查暂留；开发期 fixture 证明 new binary 可从 fresh/known schema、reset/reinstall/reimport 路径恢复，不要求旧 binary 打开或回滚新数据。
+- legacy config 值只为 import/export、debug 观察和未来稳定发布 ADR 可能需要的兼容检查暂留；开发期 fixture 证明 current dev binary 可从 fresh/known schema、reset/reimport 路径恢复，不要求旧 binary 打开或回滚新数据。
 
 ### 21.3 开发期恢复与稳定期回滚边界
 
 - Stage 1-4 不激活新 data-plane；domain/harness 失败时修复或丢弃本地升级分支，不对用户暴露混合 owner；
-- Stage 5 production cutover 后，结构性 writer/transaction blocker 必须停止 admission，开发期恢复手册是 reset/reinstall/reimport 到一致状态，不能自动回到旧双写或按请求双 selector；
+- Stage 5 production cutover 后，结构性 writer/transaction blocker 必须停止 admission，开发期恢复手册是 reset/reimport 到一致状态，不能自动回到旧双写或按请求双 selector；
 - 已创建的新表不反向 drop；reset 可以丢弃本地开发数据，import/reimport 必须走显式导入流程并保留 redaction 边界；
 - UI/read-model 迁移必须按完整 owner 切换，不能在同一 binary 中让部分页面用后端 projection、部分页面恢复前端权威公式；
 - Stage 6 删除前至少完成本地 observation/soak 和 deletion ledger approval；该窗口不等于先发布一个保留 legacy production code 的正式版本；
-- 若项目未来进入稳定产品阶段，binary rollback、自动更新、安装/升级矩阵和支持窗口必须由新的发布 ADR 重新定义，不从本开发期 spec 默认继承。
+- 若项目未来进入稳定产品阶段，binary rollback、自动更新、安装/升级矩阵和支持窗口必须由新的发布 ADR 重新定义，不从本开发期 spec 默认继承；当前开发期不以 release gate、安装包或旧二进制回滚作为交付要求。
 
 ## 22. 验收标准
 
@@ -1637,7 +1637,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 14. 所有 queue、wait、retry、trace、registry 和后台 fan-out 有明确上限。
 15. default production composition 不存在第二套 selector、pricing resolver、feedback、capacity 或 frontend truth；既有 debug-only legacy runtime 若仍在观察期，只能作为完全隔离的旧 owner 并有独立删除票据。
 16. legacy weights、compatibility caches 和临时 adapter 均有 deletion ledger，不形成永久双轨。
-17. architecture gates、Rust/TypeScript tests、migration、fault、concurrency、soak、release build 和真实 E2E 全部通过。
+17. architecture gates、Rust/TypeScript tests、migration、fault、concurrency、soak、optimized Rust build 和真实 E2E 全部通过。
 18. 日志、trace、UI、错误和快照不泄露 API key、cookie、token、完整 header 或用户 payload。
 19. `ordering_profile`、`only_use_as_backup`、`preferred_models`、`routing_tags`、`allow_depleted_fallback`、account concurrency 和模型 alias 均有明确生产语义与端到端测试，不再是写入后未消费的字段。
 20. route planning 的配置、模型不支持、倍率证据、健康、容量、事实读取和内部 invariant 错误具有穷尽、稳定、经过 contract test 的外部映射。

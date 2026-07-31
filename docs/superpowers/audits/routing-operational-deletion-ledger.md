@@ -20,10 +20,10 @@ Each entry must either be deleted by its owner task or converted into a document
 | Arbitrary string planner errors | routing string errors and `InternalProxyError` flattening | Public client cannot distinguish config, capacity, capability, transient, and internal errors | Task 18/22 | Existing proxy error mapping before typed taxonomy |
 | Legacy policy config values | routing settings enum values | Missing multiplier ceiling cannot be silently upgraded | Task 10/11/22 | Pre-migration readiness UI and development reset/reimport window |
 | Old request-coupled response finalizer | `response_body.rs::LifecycleFinalizationLease`, default `lifecycle_finalizing_stream*` constructors | Attempt terminal and request terminal can be sent from one finalizer without an explicit durable attempt ack barrier | Task 22 | Default production constructor only until atomic dual-terminal cutover; never active together with the new dual-terminal constructor for the same request |
-| Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Process-start full old owner only until default-v2 local observation proves reset/reinstall/reimport recovery |
+| Debug legacy runtime | `RELAY_POOL_PROXY_RUNTIME=legacy` policy in `PROJECT_PLAN.md` | Long-term second owner risk if it leaks into UI or automatic fallback | Task 28 | Process-start full old owner only until default-v2 local observation proves reset/reimport recovery |
 
 Deletion gate:
 
 - Task 24 must prove default-v2 has no second selector, capacity, pricing, feedback, or frontend truth path.
-- Task 28 may delete debug legacy only after the separate local observation and reset/reinstall/reimport preconditions in the plan are met.
+- Task 28 may delete debug legacy only after the separate local observation and reset/reimport preconditions in the plan are met.
 - Any new temporary adapter must add owner, consumer, expiry task, and forbidden scopes to this ledger in the same commit.
