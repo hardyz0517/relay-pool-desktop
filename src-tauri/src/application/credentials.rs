@@ -674,6 +674,31 @@ impl CredentialService {
         self.decrypt_stored_secret(secret).map_err(Into::into)
     }
 
+    pub(crate) async fn resolve_station_key_secret_ref(
+        &self,
+        station_key_id: String,
+        secret_ref: SecretRef,
+    ) -> Result<SecretBytes, ApplicationError> {
+        if secret_ref.scope != "station_key"
+            || secret_ref.owner_id != station_key_id
+            || secret_ref.kind != "api_key"
+        {
+            return Err(ApplicationError::SecretValidationFailed);
+        }
+        let store = self.store;
+        let mut read = self.runtime.begin_read().await?;
+        let secret = store
+            .station_key_secret_by_ref(&mut read, &station_key_id, &secret_ref.id)
+            .await?;
+        if secret.scope != secret_ref.scope
+            || secret.owner_id != secret_ref.owner_id
+            || secret.kind != secret_ref.kind
+        {
+            return Err(ApplicationError::SecretValidationFailed);
+        }
+        self.decrypt_stored_secret(secret).map_err(Into::into)
+    }
+
     pub(crate) async fn get_station_login_password(
         &self,
         station_id: String,
@@ -1381,6 +1406,35 @@ fn default_station_key_capabilities_input(
         preferred_models: Vec::new(),
         only_use_as_backup: false,
         routing_tags: Vec::new(),
+    }
+}
+
+impl crate::application::operational_facts::target_resolver::ExecutionCredentialResolver
+    for CredentialService
+{
+    fn resolve_station_key_secret_ref(
+        &self,
+        station_key_id: String,
+        secret_ref: SecretRef,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<
+            SecretBytes,
+            crate::application::operational_facts::target_resolver::ExecutionTargetError,
+        >,
+    > {
+        let service = self.clone();
+        let error_station_key_id = station_key_id.clone();
+        Box::pin(async move {
+            service
+                .resolve_station_key_secret_ref(station_key_id, secret_ref)
+                .await
+                .map_err(|_| {
+                    crate::application::operational_facts::target_resolver::ExecutionTargetError::SecretUnavailable {
+                        station_key_id: error_station_key_id,
+                    }
+                })
+        })
     }
 }
 

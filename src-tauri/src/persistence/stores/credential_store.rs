@@ -391,6 +391,32 @@ impl CredentialStore {
             .ok_or(PersistenceError::NotFound)
     }
 
+    pub(crate) async fn station_key_secret_by_ref(
+        &self,
+        read: &mut ReadSession,
+        station_key_id: &str,
+        secret_id: &str,
+    ) -> Result<StoredEncryptedSecret, PersistenceError> {
+        let row = sqlx::query(
+            r#"
+            SELECT s.id, s.scope, s.owner_id, s.kind, s.masked_value, s.ciphertext, s.nonce
+            FROM station_keys k
+            JOIN secrets s ON s.id = k.api_key_secret_id
+            WHERE k.id = ?1
+              AND s.id = ?2
+              AND s.owner_id = k.id
+              AND s.scope = 'station_key'
+              AND s.kind = 'api_key'
+            "#,
+        )
+        .bind(station_key_id)
+        .bind(secret_id)
+        .fetch_optional(read.connection())
+        .await?;
+        row.map(row_to_stored_secret)
+            .ok_or(PersistenceError::NotFound)
+    }
+
     pub(crate) async fn station_credential_secret(
         &self,
         read: &mut ReadSession,

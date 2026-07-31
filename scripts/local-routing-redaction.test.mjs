@@ -32,6 +32,39 @@ const requestLogTargets = [
   },
 ];
 
+const executionTargetContracts = [
+  {
+    target: resolve("src-tauri/src/application/operational_facts/target_resolver.rs"),
+    required: [
+      "pub(crate) struct ExecutionTargetHandle",
+      "impl fmt::Debug for ExecutionTargetHandle",
+      '.field("api_key", &"<redacted>")',
+      "pub(crate) lease: CapacityLease",
+      "pub(crate) api_key: SecretBytes",
+    ],
+    forbidden: [
+      "Serialize",
+      "Deserialize",
+      "Bearer ",
+      "authorization",
+      "cookie",
+    ],
+  },
+  {
+    target: resolve("src-tauri/src/persistence/stores/routing_store.rs"),
+    required: [
+      "load_operational_execution_target_refs",
+      "k.api_key_secret_id",
+      "CASE WHEN TRIM(k.api_key) != '' THEN 1 ELSE 0 END AS inline_api_key_present",
+    ],
+    forbidden: [
+      "SELECT k.api_key,",
+      "SELECT\n                k.api_key",
+      "api_key AS",
+    ],
+  },
+];
+
 const requiredSubstrings = [
   "export type LocalRoutingWorkspace =",
   "proxyStatus: ProxyStatus",
@@ -91,6 +124,20 @@ for (const contract of requestLogTargets) {
   for (const text of contract.forbidden) {
     if (source.includes(text)) {
       throw new Error(`Forbidden request-log URL backfill/full-URL persistence text in ${contract.target}: ${text}`);
+    }
+  }
+}
+
+for (const contract of executionTargetContracts) {
+  const source = readFileSync(contract.target, "utf8");
+  for (const text of contract.required) {
+    if (!source.includes(text)) {
+      throw new Error(`Missing execution-target redaction contract text in ${contract.target}: ${text}`);
+    }
+  }
+  for (const text of contract.forbidden) {
+    if (source.includes(text)) {
+      throw new Error(`Forbidden execution-target secret/serialization text in ${contract.target}: ${text}`);
     }
   }
 }

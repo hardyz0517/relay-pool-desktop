@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
 
 use crate::{
     models::{
@@ -27,6 +27,22 @@ pub(crate) struct StationEndpointProbeTarget {
     pub(crate) station_id: String,
     pub(crate) api_base_url: String,
     pub(crate) endpoint_revision: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OperationalExecutionTargetRefRow {
+    pub(crate) station_key_id: String,
+    pub(crate) station_id: String,
+    pub(crate) endpoint_revision: i64,
+    pub(crate) api_base_url: String,
+    pub(crate) upstream_api_format: UpstreamApiFormat,
+    pub(crate) key_enabled: bool,
+    pub(crate) station_enabled: bool,
+    pub(crate) api_key_secret_id: Option<String>,
+    pub(crate) api_key_secret_scope: Option<String>,
+    pub(crate) api_key_secret_owner_id: Option<String>,
+    pub(crate) api_key_secret_kind: Option<String>,
+    pub(crate) inline_api_key_present: bool,
 }
 
 struct RankedRuntimeBalance {
@@ -159,6 +175,48 @@ impl RoutingStore {
                 );
                 candidate
             })
+            .collect())
+    }
+
+    pub(crate) async fn load_operational_execution_target_refs(
+        &self,
+        read: &mut ReadSession,
+        station_key_ids: &[String],
+    ) -> Result<Vec<OperationalExecutionTargetRefRow>, PersistenceError> {
+        if station_key_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut query = QueryBuilder::<Sqlite>::new(
+            r#"
+            SELECT
+                k.id AS station_key_id,
+                k.station_id,
+                s.endpoint_revision,
+                s.api_base_url,
+                s.upstream_api_format,
+                k.enabled AS key_enabled,
+                s.enabled AS station_enabled,
+                k.api_key_secret_id,
+                sec.scope AS api_key_secret_scope,
+                sec.owner_id AS api_key_secret_owner_id,
+                sec.kind AS api_key_secret_kind,
+                CASE WHEN TRIM(k.api_key) != '' THEN 1 ELSE 0 END AS inline_api_key_present
+            FROM station_keys k
+            JOIN stations s ON s.id = k.station_id
+            LEFT JOIN secrets sec ON sec.id = k.api_key_secret_id
+            WHERE k.id IN (
+            "#,
+        );
+        let mut separated = query.separated(", ");
+        for station_key_id in station_key_ids {
+            separated.push_bind(station_key_id);
+        }
+        separated.push_unseparated(") ORDER BY k.id ASC");
+
+        let rows = query.build().fetch_all(read.connection()).await?;
+        Ok(rows
+            .into_iter()
+            .map(row_to_operational_execution_target_ref)
             .collect())
     }
 
@@ -867,6 +925,25 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> RuntimeRoutingCandi
             .to_string()
             .into_non_empty(),
         api_key_secret: None,
+    }
+}
+
+fn row_to_operational_execution_target_ref(
+    row: sqlx::sqlite::SqliteRow,
+) -> OperationalExecutionTargetRefRow {
+    OperationalExecutionTargetRefRow {
+        station_key_id: row.get("station_key_id"),
+        station_id: row.get("station_id"),
+        endpoint_revision: row.get("endpoint_revision"),
+        api_base_url: row.get("api_base_url"),
+        upstream_api_format: parse_upstream_api_format(row.get::<String, _>("upstream_api_format")),
+        key_enabled: i64_to_bool(row.get("key_enabled")),
+        station_enabled: i64_to_bool(row.get("station_enabled")),
+        api_key_secret_id: row.get("api_key_secret_id"),
+        api_key_secret_scope: row.get("api_key_secret_scope"),
+        api_key_secret_owner_id: row.get("api_key_secret_owner_id"),
+        api_key_secret_kind: row.get("api_key_secret_kind"),
+        inline_api_key_present: i64_to_bool(row.get("inline_api_key_present")),
     }
 }
 

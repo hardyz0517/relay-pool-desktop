@@ -40,7 +40,9 @@ use crate::{
     },
     persistence::{
         runtime::PersistenceHandle,
-        stores::routing_store::{RoutingStore, StationEndpointProbeTarget},
+        stores::routing_store::{
+            OperationalExecutionTargetRefRow, RoutingStore, StationEndpointProbeTarget,
+        },
     },
 };
 
@@ -74,6 +76,17 @@ impl RoutingService {
         let mut read = self.runtime.begin_read().await?;
         self.store
             .load_runtime_candidates(&mut read)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn load_operational_execution_target_refs(
+        &self,
+        station_key_ids: Vec<String>,
+    ) -> Result<Vec<OperationalExecutionTargetRefRow>, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        self.store
+            .load_operational_execution_target_refs(&mut read, &station_key_ids)
             .await
             .map_err(Into::into)
     }

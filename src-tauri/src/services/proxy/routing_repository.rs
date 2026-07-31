@@ -4,6 +4,7 @@ use crate::{
         pricing::BalanceSnapshot,
         routing::{RoutingProxyDefaults, RuntimeRoutingCandidate, RuntimeRoutingSettings},
     },
+    persistence::stores::routing_store::OperationalExecutionTargetRefRow,
     services::{
         outbound::resolve_proxy_config,
         proxy::routing_types::{RichRouteCandidate, RouteCandidate, RouteCandidateEconomics},
@@ -48,6 +49,16 @@ pub(crate) trait RoutingRepository: Send + Sync {
     ) -> futures_util::future::BoxFuture<'static, Result<Vec<BalanceSnapshot>, String>> {
         Box::pin(async { Ok(Vec::new()) })
     }
+}
+
+pub(crate) trait OperationalExecutionTargetRepository: Send + Sync {
+    fn load_execution_target_refs(
+        &self,
+        station_key_ids: Vec<String>,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Vec<OperationalExecutionTargetRefRow>, String>,
+    >;
 }
 
 impl RoutingRepository for V2RoutingRepository {
@@ -107,6 +118,24 @@ impl RoutingRepository for V2RoutingRepository {
                 .list_balance_snapshots()
                 .await
                 .map_err(|error| format!("load V2 balance snapshots failed: {error}"))
+        })
+    }
+}
+
+impl OperationalExecutionTargetRepository for V2RoutingRepository {
+    fn load_execution_target_refs(
+        &self,
+        station_key_ids: Vec<String>,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Vec<OperationalExecutionTargetRefRow>, String>,
+    > {
+        let routing = self.routing.clone();
+        Box::pin(async move {
+            routing
+                .load_operational_execution_target_refs(station_key_ids)
+                .await
+                .map_err(|error| format!("load operational execution target refs failed: {error}"))
         })
     }
 }
