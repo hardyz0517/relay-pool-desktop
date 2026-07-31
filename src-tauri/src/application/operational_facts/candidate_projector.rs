@@ -75,6 +75,7 @@ pub(crate) struct CandidateMultiplierProjection {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CandidatePricingProjection {
     pub(crate) basis: RoutingCostBasis,
+    pub(crate) comparison_value: Option<f64>,
     pub(crate) reason: Option<&'static str>,
     pub(crate) currency: Option<String>,
     pub(crate) unit: Option<String>,
@@ -122,6 +123,7 @@ pub(crate) struct CandidateProvenanceProjection {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RouteCandidateProjection {
     pub(crate) identity: CandidateIdentityProjection,
+    pub(crate) priority: i64,
     pub(crate) route_kind: RouteKind,
     pub(crate) requested_model: Option<String>,
     pub(crate) resolved_model: Option<String>,
@@ -158,6 +160,7 @@ pub(crate) struct HealthProjectionSet {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CandidateOperationalProjections {
     pub(crate) identity: CandidateIdentityProjection,
+    pub(crate) priority: i64,
     pub(crate) resolved_model: Option<String>,
     pub(crate) group: Option<GroupProjection>,
     pub(crate) multiplier: MultiplierProjection,
@@ -176,12 +179,15 @@ pub(crate) fn project_route_candidate(
     request: &RouteRequestFacts,
     candidate: CandidateOperationalProjections,
 ) -> RouteCandidateProjection {
-    let group = candidate.group.as_ref().map(|group| CandidateGroupProjection {
-        stable_key: group.identity.stable_key(),
-        display_name: group.display_name.clone(),
-        available: group.available,
-        reason: group.trace.reason,
-    });
+    let group = candidate
+        .group
+        .as_ref()
+        .map(|group| CandidateGroupProjection {
+            stable_key: group.identity.stable_key(),
+            display_name: group.display_name.clone(),
+            available: group.available,
+            reason: group.trace.reason,
+        });
     let group_matches = match (
         request.group_filter_mode(),
         request.required_group_stable_key(),
@@ -241,6 +247,7 @@ pub(crate) fn project_route_candidate(
     };
     let pricing = CandidatePricingProjection {
         basis: candidate.pricing.basis,
+        comparison_value: candidate.pricing.comparison_value,
         reason: candidate.pricing.reason,
         currency: candidate.pricing.currency,
         unit: candidate.pricing.unit,
@@ -313,6 +320,7 @@ pub(crate) fn project_route_candidate(
 
     RouteCandidateProjection {
         identity: candidate.identity.clone(),
+        priority: candidate.priority,
         route_kind: request.route_kind(),
         requested_model: request.requested_model().map(ToString::to_string),
         resolved_model,

@@ -63,9 +63,7 @@ mod models {
 
 mod services {
     pub(crate) mod pricing {
-        use crate::models::pricing::{
-            PricingStatus, RequestKind, ResolvedPricingContext,
-        };
+        use crate::models::pricing::{PricingStatus, RequestKind, ResolvedPricingContext};
 
         pub struct RequestPricingParts<'a> {
             pub station_key_id: &'a str,
@@ -125,8 +123,16 @@ mod services {
 
 #[path = "../src/application/operational_facts/mod.rs"]
 mod app_operational_facts;
+#[path = "../src/application/routing_engine/request.rs"]
+mod routing_request;
 
 mod application {
+    pub(crate) mod routing_engine {
+        pub(crate) mod request {
+            pub(crate) use crate::routing_request::*;
+        }
+    }
+
     pub(crate) mod operational_facts {
         pub(crate) use crate::app_operational_facts::assembler;
         pub(crate) use crate::app_operational_facts::*;
@@ -150,7 +156,8 @@ mod persistence {
                 match error {
                     sqlx::Error::RowNotFound => Self::NotFound,
                     sqlx::Error::Database(database)
-                        if database.is_unique_violation() || database.is_foreign_key_violation() =>
+                        if database.is_unique_violation()
+                            || database.is_foreign_key_violation() =>
                     {
                         Self::ConstraintViolation
                     }

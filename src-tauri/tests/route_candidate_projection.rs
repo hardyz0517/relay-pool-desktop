@@ -9,12 +9,12 @@ mod models {
     }
 }
 
-#[path = "../src/application/routing_engine/request.rs"]
-mod request;
 #[path = "../src/application/operational_facts/group_projector.rs"]
 mod group_projector;
 #[path = "../src/application/operational_facts/multiplier_projector.rs"]
 mod multiplier_projector;
+#[path = "../src/application/routing_engine/request.rs"]
+mod request;
 mod pricing_projector {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum PricingRouteKind {
@@ -34,6 +34,7 @@ mod pricing_projector {
     pub(crate) struct RequestCostComparisonContext {
         pub(crate) route_kind: PricingRouteKind,
         pub(crate) basis: RoutingCostBasis,
+        pub(crate) comparison_value: Option<f64>,
         pub(crate) reason: Option<&'static str>,
         pub(crate) currency: Option<String>,
         pub(crate) unit: Option<String>,
@@ -84,7 +85,7 @@ mod candidate_projector;
 use balance_projector::{BalanceProjection, BalanceProjectionStatus};
 use candidate_projector::{
     project_route_candidate, CandidateIdentityProjection, CandidateOperationalProjections,
-    CapacityProjection, CapacityScope, CapacityScopeSnapshot, CapabilityProjectionSet,
+    CapabilityProjectionSet, CapacityProjection, CapacityScope, CapacityScopeSnapshot,
     HealthProjectionSet, ROUTE_CANDIDATE_PROJECTION_VERSION,
 };
 use capability_projector::{
@@ -219,6 +220,7 @@ fn operational_projections(pricing_basis: RoutingCostBasis) -> CandidateOperatio
             sanitized_origin: "https://relay.example".to_string(),
             credential_available: true,
         },
+        priority: 10,
         resolved_model: Some("gpt-5-mini".to_string()),
         group: Some(GroupProjection {
             identity: GroupIdentity::BindingId("group-a".to_string()),
@@ -235,6 +237,7 @@ fn operational_projections(pricing_basis: RoutingCostBasis) -> CandidateOperatio
         pricing: RequestCostComparisonContext {
             route_kind: pricing_projector::PricingRouteKind::Inference,
             basis: pricing_basis,
+            comparison_value: Some(1.25),
             reason: None,
             currency: Some("USD".to_string()),
             unit: Some("per_1m_tokens".to_string()),
@@ -313,19 +316,29 @@ fn route_progress_owns_attempt_exclusions_ordinal_and_monotonic_deadline() {
 
 #[test]
 fn candidate_projection_contains_complete_cross_module_facts_without_secrets() {
-    let projection =
-        project_route_candidate(&request_facts(RouteKind::Inference), operational_projections(RoutingCostBasis::ExactPrice));
+    let projection = project_route_candidate(
+        &request_facts(RouteKind::Inference),
+        operational_projections(RoutingCostBasis::ExactPrice),
+    );
 
     assert_eq!(projection.identity.station_key_id, "key-1");
-    assert_eq!(projection.identity.sanitized_origin, "https://relay.example");
+    assert_eq!(projection.priority, 10);
+    assert_eq!(
+        projection.identity.sanitized_origin,
+        "https://relay.example"
+    );
     assert_eq!(projection.route_kind, RouteKind::Inference);
     assert_eq!(projection.resolved_model.as_deref(), Some("gpt-5-mini"));
     assert_eq!(projection.policy.group_matches, true);
     assert_eq!(projection.policy.preferred_model_match, true);
     assert_eq!(projection.policy.tag_filter_match, true);
-    assert_eq!(projection.group.as_ref().expect("group").stable_key, "binding:group-a");
+    assert_eq!(
+        projection.group.as_ref().expect("group").stable_key,
+        "binding:group-a"
+    );
     assert_eq!(projection.multiplier.multiplier, Some(1.25));
     assert_eq!(projection.pricing.basis, RoutingCostBasis::ExactPrice);
+    assert_eq!(projection.pricing.comparison_value, Some(1.25));
     assert_eq!(projection.pricing.source_chain, vec!["pricing_rule:rule-1"]);
     assert_eq!(projection.balance.status, BalanceProjectionStatus::Healthy);
     assert_eq!(projection.capability.tools, CapabilityDecision::Reject);
@@ -349,7 +362,8 @@ fn candidate_projection_contains_complete_cross_module_facts_without_secrets() {
 }
 
 #[test]
-fn inference_cannot_use_not_applicable_pricing_but_catalog_does_not_need_cost_or_multiplier_ceiling() {
+fn inference_cannot_use_not_applicable_pricing_but_catalog_does_not_need_cost_or_multiplier_ceiling(
+) {
     let inference_projection = project_route_candidate(
         &request_facts(RouteKind::Inference),
         operational_projections(RoutingCostBasis::NotApplicable),

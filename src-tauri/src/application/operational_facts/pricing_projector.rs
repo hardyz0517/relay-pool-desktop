@@ -24,6 +24,7 @@ pub(crate) enum RoutingCostBasis {
 pub(crate) struct RequestCostComparisonContext {
     pub(crate) route_kind: PricingRouteKind,
     pub(crate) basis: RoutingCostBasis,
+    pub(crate) comparison_value: Option<f64>,
     pub(crate) reason: Option<&'static str>,
     pub(crate) currency: Option<String>,
     pub(crate) unit: Option<String>,
@@ -40,6 +41,7 @@ pub(crate) fn request_cost_comparison_context(
         return RequestCostComparisonContext {
             route_kind,
             basis: RoutingCostBasis::NotApplicable,
+            comparison_value: None,
             reason: Some("model_catalog_has_no_request_cost"),
             currency: None,
             unit: None,
@@ -52,6 +54,7 @@ pub(crate) fn request_cost_comparison_context(
         return RequestCostComparisonContext {
             route_kind,
             basis: RoutingCostBasis::Unpriced,
+            comparison_value: None,
             reason: Some("pricing_context_missing"),
             currency: None,
             unit: None,
@@ -78,9 +81,15 @@ pub(crate) fn request_cost_comparison_context(
         (_, PricingStatus::Unpriced) => Some("pricing_not_available"),
         _ => Some("pricing_incomplete"),
     };
+    let comparison_value = match basis {
+        RoutingCostBasis::ExactPrice => exact_comparison_value(pricing),
+        RoutingCostBasis::MultiplierProxy => pricing.effective_rate_multiplier,
+        RoutingCostBasis::Unpriced | RoutingCostBasis::NotApplicable => None,
+    };
     RequestCostComparisonContext {
         route_kind,
         basis,
+        comparison_value,
         reason,
         currency: known_field(&pricing.currency),
         unit: known_field(&pricing.unit),
@@ -90,6 +99,20 @@ pub(crate) fn request_cost_comparison_context(
             .clone()
             .or_else(|| known_field(&pricing.resolved_at)),
         confidence: Some(pricing.confidence),
+    }
+}
+
+fn exact_comparison_value(pricing: &ResolvedPricingContext) -> Option<f64> {
+    if let Some(fixed_price) = pricing.estimated_fixed_price {
+        return Some(fixed_price);
+    }
+    match (
+        pricing.estimated_input_price,
+        pricing.estimated_output_price,
+    ) {
+        (Some(input_price), None) => Some(input_price),
+        (None, Some(output_price)) => Some(output_price),
+        _ => None,
     }
 }
 
