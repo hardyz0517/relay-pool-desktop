@@ -34,6 +34,7 @@ const contracts = [
   ["node", ["scripts/routing-workspace-integration.test.mjs"]],
   ["node", ["scripts/routing-migration-readiness.test.mjs"]],
   ["node", ["scripts/routing-operational-loopback-contract.test.mjs"]],
+  ["node", ["scripts/routing-operational-qualification-boundary.test.mjs"]],
   ["node", ["scripts/routing-operational-local-self-check.test.mjs"]],
   ["node", ["scripts/routing-operational-legacy-doc-consistency.test.mjs"]],
   ["node", ["scripts/openai-compatible-live-qualification-boundary.test.mjs"]],

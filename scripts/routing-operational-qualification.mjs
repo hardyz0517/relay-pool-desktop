@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { assert, readJson, repoRoot, runMain } from "./architecture/lib.mjs";
+import { assert, currentRevision, readJson, repoRoot, runMain } from "./architecture/lib.mjs";
 
 const MANIFEST_PATH = "docs/superpowers/audits/routing-operational-qualification-manifest.json";
 
@@ -114,6 +114,10 @@ function assertScaleBaselineIfPresent(manifest) {
   const fixturesPath = path.join(repoRoot, manifest.artifact_inputs.scale_baseline_fixtures);
   assert(fs.existsSync(fixturesPath), `missing scale baseline fixture manifest: ${manifest.artifact_inputs.scale_baseline_fixtures}`);
   assert(report.schema_version === 1, "scale baseline report schema_version must be 1");
+  assert(
+    report.provenance?.source_revision === currentRevision(),
+    "scale baseline source_revision must match current HEAD; rerun architecture:scale-baseline after tracked changes",
+  );
 }
 
 function assertSoakReport(manifest, requireLongSoak) {
@@ -121,6 +125,7 @@ function assertSoakReport(manifest, requireLongSoak) {
   assert(report.schemaVersion === 1, "soak report schemaVersion must be 1");
   assert(report.kind === "routing-operational-loopback-soak", "unexpected soak report kind");
   assert(typeof report.sourceRevision === "string" && report.sourceRevision.length >= 7, "soak report must include sourceRevision");
+  assert(report.sourceRevision === currentRevision(), "soak report sourceRevision must match current HEAD; rerun the deterministic soak after tracked changes");
   assert(typeof report.worktreeCleanAtStart === "boolean", "soak report must record worktreeCleanAtStart");
   assert(typeof report.worktreeCleanAtFinish === "boolean", "soak report must record worktreeCleanAtFinish");
   assert(Array.isArray(report.failures) && report.failures.length === 0, "soak report contains failures");

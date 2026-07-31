@@ -40,7 +40,7 @@ Optional confidence check when chasing lifecycle leaks or before a future stable
 ## Evidence boundaries
 
 - Do not commit local databases, WAL/SHM files, backups, raw logs, screenshots, API keys, cookies, authorization headers, full upstream URLs, provider payloads, prompts or responses.
-- The self-check validator checks deterministic loopback artifacts and optional scale-baseline artifacts. It records the source revision for debugging, but does not freeze a release candidate.
+- The self-check validator checks deterministic loopback artifacts and optional scale-baseline artifacts. It records the source revision for debugging, requires the soak and present scale-baseline artifacts to match current `HEAD`, and rejects stale artifacts from older commits; rerun the deterministic soak and `architecture:scale-baseline` after tracked changes.
 - The required soak is a single-pass deterministic loopback smoke. A 60-minute deterministic loopback soak remains available as optional confidence evidence, but is not a development release gate and must not consume real provider quota.
 - Development recovery is reset/reimport/reconfigure with the current dev binary; this template does not prove old binary rollback.
 
