@@ -5,7 +5,10 @@ use crate::application::{
     routing_engine::{
         eligibility::evaluate_candidate,
         request::PlanningRoundContext,
-        selector::{build_route_plan, RoutePlan, RoutePlannerError, MAX_ROUTE_PLAN_CANDIDATES},
+        selector::{
+            build_route_plan, RoutePlan, RoutePlanCandidate, RoutePlannerError,
+            MAX_ROUTE_PLAN_CANDIDATES,
+        },
     },
 };
 
@@ -38,4 +41,18 @@ pub(crate) fn plan_route(input: PlanningInput<'_>) -> Result<RoutePlan, RoutePla
         rejections,
         input.affinity_station_key_id,
     ))
+}
+
+pub(crate) fn ordered_plan_candidates(plan: &RoutePlan) -> Vec<&RoutePlanCandidate> {
+    plan.strata
+        .iter()
+        .flat_map(|stratum| stratum.candidates.iter())
+        .collect()
+}
+
+pub(crate) fn plan_candidate_count(plan: &RoutePlan) -> usize {
+    plan.strata
+        .iter()
+        .map(|stratum| stratum.candidates.len())
+        .sum()
 }

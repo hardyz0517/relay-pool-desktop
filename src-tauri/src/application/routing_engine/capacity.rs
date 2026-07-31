@@ -353,6 +353,11 @@ impl PlanningRoundCapacityState {
         self.unavailable_this_pass.push(observation);
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.unavailable_this_pass.clear();
+        self.wait_observations.clear();
+    }
+
     pub(crate) fn build_wait_plan(
         &self,
         now_ms: i64,
