@@ -1,33 +1,39 @@
-# Routing hierarchical pre-migration qualification
+# Routing hierarchical pre-migration development checkpoint
 
-Status: engineering preparation in progress; signed release and install/upgrade qualification are not complete.
+Status: development checkpoint. Public signed release and install/upgrade qualification are intentionally deferred because the project is not yet a stable product.
 
-This document is the tracked release-freeze checklist for the routing hierarchical pre-migration binary. It intentionally does not record runtime artifacts, installer hashes, signing logs, screenshots, local databases, API keys, cookies, request payloads, model names from user traffic, station URLs, or entity identifiers.
+This document is the tracked qualification checklist for the routing hierarchical pre-migration checkpoint. It intentionally does not record runtime artifacts, installer hashes, signing logs, screenshots, local databases, API keys, cookies, request payloads, model names from user traffic, station URLs, or entity identifiers.
+
+## Development-stage release policy
+
+Relay Pool Desktop is still in a non-stable development phase. The project does not currently promise public signed releases, automatic update continuity, or old-binary rollback support for this routing upgrade. Users may recover by reinstalling, clearing local data, or reimporting configuration.
+
+The former Task 11 release gate is therefore downgraded to a local development qualification gate. Keep the safety checks that prevent secret leakage, schema breakage, and accidental production selector changes; do not block Task 12 on release authorization, signed installers, or published-channel evidence. If the project enters a stable product phase, re-enable the release gate before shipping to users.
 
 ## Candidate scope
 
 - Branch: `codex/routing-operational-upgrade`
 - Plan: `docs/superpowers/plans/2026-07-30-routing-operational-unification-upgrade.md`, Task 11
 - Spec reference: `docs/superpowers/specs/2026-07-30-routing-operational-unification-upgrade-spec.md`
-- Release purpose: ship the legacy production router with hierarchical routing configuration readiness and safe request-log URL write boundaries before the real hierarchical selector cutover.
+- Checkpoint purpose: keep the legacy production router with hierarchical routing configuration readiness and safe request-log URL write boundaries before the real hierarchical selector cutover.
 - Production selector change: none. The pre-migration binary must keep unmigrated users on the existing router behavior, and saved `hierarchical_v1` configuration must not receive production traffic in this release.
 
-## Freeze fields
+## Checkpoint fields
 
-These fields must be filled from a clean worktree after the tracked Task 11 preparation commit exists. If any tracked file changes after the freeze revision is recorded, the freeze is invalid and the verification sequence must restart from the new commit.
+These fields should be filled from a clean worktree after the tracked Task 11 preparation commit exists. If any tracked file changes after the checkpoint revision is recorded, the verification sequence must restart from the new commit.
 
 | Field | Value |
 |---|---|
-| `premigration_revision` | Pending clean Task 11 preparation commit |
-| Release tag | Pending release authorization |
-| Baseline installer | Pending explicit `RELAY_BASELINE_INSTALLER` |
-| Candidate installer | Pending signed candidate bundle |
-| Baseline version | Pending explicit `RELAY_BASELINE_VERSION` |
-| Candidate version | Pending explicit `RELAY_CANDIDATE_VERSION` |
-| Install/upgrade report | Pending explicit `RELAY_UPGRADE_REPORT` under ignored release qualification output |
-| Published channel | Pending release authorization |
+| `premigration_revision` | `14d5a3a40ecb03acd2090203df75becd66f9df58` |
+| Release tag | Deferred for stable-product phase |
+| Baseline installer | Deferred for stable-product phase |
+| Candidate installer | Deferred for stable-product phase |
+| Baseline version | Deferred for stable-product phase |
+| Candidate version | Deferred for stable-product phase |
+| Install/upgrade report | Deferred for stable-product phase |
+| Published channel | Deferred for stable-product phase |
 
-## Required local contracts before release authorization
+## Required local contracts before Task 12
 
 - Fresh schema, released schema, and the existing five legacy routing policy fixtures must remain bootable.
 - Readiness checks must be read-only and must not alter legacy route selection.
@@ -39,24 +45,28 @@ These fields must be filled from a clean worktree after the tracked Task 11 prep
 - Configuration readiness statistics must only persist low-cardinality aggregates; they must not include entity IDs, model names, or URLs.
 - The install/upgrade matrix script must require explicit baseline/candidate installer paths, explicit baseline/candidate versions, and an explicit output path. It must not contain versioned defaults or version-specific labels.
 
-## Required release evidence
+## Required development evidence
 
-The following evidence is intentionally not tracked in the repository. It belongs in ignored local output or CI artifacts for the frozen revision.
+The following evidence is intentionally not tracked in the repository. It belongs in ignored local output or CI artifacts for the checkpoint revision.
 
 ```powershell
 pnpm.cmd verify:fast
 pnpm.cmd verify:full
 node scripts/install-upgrade-matrix-contract.test.mjs
 node scripts/local-routing-redaction.test.mjs
-pnpm.cmd verify:release-version --require-tag
-pnpm.cmd verify:release
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-install-upgrade-matrix.ps1 -OldInstaller $env:RELAY_BASELINE_INSTALLER -NewInstaller $env:RELAY_CANDIDATE_INSTALLER -OldVersion $env:RELAY_BASELINE_VERSION -NewVersion $env:RELAY_CANDIDATE_VERSION -OutputPath $env:RELAY_UPGRADE_REPORT
+cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 ```
 
-The install/upgrade matrix command is valid only when all five environment variables above have been explicitly set for the current release. Script defaults are not allowed for the installers, versions, or output path.
+The install/upgrade matrix command remains available as an optional stable-release check only when all five environment variables above have been explicitly set. Script defaults are not allowed for the installers, versions, or output path.
 
-## Current release blocker
+## Deferred stable-release work
 
-Task 11 cannot be marked complete until a signed pre-migration version is actually released to the supported update/download channel and at least one supported baseline-to-candidate install/upgrade verification has passed against that published artifact.
+Before treating Relay Pool Desktop as a stable product, restore the signed release workflow:
 
-Without release authorization and signed installer artifacts, this task remains blocked after the repository-local preparation commit. Do not start Task 12 from this branch state by treating this document as release evidence.
+- Create a release tag for the exact qualified revision.
+- Build and sign the candidate installer.
+- Publish through the supported update/download channel.
+- Run the install/upgrade matrix from an explicit supported baseline to the candidate.
+- Record only redacted evidence in ignored output or CI artifacts.
+
+This deferred work does not block Task 12 during the current development phase.
