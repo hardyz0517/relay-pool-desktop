@@ -55,7 +55,7 @@ assert.match(
 );
 assert.match(
   contractRunner,
-  /"--test", "scripts\/updater-check-coordinator\.test\.ts"/,
+  /"--experimental-strip-types", "--test", "scripts\/updater-check-coordinator\.test\.ts"/,
   "shared release verification must run behavioral updater coordinator tests",
 );
 assert.match(
