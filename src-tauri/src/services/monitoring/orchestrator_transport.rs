@@ -7,9 +7,12 @@ use futures_util::future::BoxFuture;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    application::monitoring::{
-        orchestrator::{ProbeTransport, ProbeTransportRequest, ProbeTransportResult},
-        planner::ProbePlan,
+    application::{
+        monitoring::{
+            orchestrator::{ProbeTransport, ProbeTransportRequest, ProbeTransportResult},
+            planner::ProbePlan,
+        },
+        queries::routing_runtime::RoutingMonitoringTargetSnapshot,
     },
     models::monitoring::{ClientProfileId, FailureKind, ProtocolKind},
     outbound::{AsyncOutboundClient, ProxyPolicy, TimeoutPolicy},
@@ -55,7 +58,7 @@ impl ProbeExecutorTransport {
 
     pub(crate) fn endpoints_from_plan(
         plan: &ProbePlan,
-        candidates: &[crate::models::routing::RuntimeRoutingCandidate],
+        candidates: &[RoutingMonitoringTargetSnapshot],
         secrets: &BTreeMap<String, String>,
     ) -> Vec<ProbeTargetEndpoint> {
         plan.target_plans
@@ -68,7 +71,7 @@ impl ProbeExecutorTransport {
                 let secret = secrets.get(&target.station_key_id)?;
                 Some(ProbeTargetEndpoint {
                     station_key_id: target.station_key_id.clone(),
-                    base_url: candidate.upstream_base_url.clone(),
+                    base_url: candidate.api_base_url.clone(),
                     endpoint_revision: target.endpoint_revision,
                     secret: secret.clone(),
                     protocol_kind,

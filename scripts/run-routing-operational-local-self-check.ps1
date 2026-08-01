@@ -1,6 +1,6 @@
 param(
   [string]$CargoManifest = "src-tauri/Cargo.toml",
-  [string]$OutputPath = "output/routing-operational/qualification/local-self-check/routing-operational-local-self-check-latest.json"
+  [string]$OutputPath = "output/routing-operational/self-check/local-self-check/routing-operational-local-self-check-latest.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,7 +66,7 @@ $steps = New-Object System.Collections.Generic.List[object]
 $failures = New-Object System.Collections.Generic.List[object]
 
 $commandPlan = @(
-  [pscustomobject]@{ id = "self-check-contract"; command = "node"; arguments = @("scripts/routing-operational-local-self-check.test.mjs"); proves = @("Task 27 runner command coverage", "no provider credential requirement", "no release gate semantics") },
+  [pscustomobject]@{ id = "self-check-contract"; command = "node"; arguments = @("scripts/routing-operational-local-self-check.test.mjs"); proves = @("Task 27 runner command coverage", "no provider credential requirement", "development-only self-check semantics") },
   [pscustomobject]@{ id = "operational-fact-reader"; command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "operational_fact_reader", "--", "--nocapture"); proves = @("snapshot-consistent operational fact reads", "fixed query count candidate assembly", "no secret/raw URL leakage from fact bundle") },
   [pscustomobject]@{ id = "known-schema-import"; command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "persistence_upgrade", "--", "--nocapture"); proves = @("legacy fixture DB imports to current dev schema", "request lifecycle/import facts survive reimport", "future/unsupported schema fails closed") },
   [pscustomobject]@{ id = "upgrade-recovery"; command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "persistence_upgrade_recovery", "--", "--nocapture"); proves = @("interrupted upgrade has deterministic recovery plan", "unsafe observations halt without destructive replay") },
@@ -78,7 +78,7 @@ $commandPlan = @(
   [pscustomobject]@{ id = "catalog-decision-cost"; command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_catalog_loopback", "--", "--nocapture"); proves = @("model listing fallback persists outcomes", "decision/cost stores remain queryable") },
   [pscustomobject]@{ id = "redaction-boundary"; command = "node"; arguments = @("scripts/local-routing-redaction.test.mjs"); proves = @("local self-check logs/traces/errors do not rehydrate full URL or secrets") },
   [pscustomobject]@{ id = "legacy-doc-anti-regression"; command = "node"; arguments = @("scripts/routing-operational-legacy-doc-consistency.test.mjs"); proves = @("debug legacy runtime deletion is reflected in current docs", "legacy env switch is not documented as a supported fallback") },
-  [pscustomobject]@{ id = "task26-self-check-preflight"; command = "node"; arguments = @("scripts/routing-operational-qualification.mjs", "--preflight"); proves = @("Task 26 self-check wiring remains available without release gate") }
+  [pscustomobject]@{ id = "task26-self-check-preflight"; command = "node"; arguments = @("scripts/routing-operational-qualification.mjs", "--preflight"); proves = @("Task 26 self-check wiring remains available") }
 )
 
 foreach ($entry in $commandPlan) {
@@ -112,10 +112,6 @@ $report = [ordered]@{
     cargo = Invoke-CaptureText "cargo" @("--version")
   }
   boundaries = [ordered]@{
-    releaseGate = $false
-    signedInstaller = $false
-    installUpgradeMatrix = $false
-    oldBinaryRollback = $false
     realProviderRequired = $false
     realProviderStatus = "not-run-without-user-authorization"
     recoveryContract = "reset/reimport/reconfigure with the current dev binary"

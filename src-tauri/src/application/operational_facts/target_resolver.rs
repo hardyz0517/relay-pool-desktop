@@ -5,11 +5,9 @@ use std::fmt;
 use futures_util::future::BoxFuture;
 
 use crate::{
-    application::{
-        credentials::{SecretBytes, SecretRef},
-        routing_engine::capacity::CapacityLease,
-    },
+    application::routing_engine::capacity::CapacityLease,
     models::{
+        credentials::{SecretBytes, SecretRef},
         proxy::UpstreamApiFormat,
         station_endpoints::{normalize_api_base_url, sanitized_api_base_url_for_trace},
     },

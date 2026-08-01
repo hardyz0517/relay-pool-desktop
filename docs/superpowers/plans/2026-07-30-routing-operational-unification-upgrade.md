@@ -1,6 +1,6 @@
 # Relay Pool 路由与运行事实一体化升级实施计划
 
-状态：Proposed，等待按 Task 顺序执行
+状态：Development implementation complete；截至 2026-08-01，自动化实现、全量 Rust 测试、前端构建、开发期本地自检、单轮 deterministic soak 和 Task 28 反回流检查已在 `codex/routing-operational-upgrade` 工作区通过。授权真实客户端/provider/CCSwitch/sleep-resume 观察仍需用户环境与显式授权，记录为未运行的外部信心观察；它们不作为 debug legacy runtime、request-coupled finalization 或 release gate 保留理由。
 日期：2026-07-30
 目标规范：`docs/superpowers/specs/2026-07-30-routing-operational-unification-upgrade-spec.md`
 上位规范：`AGENTS.md`、`docs/README.md`、`docs/PROJECT_PLAN.md`、`docs/PRODUCT_MODEL.md`、`docs/SECURITY_EXPORT_IMPORT.md`
@@ -33,8 +33,34 @@ Canonical facts/evidence
 - capacity miss、actual attempt failure、wait wake-up 和 execution-fence rebuild 使用不同状态，不互相冒充；
 - attempt/protocol 与 request/delivery 生命周期独立终结且顺序可证明；
 - monitoring、collector、pricing、routing、logs 和 UI 消费同源 facts/projections；
-- 预迁移检查点、正式 cutover 和开发期重来恢复策略均按目标规范执行；已删除的 debug-only legacy runtime、环境入口和 request-coupled finalization 不得回流；
-- Stage 7 的 architecture、migration、fault、concurrency、performance、单轮 deterministic soak、授权真实客户端和开发期本地自检全部退出 0；这些检查不构成 release gate、安装升级矩阵或旧二进制回滚承诺。60 分钟长 soak 只作为可选信心检查，不是当前开发期阻塞项。
+- 切换前开发期基线记录、正式 cutover 和开发期重来恢复策略均按目标规范执行；已删除的 debug-only legacy runtime、环境入口和 request-coupled finalization 不得回流；
+- Stage 7 的 architecture、migration、fault、concurrency、performance、单轮 deterministic soak 和开发期本地自检全部退出 0；真实客户端/provider/CCSwitch/sleep-resume 观察只有在用户提供环境与显式授权时才要求退出 0，未授权时必须记录 `not-run-without-user-authorization`，不阻塞当前开发期完成。这些检查只是开发期自检。60 分钟长 soak 只作为可选信心检查，不是当前开发期阻塞项。
+
+2026-08-01 完成审计补充：本工作区已按开发期 reset/reimport 决策完成自动化范围内的实现与验证。真实客户端/provider/CCSwitch/sleep-resume 项需要本机真实配置、secret 和显式授权，当前证据记录为 `not-run-without-user-authorization`；不得因此恢复第二 runtime owner、旧 binary rollback、签名安装包 release gate 或 request-coupled finalizer。
+
+最新自动化证据：
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml`
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`
+- `pnpm.cmd exec tsc --noEmit`
+- `pnpm.cmd build`
+- `pnpm.cmd test:contracts`
+- `node scripts/routing-operational-qualification.mjs`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke`
+- `pnpm.cmd architecture:fixtures`
+- `pnpm.cmd architecture:typescript`
+- `pnpm.cmd architecture:commands`
+- `pnpm.cmd architecture:security`
+- `pnpm.cmd architecture:artifacts`
+- `pnpm.cmd architecture:scale-baseline`
+- `git diff --check`
+
+生成的本地证据位于：
+
+- `output/routing-operational/self-check/local-self-check/routing-operational-local-self-check-latest.json`
+- `output/routing-operational/self-check/soak/routing-operational-soak-latest.json`
+- `output/architecture-scale/baseline/frontend-report.json`
 
 ## 2. 执行纪律
 
@@ -53,17 +79,17 @@ Canonical facts/evidence
 
 ## 3. 开发期序列与硬性自检边界
 
-**2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，不维护公开签名预迁移版本、正式 release/rollback 交付链路、安装升级矩阵或旧二进制回滚。用户可接受“重来”：清空本地开发数据、重新导入/重新配置后继续使用。因此，本计划中的 release gate 取消，不再作为当前升级概念存在；只保留开发期本地自检：架构、schema、redaction、build/check、单轮 deterministic soak、真实客户端 smoke，以及 reset/reimport/重新配置重来证明。60 分钟 soak 仅用于追查生命周期泄漏或未来稳定发布 ADR 前的可选信心观察，不作为当前开发期阻塞项。安装/升级脚本若保留，只作为“不写死版本/路径”的可选静态合同检查，不作为当前升级阻塞项。后续若项目进入稳定产品阶段，需要重新启用发布 ADR，并另行补回 signed installer、自动更新、升级/回滚矩阵与支持窗口要求。
+**2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，用户可接受“重来”：清空本地开发数据、重新导入/重新配置后继续使用。因此，本计划只保留开发期本地自检：架构、schema、redaction、build/check、单轮 deterministic soak、真实客户端 smoke，以及 reset/reimport/重新配置重来证明；不要求签名安装包、安装/升级矩阵、旧 binary 恢复链路或产品化发布门禁。60 分钟 soak 仅用于追查生命周期泄漏，不作为当前开发期阻塞项。
 
-执行含义：当前路由升级不再产出或等待任何“发布门禁”工件；遇到结构性不可恢复状态时停止 admission，并要求用户 reset/reimport/重新配置。不要为开发期体验保留双 owner、旧 binary rollback 或按请求回退链路。
+执行含义：遇到结构性不可恢复状态时停止 admission，并要求用户 reset/reimport/重新配置。不要为开发期体验保留双 owner 或按请求回退链路。
 
-本文后续出现的 `gate`、`Exit gate`、`architecture gate` 或“门禁”，除非明确写成 `release gate`，均只表示开发期工程自检/架构护栏；它们用于防止职责混乱、链路断裂和旧路径回流，不代表签名发布、安装升级、正式回滚或稳定产品放行流程。
+本文后续出现的 `gate`、`Exit gate`、`architecture gate` 或“门禁”，均只表示开发期工程自检/架构护栏；它们用于防止职责混乱、链路断裂和旧路径回流，不代表稳定产品发版门禁，也不要求安装器、签名、旧版本升级或回滚证明。
 
 ```text
 Stage 0 baseline + ADR freeze
   -> Stage 1 canonical facts/projectors
   -> Stage 2 backend read models + migration readiness UI
-  -> PRE-MIGRATION DEVELOPMENT CHECKPOINT (旧 production router 保持原行为)
+  -> PRE-CUTOVER DEVELOPMENT BASELINE (旧 production router 保持原行为)
   -> Stage 3 planner/capacity kernel in non-production harness
   -> Stage 4 outcomes/cost/full loopback harness
   -> Stage 5 atomic default-v2 data-plane cutover
@@ -578,7 +604,7 @@ pnpm.cmd test:contracts
 
 **Commit:** `feat: add backend routing operational read models`
 
-## 17. Task 10：删除 frontend 权威拼装并交付预迁移 readiness UI
+## 17. Task 10：删除 frontend 权威拼装并交付切换前 readiness UI
 
 **Files:**
 
@@ -619,13 +645,12 @@ pnpm.cmd build
 
 **Commit:** `feat: add hierarchical routing migration readiness`
 
-## 18. Task 11：预迁移 checkpoint 与开发期自检
+## 18. Task 11：切换前开发期基线与本地自检
 
 **Files:**
 
-- Create: `docs/superpowers/audits/routing-hierarchical-premigration-qualification.md`（历史命名保留；内容只代表开发期自检，不代表 release gate）
-- Modify: local candidate/checkpoint metadata for the authorized pre-migration checkpoint
-- Optional only for future stable-release ADR: install/upgrade matrix scripts may be kept as non-blocking contract checks, but they are not part of this development gate
+- Create: `docs/superpowers/audits/routing-hierarchical-precutover-self-check.md`
+- Modify: local candidate/baseline metadata for the authorized pre-cutover development baseline
 - Modify: `scripts/run-contract-tests.mjs`
 - Modify: `src-tauri/src/application/request_finalization.rs` 与 request-log write/query DTO，停止对新 request 持久化完整 `upstream_base_url`
 - Modify: `scripts/local-routing-redaction.test.mjs`
@@ -637,17 +662,16 @@ pnpm.cmd build
 - [ ] 未迁移用户继续使用旧 router 原行为；readiness 只读检查不得改变 selection。
 - [ ] 已迁移 config 被完整保存，但本版本不让新 selector接真实流量。
 - [ ] import/export 保留 legacy fields 并标记 ignored-after-cutover，不丢用户数据。
-- [ ] 新 binary 能容忍历史 `request_logs.upstream_base_url` 为 NULL/redacted；这是 Task 25 清洗后开发期 reset/reimport 恢复的前置合同，不再作为旧 binary rollback 合同。
-- [ ] 预迁移 binary 对所有新 request 将 legacy `upstream_base_url` 写为 NULL，只保留已有 station/key identity 和安全 path/endpoint classification；UI/query 不用当前 Station URL 回填历史显示。
+- [ ] current dev binary 能容忍历史 `request_logs.upstream_base_url` 为 NULL/redacted；这是 Task 25 清洗后开发期 reset/reimport 恢复的前置合同。
+- [ ] 当前 dev binary 对所有新 request 将 legacy `upstream_base_url` 写为 NULL，只保留已有 station/key identity 和安全 path/endpoint classification；UI/query 不用当前 Station URL 回填历史显示。
 - [ ] 记录本地 configuration readiness 统计时只保存低基数聚合，不记录实体 ID/模型/URL。
-- [ ] 冻结 checkpoint revision；开发期不要求 release tag、签名 installer 或公开更新渠道。
-- [ ] 开发期不要求 install/upgrade matrix；若脚本保留，只作为稳定产品阶段的可选合同测试，且不得写死版本或 artifact 路径。
+- [ ] 记录 checkpoint revision，仅用于复现和诊断。
 - [ ] 开发期以 fresh/known schema、readiness、redaction、import/export 和 local build 证据作为本 Task gate。
-- [ ] 不发布预迁移版本；Task 12 可在开发期自检通过后继续。用户恢复策略为清空本地数据、重新导入或重新配置，不承诺旧 binary rollback。
+- [ ] Task 12 可在开发期自检通过后继续。用户恢复策略为清空本地数据、重新导入或重新配置。
 
 **Pre-migration development freeze:**
 
-- [ ] 先提交实现、脚本和自检文档，记录 `premigration_revision`，后续 Task 以该 commit 作为开发检查点。
+- [ ] 先提交实现、脚本和自检文档，记录 `precutover_baseline_revision`，后续 Task 以该 commit 作为开发期基线。
 - [ ] build/install evidence 若存在写 ignored output/CI artifact；若 tracked 文件变化，形成新 commit 后按影响范围重跑对应自检。
 
 **Run:**
@@ -665,11 +689,11 @@ node scripts/local-routing-redaction.test.mjs
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-若本机 Node/工具链版本满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full`；版本不匹配时记录环境限制，不把发布期依赖门禁作为本开发 checkpoint 的阻塞项。
+若本机 Node/工具链版本满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full`；版本不匹配时记录环境限制，不把产品化发布流程中的依赖矩阵作为本开发 checkpoint 的阻塞项。
 
-**完成条件:** 开发期自检证明旧 production behavior 未变、用户能完成所有 cutover-required config、新 request log 不再写完整 upstream URL、fresh/known schema 与导入导出合同仍通过。开发期不要求签名发布或 installer 升级矩阵；Task 12 可在上述本地自检通过后开始。若重新启用稳定发布策略，必须恢复 tag、签名 bundle、install/upgrade matrix 和发布渠道证据。
+**完成条件:** 开发期自检证明旧 production behavior 未变、用户能完成所有 cutover-required config、新 request log 不再写完整 upstream URL、fresh/known schema 与导入导出合同仍通过。Task 12 可在上述本地自检通过后开始。
 
-**Commit:** `chore: qualify hierarchical routing premigration checkpoint`
+**Commit:** `chore: qualify hierarchical routing precutover baseline`
 
 ## 19. Task 12：实现 hierarchical eligibility 与两个 sealed ordering profiles
 
@@ -741,7 +765,7 @@ node scripts/routing-operational-architecture.test.mjs
 **GREEN:**
 
 - [ ] decision evidence 先保存在 bounded request memory，后续随 AttemptOutcome/RequestOutcome transaction upsert；本 Task 不添加 pre-upstream decision DB barrier。
-- [ ] migration forward-only/idempotent；new binary 对缺失或旧数据给出明确 unavailable/ignored 状态，开发期不承诺旧 binary 回滚。
+- [ ] migration forward-only/idempotent；current dev binary 对缺失或旧数据给出明确 unavailable/ignored 状态。
 - [ ] maintenance 与 request-log retention 同 owner 编排。
 
 **Run:**
@@ -1008,7 +1032,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] 复用 Request Lifecycle 的 Start/Finish writer、permit reservation、bounded queue、ack 与 shutdown owner；不创建第二个 routing writer。
 - [ ] 旧 production lifecycle command 在 Task 22 前继续走兼容 transaction；新 `AttemptOutcome`/`RequestOutcome` command 只由 harness composition 提交，二者共享同一 writer capacity/health gate 但绝不双写同一 terminal。
 - [ ] 显式 orchestrator 固定调用 journal、scoped observation、cost 和 decision store ports；不实现动态 handler/event bus。
-- [ ] transaction schema 使用稳定 unique key 和 CAS；migration forward-only、幂等；new binary 对旧数据/缺失列有明确 projection fallback，开发期不承诺旧 binary 回滚。
+- [ ] transaction schema 使用稳定 unique key 和 CAS；migration forward-only、幂等；current dev binary 对旧数据/缺失列有明确 projection fallback。
 - [ ] runtime feedback 仍由 AttemptLifecycle 唯一 owner apply once；durable transaction 不反向操作 runtime registry。
 - [ ] `/v1/models` outcome 的 pricing/cost sealed 为 `NotApplicable`，不进入 inference cost aggregation。
 - [ ] reconciliation 由 `RequestFinalizationService` 的窄 startup method 拥有，不另建后台 writer；完成后返回明确 ack 供 composition gate 使用。
@@ -1131,7 +1155,7 @@ pnpm.cmd test:contracts
 
 ## 29. Task 22：原子切换 default-v2 production composition
 
-**Depends on:** Task 21 全绿；本地 pre-cutover readiness/checkpoint 没有未确认 blocker。开发期不要求预迁移版本发布。
+**Depends on:** Task 21 全绿；本地 pre-cutover readiness/baseline 没有未确认 blocker。开发期不要求公开过渡版本或旧 binary 恢复链路。
 
 **Files:**
 
@@ -1167,7 +1191,7 @@ pnpm.cmd test:contracts
 **GREEN:**
 
 - [ ] composition root 唯一构造 fact/runtime/capacity/finalization registries 并交给 `TaskSupervisor`；planner 仍只看 immutable input。
-- [ ] 切换与 legacy compatibility config 保留分开；开发期恢复依赖 reset/reimport，而不是同 binary 混合 owner。若未来进入稳定产品阶段，再用独立发布 ADR 恢复完整 rollback 合同。
+- [ ] 切换与 legacy compatibility config 保留分开；开发期恢复依赖 reset/reimport，而不是同 binary 混合 owner。
 - [ ] 本 Task 可以合并到 cutover-candidate branch，但在 Tasks 23-26 完成前不得交付为默认可用路径。
 
 **Run:**
@@ -1340,7 +1364,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] 全部 logical rows 完成后执行受控 WAL checkpoint/truncate 与 SQLite rebuild/`VACUUM`，清理 free pages；关闭相关 producers 后再处理 `-wal`/`-shm` sidecars。
 - [ ] 枚举并清理应用管理范围内由本次升级产生的 pre-sanitization backup/temp artifact；路径必须由 persistence artifact policy 验证，不能递归删除用户目录或外部备份。
 - [ ] canary fixture 对主 DB、WAL、SHM、upgrade journal 和应用管理 backup 做原始字节扫描；本地自检证据明确这只是应用管理存储范围内的 best-effort purge，不宣称 SSD/文件系统级不可恢复。
-- [ ] fresh schema、known schema 和中断恢复 fixture 均可升级；开发期不承诺旧 binary rollback，清洗后的恢复路径是 new binary reset/reimport。
+- [ ] fresh schema、known schema 和中断恢复 fixture 均可升级；清洗后的恢复路径是 current dev binary reset/reimport。
 - [ ] source/runtime scan 证明 candidate、outcome、decision、IPC、UI、trace、error、snapshot 和 self-check artifact 不含 secret/full URL/user payload。
 - [ ] redaction 对 Authorization、API key、Cookie、token、完整 headers 和 prompt/response 同样生效。
 
@@ -1377,17 +1401,17 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - Extend: `scripts/run-routing-operational-soak.ps1` with final fault mix、metrics and report output
 - Create: `scripts/routing-operational-qualification.mjs`
 - Modify: `scripts/verify.ps1` full profile，只增加 deterministic routing self-check preflight；长 soak 保持独立可选 step
-- Do not modify for this development upgrade: `.github/workflows/release.yml` 与 release verification entrypoint。未来稳定发布 ADR 才可把同 revision 长 soak + self-check artifact validation 接入 signed bundle 前置验证
+- Do not modify for this development upgrade: `.github/workflows/release.yml` 与 release verification entrypoint
 - Modify: architecture scale baseline datasets/reports
-- Modify: local self-check metadata；不为了当前开发期自检维护 release version、changelog 或候选发布元数据
+- Modify: local self-check metadata；不维护 release version、changelog 或候选发布元数据
 - Create: `docs/superpowers/audits/` 下不含运行结果的 development self-check manifest/template
-- Do not commit: 最终运行结果；写入现有 ignored `output/architecture-scale/qualification/local/` 或 CI artifact path
+- Do not commit: 最终运行结果；写入 ignored output 或 CI artifact path
 
 **Development self-check boundary:**
 
 - [ ] 先完成所有实现、tests、workflow 和 self-check manifest，运行 focused tests 后提交 `test: qualify routing operational cutover`。
-- [ ] soak/performance/security 输出携带 source revision、工具版本和参数，只写 ignored output/CI artifact；source revision 仅用于诊断，不代表发布候选冻结。
-- [ ] 不要求 release tag、签名 installer、安装升级矩阵、旧 binary rollback、release exe artifact 校验或同 revision 发布候选门禁。
+- [ ] soak/performance/security 输出携带 source revision、工具版本和参数，只写 ignored output/CI artifact；source revision 仅用于诊断，不代表产品化发布候选。
+- [ ] source revision 只用于复现和诊断；不冻结产品化发布候选。
 - [ ] 若自检后继续修改 tracked 文件，只需针对修改范围重跑对应检查；影响路由闭环、schema、安全或生命周期时重跑完整开发期目标检查集与单轮 deterministic soak；本机工具链版本满足 ledger 时可附加 `verify:full`，需要追查泄漏时可附加 60 分钟长 soak。
 
 **Fault and concurrency matrix:**
@@ -1413,7 +1437,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 **Soak checks:**
 
 - [ ] 必跑检查为单轮 mixed buffered/stream/catalog/fallback/cancel/slow-client deterministic loopback；不消耗真实 provider 配额。
-- [ ] 60 分钟 mixed workload soak 只作为可选信心检查，用于追查生命周期泄漏、长期资源漂移或未来稳定发布 ADR，不作为当前开发期阻塞项。
+- [ ] 60 分钟 mixed workload soak 只作为可选信心检查，用于追查生命周期泄漏或长期资源漂移，不作为当前开发期阻塞项。
 - [ ] 期间周期采样 active request/attempt/lease/retry/half-open/waiter/body budget/writer/task/runtime registry/SQLite size。
 - [ ] 结束并 shutdown 后所有瞬态计数归零；registry/trace/DB size 符合 TTL/count/retention 上限，无单调泄漏。
 - [ ] tracing 开/关各跑一轮 canary secret scan；报告仅保存聚合指标和脱敏失败代码。
@@ -1435,20 +1459,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operatio
 node scripts/routing-operational-qualification.mjs
 ```
 
-若本机 Node/工具链版本恰好满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full` 作为聚合检查；当前开发期不把它作为 release gate，也不为了通过它放宽依赖 ledger。
+若本机 Node/工具链版本恰好满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full` 作为聚合检查；当前开发期不为了通过它放宽依赖 ledger。
 
-**完成条件:** fault/concurrency/performance/单轮 deterministic soak 全绿，ignored/CI self-check artifact 记录 source revision、命令、版本、环境、阈值与脱敏结果；任一红项阻止 Task 27。开发期不要求 60 分钟 soak、release tag、签名密钥、本地安装包、升级矩阵、release binary artifact 或旧 binary rollback；Task 27 负责 reset/reimport 重来恢复和授权客户端 smoke。
+**完成条件:** fault/concurrency/performance/单轮 deterministic soak 全绿，ignored/CI self-check artifact 记录 source revision、命令、版本、环境、阈值与脱敏结果；任一红项阻止 Task 27。60 分钟 soak 可选；Task 27 负责 reset/reimport 重来恢复和授权客户端 smoke。
 
 **Commit:** `test: qualify routing operational cutover`
 
 ## 34. Task 27：开发期本地自检、重来恢复与真实客户端验证
 
-**Depends on:** Task 26；开发期不要求公开发布、签名 installer、本地安装包、自动更新渠道、安装升级矩阵或旧 binary rollback。恢复策略是停止 admission 后 reset local data、reimport config 或重新配置；若项目进入稳定产品阶段，本 Task 才由新的发布 ADR 重新升级为正式 release/upgrade/rollback 流程。
+**Depends on:** Task 26。恢复策略是停止 admission 后 reset local data、reimport config 或重新配置。
 
 **Files:**
 
 - Produce: local self-check/reset-reimport evidence under ignored output/CI artifact path
-- Create/extend: `scripts/run-routing-operational-local-self-check.ps1` and a contract test that verifies it reuses existing deterministic recovery/routing suites and does not become a release gate
+- Create/extend: `scripts/run-routing-operational-local-self-check.ps1` and a contract test that verifies it reuses existing deterministic recovery/routing suites and does not become a product-release workflow
 - Create: `docs/superpowers/audits/routing-operational-local-self-check-template.md` without filled runtime results
 - After successful local self-check only: Modify `docs/PROJECT_PLAN.md` completion status and remaining debug-legacy cleanup note in a separate documentation commit
 - Do not commit: real credentials、local DB、raw logs、screenshots containing private data
@@ -1456,7 +1480,7 @@ node scripts/routing-operational-qualification.mjs
 **Local development self-check boundary:**
 
 - [ ] Task 26 通过后若继续修改实现、schema、generated binding 或依赖，按影响范围重跑对应自检；影响路由闭环、schema、安全或生命周期时回到 Task 26 重跑完整自检。
-- [ ] self-check evidence 必须记录 `source_revision`、dirty status、命令和环境，dirty status 只用于诊断，不作为发布候选冻结。
+- [ ] self-check evidence 必须记录 `source_revision`、dirty status、命令和环境，dirty status 只用于诊断，不作为产品化发布候选冻结。
 - [ ] 本地/CI 优先使用仓库既有 verify/build phases；不得维护另一份手抄 test 列表。
 
 **Reset/reimport matrix:**
@@ -1468,10 +1492,10 @@ node scripts/routing-operational-qualification.mjs
 
 **Reset/reimport recovery proof:**
 
-- [ ] 在隔离副本上证明 reset local data/reimport config 后 current dev binary 可启动，旧数据不作为受支持 rollback 合同。
+- [ ] 在隔离副本上证明 reset local data/reimport config 后 current dev binary 可启动。
 - [ ] reset/reimport 不 drop 用户未授权路径、不按请求混用 owner；回到 current dev binary 后 migration/decision/outcome uniqueness 仍正确。
 - [ ] writer unhealthy 或 cutover blocker 的操作手册是 stop admission + reset/reimport，不是切局部 feature flag。
-- [ ] 明确开发期不承诺旧 binary rollback；新版本期间产生的 trace/cost 在 reset 后可丢弃或显示为 unavailable/ignored，而不是伪造兼容结果。
+- [ ] 新版本期间产生的 trace/cost 在 reset 后可丢弃或显示为 unavailable/ignored，而不是伪造兼容结果。
 
 **Real client/provider verification:**
 
@@ -1491,15 +1515,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operatio
 node scripts/routing-operational-qualification.mjs
 ```
 
-`pnpm.cmd verify:full` 只在本机 Node/依赖生命周期版本满足 ledger 时作为额外聚合检查；版本不匹配时记录环境限制并使用上面的开发期目标检查集，不把发布期门禁带进 Task 27。
+`pnpm.cmd verify:full` 只在本机 Node/依赖生命周期版本满足 ledger 时作为额外聚合检查；版本不匹配时记录环境限制并使用上面的开发期目标检查集。
 
-**完成条件:** 本地自检、reset/reimport recovery、授权真实客户端与安全核对全部通过；保存版本/commit/证据索引，不保存秘密或原始 provider payload。公开签名 release、本地安装包、安装/升级矩阵和旧 binary rollback 仅在稳定产品阶段由新 ADR 恢复。
+**完成条件:** 本地自检、reset/reimport recovery、授权真实客户端与安全核对全部通过；保存版本/commit/证据索引，不保存秘密或原始 provider payload。
 
 **Commit:** `docs: record unified routing operational local self-check`
 
 ## 35. Task 28：执行 debug legacy runtime 删除与反回流门禁
 
-**Depends on:** Tasks 22-27 的可用本地自检证据，以及 2026-07-31 开发期恢复决策。当前项目不是稳定成型产品；不要求正式发布后观察门禁、签名安装包、安装升级矩阵或旧 binary rollback。结构性不可恢复状态的受支持路径是 stop admission 后 reset/reimport/重新配置。
+**Depends on:** Tasks 22-27 的可用本地自检证据，以及 2026-07-31 开发期恢复决策。结构性不可恢复状态的受支持路径是 stop admission 后 reset/reimport/重新配置。
 
 **Files:**
 
@@ -1528,7 +1552,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1
 ```
 
-**Exit gate:** debug legacy runtime 及其专属债务物理删除，support 文档指向受支持的 reset/reimport 流程；稳定产品阶段若需要 binary rollback，另开 ADR 重新定义。
+**Exit gate:** debug legacy runtime 及其专属债务物理删除，support 文档指向受支持的 reset/reimport 流程。
 
 **Commit:** `refactor: remove debug legacy proxy runtime`
 
@@ -1546,9 +1570,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operatio
 8. **Stage**：只用 `git add <明确路径>`；重叠 dirty file 使用 `git add -p`。禁止 `git add .`、`git add -A`。
 9. **Cached review**：运行 `git diff --cached --check` 和 `git diff --cached`；确认没有 stage 用户的无关 monitoring/UI 改动、local DB、日志或 credentials。
 10. **Commit**：使用 Task 建议 message 或同等清晰的 conventional commit；schema、consumer、cutover、deletion 保持可独立 review。
-11. **Evidence**：在 stage audit 中记录 commit、命令、exit code、环境、阈值、已知限制和下一个 gate。只有最终 qualification 保存聚合报告，不提交原始敏感输出。
+11. **Evidence**：在 stage audit 中记录 commit、命令、exit code、环境、阈值、已知限制和下一个自检项。只有最终 self-check 保存聚合报告，不提交原始敏感输出。
 
-Tasks 11 和 26 是自检顺序例外：先完成 focused verification 并提交脚本/文档/测试，再执行开发期本地自检；运行证据写 ignored output/CI artifact，不提交运行结果。source revision 与 dirty status 只用于诊断，不冻结发布候选，也不要求 clean worktree 作为 release gate。开发期不要求 Task 11 预迁移 tag、Task 27 正式 tag、签名安装包、安装升级矩阵或旧 binary rollback；若自检失败，修复后按影响范围重跑，影响路由闭环、schema、安全或生命周期时重跑完整自检。
+Tasks 11 和 26 是自检顺序例外：先完成 focused verification 并提交脚本/文档/测试，再执行开发期本地自检；运行证据写 ignored output/CI artifact，不提交运行结果。source revision 与 dirty status 只用于诊断。若自检失败，修复后按影响范围重跑，影响路由闭环、schema、安全或生命周期时重跑完整自检。
 
 一个 Task 的状态只能是：`not_started`、`red_confirmed`、`implemented_unverified`、`blocked`、`complete`。只有所有 Run 命令退出 0 且 Exit gate 满足才可标 `complete`。
 
@@ -1610,7 +1634,7 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 
 - 现有 SQLite/Persistence V2、Request Lifecycle writer/permits、response-body wrapper 和 TaskSupervisor；
 - PricingProjector/CostCalculator、HealthTransitionService 和 monitoring/collector 的 typed evidence ports；
-- Tauri/React Query/IPC registry、现有安全和本地 qualification gates；
+- Tauri/React Query/IPC registry、现有安全和本地 self-check gates；
 - 单进程模块化单体、SQLite、Tokio RAII primitives，不引入 Redis/outbox/microservice/event bus。
 
 ## 39. 风险、暂停条件与决策升级
@@ -1619,7 +1643,7 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 |---|---|---|
 | monitoring V2 baseline/target scope 仍变化 | 暂停 Task 3/6，先冻结共享 fact/observation port | routing 复制 monitoring DTO/reducer |
 | provider account concurrency scope 无可信 provenance | 只显示 evidence gap，不启用 account lease | 猜测为 per-key 或 station limit |
-| automatic profile 缺 multiplier ceiling/ordering confirmation | 预迁移 UI 引导并停止 cutover | 默认 1.0、无限上限或猜 enum |
+| automatic profile 缺 multiplier ceiling/ordering confirmation | 切换前 UI 引导并停止 cutover | 默认 1.0、无限上限或猜 enum |
 | CostFirst 缺 exact comparable basis | 使用已批准 multiplier proxy 或 unpriced fallback | input+output 单价直接相加 |
 | provider 403/404 无 sealed semantic signal | `Uncertain` + neutral effect | 解析任意正文并 hard block |
 | lifecycle permit/ack 或 writer unhealthy | 停止新 upstream admission，drain/诊断 | 先发送再补 journal、自动回 legacy |
@@ -1638,14 +1662,14 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 |---|---|---|---|
 | A 基线冻结 | 0-2 | 无 | ADR、ownership、纯类型；不改运行行为 |
 | B 事实投影 | 3-7 | 4/5/6/7 可在 Task 3 后并行 | canonical facts/projectors；不接 data-plane |
-| C 控制面预迁移 | 8-11 | 9/10 在 8 后部分并行 | backend preview/readiness + 一次预迁移 checkpoint |
+| C 控制面切换前准备 | 8-11 | 9/10 在 8 后部分并行 | backend preview/readiness + 一次切换前开发期基线记录 |
 | D 决策与运行内核 | 12-18 | 13/14 可在 12 后并行；15 依赖 runtime contract | non-production planner/capacity/failure kernel |
 | E 生命周期闭环 | 19-21 | outcome domain 与 harness fixtures 可分工 | 完整 loopback，无 production cutover |
 | F 原子切换 | 22-25 | UI 与 deletion review 可预备，不可提前交付 | 一个 Stage 5+6 cutover candidate，单 owner + security migration |
 | G 本地自检 | 26-27 | performance、security、reset/reimport fixtures 可并行执行 | fault/soak/build/授权真实 E2E 后完成本地 self-check |
 | H 后续清债 | 28 | 无 | 按开发期 reset/reimport 决策删除 debug legacy runtime 并建立反回流门禁 |
 
-推荐评审至少设置六个强制切点：ADR/ownership、projector contracts、预迁移 checkpoint、planner/capacity kernel、outcome/loopback、production cutover/deletion。F 批次内部可以多 commit，但只能形成一个 production owner；不得为了减少单次 diff 而交付混合 composition。
+推荐评审至少设置六个强制切点：ADR/ownership、projector contracts、切换前开发期基线、planner/capacity kernel、outcome/loopback、production cutover/deletion。F 批次内部可以多 commit，但只能形成一个 production owner；不得为了减少单次 diff 而交付混合 composition。
 
 ## 41. 整体 Definition of Done
 
@@ -1653,7 +1677,7 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 
 - Tasks 0-28 均为 `complete`；debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 和 request-coupled finalization 已删除且有反回流门禁；
 - 第 37 节 26 行均有实际自动化和 production/E2E 证据；
-- pre-migration checkpoint 与 Stage 5+6 cutover candidate 的顺序可从 commit 证明；
+- pre-cutover development baseline 与 Stage 5+6 cutover candidate 的顺序可从 commit 证明；
 - Tauri/Rust build checks、local self-check verification、reset/reimport recovery、单轮 deterministic soak 和授权真实客户端验证退出 0；60 分钟长 soak 只作为可选信心证据；
 - fresh/known schema、sanitizer resume、reset/reimport recovery、current dev binary re-open 均通过；
 - default-v2 source/composition 没有第二 truth/selector/capacity/feedback；
@@ -1662,4 +1686,4 @@ Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。�
 - deletion ledger 无无 owner、无期限的临时项；
 - `docs/PROJECT_PLAN.md`、相关 ADR/spec、命令/IPC fixtures 与实现一致。
 
-本计划不以算法复杂度作为先进性目标。完成后的技术路线是成熟工程软件常用的 deterministic layered eligibility、lexicographic ordering、bounded retry/wait、RAII admission、outlier/half-open、immutable snapshot、typed outcomes 和 request-time settlement；其优势来自单一事实所有权、可证明生命周期、可解释决策和本地自检闭环，而不是 LLM、不可审计的在线学习或当前阶段不需要的稳定发布/安装升级/回滚体系。
+本计划不以算法复杂度作为先进性目标。完成后的技术路线是成熟工程软件常用的 deterministic layered eligibility、lexicographic ordering、bounded retry/wait、RAII admission、outlier/half-open、immutable snapshot、typed outcomes 和 request-time settlement；其优势来自单一事实所有权、可证明生命周期、可解释决策和本地自检闭环，而不是 LLM、不可审计的在线学习或当前阶段不需要的产品化发布体系。

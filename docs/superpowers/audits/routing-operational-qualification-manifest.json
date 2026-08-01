@@ -6,7 +6,7 @@
   "owner_task": 26,
   "artifact_policy": {
     "tracked_results_allowed": false,
-    "runtime_output_root": "output/routing-operational/qualification/",
+    "runtime_output_root": "output/routing-operational/self-check/",
     "scale_baseline_output_root": "output/architecture-scale/baseline/",
     "secret_policy": "no API keys, cookies, authorization headers, full upstream URLs, prompts, responses, provider payloads, local database files, WAL/SHM files, screenshots, or raw logs are tracked"
   },
@@ -53,7 +53,7 @@
     "max_runtime_replans": 8
   },
   "artifact_inputs": {
-    "soak_report": "output/routing-operational/qualification/soak/routing-operational-soak-latest.json",
+    "soak_report": "output/routing-operational/self-check/soak/routing-operational-soak-latest.json",
     "scale_baseline_report": "output/architecture-scale/baseline/frontend-report.json",
     "scale_baseline_fixtures": "output/architecture-scale/baseline/fixtures-first.json"
   }

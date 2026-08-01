@@ -41,7 +41,7 @@ mod services {
         #[path = "../../../src/services/proxy/limits.rs"]
         pub(crate) mod limits;
 
-        pub(crate) mod response_body {
+        pub(crate) mod finalization {
             #[allow(dead_code)]
             pub(crate) enum FinalizationOutcome {
                 Completed,
@@ -55,6 +55,10 @@ mod services {
             }
         }
 
+        pub(crate) mod response_body {
+            pub(crate) use super::finalization::FinalizationOutcome;
+        }
+
         #[path = "../../../src/services/proxy/attempt.rs"]
         pub(crate) mod attempt;
     }
@@ -65,6 +69,7 @@ use services::proxy::{
         DownstreamRequestFinalizationLease, DualTerminalFinalizationLease,
         UpstreamAttemptFinalizationLease,
     },
+    finalization::FinalizationOutcome,
     lifecycle::{
         attempt::{AttemptContext, AttemptTerminal, AttemptTerminalRecord},
         delivery::DeliveryTerminal,
@@ -79,7 +84,6 @@ use services::proxy::{
         writer::LifecycleWriter,
     },
     limits::RequestLease,
-    response_body::FinalizationOutcome,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

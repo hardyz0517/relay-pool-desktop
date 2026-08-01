@@ -1,5 +1,3 @@
-use sqlx::SqliteConnection;
-
 use crate::{
     models::health::{
         HealthObservation, HealthObservationOutcome, HealthWritebackMode, StationKeyHealthSnapshot,
@@ -7,6 +5,7 @@ use crate::{
     },
     persistence::{
         error::PersistenceError, stores::health_observation_store::HealthObservationStore,
+        WriteSession,
     },
 };
 
@@ -50,12 +49,12 @@ impl HealthTransitionService {
 
     pub(crate) async fn record_observation(
         &self,
-        connection: &mut SqliteConnection,
+        write: &mut WriteSession,
         observation: HealthObservation,
     ) -> Result<HealthTransitionAck, PersistenceError> {
         self.store
             .assert_station_key_revision(
-                &mut *connection,
+                write.connection(),
                 &observation.station_key_id,
                 observation.endpoint_revision,
             )
@@ -63,7 +62,7 @@ impl HealthTransitionService {
         let decision = writeback_decision(&observation);
         let inserted = self
             .store
-            .insert_observation_once(&mut *connection, &observation, decision.as_str())
+            .insert_observation_once(write.connection(), &observation, decision.as_str())
             .await?;
         if !inserted || decision != HealthWritebackDecision::Write {
             return Ok(HealthTransitionAck {
@@ -76,7 +75,7 @@ impl HealthTransitionService {
         let mut current = self
             .store
             .load_station_key_health(
-                &mut *connection,
+                write.connection(),
                 &observation.station_key_id,
                 observation.observed_at_ms,
             )
@@ -90,11 +89,11 @@ impl HealthTransitionService {
         }
         let next = reduce_health(current, &observation);
         self.store
-            .upsert_station_key_health(&mut *connection, &next)
+            .upsert_station_key_health(write.connection(), &next)
             .await?;
         self.store
             .update_station_key_status(
-                &mut *connection,
+                write.connection(),
                 &observation.station_key_id,
                 station_status(&next),
                 observation.observed_at_ms,

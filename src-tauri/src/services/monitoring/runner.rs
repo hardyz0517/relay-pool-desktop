@@ -9,24 +9,22 @@ use crate::{
         app_services::AppServices,
         credentials::CredentialService,
         monitoring::{
-            commands::{MonitorExecutionReceipt, MonitorExecutionRequest},
+            commands::MonitorExecutionRequest,
             definition_bridge::target_snapshots_for_scope,
             orchestrator::{
                 MonitorClock, MonitorIdGenerator, MonitorOrchestrator, ProbeTransport,
                 ProbeTransportRequest, ProbeTransportResult,
             },
             planner::{MonitorPlanningSnapshot, ProbePlan, ProbePlanner, TargetCapabilitySnapshot},
-            recorder::BufferedMonitoringRecorder,
+            recorder::{BufferedMonitoringRecorder, MonitorExecutionReceipt},
             MonitoringService,
         },
         pagination::PageLimit,
+        queries::routing_runtime::RoutingMonitoringTargetSnapshot,
         routing::RoutingService,
     },
     background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor},
-    models::{
-        monitoring::{RunChannelMonitorReceipt, TriggerKind},
-        routing::RuntimeRoutingCandidate,
-    },
+    models::monitoring::{RunChannelMonitorReceipt, TriggerKind},
     outbound::{AsyncOutboundClient, AsyncOutboundClientConfig},
     services::{
         endpoint_ping::ping_station_endpoint,
@@ -203,12 +201,12 @@ impl MonitoringRunner {
             .load_monitoring_planning_snapshot(&monitor_id)
             .await
             .map_err(|error| error.to_string())?;
-        let candidates = self
+        let routing_targets = self
             .routing
-            .load_runtime_candidates()
+            .load_monitoring_target_snapshots()
             .await
             .map_err(|error| error.to_string())?;
-        let targets = target_snapshots_for_scope(&snapshot, &candidates);
+        let targets = target_snapshots_for_scope(&snapshot, &routing_targets);
         let plan = ProbePlanner
             .build_plan(snapshot.clone(), &targets, trigger_kind)
             .map_err(|error| format!("{error:?}"))?;
@@ -217,7 +215,7 @@ impl MonitoringRunner {
             manual_idempotency_key,
             snapshot,
             targets,
-            candidates,
+            routing_targets,
             plan,
             cancellation_token: CancellationToken::new(),
             registration: None,
@@ -257,7 +255,7 @@ impl MonitoringRunner {
         let secrets = resolve_probe_secrets(self.credentials.as_ref(), &prepared.plan).await;
         let endpoints = ProbeExecutorTransport::endpoints_from_plan(
             &prepared.plan,
-            &prepared.candidates,
+            &prepared.routing_targets,
             &secrets,
         );
         let transport = BudgetedProbeTransport::new(
@@ -353,7 +351,7 @@ struct PreparedMonitoringExecution {
     manual_idempotency_key: Option<String>,
     snapshot: MonitorPlanningSnapshot,
     targets: Vec<TargetCapabilitySnapshot>,
-    candidates: Vec<RuntimeRoutingCandidate>,
+    routing_targets: Vec<RoutingMonitoringTargetSnapshot>,
     plan: ProbePlan,
     cancellation_token: CancellationToken,
     registration: Option<LiveExecutionRegistration>,
@@ -370,7 +368,7 @@ fn endpoint_ping_targets(prepared: &PreparedMonitoringExecution) -> Vec<Endpoint
     let mut targets = std::collections::BTreeMap::new();
     for target in &prepared.plan.target_plans {
         let Some(candidate) = prepared
-            .candidates
+            .routing_targets
             .iter()
             .find(|candidate| candidate.station_key_id == target.station_key_id)
         else {
@@ -381,7 +379,7 @@ fn endpoint_ping_targets(prepared: &PreparedMonitoringExecution) -> Vec<Endpoint
             .or_insert_with(|| EndpointPingTarget {
                 station_id: target.station_id.clone(),
                 endpoint_revision: target.endpoint_revision,
-                base_url: candidate.upstream_base_url.clone(),
+                base_url: candidate.api_base_url.clone(),
             });
     }
     targets.into_values().collect()

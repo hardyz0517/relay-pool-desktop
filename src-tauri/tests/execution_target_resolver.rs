@@ -46,6 +46,10 @@ mod application {
 }
 
 mod models {
+    pub(crate) mod credentials {
+        pub(crate) use crate::application::credentials::*;
+    }
+
     pub(crate) mod proxy {
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum UpstreamApiFormat {

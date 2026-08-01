@@ -8,6 +8,7 @@ pub(crate) mod monitoring_store;
 pub(crate) mod operational_facts;
 pub(crate) mod pricing_store;
 pub(crate) mod provider_draft_store;
+pub(crate) mod request_lifecycle_reconciliation;
 pub(crate) mod request_log_store;
 pub(crate) mod request_log_write;
 pub(crate) mod request_outcome_store;

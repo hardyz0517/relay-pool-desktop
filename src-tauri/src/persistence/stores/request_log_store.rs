@@ -459,15 +459,10 @@ async fn request_attempt_by_request_and_ordinal(
 
 #[cfg(test)]
 mod v2_tests {
-    use std::collections::BTreeSet;
-
-    use semver::Version;
-    use sqlx::{sqlite::SqlitePoolOptions, Row};
+    use sqlx::Row;
 
     use crate::persistence::{
-        migrations::migrator,
         runtime::PersistenceRuntime,
-        schema_compatibility::BinaryCompatibility,
         stores::request_log_write::{
             AttemptHealthUpdate, AttemptTerminalWrite, RequestLogAnnotationsWrite,
             RequestStartWrite, RequestTerminalWrite,
@@ -476,33 +471,15 @@ mod v2_tests {
 
     use super::RequestLogStore;
 
-    fn binary() -> BinaryCompatibility {
-        BinaryCompatibility {
-            app_version: Version::new(0, 3, 3),
-            database_generation: 2,
-            readable_schema: 1..=15,
-            writable_schema: BTreeSet::from([15]),
-        }
-    }
-
     async fn runtime() -> PersistenceRuntime {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool.sqlite3");
-        let options = sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
+        let runtime = PersistenceRuntime::initialize_new(&path)
             .await
-            .expect("pool");
-        migrator().run(&pool).await.expect("migrations");
-        pool.close().await;
+            .expect("initialize runtime");
         // Keep the directory alive for the lifetime of the test runtime.
         std::mem::forget(root);
-        PersistenceRuntime::open(&path, binary())
-            .await
-            .expect("runtime")
+        runtime
     }
 
     fn start_record(id: &str) -> RequestStartWrite {

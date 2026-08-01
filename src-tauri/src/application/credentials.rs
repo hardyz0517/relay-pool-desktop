@@ -1,6 +1,4 @@
-use std::{fmt, sync::Arc};
-
-use zeroize::Zeroizing;
+use std::sync::Arc;
 
 use crate::{
     application::{clock::Clock, error::ApplicationError, ids::IdGenerator},
@@ -29,58 +27,13 @@ use crate::{
     },
 };
 
-pub(crate) struct SecretBytes(Zeroizing<Vec<u8>>);
-
-impl SecretBytes {
-    pub(crate) fn as_bytes(&self) -> &[u8] {
-        self.0.as_slice()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl From<Vec<u8>> for SecretBytes {
-    fn from(value: Vec<u8>) -> Self {
-        Self(Zeroizing::new(value))
-    }
-}
-
-impl From<String> for SecretBytes {
-    fn from(value: String) -> Self {
-        Self::from(value.into_bytes())
-    }
-}
-
-impl fmt::Debug for SecretBytes {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SecretBytes")
-            .field("len", &self.0.len())
-            .finish_non_exhaustive()
-    }
-}
+pub(crate) use crate::models::credentials::{SecretBytes, SecretRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EncryptedSecret {
     pub(crate) ciphertext: Vec<u8>,
     pub(crate) nonce: Vec<u8>,
     pub(crate) masked_value: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SecretRef {
-    pub(crate) id: String,
-    pub(crate) scope: String,
-    pub(crate) owner_id: String,
-    pub(crate) kind: String,
-}
-
-impl SecretRef {
-    pub(crate) fn aad(&self) -> String {
-        secret_aad(&self.scope, &self.owner_id, &self.kind)
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1076,7 +1029,7 @@ impl CredentialService {
             .await?;
         let secret = std::str::from_utf8(secret.as_bytes())
             .map_err(|_| ApplicationError::SecretValidationFailed)?;
-        let fingerprint = crate::services::remote_keys::api_key_fingerprint(secret)
+        let fingerprint = crate::models::remote_keys::api_key_fingerprint(secret)
             .ok_or(ApplicationError::SecretValidationFailed)?;
         let store = self.store;
         let now = self.now_ms_string();
@@ -1468,10 +1421,6 @@ fn remote_local_key_note(remote_key_id: &str) -> String {
     format!("由远端发现开关自动创建：{remote_key_id}")
 }
 
-pub(crate) fn secret_aad(scope: &str, owner_id: &str, kind: &str) -> String {
-    format!("{scope}:{owner_id}:{kind}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1553,9 +1502,7 @@ mod tests {
                 remote_key_id_hash: Some("remote-hash-1".to_string()),
                 remote_key_name: Some("Remote key".to_string()),
                 api_key_masked: Some("sk-***".to_string()),
-                api_key_fingerprint: crate::services::remote_keys::api_key_fingerprint(
-                    "sk-existing",
-                ),
+                api_key_fingerprint: crate::models::remote_keys::api_key_fingerprint("sk-existing"),
                 group_id_hash: None,
                 group_name: None,
                 tier_label: None,

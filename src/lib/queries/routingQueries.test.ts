@@ -74,7 +74,7 @@ describe("routing query owner", () => {
       policy: "cost_stable_first" as const,
       maxRateMultiplier: null,
       routingGroupFilter: "all_groups" as const,
-      schedulerErrorCode: null,
+      plannerErrorCode: null,
       candidates: [],
       message: "preview",
     })),

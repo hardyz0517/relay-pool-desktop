@@ -273,7 +273,7 @@ impl RoutePlanningFailure {
             Self::CapacityExhausted => "route_capacity_exhausted",
             Self::CandidateLimitExceeded { .. } => "route_candidate_limit_exceeded",
             Self::FactsUnavailable => "route_facts_unavailable",
-            Self::ConfigUnstable => "route_config_unstable",
+            Self::ConfigUnstable => "route_configuration_changed",
             Self::LifecycleUnavailable => "route_lifecycle_unavailable",
             Self::DeadlineExceeded => "route_deadline_exceeded",
             Self::InvariantViolation { code } => code,

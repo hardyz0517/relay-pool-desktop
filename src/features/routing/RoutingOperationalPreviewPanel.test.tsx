@@ -236,7 +236,7 @@ function simulation(overrides: Partial<RouteSimulationResult> = {}): RouteSimula
     policy: "priority_fallback",
     maxRateMultiplier: 2.5,
     routingGroupFilter: "all_groups",
-    schedulerErrorCode: null,
+    plannerErrorCode: null,
     candidates: [],
     message: "simulation came from backend planner",
     ...overrides,
@@ -379,6 +379,60 @@ describe("RoutingOperationalPreviewPanel", () => {
     expect(unavailable.host.textContent).not.toContain("0/4");
     expect(unavailable.host.textContent).not.toContain("$0");
     await act(async () => unavailable.root.unmount());
+  });
+
+  it("renders backend projection fields without deriving capability or pricing fallbacks in the UI", async () => {
+    const projected = candidate({
+      capabilitySummary: {
+        chatCompletions: false,
+        responses: false,
+        embeddings: false,
+        stream: false,
+        tools: false,
+        vision: false,
+        reasoning: false,
+      },
+      capabilityVerdicts: {
+        protocol: "allow",
+        model: "allow",
+        stream: "allow",
+        tools: "reject",
+        vision: "reject",
+        reasoning: "reject",
+        rejectionSubjects: ["tools"],
+      },
+      priceBasis: "unpriced",
+      pricing: {
+        basis: "exact_price",
+        comparisonValue: 0.42,
+        reason: "pricing_rule:rule-workspace",
+        currency: "USD",
+        unit: "request",
+        estimatedInputPrice: null,
+        estimatedOutputPrice: null,
+        estimatedFixedPrice: 0.42,
+        statusLabel: "priced",
+        sourceChain: ["pricing_rule:rule-workspace"],
+        observedAt: "2026-07-31T00:00:00Z",
+        confidence: 0.99,
+      },
+    });
+
+    const { host, root } = await renderPanel({
+      panelRuntimeOverlay: null,
+      panelSnapshot: snapshot({ candidates: [projected] }),
+    });
+
+    expect(host.textContent).toContain("protocol:allow");
+    expect(host.textContent).toContain("stream:allow");
+    expect(host.textContent).toContain("tools:reject");
+    expect(host.textContent).toContain("reject:tools");
+    expect(host.textContent).toContain("exact");
+    expect(host.textContent).toContain("pricing_rule:rule-workspace");
+    expect(host.textContent).not.toContain("protocol:unknown");
+    expect(host.textContent).not.toContain("pricing unavailable");
+
+    await act(async () => root.unmount());
   });
 
   it("renders typed backend errors without falling back to stale candidate facts", async () => {

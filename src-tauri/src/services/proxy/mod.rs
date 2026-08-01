@@ -3,6 +3,7 @@ pub(crate) mod attempt;
 pub mod endpoint_adapter;
 pub mod error;
 pub mod execution;
+pub(crate) mod finalization;
 // The raw TCP parser supports loopback fixtures; production ingress is Hyper-based.
 #[cfg(test)]
 pub mod http_request;

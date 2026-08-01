@@ -11,6 +11,53 @@ mod models {
     }
 }
 
+mod application {
+    pub(crate) mod request_finalization {
+        pub(crate) mod failure {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub(crate) enum CapabilityApplicabilitySet {
+                ConfirmedModelCatalog,
+                UnknownModelCatalog,
+                PositiveCapabilityEvidence,
+                LoadEvidenceGap,
+                RequestPolicyOnly,
+            }
+
+            impl CapabilityApplicabilitySet {
+                pub(crate) fn permits_model_not_found_learning(self) -> bool {
+                    matches!(self, Self::ConfirmedModelCatalog)
+                }
+            }
+
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            pub(crate) enum ProviderErrorSemanticSignal {
+                ConfirmedAuthentication {
+                    station_key_id: String,
+                },
+                ConfirmedInsufficientBalance {
+                    station_id: String,
+                },
+                ConfirmedModelNotFound {
+                    station_key_id: String,
+                    model: String,
+                },
+                RateLimited {
+                    station_id: String,
+                    retry_after_ms: Option<i64>,
+                },
+                BadRequest,
+                ServerError {
+                    station_id: String,
+                    endpoint_revision: i64,
+                },
+                GenericStatus {
+                    status: u16,
+                },
+            }
+        }
+    }
+}
+
 #[path = "../src/services/proxy/adapters/capability.rs"]
 mod capability;
 #[path = "../src/application/operational_facts/capability_projector.rs"]

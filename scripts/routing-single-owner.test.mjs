@@ -6,19 +6,28 @@ const root = process.cwd();
 const failures = [];
 
 const files = {
+  applicationRouting: read("src-tauri/src/application/routing.rs"),
   execution: read("src-tauri/src/services/proxy/execution.rs"),
   runtime: read("src-tauri/src/services/proxy/runtime.rs"),
   repository: read("src-tauri/src/services/proxy/routing_repository.rs"),
   upstream: read("src-tauri/src/services/proxy/upstream.rs"),
   endpointAdapter: read("src-tauri/src/services/proxy/endpoint_adapter.rs"),
   routingTypes: read("src-tauri/src/application/routing_engine/routing_types.rs"),
-  schedulerMod: read("src-tauri/src/application/routing_engine/scheduler/mod.rs"),
+  routingModels: read("src-tauri/src/models/routing.rs"),
+  routingHealthTypescript: read("src-tauri/src/ipc/dto/routing_health_reads.typescript.txt"),
+  routingEngineMod: read("src-tauri/src/application/routing_engine/mod.rs"),
+  routingWorkspaceQuery: read("src-tauri/src/application/queries/routing_workspace.rs"),
+  operationalDetailQuery: read("src-tauri/src/application/queries/operational_detail.rs"),
 };
 
 checkDefaultV2ExecutionHasOneSelectorOwner();
+checkApplicationRoutingCommandsUseHierarchicalPreview();
 checkDefaultV2ExecutionUsesLeasedController();
 checkCredentialAndEndpointResolveLate();
-checkNoSimulatedCapacityInDefaultV2();
+checkLegacyRoutingSchedulerDeleted();
+checkRoutingWorkspaceUsesProjectionFacts();
+checkOperationalDetailUsesProjectionFacts();
+checkSimulationDtoUsesPlannerProjectionLanguage();
 checkFrontendDoesNotOwnRoutingTruth();
 
 if (failures.length > 0) {
@@ -116,6 +125,22 @@ function checkDefaultV2ExecutionHasOneSelectorOwner() {
   );
 }
 
+function checkApplicationRoutingCommandsUseHierarchicalPreview() {
+  const file = "src-tauri/src/application/routing.rs";
+  reject(
+    files.applicationRouting,
+    file,
+    /\bSchedulerRuntimeState\b|select_route_candidates_with_scheduler|router::select_route_candidates/u,
+    "routing commands and simulation previews must use RouteCandidateProjection + hierarchical planner, not the legacy scheduler/router selector",
+  );
+  require(
+    files.applicationRouting,
+    file,
+    /\broute_projection_from_runtime_candidate_with_pricing\b[\s\S]*\bplan_route\b/u,
+    "routing simulation must reuse request-priced operational projections and the hierarchical planner",
+  );
+}
+
 function checkDefaultV2ExecutionUsesLeasedController() {
   const file = "src-tauri/src/services/proxy/execution.rs";
   require(
@@ -157,6 +182,12 @@ function checkCredentialAndEndpointResolveLate() {
     /pub\(crate\)\s+api_key:\s*String|pub\(crate\)\s+upstream_base_url:\s*String/u,
     "routing engine executable candidate types must not carry plaintext credentials or full endpoint URLs",
   );
+  reject(
+    files.routingModels,
+    "src-tauri/src/models/routing.rs",
+    /\bRuntimeRoutingCandidate\b[\s\S]*\bupstream_base_url\b/u,
+    "runtime routing candidate DTO must carry sanitized_origin, not a full endpoint URL",
+  );
   require(
     files.execution + "\n" + files.runtime,
     "src-tauri/src/services/proxy/{execution.rs,runtime.rs}",
@@ -169,18 +200,119 @@ function checkCredentialAndEndpointResolveLate() {
     /\bExecutionCredentialResolver\b|CredentialService\b/u,
     "production proxy must receive a narrow credential resolver for late secret resolution",
   );
+  reject(
+    files.applicationRouting + "\n" + files.routingEngineMod,
+    "src-tauri/src/application/{routing.rs,routing_engine/mod.rs}",
+    /scheduler_group_binding_id|scheduler_group_id_hash|scheduler_group_type/u,
+    "routing read models must use projected group facts, not legacy scheduler_group compatibility fields",
+  );
 }
 
-function checkNoSimulatedCapacityInDefaultV2() {
-  reject(
-    files.schedulerMod,
+function checkLegacyRoutingSchedulerDeleted() {
+  const deletedPaths = [
+    "src-tauri/src/application/routing_engine/router.rs",
+    "src-tauri/src/application/routing_engine/routing_policy.rs",
     "src-tauri/src/application/routing_engine/scheduler/mod.rs",
-    /acquired_simulated|slot_unavailable/u,
-    "simulated scheduler capacity must be deleted or moved to an isolated non-default legacy owner",
+  ];
+  for (const relativePath of deletedPaths) {
+    if (existsSync(path.join(root, ...relativePath.split("/")))) {
+      fail(
+        relativePath,
+        "legacy routing scheduler/router files must stay physically deleted from the production module tree",
+      );
+    }
+  }
+  reject(
+    files.routingEngineMod,
+    "src-tauri/src/application/routing_engine/mod.rs",
+    /\bmod\s+(router|routing_policy|scheduler)\s*;/u,
+    "routing_engine module tree must not re-export the legacy scheduler/router selector",
+  );
+}
+
+function checkRoutingWorkspaceUsesProjectionFacts() {
+  const file = "src-tauri/src/application/queries/routing_workspace.rs";
+  reject(
+    files.routingWorkspaceQuery,
+    file,
+    /\bRuntimeRoutingCandidate\b|\bworkspace_snapshot_from_runtime\b|\bcompatibility_runtime_candidate\b/u,
+    "routing workspace read model must consume RouteCandidateProjection rows, not direct RuntimeRoutingCandidate compatibility facts",
+  );
+  require(
+    files.routingWorkspaceQuery,
+    file,
+    /\bRoutingWorkspaceProjectionCandidate\b[\s\S]*\bRouteCandidateProjection\b/u,
+    "routing workspace read model must expose the canonical backend projection path",
+  );
+}
+
+function checkOperationalDetailUsesProjectionFacts() {
+  const file = "src-tauri/src/application/queries/operational_detail.rs";
+  reject(
+    files.operationalDetailQuery,
+    file,
+    /\bRuntimeRoutingCandidate\b|\boperational_detail_from_runtime_candidate\b|\brouting_store\.runtime_candidate\b/u,
+    "operational detail read model must consume RouteCandidateProjection facts, not rebuild runtime-candidate compatibility facts",
+  );
+  require(
+    files.operationalDetailQuery,
+    file,
+    /\boperational_detail_from_projection\b[\s\S]*\bRouteCandidateProjection\b/u,
+    "operational detail read model must keep the canonical projection-backed adapter",
+  );
+}
+
+function checkSimulationDtoUsesPlannerProjectionLanguage() {
+  const routingModelsFile = "src-tauri/src/models/routing.rs";
+  reject(
+    files.routingModels,
+    routingModelsFile,
+    /\bpub\s+score\s*:|\bpub\s+scheduler_score\s*:|\bpub\s+scheduler_factors\s*:|\bpub\s+effective_multiplier_source\s*:|\bpub\s+effective_multiplier_confidence\s*:|\bpub\s+scheduler_error_code\s*:/u,
+    "route simulation DTO must expose planner/projection facts, not legacy scheduler score, factor, multiplier-source or error-code fields",
+  );
+  require(
+    files.routingModels,
+    routingModelsFile,
+    /\bpub\s+planner_error_code\s*:/u,
+    "route simulation DTO must name planner rejection code as planner_error_code",
+  );
+
+  const routingHealthTypescriptFile = "src-tauri/src/ipc/dto/routing_health_reads.typescript.txt";
+  reject(
+    files.routingHealthTypescript,
+    routingHealthTypescriptFile,
+    /score:\s*number|schedulerScore|schedulerFactors|effectiveMultiplierSource|effectiveMultiplierConfidence|schedulerErrorCode/u,
+    "routing IPC DTO contract must not reintroduce legacy simulation scheduler fields",
+  );
+  require(
+    files.routingHealthTypescript,
+    routingHealthTypescriptFile,
+    /plannerErrorCode:\s*string \| null/u,
+    "routing IPC DTO contract must expose plannerErrorCode",
   );
 }
 
 function checkFrontendDoesNotOwnRoutingTruth() {
+  const routingWorkspacePanelFile = "src/features/routing/RoutingOperationalPreviewPanel.tsx";
+  const routingWorkspacePanel = read(routingWorkspacePanelFile);
+  reject(
+    routingWorkspacePanel,
+    routingWorkspacePanelFile,
+    /capabilitySummary|priceBasis|pricing unavailable/u,
+    "routing operational workspace UI must render backend capabilityVerdicts/pricing snapshots without deriving fallback truth from summary fields",
+  );
+  for (const file of [
+    "src/features/routing/LocalRoutingCandidateRow.tsx",
+    "src/features/routing/LocalRoutingStatusCandidateRow.tsx",
+  ]) {
+    reject(
+      read(file),
+      file,
+      /effectiveMultiplier|effectiveMultiplierSource|effectiveMultiplierConfidence|previewRejectReasons|schedulerRejectReason|formatMultiplierSource/u,
+      "legacy local routing candidate rows must render backend facts through the view model, not rebuild multiplier or rejection truth from compatibility DTO fields",
+    );
+  }
+
   const frontendTruthFiles = [
     "src/lib/projections/pricingFacts.ts",
     "src/lib/projections/groupFacts.ts",

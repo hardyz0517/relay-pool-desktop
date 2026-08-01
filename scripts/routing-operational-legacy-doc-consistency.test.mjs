@@ -60,12 +60,17 @@ for (const requiredLedgerText of [
   "Debug legacy runtime",
   "Deleted;",
   "Supported recovery after deletion: stop admission, reset local data, reimport config, or reconfigure with the current dev binary.",
-  "Old binary rollback remains outside the development-phase contract.",
 ]) {
   assert.ok(
     deletionLedger.includes(requiredLedgerText),
     `deletion ledger must include structured Task 28 evidence: ${requiredLedgerText}`,
   );
 }
+
+assert.doesNotMatch(
+  deletionLedger,
+  /old binary rollback|旧\s*binary\s*回滚|旧版本回滚|previous-release upgrade|install\/upgrade matrix/u,
+  "deletion ledger must not require old-binary rollback or install/upgrade matrix gates for this development-stage project",
+);
 
 console.log("routing operational legacy doc consistency ok");

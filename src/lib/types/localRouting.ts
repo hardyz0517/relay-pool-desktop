@@ -53,13 +53,8 @@ export type LocalRoutingCandidateRow = {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   cooldownUntil: string | null;
-  score: number | null;
-  effectiveMultiplier: number | null;
-  effectiveMultiplierSource: string | null;
-  effectiveMultiplierConfidence: number | null;
   routingGroupScope: RoutingGroupFilter;
   routingGroupMatch: boolean;
-  schedulerRejectReason: string | null;
   previewEligible: boolean;
   previewRejectReasons: string[];
   facts: DecisionFact[];

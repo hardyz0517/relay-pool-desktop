@@ -2,7 +2,7 @@ param(
   [int]$DurationMinutes = 0,
   [switch]$Smoke,
   [string]$CargoManifest = "src-tauri/Cargo.toml",
-  [string]$OutputPath = "output/routing-operational/qualification/task24-predeletion/task24-predeletion-gate-latest.json"
+  [string]$OutputPath = "output/routing-operational/self-check/task24-predeletion/task24-predeletion-gate-latest.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,7 +77,7 @@ $candidateRevision = (& git rev-parse HEAD).Trim()
 $dirtyStatus = @(& git status --porcelain)
 $steps = New-Object System.Collections.Generic.List[object]
 $failure = $null
-$soakOutputPath = "output/routing-operational/qualification/task24-predeletion/task24-routing-operational-soak-latest.json"
+$soakOutputPath = "output/routing-operational/self-check/task24-predeletion/task24-routing-operational-soak-latest.json"
 
 try {
   Add-Task24GateStepOrThrow -Name "production-composition" -Command "cargo" -Arguments @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_production_composition", "--", "--nocapture")

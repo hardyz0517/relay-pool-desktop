@@ -24,7 +24,7 @@ for (const [source, label] of [
   assertIncludes(source, "git status --porcelain", label);
   assertIncludes(source, "worktreeCleanAtStart", label);
   assertIncludes(source, "ConvertTo-Json", label);
-  assertIncludes(source, "output/routing-operational/qualification", label);
+  assertIncludes(source, "output/routing-operational/self-check", label);
   assertExcludes(source, "Remove-Item", label);
   assertExcludes(source, "rm -", label);
   assertExcludes(source, "git add", label);

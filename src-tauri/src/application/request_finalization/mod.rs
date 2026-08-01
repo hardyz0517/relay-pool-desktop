@@ -4,7 +4,6 @@ pub(crate) mod effect_planner;
 pub(crate) mod failure;
 pub(crate) mod outcome;
 pub(crate) mod outcome_orchestrator;
-pub(crate) mod reconciliation;
 
 use futures_util::future::BoxFuture;
 
@@ -29,6 +28,10 @@ use crate::{
     persistence::{
         error::PersistenceError,
         runtime::PersistenceHandle,
+        stores::request_lifecycle_reconciliation::{
+            default_startup_reconciliation_batch_size, reconcile_startup_interrupted_batch,
+            StartupReconciliationReport,
+        },
         stores::request_log_store::{
             AttemptPersistenceResult, RequestLogStore, RequestStartPersistenceResult,
             RequestTerminalPersistenceResult,
@@ -41,11 +44,6 @@ use crate::{
             AttemptCostWrite, RequestCostAggregateWrite, RequestOutcomeStore,
         },
     },
-};
-
-use self::reconciliation::{
-    default_startup_reconciliation_batch_size, reconcile_startup_interrupted_batch,
-    StartupReconciliationReport,
 };
 
 #[derive(Clone)]
@@ -130,7 +128,7 @@ impl RequestLifecycleStore for RequestFinalizationService {
             if outcome.inserted {
                 if let Some(observation) = attempt_health_observation(&write) {
                     health_applied = health
-                        .record_observation(session.connection(), observation)
+                        .record_observation(&mut session, observation)
                         .await
                         .map_err(map_persistence_error)?
                         .health_applied;

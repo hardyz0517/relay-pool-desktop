@@ -1,61 +1,9 @@
-use super::scheduler::types::{EffectiveMultiplierFact, MultiplierRejectReason};
-use crate::models::proxy::{ProxyStatus, UpstreamApiFormat};
-use crate::models::routing::{
-    RouteCandidateExplanation, RouteEndpointKind, RoutingGroupFilter, RoutingPolicy,
-    StationKeyCapabilities, StationKeyHealth,
-};
+use crate::models::proxy::ProxyStatus;
+use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 use serde::Serialize;
 
 #[allow(unused_imports)]
 pub(crate) use crate::application::operational_facts::candidate_projector::RouteCandidateProjection;
-
-#[derive(Debug, Clone)]
-pub(crate) struct RouteCandidate {
-    pub(crate) station_key_id: String,
-    pub(crate) station_id: String,
-    pub(crate) station_endpoint_revision: i64,
-    pub(crate) collector_proxy_mode: String,
-    pub(crate) collector_proxy_url: Option<String>,
-    pub(crate) upstream_api_format: UpstreamApiFormat,
-    pub(crate) priority: i64,
-    pub(crate) max_concurrency: i64,
-    pub(crate) load_factor: Option<i64>,
-    pub(crate) schedulable: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RouteRequest {
-    pub(crate) endpoint: RouteEndpointKind,
-    pub(crate) model: Option<String>,
-    pub(crate) stream: bool,
-    pub(crate) uses_tools: bool,
-    pub(crate) uses_vision: bool,
-    pub(crate) uses_reasoning: bool,
-    pub(crate) policy: RoutingPolicy,
-    pub(crate) max_rate_multiplier: Option<f64>,
-    pub(crate) routing_group_filter: RoutingGroupFilter,
-    pub(crate) session_hash: Option<String>,
-    pub(crate) previous_response_id: Option<String>,
-    pub(crate) excluded_key_ids: Vec<String>,
-    pub(crate) current_station_key_id: Option<String>,
-    pub(crate) allow_depleted_fallback: bool,
-    pub(crate) now_ms: i64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RichRouteCandidate {
-    pub(crate) candidate: RouteCandidate,
-    pub(crate) station_name: String,
-    pub(crate) key_name: String,
-    pub(crate) capabilities: StationKeyCapabilities,
-    pub(crate) health: Option<StationKeyHealth>,
-    pub(crate) economics: Option<RouteCandidateEconomics>,
-    pub(crate) scheduler_group_binding_id: Option<String>,
-    pub(crate) scheduler_group_id_hash: Option<String>,
-    pub(crate) scheduler_group_type: Option<crate::models::routing::PricingGroupType>,
-    pub(crate) scheduler_effective_multiplier: Option<EffectiveMultiplierFact>,
-    pub(crate) scheduler_multiplier_reject_reason: Option<MultiplierRejectReason>,
-}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
@@ -81,14 +29,6 @@ pub(crate) struct RouteCandidateEconomics {
     pub(crate) balance_scope: Option<String>,
     pub(crate) balance_collected_at: Option<String>,
     pub(crate) economic_freshness: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RouteSelection {
-    pub(crate) accepted: Vec<RichRouteCandidate>,
-    pub(crate) explanations: Vec<RouteCandidateExplanation>,
-    pub(crate) mapped_model: Option<String>,
-    pub(crate) scheduler_error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -173,13 +113,8 @@ pub(crate) struct LocalRoutingCandidateRow {
     pub(crate) last_success_at: Option<String>,
     pub(crate) last_failure_at: Option<String>,
     pub(crate) cooldown_until: Option<String>,
-    pub(crate) score: Option<i64>,
-    pub(crate) effective_multiplier: Option<f64>,
-    pub(crate) effective_multiplier_source: Option<String>,
-    pub(crate) effective_multiplier_confidence: Option<f64>,
     pub(crate) routing_group_scope: RoutingGroupFilter,
     pub(crate) routing_group_match: bool,
-    pub(crate) scheduler_reject_reason: Option<String>,
     pub(crate) preview_eligible: bool,
     pub(crate) preview_reject_reasons: Vec<String>,
     pub(crate) facts: Vec<DecisionFact>,

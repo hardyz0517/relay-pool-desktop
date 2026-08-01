@@ -83,6 +83,17 @@ mod application {
                 Unpriced,
                 NotApplicable,
             }
+
+            impl RoutingCostBasis {
+                pub(crate) fn as_str(self) -> &'static str {
+                    match self {
+                        Self::ExactPrice => "exact_price",
+                        Self::MultiplierProxy => "multiplier_proxy",
+                        Self::Unpriced => "unpriced",
+                        Self::NotApplicable => "not_applicable",
+                    }
+                }
+            }
         }
 
         pub(crate) mod candidate_projector {
@@ -160,6 +171,10 @@ mod application {
                 pub(crate) reason: Option<&'static str>,
                 pub(crate) currency: Option<String>,
                 pub(crate) unit: Option<String>,
+                pub(crate) estimated_input_price: Option<f64>,
+                pub(crate) estimated_output_price: Option<f64>,
+                pub(crate) estimated_fixed_price: Option<f64>,
+                pub(crate) status_label: String,
                 pub(crate) source_chain: Vec<String>,
                 pub(crate) observed_at: Option<String>,
                 pub(crate) confidence: Option<f64>,
@@ -256,9 +271,8 @@ use request_decision_trace::{
 use routing_runtime::runtime_overlay_from_candidates;
 use routing_workspace::{
     simulate_preview_from_candidate_projections, workspace_snapshot_from_projection_candidates,
-    workspace_snapshot_from_runtime, RoutePreviewSimulationInput, RoutingCapacityReadMode,
-    RoutingWorkspaceProjectionCandidate, RoutingWorkspaceSnapshotInput,
-    ROUTING_PREVIEW_POLICY_VERSION,
+    RoutePreviewSimulationInput, RoutingCapacityReadMode, RoutingWorkspaceProjectionCandidate,
+    RoutingWorkspaceSnapshotInput, ROUTING_PREVIEW_POLICY_VERSION,
 };
 
 fn capabilities() -> StationKeyCapabilities {
@@ -285,7 +299,7 @@ fn candidate(id: &str, load: Option<i64>) -> RuntimeRoutingCandidate {
         station_key_id: id.to_string(),
         station_id: "station-1".to_string(),
         station_endpoint_revision: 7,
-        upstream_base_url: "https://secret.example/v1?token=redacted".to_string(),
+        sanitized_origin: "https://secret.example".to_string(),
         upstream_api_format: models::proxy::UpstreamApiFormat::OpenAiChatCompletions,
         routing_order: Some(1),
         priority: 10,
@@ -310,6 +324,7 @@ fn candidate(id: &str, load: Option<i64>) -> RuntimeRoutingCandidate {
             updated_at: "1000".to_string(),
         }),
         balance_snapshot: None,
+        economic_snapshot: None,
         api_key: Some("sk-secret".to_string()),
         api_key_secret: None,
     }
@@ -414,21 +429,29 @@ fn projection(
             reason: "bound_group",
         }),
         multiplier: CandidateMultiplierProjection {
-            status: MultiplierResolutionStatus::Missing,
-            multiplier: None,
-            selected_source: None,
+            status: MultiplierResolutionStatus::Resolved,
+            multiplier: Some(1.25),
+            selected_source: Some("manual_override"),
             ceiling_rejected: false,
-            reason: "multiplier_missing",
+            reason: "manual_rate_multiplier",
         },
         pricing: CandidatePricingProjection {
-            basis: RoutingCostBasis::Unpriced,
-            comparison_value: None,
-            reason: Some("pricing_context_missing"),
+            basis: RoutingCostBasis::MultiplierProxy,
+            comparison_value: Some(1.25),
+            reason: Some("candidate_multiplier_proxy"),
             currency: None,
-            unit: None,
-            source_chain: vec!["pricing_projector".to_string()],
-            observed_at: None,
-            confidence: None,
+            unit: Some("rate_multiplier".to_string()),
+            estimated_input_price: None,
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            status_label: "multiplier_proxy".to_string(),
+            source_chain: vec![
+                "runtime_candidate_economic_snapshot".to_string(),
+                "manual_override".to_string(),
+                "rate_source:manual".to_string(),
+            ],
+            observed_at: Some("123456".to_string()),
+            confidence: Some(0.92),
         },
         balance: CandidateBalanceProjection {
             status: BalanceProjectionStatus::Missing,
@@ -472,10 +495,21 @@ fn projection(
 }
 
 #[test]
-fn workspace_snapshot_is_backend_owned_paginated_and_secret_free() {
-    let snapshot = workspace_snapshot_from_runtime(
+fn workspace_snapshot_projection_path_is_backend_owned_paginated_and_secret_free() {
+    let snapshot = workspace_snapshot_from_projection_candidates(
         &settings(),
-        vec![candidate("key-1", Some(1)), candidate("key-2", Some(0))],
+        vec![
+            RoutingWorkspaceProjectionCandidate {
+                station_name: "Station".to_string(),
+                key_name: "Key".to_string(),
+                projection: projection("key-1", "station-1", Vec::new()),
+            },
+            RoutingWorkspaceProjectionCandidate {
+                station_name: "Station".to_string(),
+                key_name: "Key".to_string(),
+                projection: projection("key-2", "station-2", Vec::new()),
+            },
+        ],
         RoutingWorkspaceSnapshotInput {
             limit: Some(1),
             cursor: None,
@@ -504,6 +538,7 @@ fn workspace_snapshot_is_backend_owned_paginated_and_secret_free() {
     assert!(!json.contains("sk-secret"));
     assert!(!json.contains("secret.example"));
     assert!(!json.contains("upstreamBaseUrl"));
+    assert!(!json.contains("compatibility_runtime_candidate"));
 }
 
 #[test]
@@ -545,10 +580,27 @@ fn workspace_snapshot_from_projection_exposes_unified_operational_fields() {
             .map(|group| group.stable_key.as_str()),
         Some("binding:group-1")
     );
-    assert_eq!(candidate.multiplier.reason, "multiplier_missing");
+    assert_eq!(candidate.multiplier.multiplier, Some(1.25));
+    assert_eq!(
+        candidate.multiplier.selected_source.as_deref(),
+        Some("manual_override")
+    );
+    assert_eq!(candidate.multiplier.reason, "manual_rate_multiplier");
+    assert_eq!(candidate.price_basis, "multiplier_proxy");
+    assert_eq!(candidate.pricing.comparison_value, Some(1.25));
+    assert_eq!(candidate.pricing.unit.as_deref(), Some("rate_multiplier"));
     assert_eq!(
         candidate.pricing.reason.as_deref(),
-        Some("pricing_context_missing")
+        Some("candidate_multiplier_proxy")
+    );
+    assert_eq!(candidate.pricing.confidence, Some(0.92));
+    assert_eq!(
+        candidate.pricing.source_chain,
+        vec![
+            "runtime_candidate_economic_snapshot".to_string(),
+            "manual_override".to_string(),
+            "rate_source:manual".to_string()
+        ]
     );
     assert_eq!(candidate.capability_verdicts.tools, "reject");
     assert_eq!(

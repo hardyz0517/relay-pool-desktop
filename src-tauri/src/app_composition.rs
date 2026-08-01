@@ -395,7 +395,6 @@ pub(crate) fn compose_data_directory_command_facade(
 pub(crate) fn compose_local_proxy_command_facade(
     services: &AppServices,
     proxy: Arc<ProxyRuntimeState>,
-    data_key: [u8; 32],
 ) -> LocalProxyCommandFacade {
     LocalProxyCommandFacade::new(
         Arc::clone(&services.settings),
@@ -404,6 +403,5 @@ pub(crate) fn compose_local_proxy_command_facade(
         Arc::clone(&services.request_logs),
         Arc::clone(&services.request_finalization),
         proxy,
-        data_key,
     )
 }

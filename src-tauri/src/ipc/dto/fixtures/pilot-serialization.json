@@ -2806,12 +2806,12 @@
         "mappedModel": "fixture-model",
         "maxRateMultiplier": 2.0,
         "message": "Route simulation completed.",
+        "plannerErrorCode": null,
         "policy": "cost_stable_first",
         "previewPolicyVersion": "hierarchical_v1_preview",
         "routingGroupFilter": {
           "group_type": "gpt"
         },
-        "schedulerErrorCode": null,
         "selectedCapacityAcquired": false,
         "selectedStationId": "station-1",
         "selectedStationKeyId": "key-1"

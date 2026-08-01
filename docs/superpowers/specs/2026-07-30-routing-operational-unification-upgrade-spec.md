@@ -34,9 +34,9 @@ Canonical Facts / Evidence
 6. 复用现有 request finalization lease，把一次终结扩展为显式、幂等的 outcome consumers，不引入通用事件总线。
 7. 各页面保持职责独立，但通过同源后端 read model、实体 deep link 和统一 decision trace 融汇贯通。
 8. 学习 Sub2API、claude-code-hub、LiteLLM、Envoy 和 HAProxy 的必要工程原则，不复制其分布式复杂度、胖对象或巨型 selector。
-9. 当前项目仍处于非稳定成型阶段，不做 release gate、签名安装包、安装升级矩阵或旧二进制回滚承诺；结构性不可恢复状态的开发期恢复方式是停止 admission，并让用户 reset/reimport/重新配置后继续。
+9. 当前项目仍处于非稳定成型阶段，本轮只面向 current dev binary；结构性不可恢复状态的开发期恢复方式是停止 admission，并让用户 reset/reimport/重新配置后继续。本轮只保留开发期本地自检，不设计签名安装包、安装/升级矩阵、旧 binary 恢复链路或任何产品化发布门禁。
 
-本 spec 后续保留的 `architecture gate`、类型边界门禁、source gate 和自检脚本，均是开发期工程护栏：它们只证明职责边界、可复用事实链路、生命周期和安全约束没有回流或断裂，不代表稳定产品发布放行、安装升级资格或旧 binary rollback 能力。
+本 spec 后续保留的架构护栏、类型边界检查、source 检查和自检脚本，均是开发期工程自检：它们只证明职责边界、可复用事实链路、生命周期和安全约束没有回流或断裂。
 
 ## 2. 与现有规范的关系
 
@@ -1109,7 +1109,7 @@ src-tauri/src/application/queries/
 3. UI cutover 后停止编辑旧 weights，并显示一次迁移说明；
 4. import/export 在开发期观察窗口内保留字段但标记 legacy ignored；
 5. architecture gate 禁止 production selector 重新读取 legacy weights；
-6. 开发期观察窗口和 reset/reimport 路径验证后，通过独立 deletion ledger 决定删除 schema/DTO 字段；若未来进入稳定产品阶段，再由发布 ADR 重新定义保留周期。
+6. 开发期观察窗口和 reset/reimport 路径验证后，通过独立 deletion ledger 决定删除 schema/DTO 字段。
 
 旧 `score/scheduler_score/factors` 数值不映射到新算法。新 decision DTO 返回 availability/priority/preference/cost/utilization/LRU tiers 与最终 rank；兼容字段在一个观察周期内为 null/legacy label，UI 不再展示一个容易被误读为全局质量的“智能分”。
 
@@ -1117,7 +1117,7 @@ src-tauri/src/application/queries/
 
 现有安装可能仍使用 `PriorityFallback/StableFirst/BackupOnly/CheapFirst/CostStableFirst` 且没有 multiplier ceiling，迁移不能静默改变成本边界：
 
-1. cutover 前在同一开发分支内加入只读资格检查、显式迁移 UI 和本地 checkpoint；旧 production router 在正式切换前保持原行为，但不要求公开预迁移版本；
+1. cutover 前在同一开发分支内加入只读资格检查、显式迁移 UI 和切换前开发期基线记录；旧 production router 在正式切换前保持原行为，但不要求公开过渡版本、旧 binary 恢复链路或发布期兼容矩阵；
 2. 迁移 UI 可以提出但不能静默提交以下语义映射：`PriorityFallback/StableFirst -> PriorityFirst`，`CheapFirst/CostStableFirst -> CostFirst`；stable 类旧策略同时展示 affinity 开关/TTL 的确认。`BackupOnly` 因当前名称与实际 penalty 语义容易误读，不自动映射，必须让用户明确选择 primary/backup tier 行为；
 3. 用户确认 ordering profile、max multiplier、group scope、backup/depleted policy 与 affinity 后，保存完整 `hierarchical_v1` config；
 4. 新安装在启用本地自动路由前必须完成同一配置；
@@ -1130,7 +1130,7 @@ src-tauri/src/application/queries/
 
 ### 14.4 与已删除 debug-only legacy proxy runtime 的边界
 
-`PROJECT_PLAN.md` 现已明确：默认且唯一运行 v2 runtime。结合 2026-07-31 开发期恢复决策，项目不再为了旧 binary rollback、安装升级矩阵或发布后观察期保留 debug legacy runtime。`RELAY_POOL_PROXY_RUNTIME=legacy`、process-start legacy composition 和 request-coupled finalization 均属于已删除债务；结构性不可恢复状态的受支持路径是 stop admission 后 reset/reimport/重新配置。
+`PROJECT_PLAN.md` 现已明确：默认且唯一运行 v2 runtime。结合 2026-07-31 开发期恢复决策，项目不再保留 debug legacy runtime 作为回退路径。`RELAY_POOL_PROXY_RUNTIME=legacy`、process-start legacy composition 和 request-coupled finalization 均属于已删除债务；结构性不可恢复状态的受支持路径是 stop admission 后 reset/reimport/重新配置。
 
 该边界必须满足：
 
@@ -1279,7 +1279,7 @@ stop new proxy admission
 - incomplete admitted request 通过 lifecycle reconciliation 标记 interrupted；
 - cooldown 使用 wall-clock durable time 时必须容忍时钟回拨，runtime duration 使用 monotonic time；
 - matching revision 且 traffic-equivalent 的 monitor success 可以恢复普通 endpoint/Key 被动状态，但 diagnostic/CLI-compatible probe 不能恢复，任何 monitor success 都不能恢复已确认无效 credential；
-- schema migration forward-only；开发期恢复由 current dev binary 的 reset/reimport 路径承担，不要求旧 binary 忽略新表。
+- schema migration forward-only；开发期恢复由 current dev binary 的 reset/reimport 路径承担。
 
 ### 16.6 可观测性合同
 
@@ -1421,7 +1421,7 @@ metric label 禁止 station/key/model 原始 ID、URL、错误正文和任意高
 
 退出条件：UI 与 simulator 完全消费后端 projection，旧页面拼装无生产消费者。
 
-Stage 2/3 若进入预迁移 checkpoint，simulator 必须标记 `hierarchical_v1_preview`，不能把预览结果描述为当前 production decision；真实请求日志仍按当时唯一 production owner 展示。正式 UI 语义与 data-plane 的同版切换仍受 Stage 5/6 原子 cutover 约束。
+Stage 2/3 若进入切换前开发期基线记录，simulator 必须标记 `hierarchical_v1_preview`，不能把预览结果描述为当前 production decision；真实请求日志仍按当时唯一 production owner 展示。正式 UI 语义与 data-plane 的同版切换仍受 Stage 5/6 原子 cutover 约束。
 
 ### Stage 3：Hierarchical planner 与 capacity lease kernel
 
@@ -1483,7 +1483,7 @@ Stage 2/3 若进入预迁移 checkpoint，simulator 必须标记 `hierarchical_v
 
 退出条件：用户能从任一异常定位到路由影响和具体请求；仓库内只有一个 production fact resolution、selection、capacity、feedback 和 pricing settlement path。
 
-Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可见版本发布；进入本地自检的 source snapshot 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。这里的 source snapshot 只用于开发期诊断，不冻结发布候选。debug-only legacy runtime 不再是例外项；它按 14.4 删除并由反回流门禁保护。
+Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可见版本对待；进入本地自检的 source snapshot 必须已经完成 default v2 composition 内旧 production code 删除，避免“不可达 legacy”重新被后续补丁接回。这里的 source snapshot 只用于开发期诊断，不表示发布候选冻结。debug-only legacy runtime 不再是例外项；它按 14.4 删除并由反回流门禁保护。
 
 ### Stage 7：开发期本地自检
 
@@ -1493,7 +1493,7 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 - migration/known-schema fixtures；
 - concurrency/fault/restart/stream-drop tests；
 - 单轮 mixed workload deterministic soak；60 分钟长 soak 仅作为可选信心检查，用于追查生命周期泄漏或未来稳定发布 ADR；
-- 真实客户端 E2E；如需要性能诊断，可单独运行 optimized Rust build，但它不产出 release binary gate；
+- 真实客户端 E2E；如需要性能诊断，可单独运行 optimized Rust build，但它只作为开发期性能诊断证据；
 - SQLite journal、decision、health、cost 和资源计数核对；
 - Windows sleep/resume、graceful shutdown 和 reset/reimport 验证。
 
@@ -1606,21 +1606,20 @@ Stage 5 与 Stage 6 可以分提交审查，但不能作为两个独立用户可
 ### 21.2 数据迁移
 
 - migration forward-only、幂等并加入 fresh/known-schema fixtures；
-- 新 decision/cost 字段允许当前 dev binary 在缺失、旧数据或 reset 后保持明确 unavailable/ignored 状态；开发期不承诺旧 binary rollback；
+- 新 decision/cost 字段允许当前 dev binary 在缺失、旧数据或 reset 后保持明确 unavailable/ignored 状态；
 - 不把旧 request logs 用当前价格静默回填为权威历史；
 - legacy row 显式标记 `legacy_estimate` 或 `trace_unavailable`；
 - 不在迁移中删除 compatibility cache。
 - 历史完整 upstream URL 使用独立、可恢复且有进度记录的 sanitizer migration；解析失败宁可置空/标记 redacted，也不把潜在 query/userinfo 复制到新列；
-- legacy config 值只为 import/export、debug 观察和未来稳定发布 ADR 可能需要的兼容检查暂留；开发期 fixture 证明 current dev binary 可从 fresh/known schema、reset/reimport/重新配置路径恢复，不要求旧 binary 打开或回滚新数据。
+- legacy config 值只为 import/export 和 debug 观察暂留；开发期 fixture 证明 current dev binary 可从 fresh/known schema、reset/reimport/重新配置路径恢复。
 
-### 21.3 开发期恢复与稳定期回滚边界
+### 21.3 开发期重来恢复边界
 
 - Stage 1-4 不激活新 data-plane；domain/harness 失败时修复或丢弃本地升级分支，不对用户暴露混合 owner；
 - Stage 5 production cutover 后，结构性 writer/transaction blocker 必须停止 admission，开发期恢复手册是 reset/reimport 到一致状态，不能自动回到旧双写或按请求双 selector；
 - 已创建的新表不反向 drop；reset 可以丢弃本地开发数据，import/reimport 必须走显式导入流程并保留 redaction 边界；
 - UI/read-model 迁移必须按完整 owner 切换，不能在同一 binary 中让部分页面用后端 projection、部分页面恢复前端权威公式；
-- Stage 6 删除前至少完成本地 observation、单轮 deterministic soak 和 deletion ledger approval；60 分钟长 soak 不是删除或开发期交付阻塞项，该窗口不等于先发布一个保留 legacy production code 的正式版本；
-- 若项目未来进入稳定产品阶段，binary rollback、自动更新、安装/升级矩阵和支持窗口必须由新的发布 ADR 重新定义，不从本开发期 spec 默认继承；当前开发期不以 release gate、安装包或旧二进制回滚作为交付要求。
+- Stage 6 删除前至少完成本地 observation、单轮 deterministic soak 和 deletion ledger approval；60 分钟长 soak 只用于追查生命周期泄漏或资源漂移，不是删除或开发期交付阻塞项。
 
 ## 22. 验收标准
 
@@ -1740,7 +1739,7 @@ Relay Pool 仍是本地桌面工具：一个固定 OpenAI-compatible 入口、�
 | decision trace 可能增加 SQLite 体积 | 最坏约 32 candidate rows/round | retention/索引/100 万级 fixture performance 与 maintenance fault test 为本地自检条件 |
 | 不引入 durable outbox 会留下 crash gap | terminal observation 到 SQLite commit 间强杀进程可能丢 usage/cost/health effect | fail-stop writer、启动 reconciliation 与 `trace_incomplete` 是明确降级；若真实故障数据证明不可接受，再单独评估轻量 local WAL，不先上分布式 outbox |
 | runtime generation churn 可能反复推翻 plan | 并发失败/恢复会让 immutable overlay 很快过期 | acquire 前 runtime fence、最多 8 次 runtime-only replan 与 monotonic deadline；超过返回 typed temporary failure |
-| legacy policy 用户迁移可能中断代理 | 旧安装可能没有 multiplier ceiling | 必须先完成预迁移 checkpoint/readiness UI；正式 cutover 前统计本地 configuration readiness，不静默自动转换 |
+| legacy policy 用户迁移可能中断代理 | 旧安装可能没有 multiplier ceiling | 必须先完成切换前开发期基线记录/readiness UI；正式 cutover 前统计本地 configuration readiness，不静默自动转换 |
 | 真实 provider 错误语义不统一 | generic 403/404 无法可靠判断 credential/model | provider fixture + 用户授权 live test；无 adapter signal 时保持 Uncertain/neutral |
 | streaming 双终态改造复杂 | 当前 selected attempt 与 request 多在同一 body finalization 点提交 | upstream/downstream 独立状态测试、slow client、drop、idle timeout、writer failure 和 soak 全通过后才能 cutover |
 

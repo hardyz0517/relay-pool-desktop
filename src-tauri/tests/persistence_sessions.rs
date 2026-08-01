@@ -41,6 +41,15 @@ mod persistence {
         ));
     }
 
+    pub(crate) mod maintenance {
+        pub(crate) mod request_log_url_sanitizer {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/maintenance/request_log_url_sanitizer.rs"
+            ));
+        }
+    }
+
     pub(crate) mod runtime {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -67,6 +76,14 @@ mod persistence {
             env!("CARGO_MANIFEST_DIR"),
             "/src/persistence/migrations.rs"
         ));
+    }
+}
+
+mod services {
+    pub(crate) mod time {
+        pub(crate) fn now_millis_for_services() -> i64 {
+            1_000
+        }
     }
 }
 
@@ -236,16 +253,15 @@ struct V2Fixture {
 impl V2Fixture {
     async fn create() -> Self {
         let path = temp_db_path("sessions");
+        persistence::migrations::initialize_v2_database(&path)
+            .await
+            .expect("initialize fixture");
         let mut connection = SqliteConnectOptions::new()
             .filename(&path)
-            .create_if_missing(true)
+            .create_if_missing(false)
             .connect()
             .await
             .expect("connect fixture");
-        persistence::migrations::migrator()
-            .run(&mut connection)
-            .await
-            .expect("migrate fixture");
         sqlx::query(
             r#"
             CREATE TABLE persistence_session_test (

@@ -2,12 +2,7 @@ import type { ReactNode } from "react";
 import { StatusBadge } from "@/components/ui";
 import { toTimestampMillis } from "@/lib/time";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate } from "@/lib/types/localRouting";
-import {
-  buildCooldownDisplay,
-  formatBalanceStatus,
-  formatMultiplierSource,
-  formatPreviewRejectReason,
-} from "./localRoutingStatusViewModel";
+import { buildCandidateDisplayFacts, buildCooldownDisplay } from "./localRoutingStatusViewModel";
 
 type LocalRoutingStatusCandidateRowProps = {
   candidate: LocalRoutingCandidate;
@@ -23,9 +18,7 @@ export function LocalRoutingStatusCandidateRow({
   const cooldownUntilMs =
     candidate.cooldownUntil == null ? null : toTimestampMillis(candidate.cooldownUntil);
   const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, nowMs);
-  const primaryRejectReason = !candidate.schedulable
-    ? "asset_unavailable"
-    : (candidate.previewRejectReasons[0] ?? null);
+  const displayFacts = buildCandidateDisplayFacts(candidate);
   const participationTone = !candidate.schedulable
     ? "disabled"
     : candidate.previewEligible
@@ -36,16 +29,6 @@ export function LocalRoutingStatusCandidateRow({
     : candidate.previewEligible
       ? "可参与"
       : "不参与";
-  const balanceFact = candidate.facts.find((fact) => fact.kind === "balance");
-  const multiplierLabel =
-    candidate.effectiveMultiplier == null
-      ? "未确认"
-      : `${candidate.effectiveMultiplier.toFixed(4)}x`;
-  const multiplierSourceLabel = formatMultiplierSource(
-    candidate.effectiveMultiplierSource,
-    candidate.effectiveMultiplierConfidence,
-  );
-  const balanceLabel = formatBalanceStatus(balanceFact?.value ?? null);
 
   return (
     <div className="grid min-h-[68px] gap-3 px-3 py-2.5 sm:grid-cols-[minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)] sm:items-center">
@@ -62,14 +45,14 @@ export function LocalRoutingStatusCandidateRow({
       </div>
       <MetricCell label="参与状态">
         <StatusBadge tone={participationTone}>{participationLabel}</StatusBadge>
-        {!candidate.previewEligible && primaryRejectReason ? (
+        {!candidate.previewEligible && displayFacts.rejectReasonLabel ? (
           <div className="mt-1 text-xs text-warning-foreground">
-            {formatPreviewRejectReason(primaryRejectReason)}
+            {displayFacts.rejectReasonLabel}
           </div>
         ) : null}
       </MetricCell>
-      <MetricCell label="有效倍率" value={multiplierLabel} detail={multiplierSourceLabel} />
-      <MetricCell label="余额" value={balanceLabel} />
+      <MetricCell label="有效倍率" value={displayFacts.multiplierLabel} detail={displayFacts.multiplierDetail} />
+      <MetricCell label="余额" value={displayFacts.balanceLabel} detail={displayFacts.balanceDetail} />
       <MetricCell
         label="冷却"
         value={cooldown.label}

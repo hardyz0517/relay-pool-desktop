@@ -24,6 +24,22 @@ mod models {
 }
 
 mod persistence {
+    pub(crate) struct WriteSession {
+        connection: *mut sqlx::SqliteConnection,
+    }
+
+    impl WriteSession {
+        pub(crate) fn new(connection: &mut sqlx::SqliteConnection) -> Self {
+            Self { connection }
+        }
+
+        pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
+            // SAFETY: test-local wrapper is created from one mutable connection
+            // borrow and is used synchronously by the included application code.
+            unsafe { &mut *self.connection }
+        }
+    }
+
     pub(crate) mod error {
         pub(crate) use crate::persistence_error::*;
     }
@@ -124,18 +140,25 @@ use sqlx::{Connection, Row, SqliteConnection};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
 
+async fn commit_execution(
+    committer: &MonitoringExecutionCommitter,
+    connection: &mut SqliteConnection,
+    execution: &BufferedExecution,
+) -> Result<monitoring_executions::ExecutionSummaryRow, PersistenceError> {
+    let mut write = persistence::WriteSession::new(connection);
+    committer.commit(&mut write, execution).await
+}
+
 #[tokio::test]
 async fn orchestrator_buffer_commits_v2_facts_without_legacy_run_writes_and_replays_once() {
     let mut connection = ready_connection().await;
     let committer = MonitoringExecutionCommitter::new();
     let execution = buffered_execution("execution-1", TriggerKind::Manual, ProbeOutcome::Available);
 
-    committer
-        .commit(&mut connection, &execution)
+    commit_execution(&committer, &mut connection, &execution)
         .await
         .expect("commit execution");
-    committer
-        .commit(&mut connection, &execution)
+    commit_execution(&committer, &mut connection, &execution)
         .await
         .expect("replay execution");
 
@@ -182,17 +205,17 @@ async fn scheduled_execution_advances_due_but_manual_execution_does_not() {
     let mut connection = ready_connection().await;
     let committer = MonitoringExecutionCommitter::new();
 
-    committer
-        .commit(
-            &mut connection,
-            &buffered_execution(
-                "manual-execution",
-                TriggerKind::Manual,
-                ProbeOutcome::Available,
-            ),
-        )
-        .await
-        .expect("manual commit");
+    commit_execution(
+        &committer,
+        &mut connection,
+        &buffered_execution(
+            "manual-execution",
+            TriggerKind::Manual,
+            ProbeOutcome::Available,
+        ),
+    )
+    .await
+    .expect("manual commit");
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT next_due_at_ms FROM channel_monitors WHERE id = 'monitor-1'"
@@ -203,17 +226,17 @@ async fn scheduled_execution_advances_due_but_manual_execution_does_not() {
         999
     );
 
-    committer
-        .commit(
-            &mut connection,
-            &buffered_execution(
-                "scheduled-execution",
-                TriggerKind::Scheduled,
-                ProbeOutcome::Available,
-            ),
-        )
-        .await
-        .expect("scheduled commit");
+    commit_execution(
+        &committer,
+        &mut connection,
+        &buffered_execution(
+            "scheduled-execution",
+            TriggerKind::Scheduled,
+            ProbeOutcome::Available,
+        ),
+    )
+    .await
+    .expect("scheduled commit");
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT next_due_at_ms FROM channel_monitors WHERE id = 'monitor-1'"
@@ -240,7 +263,9 @@ async fn endpoint_revision_stale_health_writeback_rolls_back_v2_target_when_wrap
     );
 
     let mut tx = connection.begin().await.expect("begin");
-    let result = committer.commit(&mut tx, &execution).await;
+    let mut write = persistence::WriteSession::new(&mut tx);
+    let result = committer.commit(&mut write, &execution).await;
+    drop(write);
     assert!(matches!(result, Err(PersistenceError::NotFound)));
     tx.rollback().await.expect("rollback");
 

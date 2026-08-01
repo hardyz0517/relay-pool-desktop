@@ -608,7 +608,7 @@ fn fixture_simulation_result() -> RouteSimulationResult {
         policy: RoutingPolicy::CostStableFirst,
         max_rate_multiplier: Some(2.0),
         routing_group_filter: RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
-        scheduler_error_code: None,
+        planner_error_code: None,
         candidates: Vec::new(),
         message: "Route simulation completed.".into(),
     }

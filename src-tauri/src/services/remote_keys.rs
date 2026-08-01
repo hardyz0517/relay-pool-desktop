@@ -1,16 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    application::{credentials::CredentialService, error::ApplicationError},
+    application::error::ApplicationError,
     models::{
         group_facts::{GroupRateRecord, StationGroupBinding},
         remote_keys::{
-            CreateLocalStationKeyFromRemoteResult, CreateRemoteStationKeyInput,
-            CreateRemoteStationKeyResult, DeleteRemoteStationKeyResult, RemoteKeyCapability,
-            RemoteKeyScanResult, RemoteStationKey,
+            api_key_fingerprint, CreateLocalStationKeyFromRemoteResult,
+            CreateRemoteStationKeyInput, CreateRemoteStationKeyResult,
+            DeleteRemoteStationKeyResult, RemoteKeyCapability, RemoteKeyScanResult,
+            RemoteStationKey,
         },
         station_keys::{StationKey, UpdateStationKeyInput},
     },
@@ -47,6 +47,30 @@ impl From<ApplicationError> for RemoteKeyOperationError {
     fn from(error: ApplicationError) -> Self {
         Self::Application(error)
     }
+}
+
+pub(crate) trait RemoteKeyPersistencePort: Send + Sync {
+    fn list_remote_station_keys<'a>(
+        &'a self,
+        station_id: String,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<RemoteStationKey>, ApplicationError>>;
+
+    fn replace_remote_station_keys_and_metadata<'a>(
+        &'a self,
+        station_id: String,
+        expected_endpoint_revision: i64,
+        remote_keys: Vec<RemoteStationKey>,
+        station_key_updates: Vec<UpdateStationKeyInput>,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<RemoteStationKey>, ApplicationError>>;
+
+    fn save_remote_station_key_with_local<'a>(
+        &'a self,
+        remote_key: RemoteStationKey,
+        expected_endpoint_revision: i64,
+        matched_station_key_update: Option<UpdateStationKeyInput>,
+        new_group_binding_id: Option<String>,
+        full_key: String,
+    ) -> futures_util::future::BoxFuture<'a, Result<(RemoteStationKey, StationKey), ApplicationError>>;
 }
 
 pub(crate) enum PreparedRemoteKeyScan {
@@ -745,7 +769,7 @@ pub(crate) fn prepare_unsupported_remote_key_scan_v2(
 }
 
 pub(crate) async fn finish_remote_key_scan_v2(
-    credentials: &CredentialService,
+    credentials: &dyn RemoteKeyPersistencePort,
     prepared: PreparedRemoteKeyScan,
 ) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
     match prepared {
@@ -842,7 +866,7 @@ pub(crate) fn preview_remote_key_scan_v2(
 }
 
 pub(crate) async fn finish_remote_key_creation_v2(
-    credentials: &CredentialService,
+    credentials: &dyn RemoteKeyPersistencePort,
     prepared: PreparedRemoteKeySave,
 ) -> Result<CreateRemoteStationKeyResult, RemoteKeyOperationError> {
     let PreparedRemoteKeySave {
@@ -875,7 +899,7 @@ pub(crate) async fn finish_remote_key_creation_v2(
 }
 
 pub(crate) async fn finish_local_key_from_remote_v2(
-    credentials: &CredentialService,
+    credentials: &dyn RemoteKeyPersistencePort,
     prepared: PreparedRemoteKeySave,
 ) -> Result<CreateLocalStationKeyFromRemoteResult, RemoteKeyOperationError> {
     let result = finish_remote_key_creation_v2(credentials, prepared).await?;
@@ -887,7 +911,7 @@ pub(crate) async fn finish_local_key_from_remote_v2(
 }
 
 pub(crate) async fn finish_remote_key_deletion_v2(
-    credentials: &CredentialService,
+    credentials: &dyn RemoteKeyPersistencePort,
     prepared: PreparedRemoteKeyDelete,
 ) -> Result<DeleteRemoteStationKeyResult, RemoteKeyOperationError> {
     let keys = credentials
@@ -1320,16 +1344,6 @@ fn names_match(left: Option<&str>, right: Option<&str>) -> bool {
 
 fn normalized_text(value: &str) -> String {
     value.trim().to_lowercase()
-}
-
-pub fn api_key_fingerprint(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(trimmed.as_bytes());
-    Some(format!("{:x}", hasher.finalize()))
 }
 
 fn secret_fingerprint_match_confidence(

@@ -9,7 +9,9 @@ use crate::{
     models::remote_keys::{
         CreateLocalStationKeyFromRemoteResult, CreateRemoteStationKeyInput,
         CreateRemoteStationKeyResult, DeleteRemoteStationKeyResult, RemoteKeyScanResult,
+        RemoteStationKey,
     },
+    models::station_keys::{StationKey, UpdateStationKeyInput},
     observability::correlation,
     outbound::AsyncOutboundClient,
     services::{
@@ -337,4 +339,52 @@ fn current_correlation_id() -> Option<String> {
 
 fn remote_key_blocking_error(_error: BlockingExecutorError) -> RemoteKeyOperationError {
     RemoteKeyOperationError::Internal
+}
+
+impl remote_keys::RemoteKeyPersistencePort for CredentialService {
+    fn list_remote_station_keys<'a>(
+        &'a self,
+        station_id: String,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<RemoteStationKey>, ApplicationError>> {
+        Box::pin(async move { self.list_remote_station_keys(station_id).await })
+    }
+
+    fn replace_remote_station_keys_and_metadata<'a>(
+        &'a self,
+        station_id: String,
+        expected_endpoint_revision: i64,
+        remote_keys: Vec<RemoteStationKey>,
+        station_key_updates: Vec<UpdateStationKeyInput>,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<RemoteStationKey>, ApplicationError>> {
+        Box::pin(async move {
+            self.replace_remote_station_keys_and_metadata(
+                station_id,
+                expected_endpoint_revision,
+                remote_keys,
+                station_key_updates,
+            )
+            .await
+        })
+    }
+
+    fn save_remote_station_key_with_local<'a>(
+        &'a self,
+        remote_key: RemoteStationKey,
+        expected_endpoint_revision: i64,
+        matched_station_key_update: Option<UpdateStationKeyInput>,
+        new_group_binding_id: Option<String>,
+        full_key: String,
+    ) -> futures_util::future::BoxFuture<'a, Result<(RemoteStationKey, StationKey), ApplicationError>>
+    {
+        Box::pin(async move {
+            self.save_remote_station_key_with_local(
+                remote_key,
+                expected_endpoint_revision,
+                matched_station_key_update,
+                new_group_binding_id,
+                full_key,
+            )
+            .await
+        })
+    }
 }

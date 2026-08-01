@@ -183,7 +183,7 @@ impl PublicErrorCode {
             Self::CapacityExhausted => "route_capacity_exhausted",
             Self::CandidateLimitExceeded => "route_candidate_limit_exceeded",
             Self::FactsUnavailable => "route_facts_unavailable",
-            Self::ConfigUnstable => "route_config_unstable",
+            Self::ConfigUnstable => "route_configuration_changed",
             Self::LifecycleUnavailable => "route_lifecycle_unavailable",
             Self::DeadlineExceeded => "route_deadline_exceeded",
             Self::InvariantViolation => "route_invariant_violation",
@@ -196,12 +196,12 @@ pub(crate) fn public_error_for_class(class: FailureClass) -> PublicError {
     match class {
         FailureClass::ConfigRequired => PublicError {
             code: PublicErrorCode::ConfigRequired,
-            http_status: StatusCode::PRECONDITION_REQUIRED,
+            http_status: StatusCode::SERVICE_UNAVAILABLE,
             message: "routing configuration is required",
         },
         FailureClass::PolicyRejected => PublicError {
             code: PublicErrorCode::PolicyRejected,
-            http_status: StatusCode::BAD_REQUEST,
+            http_status: StatusCode::SERVICE_UNAVAILABLE,
             message: "request is rejected by routing policy",
         },
         FailureClass::EconomicsUnavailable => PublicError {

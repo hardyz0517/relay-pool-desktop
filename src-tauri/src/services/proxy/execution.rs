@@ -44,11 +44,11 @@ use crate::{
                 ControllerFailureKind, ControllerPlanningInput, FallbackPolicy,
                 RouteAdmissionController, RouteControllerSettings, SelectedRoute,
             },
+            model_alias,
             request::{
                 CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind,
                 RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
             },
-            routing_policy,
             selector::RoutePlanCandidate,
         },
     },
@@ -208,7 +208,7 @@ impl ExecutionEngine {
             .load_execution_settings()
             .await
             .map_err(|error| internal_failure(format!("load routing settings failed: {error}")))?;
-        let mapped_model = routing_policy::mapped_model(request.model.as_deref(), &aliases);
+        let mapped_model = model_alias::mapped_model(request.model.as_deref(), &aliases);
         let route_facts = route_request_facts(
             &request,
             &execution_settings,
@@ -249,17 +249,23 @@ impl ExecutionEngine {
         );
 
         for attempt_index in 0..self.retry_policy.max_candidate_attempts {
-            let decision = controller
-                .next(ControllerPlanningInput {
-                    candidates: &snapshot.candidates,
-                    affinity_station_key_id: None,
-                    profiles: &snapshot.profiles,
-                    capacity: &self.capacity,
-                    current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
-                    now_ms: now_millis_for_services() as i64,
-                    max_waiters_per_constraint: 0,
-                })
-                .map_err(|failure| controller_failure(failure, &execution_settings.policy))?;
+            let decision = match controller.next(ControllerPlanningInput {
+                candidates: &snapshot.candidates,
+                affinity_station_key_id: None,
+                profiles: &snapshot.profiles,
+                capacity: &self.capacity,
+                current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                now_ms: now_millis_for_services() as i64,
+                max_waiters_per_constraint: 0,
+            }) {
+                Ok(decision) => decision,
+                Err(failure) if last_failure.is_some() && catalog_planning_exhausted(&failure) => {
+                    break;
+                }
+                Err(failure) => {
+                    return Err(controller_failure(failure, &execution_settings.policy));
+                }
+            };
             let ControllerDecision::Selected(selected) = decision else {
                 return Err(controller_failure(
                     ControllerFailure {
@@ -1799,8 +1805,10 @@ mod tests {
                 Duration::from_secs(300),
             ));
 
+        let mut request = canonical_chat_request().await;
+        request.idempotency_key = Some("idem-precommit-budget".to_string());
         let failure = engine
-            .execute(canonical_chat_request().await)
+            .execute(request)
             .await
             .expect_err("precommit budget exhausted");
 
@@ -2213,7 +2221,7 @@ mod tests {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
             station_endpoint_revision: 1,
-            upstream_base_url: "https://upstream.example.test/v1".to_string(),
+            sanitized_origin: "https://upstream.example.test".to_string(),
             upstream_api_format: UpstreamApiFormat::Auto,
             routing_order: None,
             priority: 0,
@@ -2242,7 +2250,8 @@ mod tests {
             },
             health: None,
             balance_snapshot: None,
-            api_key: None,
+            economic_snapshot: None,
+            api_key: Some("sk-test".to_string()),
             api_key_secret: None,
         }
     }

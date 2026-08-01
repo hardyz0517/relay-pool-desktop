@@ -72,7 +72,6 @@ export type RouteCandidateExplanationDto = {
   stationName: string;
   keyName: string;
   accepted: boolean;
-  score: number;
   reasons: string[];
   rejectionReasons: string[];
   mappedModel: string | null;
@@ -92,12 +91,6 @@ export type RouteCandidateExplanationDto = {
   economicReasons: string[];
   routingGroupScope: RoutingGroupFilterDto | null;
   routingGroupMatch: boolean;
-  groupIdHash: string | null;
-  groupType: PricingGroupTypeDto | null;
-  effectiveMultiplierSource: string | null;
-  effectiveMultiplierConfidence: number | null;
-  schedulerScore: number | null;
-  schedulerFactors: string[];
   topKRank: number | null;
   slotResult: string | null;
 };
@@ -112,7 +105,7 @@ export type RouteSimulationResultDto = {
   policy: RoutingPolicyDto;
   maxRateMultiplier: number | null;
   routingGroupFilter: RoutingGroupFilterDto;
-  schedulerErrorCode: string | null;
+  plannerErrorCode: string | null;
   candidates: RouteCandidateExplanationDto[];
   message: string;
 };

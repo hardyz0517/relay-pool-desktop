@@ -2,7 +2,7 @@ param(
   [int]$DurationMinutes = 5,
   [switch]$Smoke,
   [string]$CargoManifest = "src-tauri/Cargo.toml",
-  [string]$OutputPath = "output/routing-operational/qualification/soak/routing-operational-soak-latest.json"
+  [string]$OutputPath = "output/routing-operational/self-check/soak/routing-operational-soak-latest.json"
 )
 
 $ErrorActionPreference = "Stop"

@@ -1,26 +1,23 @@
-use crate::models::{
-    proxy::{ProxyStatus, RequestLog},
-    routing::{
-        PricingGroupType, RouteEndpointKind, RoutingGroupFilter, StationKeyCapabilities,
-        StationKeyHealth,
+use crate::{
+    application::operational_facts::{
+        candidate_projector::RouteCandidateProjection, capability_projector::CapabilityDecision,
     },
-    settings::AppSettings,
+    models::{
+        proxy::{ProxyStatus, RequestLog},
+        routing::{
+            RouteEndpointKind, RoutingGroupFilter, StationKeyCapabilities, StationKeyHealth,
+        },
+        settings::AppSettings,
+    },
 };
 
 use super::{
-    routing_health::{error_summary_indicates_offline, health_is_blocked},
+    routing_health::error_summary_indicates_offline,
     routing_types::{
         DecisionFact, DecisionFactKind, DecisionFactSeverity, LocalRoutingCandidateRow,
         LocalRoutingPreviewKind, LocalRoutingSettingsView, LocalRoutingSummary,
         LocalRoutingWorkspace, RouteCandidateEconomics, RouteDecisionEvent, RouteDecisionStatus,
         RouteDecisionSummary, RouteHealthState,
-    },
-    scheduler::{
-        eligibility::evaluate_candidate,
-        explanation::rejection_code_label,
-        types::{
-            EffectiveMultiplierFact, MultiplierRejectReason, ScheduleRequest, SchedulerCandidate,
-        },
     },
 };
 
@@ -34,11 +31,7 @@ pub(crate) struct LocalRoutingReadCandidate {
     pub(crate) capabilities: StationKeyCapabilities,
     pub(crate) health: Option<StationKeyHealth>,
     pub(crate) economics: Option<RouteCandidateEconomics>,
-    pub(crate) scheduler_group_binding_id: Option<String>,
-    pub(crate) scheduler_group_id_hash: Option<String>,
-    pub(crate) scheduler_group_type: Option<PricingGroupType>,
-    pub(crate) scheduler_effective_multiplier: Option<EffectiveMultiplierFact>,
-    pub(crate) scheduler_multiplier_reject_reason: Option<MultiplierRejectReason>,
+    pub(crate) projection: Option<RouteCandidateProjection>,
 }
 
 pub(crate) fn build_local_routing_workspace(
@@ -49,12 +42,6 @@ pub(crate) fn build_local_routing_workspace(
 ) -> LocalRoutingWorkspace {
     let latest_log = request_logs.first();
     let now_ms = current_time_millis();
-    let preview_request = settings
-        .max_rate_multiplier
-        .filter(|limit| limit.is_finite() && *limit >= 0.0)
-        .map(|limit| {
-            preview_schedule_request(settings.default_routing_group_filter.clone(), limit, now_ms)
-        });
     let rows = candidates
         .iter()
         .enumerate()
@@ -63,7 +50,6 @@ pub(crate) fn build_local_routing_workspace(
                 index,
                 candidate,
                 &settings.default_routing_group_filter,
-                preview_request.as_ref(),
                 now_ms,
             )
         })
@@ -104,14 +90,19 @@ fn candidate_row(
     index: usize,
     candidate: &LocalRoutingReadCandidate,
     routing_group_filter: &RoutingGroupFilter,
-    preview_request: Option<&ScheduleRequest>,
     now_ms: i64,
 ) -> LocalRoutingCandidateRow {
     let health_state = health_state(candidate, now_ms);
-    let routing_group_match = local_candidate_group_matches(routing_group_filter, candidate);
-    let scheduler_candidate = scheduler_candidate_from_read_candidate(candidate, now_ms);
-    let (preview_eligible, preview_reject_reasons) =
-        preview_decision(preview_request, &scheduler_candidate);
+    let routing_group_match = candidate
+        .projection
+        .as_ref()
+        .map(|projection| projection.policy.group_matches)
+        .unwrap_or_else(|| local_candidate_group_matches(routing_group_filter, candidate));
+    let preview_reject_reasons = candidate
+        .projection
+        .as_ref()
+        .map(projection_preview_reject_reasons)
+        .unwrap_or_default();
     let preview_reject_reasons = if candidate.schedulable {
         preview_reject_reasons
     } else {
@@ -121,7 +112,7 @@ fn candidate_row(
         }
         reasons
     };
-    let preview_eligible = candidate.schedulable && preview_eligible;
+    let preview_eligible = candidate.schedulable && preview_reject_reasons.is_empty();
     let mut facts = Vec::new();
     facts.push(DecisionFact {
         kind: DecisionFactKind::Policy,
@@ -175,19 +166,39 @@ fn candidate_row(
             });
         }
     }
-    if let Some(multiplier) = &candidate.scheduler_effective_multiplier {
+    if let Some(projection) = &candidate.projection {
+        if let Some(multiplier) = projection.multiplier.multiplier {
+            facts.push(DecisionFact {
+                kind: DecisionFactKind::Pricing,
+                label: "Effective multiplier".to_string(),
+                value: format!(
+                    "{:.4}x via {}",
+                    multiplier,
+                    projection
+                        .multiplier
+                        .selected_source
+                        .unwrap_or(projection.multiplier.reason)
+                ),
+                severity: DecisionFactSeverity::Info,
+            });
+        } else {
+            facts.push(DecisionFact {
+                kind: DecisionFactKind::Pricing,
+                label: "Multiplier evidence".to_string(),
+                value: projection.multiplier.reason.to_string(),
+                severity: DecisionFactSeverity::Warning,
+            });
+        }
+    } else if let Some(multiplier) = candidate
+        .economics
+        .as_ref()
+        .and_then(|economics| economics.rate_multiplier)
+    {
         facts.push(DecisionFact {
             kind: DecisionFactKind::Pricing,
             label: "Effective multiplier".to_string(),
-            value: format!("{:.4}x via {}", multiplier.value, multiplier.source),
+            value: format!("{multiplier:.4}x via economics"),
             severity: DecisionFactSeverity::Info,
-        });
-    } else if let Some(reason) = candidate.scheduler_multiplier_reject_reason {
-        facts.push(DecisionFact {
-            kind: DecisionFactKind::Pricing,
-            label: "Multiplier evidence".to_string(),
-            value: multiplier_reject_reason_label(reason).to_string(),
-            severity: DecisionFactSeverity::Warning,
         });
     }
     facts.push(DecisionFact {
@@ -227,137 +238,42 @@ fn candidate_row(
             .health
             .as_ref()
             .and_then(|health| health.cooldown_until.clone()),
-        score: None,
-        effective_multiplier: candidate
-            .scheduler_effective_multiplier
-            .as_ref()
-            .map(|multiplier| multiplier.value),
-        effective_multiplier_source: candidate
-            .scheduler_effective_multiplier
-            .as_ref()
-            .map(|multiplier| multiplier.source.clone()),
-        effective_multiplier_confidence: candidate
-            .scheduler_effective_multiplier
-            .as_ref()
-            .map(|multiplier| multiplier.confidence),
         routing_group_scope: routing_group_filter.clone(),
         routing_group_match,
-        scheduler_reject_reason: candidate
-            .scheduler_multiplier_reject_reason
-            .map(|reason| multiplier_reject_reason_label(reason).to_string()),
         preview_eligible,
         preview_reject_reasons,
         facts,
     }
 }
 
-fn preview_schedule_request(
-    filter: RoutingGroupFilter,
-    max_rate_multiplier: f64,
-    now_ms: i64,
-) -> ScheduleRequest {
-    ScheduleRequest {
-        endpoint: RouteEndpointKind::ChatCompletions,
-        requested_model: None,
-        mapped_model: None,
-        routing_group_filter: filter,
-        stream: false,
-        uses_tools: false,
-        uses_vision: false,
-        uses_reasoning: false,
-        max_rate_multiplier,
-        session_hash: None,
-        previous_response_id: None,
-        excluded_key_ids: Vec::new(),
-        now_ms,
-    }
+fn projection_preview_reject_reasons(projection: &RouteCandidateProjection) -> Vec<String> {
+    let mut reasons = projection
+        .hard_rejection_codes
+        .iter()
+        .map(|code| preview_reject_reason_code(code, projection).to_string())
+        .collect::<Vec<_>>();
+    reasons.sort();
+    reasons.dedup();
+    reasons
 }
 
-fn preview_decision(
-    request: Option<&ScheduleRequest>,
-    candidate: &SchedulerCandidate,
-) -> (bool, Vec<String>) {
-    let Some(request) = request else {
-        return (
-            false,
-            vec!["routing_multiplier_limit_not_configured".to_string()],
-        );
-    };
-
-    match evaluate_candidate(request, candidate) {
-        Ok(()) => (true, Vec::new()),
-        Err(rejection) => (
-            false,
-            rejection
-                .reasons
-                .into_iter()
-                .map(rejection_code_label)
-                .map(str::to_string)
-                .collect(),
-        ),
-    }
-}
-
-fn scheduler_candidate_from_read_candidate(
-    candidate: &LocalRoutingReadCandidate,
-    now_ms: i64,
-) -> SchedulerCandidate {
-    SchedulerCandidate {
-        station_key_id: candidate.station_key_id.clone(),
-        station_id: candidate.station_id.clone(),
-        priority: 0,
-        max_concurrency: 0,
-        load_factor: None,
-        group_binding_id: candidate.scheduler_group_binding_id.clone().or_else(|| {
-            candidate
-                .economics
-                .as_ref()
-                .and_then(|economics| economics.group_binding_id.clone())
-        }),
-        group_id_hash: candidate.scheduler_group_id_hash.clone(),
-        group_type: candidate.scheduler_group_type.clone(),
-        station_enabled: true,
-        key_enabled: true,
-        schedulable: candidate.schedulable,
-        supports_chat_completions: candidate.capabilities.supports_chat_completions,
-        supports_responses: candidate.capabilities.supports_responses,
-        supports_embeddings: candidate.capabilities.supports_embeddings,
-        supports_stream: candidate.capabilities.supports_stream,
-        supports_tools: candidate.capabilities.supports_tools,
-        supports_vision: candidate.capabilities.supports_vision,
-        supports_reasoning: candidate.capabilities.supports_reasoning,
-        model_allowlist: candidate.capabilities.model_allowlist.clone(),
-        model_blocklist: candidate.capabilities.model_blocklist.clone(),
-        health_blocked: health_is_blocked(candidate.health.as_ref(), now_ms),
-        balance_depleted: candidate
-            .economics
-            .as_ref()
-            .and_then(|economics| economics.balance_status.as_deref())
-            .map(|status| matches!(status, "depleted" | "insufficient" | "blocked"))
-            .unwrap_or(false),
-        effective_multiplier: candidate
-            .scheduler_effective_multiplier
-            .clone()
-            .or_else(|| {
-                let economics = candidate.economics.as_ref()?;
-                let value = economics.rate_multiplier?;
-                Some(EffectiveMultiplierFact {
-                    station_key_id: candidate.station_key_id.clone(),
-                    value,
-                    source: economics
-                        .pricing_source
-                        .clone()
-                        .unwrap_or_else(|| "economics".to_string()),
-                    collected_at_ms: economics
-                        .balance_collected_at
-                        .as_deref()
-                        .and_then(|value| value.parse::<i64>().ok()),
-                    valid_until_ms: None,
-                    confidence: economics.price_confidence.unwrap_or(1.0),
-                    group_binding_id: economics.group_binding_id.clone(),
-                })
-            }),
-        multiplier_reject_reason: candidate.scheduler_multiplier_reject_reason,
+fn preview_reject_reason_code(
+    code: &'static str,
+    projection: &RouteCandidateProjection,
+) -> &'static str {
+    match code {
+        "credential_missing" => "asset_unavailable",
+        "capability_rejected" => {
+            if projection.capability.model == CapabilityDecision::Reject {
+                "model_mismatch"
+            } else {
+                "capability_mismatch"
+            }
+        }
+        "group_mismatch" => "routing_group_mismatch",
+        "health_hard_reject" => "health_blocked",
+        "multiplier_ceiling" => "multiplier_over_ceiling",
+        other => other,
     }
 }
 
@@ -381,34 +297,14 @@ fn build_local_routing_summary(
 
 fn local_candidate_group_matches(
     filter: &RoutingGroupFilter,
-    candidate: &LocalRoutingReadCandidate,
+    _candidate: &LocalRoutingReadCandidate,
 ) -> bool {
     match filter {
         RoutingGroupFilter::AllGroups => true,
-        RoutingGroupFilter::UngroupedOnly => {
-            candidate.scheduler_group_binding_id.is_none()
-                && candidate.scheduler_group_id_hash.is_none()
-        }
-        RoutingGroupFilter::GroupBindingId(expected) => {
-            candidate.scheduler_group_binding_id.as_deref() == Some(expected.as_str())
-        }
-        RoutingGroupFilter::GroupIdHash(expected) => {
-            candidate.scheduler_group_id_hash.as_deref() == Some(expected.as_str())
-        }
-        RoutingGroupFilter::GroupType(expected) => {
-            candidate.scheduler_group_type.as_ref() == Some(expected)
-        }
-    }
-}
-
-fn multiplier_reject_reason_label(reason: MultiplierRejectReason) -> &'static str {
-    match reason {
-        MultiplierRejectReason::Missing => "missing",
-        MultiplierRejectReason::Invalid => "invalid",
-        MultiplierRejectReason::Negative => "negative",
-        MultiplierRejectReason::Expired => "expired",
-        MultiplierRejectReason::UnboundGroup => "unbound_group",
-        MultiplierRejectReason::LowConfidence => "low_confidence",
+        RoutingGroupFilter::UngroupedOnly
+        | RoutingGroupFilter::GroupBindingId(_)
+        | RoutingGroupFilter::GroupIdHash(_)
+        | RoutingGroupFilter::GroupType(_) => false,
     }
 }
 
@@ -544,18 +440,26 @@ fn endpoint_from_path(path: &str) -> RouteEndpointKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        application::operational_facts::runtime_candidate_adapter::{
+            route_projection_from_runtime_candidate, route_request_facts_for_read_model,
+        },
+        models::{
+            proxy::UpstreamApiFormat,
+            routing::{
+                PricingGroupType, RoutingPolicy, RuntimeRoutingCandidate, RuntimeRoutingSettings,
+            },
+        },
+    };
 
     #[test]
     fn preview_summary_counts_the_same_decisions_exposed_on_rows() {
-        let rows = preview_rows_for_test(
-            vec![
-                preview_candidate("eligible", PreviewFixture::Eligible),
-                preview_candidate("group-mismatch", PreviewFixture::GroupMismatch),
-                preview_candidate("low-confidence", PreviewFixture::LowConfidence),
-                preview_candidate("cooldown", PreviewFixture::Cooldown),
-            ],
-            Some(1.0),
-        );
+        let rows = preview_rows_for_test(vec![
+            preview_candidate("eligible", PreviewFixture::Eligible),
+            preview_candidate("group-mismatch", PreviewFixture::GroupMismatch),
+            preview_candidate("multiplier-ceiling", PreviewFixture::MultiplierCeiling),
+            preview_candidate("cooldown", PreviewFixture::Cooldown),
+        ]);
 
         assert!(rows[0].preview_eligible);
         assert_eq!(
@@ -564,7 +468,7 @@ mod tests {
         );
         assert_eq!(
             rows[2].preview_reject_reasons,
-            vec!["multiplier_evidence_low_confidence"],
+            vec!["multiplier_over_ceiling"],
         );
         assert_eq!(rows[3].preview_reject_reasons, vec!["health_blocked"]);
 
@@ -576,54 +480,45 @@ mod tests {
     }
 
     #[test]
-    fn missing_multiplier_limit_blocks_preview_without_guessing() {
-        let rows = preview_rows_for_test(
-            vec![
-                preview_candidate("eligible", PreviewFixture::Eligible),
-                preview_candidate("group-mismatch", PreviewFixture::GroupMismatch),
-            ],
-            None,
-        );
+    fn preview_uses_projection_rejections_without_multiplier_limit_guessing() {
+        let rows = preview_rows_for_test(vec![
+            preview_candidate("eligible", PreviewFixture::Eligible),
+            preview_candidate("group-mismatch", PreviewFixture::GroupMismatch),
+        ]);
 
-        assert!(rows.iter().all(|row| !row.preview_eligible));
-        assert!(rows.iter().all(|row| {
-            row.preview_reject_reasons == vec!["routing_multiplier_limit_not_configured"]
-        }));
+        assert!(rows[0].preview_eligible);
+        assert!(rows[0].preview_reject_reasons.is_empty());
+        assert!(!rows[1].preview_eligible);
+        assert_eq!(
+            rows[1].preview_reject_reasons,
+            vec!["routing_group_mismatch"]
+        );
     }
 
     #[test]
     fn unschedulable_candidate_preview_is_paused_once() {
-        let rows = preview_rows_for_test(
-            vec![preview_candidate("paused", PreviewFixture::Unschedulable)],
-            Some(1.0),
-        );
+        let rows = preview_rows_for_test(vec![preview_candidate(
+            "paused",
+            PreviewFixture::Unschedulable,
+        )]);
 
         assert!(!rows[0].schedulable);
         assert!(!rows[0].preview_eligible);
         assert_eq!(rows[0].preview_reject_reasons, vec!["asset_unavailable"]);
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum PreviewFixture {
         Eligible,
         GroupMismatch,
-        LowConfidence,
+        MultiplierCeiling,
         Cooldown,
         Unschedulable,
     }
 
     fn preview_rows_for_test(
         candidates: Vec<LocalRoutingReadCandidate>,
-        max_rate_multiplier: Option<f64>,
     ) -> Vec<LocalRoutingCandidateRow> {
-        let request = max_rate_multiplier.map(|limit| {
-            preview_schedule_request(
-                RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
-                limit,
-                60_000,
-            )
-        });
-
         candidates
             .iter()
             .enumerate()
@@ -632,7 +527,6 @@ mod tests {
                     index,
                     candidate,
                     &RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
-                    request.as_ref(),
                     60_000,
                 )
             })
@@ -640,6 +534,25 @@ mod tests {
     }
 
     fn preview_candidate(id: &str, fixture: PreviewFixture) -> LocalRoutingReadCandidate {
+        let mut runtime = runtime_candidate(id);
+        if fixture == PreviewFixture::Cooldown {
+            if let Some(health) = &mut runtime.health {
+                health.cooldown_until = Some("61000".to_string());
+            }
+        }
+
+        let request = route_request_facts_for_read_model(
+            &RuntimeRoutingSettings {
+                policy: RoutingPolicy::PriorityFallback,
+                max_rate_multiplier: Some(1.0),
+                routing_group_filter: RoutingGroupFilter::AllGroups,
+                scheduler_advanced_settings: Default::default(),
+                allow_depleted_fallback: false,
+            },
+            60_000,
+        );
+        let mut projection =
+            route_projection_from_runtime_candidate(&request, runtime.clone()).expect("projection");
         let mut candidate = LocalRoutingReadCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
@@ -647,47 +560,66 @@ mod tests {
             key_name: format!("Key {id}"),
             schedulable: true,
             capabilities: station_key_capabilities(id),
-            health: Some(station_key_health(id)),
+            health: runtime.health.clone(),
             economics: Some(RouteCandidateEconomics {
                 balance_status: Some("normal".to_string()),
                 ..Default::default()
             }),
-            scheduler_group_binding_id: Some(format!("binding-{id}")),
-            scheduler_group_id_hash: Some(format!("hash-{id}")),
-            scheduler_group_type: Some(PricingGroupType::Gpt),
-            scheduler_effective_multiplier: Some(EffectiveMultiplierFact {
-                station_key_id: id.to_string(),
-                value: 0.5,
-                source: "test".to_string(),
-                collected_at_ms: Some(1_000),
-                valid_until_ms: Some(120_000),
-                confidence: 1.0,
-                group_binding_id: Some(format!("binding-{id}")),
-            }),
-            scheduler_multiplier_reject_reason: None,
+            projection: Some(projection.clone()),
         };
 
         match fixture {
             PreviewFixture::Eligible => {}
             PreviewFixture::GroupMismatch => {
-                candidate.scheduler_group_type = Some(PricingGroupType::Claude);
+                projection.policy.group_matches = false;
+                projection.hard_rejection_codes = vec!["group_mismatch"];
+                candidate.projection = Some(projection);
             }
-            PreviewFixture::LowConfidence => {
-                candidate.scheduler_effective_multiplier = None;
-                candidate.scheduler_multiplier_reject_reason =
-                    Some(MultiplierRejectReason::LowConfidence);
+            PreviewFixture::MultiplierCeiling => {
+                projection.multiplier.multiplier = Some(2.0);
+                projection.multiplier.selected_source = Some("test");
+                projection.multiplier.ceiling_rejected = true;
+                projection.hard_rejection_codes = vec!["multiplier_ceiling"];
+                candidate.projection = Some(projection);
             }
             PreviewFixture::Cooldown => {
-                if let Some(health) = &mut candidate.health {
-                    health.cooldown_until = Some("61000".to_string());
-                }
+                projection.health.station_key =
+                    crate::application::operational_facts::health_projector::HealthAdmission::HardReject;
+                projection.hard_rejection_codes = vec!["health_hard_reject"];
+                candidate.projection = Some(projection);
             }
             PreviewFixture::Unschedulable => {
                 candidate.schedulable = false;
+                candidate.projection = Some(projection);
             }
         }
 
         candidate
+    }
+
+    fn runtime_candidate(id: &str) -> RuntimeRoutingCandidate {
+        RuntimeRoutingCandidate {
+            station_key_id: id.to_string(),
+            station_id: format!("station-{id}"),
+            station_endpoint_revision: 1,
+            sanitized_origin: format!("https://{id}.example.test"),
+            upstream_api_format: UpstreamApiFormat::CustomOpenAiCompatible,
+            routing_order: None,
+            priority: 10,
+            max_concurrency: 4,
+            load_factor: Some(0),
+            schedulable: true,
+            collector_proxy_mode: "inherit".to_string(),
+            collector_proxy_url: None,
+            station_name: format!("Station {id}"),
+            key_name: format!("Key {id}"),
+            capabilities: station_key_capabilities(id),
+            health: Some(station_key_health(id)),
+            balance_snapshot: None,
+            economic_snapshot: None,
+            api_key: Some(format!("sk-{id}")),
+            api_key_secret: None,
+        }
     }
 
     fn station_key_capabilities(id: &str) -> StationKeyCapabilities {

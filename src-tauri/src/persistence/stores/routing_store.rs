@@ -8,9 +8,9 @@ use crate::{
         proxy::UpstreamApiFormat,
         routing::{
             ModelAlias, RoutingGroupFilter, RoutingPolicy, RoutingProxyDefaults,
-            RuntimeRoutingBalance, RuntimeRoutingCandidate, RuntimeRoutingSecret,
-            RuntimeRoutingSettings, SchedulerAdvancedSettings, StationKeyCapabilities,
-            StationKeyHealth, UpsertModelAliasInput,
+            RuntimeRoutingBalance, RuntimeRoutingCandidate, RuntimeRoutingEconomicSnapshot,
+            RuntimeRoutingSecret, RuntimeRoutingSettings, SchedulerAdvancedSettings,
+            StationKeyCapabilities, StationKeyHealth, UpsertModelAliasInput,
         },
         stations::StationEndpointHealth,
     },
@@ -45,6 +45,17 @@ pub(crate) struct OperationalExecutionTargetRefRow {
     pub(crate) api_key_secret_owner_id: Option<String>,
     pub(crate) api_key_secret_kind: Option<String>,
     pub(crate) inline_api_key_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OperationalMonitoringTargetSnapshotRow {
+    pub(crate) station_key_id: String,
+    pub(crate) station_id: String,
+    pub(crate) endpoint_revision: i64,
+    pub(crate) api_base_url: String,
+    pub(crate) upstream_api_format: UpstreamApiFormat,
+    pub(crate) supports_chat_completions: bool,
+    pub(crate) supports_responses: bool,
 }
 
 struct RankedRuntimeBalance {
@@ -133,9 +144,26 @@ impl RoutingStore {
                 s.collector_proxy_url,
                 s.name AS station_name,
                 k.name AS key_name,
-                k.api_key
+                k.api_key,
+                k.group_name,
+                k.group_binding_id,
+                k.group_id_hash,
+                k.rate_multiplier,
+                k.manual_rate_multiplier,
+                k.manual_rate_updated_at,
+                k.rate_source,
+                k.rate_collected_at,
+                k.updated_at AS key_updated_at,
+                b.group_key_hash AS binding_group_key_hash,
+                b.group_id_hash AS binding_group_id_hash,
+                b.group_name AS binding_group_name,
+                b.binding_status,
+                b.effective_rate_multiplier AS binding_effective_rate_multiplier,
+                b.confidence AS binding_confidence,
+                b.last_checked_at AS binding_last_checked_at
             FROM station_keys k
             JOIN stations s ON s.id = k.station_id
+            LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
             WHERE k.enabled = 1
               AND s.enabled = 1
               AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
@@ -221,6 +249,37 @@ impl RoutingStore {
         Ok(rows
             .into_iter()
             .map(row_to_operational_execution_target_ref)
+            .collect())
+    }
+
+    pub(crate) async fn load_operational_monitoring_target_snapshots(
+        &self,
+        read: &mut ReadSession,
+    ) -> Result<Vec<OperationalMonitoringTargetSnapshotRow>, PersistenceError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                k.id AS station_key_id,
+                k.station_id,
+                s.endpoint_revision,
+                s.api_base_url,
+                s.upstream_api_format,
+                c.supports_chat_completions,
+                c.supports_responses
+            FROM station_keys k
+            JOIN stations s ON s.id = k.station_id
+            LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
+            WHERE k.enabled = 1
+              AND s.enabled = 1
+              AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
+            ORDER BY k.id ASC
+            "#,
+        )
+        .fetch_all(read.connection())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(row_to_operational_monitoring_target_snapshot)
             .collect())
     }
 
@@ -907,7 +966,9 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> RuntimeRoutingCandi
         station_key_id: station_key_id.clone(),
         station_id: row.get(runtime_candidate_column::STATION_ID),
         station_endpoint_revision: row.get(runtime_candidate_column::ENDPOINT_REVISION),
-        upstream_base_url: row.get(runtime_candidate_column::API_BASE_URL),
+        sanitized_origin: crate::models::station_endpoints::sanitized_api_base_url_for_trace(
+            &row.get::<String, _>(runtime_candidate_column::API_BASE_URL),
+        ),
         upstream_api_format: parse_upstream_api_format(
             row.get::<String, _>(runtime_candidate_column::UPSTREAM_API_FORMAT),
         ),
@@ -923,12 +984,47 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> RuntimeRoutingCandi
         capabilities: default_runtime_capabilities(&station_key_id),
         health: None,
         balance_snapshot: None,
+        economic_snapshot: Some(row_to_runtime_economic_snapshot(&row)),
         api_key: row
             .get::<String, _>(runtime_candidate_column::API_KEY)
             .trim()
             .to_string()
             .into_non_empty(),
         api_key_secret: None,
+    }
+}
+
+fn row_to_runtime_economic_snapshot(
+    row: &sqlx::sqlite::SqliteRow,
+) -> RuntimeRoutingEconomicSnapshot {
+    let group_binding_id = row.get::<Option<String>, _>(runtime_candidate_column::GROUP_BINDING_ID);
+    let group_key_hash =
+        row.get::<Option<String>, _>(runtime_candidate_column::BINDING_GROUP_KEY_HASH);
+    let group_id_hash = row
+        .get::<Option<String>, _>(runtime_candidate_column::GROUP_ID_HASH)
+        .or_else(|| row.get(runtime_candidate_column::BINDING_GROUP_ID_HASH));
+    let group_name = row
+        .get::<Option<String>, _>(runtime_candidate_column::BINDING_GROUP_NAME)
+        .or_else(|| row.get(runtime_candidate_column::GROUP_NAME));
+    let binding_effective_rate_multiplier =
+        row.get::<Option<f64>, _>(runtime_candidate_column::BINDING_EFFECTIVE_RATE_MULTIPLIER);
+    let key_rate_multiplier = row.get::<Option<f64>, _>(runtime_candidate_column::RATE_MULTIPLIER);
+    RuntimeRoutingEconomicSnapshot {
+        group_binding_id,
+        group_key_hash,
+        group_id_hash,
+        group_name,
+        group_status: row.get(runtime_candidate_column::BINDING_STATUS),
+        group_confidence: row.get(runtime_candidate_column::BINDING_CONFIDENCE),
+        group_checked_at: row.get(runtime_candidate_column::BINDING_LAST_CHECKED_AT),
+        rate_multiplier: key_rate_multiplier.or(binding_effective_rate_multiplier),
+        manual_rate_multiplier: row.get(runtime_candidate_column::MANUAL_RATE_MULTIPLIER),
+        manual_rate_updated_at: row.get(runtime_candidate_column::MANUAL_RATE_UPDATED_AT),
+        rate_source: row.get(runtime_candidate_column::RATE_SOURCE),
+        rate_collected_at: row
+            .get::<Option<String>, _>(runtime_candidate_column::RATE_COLLECTED_AT)
+            .or_else(|| row.get(runtime_candidate_column::BINDING_LAST_CHECKED_AT)),
+        key_updated_at: row.get(runtime_candidate_column::KEY_UPDATED_AT),
     }
 }
 
@@ -953,6 +1049,26 @@ fn row_to_operational_execution_target_ref(
     }
 }
 
+fn row_to_operational_monitoring_target_snapshot(
+    row: sqlx::sqlite::SqliteRow,
+) -> OperationalMonitoringTargetSnapshotRow {
+    OperationalMonitoringTargetSnapshotRow {
+        station_key_id: row.get("station_key_id"),
+        station_id: row.get("station_id"),
+        endpoint_revision: row.get("endpoint_revision"),
+        api_base_url: row.get("api_base_url"),
+        upstream_api_format: parse_upstream_api_format(row.get::<String, _>("upstream_api_format")),
+        supports_chat_completions: row
+            .get::<Option<i64>, _>("supports_chat_completions")
+            .map(i64_to_bool)
+            .unwrap_or(true),
+        supports_responses: row
+            .get::<Option<i64>, _>("supports_responses")
+            .map(i64_to_bool)
+            .unwrap_or(true),
+    }
+}
+
 mod runtime_candidate_column {
     pub(super) const STATION_KEY_ID: usize = 0;
     pub(super) const STATION_ID: usize = 1;
@@ -969,6 +1085,22 @@ mod runtime_candidate_column {
     pub(super) const STATION_NAME: usize = 12;
     pub(super) const KEY_NAME: usize = 13;
     pub(super) const API_KEY: usize = 14;
+    pub(super) const GROUP_NAME: usize = 15;
+    pub(super) const GROUP_BINDING_ID: usize = 16;
+    pub(super) const GROUP_ID_HASH: usize = 17;
+    pub(super) const RATE_MULTIPLIER: usize = 18;
+    pub(super) const MANUAL_RATE_MULTIPLIER: usize = 19;
+    pub(super) const MANUAL_RATE_UPDATED_AT: usize = 20;
+    pub(super) const RATE_SOURCE: usize = 21;
+    pub(super) const RATE_COLLECTED_AT: usize = 22;
+    pub(super) const KEY_UPDATED_AT: usize = 23;
+    pub(super) const BINDING_GROUP_KEY_HASH: usize = 24;
+    pub(super) const BINDING_GROUP_ID_HASH: usize = 25;
+    pub(super) const BINDING_GROUP_NAME: usize = 26;
+    pub(super) const BINDING_STATUS: usize = 27;
+    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 28;
+    pub(super) const BINDING_CONFIDENCE: usize = 29;
+    pub(super) const BINDING_LAST_CHECKED_AT: usize = 30;
 }
 
 fn default_runtime_capabilities(station_key_id: &str) -> StationKeyCapabilities {

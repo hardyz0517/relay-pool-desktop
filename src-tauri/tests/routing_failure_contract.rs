@@ -205,28 +205,68 @@ fn effect_planner_keeps_retry_health_and_capability_axes_separate() {
 #[test]
 fn route_planning_failures_have_stable_codes_and_public_proxy_mapping() {
     let failures = [
-        routing_failure::RoutePlanningFailure::ConfigRequired,
-        routing_failure::RoutePlanningFailure::PolicyRejected {
-            code: "route_group_rejected",
-        },
-        routing_failure::RoutePlanningFailure::EconomicsUnavailable,
-        routing_failure::RoutePlanningFailure::HealthUnavailable,
-        routing_failure::RoutePlanningFailure::CapacityExhausted,
-        routing_failure::RoutePlanningFailure::CandidateLimitExceeded {
-            actual: 1025,
-            limit: 1024,
-        },
-        routing_failure::RoutePlanningFailure::FactsUnavailable,
-        routing_failure::RoutePlanningFailure::ConfigUnstable,
-        routing_failure::RoutePlanningFailure::LifecycleUnavailable,
-        routing_failure::RoutePlanningFailure::DeadlineExceeded,
+        (
+            routing_failure::RoutePlanningFailure::ConfigRequired,
+            "routing_configuration_required",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::PolicyRejected {
+                code: "route_group_rejected",
+            },
+            "route_group_rejected",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::EconomicsUnavailable,
+            "route_economics_unavailable",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::HealthUnavailable,
+            "route_health_unavailable",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::CapacityExhausted,
+            "route_capacity_exhausted",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::CandidateLimitExceeded {
+                actual: 1025,
+                limit: 1024,
+            },
+            "route_candidate_limit_exceeded",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::FactsUnavailable,
+            "route_facts_unavailable",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::ConfigUnstable,
+            "route_configuration_changed",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::LifecycleUnavailable,
+            "route_lifecycle_unavailable",
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            routing_failure::RoutePlanningFailure::DeadlineExceeded,
+            "route_deadline_exceeded",
+            StatusCode::GATEWAY_TIMEOUT,
+        ),
     ];
-    for failure in failures {
-        assert!(failure.stable_code().starts_with("route_"));
+    for (failure, stable_code, http_status) in failures {
+        assert_eq!(failure.stable_code(), stable_code);
         let canonical = failure.into_canonical();
         let proxy = ProxyFailure::from_public_error(canonical.public.clone());
         assert_eq!(proxy.code.as_str(), canonical.public.code.as_str());
-        assert_ne!(proxy.http_status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(proxy.http_status, http_status);
     }
 
     let invariant = planning_failure(

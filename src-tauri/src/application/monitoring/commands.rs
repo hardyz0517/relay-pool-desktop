@@ -9,9 +9,3 @@ pub(crate) struct MonitorExecutionRequest {
     pub(crate) snapshot: MonitorPlanningSnapshot,
     pub(crate) targets: Vec<TargetCapabilitySnapshot>,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MonitorExecutionReceipt {
-    pub(crate) execution_id: String,
-    pub(crate) reused_existing: bool,
-}

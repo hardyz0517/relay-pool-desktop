@@ -725,7 +725,7 @@ async fn reveal_full_key_for_token_value(
         )
     })?;
     remote_key.api_key_masked = Some(crate::services::secrets::mask::mask_secret(&full_key));
-    remote_key.api_key_fingerprint = crate::services::remote_keys::api_key_fingerprint(&full_key);
+    remote_key.api_key_fingerprint = crate::models::remote_keys::api_key_fingerprint(&full_key);
     Ok((remote_key, full_key, endpoint))
 }
 
@@ -843,7 +843,7 @@ fn remote_key_from_value(
         api_key_masked: masked,
         api_key_fingerprint: full_key
             .as_deref()
-            .and_then(crate::services::remote_keys::api_key_fingerprint),
+            .and_then(crate::models::remote_keys::api_key_fingerprint),
         group_id_hash,
         group_name,
         tier_label: None,
@@ -2238,7 +2238,7 @@ mod tests {
         assert_eq!(output.keys[0].api_key_masked.as_deref(), Some("sk-...7890"));
         assert_eq!(
             output.keys[0].api_key_fingerprint,
-            crate::services::remote_keys::api_key_fingerprint("sk-primary-secret-7890")
+            crate::models::remote_keys::api_key_fingerprint("sk-primary-secret-7890")
         );
         assert!(!output.keys[0]
             .api_key_masked

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +35,16 @@ pub struct RemoteStationKey {
     pub matched_station_key_id: Option<String>,
     pub match_confidence: f64,
     pub collected_at: String,
+}
+
+pub fn api_key_fingerprint(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(trimmed.as_bytes());
+    Some(format!("{:x}", hasher.finalize()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

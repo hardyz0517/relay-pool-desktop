@@ -59,6 +59,7 @@ for (const text of [
   "RouteEconomicsUnavailable",
   "RouteHealthUnavailable",
   "RouteCapacityExhausted",
+  "route_configuration_changed",
   "RouteInvariantViolation",
   "UpstreamAuthenticationFailed",
   "UpstreamModelUnavailable",
@@ -70,6 +71,9 @@ for (const text of [
 for (const source of [failure, routingFailure, proxyError]) {
   if (source.includes('"route_config_required"')) {
     throw new Error("routing configuration admission must use routing_configuration_required, not the legacy route_config_required code");
+  }
+  if (source.includes('"route_config_unstable"')) {
+    throw new Error("configuration-change admission must use route_configuration_changed, not the legacy route_config_unstable code");
   }
 }
 

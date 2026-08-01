@@ -16,7 +16,7 @@ mod persistence {
     }
 }
 
-#[path = "../src/application/request_finalization/reconciliation.rs"]
+#[path = "../src/persistence/stores/request_lifecycle_reconciliation.rs"]
 mod reconciliation;
 
 use reconciliation::reconcile_startup_interrupted_batch;

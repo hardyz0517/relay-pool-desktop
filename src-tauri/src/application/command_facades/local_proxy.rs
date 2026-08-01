@@ -47,7 +47,6 @@ pub(crate) struct LocalProxyCommandFacade {
     request_logs: Arc<RequestLogService>,
     request_finalization: Arc<RequestFinalizationService>,
     proxy: Arc<ProxyRuntimeState>,
-    data_key: [u8; 32],
 }
 
 impl LocalProxyCommandFacade {
@@ -58,7 +57,6 @@ impl LocalProxyCommandFacade {
         request_logs: Arc<RequestLogService>,
         request_finalization: Arc<RequestFinalizationService>,
         proxy: Arc<ProxyRuntimeState>,
-        data_key: [u8; 32],
     ) -> Self {
         Self {
             settings,
@@ -67,7 +65,6 @@ impl LocalProxyCommandFacade {
             request_logs,
             request_finalization,
             proxy,
-            data_key,
         }
     }
 
@@ -170,10 +167,8 @@ impl LocalProxyCommandFacade {
             .reconcile_startup_interrupted_request_lifecycle()
             .await
             .map_err(local_proxy_startup_reconciliation_error)?;
-        let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
-            self.routing.as_ref().clone(),
-            self.data_key,
-        ));
+        let routing_repository: Arc<dyn RoutingRepository> =
+            Arc::new(V2RoutingRepository::new(self.routing.as_ref().clone()));
         let lifecycle_store: Arc<dyn RequestLifecycleStore> = self.request_finalization.clone();
         let config = ProxyStartConfig::new_v2(
             routing_repository,

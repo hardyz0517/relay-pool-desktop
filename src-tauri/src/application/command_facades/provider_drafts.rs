@@ -126,7 +126,6 @@ impl ProviderDraftCommandFacade {
     ) -> Result<ProviderDraftPreview, ProviderDraftCommandError> {
         let draft = self.drafts.get(draft_id.clone()).await?;
         let fingerprint = ProviderDraftService::runtime_fingerprint(&draft.payload);
-        let finish_draft_id = draft_id.clone();
         let source = self.snapshot_source(draft_id.clone()).await?;
         let data_key = self.data_key;
         let prepared = super::draft_jobs::prepare_collection_plan(
@@ -159,7 +158,9 @@ impl ProviderDraftCommandFacade {
                 .await?
             }
             collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
-                let source = self.source(finish_draft_id);
+                let source = DraftSessionPersistSource {
+                    drafts: Arc::clone(&self.drafts),
+                };
                 collectors::finish_newapi_collection_v2(
                     &source,
                     self.providers.as_ref(),
@@ -225,14 +226,6 @@ impl ProviderDraftCommandFacade {
             return remote_keys::preview_remote_key_scan_v2(prepared).map_err(Into::into);
         }
         Err(RemoteKeyOperationError::Unsupported.into())
-    }
-
-    fn source(&self, draft_id: String) -> ProviderDraftCollectorSource {
-        ProviderDraftCollectorSource {
-            drafts: Arc::clone(&self.drafts),
-            settings: Arc::clone(&self.settings),
-            draft_id,
-        }
     }
 
     async fn snapshot_source(
@@ -372,66 +365,59 @@ impl CollectorSourcePort for DraftSnapshotCollectorSource {
     }
 }
 
-#[derive(Clone)]
-struct ProviderDraftCollectorSource {
+struct DraftSessionPersistSource {
     drafts: Arc<ProviderDraftService>,
-    settings: Arc<SettingsService>,
-    draft_id: String,
 }
 
-impl CollectorSourcePort for ProviderDraftCollectorSource {
-    fn station_for_collector(&self, station_id: &str) -> Result<Station, String> {
-        tauri::async_runtime::block_on(self.drafts.station_projection(station_id))
-            .map_err(app_error)
+impl CollectorSourcePort for DraftSessionPersistSource {
+    fn station_for_collector(&self, _station_id: &str) -> Result<Station, String> {
+        Err("draft session persist source does not expose station facts".to_string())
     }
 
     fn get_settings(&self) -> Result<AppSettings, String> {
-        tauri::async_runtime::block_on(self.settings.load()).map_err(app_error)
+        Err("draft session persist source does not expose settings".to_string())
     }
 
-    fn list_station_keys(&self, station_id: String) -> Result<Vec<StationKey>, String> {
-        tauri::async_runtime::block_on(self.drafts.list_keys(&station_id)).map_err(app_error)
+    fn list_station_keys(&self, _station_id: String) -> Result<Vec<StationKey>, String> {
+        Err("draft session persist source does not expose station keys".to_string())
     }
 
     fn resolve_station_key_secret_with_data_key(
         &self,
         _data_key: &[u8; 32],
-        station_key_id: &str,
+        _station_key_id: &str,
     ) -> Result<String, String> {
-        tauri::async_runtime::block_on(self.drafts.key_secret(&self.draft_id, station_key_id))
-            .map_err(app_error)
+        Err("draft session persist source does not expose key secrets".to_string())
     }
 
-    fn get_station_credentials(&self, station_id: String) -> Result<StationCredentials, String> {
-        tauri::async_runtime::block_on(self.drafts.credentials_projection(&station_id))
-            .map_err(app_error)
+    fn get_station_credentials(&self, _station_id: String) -> Result<StationCredentials, String> {
+        Err("draft session persist source does not expose credentials".to_string())
     }
 
     fn get_station_login_password_with_data_key(
         &self,
-        station_id: String,
+        _station_id: String,
         _data_key: &[u8; 32],
     ) -> Result<Option<String>, String> {
-        tauri::async_runtime::block_on(self.drafts.login_password(&station_id)).map_err(app_error)
+        Err("draft session persist source does not expose login passwords".to_string())
     }
 
     fn resolve_station_session_with_data_key(
         &self,
-        station_id: String,
+        _station_id: String,
         _data_key: &[u8; 32],
         _now_ms: i64,
     ) -> Result<ResolvedSession, String> {
-        tauri::async_runtime::block_on(self.drafts.resolve_session(&station_id)).map_err(app_error)
+        Err("draft session persist source does not expose sessions".to_string())
     }
 
     fn update_station_session_with_data_key(
         &self,
-        input: UpdateStationSessionInput,
+        _input: UpdateStationSessionInput,
         _data_key: &[u8; 32],
-        expected_revision: i64,
+        _expected_revision: i64,
     ) -> Result<StationCredentials, String> {
-        tauri::async_runtime::block_on(self.drafts.update_session(input, expected_revision))
-            .map_err(app_error)
+        Err("draft session persist source does not update sessions synchronously".to_string())
     }
 
     fn persist_station_session<'a>(
@@ -450,18 +436,17 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
 
     fn invalidate_station_session_credential(
         &self,
-        station_id: &str,
-        kind: StationSessionCredentialKind,
+        _station_id: &str,
+        _kind: StationSessionCredentialKind,
     ) -> Result<(), String> {
-        tauri::async_runtime::block_on(self.drafts.invalidate_session_credential(station_id, kind))
-            .map_err(app_error)
+        Err("draft session persist source does not invalidate sessions".to_string())
     }
 
     fn list_station_group_bindings(
         &self,
-        station_id: String,
+        _station_id: String,
     ) -> Result<Vec<StationGroupBinding>, String> {
-        tauri::async_runtime::block_on(self.drafts.list_groups(&station_id)).map_err(app_error)
+        Err("draft session persist source does not expose group bindings".to_string())
     }
 }
 

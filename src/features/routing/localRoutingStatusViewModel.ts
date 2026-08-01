@@ -13,6 +13,14 @@ export type LatestDecisionDisplay = {
   decidedAt: string | null;
 };
 
+export type CandidateDisplayFacts = {
+  rejectReasonLabel: string | null;
+  multiplierLabel: string;
+  multiplierDetail: string | null;
+  balanceLabel: string;
+  balanceDetail: string | null;
+};
+
 const previewRejectReasonLabels: Record<string, string> = {
   asset_unavailable: "候选不可用",
   routing_group_mismatch: "分组不匹配",
@@ -104,12 +112,23 @@ export function formatPreviewRejectReason(code: string) {
   return previewRejectReasonLabels[code] ?? "当前请求条件不满足";
 }
 
-export function formatMultiplierSource(source: string | null, confidence: number | null) {
-  if (!source) return "暂无可信来源";
-  const sourceLabel = source === "sub2api_groups_rates" ? "Sub2API 分组费率" : source;
-  return confidence == null
-    ? sourceLabel
-    : `${sourceLabel} · 可信度 ${(confidence * 100).toFixed(0)}%`;
+export function buildCandidateDisplayFacts(candidate: LocalRoutingCandidateRow): CandidateDisplayFacts {
+  const rejectReason = candidate.previewRejectReasons[0] ?? null;
+  const pricingFacts = candidate.facts.filter((fact) => fact.kind === "pricing");
+  const multiplierFact =
+    pricingFacts.find((fact) => fact.label === "Effective multiplier") ??
+    pricingFacts.find((fact) => fact.label === "Multiplier evidence") ??
+    pricingFacts[0] ??
+    null;
+  const balanceFact = candidate.facts.find((fact) => fact.kind === "balance") ?? null;
+
+  return {
+    rejectReasonLabel: rejectReason ? formatPreviewRejectReason(rejectReason) : null,
+    multiplierLabel: multiplierFact?.value ?? "后端未提供",
+    multiplierDetail: multiplierFact?.label ?? null,
+    balanceLabel: balanceFact ? formatBalanceStatus(balanceFact.value) : "后端未提供",
+    balanceDetail: balanceFact?.label ?? null,
+  };
 }
 
 export function formatBalanceStatus(value: string | null) {

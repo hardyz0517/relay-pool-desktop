@@ -68,6 +68,12 @@ mod models {
 }
 
 mod services {
+    pub(crate) mod time {
+        pub(crate) fn now_millis_for_services() -> i64 {
+            1_000
+        }
+    }
+
     pub(crate) mod group_categories {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -246,6 +252,14 @@ mod persistence {
             env!("CARGO_MANIFEST_DIR"),
             "/src/persistence/health_check.rs"
         ));
+    }
+    pub(crate) mod maintenance {
+        pub(crate) mod request_log_url_sanitizer {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/maintenance/request_log_url_sanitizer.rs"
+            ));
+        }
     }
     pub(crate) mod migrations {
         include!(concat!(
@@ -793,16 +807,15 @@ impl Fixture {
         }
         std::fs::create_dir_all(&root).expect("fixture directory");
         let path = root.join("relay-pool-v2.sqlite3");
+        persistence::migrations::initialize_v2_database(&path)
+            .await
+            .expect("initialize fixture");
         let mut connection = SqliteConnectOptions::new()
             .filename(&path)
-            .create_if_missing(true)
+            .create_if_missing(false)
             .connect()
             .await
             .expect("connect fixture");
-        persistence::migrations::migrator()
-            .run(&mut connection)
-            .await
-            .expect("migrate fixture");
         sqlx::query(
             "INSERT INTO stations (
                 id, name, station_type, website_url, api_base_url,

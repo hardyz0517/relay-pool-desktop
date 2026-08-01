@@ -88,6 +88,20 @@ pub(crate) struct ExecutionSummaryRow {
     pub(crate) summary_outcome: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CancelExecutionRow {
+    pub(crate) execution_id: String,
+    pub(crate) status: String,
+    pub(crate) cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TriggeredExecutionRow {
+    pub(crate) id: String,
+    pub(crate) monitor_id: String,
+    pub(crate) status: String,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MonitoringExecutionRepository;
 
@@ -121,6 +135,114 @@ impl MonitoringExecutionRepository {
         .execute(connection)
         .await?;
         Ok(())
+    }
+
+    pub(crate) async fn cancel_execution(
+        &self,
+        connection: &mut SqliteConnection,
+        execution_id: &str,
+        now_ms: i64,
+    ) -> Result<CancelExecutionRow, PersistenceError> {
+        let current_status: String =
+            sqlx::query_scalar("SELECT status FROM channel_monitor_executions WHERE id = ?1")
+                .bind(execution_id)
+                .fetch_one(&mut *connection)
+                .await?;
+        let cancelled = matches!(current_status.as_str(), "queued" | "running");
+        if cancelled {
+            sqlx::query(
+                r#"
+                UPDATE channel_monitor_executions
+                SET status = 'cancelled',
+                    finished_at_ms = COALESCE(finished_at_ms, ?1),
+                    summary_failure_kind = COALESCE(summary_failure_kind, 'cancelled')
+                WHERE id = ?2
+                "#,
+            )
+            .bind(now_ms)
+            .bind(execution_id)
+            .execute(&mut *connection)
+            .await?;
+        }
+        Ok(CancelExecutionRow {
+            execution_id: execution_id.to_string(),
+            status: if cancelled {
+                "cancelled".to_string()
+            } else {
+                current_status
+            },
+            cancelled,
+        })
+    }
+
+    pub(crate) async fn find_by_trigger_request_id(
+        &self,
+        connection: &mut SqliteConnection,
+        trigger_request_id: &str,
+    ) -> Result<Option<TriggeredExecutionRow>, PersistenceError> {
+        sqlx::query_as::<_, (String, String, String)>(
+            r#"
+            SELECT id, monitor_id, status
+            FROM channel_monitor_executions
+            WHERE trigger_request_id = ?1
+            ORDER BY created_at_ms DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(trigger_request_id)
+        .fetch_optional(connection)
+        .await
+        .map(|row| {
+            row.map(|(id, monitor_id, status)| TriggeredExecutionRow {
+                id,
+                monitor_id,
+                status,
+            })
+        })
+        .map_err(PersistenceError::from)
+    }
+
+    pub(crate) async fn start_queued_execution(
+        &self,
+        connection: &mut SqliteConnection,
+        execution_id: &str,
+        now_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        sqlx::query(
+            r#"
+            UPDATE channel_monitor_executions
+            SET status = 'running', started_at_ms = COALESCE(started_at_ms, ?1)
+            WHERE id = ?2 AND status = 'queued'
+            "#,
+        )
+        .bind(now_ms)
+        .bind(execution_id)
+        .execute(connection)
+        .await
+        .map(|result| result.rows_affected() == 1)
+        .map_err(PersistenceError::from)
+    }
+
+    pub(crate) async fn interrupt_execution(
+        &self,
+        connection: &mut SqliteConnection,
+        execution_id: &str,
+        now_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        sqlx::query(
+            r#"
+            UPDATE channel_monitor_executions
+            SET status = 'interrupted', finished_at_ms = COALESCE(finished_at_ms, ?1),
+                summary_failure_kind = COALESCE(summary_failure_kind, 'interrupted')
+            WHERE id = ?2 AND status IN ('queued', 'running')
+            "#,
+        )
+        .bind(now_ms)
+        .bind(execution_id)
+        .execute(connection)
+        .await
+        .map(|result| result.rows_affected() == 1)
+        .map_err(PersistenceError::from)
     }
 
     pub(crate) async fn append_attempt(

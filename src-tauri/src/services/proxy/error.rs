@@ -120,7 +120,7 @@ impl ProxyFailureCode {
             Self::RouteCapacityExhausted => "route_capacity_exhausted",
             Self::RouteCandidateLimitExceeded => "route_candidate_limit_exceeded",
             Self::RouteFactsUnavailable => "route_facts_unavailable",
-            Self::RouteConfigUnstable => "route_config_unstable",
+            Self::RouteConfigUnstable => "route_configuration_changed",
             Self::RouteLifecycleUnavailable => "route_lifecycle_unavailable",
             Self::RouteDeadlineExceeded => "route_deadline_exceeded",
             Self::RouteInvariantViolation => "route_invariant_violation",

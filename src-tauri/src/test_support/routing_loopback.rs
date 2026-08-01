@@ -44,8 +44,7 @@ pub struct RoutingLoopbackHarness {
     services: AppServices,
     runtime: PersistenceRuntime,
     proxy: Arc<ProxyRuntimeState>,
-    data_key: [u8; 32],
-    root: TempRoot,
+    _root: TempRoot,
 }
 
 impl RoutingLoopbackHarness {
@@ -98,8 +97,7 @@ impl RoutingLoopbackHarness {
             services,
             runtime,
             proxy: Arc::new(ProxyRuntimeState::default()),
-            data_key,
-            root,
+            _root: root,
         }
     }
 
@@ -120,7 +118,6 @@ impl RoutingLoopbackHarness {
         self.update_proxy_port(port).await;
         let started = crate::services::proxy::startup::start_from_v2_persisted_settings(
             &self.services,
-            self.data_key,
             self.proxy.as_ref(),
         )
         .await
@@ -138,7 +135,6 @@ impl RoutingLoopbackHarness {
         let facade = app_composition::compose_local_proxy_command_facade(
             &self.services,
             Arc::clone(&self.proxy),
-            self.data_key,
         );
         let started = facade
             .start_local_proxy()
@@ -526,7 +522,6 @@ impl RoutingLoopbackHarness {
         > = Arc::new(
             crate::services::proxy::routing_repository::V2RoutingRepository::new(
                 self.services.routing.as_ref().clone(),
-                self.data_key,
             ),
         );
         let lifecycle_store: Arc<

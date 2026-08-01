@@ -1,6 +1,12 @@
 use crate::models::monitoring::{FailureKind, ProbeOutcome, ProtocolKind, SemanticConfidence};
 
-use super::{commands::MonitorExecutionReceipt, planner::ProbePlan};
+use super::planner::ProbePlan;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MonitorExecutionReceipt {
+    pub(crate) execution_id: String,
+    pub(crate) reused_existing: bool,
+}
 
 pub(crate) trait MonitoringRecorder {
     fn find_manual_execution(&self, idempotency_key: &str) -> Option<MonitorExecutionReceipt>;

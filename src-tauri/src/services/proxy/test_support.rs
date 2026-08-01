@@ -29,7 +29,6 @@ use crate::{
 pub(crate) struct V2ProxyTestFixture {
     pub(crate) services: AppServices,
     runtime: PersistenceRuntime,
-    pub(crate) data_key: [u8; 32],
     _root: tempfile::TempDir,
 }
 
@@ -70,7 +69,6 @@ impl V2ProxyTestFixture {
         Self {
             services,
             runtime,
-            data_key,
             _root: root,
         }
     }
@@ -81,7 +79,6 @@ impl V2ProxyTestFixture {
         > = Arc::new(
             crate::services::proxy::routing_repository::V2RoutingRepository::new(
                 self.services.routing.as_ref().clone(),
-                self.data_key,
             ),
         );
         let lifecycle_store: Arc<

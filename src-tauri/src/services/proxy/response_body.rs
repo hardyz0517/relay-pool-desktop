@@ -15,6 +15,7 @@ use super::{
         DualTerminalFinalizationLease, UpstreamAttemptFinalizationLease,
     },
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
+    finalization::FinalizationOutcome,
     lifecycle::{
         attempt::{
             AttemptContext, AttemptFailureKind, AttemptTerminal, ClassifiedAttemptFailure,
@@ -35,17 +36,6 @@ const DEFAULT_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 enum FinalizationState {
     Lifecycle(PendingFinalRequestRecord),
-}
-
-pub(crate) enum FinalizationOutcome {
-    Completed,
-    Failed {
-        code: String,
-        detail: Option<String>,
-    },
-    Interrupted {
-        detail: Option<String>,
-    },
 }
 
 enum FinalizationTarget {

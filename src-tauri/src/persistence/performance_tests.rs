@@ -72,9 +72,9 @@ async fn standard_fixture_meets_approved_absolute_performance_gates() {
     let routing = sample(SAMPLE_COUNT, || async {
         let started = Instant::now();
         let candidate_count = routing
-            .load_runtime_candidates()
+            .load_monitoring_target_snapshots()
             .await
-            .expect("routing candidates");
+            .expect("routing monitoring target snapshots");
         assert_eq!(candidate_count.len() as i64, STATION_KEY_COUNT);
         started.elapsed()
     })
@@ -1078,7 +1078,7 @@ fn fixture_statements() -> [&'static str; 7] {
                'success', 'completed',
                printf('key-%04d', (a.n * 1000 + b.n * 100 + c.n * 10 + d.n) % 1000),
                printf('station-%03d', (a.n * 1000 + b.n * 100 + c.n * 10 + d.n) % 100),
-               'https://example.invalid/v1', 0, 'cost_stable_first',
+               NULL, 0, 'cost_stable_first',
                'qualification representative route', '[]', 2048, 1, 2, 40,
                '[{"ordinal":0,"terminal":"success"}]', 'body_completed',
                1000, 200, 1200, 50, 100, 'medium', 75,

@@ -1,5 +1,3 @@
-use sqlx::SqliteConnection;
-
 use crate::{
     application::health_transitions::{writeback_decision, HealthTransitionService},
     models::{
@@ -19,6 +17,7 @@ use crate::{
             NewExecutionRow,
         },
         stores::monitoring::retention::MonitoringRetentionRepository,
+        WriteSession,
     },
 };
 
@@ -45,7 +44,7 @@ impl MonitoringExecutionCommitter {
 
     pub(crate) async fn commit(
         &self,
-        connection: &mut SqliteConnection,
+        write: &mut WriteSession,
         execution: &BufferedExecution,
     ) -> Result<ExecutionSummaryRow, PersistenceError> {
         let summary = execution
@@ -61,7 +60,7 @@ impl MonitoringExecutionCommitter {
 
         self.executions
             .insert_execution(
-                &mut *connection,
+                write.connection(),
                 &NewExecutionRow {
                     id: execution.execution_id.clone(),
                     monitor_id: execution.plan.monitor_id.clone(),
@@ -81,23 +80,21 @@ impl MonitoringExecutionCommitter {
 
         for attempt in &execution.attempts {
             self.executions
-                .append_attempt(&mut *connection, &attempt_row(&execution.plan, attempt)?)
+                .append_attempt(write.connection(), &attempt_row(&execution.plan, attempt)?)
                 .await?;
         }
 
         for target in &execution.targets {
             let target_row = target_row(execution, target)?;
             self.executions
-                .finalize_target(&mut *connection, &target_row)
+                .finalize_target(write.connection(), &target_row)
                 .await?;
 
             let observation = health_observation(execution, target, &target_row);
-            self.health
-                .record_observation(&mut *connection, observation)
-                .await?;
+            self.health.record_observation(write, observation).await?;
             self.retention
                 .mark_dirty_range(
-                    &mut *connection,
+                    write.connection(),
                     &format!("dirty:{}", target_row.id),
                     &execution.plan.monitor_id,
                     Some(&target.station_key_id),
@@ -114,7 +111,7 @@ impl MonitoringExecutionCommitter {
 
         self.executions
             .finalize_execution_and_advance_schedule(
-                &mut *connection,
+                write.connection(),
                 &execution.execution_id,
                 &execution.plan.monitor_id,
                 finished_at_ms,

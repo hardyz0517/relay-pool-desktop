@@ -5,7 +5,6 @@ const readiness = read("src/features/routing/routingMigrationReadiness.ts");
 const panel = read("src/features/routing/RoutingMigrationReadinessPanel.tsx");
 const preview = read("src/features/routing/RoutingOperationalPreviewPanel.tsx");
 const page = read("src/features/routing/RoutingPage.tsx");
-const runtimeSnapshot = read("src/lib/projections/runtimeSnapshot.ts");
 const generated = read("src/lib/bridge/generated.ts");
 const registry = read("src-tauri/src/ipc/registry.rs");
 const settingsStore = read("src-tauri/src/persistence/stores/settings_store.rs");
@@ -67,16 +66,6 @@ assert.match(
   preview,
   /selectedCapacityAcquired/u,
   "preview UI must show that preview simulation did not acquire capacity",
-);
-assert.doesNotMatch(
-  runtimeSnapshot,
-  /buildPricingGroupCandidates/u,
-  "runtime snapshot routing path must not reuse frontend pricing matcher",
-);
-assert.match(
-  runtimeSnapshot,
-  /backend_read_model_required/u,
-  "runtime snapshot pricing status must be explicitly marked as backend-read-model required",
 );
 assert.match(
   generated,

@@ -491,7 +491,6 @@ pub fn run() {
                         app_composition::compose_local_proxy_command_facade(
                             &app_services,
                             Arc::clone(&proxy_runtime),
-                            data_key,
                         );
                     tauri::async_runtime::block_on(app_services.settings.repair_legacy_settings())
                         .map_err(|error| {

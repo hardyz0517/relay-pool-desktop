@@ -129,7 +129,7 @@ export function RoutingOperationalPreviewPanel({
             <div className="grid min-w-0 gap-0.5">
               <span>{formatPriceBasis(pricing.basis)}</span>
               <span className="text-xs text-muted-foreground">
-                {pricing.reason ?? candidate.balanceStatus ?? pricing.statusLabel ?? "pricing unavailable"}
+                {pricing.reason ?? pricing.statusLabel}
               </span>
             </div>
           );
@@ -276,7 +276,7 @@ export function RoutingOperationalPreviewPanel({
           <ReadModelMetric label="Preview policy" value={snapshot.previewPolicyVersion} />
           <ReadModelMetric label="Capacity" value={snapshot.capacityMode} />
           <ReadModelMetric label="Runtime rev" value={runtimeOverlay?.revision.toString() ?? "snapshot-only"} />
-          <ReadModelMetric label="价格缺口" value={`${snapshot.candidates.filter((candidate) => candidate.priceBasis === "unpriced").length}`} />
+          <ReadModelMetric label="价格缺口" value={`${snapshot.candidates.filter((candidate) => candidate.pricing.basis === "unpriced").length}`} />
         </div>
 
         {stationScopeId ? (
@@ -564,17 +564,7 @@ function formatTimelineKind(kind: RequestDecisionTrace["timeline"][number]["kind
 }
 
 function capabilityVerdictLabels(candidate: RoutingWorkspaceCandidate) {
-  const verdicts =
-    candidate.capabilityVerdicts ??
-    ({
-      protocol: candidate.capabilitySummary.chatCompletions ? "allow" : "unknown",
-      model: "unknown",
-      stream: candidate.capabilitySummary.stream ? "allow" : "unknown",
-      tools: candidate.capabilitySummary.tools ? "allow" : "unknown",
-      vision: candidate.capabilitySummary.vision ? "allow" : "unknown",
-      reasoning: candidate.capabilitySummary.reasoning ? "allow" : "unknown",
-      rejectionSubjects: [],
-    } satisfies RoutingWorkspaceCandidate["capabilityVerdicts"]);
+  const verdicts = candidate.capabilityVerdicts;
   const labels = [
     `protocol:${verdicts.protocol}`,
     `model:${verdicts.model}`,
@@ -589,22 +579,7 @@ function capabilityVerdictLabels(candidate: RoutingWorkspaceCandidate) {
 }
 
 function candidatePricing(candidate: RoutingWorkspaceCandidate): RoutingWorkspaceCandidate["pricing"] {
-  return (
-    candidate.pricing ?? {
-      basis: candidate.priceBasis ?? "unpriced",
-      comparisonValue: null,
-      reason: "pricing unavailable",
-      currency: null,
-      unit: null,
-      estimatedInputPrice: null,
-      estimatedOutputPrice: null,
-      estimatedFixedPrice: null,
-      statusLabel: "unavailable",
-      sourceChain: [],
-      observedAt: null,
-      confidence: null,
-    }
-  );
+  return candidate.pricing;
 }
 
 function healthTone(value: string) {

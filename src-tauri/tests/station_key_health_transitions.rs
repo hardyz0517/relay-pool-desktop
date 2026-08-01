@@ -14,6 +14,22 @@ mod models {
 }
 
 mod persistence {
+    pub(crate) struct WriteSession {
+        connection: *mut sqlx::SqliteConnection,
+    }
+
+    impl WriteSession {
+        pub(crate) fn new(connection: &mut sqlx::SqliteConnection) -> Self {
+            Self { connection }
+        }
+
+        pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
+            // SAFETY: test-local wrapper is created from one mutable connection
+            // borrow and is used synchronously by the included application code.
+            unsafe { &mut *self.connection }
+        }
+    }
+
     pub(crate) mod error {
         pub(crate) use crate::persistence_error::*;
     }
@@ -35,50 +51,59 @@ use sqlx::{Connection, Row, SqliteConnection};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
 
+async fn record_observation(
+    service: &HealthTransitionService,
+    connection: &mut SqliteConnection,
+    observation: HealthObservation,
+) -> Result<health_transitions::HealthTransitionAck, PersistenceError> {
+    let mut write = persistence::WriteSession::new(connection);
+    service.record_observation(&mut write, observation).await
+}
+
 #[tokio::test]
 async fn proxy_synthetic_and_manual_share_one_observation_contract() {
     let mut connection = ready_connection().await;
     let service = HealthTransitionService::new();
     seed_station_monitor_target(&mut connection, "target-standard", "key-1").await;
 
-    let proxy_ack = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "proxy-success",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-1:0",
-                HealthObservationOutcome::Success,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                1_000,
-            ),
-        )
-        .await
-        .expect("proxy observation");
+    let proxy_ack = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "proxy-success",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-1:0",
+            HealthObservationOutcome::Success,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            1_000,
+        ),
+    )
+    .await
+    .expect("proxy observation");
     assert!(proxy_ack.observation_inserted);
     assert!(proxy_ack.health_applied);
     assert_eq!(proxy_ack.writeback_decision, HealthWritebackDecision::Write);
 
-    let synthetic_ack = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "synthetic-cooldown",
-                HealthObservationSource::SyntheticMonitor,
-                "target-standard",
-                HealthObservationOutcome::Cooldown,
-                TrafficEquivalence::SyntheticStandard,
-                HealthWritebackMode::Authoritative,
-                Some("target-standard"),
-                2_000,
-            )
-            .with_retry_after(45_000)
-            .with_error("rate limited"),
+    let synthetic_ack = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "synthetic-cooldown",
+            HealthObservationSource::SyntheticMonitor,
+            "target-standard",
+            HealthObservationOutcome::Cooldown,
+            TrafficEquivalence::SyntheticStandard,
+            HealthWritebackMode::Authoritative,
+            Some("target-standard"),
+            2_000,
         )
-        .await
-        .expect("synthetic observation");
+        .with_retry_after(45_000)
+        .with_error("rate limited"),
+    )
+    .await
+    .expect("synthetic observation");
     assert!(synthetic_ack.observation_inserted);
     assert!(synthetic_ack.health_applied);
     assert_eq!(
@@ -86,23 +111,23 @@ async fn proxy_synthetic_and_manual_share_one_observation_contract() {
         HealthWritebackDecision::Write
     );
 
-    let manual_ack = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "manual-diagnostic",
-                HealthObservationSource::ManualConnectivity,
-                "manual:station-1:key-1:probe-1",
-                HealthObservationOutcome::ObserveFailure,
-                TrafficEquivalence::Diagnostic,
-                HealthWritebackMode::Authoritative,
-                None,
-                3_000,
-            )
-            .with_error("manual connectivity failed"),
+    let manual_ack = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "manual-diagnostic",
+            HealthObservationSource::ManualConnectivity,
+            "manual:station-1:key-1:probe-1",
+            HealthObservationOutcome::ObserveFailure,
+            TrafficEquivalence::Diagnostic,
+            HealthWritebackMode::Authoritative,
+            None,
+            3_000,
         )
-        .await
-        .expect("manual observation");
+        .with_error("manual connectivity failed"),
+    )
+    .await
+    .expect("manual observation");
     assert!(manual_ack.observation_inserted);
     assert!(!manual_ack.health_applied);
     assert_eq!(
@@ -171,40 +196,40 @@ async fn duplicate_source_event_is_exactly_once_for_observation_and_health() {
     let mut connection = ready_connection().await;
     let service = HealthTransitionService::new();
 
-    let first = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "proxy-failure",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-dup:0",
-                HealthObservationOutcome::ObserveFailure,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                1_000,
-            )
-            .with_error("network timeout"),
+    let first = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "proxy-failure",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-dup:0",
+            HealthObservationOutcome::ObserveFailure,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            1_000,
         )
-        .await
-        .expect("first observation");
-    let replay = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "proxy-failure",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-dup:0",
-                HealthObservationOutcome::ObserveFailure,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                1_000,
-            )
-            .with_error("network timeout"),
+        .with_error("network timeout"),
+    )
+    .await
+    .expect("first observation");
+    let replay = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "proxy-failure",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-dup:0",
+            HealthObservationOutcome::ObserveFailure,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            1_000,
         )
-        .await
-        .expect("replayed observation");
+        .with_error("network timeout"),
+    )
+    .await
+    .expect("replayed observation");
 
     assert!(first.observation_inserted);
     assert!(first.health_applied);
@@ -229,23 +254,23 @@ async fn outcome_matrix_handles_recovery_threshold_cooldown_and_non_applicable_r
     let service = HealthTransitionService::new();
 
     for index in 0..3 {
-        let ack = service
-            .record_observation(
-                &mut connection,
-                observation(
-                    &format!("proxy-observe-failure-{index}"),
-                    HealthObservationSource::ProxyRequest,
-                    &format!("proxy:req-failure:{index}"),
-                    HealthObservationOutcome::ObserveFailure,
-                    TrafficEquivalence::RealUserTraffic,
-                    HealthWritebackMode::Authoritative,
-                    None,
-                    1_000 + index,
-                )
-                .with_error("upstream unavailable"),
+        let ack = record_observation(
+            &service,
+            &mut connection,
+            observation(
+                &format!("proxy-observe-failure-{index}"),
+                HealthObservationSource::ProxyRequest,
+                &format!("proxy:req-failure:{index}"),
+                HealthObservationOutcome::ObserveFailure,
+                TrafficEquivalence::RealUserTraffic,
+                HealthWritebackMode::Authoritative,
+                None,
+                1_000 + index,
             )
-            .await
-            .expect("observe failure");
+            .with_error("upstream unavailable"),
+        )
+        .await
+        .expect("observe failure");
         assert!(ack.health_applied);
     }
 
@@ -257,22 +282,22 @@ async fn outcome_matrix_handles_recovery_threshold_cooldown_and_non_applicable_r
         Some("121002")
     );
 
-    let success = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "proxy-recovery",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-recovery:0",
-                HealthObservationOutcome::Success,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                2_000,
-            ),
-        )
-        .await
-        .expect("recovery");
+    let success = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "proxy-recovery",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-recovery:0",
+            HealthObservationOutcome::Success,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            2_000,
+        ),
+    )
+    .await
+    .expect("recovery");
     assert!(success.health_applied);
     let health = station_key_health(&mut connection).await;
     assert_eq!(health.get::<i64, _>("success_count"), 1);
@@ -283,23 +308,23 @@ async fn outcome_matrix_handles_recovery_threshold_cooldown_and_non_applicable_r
         Some("healthy")
     );
 
-    let hard_fail = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "proxy-auth-hard-fail",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-auth:0",
-                HealthObservationOutcome::HardFail,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                3_000,
-            )
-            .with_error("authentication failed"),
+    let hard_fail = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "proxy-auth-hard-fail",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-auth:0",
+            HealthObservationOutcome::HardFail,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            3_000,
         )
-        .await
-        .expect("hard fail");
+        .with_error("authentication failed"),
+    )
+    .await
+    .expect("hard fail");
     assert!(hard_fail.health_applied);
     let health = station_key_health(&mut connection).await;
     assert_eq!(health.get::<i64, _>("failure_count"), 4);
@@ -319,22 +344,22 @@ async fn outcome_matrix_handles_recovery_threshold_cooldown_and_non_applicable_r
         ("proxy-skipped", HealthObservationOutcome::Skipped),
         ("proxy-neutral", HealthObservationOutcome::Neutral),
     ] {
-        let ack = service
-            .record_observation(
-                &mut connection,
-                observation(
-                    id,
-                    HealthObservationSource::ProxyRequest,
-                    id,
-                    outcome,
-                    TrafficEquivalence::RealUserTraffic,
-                    HealthWritebackMode::Authoritative,
-                    None,
-                    4_000,
-                ),
-            )
-            .await
-            .expect("non-applicable observation");
+        let ack = record_observation(
+            &service,
+            &mut connection,
+            observation(
+                id,
+                HealthObservationSource::ProxyRequest,
+                id,
+                outcome,
+                TrafficEquivalence::RealUserTraffic,
+                HealthWritebackMode::Authoritative,
+                None,
+                4_000,
+            ),
+        )
+        .await
+        .expect("non-applicable observation");
         assert!(ack.observation_inserted);
         assert!(!ack.health_applied);
         assert_eq!(
@@ -358,22 +383,22 @@ async fn endpoint_revision_mismatch_fails_closed_and_revision_change_resets_heal
     let mut connection = ready_connection().await;
     let service = HealthTransitionService::new();
 
-    let stale = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "stale-revision",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-stale:0",
-                HealthObservationOutcome::Success,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                1_000,
-            )
-            .with_endpoint_revision(2),
+    let stale = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "stale-revision",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-stale:0",
+            HealthObservationOutcome::Success,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            1_000,
         )
-        .await;
+        .with_endpoint_revision(2),
+    )
+    .await;
     assert!(matches!(stale, Err(PersistenceError::NotFound)));
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM station_key_health_observations")
@@ -383,45 +408,45 @@ async fn endpoint_revision_mismatch_fails_closed_and_revision_change_resets_heal
         0
     );
 
-    service
-        .record_observation(
-            &mut connection,
-            observation(
-                "revision-one-success",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-r1:0",
-                HealthObservationOutcome::Success,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                1_000,
-            ),
-        )
-        .await
-        .expect("revision 1 health");
+    record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "revision-one-success",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-r1:0",
+            HealthObservationOutcome::Success,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            1_000,
+        ),
+    )
+    .await
+    .expect("revision 1 health");
     sqlx::query("UPDATE stations SET endpoint_revision = 2 WHERE id = 'station-1'")
         .execute(&mut connection)
         .await
         .expect("endpoint revision update");
 
-    service
-        .record_observation(
-            &mut connection,
-            observation(
-                "revision-two-failure",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-r2:0",
-                HealthObservationOutcome::ObserveFailure,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                2_000,
-            )
-            .with_endpoint_revision(2)
-            .with_error("new endpoint failed"),
+    record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "revision-two-failure",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-r2:0",
+            HealthObservationOutcome::ObserveFailure,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            2_000,
         )
-        .await
-        .expect("revision 2 health");
+        .with_endpoint_revision(2)
+        .with_error("new endpoint failed"),
+    )
+    .await
+    .expect("revision 2 health");
 
     let health = station_key_health(&mut connection).await;
     assert_eq!(health.get::<i64, _>("endpoint_revision"), 2);
@@ -437,40 +462,40 @@ async fn cli_compat_and_observe_only_probes_are_recorded_without_route_health_wr
     seed_station_monitor_target(&mut connection, "target-cli", "key-1").await;
     seed_station_monitor_target(&mut connection, "target-observe-only", "key-1").await;
 
-    service
-        .record_observation(
-            &mut connection,
-            observation(
-                "baseline-proxy-success",
-                HealthObservationSource::ProxyRequest,
-                "proxy:req-baseline:0",
-                HealthObservationOutcome::Success,
-                TrafficEquivalence::RealUserTraffic,
-                HealthWritebackMode::Authoritative,
-                None,
-                1_000,
-            ),
-        )
-        .await
-        .expect("baseline success");
+    record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "baseline-proxy-success",
+            HealthObservationSource::ProxyRequest,
+            "proxy:req-baseline:0",
+            HealthObservationOutcome::Success,
+            TrafficEquivalence::RealUserTraffic,
+            HealthWritebackMode::Authoritative,
+            None,
+            1_000,
+        ),
+    )
+    .await
+    .expect("baseline success");
 
-    let cli_ack = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "synthetic-cli-auth-failure",
-                HealthObservationSource::SyntheticMonitor,
-                "target-cli",
-                HealthObservationOutcome::HardFail,
-                TrafficEquivalence::SyntheticCliCompat,
-                HealthWritebackMode::Authoritative,
-                Some("target-cli"),
-                2_000,
-            )
-            .with_error("cli profile auth failed"),
+    let cli_ack = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "synthetic-cli-auth-failure",
+            HealthObservationSource::SyntheticMonitor,
+            "target-cli",
+            HealthObservationOutcome::HardFail,
+            TrafficEquivalence::SyntheticCliCompat,
+            HealthWritebackMode::Authoritative,
+            Some("target-cli"),
+            2_000,
         )
-        .await
-        .expect("cli compat observation");
+        .with_error("cli profile auth failed"),
+    )
+    .await
+    .expect("cli compat observation");
     assert!(cli_ack.observation_inserted);
     assert!(!cli_ack.health_applied);
     assert_eq!(
@@ -478,23 +503,23 @@ async fn cli_compat_and_observe_only_probes_are_recorded_without_route_health_wr
         HealthWritebackDecision::Suppressed
     );
 
-    let observe_only_ack = service
-        .record_observation(
-            &mut connection,
-            observation(
-                "synthetic-observe-only-failure",
-                HealthObservationSource::SyntheticMonitor,
-                "target-observe-only",
-                HealthObservationOutcome::HardFail,
-                TrafficEquivalence::SyntheticStandard,
-                HealthWritebackMode::ObserveOnly,
-                Some("target-observe-only"),
-                3_000,
-            )
-            .with_error("observe only hard fail"),
+    let observe_only_ack = record_observation(
+        &service,
+        &mut connection,
+        observation(
+            "synthetic-observe-only-failure",
+            HealthObservationSource::SyntheticMonitor,
+            "target-observe-only",
+            HealthObservationOutcome::HardFail,
+            TrafficEquivalence::SyntheticStandard,
+            HealthWritebackMode::ObserveOnly,
+            Some("target-observe-only"),
+            3_000,
         )
-        .await
-        .expect("observe-only observation");
+        .with_error("observe only hard fail"),
+    )
+    .await
+    .expect("observe-only observation");
     assert!(observe_only_ack.observation_inserted);
     assert!(!observe_only_ack.health_applied);
     assert_eq!(

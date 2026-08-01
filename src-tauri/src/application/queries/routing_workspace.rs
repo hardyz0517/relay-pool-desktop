@@ -2,9 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     application::operational_facts::candidate_projector::RouteCandidateProjection,
-    models::routing::{
-        RouteEndpointKind, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingCandidate,
-    },
+    models::routing::{RouteEndpointKind, RoutingGroupFilter, RoutingPolicy},
 };
 
 pub(crate) const ROUTING_WORKSPACE_READ_MODEL_VERSION: &str = "routing_workspace_read_model_v1";
@@ -199,45 +197,6 @@ pub(crate) struct RoutePreviewSimulation {
     pub(crate) message: String,
 }
 
-pub(crate) fn workspace_snapshot_from_runtime(
-    settings: &crate::models::routing::RuntimeRoutingSettings,
-    candidates: Vec<RuntimeRoutingCandidate>,
-    input: RoutingWorkspaceSnapshotInput,
-    generated_at_ms: i64,
-) -> RoutingWorkspaceSnapshot {
-    let limit = input.limit.unwrap_or(128).clamp(1, 1024);
-    let start = input
-        .cursor
-        .as_deref()
-        .and_then(|cursor| cursor.strip_prefix("offset:"))
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0);
-    let total = candidates.len();
-    let rows = candidates
-        .into_iter()
-        .skip(start)
-        .take(limit)
-        .map(candidate_from_runtime)
-        .collect::<Vec<_>>();
-    let next = start + rows.len();
-    RoutingWorkspaceSnapshot {
-        read_model_version: ROUTING_WORKSPACE_READ_MODEL_VERSION,
-        generated_at_ms,
-        production_policy: settings.policy.clone(),
-        preview_policy_version: ROUTING_PREVIEW_POLICY_VERSION,
-        max_rate_multiplier: settings.max_rate_multiplier,
-        routing_group_filter: settings.routing_group_filter.clone(),
-        capacity_mode: RoutingCapacityReadMode::SnapshotOnly,
-        page: RoutingReadPage {
-            limit,
-            returned: rows.len(),
-            next_cursor: (next < total).then(|| format!("offset:{next}")),
-        },
-        candidates: rows,
-        read_model_status: RoutingReadModelStatus::Available,
-    }
-}
-
 pub(crate) fn workspace_snapshot_from_projection_candidates(
     settings: &crate::models::routing::RuntimeRoutingSettings,
     candidates: Vec<RoutingWorkspaceProjectionCandidate>,
@@ -319,100 +278,6 @@ pub(crate) fn simulate_preview_from_candidate_projections(
                     input.endpoint
                 )
             }),
-    }
-}
-
-fn candidate_from_runtime(candidate: RuntimeRoutingCandidate) -> RoutingWorkspaceCandidate {
-    let health_state = candidate
-        .health
-        .as_ref()
-        .map(|health| {
-            if health.cooldown_until.is_some() {
-                "cooldown"
-            } else if health.consecutive_failures > 0 {
-                "degraded"
-            } else {
-                "ready"
-            }
-        })
-        .unwrap_or("unknown")
-        .to_string();
-    let balance_status = candidate
-        .balance_snapshot
-        .as_ref()
-        .map(|balance| balance.status.clone());
-    let price_basis = candidate
-        .balance_snapshot
-        .as_ref()
-        .map(|_| "balance_only")
-        .unwrap_or("unpriced")
-        .to_string();
-    RoutingWorkspaceCandidate {
-        station_key_id: candidate.station_key_id.clone(),
-        station_id: candidate.station_id.clone(),
-        station_name: candidate.station_name,
-        key_name: candidate.key_name,
-        endpoint_revision: candidate.station_endpoint_revision,
-        priority: candidate.routing_order.unwrap_or(candidate.priority),
-        schedulable: candidate.schedulable,
-        health_state,
-        group: None,
-        multiplier: RoutingCandidateMultiplierSnapshot {
-            status: "missing".to_string(),
-            multiplier: None,
-            selected_source: None,
-            ceiling_rejected: false,
-            reason: "compatibility_runtime_candidate".to_string(),
-        },
-        capability_summary: RoutingCapabilitySummary {
-            chat_completions: candidate.capabilities.supports_chat_completions,
-            responses: candidate.capabilities.supports_responses,
-            embeddings: candidate.capabilities.supports_embeddings,
-            stream: candidate.capabilities.supports_stream,
-            tools: candidate.capabilities.supports_tools,
-            vision: candidate.capabilities.supports_vision,
-            reasoning: candidate.capabilities.supports_reasoning,
-        },
-        capability_verdicts: RoutingCapabilityVerdictSnapshot {
-            protocol: "allow".to_string(),
-            model: "allow".to_string(),
-            stream: capability_label(candidate.capabilities.supports_stream),
-            tools: capability_label(candidate.capabilities.supports_tools),
-            vision: capability_label(candidate.capabilities.supports_vision),
-            reasoning: capability_label(candidate.capabilities.supports_reasoning),
-            rejection_subjects: Vec::new(),
-        },
-        price_basis,
-        pricing: RoutingCandidatePricingSnapshot {
-            basis: "unpriced".to_string(),
-            comparison_value: None,
-            reason: Some("compatibility_runtime_candidate".to_string()),
-            currency: None,
-            unit: None,
-            estimated_input_price: None,
-            estimated_output_price: None,
-            estimated_fixed_price: None,
-            status_label: "unpriced".to_string(),
-            source_chain: Vec::new(),
-            observed_at: None,
-            confidence: None,
-        },
-        balance_status,
-        capacity: RoutingCandidateCapacitySnapshot {
-            mode: RoutingCapacityReadMode::SnapshotOnly,
-            max_concurrency: candidate.max_concurrency,
-            in_flight: candidate.load_factor,
-            acquired: false,
-        },
-        source_refs: RoutingCandidateSourceRefs {
-            station_key_id: candidate.station_key_id,
-            station_id: candidate.station_id,
-            endpoint_revision: candidate.station_endpoint_revision,
-            snapshot_id: format!("endpoint-revision-{}", candidate.station_endpoint_revision),
-            fact_version_vector: format!("endpoint:{}", candidate.station_endpoint_revision),
-            projector_version: "compatibility_runtime_candidate".to_string(),
-        },
-        hard_rejection_codes: Vec::new(),
     }
 }
 
@@ -513,13 +378,5 @@ fn candidate_from_projection(
             .iter()
             .map(|code| (*code).to_string())
             .collect(),
-    }
-}
-
-fn capability_label(supported: bool) -> String {
-    if supported {
-        "allow".to_string()
-    } else {
-        "reject".to_string()
     }
 }

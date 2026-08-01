@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 
@@ -269,6 +269,151 @@ impl PricingStore {
         .fetch_optional(read.connection())
         .await?;
         row.map(row_to_station_key_pricing_resolution).transpose()
+    }
+
+    pub(crate) async fn resolve_station_key_pricing_many(
+        &self,
+        read: &mut ReadSession,
+        station_key_ids: &[String],
+        requested_model: &str,
+        at: &str,
+    ) -> Result<BTreeMap<String, StationKeyPricingResolutionRow>, PersistenceError> {
+        if station_key_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            r#"
+            WITH requested_keys(station_key_id) AS (
+                VALUES
+            "#,
+        );
+        for (index, station_key_id) in station_key_ids.iter().enumerate() {
+            if index > 0 {
+                builder.push(", ");
+            }
+            builder.push("(").push_bind(station_key_id).push(")");
+        }
+        builder.push(
+            r#"
+            ), key_context AS (
+                SELECT k.id AS station_key_id,
+                       k.station_id,
+                       COALESCE(k.group_binding_id, b.id) AS group_binding_id,
+                       COALESCE(k.rate_multiplier, b.effective_rate_multiplier) AS group_rate_multiplier,
+                       COALESCE(b.confidence, 0.8) AS group_confidence,
+                       COALESCE(k.rate_collected_at, b.last_checked_at) AS group_collected_at
+                FROM station_keys k
+                JOIN requested_keys requested ON requested.station_key_id = k.id
+                LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
+            ), selected_rule_candidates AS (
+                SELECT k.station_key_id,
+                       r.id, r.model, r.input_price, r.output_price, r.fixed_price,
+                       r.currency, r.source, r.group_binding_id, r.rate_multiplier,
+                       r.normalization_status, r.confidence, r.collected_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY k.station_key_id
+                           ORDER BY
+                               CASE WHEN lower(r.model) = lower(
+            "#,
+        );
+        builder.push_bind(requested_model);
+        builder.push(
+            r#"
+                               ) THEN 0 ELSE 1 END,
+                               CASE WHEN r.station_key_id = k.station_key_id THEN 0 ELSE 1 END,
+                               CASE WHEN r.group_binding_id = k.group_binding_id THEN 0 ELSE 1 END,
+                               CASE WHEN r.normalization_status = 'complete' THEN 0 ELSE 1 END,
+                               CASE WHEN r.input_price IS NOT NULL OR r.output_price IS NOT NULL OR r.fixed_price IS NOT NULL THEN 0 ELSE 1 END,
+                               r.updated_at DESC,
+                               r.created_at DESC,
+                               r.id DESC
+                       ) AS row_number
+                FROM key_context k
+                JOIN pricing_rules r ON r.station_id = k.station_id
+                WHERE r.enabled = 1
+                  AND (r.valid_from IS NULL OR CAST(r.valid_from AS INTEGER) <= CAST(
+            "#,
+        );
+        builder.push_bind(at);
+        builder.push(
+            r#"
+                   AS INTEGER))
+                  AND (r.valid_until IS NULL OR CAST(r.valid_until AS INTEGER) > CAST(
+            "#,
+        );
+        builder.push_bind(at);
+        builder.push(
+            r#"
+                   AS INTEGER))
+                  AND (r.station_key_id IS NULL OR r.station_key_id = k.station_key_id)
+                  AND (
+                      lower(r.model) = lower(
+            "#,
+        );
+        builder.push_bind(requested_model);
+        builder.push(
+            r#"
+                      )
+                      OR (
+                          r.normalization_status = 'group_rate_only'
+                          AND r.input_price IS NULL
+                          AND r.output_price IS NULL
+                          AND r.fixed_price IS NULL
+                      )
+                  )
+                  AND (r.group_binding_id IS NULL OR r.group_binding_id = k.group_binding_id)
+            ), selected_rule AS (
+                SELECT * FROM selected_rule_candidates WHERE row_number = 1
+            ), selected_base_price AS (
+                SELECT p.model, p.input_price, p.output_price, p.currency,
+                       p.source_checked_at, p.built_in
+                FROM model_base_prices p
+                WHERE p.enabled = 1 AND lower(p.model) = lower(
+            "#,
+        );
+        builder.push_bind(requested_model);
+        builder.push(
+            r#"
+                )
+                ORDER BY p.built_in DESC, p.updated_at DESC, p.created_at DESC, p.id DESC
+                LIMIT 1
+            )
+            SELECT k.station_key_id AS resolved_station_key_id,
+                   k.station_id,
+                   k.group_binding_id,
+                   k.group_rate_multiplier,
+                   k.group_confidence,
+                   k.group_collected_at,
+                   r.id AS rule_id,
+                   r.model AS rule_model,
+                   r.input_price AS rule_input_price,
+                   r.output_price AS rule_output_price,
+                   r.fixed_price AS rule_fixed_price,
+                   r.currency AS rule_currency,
+                   r.source AS rule_source,
+                   r.group_binding_id AS rule_group_binding_id,
+                   r.rate_multiplier AS rule_rate_multiplier,
+                   r.normalization_status AS rule_normalization_status,
+                   r.confidence AS rule_confidence,
+                   r.collected_at AS rule_collected_at,
+                   p.model AS base_model,
+                   p.input_price AS base_input_price,
+                   p.output_price AS base_output_price,
+                   p.currency AS base_currency,
+                   p.source_checked_at AS base_source_checked_at,
+                   p.built_in AS base_built_in
+            FROM key_context k
+            LEFT JOIN selected_rule r ON r.station_key_id = k.station_key_id
+            LEFT JOIN selected_base_price p ON 1 = 1
+            "#,
+        );
+        let rows = builder.build().fetch_all(read.connection()).await?;
+        rows.into_iter()
+            .map(|row| {
+                let station_key_id: String = row.try_get("resolved_station_key_id")?;
+                Ok((station_key_id, row_to_station_key_pricing_resolution(row)?))
+            })
+            .collect::<Result<BTreeMap<_, _>, PersistenceError>>()
     }
 
     pub(crate) async fn upsert_pricing_rule(

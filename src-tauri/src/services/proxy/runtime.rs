@@ -13,6 +13,7 @@ use crate::{
     services::{
         proxy::{
             execution::{ExecutionEngine, UpstreamAttemptExecutor},
+            finalization::FinalizationOutcome,
             ingress::{self, IngressExecutor, IngressState},
             lifecycle::{
                 delivery::DeliveryTerminal,
@@ -24,7 +25,7 @@ use crate::{
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
                 dual_terminal_buffered_lifecycle_finalizing_stream,
-                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
+                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout,
             },
             routing_repository::RoutingRepository,
             server::{self, RunningServer},
@@ -1292,7 +1293,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_uses_persisted_stable_first_routing_strategy() {
+    async fn v2_maps_persisted_stable_first_to_priority_first_ordering() {
         let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
             br#"{"id":"chatcmpl-stable","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}"#.to_vec(),
         )]);
@@ -1361,7 +1362,7 @@ mod tests {
         upstream.wait_for_requests(1);
         assert_eq!(
             upstream.captured_requests()[0].header("authorization"),
-            Some("Bearer sk-v2-stable")
+            Some("Bearer sk-v2-flaky")
         );
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
@@ -1420,8 +1421,9 @@ mod tests {
             .send()
             .await
             .expect("send responses");
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let status = response.status();
         let failure_body: serde_json::Value = response.json().await.expect("failure json");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(failure_body["error"]["code"], "upstream_http_error");
         assert_eq!(failure_body["error"]["message"], "upstream HTTP 502");
         runtime.stop(started.port).await.unwrap();

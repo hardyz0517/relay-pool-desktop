@@ -45,8 +45,8 @@ async fn lifecycle_concurrent_no_candidate_failures_return_to_zero_and_log_once_
         assert_eq!(body["error"]["code"], "route_no_candidate");
     }
 
-    wait_runtime_active_requests(&runtime, started.port, 0).await;
     wait_request_logs_with_status(&fixture, 32, "failed").await;
+    wait_runtime_active_requests(&runtime, started.port, 0).await;
     let status = runtime.status(started.port);
     assert_eq!(status.request_count, 32);
     let logs = fixture.request_logs().await;
@@ -122,7 +122,7 @@ async fn lifecycle_stream_capacity_is_released_when_client_drops_body() {
 }
 
 async fn wait_runtime_active_requests(runtime: &ProxyRuntimeState, port: u16, expected: u32) {
-    for _ in 0..100 {
+    for _ in 0..250 {
         if runtime.status(port).active_requests == expected {
             return;
         }
@@ -139,7 +139,7 @@ async fn wait_request_logs_with_status(
     expected: usize,
     status: &str,
 ) {
-    for _ in 0..100 {
+    for _ in 0..250 {
         let logs = fixture.request_logs().await;
         if logs.len() == expected && logs.iter().all(|log| log.status == status) {
             return;

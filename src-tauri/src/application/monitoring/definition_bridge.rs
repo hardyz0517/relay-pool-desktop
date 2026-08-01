@@ -7,12 +7,12 @@ use crate::{
             TargetScope,
         },
         proxy::UpstreamApiFormat,
-        routing::RuntimeRoutingCandidate,
     },
     persistence::stores::monitoring::definitions::MonitorDefinitionConfigRow,
 };
 
 use super::planner::{MonitorPlanningSnapshot, ProtocolSelection, TargetCapabilitySnapshot};
+use crate::application::queries::routing_runtime::RoutingMonitoringTargetSnapshot;
 
 pub(crate) fn planning_snapshot_from_config(
     row: MonitorDefinitionConfigRow,
@@ -88,13 +88,13 @@ pub(crate) fn planning_snapshot_from_config(
     })
 }
 
-pub(crate) fn target_snapshot_from_runtime_candidate(
-    candidate: &RuntimeRoutingCandidate,
+pub(crate) fn target_snapshot_from_monitoring_target(
+    candidate: &RoutingMonitoringTargetSnapshot,
 ) -> TargetCapabilitySnapshot {
     TargetCapabilitySnapshot {
         station_id: candidate.station_id.clone(),
         station_key_id: candidate.station_key_id.clone(),
-        endpoint_revision: candidate.station_endpoint_revision,
+        endpoint_revision: candidate.endpoint_revision,
         provider_protocol: protocol_from_upstream_format(&candidate.upstream_api_format),
         endpoint_protocol: protocol_from_capabilities(candidate),
     }
@@ -102,7 +102,7 @@ pub(crate) fn target_snapshot_from_runtime_candidate(
 
 pub(crate) fn target_snapshots_for_scope(
     snapshot: &MonitorPlanningSnapshot,
-    candidates: &[RuntimeRoutingCandidate],
+    candidates: &[RoutingMonitoringTargetSnapshot],
 ) -> Vec<TargetCapabilitySnapshot> {
     candidates
         .iter()
@@ -113,7 +113,7 @@ pub(crate) fn target_snapshots_for_scope(
                 station_key_id,
             } => candidate.station_id == *station_id && candidate.station_key_id == *station_key_id,
         })
-        .map(target_snapshot_from_runtime_candidate)
+        .map(target_snapshot_from_monitoring_target)
         .collect()
 }
 
@@ -126,10 +126,10 @@ fn protocol_from_upstream_format(format: &UpstreamApiFormat) -> Option<ProtocolK
     }
 }
 
-fn protocol_from_capabilities(candidate: &RuntimeRoutingCandidate) -> Option<ProtocolKind> {
+fn protocol_from_capabilities(candidate: &RoutingMonitoringTargetSnapshot) -> Option<ProtocolKind> {
     match (
-        candidate.capabilities.supports_chat_completions,
-        candidate.capabilities.supports_responses,
+        candidate.supports_chat_completions,
+        candidate.supports_responses,
     ) {
         (true, false) => Some(ProtocolKind::OpenAiChat),
         (false, true) => Some(ProtocolKind::OpenAiResponses),

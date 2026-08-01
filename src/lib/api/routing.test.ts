@@ -101,7 +101,7 @@ describe("routing backend cutover", () => {
       policy: input.policy ?? "cost_stable_first",
       maxRateMultiplier: input.maxRateMultiplier ?? null,
       routingGroupFilter: input.routingGroupFilter ?? "all_groups",
-      schedulerErrorCode: null,
+      plannerErrorCode: null,
       candidates: [],
       message: "ok",
     })),

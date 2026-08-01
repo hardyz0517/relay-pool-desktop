@@ -3,7 +3,7 @@
 Status: template only; do not commit filled runtime results
 Owner task: Task 26
 
-This file defines the human-readable checklist for a development-period local self-check run. It is not a release gate, signed installer checklist, install/upgrade matrix, or old-binary rollback proof. Runtime output belongs under ignored `output/routing-operational/qualification/` or CI artifacts.
+This file defines the human-readable checklist for a development-period local self-check run. Runtime output belongs under ignored `output/routing-operational/self-check/` or CI artifacts.
 
 ## Source snapshot
 
@@ -32,7 +32,7 @@ Optional aggregate check, only when the local Node/toolchain lifecycle ledger ma
 
 - `pnpm.cmd verify:full`
 
-Optional confidence check when chasing lifecycle leaks or before a future stable-release ADR:
+Optional confidence check when chasing lifecycle leaks:
 
 - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60`
 - `node scripts/routing-operational-qualification.mjs --require-long-soak`
@@ -41,12 +41,12 @@ Optional confidence check when chasing lifecycle leaks or before a future stable
 
 - Do not commit local databases, WAL/SHM files, backups, raw logs, screenshots, API keys, cookies, authorization headers, full upstream URLs, provider payloads, prompts or responses.
 - The self-check validator checks deterministic loopback artifacts and optional scale-baseline artifacts. It records the source revision for debugging, requires the soak and present scale-baseline artifacts to match current `HEAD`, and rejects stale artifacts from older commits; rerun the deterministic soak and `architecture:scale-baseline` after tracked changes.
-- The required soak is a single-pass deterministic loopback smoke. A 60-minute deterministic loopback soak remains available as optional confidence evidence, but is not a development release gate and must not consume real provider quota.
-- Development recovery is reset/reimport/reconfigure with the current dev binary; this template does not prove old binary rollback.
+- The required soak is a single-pass deterministic loopback smoke. A 60-minute deterministic loopback soak remains available as optional confidence evidence and must not consume real provider quota.
+- Development recovery is reset/reimport/reconfigure with the current dev binary.
 
 ## Manual observations
 
 - Windows sleep/resume:
-- Wall-clock rollback / monotonic deadline:
+- Wall-clock moves backward / monotonic deadline:
 - Shutdown counters/gauges:
 - Canary scan notes:

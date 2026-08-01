@@ -404,13 +404,31 @@ pub struct RuntimeRoutingBalance {
     pub collected_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeRoutingEconomicSnapshot {
+    pub group_binding_id: Option<String>,
+    pub group_key_hash: Option<String>,
+    pub group_id_hash: Option<String>,
+    pub group_name: Option<String>,
+    pub group_status: Option<String>,
+    pub group_confidence: Option<f64>,
+    pub group_checked_at: Option<String>,
+    pub rate_multiplier: Option<f64>,
+    pub manual_rate_multiplier: Option<f64>,
+    pub manual_rate_updated_at: Option<String>,
+    pub rate_source: Option<String>,
+    pub rate_collected_at: Option<String>,
+    pub key_updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeRoutingCandidate {
     pub station_key_id: String,
     pub station_id: String,
     pub station_endpoint_revision: i64,
-    pub upstream_base_url: String,
+    pub sanitized_origin: String,
     pub upstream_api_format: crate::models::proxy::UpstreamApiFormat,
     pub routing_order: Option<i64>,
     pub priority: i64,
@@ -424,6 +442,7 @@ pub struct RuntimeRoutingCandidate {
     pub capabilities: StationKeyCapabilities,
     pub health: Option<StationKeyHealth>,
     pub balance_snapshot: Option<RuntimeRoutingBalance>,
+    pub economic_snapshot: Option<RuntimeRoutingEconomicSnapshot>,
     pub api_key: Option<String>,
     pub api_key_secret: Option<RuntimeRoutingSecret>,
 }
@@ -463,7 +482,6 @@ pub struct RouteCandidateExplanation {
     pub station_name: String,
     pub key_name: String,
     pub accepted: bool,
-    pub score: i64,
     pub reasons: Vec<String>,
     pub rejection_reasons: Vec<String>,
     pub mapped_model: Option<String>,
@@ -483,12 +501,6 @@ pub struct RouteCandidateExplanation {
     pub economic_reasons: Vec<String>,
     pub routing_group_scope: Option<RoutingGroupFilter>,
     pub routing_group_match: bool,
-    pub group_id_hash: Option<String>,
-    pub group_type: Option<PricingGroupType>,
-    pub effective_multiplier_source: Option<String>,
-    pub effective_multiplier_confidence: Option<f64>,
-    pub scheduler_score: Option<f64>,
-    pub scheduler_factors: Vec<String>,
     pub top_k_rank: Option<i64>,
     pub slot_result: Option<String>,
 }
@@ -505,7 +517,7 @@ pub struct RouteSimulationResult {
     pub policy: RoutingPolicy,
     pub max_rate_multiplier: Option<f64>,
     pub routing_group_filter: RoutingGroupFilter,
-    pub scheduler_error_code: Option<String>,
+    pub planner_error_code: Option<String>,
     pub candidates: Vec<RouteCandidateExplanation>,
     pub message: String,
 }

@@ -85,12 +85,6 @@
       "reason": "SelectedRoute must require a real capacity lease"
     },
     {
-      "symbol": "RuntimeRoutingCandidate.upstream_base_url",
-      "paths": ["src-tauri/src/models/routing.rs"],
-      "delete_by_task": 25,
-      "reason": "routing/UI facts must not carry full endpoint URL"
-    },
-    {
       "symbol": "credential-bearing route DTOs api_key/api_key_secret",
       "paths": [
         "src-tauri/src/application/routing_engine/routing_types.rs",
@@ -126,23 +120,13 @@
       ],
       "delete_by_task": 24,
       "reason": "pricing/group semantics must come from backend projectors"
-    },
-    {
-      "symbol": "monitoring imports RuntimeRoutingCandidate",
-      "paths": [
-        "src-tauri/src/services/monitoring/runner.rs",
-        "src-tauri/src/services/monitoring/orchestrator_transport.rs",
-        "src-tauri/src/application/monitoring/definition_bridge.rs"
-      ],
-      "delete_by_task": 24,
-      "reason": "monitoring and routing must share operational facts, not candidate DTO"
     }
   ],
   "temporary_allowed_exceptions": [
     {
       "id": "legacy_policy_values_until_migration",
       "owner_task": 10,
-      "scope": "configuration readiness and pre-migration release",
+      "scope": "development readiness before migration cutover",
       "forbidden_uses": ["silent_hierarchical_mapping", "default_multiplier_1", "unbounded_ceiling"]
     }
   ],

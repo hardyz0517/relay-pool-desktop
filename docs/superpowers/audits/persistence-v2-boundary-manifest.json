@@ -18,13 +18,9 @@
       "read_config"
     ],
     "services::proxy::response_body": [
-      "FinalizationOutcome",
-      "LifecycleFinalizationLease",
-      "SelectedAttemptFinalization",
-      "buffered_lifecycle_finalizing_stream",
-      "downstream_disconnected_failure",
-      "lifecycle_finalizing_stream",
-      "lifecycle_finalizing_stream_with_idle_timeout"
+      "dual_terminal_buffered_lifecycle_finalizing_stream",
+      "dual_terminal_lifecycle_finalizing_stream_with_idle_timeout",
+      "downstream_disconnected_failure"
     ]
   },
   "legacy_cycle_baseline": [],
@@ -81,17 +77,17 @@
     },
     {
       "from": "app_composition",
-      "to": "services::channel_monitors",
-      "temporary": false
-    },
-    {
-      "from": "app_composition",
       "to": "services::collectors::drivers",
       "temporary": false
     },
     {
       "from": "app_composition",
       "to": "services::collectors::orchestration",
+      "temporary": false
+    },
+    {
+      "from": "app_composition",
+      "to": "services::monitoring::runner",
       "temporary": false
     },
     {
@@ -356,6 +352,11 @@
     },
     {
       "from": "application::command_facades::capture",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::capture",
       "to": "observability::correlation",
       "temporary": false
     },
@@ -406,7 +407,17 @@
     },
     {
       "from": "application::command_facades::channel_monitoring",
-      "to": "services::channel_monitors",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::channel_monitoring",
+      "to": "services::monitoring::runner",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::channel_status",
+      "to": "models::monitoring",
       "temporary": false
     },
     {
@@ -417,6 +428,31 @@
     {
       "from": "application::command_facades::data_directory",
       "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::draft_jobs",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::draft_jobs",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::draft_jobs",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::draft_jobs",
+      "to": "services::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::local_proxy",
+      "to": "application::request_lifecycle::ports",
       "temporary": false
     },
     {
@@ -437,6 +473,46 @@
     {
       "from": "application::command_facades::local_proxy",
       "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::collectors",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::collectors::orchestration",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::collectors::output",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::provider_drafts",
+      "to": "services::remote_keys",
       "temporary": false
     },
     {
@@ -467,6 +543,26 @@
     {
       "from": "application::command_facades::remote_keys",
       "to": "services::remote_keys",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::routing",
+      "to": "application::queries::operational_detail",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::routing",
+      "to": "application::queries::request_decision_trace",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::routing",
+      "to": "application::queries::routing_runtime",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::routing",
+      "to": "application::queries::routing_workspace",
       "temporary": false
     },
     {
@@ -511,7 +607,12 @@
     },
     {
       "from": "application::command_facades::station_key_connectivity",
-      "to": "outbound",
+      "to": "application::connectivity_probe",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::station_key_connectivity",
+      "to": "background_tasks",
       "temporary": false
     },
     {
@@ -525,6 +626,11 @@
       "temporary": false
     },
     {
+      "from": "application::credentials",
+      "to": "application::operational_facts::target_resolver",
+      "temporary": false
+    },
+    {
       "from": "application::data_directory",
       "to": "background_tasks",
       "temporary": false
@@ -532,6 +638,296 @@
     {
       "from": "application::data_directory",
       "to": "observability::correlation",
+      "temporary": false
+    },
+    {
+      "from": "application::health_transitions",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "application::health_transitions",
+      "to": "persistence::stores::health_observation_store",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::commands",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::commands",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::definition_bridge",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::definition_bridge",
+      "to": "application::queries::routing_runtime",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::definition_bridge",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::definition_bridge",
+      "to": "persistence::stores::monitoring::definitions",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::orchestrator",
+      "to": "application::monitoring::commands",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::orchestrator",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::orchestrator",
+      "to": "application::monitoring::recorder",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::orchestrator",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::planner",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::planner",
+      "to": "services::monitoring::adapters::protocol_auto",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::planner",
+      "to": "services::monitoring::profiles::registry",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::queries",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::queries",
+      "to": "persistence::stores::monitoring::status_read_repository",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::recorder",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::recorder",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "application::monitoring::definition_bridge",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "application::monitoring::recorder",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "persistence::stores::legacy_monitor_run_store",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "persistence::stores::monitoring::budgets",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "persistence::stores::monitoring::definitions",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "persistence::stores::monitoring::executions",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::service",
+      "to": "persistence::stores::monitoring::retention",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::write_path",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::write_path",
+      "to": "application::monitoring::recorder",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::write_path",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::write_path",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::write_path",
+      "to": "persistence::stores::monitoring::executions",
+      "temporary": false
+    },
+    {
+      "from": "application::monitoring::write_path",
+      "to": "persistence::stores::monitoring::retention",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::assembler",
+      "to": "models::operational",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::balance_projector",
+      "to": "models::operational",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::candidate_projector",
+      "to": "application::operational_facts::pricing_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::candidate_projector",
+      "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::capability_projector",
+      "to": "models::operational",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::group_projector",
+      "to": "models::operational",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::health_projector",
+      "to": "models::operational",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::multiplier_projector",
+      "to": "models::operational",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::reader",
+      "to": "application::operational_facts::assembler",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::runtime_candidate_adapter",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::runtime_candidate_adapter",
+      "to": "application::operational_facts::pricing_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::runtime_candidate_adapter",
+      "to": "application::routing_engine::capacity",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::runtime_candidate_adapter",
+      "to": "application::routing_engine::controller",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::runtime_candidate_adapter",
+      "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::runtime_candidate_adapter",
+      "to": "models::operational",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::target_resolver",
+      "to": "application::routing_engine::capacity",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::target_resolver",
+      "to": "models::station_endpoints",
+      "temporary": false
+    },
+    {
+      "from": "application::pricing",
+      "to": "application::operational_facts::pricing_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::provider_drafts",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "application::provider_drafts",
+      "to": "persistence::stores::provider_draft_store",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::channel_status",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::channel_status",
+      "to": "services::monitoring::profiles::registry",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::operational_detail",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::routing_workspace",
+      "to": "application::operational_facts::candidate_projector",
       "temporary": false
     },
     {
@@ -547,6 +943,46 @@
     {
       "from": "application::request_finalization",
       "to": "application::request_lifecycle::request",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization",
+      "to": "persistence::stores::request_lifecycle_reconciliation",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization",
+      "to": "persistence::stores::request_outcome_store",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization::effect_planner",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization::effect_planner",
+      "to": "application::request_finalization::outcome",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization::outcome",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization::outcome",
+      "to": "application::request_lifecycle::delivery",
+      "temporary": false
+    },
+    {
+      "from": "application::request_finalization::outcome_orchestrator",
+      "to": "application::request_finalization::outcome",
       "temporary": false
     },
     {
@@ -571,7 +1007,47 @@
     },
     {
       "from": "application::routing",
-      "to": "application::routing_engine::router",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::operational_facts::pricing_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::operational_facts::runtime_candidate_adapter",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::operational_facts::target_resolver",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::queries::operational_detail",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::queries::routing_runtime",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::queries::routing_workspace",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::routing_engine::model_alias",
+      "temporary": false
+    },
+    {
+      "from": "application::routing",
+      "to": "application::routing_engine::request",
       "temporary": false
     },
     {
@@ -586,37 +1062,67 @@
     },
     {
       "from": "application::routing",
-      "to": "application::routing_engine::scheduler",
+      "to": "application::routing_engine::selector",
       "temporary": false
     },
     {
-      "from": "application::routing_engine::router",
-      "to": "application::routing_engine::routing_health",
+      "from": "application::routing",
+      "to": "models::health",
       "temporary": false
     },
     {
-      "from": "application::routing_engine::router",
-      "to": "application::routing_engine::routing_policy",
+      "from": "application::routing_engine::controller",
+      "to": "application::operational_facts::candidate_projector",
       "temporary": false
     },
     {
-      "from": "application::routing_engine::router",
-      "to": "application::routing_engine::routing_types",
+      "from": "application::routing_engine::controller",
+      "to": "application::routing_engine::capacity",
       "temporary": false
     },
     {
-      "from": "application::routing_engine::router",
-      "to": "application::routing_engine::scheduler",
+      "from": "application::routing_engine::controller",
+      "to": "application::routing_engine::request",
       "temporary": false
     },
     {
-      "from": "application::routing_engine::routing_policy",
-      "to": "application::routing_engine::routing_health",
+      "from": "application::routing_engine::controller",
+      "to": "application::routing_engine::selector",
       "temporary": false
     },
     {
-      "from": "application::routing_engine::routing_policy",
-      "to": "application::routing_engine::routing_types",
+      "from": "application::routing_engine::eligibility",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::eligibility",
+      "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::planner",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::planner",
+      "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::planner",
+      "to": "application::routing_engine::selector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::routing_failure",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::routing_snapshot",
+      "to": "application::operational_facts::candidate_projector",
       "temporary": false
     },
     {
@@ -627,6 +1133,26 @@
     {
       "from": "application::routing_engine::routing_snapshot",
       "to": "application::routing_engine::routing_types",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::routing_types",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::selector",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::selector",
+      "to": "application::operational_facts::pricing_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::routing_engine::selector",
+      "to": "application::routing_engine::request",
       "temporary": false
     },
     {
@@ -801,6 +1327,11 @@
     },
     {
       "from": "commands::capture",
+      "to": "ipc::dto::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "commands::capture",
       "to": "ipc::dto::station_collector_operations",
       "temporary": false
     },
@@ -842,6 +1373,11 @@
     {
       "from": "commands::channel_monitoring",
       "to": "ipc::dto::channel_monitor_mutations",
+      "temporary": false
+    },
+    {
+      "from": "commands::channel_monitoring",
+      "to": "ipc::dto::channel_monitor_operations",
       "temporary": false
     },
     {
@@ -1055,6 +1591,21 @@
       "temporary": false
     },
     {
+      "from": "commands::provider_drafts",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::provider_drafts",
+      "to": "ipc::dto::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "commands::provider_drafts",
+      "to": "models::remote_keys",
+      "temporary": false
+    },
+    {
       "from": "commands::request_logs",
       "to": "application::command_facades",
       "temporary": false
@@ -1170,6 +1721,11 @@
       "temporary": false
     },
     {
+      "from": "commands::station_key_connectivity",
+      "to": "services::endpoint_ping",
+      "temporary": false
+    },
+    {
       "from": "commands::stations",
       "to": "application::command_facades",
       "temporary": false
@@ -1226,27 +1782,7 @@
     },
     {
       "from": "ipc::dto::channel_monitor_operations",
-      "to": "ipc::dto::change_logs",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "ipc::dto::channel_monitor_reads",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "ipc::dto::station_keys",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "models::routing",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::channel_monitor_operations",
-      "to": "models::shared_capabilities",
+      "to": "models::monitoring",
       "temporary": false
     },
     {
@@ -1256,7 +1792,7 @@
     },
     {
       "from": "ipc::dto::channel_monitor_reads",
-      "to": "models::shared_capabilities",
+      "to": "models::monitoring",
       "temporary": false
     },
     {
@@ -1320,6 +1856,16 @@
       "temporary": false
     },
     {
+      "from": "ipc::dto::provider_drafts",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::provider_drafts",
+      "to": "services::collectors::output",
+      "temporary": false
+    },
+    {
       "from": "ipc::dto::proxy_workspace_reads",
       "to": "application::routing_engine::routing_types",
       "temporary": false
@@ -1327,6 +1873,26 @@
     {
       "from": "ipc::dto::proxy_workspace_reads",
       "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_health_reads",
+      "to": "application::queries::operational_detail",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_health_reads",
+      "to": "application::queries::request_decision_trace",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_health_reads",
+      "to": "application::queries::routing_runtime",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::routing_health_reads",
+      "to": "application::queries::routing_workspace",
       "temporary": false
     },
     {
@@ -1382,6 +1948,16 @@
     {
       "from": "ipc::dto::station_collector_operations",
       "to": "models::collector",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "application::command_facades",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::station_keys",
+      "to": "application::connectivity_probe",
       "temporary": false
     },
     {
@@ -1486,11 +2062,6 @@
     },
     {
       "from": "lib",
-      "to": "services::channel_monitors",
-      "temporary": false
-    },
-    {
-      "from": "lib",
       "to": "services::data_store",
       "temporary": false
     },
@@ -1521,6 +2092,16 @@
     },
     {
       "from": "lib",
+      "to": "services::monitoring::maintenance",
+      "temporary": false
+    },
+    {
+      "from": "lib",
+      "to": "services::monitoring::runner",
+      "temporary": false
+    },
+    {
+      "from": "lib",
       "to": "services::proxy::runtime",
       "temporary": false
     },
@@ -1537,11 +2118,6 @@
     {
       "from": "lib",
       "to": "services::station_collectors",
-      "temporary": false
-    },
-    {
-      "from": "models",
-      "to": "models::channel_monitors",
       "temporary": false
     },
     {
@@ -1690,18 +2266,53 @@
       "temporary": false
     },
     {
+      "from": "persistence::maintenance::request_log_url_sanitizer",
+      "to": "services::time",
+      "temporary": false
+    },
+    {
       "from": "persistence::stores::credential_store",
       "to": "models::secrets",
       "temporary": false
     },
     {
-      "from": "persistence::stores::monitoring_store",
-      "to": "models::secrets",
+      "from": "persistence::stores::health_observation_store",
+      "to": "models::health",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::monitoring::status_read_repository",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::operational_facts::queries",
+      "to": "application::operational_facts",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::operational_facts::queries",
+      "to": "application::operational_facts::assembler",
       "temporary": false
     },
     {
       "from": "persistence::stores::pricing_store",
       "to": "models::secrets",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::provider_draft_store",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::provider_draft_store",
+      "to": "persistence::stores::credential_store",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::routing_store",
+      "to": "models::station_endpoints",
       "temporary": false
     },
     {
@@ -1760,101 +2371,6 @@
       "temporary": false
     },
     {
-      "from": "services::channel_monitors",
-      "to": "application::app_services",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::credentials",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::error",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::monitoring",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::pagination",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::pricing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "application::routing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "background_tasks",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "models::channel_monitors",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "models::pricing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "models::routing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "outbound",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "persistence",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::pricing",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::proxy::observability",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::station_endpoints",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors",
-      "to": "services::time",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors::probe",
-      "to": "observability::correlation",
-      "temporary": false
-    },
-    {
-      "from": "services::channel_monitors::probe",
-      "to": "outbound",
-      "temporary": false
-    },
-    {
       "from": "services::collectors",
       "to": "application::collectors",
       "temporary": false
@@ -1896,6 +2412,11 @@
     },
     {
       "from": "services::collectors",
+      "to": "models::provider_drafts",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors",
       "to": "models::remote_keys",
       "temporary": false
     },
@@ -1931,11 +2452,6 @@
     },
     {
       "from": "services::collectors",
-      "to": "services::remote_keys",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors",
       "to": "services::secrets::mask",
       "temporary": false
     },
@@ -1947,6 +2463,11 @@
     {
       "from": "services::collectors",
       "to": "services::time",
+      "temporary": false
+    },
+    {
+      "from": "services::collectors::collector_apply",
+      "to": "observability::correlation",
       "temporary": false
     },
     {
@@ -2135,6 +2656,231 @@
       "temporary": false
     },
     {
+      "from": "services::monitoring::adapters::anthropic_messages",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::contract",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::gemini_native",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::generic_openai",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::http_mapping",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::openai_chat",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::openai_responses",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::protocol_auto",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::sse",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::adapters::xai_grok",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::executor",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::executor",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::executor",
+      "to": "services::monitoring::profiles::registry",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::maintenance",
+      "to": "application::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::maintenance",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::orchestrator_transport",
+      "to": "application::monitoring::orchestrator",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::orchestrator_transport",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::orchestrator_transport",
+      "to": "application::queries::routing_runtime",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::orchestrator_transport",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::orchestrator_transport",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::profiles",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::profiles::claude_code",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::profiles::codex_cli",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::profiles::gemini_cli",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::profiles::registry",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::profiles::standard",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::request_shape",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::app_services",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::credentials",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::monitoring::commands",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::monitoring::definition_bridge",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::monitoring::orchestrator",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::monitoring::planner",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::monitoring::recorder",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::pagination",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::queries::routing_runtime",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "application::routing",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runner",
+      "to": "services::endpoint_ping",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::runtime",
+      "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::transport",
+      "to": "models::monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::monitoring::transport",
+      "to": "outbound",
+      "temporary": false
+    },
+    {
       "from": "services::outbound",
       "to": "models::proxy",
       "temporary": false
@@ -2166,22 +2912,12 @@
     },
     {
       "from": "services::proxy",
-      "to": "application::routing_engine::router",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy",
       "to": "application::routing_engine::routing_failure",
       "temporary": false
     },
     {
       "from": "services::proxy",
       "to": "application::routing_engine::routing_types",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy",
-      "to": "application::routing_engine::scheduler",
       "temporary": false
     },
     {
@@ -2231,16 +2967,6 @@
     },
     {
       "from": "services::proxy",
-      "to": "services::secrets",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy",
-      "to": "services::secrets::crypto",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy",
       "to": "services::secrets::mask",
       "temporary": false
     },
@@ -2252,6 +2978,76 @@
     {
       "from": "services::proxy",
       "to": "services::time",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::adapters::openai",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::adapters::responses",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::attempt",
+      "to": "application::request_finalization::outcome",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::attempt",
+      "to": "application::request_finalization::outcome_orchestrator",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::attempt",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::endpoint_adapter",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::error",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::operational_facts::pricing_projector",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::operational_facts::target_resolver",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::routing_engine::capacity",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::routing_engine::controller",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::routing_engine::model_alias",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::routing_engine::selector",
       "temporary": false
     },
     {
@@ -2305,6 +3101,36 @@
       "temporary": false
     },
     {
+      "from": "services::proxy::routing_repository",
+      "to": "application::operational_facts::candidate_projector",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::routing_repository",
+      "to": "application::operational_facts::runtime_candidate_adapter",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::routing_repository",
+      "to": "application::operational_facts::target_resolver",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::routing_repository",
+      "to": "application::routing_engine::controller",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::routing_repository",
+      "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::runtime",
+      "to": "application::operational_facts::target_resolver",
+      "temporary": false
+    },
+    {
       "from": "services::proxy::runtime",
       "to": "observability::correlation",
       "temporary": false
@@ -2330,8 +3156,8 @@
       "temporary": false
     },
     {
-      "from": "services::remote_keys",
-      "to": "application::credentials",
+      "from": "services::proxy::upstream",
+      "to": "application::operational_facts::target_resolver",
       "temporary": false
     },
     {
@@ -2461,7 +3287,17 @@
     },
     {
       "from": "services::station_collectors",
+      "to": "application::settings",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
       "to": "background_tasks",
+      "temporary": false
+    },
+    {
+      "from": "services::station_collectors",
+      "to": "observability::correlation",
       "temporary": false
     },
     {
@@ -2497,6 +3333,91 @@
     {
       "from": "services::updater",
       "to": "services::outbound",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "app_composition",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "application::app_services",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "application::pagination",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "models::pricing",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "models::proxy",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "models::routing",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "models::settings",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "models::station_keys",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "models::stations",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "persistence::runtime",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "services",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "services::data_store::data_directory_port",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "services::proxy::lifecycle",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "services::proxy::routing_repository",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "services::proxy::runtime",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "services::proxy::startup",
+      "temporary": false
+    },
+    {
+      "from": "test_support::routing_loopback",
+      "to": "services::secrets::crypto",
       "temporary": false
     }
   ],

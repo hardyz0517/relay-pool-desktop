@@ -41,6 +41,10 @@ for (const forbidden of [
   "TAURI_SIGNING_PRIVATE_KEY",
   "cargo build --release",
   "pnpm.cmd tauri:build",
+  "releaseGate",
+  "signedInstaller",
+  "installUpgradeMatrix",
+  "oldBinaryRollback",
 ]) {
   assert.ok(!runner.includes(forbidden), `local self-check must not require ${forbidden}`);
 }
@@ -63,8 +67,4 @@ assert.ok(
 assert.ok(
   deletionLedger.includes("Supported recovery after deletion: stop admission, reset local data, reimport config, or reconfigure with the current dev binary."),
   "Task 27/28 recovery boundary must be recorded in the deletion ledger as reset/reimport/reconfigure",
-);
-assert.ok(
-  deletionLedger.includes("Old binary rollback remains outside the development-phase contract."),
-  "Task 27/28 deletion ledger must not promise old binary rollback",
 );

@@ -6,6 +6,7 @@
 use tokio::task::JoinHandle;
 
 use super::{
+    finalization::FinalizationOutcome,
     lifecycle::{
         attempt::{AttemptContext, AttemptTerminal, AttemptTerminalRecord},
         delivery::DeliveryTerminal,
@@ -16,7 +17,6 @@ use super::{
         },
     },
     limits::RequestLease,
-    response_body::FinalizationOutcome,
 };
 use crate::{
     application::request_finalization::{
