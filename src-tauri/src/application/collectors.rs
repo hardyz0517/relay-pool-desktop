@@ -33,8 +33,7 @@ use crate::{
             collector_store::{
                 BalanceWrite, CollectorRunFinish, CollectorRunStart, CollectorSnapshotWrite,
                 CollectorStore, CollectorTaskStateWrite, GroupState, GroupTransition, GroupWrite,
-                RateTransition, RateWrite, StationGroupBindingWrite,
-                StoredCollectorApply,
+                RateTransition, RateWrite, StationGroupBindingWrite, StoredCollectorApply,
             },
             station_catalog::StationCatalogStore,
         },
@@ -959,7 +958,7 @@ fn validate_request(request: &CollectorApplyRequest) -> Result<(), ApplicationEr
         || request.adapter.trim().is_empty()
         || !matches!(
             request.task_type.as_str(),
-                "detect" | "balance" | "groups" | "full"
+            "detect" | "balance" | "groups" | "full"
         )
         || !matches!(
             request.status.as_str(),

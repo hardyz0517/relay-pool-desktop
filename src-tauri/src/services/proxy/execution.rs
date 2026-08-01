@@ -1675,9 +1675,7 @@ mod tests {
             credentials::{
                 ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
             },
-            operational_facts::target_resolver::{
-                ExecutionTargetHandle, ExecutionTargetRef,
-            },
+            operational_facts::target_resolver::{ExecutionTargetHandle, ExecutionTargetRef},
             routing_engine::request::RouteRequestFacts,
         },
         models::{

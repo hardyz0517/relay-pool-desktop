@@ -658,11 +658,12 @@ mod tests {
         .await
         .expect("sub2api model facts");
         assert_eq!(sub2api_model_facts, 1);
-        let removed_model_task_state: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM collector_task_state WHERE task_type = 'models'")
-                .fetch_one(&pool)
-                .await
-                .expect("models task state");
+        let removed_model_task_state: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM collector_task_state WHERE task_type = 'models'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("models task state");
         assert_eq!(removed_model_task_state, 0);
         let removed_model_events: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM change_events WHERE event_type IN ('model_added', 'model_removed')",
@@ -671,11 +672,12 @@ mod tests {
         .await
         .expect("model events");
         assert_eq!(removed_model_events, 0);
-        let model_setting_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM settings WHERE key = 'model_list_interval_minutes'")
-                .fetch_one(&pool)
-                .await
-                .expect("model setting");
+        let model_setting_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM settings WHERE key = 'model_list_interval_minutes'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("model setting");
         assert_eq!(model_setting_count, 0);
         pool.close().await;
 

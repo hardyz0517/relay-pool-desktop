@@ -965,7 +965,8 @@ async fn collect_today_dashboard_usage(
     let now = unix_now_seconds();
     let today_start = local_today_start_timestamp(now);
     let Ok((dashboard, evidence)) =
-        collect_dashboard_usage_window(context, website_url, today_start, now, quota_per_unit).await
+        collect_dashboard_usage_window(context, website_url, today_start, now, quota_per_unit)
+            .await
     else {
         return (None, Vec::new());
     };
@@ -2156,8 +2157,12 @@ mod tests {
         assert!(requests[0].starts_with("GET /api/status "));
         assert!(requests[1].starts_with("GET /api/user/self "));
         assert!(requests[2].starts_with("GET /api/data/self?"));
-        assert!(requests.iter().all(|request| !request.contains("/api/user/models")));
-        assert!(requests.iter().all(|request| !request.contains("/api/log/self")));
+        assert!(requests
+            .iter()
+            .all(|request| !request.contains("/api/user/models")));
+        assert!(requests
+            .iter()
+            .all(|request| !request.contains("/api/log/self")));
         assert_eq!(balance.today_request_count, Some(2));
         assert_eq!(balance.today_consumption, Some(0.75));
         assert_eq!(balance.today_token_count, Some(49567));
@@ -2221,9 +2226,10 @@ mod tests {
         let secrets = TestSecretAccessor("newapi-access-token");
         let context = test_context(&server.base_url, &secrets, &outbound);
 
-        let (window, _) = collect_dashboard_usage_window(&context, &server.base_url, 0, 1, Some(500000.0))
-            .await
-            .expect("dashboard window");
+        let (window, _) =
+            collect_dashboard_usage_window(&context, &server.base_url, 0, 1, Some(500000.0))
+                .await
+                .expect("dashboard window");
         server.finish();
 
         assert_eq!(window.request_count, Some(3));
@@ -2237,7 +2243,8 @@ mod tests {
         assert!(dashboard_usage_items(&json!({
             "success": true,
             "data": [{ "count": 1 }]
-        })).is_empty());
+        }))
+        .is_empty());
         assert!(dashboard_usage_items(&json!({ "count": 1 })).is_empty());
     }
     #[test]

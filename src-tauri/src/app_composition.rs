@@ -207,10 +207,7 @@ mod tests {
         background_tasks::{BlockingExecutorConfig, OperationRegistryConfig, TaskId},
         outbound::{AsyncOutboundClientConfig, OutboundHeaderPolicy, TimeoutPolicy},
         runtime_composition::RuntimeCompositionError,
-        services::collectors::{
-            contract::ProviderKind,
-            drivers::REQUIRED_PROVIDER_KINDS,
-        },
+        services::collectors::{contract::ProviderKind, drivers::REQUIRED_PROVIDER_KINDS},
     };
 
     #[test]
