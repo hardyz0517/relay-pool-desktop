@@ -115,10 +115,6 @@ describe("channel status V2 view model", () => {
     const markup = renderToStaticMarkup(createElement(ChannelStatusCardGrid, {
       rows: [view],
       loading: false,
-      actionPending: false,
-      onRunNow: () => undefined,
-      onCancel: () => undefined,
-      onOpenExecution: () => undefined,
     }));
 
     expect(markup).toContain("模型延迟");
@@ -131,6 +127,7 @@ describe("channel status V2 view model", () => {
     expect(markup).toContain("md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4");
     expect(markup).toContain("flex w-full min-w-0 items-end gap-[2px]");
     expect(markup).toContain("h-5");
+    expect(markup).not.toContain("<button");
   });
 
   it.each([

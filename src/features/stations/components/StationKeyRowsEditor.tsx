@@ -1,4 +1,5 @@
 import { Trash2 } from "lucide-react";
+import { StationGroupOptionLabel, StationGroupTriggerLabel } from "@/components/group/StationGroupChip";
 import { Button, SelectControl, SwitchControl } from "@/components/ui";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import { cn } from "@/lib/utils";
@@ -87,9 +88,8 @@ export function StationKeyRowsEditor({
     { value: noGroupValue, label: "无", description: "不绑定分组，手动填写倍率" },
     ...normalizedGroupOptions.map((group) => ({
       value: stationGroupSelectValue(group),
-      label: group.groupName,
-      description:
-        group.rateMultiplier === null ? "未采集倍率" : `${formatMultiplier(group.rateMultiplier)}x`,
+      label: <StationGroupOptionLabel option={group} />,
+      triggerLabel: <StationGroupTriggerLabel option={group} />,
     })),
   ];
 
@@ -169,6 +169,7 @@ export function StationKeyRowsEditor({
                   className={selectClassName}
                   disabled={disabled}
                   menuClassName="text-xs"
+                  menuMinWidth={320}
                   options={selectOptions}
                   value={resolveSelectedGroupValue(row, normalizedGroupOptions)}
                   onChange={(value) => selectGroup(row, value)}

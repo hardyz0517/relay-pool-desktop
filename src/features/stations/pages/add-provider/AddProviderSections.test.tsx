@@ -392,12 +392,13 @@ describe("AddProviderSections", () => {
     const layoutClassNames = [...host.querySelectorAll("div")].flatMap((element) => [
       ...element.classList,
     ]);
-    expect(layoutClassNames).toContain("min-w-[840px]");
+    expect(layoutClassNames).toContain("min-w-[760px]");
     expect(layoutClassNames).not.toContain("min-w-[820px]");
     expect(layoutClassNames).not.toContain("min-w-[1000px]");
     expect(host.textContent).not.toContain("已匹配");
     expect(host.textContent).not.toContain("已关联");
-    expect(host.textContent).toContain("未绑定");
+    expect(host.textContent).not.toContain("未绑定");
+    expect(host.textContent).not.toContain("状态");
     expect(host.textContent).toContain("Key 池");
     expect(host.textContent).toContain("无对应本地 Key");
     expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).not.toBeNull();
@@ -413,12 +414,12 @@ describe("AddProviderSections", () => {
         />,
       ),
     );
-    expect(host.textContent).toContain("已匹配");
+    expect(host.textContent).not.toContain("已匹配");
     expect(host.textContent).toContain("Matched local");
     expect(host.textContent).toContain("已存在");
     expect(
       [...host.querySelectorAll("div")].flatMap((element) => [...element.classList]),
-    ).toContain("min-w-[840px]");
+    ).toContain("min-w-[760px]");
     expect(host.querySelector('button[aria-label*="绑定"]')).toBeNull();
     expect(host.querySelector('button[aria-label*="解除"]')).toBeNull();
 
@@ -455,7 +456,8 @@ describe("AddProviderSections", () => {
       ),
     );
     expect(host.textContent).not.toContain("已导入");
-    expect(host.textContent).toContain("待解绑");
+    expect(host.textContent).not.toContain("待解绑");
+    expect(host.textContent).toContain("正在解除绑定");
     expect(host.textContent).toContain("删除中");
     expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).toBeNull();
     expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除远端 Key Matched remote"]')?.disabled).toBe(true);

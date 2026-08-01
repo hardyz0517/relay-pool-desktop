@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
-import { compactKeyBadges, formatStationBaseUrl, KeyRowContent } from "./KeyPoolRows";
+import { formatStationBaseUrl, KeyRowContent } from "./KeyPoolRows";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,11 +57,32 @@ function keyPoolItem(overrides: Partial<KeyPoolItem> = {}): KeyPoolItem {
 }
 
 describe("KeyPoolRows", () => {
-  it("formats row base URLs and compact badge priority", () => {
+  it("formats row base URLs", () => {
     expect(formatStationBaseUrl("https://api.example/v1/chat")).toBe("https://api.example");
     expect(formatStationBaseUrl("not-a-url///")).toBe("not-a-url");
-    expect(compactKeyBadges(keyPoolItem({ apiKeyPresent: false }), false)[0]?.tone).toBe("error");
-    expect(compactKeyBadges(keyPoolItem({ status: "warning" }), false)[0]?.tone).toBe("warning");
+  });
+
+  it("shows status only when an enabled monitor provides monitoring status", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const item = keyPoolItem();
+
+    await act(async () => root.render(<KeyRowContent item={item} monitor={null} />));
+    expect(host.querySelector('[aria-label="未开启监控 Primary"]')).not.toBeNull();
+    expect(host.textContent).not.toContain("正常");
+
+    await act(async () =>
+      root.render(
+        <KeyRowContent
+          item={item}
+          monitor={{ enabled: true } as never}
+          monitorStatus={{ label: "正常", tone: "healthy" }}
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("正常");
+
+    await act(async () => root.unmount());
   });
 
   it("delegates row switches and icon actions to page handlers", async () => {

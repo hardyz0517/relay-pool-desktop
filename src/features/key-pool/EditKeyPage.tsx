@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, KeyRound, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, ConfirmDialog, EmptyState, IconButton, PageForm, SectionCard, SelectControl, useToast } from "@/components/ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, PageForm, SectionCard, SelectControl, SwitchControl, useToast } from "@/components/ui";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
@@ -11,10 +11,11 @@ import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { keyPoolQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import { cn } from "@/lib/utils";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
-import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
-import { StationGroupOptionLabel } from "@/components/group/StationGroupChip";
+import { StationGroupOptionLabel, StationGroupTriggerLabel } from "@/components/group/StationGroupChip";
 import {
   buildStationGroupOptionsFromCurrentFactsForSelect,
   findMatchingGroupOption,
@@ -48,7 +49,6 @@ type EditKeyFormState = {
   groupBindingId: string;
   groupName: string;
   tierLabel: string;
-  status: StationKeyStatus;
   note: string;
   supportsChatCompletions: boolean;
   supportsResponses: boolean;
@@ -76,7 +76,6 @@ const emptyForm: EditKeyFormState = {
   groupBindingId: "",
   groupName: "",
   tierLabel: "",
-  status: "unchecked",
   note: "",
   supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
   supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
@@ -123,6 +122,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
       .map((option) => ({
         value: option.groupBindingId ?? option.value,
         label: groupOptionLabel(option),
+        triggerLabel: groupTriggerLabel(option),
       })),
     ...currentGroupOption(sourceItem, groupOptions),
   ];
@@ -271,7 +271,6 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
         priority: Number(form.priority),
         tierLabel: form.tierLabel.trim() ? form.tierLabel.trim() : null,
         balanceScope: sourceItem.balanceScope,
-        status: form.status,
         note: form.note.trim() ? form.note.trim() : null,
         groupSelection: groupSelectionFromEditForm(form, sourceItem, groupOptions),
         capabilities: capabilitiesFromEditForm(form),
@@ -400,31 +399,22 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
                       }}
                     />
                   </Field>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="优先级">
-                      <input className={inputClassName} type="number" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} />
-                    </Field>
-                    <Field label="状态">
-                      <SelectControl
-                        ariaLabel="密钥状态"
-                        className={inputClassName}
-                        value={form.status}
-                        options={[
-                          { value: "unchecked", label: "未检测" },
-                          { value: "healthy", label: "正常" },
-                          { value: "warning", label: "警告" },
-                          { value: "error", label: "错误" },
-                          { value: "disabled", label: "禁用" },
-                        ]}
-                        onChange={(status) => setForm({ ...form, status })}
-                      />
-                    </Field>
-                  </div>
+                  <Field label="优先级">
+                    <input className={inputClassName} type="number" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} />
+                  </Field>
                   <Field label="档位">
                     <input className={inputClassName} value={form.tierLabel} onChange={(event) => setForm({ ...form, tierLabel: event.target.value })} />
                   </Field>
-                  <CheckField label="启用" checked={form.enabled} onChange={(checked) => setForm({ ...form, enabled: checked })} />
-                  <CheckField label="仅作为备用密钥" checked={form.onlyUseAsBackup} onChange={(checked) => setForm({ ...form, onlyUseAsBackup: checked })} />
+                  <Field label="启用状态">
+                    <SwitchControl
+                      ariaLabel="启用密钥"
+                      checked={form.enabled}
+                      className="justify-self-start"
+                      offLabel="停用"
+                      onCheckedChange={() => setForm({ ...form, enabled: !form.enabled })}
+                      onLabel="启用"
+                    />
+                  </Field>
                   <Field label="路由标签">
                     <input className={inputClassName} value={form.routingTags} onChange={(event) => setForm({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如：高优先级, 低延迟" />
                   </Field>
@@ -481,7 +471,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
   );
 }
 
-function KeyModelConfigurationEditor({
+export function KeyModelConfigurationEditor({
   defaultModel,
   modelList,
   modelListAction,
@@ -494,7 +484,6 @@ function KeyModelConfigurationEditor({
   onDefaultModelChange: (model: string) => void;
   onModelListChange: (models: string) => void;
 }) {
-  const dataListId = useId();
   const [newModel, setNewModel] = useState("");
   const models = modelLines(modelList);
 
@@ -504,9 +493,6 @@ function KeyModelConfigurationEditor({
       return;
     }
     onModelListChange(addModelToList(modelList, model));
-    if (!defaultModel.trim()) {
-      onDefaultModelChange(model);
-    }
     setNewModel("");
   }
 
@@ -519,18 +505,29 @@ function KeyModelConfigurationEditor({
 
   return (
     <div className="grid gap-4">
-      <Field label="默认模型">
-        <input
-          className={inputClassName}
-          list={dataListId}
-          placeholder="输入模型名称或从列表选择"
-          value={defaultModel}
-          onChange={(event) => onDefaultModelChange(event.target.value)}
-        />
-        <datalist id={dataListId}>
-          {models.map((model) => <option key={model} value={model} />)}
-        </datalist>
-      </Field>
+      <div className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+        <div>默认模型</div>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2">
+          <input
+            aria-label="默认模型"
+            className={`${inputClassName} min-w-0 w-full`}
+            placeholder="输入模型名称或从列表选择"
+            value={defaultModel}
+            onChange={(event) => onDefaultModelChange(event.target.value)}
+          />
+          <SelectControl
+            ariaLabel="从模型列表选择默认模型"
+            className="h-8 w-8 min-w-[2rem] justify-center gap-0 px-0 shadow-none"
+            disabled={models.length === 0}
+            menuAlign="end"
+            menuMinWidth={220}
+            options={models.map((model) => ({ value: model, label: model }))}
+            placeholder={null}
+            value=""
+            onChange={onDefaultModelChange}
+          />
+        </div>
+      </div>
 
       <div className="grid gap-2">
         <div className="flex min-h-5 items-center justify-between gap-2">
@@ -540,51 +537,67 @@ function KeyModelConfigurationEditor({
           </div>
           {modelListAction}
         </div>
-        <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
-          <div className="flex min-w-0 items-center gap-1.5 border-b border-border bg-surface-subtle p-2">
-            <input
-              className={`${inputClassName} min-w-0 flex-1`}
-              placeholder="添加模型"
-              value={newModel}
-              onChange={(event) => setNewModel(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  addModel();
-                }
-              }}
-            />
-            <IconButton label="添加模型" disabled={!newModel.trim()} onClick={addModel}>
-              <Plus className="h-4 w-4" />
-            </IconButton>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <input
+            className={`${inputClassName} min-w-0 flex-1`}
+            placeholder="添加模型"
+            value={newModel}
+            onChange={(event) => setNewModel(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addModel();
+              }
+            }}
+          />
+          <IconButton
+            className="shrink-0 shadow-none"
+            label="添加模型"
+            disabled={!newModel.trim()}
+            variant="outline"
+            onClick={addModel}
+          >
+            <Plus className="h-4 w-4" />
+          </IconButton>
+        </div>
+        {models.length === 0 ? (
+          <div className="flex min-h-12 items-center justify-center border-y border-dashed border-border py-3 text-sm text-muted-foreground">
+            暂无模型
           </div>
-          {models.length === 0 ? (
-            <div className="flex min-h-20 items-center justify-center px-3 py-4 text-sm text-muted-foreground">
-              暂无模型
-            </div>
-          ) : (
-            <div className="grid max-h-60 overflow-y-auto sm:grid-cols-2">
-              {models.map((model) => (
+        ) : (
+          <div aria-label="模型列表" className="flex flex-wrap gap-1.5" role="list">
+            {models.map((model) => {
+              const isDefault = defaultModel.trim().toLowerCase() === model.toLowerCase();
+              return (
                 <div
                   key={model}
-                  className="flex min-w-0 items-center gap-2 border-b border-border px-3 py-1.5 last:border-b-0 sm:odd:border-r"
+                  className={cn(
+                    "group flex h-8 max-w-full items-center gap-1.5 rounded-[6px] border border-border bg-surface-subtle pl-2.5 pr-1 text-foreground transition-colors hover:border-ring/30 hover:bg-hover",
+                    isDefault && "border-info-border bg-info-surface text-info-foreground",
+                  )}
+                  role="listitem"
                 >
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={model}>
+                  <span className="min-w-0 max-w-64 truncate font-mono text-xs" title={model}>
                     {model}
                   </span>
-                  {defaultModel.trim().toLowerCase() === model.toLowerCase() && (
-                    <span className="shrink-0 rounded-[var(--surface-radius)] bg-info-surface px-1.5 py-0.5 text-[11px] font-medium text-info-foreground">
+                  {isDefault && (
+                    <span className="shrink-0 text-[11px] font-medium text-info-foreground">
                       默认
                     </span>
                   )}
-                  <IconButton label={`移除模型 ${model}`} variant="ghost" onClick={() => removeModel(model)}>
+                  <IconButton
+                    className="h-6 w-6 rounded-[5px] text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"
+                    label={`移除模型 ${model}`}
+                    variant="ghost"
+                    onClick={() => removeModel(model)}
+                  >
                     <X className="h-3.5 w-3.5" />
                   </IconButton>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -634,7 +647,6 @@ function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = []): Ed
     groupBindingId: groupBindingValueFromItem(item, options),
     groupName: item.groupName ?? "",
     tierLabel: item.tierLabel ?? "",
-    status: item.status,
     note: item.note ?? "",
     supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
     supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
@@ -752,6 +764,7 @@ function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGrou
     {
       value: sourceItem.groupBindingId,
       label: <StationGroupOptionLabel option={keyPoolItemGroupOption(sourceItem)} suffix="当前" />,
+      triggerLabel: <StationGroupTriggerLabel option={keyPoolItemGroupOption(sourceItem)} suffix="当前" />,
     },
   ];
 }
@@ -776,6 +789,10 @@ function groupNameForEditSelection(
 
 function groupOptionLabel(option: StationGroupOption) {
   return <StationGroupOptionLabel option={option} />;
+}
+
+function groupTriggerLabel(option: StationGroupOption) {
+  return <StationGroupTriggerLabel option={option} />;
 }
 
 function keyPoolItemGroupOption(item: KeyPoolItem) {

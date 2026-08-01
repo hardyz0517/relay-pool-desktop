@@ -37,6 +37,7 @@ describe("KeyEditDialog", () => {
           onStationChange={vi.fn()}
           renderCurrentGroupOption={() => []}
           renderGroupOptionLabel={(option: StationGroupOption) => option.groupName}
+          renderGroupTriggerLabel={(option: StationGroupOption) => option.groupName}
         />,
       ),
     );
@@ -50,6 +51,7 @@ describe("KeyEditDialog", () => {
       ...form,
       name: "Primary Next",
     });
+    expect(document.body.querySelector('[aria-label="密钥状态"]')).toBeNull();
 
     const dialogForm = document.body.querySelector<HTMLFormElement>("#key-pool-edit-form")!;
     await act(async () => dialogForm.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));

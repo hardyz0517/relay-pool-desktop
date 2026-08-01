@@ -20,7 +20,7 @@ type RemoteKeyDiscoveryListProps = {
   onImport: (remoteKey: RemoteStationKey) => void;
 };
 const remoteKeyGridClassName =
-  "grid-cols-[minmax(7rem,1.2fr)_5.5rem_minmax(7rem,0.8fr)_6rem_4.5rem_9rem_6rem_7rem]";
+  "grid-cols-[minmax(7rem,1.2fr)_minmax(7rem,0.8fr)_6rem_4.5rem_9rem_6rem_7rem]";
 
 export function RemoteKeyDiscoveryList({
   keys,
@@ -51,10 +51,9 @@ export function RemoteKeyDiscoveryList({
   return (
     <div className="grid gap-2">
       <div className="overflow-x-auto">
-        <div className="min-w-[840px]">
+        <div className="min-w-[760px]">
           <div className={cn("grid h-7 items-center gap-2 border-b border-border px-1 text-[11px] font-medium text-muted-foreground", remoteKeyGridClassName)}>
             <span>远端名称</span>
-            <span>状态</span>
             <span>密钥</span>
             <span>分组</span>
             <span>倍率</span>
@@ -84,12 +83,6 @@ export function RemoteKeyDiscoveryList({
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
                   </span>
-                  <StatusBadge
-                    tone={isPendingUnbind ? "warning" : isMatched ? "healthy" : identityVerified ? "disabled" : "warning"}
-                    className="h-5 px-1.5 text-[11px]"
-                  >
-                    {isPendingUnbind ? "待解绑" : isMatched ? "已匹配" : identityVerified ? "未绑定" : "未验证"}
-                  </StatusBadge>
                   <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
                     {key.apiKeyMasked || key.apiKeyFingerprint || "未提供"}
                   </span>

@@ -40,10 +40,6 @@ export function ChannelStatusTab() {
         <ChannelStatusCardGrid
           rows={controller.workspaceView.rows}
           loading={controller.statusQuery.isPending}
-          actionPending={controller.isRunningAction}
-          onRunNow={controller.runNow}
-          onCancel={controller.cancel}
-          onOpenExecution={controller.setSelectedExecutionId}
         />
       ) : (
         <ChannelStatusTable

@@ -24,6 +24,7 @@ import { useToast } from "@/components/ui";
 import {
   ConnectivityOperationCancelledError,
 } from "./connectivityOperationController";
+import { keyPoolMonitorStatus } from "./keyPoolMonitorStatus";
 import {
   capabilitiesFromEditForm,
   createFormForStation,
@@ -51,11 +52,12 @@ export function useKeyPoolPageController({
   const queryClient = useQueryClient();
   const keyPoolItemsQuery = useActivityQuery(keyPoolQueryOptions());
   const stationsQuery = useActivityQuery(stationsQueryOptions());
-  const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions());
+  const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions(5_000));
   const connectivityOperation = useConnectivityOperation();
   const stations = stationsQuery.data ?? [];
   const items = keyPoolItemsQuery.data ?? [];
   const monitors = channelMonitoringQuery.data?.monitors ?? [];
+  const channelStatusRows = channelMonitoringQuery.data?.statusWorkspace.rows ?? [];
   const monitorTemplates = channelMonitoringQuery.data?.templates ?? [];
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
@@ -118,6 +120,14 @@ export function useKeyPoolPageController({
     });
     return new Map(entries);
   }, [items, monitors]);
+  const monitorStatusByKey = useMemo(() => {
+    return new Map(
+      Array.from(monitorByKey.entries()).map(([stationKeyId, monitor]) => [
+        stationKeyId,
+        keyPoolMonitorStatus(monitor, channelStatusRows),
+      ]),
+    );
+  }, [channelStatusRows, monitorByKey]);
 
   const stationOptions = useMemo(
     () => stations.map((station) => ({ id: station.id, label: station.name })),
@@ -211,7 +221,7 @@ export function useKeyPoolPageController({
       await invalidateKeyPoolQueries(false);
       toast.success(item.enabled ? "密钥已禁用" : "密钥已启用");
     } catch (requestError) {
-      toast.error("更新密钥状态失败", readError(requestError));
+      toast.error("更新密钥调度失败", readError(requestError));
     } finally {
       setSaving(false);
     }
@@ -493,7 +503,6 @@ export function useKeyPoolPageController({
         priority: Number(editForm.priority),
         tierLabel: editForm.tierLabel.trim() ? editForm.tierLabel.trim() : null,
         balanceScope: editingItem.balanceScope,
-        status: editForm.status,
         note: editForm.note.trim() ? editForm.note.trim() : null,
         groupSelection: groupSelectionFromEditForm(editForm, editingItem, groupOptionsForEdit),
         capabilities: capabilitiesFromEditForm(editForm),
@@ -545,6 +554,7 @@ export function useKeyPoolPageController({
     groupOptionsForEdit,
     loading,
     monitorByKey,
+    monitorStatusByKey,
     monitoringKeyId,
     pendingDeleteItem,
     query,

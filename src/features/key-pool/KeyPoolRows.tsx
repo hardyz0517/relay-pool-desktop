@@ -2,27 +2,11 @@ import type { DraggableAttributes } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Activity, Edit3, GripVertical, KeyRound, Loader2, Route, Trash2 } from "lucide-react";
-import { IconButton, StatusBadge, SwitchControl, type StatusTone } from "@/components/ui";
-import { parseTimestampLikeDate } from "@/lib/time";
+import { IconButton, StatusBadge, SwitchControl } from "@/components/ui";
 import type { ChannelMonitor } from "@/lib/types/channelMonitors";
-import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
-
-const statusTone: Record<StationKeyStatus, StatusTone> = {
-  unchecked: "info",
-  healthy: "healthy",
-  warning: "warning",
-  error: "error",
-  disabled: "disabled",
-};
-
-const statusLabels: Record<StationKeyStatus, string> = {
-  unchecked: "未检测",
-  healthy: "正常",
-  warning: "警告",
-  error: "错误",
-  disabled: "禁用",
-};
+import type { KeyPoolMonitorStatus } from "./keyPoolMonitorStatus";
 
 export const keyPoolGridClassName =
   "grid min-w-[780px] grid-cols-[2rem_minmax(18rem,1fr)_7rem_5rem_5rem_12rem_5.5rem] items-center gap-3";
@@ -32,6 +16,7 @@ export function SortableKeyRow({
   dragEnabled,
   testing,
   monitor,
+  monitorStatus,
   monitoring,
   onEdit,
   onTestConnectivity,
@@ -44,6 +29,7 @@ export function SortableKeyRow({
   dragEnabled: boolean;
   testing: boolean;
   monitor: ChannelMonitor | null;
+  monitorStatus: KeyPoolMonitorStatus | null;
   monitoring: boolean;
   onEdit: (item: KeyPoolItem) => void;
   onTestConnectivity: (item: KeyPoolItem) => void;
@@ -55,7 +41,7 @@ export function SortableKeyRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: !dragEnabled });
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("will-change-transform", isDragging && "opacity-35")}>
-      <KeyRowContent item={item} testing={testing} monitor={monitor} monitoring={monitoring} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onToggleMonitoring={onToggleMonitoring} onOpenRoutingImpact={onOpenRoutingImpact} onDelete={onDelete} />
+      <KeyRowContent item={item} testing={testing} monitor={monitor} monitorStatus={monitorStatus} monitoring={monitoring} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onToggleMonitoring={onToggleMonitoring} onOpenRoutingImpact={onOpenRoutingImpact} onDelete={onDelete} />
     </div>
   );
 }
@@ -65,6 +51,7 @@ export function KeyRowContent({
   overlay = false,
   testing = false,
   monitor,
+  monitorStatus = null,
   monitoring = false,
   dragDisabled = false,
   dragAttributes,
@@ -80,6 +67,7 @@ export function KeyRowContent({
   overlay?: boolean;
   testing?: boolean;
   monitor?: ChannelMonitor | null;
+  monitorStatus?: KeyPoolMonitorStatus | null;
   monitoring?: boolean;
   dragDisabled?: boolean;
   dragAttributes?: DraggableAttributes;
@@ -91,10 +79,6 @@ export function KeyRowContent({
   onOpenRoutingImpact?: (item: KeyPoolItem) => void;
   onDelete?: (item: KeyPoolItem) => void;
 }) {
-  const cooldownActive = isFutureTime(item.cooldownUntil);
-  const badges = compactKeyBadges(item, cooldownActive);
-  const status = keyStatusView(item, badges);
-
   return (
     <div
       className={cn(
@@ -138,8 +122,10 @@ export function KeyRowContent({
             <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
             测试中
           </span>
+        ) : monitorStatus ? (
+          <StatusBadge tone={monitorStatus.tone}>{monitorStatus.label}</StatusBadge>
         ) : (
-          <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+          <span aria-label={`未开启监控 ${item.name}`} className="text-sm text-muted-foreground">—</span>
         )}
       </div>
 
@@ -229,43 +215,6 @@ export function TableHeadCell({
   );
 }
 
-function keyStatusView(
-  item: KeyPoolItem,
-  badges: Array<{ label: string; tone: StatusTone }>,
-) {
-  if (badges[0]) {
-    return badges[0];
-  }
-  if (item.status === "healthy") {
-    return { label: "正常", tone: "healthy" as const };
-  }
-  return { label: "未检测", tone: "info" as const };
-}
-
-export function compactKeyBadges(item: KeyPoolItem, cooldownActive: boolean) {
-  const badges: Array<{ label: string; tone: StatusTone }> = [];
-  if (!item.apiKeyPresent) {
-    badges.push({ label: "缺少密钥", tone: "error" });
-    return badges;
-  }
-  if (item.status === "disabled" && item.enabled) {
-    badges.push({ label: "状态禁用", tone: "disabled" });
-    return badges;
-  }
-  if (item.status === "warning" || item.status === "error") {
-    badges.push({ label: statusLabels[item.status], tone: statusTone[item.status] });
-    return badges;
-  }
-  if (cooldownActive) {
-    badges.push({ label: "冷却中", tone: "warning" });
-    return badges;
-  }
-  if (item.onlyUseAsBackup) {
-    badges.push({ label: "备用", tone: "warning" });
-  }
-  return badges;
-}
-
 export function formatStationBaseUrl(value: string) {
   try {
     const url = new URL(value);
@@ -273,12 +222,4 @@ export function formatStationBaseUrl(value: string) {
   } catch {
     return value.replace(/\/+$/, "");
   }
-}
-
-function isFutureTime(value: string | null) {
-  if (!value) {
-    return false;
-  }
-  const date = parseTimestampLikeDate(value);
-  return !Number.isNaN(date.getTime()) && date.getTime() > Date.now();
 }

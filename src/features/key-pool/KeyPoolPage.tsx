@@ -8,7 +8,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Plus, Search } from "lucide-react";
-import { StationGroupOptionLabel } from "@/components/group/StationGroupChip";
+import { StationGroupOptionLabel, StationGroupTriggerLabel } from "@/components/group/StationGroupChip";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, EmptyState, SelectControl, StatusBadge } from "@/components/ui";
 import { findMatchingGroupOption } from "@/lib/groupOptionViewModels";
@@ -63,6 +63,7 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
     handleToggleMonitoring,
     loading,
     monitorByKey,
+    monitorStatusByKey,
     monitoringKeyId,
     pendingDeleteItem,
     query,
@@ -177,6 +178,7 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
                       testing={testingKeyId === item.id}
                       onToggleEnabled={handleToggleEnabled}
                       monitor={monitorByKey.get(item.id) ?? null}
+                      monitorStatus={monitorStatusByKey.get(item.id) ?? null}
                       monitoring={monitoringKeyId === item.id}
                       onToggleMonitoring={handleToggleMonitoring}
                       onOpenRoutingImpact={
@@ -215,6 +217,7 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
           onStationChange={creatingKey ? handleCreateStationChange : undefined}
           renderCurrentGroupOption={currentGroupOption}
           renderGroupOptionLabel={groupOptionLabel}
+          renderGroupTriggerLabel={groupTriggerLabel}
         />
       )}
 
@@ -252,12 +255,17 @@ function currentGroupOption(sourceItem: KeyPoolItem | null, options: StationGrou
     {
       value: sourceItem.groupBindingId,
       label: <StationGroupOptionLabel option={keyPoolItemGroupOption(sourceItem)} suffix="当前" />,
+      triggerLabel: <StationGroupTriggerLabel option={keyPoolItemGroupOption(sourceItem)} suffix="当前" />,
     },
   ];
 }
 
 function groupOptionLabel(option: StationGroupOption) {
   return <StationGroupOptionLabel option={option} />;
+}
+
+function groupTriggerLabel(option: StationGroupOption) {
+  return <StationGroupTriggerLabel option={option} />;
 }
 
 function keyPoolItemGroupOption(item: KeyPoolItem): StationGroupOption {

@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
-import { Eye, Gauge, Play, Square, Timer } from "lucide-react";
+import { Gauge, Timer } from "lucide-react";
 import { Sub2ApiPlatformIcon } from "@/components/group/Sub2ApiPlatformIcon";
-import { EmptyState, IconButton, StatusBadge } from "@/components/ui";
+import { EmptyState, StatusBadge } from "@/components/ui";
 import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { cn } from "@/lib/utils";
 import {
@@ -14,10 +14,6 @@ import { StatusTrend } from "./StatusTrend";
 type ChannelStatusCardGridProps = {
   rows: ChannelStatusRowView[];
   loading: boolean;
-  actionPending: boolean;
-  onRunNow: (row: ChannelStatusRowView) => void;
-  onCancel: (executionId: string) => void;
-  onOpenExecution: (executionId: string) => void;
 };
 
 const badgeTone: Record<StatusTone, "healthy" | "warning" | "error" | "disabled" | "info"> = {
@@ -33,10 +29,6 @@ const badgeTone: Record<StatusTone, "healthy" | "warning" | "error" | "disabled"
 export function ChannelStatusCardGrid({
   rows,
   loading,
-  actionPending,
-  onRunNow,
-  onCancel,
-  onOpenExecution,
 }: ChannelStatusCardGridProps) {
   if (rows.length === 0) {
     return (
@@ -53,10 +45,6 @@ export function ChannelStatusCardGrid({
         <ChannelStatusCard
           key={row.rowKey}
           row={row}
-          actionPending={actionPending}
-          onRunNow={onRunNow}
-          onCancel={onCancel}
-          onOpenExecution={onOpenExecution}
         />
       ))}
     </div>
@@ -65,25 +53,14 @@ export function ChannelStatusCardGrid({
 
 type ChannelStatusCardProps = {
   row: ChannelStatusRowView;
-  actionPending: boolean;
-  onRunNow: (row: ChannelStatusRowView) => void;
-  onCancel: (executionId: string) => void;
-  onOpenExecution: (executionId: string) => void;
 };
 
-function ChannelStatusCard({
-  row,
-  actionPending,
-  onRunNow,
-  onCancel,
-  onOpenExecution,
-}: ChannelStatusCardProps) {
-  const executionId = row.runningExecutionId ?? row.latestExecutionId;
+function ChannelStatusCard({ row }: ChannelStatusCardProps) {
   const availabilityHueValue = availabilityHue(row.availabilityPercent);
   const platformClassNames = groupVisualClassNames[row.visualPlatform];
 
   return (
-    <article className="flex h-full min-h-[308px] flex-col rounded-[var(--surface-radius)] border border-border bg-surface p-3.5 shadow-[var(--surface-shadow)]">
+    <article className="flex h-full flex-col rounded-[var(--surface-radius)] border border-border bg-surface p-3.5 shadow-[var(--surface-shadow)]">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">
           <span
@@ -159,37 +136,6 @@ function ChannelStatusCard({
         </div>
       </div>
 
-      <div className="mt-auto flex min-h-12 items-end justify-between gap-3 border-t border-border pt-3">
-        <div className="min-w-0 text-xs text-muted-foreground">
-          <div className="truncate" title={row.monitorName}>{row.monitorName}</div>
-        </div>
-        <div className="flex shrink-0 gap-1">
-          {row.runningExecutionId ? (
-            <IconButton
-              label="取消执行"
-              disabled={actionPending}
-              onClick={() => onCancel(row.runningExecutionId!)}
-            >
-              <Square className="h-4 w-4" />
-            </IconButton>
-          ) : (
-            <IconButton
-              label="立即运行"
-              disabled={actionPending || !row.enabled}
-              onClick={() => onRunNow(row)}
-            >
-              <Play className="h-4 w-4" />
-            </IconButton>
-          )}
-          <IconButton
-            label="查看执行详情"
-            disabled={!executionId}
-            onClick={() => executionId && onOpenExecution(executionId)}
-          >
-            <Eye className="h-4 w-4" />
-          </IconButton>
-        </div>
-      </div>
     </article>
   );
 }

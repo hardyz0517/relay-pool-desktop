@@ -47,10 +47,12 @@ export function StationGroupRateBadge({
   rateMultiplier,
   label,
   fallback = "倍率未知",
+  verbose = false,
 }: StationGroupVisualInput & {
   rateMultiplier?: number | null;
   label?: string;
   fallback?: string;
+  verbose?: boolean;
 }) {
   const visualMeta = groupVisualMetaFor(groupName, rawJsonRedacted, effectiveGroupCategory);
   const visualClassNames = groupVisualClassNames[visualMeta.platform];
@@ -58,12 +60,12 @@ export function StationGroupRateBadge({
     label ??
     (rateMultiplier === null || rateMultiplier === undefined
       ? fallback
-      : `${formatMultiplier(rateMultiplier)}x`);
+      : `${formatMultiplier(rateMultiplier)}x${verbose ? " 倍率" : ""}`);
 
   return (
     <span
       className={cn(
-        "inline-flex h-6 shrink-0 items-center rounded-[calc(var(--surface-radius)-3px)] px-2 text-[11px] font-semibold leading-none",
+        "inline-flex h-6 shrink-0 items-center rounded-full px-2.5 text-[11px] font-semibold leading-none",
         visualClassNames.rateBadge,
       )}
     >
@@ -106,7 +108,7 @@ export function StationGroupInlineBadge({
         <Sub2ApiPlatformIcon platform={visualMeta.platform} className={inlineIconClassName} />
         <span className="truncate">{groupName}</span>
       </span>
-      <span className="inline-flex h-5 shrink-0 items-center rounded-md bg-muted px-1.5 text-[10px] font-semibold leading-none">
+      <span className="inline-flex h-5 shrink-0 items-center rounded-md bg-foreground/10 px-1.5 text-[10px] font-semibold leading-none">
         {rateLabel}
       </span>
     </span>
@@ -114,6 +116,38 @@ export function StationGroupInlineBadge({
 }
 
 export function StationGroupOptionLabel({
+  option,
+  suffix,
+}: {
+  option: StationGroupOptionLike;
+  suffix?: ReactNode;
+}) {
+  const groupName = option.groupName || "当前绑定";
+
+  return (
+    <span className="flex w-full min-w-0 items-center justify-between gap-3">
+      <span className="inline-flex min-w-0 items-center gap-1.5">
+        <StationGroupNameBadge
+          groupName={groupName}
+          rawJsonRedacted={option.rawJsonRedacted}
+          effectiveGroupCategory={option.effectiveGroupCategory}
+        />
+        {suffix ? (
+          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{suffix}</span>
+        ) : null}
+      </span>
+      <StationGroupRateBadge
+        groupName={groupName}
+        rawJsonRedacted={option.rawJsonRedacted}
+        effectiveGroupCategory={option.effectiveGroupCategory}
+        rateMultiplier={option.rateMultiplier}
+        verbose
+      />
+    </span>
+  );
+}
+
+export function StationGroupTriggerLabel({
   option,
   suffix,
 }: {

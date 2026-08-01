@@ -200,9 +200,10 @@ export const pricingComparisonQueryOptions = (refetchInterval: number | false = 
     refetchInterval,
   });
 
-export const channelMonitoringQueryOptions = () =>
+export const channelMonitoringQueryOptions = (refetchInterval: number | false = false) =>
   queryOptions({
     queryKey: queryKeys.channelMonitoring,
     queryFn: loadChannelMonitoringWorkspace,
     staleTime: 5_000,
+    refetchInterval,
   });

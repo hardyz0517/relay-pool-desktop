@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from "react";
-import { Button, Dialog, SelectControl } from "@/components/ui";
+import { Button, Dialog, SelectControl, SwitchControl } from "@/components/ui";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { Station } from "@/lib/types/stations";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
@@ -21,6 +21,7 @@ export function KeyEditDialog({
   onStationChange,
   renderCurrentGroupOption,
   renderGroupOptionLabel,
+  renderGroupTriggerLabel,
   sourceItem,
   stations,
 }: {
@@ -32,8 +33,9 @@ export function KeyEditDialog({
   onFormChange: (next: KeyPoolEditForm) => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
   onStationChange?: (stationId: string) => void;
-  renderCurrentGroupOption: (sourceItem: KeyPoolItem | null, options: StationGroupOption[]) => Array<{ value: string; label: ReactNode }>;
+  renderCurrentGroupOption: (sourceItem: KeyPoolItem | null, options: StationGroupOption[]) => Array<{ value: string; label: ReactNode; triggerLabel?: ReactNode }>;
   renderGroupOptionLabel: (option: StationGroupOption) => ReactNode;
+  renderGroupTriggerLabel: (option: StationGroupOption) => ReactNode;
   sourceItem: KeyPoolItem | null;
   stations: Station[];
 }) {
@@ -44,6 +46,7 @@ export function KeyEditDialog({
       .map((option) => ({
         value: option.groupBindingId ?? option.value,
         label: renderGroupOptionLabel(option),
+        triggerLabel: renderGroupTriggerLabel(option),
       })),
     ...renderCurrentGroupOption(sourceItem, groupOptions),
   ];
@@ -94,7 +97,7 @@ export function KeyEditDialog({
             type="password"
           />
         </Field>
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2">
           <Field label="分组">
             <SelectControl
               ariaLabel="分组"
@@ -121,26 +124,17 @@ export function KeyEditDialog({
           <Field label="档位">
             <input className={inputClassName} value={form.tierLabel} onChange={(event) => onFormChange({ ...form, tierLabel: event.target.value })} />
           </Field>
-          <Field label="状态">
-            <SelectControl
-              ariaLabel="密钥状态"
-              className={inputClassName}
-              value={form.status}
-              options={[
-                { value: "unchecked", label: "未检测" },
-                { value: "healthy", label: "正常" },
-                { value: "warning", label: "警告" },
-                { value: "error", label: "错误" },
-                { value: "disabled", label: "禁用" },
-              ]}
-              onChange={(status) => onFormChange({ ...form, status })}
-            />
-          </Field>
         </div>
-        <label className="flex items-center gap-2 text-sm text-foreground">
-          <input checked={form.enabled} className="h-4 w-4 accent-primary" type="checkbox" onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
-          启用
-        </label>
+        <Field label="启用状态">
+          <SwitchControl
+            ariaLabel="启用密钥"
+            checked={form.enabled}
+            className="justify-self-start"
+            offLabel="停用"
+            onCheckedChange={() => onFormChange({ ...form, enabled: !form.enabled })}
+            onLabel="启用"
+          />
+        </Field>
         <div className="grid gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface p-3">
           <div className="text-xs font-semibold text-foreground">协议能力</div>
           <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
@@ -164,15 +158,9 @@ export function KeyEditDialog({
             <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.preferredModels} onChange={(event) => onFormChange({ ...form, preferredModels: event.target.value })} placeholder="每行一个模型" />
           </Field>
         </div>
-        <div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)]">
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input checked={form.onlyUseAsBackup} className="h-4 w-4 accent-primary" type="checkbox" onChange={(event) => onFormChange({ ...form, onlyUseAsBackup: event.target.checked })} />
-            仅作为备用密钥
-          </label>
-          <Field label="路由标签">
-            <input className={inputClassName} value={form.routingTags} onChange={(event) => onFormChange({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如 高优先级, 低延迟" />
-          </Field>
-        </div>
+        <Field label="路由标签">
+          <input className={inputClassName} value={form.routingTags} onChange={(event) => onFormChange({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如 高优先级, 低延迟" />
+        </Field>
         <Field label="备注">
           <textarea className={`${inputClassName} min-h-20 resize-none py-2`} value={form.note} onChange={(event) => onFormChange({ ...form, note: event.target.value })} />
         </Field>

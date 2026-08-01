@@ -38,13 +38,15 @@ type SelectControlProps<T extends string = string> = {
 };
 
 type MenuPosition = {
+  bottom: number | null;
   left: number;
-  top: number;
+  top: number | null;
   width: number;
   maxHeight: number;
 };
 
 const MIN_MENU_WIDTH = 160;
+const MAX_MENU_HEIGHT = 320;
 
 export function SelectControl<T extends string>({
   value,
@@ -145,23 +147,21 @@ export function SelectControl<T extends string>({
     }
     const gap = 6;
     const viewportPadding = 10;
-    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
-    const spaceAbove = rect.top - viewportPadding;
-    const maxHeight = Math.max(160, Math.min(320, Math.max(spaceBelow, spaceAbove) - gap));
-    const openAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
-    const menuHeight = estimateMenuHeight(options, maxHeight);
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - viewportPadding - gap);
+    const spaceAbove = Math.max(0, rect.top - viewportPadding - gap);
+    const desiredMenuHeight = estimateMenuHeight(options, MAX_MENU_HEIGHT);
+    const openAbove = spaceBelow < desiredMenuHeight && spaceAbove > spaceBelow;
+    const maxHeight = Math.min(MAX_MENU_HEIGHT, openAbove ? spaceAbove : spaceBelow);
     const menuWidth = Math.max(rect.width, menuMinWidth);
-    const top = openAbove
-      ? Math.max(viewportPadding, rect.top - menuHeight - gap)
-      : Math.min(window.innerHeight - viewportPadding, rect.bottom + gap);
     const preferredLeft = menuAlign === "end" ? rect.right - menuWidth : rect.left;
 
     setPosition({
+      bottom: openAbove ? window.innerHeight - rect.top + gap : null,
       left: Math.max(
         viewportPadding,
         Math.min(preferredLeft, window.innerWidth - menuWidth - viewportPadding),
       ),
-      top,
+      top: openAbove ? null : rect.bottom + gap,
       width: menuWidth,
       maxHeight,
     });
@@ -280,8 +280,9 @@ export function SelectControl<T extends string>({
             menuClassName,
           )}
           style={{
+            bottom: position.bottom ?? undefined,
             left: position.left,
-            top: position.top,
+            top: position.top ?? undefined,
             width: position.width,
             maxHeight: position.maxHeight,
           }}
@@ -316,11 +317,11 @@ export function SelectControl<T extends string>({
                     selected && "font-medium",
                   )}
                 >
-                  <span className="flex min-w-0 items-center gap-2">
+                  <span className="flex min-w-0 flex-1 items-center gap-2">
                     {option.leadingIcon ? (
                       <span className="shrink-0 text-muted-foreground">{option.leadingIcon}</span>
                     ) : null}
-                    <span className="min-w-0">
+                    <span className="min-w-0 flex-1">
                       <span className="block truncate">{option.label}</span>
                       {option.description ? (
                         <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">

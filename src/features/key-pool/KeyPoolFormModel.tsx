@@ -1,7 +1,7 @@
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
 import type { Station } from "@/lib/types/stations";
-import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS } from "./stationKeyCapabilityDefaults";
 
 export const KEEP_GROUP_BINDING_VALUE = "__keep__";
@@ -19,7 +19,6 @@ export type KeyPoolEditForm = {
   groupBindingId: string;
   groupName: string;
   tierLabel: string;
-  status: StationKeyStatus;
   note: string;
   supportsChatCompletions: boolean;
   supportsResponses: boolean;
@@ -47,7 +46,6 @@ export const emptyEditForm: KeyPoolEditForm = {
   groupBindingId: "",
   groupName: "",
   tierLabel: "",
-  status: "unchecked",
   note: "",
   supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
   supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,
@@ -164,7 +162,6 @@ export function formFromItem(item: KeyPoolItem, options: StationGroupOption[] = 
     groupBindingId: groupBindingValueFromItem(item, options),
     groupName: item.groupName ?? "",
     tierLabel: item.tierLabel ?? "",
-    status: item.status,
     note: item.note ?? "",
     supportsChatCompletions: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsChatCompletions,
     supportsResponses: OPENAI_COMPATIBLE_CAPABILITY_DEFAULTS.supportsResponses,

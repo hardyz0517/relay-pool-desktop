@@ -64,8 +64,7 @@ export function useChannelStatusController() {
       const triggerRequestId = getOrCreateTriggerRequestId(triggerRequestIds.current, row.monitorId);
       return runChannelMonitorNowWithTrigger(row.monitorId, triggerRequestId);
     },
-    onSuccess: async (receipt) => {
-      setSelectedExecutionId(receipt.executionId);
+    onSuccess: async () => {
       await invalidateMonitoringQueries(queryClient);
     },
   });
