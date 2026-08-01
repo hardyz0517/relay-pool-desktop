@@ -250,7 +250,7 @@ export function ChannelMonitorForm({
               <Field label="抖动（秒）"><NumberInput value={draft.jitterSeconds} onChange={(jitterSeconds) => updateDraft({ jitterSeconds })} /></Field>
               <Field label="单次超时（毫秒）"><NumberInput value={draft.attemptTimeoutMs} onChange={(attemptTimeoutMs) => updateDraft({ attemptTimeoutMs })} /></Field>
               <Field label="任务超时（毫秒）"><NumberInput value={draft.executionTimeoutMs} onChange={(executionTimeoutMs) => updateDraft({ executionTimeoutMs })} /></Field>
-              <Field label="每日尝试预算"><NumberInput value={draft.riskDailyProbeBudget} onChange={(riskDailyProbeBudget) => updateDraft({ riskDailyProbeBudget })} /></Field>
+              <Field label="每日尝试次数上限"><NumberInput value={draft.riskDailyProbeBudget} onChange={(riskDailyProbeBudget) => updateDraft({ riskDailyProbeBudget })} /></Field>
             </div>
           </SectionCard>
 

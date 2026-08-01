@@ -279,7 +279,7 @@ function PricingRowsTable({
             <th className={tableHeaderClassName}>中转站</th>
             <th className={tableHeaderClassName}>分组</th>
             <th className={tableHeaderClassName}>倍率</th>
-            <th className={updatedAtHeaderClassName}>更新时间</th>
+            <th className={updatedAtHeaderClassName}>最后变更时间</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
