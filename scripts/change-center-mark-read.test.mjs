@@ -420,6 +420,14 @@ assert.ok(
 );
 
 assert.ok(
+  !changeCenterSource.includes("markAllRead") &&
+    !changeCenterSource.includes("CheckCheck") &&
+    !changeCenterSource.includes("unreadRiskCount") &&
+    changeCenterSource.includes("md:grid-cols-3"),
+  "change center should rely on entry-owned read persistence and omit the manual read action and unread-risk tile",
+);
+
+assert.ok(
   changeCenterSource.includes("stationsQueryOptions") &&
     changeCenterSource.includes("(stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)") &&
     changeCenterSource.includes("stationNamesById") &&
@@ -475,7 +483,7 @@ assert.ok(
   changeCenterSource.includes("clearChangeHistory") &&
     changeCenterSource.includes("清除记录") &&
     changeCenterSource.includes("pageInfo.events.map") &&
-    changeCenterSource.includes("grid-cols-[56px_minmax(0,1fr)_88px]") &&
+    changeCenterSource.includes("grid-cols-[56px_minmax(0,1fr)_88px_32px]") &&
     !changeCenterSource.includes("function ChangeDiff") &&
     changeCenterSource.includes("<Pagination") &&
     changeCenterSource.includes('ariaLabel="变更中心分页"'),

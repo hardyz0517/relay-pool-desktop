@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCheck, RefreshCw, Route, Search, Trash2 } from "lucide-react";
+import { RefreshCw, Route, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -15,10 +15,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
-import {
-  clearChangeEvents,
-  markChangeEventsRead,
-} from "@/lib/api/changeEvents";
+import { clearChangeEvents } from "@/lib/api/changeEvents";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   changeEventsQueryOptions,
@@ -32,12 +29,9 @@ import {
   buildChangeEventListItem,
   filterChangeEvents,
   formatChangeTime,
-  mergeChangeEventUpdates,
-  markUnreadChangeEventsRead,
   objectTypeLabels,
   paginateChangeEvents,
   severityTone,
-  unreadRiskCount,
   type ChangeFilter,
 } from "./changeEventViewModels";
 
@@ -89,22 +83,6 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink }: ChangeCenterPageProp
     }
   }
 
-  async function markAllRead() {
-    setSaving(true);
-    try {
-      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
-      const result = await markUnreadChangeEventsRead(events, markChangeEventsRead);
-      queryClient.setQueryData(queryKeys.changeEvents, (latestEvents: typeof events | undefined) =>
-        mergeChangeEventUpdates(latestEvents ?? events, result.updatedEvents),
-      );
-      toast.success(`已标记 ${result.changedCount} 条变更为已读`);
-    } catch (requestError) {
-      toast.error("批量标记已读失败", readError(requestError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function clearChangeHistory() {
     setSaving(true);
     try {
@@ -126,8 +104,6 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink }: ChangeCenterPageProp
     [events, filter, stationCreditPerCnyById, stationNamesById],
   );
   const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, pageSize), [filteredEvents, page, pageSize]);
-  const unreadCount = events.filter((event) => event.status === "unread").length;
-  const riskCount = unreadRiskCount(events);
   const objectOptions = useMemo(() => {
     const values = Array.from(new Set(events.map((event) => event.objectType))).sort((a, b) => a.localeCompare(b));
     return values.map((value) => ({ value, label: objectTypeLabels[value] ?? value }));
@@ -142,10 +118,6 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink }: ChangeCenterPageProp
             <Trash2 className="h-4 w-4" />
             清除记录
           </Button>
-          <Button variant="secondary" onClick={() => void markAllRead()} disabled={loading || saving || unreadCount === 0}>
-            <CheckCheck className="h-4 w-4" />
-            一键已读
-          </Button>
           <Button variant="secondary" onClick={() => void refresh(true)} disabled={loading || saving}>
             <RefreshCw className="h-4 w-4" />
             刷新
@@ -154,8 +126,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink }: ChangeCenterPageProp
       }
     >
       <div className="grid gap-[var(--shell-page-gap)]">
-        <div className="grid gap-3 md:grid-cols-4">
-          <SummaryTile label="未读风险" value={riskCount} tone={riskCount > 0 ? "text-danger-foreground" : "text-success-foreground"} />
+        <div className="grid gap-3 md:grid-cols-3">
           <SummaryTile label="严重" value={activeSeverityCount(events, "critical")} />
           <SummaryTile label="警告" value={activeSeverityCount(events, "warning")} />
           <SummaryTile label="信息" value={activeSeverityCount(events, "info")} />
