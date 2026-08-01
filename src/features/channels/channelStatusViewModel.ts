@@ -139,7 +139,7 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
   const latest = row.latest;
   const selected = row.selectedWindow;
   const runningExecutionId = row.running?.executionId ?? null;
-  const currentOutcome = selected.latestOutcome;
+  const currentOutcome = latest?.outcome ?? selected.latestOutcome;
   const currentTone: StatusTone = row.monitor.enabled
     ? runningExecutionId
       ? "running"

@@ -139,6 +139,49 @@ fn bucket_counts_distinguish_missing_skipped_unavailable_and_degraded_weight() {
     assert_eq!(mixed.state(), BucketAvailabilityState::Degraded);
     assert_eq!(mixed.strict_availability_bps(), Some(3_333));
     assert_eq!(mixed.effective_availability_bps(5_000), Some(5_000));
+
+    let isolated_degraded = BucketCounts {
+        available_count: 5,
+        degraded_count: 1,
+        unavailable_count: 0,
+        skipped_count: 0,
+    };
+    assert_eq!(
+        isolated_degraded.state(),
+        BucketAvailabilityState::Available,
+        "one degraded sample must not taint an otherwise healthy bucket"
+    );
+
+    let isolated_failure = BucketCounts {
+        available_count: 11,
+        degraded_count: 0,
+        unavailable_count: 1,
+        skipped_count: 0,
+    };
+    assert_eq!(
+        isolated_failure.state(),
+        BucketAvailabilityState::Available,
+        "a bucket at or above 90% effective availability remains healthy"
+    );
+
+    let repeated_failures = BucketCounts {
+        available_count: 9,
+        degraded_count: 0,
+        unavailable_count: 2,
+        skipped_count: 0,
+    };
+    assert_eq!(repeated_failures.state(), BucketAvailabilityState::Degraded);
+
+    let fully_unavailable = BucketCounts {
+        available_count: 0,
+        degraded_count: 0,
+        unavailable_count: 6,
+        skipped_count: 0,
+    };
+    assert_eq!(
+        fully_unavailable.state(),
+        BucketAvailabilityState::Unavailable
+    );
 }
 
 #[tokio::test]

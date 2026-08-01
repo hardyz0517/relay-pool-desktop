@@ -5,6 +5,7 @@ import {
   createStationKeyMonitorInput,
   draftToMonitorInput,
   monitorToDraft,
+  selectStationKeyMonitorModel,
   validateMonitorDraft,
 } from "@/lib/channelMonitorViewModel";
 import type {
@@ -181,16 +182,17 @@ describe("channel monitor V2 view model", () => {
       { id: "builtin-openai-chat-low-token", endpointKind: "chat_completions" },
       {
         preferredModels: ["gpt-4o-mini"],
-        modelAllowlist: ["gpt-4.1-mini"],
+        modelAllowlist: ["gpt-5.5"],
         modelBlocklist: [],
       },
+      "gpt",
     );
 
     expect(input).toMatchObject({
       protocolKind: "open_ai_chat",
       clientProfileId: "standard_api",
       clientProfileVersion: 1,
-      primaryModel: "gpt-4o-mini",
+      primaryModel: "gpt-5.5",
       retryMaxAttemptsPerModel: 1,
       retryInitialBackoffMs: 200,
       retryMaxBackoffMs: 2_000,
@@ -204,5 +206,22 @@ describe("channel monitor V2 view model", () => {
       jitterSeconds: 15,
       fallbackModels: [],
     });
+  });
+
+  it.each([
+    ["gpt", "gpt-5.5"],
+    ["claude", "claude-opus-4-8"],
+    ["gemini", "gemini-3.5-flash"],
+    ["grok", "grok-4.5"],
+  ] as const)("uses the %s group default model for Key Pool monitoring", (category, model) => {
+    expect(selectStationKeyMonitorModel(null, category)).toBe(model);
+  });
+
+  it("keeps explicit Key model restrictions ahead of the group default", () => {
+    expect(selectStationKeyMonitorModel({
+      preferredModels: ["claude-sonnet-4-7"],
+      modelAllowlist: ["claude-sonnet-4-7"],
+      modelBlocklist: ["claude-opus-4-8"],
+    }, "claude")).toBe("claude-sonnet-4-7");
   });
 });

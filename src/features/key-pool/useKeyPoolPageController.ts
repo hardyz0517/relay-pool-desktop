@@ -12,7 +12,8 @@ import {
   updateStationKeyMonitorEnabledInput,
 } from "@/lib/channelMonitorViewModel";
 import { readError } from "@/lib/errors";
-import { buildStationGroupOptionsFromCurrentFactsForSelect } from "@/lib/groupOptionViewModels";
+import { inferGroupCategoryFromEvidence } from "@/lib/groupCategories";
+import { buildStationGroupOptionsFromCurrentFactsForSelect, findMatchingGroupOption } from "@/lib/groupOptionViewModels";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { channelMonitoringQueryOptions, keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
@@ -338,14 +339,24 @@ export function useKeyPoolPageController({
         if (!template) {
           throw new Error("暂无启用的监控请求模板，请先在渠道状态的监控页启用模板。");
         }
-        const capabilities = await getStationKeyCapabilities(item.id);
+        const [capabilities, groupOptions] = await Promise.all([
+          getStationKeyCapabilities(item.id),
+          loadCurrentStationGroupOptions(item.stationId),
+        ]);
+        const groupCategory = findMatchingGroupOption({
+          groupBindingId: item.groupBindingId,
+          groupIdHash: item.groupIdHash,
+          groupName: item.groupName ?? "",
+        }, groupOptions)?.effectiveGroupCategory ?? inferGroupCategoryFromEvidence({
+          groupName: item.groupName,
+        });
         const preferredTemplate = preferredStationKeyMonitorTemplate(monitorTemplates, {
           stationType: item.stationType,
           stationUpstreamApiFormat: item.stationUpstreamApiFormat,
           capabilities,
         }) ?? template;
         await createChannelMonitor(
-          createStationKeyMonitorInput(item, preferredTemplate, capabilities),
+          createStationKeyMonitorInput(item, preferredTemplate, capabilities, groupCategory),
         );
       }
       await Promise.all([

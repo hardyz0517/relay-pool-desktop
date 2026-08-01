@@ -1,4 +1,5 @@
 import type { StatusTone } from "@/components/ui";
+import type { StationGroupCategory } from "@/lib/groupCategories";
 import type {
   ChannelMonitor,
   ChannelMonitorClientProfileId,
@@ -59,6 +60,12 @@ type StationKeyMonitorTemplatePreference = {
 };
 
 export const DEFAULT_STATION_KEY_MONITOR_MODEL = "gpt-4.1-mini";
+export const DEFAULT_STATION_KEY_MONITOR_MODELS: Partial<Record<StationGroupCategory, string>> = {
+  gpt: "gpt-5.5",
+  claude: "claude-opus-4-8",
+  gemini: "gemini-3.5-flash",
+  grok: "grok-4.5",
+};
 export const DEFAULT_STATION_KEY_MONITOR_TEMPLATE_ID = "builtin-openai-responses-low-token";
 export const STATION_KEY_MONITOR_NOTE = "由密钥池监控开关创建";
 const DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS = 45_000;
@@ -122,13 +129,23 @@ export function templateForMonitorProtocol(
 
 export function selectStationKeyMonitorModel(
   capabilities?: Pick<StationKeyCapabilities, "modelAllowlist" | "modelBlocklist" | "preferredModels"> | null,
+  groupCategory?: StationGroupCategory | null,
 ) {
   const blockedModels = new Set((capabilities?.modelBlocklist ?? []).map(normalizeModelName));
+  const allowlistedModels = new Set((capabilities?.modelAllowlist ?? []).map(normalizeModelName));
   const explicitModels = [
     ...(capabilities?.preferredModels ?? []),
     ...(capabilities?.modelAllowlist ?? []),
   ];
   const candidates = uniqueModels(explicitModels).filter((model) => !blockedModels.has(normalizeModelName(model)));
+  const groupDefault = groupCategory ? DEFAULT_STATION_KEY_MONITOR_MODELS[groupCategory] : undefined;
+  if (
+    groupDefault &&
+    !blockedModels.has(normalizeModelName(groupDefault)) &&
+    (allowlistedModels.size === 0 || allowlistedModels.has(normalizeModelName(groupDefault)))
+  ) {
+    return groupDefault;
+  }
   const selected = candidates[0];
   return selected ?? (blockedModels.has(normalizeModelName(DEFAULT_STATION_KEY_MONITOR_MODEL))
     ? candidates[0] ?? DEFAULT_STATION_KEY_MONITOR_MODEL
@@ -139,9 +156,9 @@ export function createStationKeyMonitorInput(
   key: Pick<KeyPoolItem, "id" | "stationId" | "name">,
   template: Pick<ChannelMonitorRequestTemplate, "id" | "endpointKind">,
   capabilities?: Pick<StationKeyCapabilities, "modelAllowlist" | "modelBlocklist" | "preferredModels"> | null,
-  testedModel?: string | null,
+  groupCategory?: StationGroupCategory | null,
 ): CreateChannelMonitorInput {
-  const fallbackModel = testedModel?.trim() || selectStationKeyMonitorModel(capabilities);
+  const fallbackModel = selectStationKeyMonitorModel(capabilities, groupCategory);
   return {
     name: `${key.name} 监控`,
     targetType: "station_key",

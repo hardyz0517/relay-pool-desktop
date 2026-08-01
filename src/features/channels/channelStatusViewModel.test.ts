@@ -100,6 +100,7 @@ describe("channel status V2 view model", () => {
 
   it("does not collapse retry/fallback evidence in the row summary", () => {
     const row = fixtureRow();
+    row.selectedWindow.latestOutcome = "available";
     const view = buildRowView(row, "last24h");
 
     expect(view.currentLabel).toBe("降级");

@@ -46,6 +46,9 @@ pub(crate) struct BucketCounts {
     pub(crate) skipped_count: u32,
 }
 
+pub(crate) const DEGRADED_WEIGHT_BPS: u32 = 5_000;
+pub(crate) const AVAILABLE_BUCKET_THRESHOLD_BPS: u32 = 9_000;
+
 impl BucketCounts {
     pub(crate) fn eligible_count(&self) -> u32 {
         self.available_count + self.degraded_count + self.unavailable_count
@@ -59,12 +62,15 @@ impl BucketCounts {
             } else {
                 BucketAvailabilityState::Missing
             }
-        } else if self.unavailable_count == 0 && self.degraded_count == 0 {
-            BucketAvailabilityState::Available
-        } else if self.available_count > 0 || self.degraded_count > 0 {
-            BucketAvailabilityState::Degraded
-        } else {
+        } else if self.available_count == 0 && self.degraded_count == 0 {
             BucketAvailabilityState::Unavailable
+        } else if self
+            .effective_availability_bps(DEGRADED_WEIGHT_BPS)
+            .is_some_and(|availability| availability >= AVAILABLE_BUCKET_THRESHOLD_BPS)
+        {
+            BucketAvailabilityState::Available
+        } else {
+            BucketAvailabilityState::Degraded
         }
     }
 

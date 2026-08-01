@@ -7,7 +7,7 @@ use crate::{
         monitoring::buckets::{
             hourly_bucket_windows, local_day_bucket_windows, recent_target_result_limit,
             BucketAvailabilityState, BucketCounts, BucketTimezoneSource, BucketWindow,
-            BucketWindowKind,
+            BucketWindowKind, DEGRADED_WEIGHT_BPS,
         },
     },
     models::monitoring::{
@@ -41,7 +41,6 @@ const MAX_ATTEMPT_LIMIT: u32 = 200;
 const MAX_BASE_SCAN_ROWS: i64 = 5_000;
 const HOURLY_BUCKET_COUNT: u32 = 24;
 const DAILY_BUCKET_COUNT: u32 = 30;
-const DEGRADED_WEIGHT_BPS: u32 = 5_000;
 
 #[derive(Clone)]
 pub(crate) struct ChannelStatusReadModelQuery {
@@ -391,11 +390,11 @@ fn summarize_selected_window(
 ) -> ChannelStatusWindowSummaryV2 {
     match window {
         ChannelStatusWorkspaceWindow::Recent => summarize_recent_window(window, recent, latest),
-        ChannelStatusWorkspaceWindow::Last24h => summarize_bucket_window(window, hourly),
+        ChannelStatusWorkspaceWindow::Last24h => summarize_bucket_window(window, hourly, latest),
         ChannelStatusWorkspaceWindow::Last7d => {
-            summarize_bucket_window(window, select_tail(daily, 7))
+            summarize_bucket_window(window, select_tail(daily, 7), latest)
         }
-        ChannelStatusWorkspaceWindow::Last30d => summarize_bucket_window(window, daily),
+        ChannelStatusWorkspaceWindow::Last30d => summarize_bucket_window(window, daily, latest),
     }
 }
 
@@ -444,6 +443,7 @@ fn summarize_recent_window(
 fn summarize_bucket_window(
     window: ChannelStatusWorkspaceWindow,
     buckets: &[ChannelStatusBucket],
+    latest: Option<&ChannelStatusLatestResult>,
 ) -> ChannelStatusWindowSummaryV2 {
     let counts = buckets.iter().fold(
         ChannelStatusBucketCounts::default(),
@@ -457,12 +457,6 @@ fn summarize_bucket_window(
         },
     );
     let bucket_counts = bucket_counts(counts);
-    let latest_bucket = buckets.iter().rev().find(|bucket| {
-        !matches!(
-            bucket.state,
-            ChannelStatusBucketState::Missing | ChannelStatusBucketState::Dirty
-        )
-    });
     ChannelStatusWindowSummaryV2 {
         window,
         bucket_kind: buckets
@@ -474,10 +468,10 @@ fn summarize_bucket_window(
         counts,
         strict_availability_bps: bucket_counts.strict_availability_bps(),
         effective_availability_bps: bucket_counts.effective_availability_bps(DEGRADED_WEIGHT_BPS),
-        latest_outcome: latest_bucket
-            .map(bucket_outcome)
+        latest_outcome: latest
+            .map(|latest| latest.outcome)
             .unwrap_or(ChannelStatusOutcome::Missing),
-        latest_checked_at_ms: latest_bucket.map(|bucket| bucket.end_ms),
+        latest_checked_at_ms: latest.and_then(|latest| latest.finished_at_ms),
         dirty: buckets.iter().any(|bucket| bucket.dirty),
         corrupt: buckets.iter().any(|bucket| bucket.corrupt),
     }
@@ -631,18 +625,6 @@ fn bucket_counts(counts: ChannelStatusBucketCounts) -> BucketCounts {
     }
 }
 
-fn bucket_outcome(bucket: &ChannelStatusBucket) -> ChannelStatusOutcome {
-    match bucket.state {
-        ChannelStatusBucketState::Available => ChannelStatusOutcome::Available,
-        ChannelStatusBucketState::Degraded => ChannelStatusOutcome::Degraded,
-        ChannelStatusBucketState::Unavailable => ChannelStatusOutcome::Unavailable,
-        ChannelStatusBucketState::SkippedOnly => ChannelStatusOutcome::Skipped,
-        ChannelStatusBucketState::Missing | ChannelStatusBucketState::Dirty => {
-            ChannelStatusOutcome::Missing
-        }
-    }
-}
-
 fn row_key(monitor_id: &str, station_key_id: Option<&str>) -> String {
     format!("{}|{}", monitor_id, station_key_id.unwrap_or(""))
 }
@@ -707,6 +689,53 @@ mod tests {
                 .single()
                 .expect("timestamp")
         }
+    }
+
+    #[test]
+    fn bucket_window_summary_uses_latest_probe_for_current_status() {
+        let bucket = ChannelStatusBucket {
+            kind: ChannelStatusBucketKind::Hour,
+            start_ms: 0,
+            end_ms: 3_600_000,
+            state: ChannelStatusBucketState::Degraded,
+            counts: ChannelStatusBucketCounts {
+                total: 2,
+                available: 1,
+                degraded: 1,
+                unavailable: 0,
+                skipped: 0,
+            },
+            strict_availability_bps: Some(5_000),
+            effective_availability_bps: Some(7_500),
+            p50_latency_ms: Some(100),
+            p95_latency_ms: Some(200),
+            failure_counts: BTreeMap::new(),
+            dirty: false,
+            corrupt: false,
+        };
+        let latest = ChannelStatusLatestResult {
+            target_result_id: "target-latest".to_string(),
+            execution_id: "execution-latest".to_string(),
+            outcome: ChannelStatusOutcome::Available,
+            failure_kind: None,
+            terminal_reason: None,
+            http_status: Some(200),
+            latency_ms: Some(100),
+            finished_at_ms: Some(3_500_000),
+            semantic_confidence: "protocol_validated".to_string(),
+            used_fallback: false,
+            attempt_count: 1,
+            effective_model: Some("gpt-test".to_string()),
+        };
+
+        let summary = summarize_bucket_window(
+            ChannelStatusWorkspaceWindow::Last24h,
+            &[bucket],
+            Some(&latest),
+        );
+
+        assert_eq!(summary.latest_outcome, ChannelStatusOutcome::Available);
+        assert_eq!(summary.latest_checked_at_ms, Some(3_500_000));
     }
 
     #[tokio::test]
