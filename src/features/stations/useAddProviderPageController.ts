@@ -35,6 +35,7 @@ import { readError } from "@/lib/errors";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 import { normalizeStationGroupOptions } from "@/lib/groupOptionViewModels";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { discoverCreatedStationKeyModels } from "@/lib/stationKeyModelDiscovery";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
 import type { StationType } from "@/lib/types/stations";
 import type { CommonLoginOptions } from "@/lib/types/settings";
@@ -164,6 +165,28 @@ export function useAddProviderPageController({
       queryClient.invalidateQueries({ queryKey: queryKeys.stations }),
       queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
     ]);
+  }
+
+  async function autoDiscoverCreatedKeyModels(stationKeyIds: string[]) {
+    const summary = await discoverCreatedStationKeyModels(stationKeyIds);
+    if (summary.requestedCount === 0) {
+      return;
+    }
+    if (summary.failures.length > 0) {
+      toast.info(
+        "本地 Key 已创建，部分模型列表获取失败",
+        `${summary.failures.length}/${summary.requestedCount} 把 Key 获取失败：${readError(summary.failures[0].error)}`,
+      );
+      return;
+    }
+    if (summary.updatedCount === 0) {
+      toast.info("本地 Key 已创建，未获取到模型", "模型接口返回了空列表。");
+      return;
+    }
+    toast.success(
+      "模型列表已自动获取并保存",
+      `${summary.updatedCount} 把 Key 共获取 ${summary.modelCount} 个模型。`,
+    );
   }
 
   async function flushProviderDraft() {
@@ -561,9 +584,7 @@ export function useAddProviderPageController({
             : null,
           enabled: form.enabled,
           creditPerCny: Number(form.creditPerCny),
-          lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
-            ? Number(form.lowBalanceThresholdCny)
-            : null,
+          lowBalanceThresholdCny: null,
           collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
           note: form.note.trim() ? form.note.trim() : null,
         });
@@ -571,7 +592,8 @@ export function useAddProviderPageController({
         const rowsToSave = mergeKeyRowsWithSavedGroupOptions(keyRows, savedGroupOptions);
         setGroupRows((currentRows) => mergeGroupRowsWithSavedOptions(currentRows, savedGroupOptions));
         setKeyRows(rowsToSave);
-        await saveKeyRows(activeStationId, rowsToSave);
+        const createdStationKeyIds = await saveKeyRows(activeStationId, rowsToSave);
+        await autoDiscoverCreatedKeyModels(createdStationKeyIds);
         await refreshStationKeyState(activeStationId);
         await invalidateProviderWorkspaceCaches();
         if (form.loginUsername.trim() || form.loginPassword.trim() || form.rememberPassword) {
@@ -594,6 +616,12 @@ export function useAddProviderPageController({
       const draft = await flushProviderDraft();
       const commitKey = globalThis.crypto?.randomUUID?.() ?? `provider-draft-${Date.now()}`;
       const station = await commitProviderDraft(draft.id, draft.revision, commitKey);
+      try {
+        const createdStationKeys = await listStationKeys(station.id);
+        await autoDiscoverCreatedKeyModels(createdStationKeys.map((key) => key.id));
+      } catch (modelDiscoveryError) {
+        toast.info("供应商已创建，模型列表获取失败", readError(modelDiscoveryError));
+      }
       providerDraftRef.current = null;
       setProviderDraftId(null);
       setActiveStationId(station.id);
@@ -755,6 +783,10 @@ export function useAddProviderPageController({
         stationId: targetStationId,
         ...input,
       });
+      const createdLocalKey = !localStationKeys.some((key) => key.id === result.stationKey.id);
+      if (createdLocalKey) {
+        await autoDiscoverCreatedKeyModels([result.stationKey.id]);
+      }
       setRemoteKeys((current) => [
         result.remoteKey,
         ...current.filter(
@@ -830,9 +862,13 @@ export function useAddProviderPageController({
   async function createLocalKeyFromRemote(remoteKey: RemoteStationKey) {
     const targetStationId = await ensureStationForRemoteKeyActions();
     const result = await createLocalStationKeyFromRemote(remoteKey.id, targetStationId);
+    const createdLocalKey = !localStationKeys.some((key) => key.id === result.stationKey.id);
     await updateStationKey(stationKeyToUpdateInput(result.stationKey, {
       rateMultiplier: effectiveRateMultiplierForCredit(remoteKey.rateMultiplier, currentCreditPerCny),
     }));
+    if (createdLocalKey) {
+      await autoDiscoverCreatedKeyModels([result.stationKey.id]);
+    }
     await refreshStationKeyState(targetStationId);
     await invalidateProviderWorkspaceCaches();
     toast.success("已创建本地 Key", result.message || `${remoteKeyDisplayName(remoteKey)} 已保存为本地 Key。`);

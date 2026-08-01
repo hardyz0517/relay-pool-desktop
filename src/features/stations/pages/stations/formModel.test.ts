@@ -85,7 +85,6 @@ describe("stations page form model", () => {
         apiBaseUrl: " https://api.example/v1 ",
         apiKey: " sk-test ",
         creditPerCny: "7.2",
-        lowBalanceThresholdCny: "10",
         collectionIntervalMinutes: "0",
         note: " hello ",
       }),
@@ -95,7 +94,7 @@ describe("stations page form model", () => {
       collectorProxyMode: "inherit",
       collectorProxyUrl: null,
       creditPerCny: 7.2,
-      lowBalanceThresholdCny: 10,
+      lowBalanceThresholdCny: null,
       collectionIntervalMinutes: 5,
       note: "hello",
     });

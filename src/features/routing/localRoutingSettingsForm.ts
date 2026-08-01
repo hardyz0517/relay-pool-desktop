@@ -208,7 +208,7 @@ export function parseLocalRoutingBoundaryDraft(
     : null;
   const lowBalanceThresholdCny = parseRequiredNonNegativeNumber(
     draft.lowBalanceThresholdCny,
-    "默认低余额阈值必须是大于或等于 0 的数字",
+    "低余额阈值必须是大于或等于 0 的数字",
     (message) => {
       errors.lowBalanceThresholdCny = message;
     },

@@ -508,18 +508,7 @@ export function ProviderOptionsSection({ form, onFormChange }: ProviderOptionsSe
   return (
     <SectionCard title="可选项">
       <div className="grid gap-3">
-        <Field label="低余额阈值 CNY">
-          <input
-            className={inputClassName}
-            min="0"
-            step="0.01"
-            type="number"
-            value={form.lowBalanceThresholdCny}
-            onChange={(event) => onFormChange({ ...form, lowBalanceThresholdCny: event.target.value })}
-            placeholder="使用全局设置"
-          />
-        </Field>
-        <Field label="兑换比例">
+        <Field label="兑换比例（积分 / USD）">
           <input
             className={inputClassName}
             min="0.01"

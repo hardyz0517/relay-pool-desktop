@@ -79,6 +79,7 @@ describe("add provider save controller", () => {
     const dependencies: SaveKeyRowsDependencies = {
       createStationKey: async (input) => {
         created.push(input);
+        return { id: "created-key" };
       },
       updateStationKey: async (input) => {
         updated.push(input);
@@ -88,7 +89,7 @@ describe("add provider save controller", () => {
       },
     };
 
-    await saveKeyRows(
+    const createdStationKeyIds = await saveKeyRows(
       "station-1",
       [
         keyDraft({ id: "delete-me", deleteRequested: true }),
@@ -129,6 +130,7 @@ describe("add provider save controller", () => {
         priority: 1,
       }),
     ]);
+    expect(createdStationKeyIds).toEqual(["created-key"]);
   });
 
   it("disables matching saved groups and upserts editable group rows", async () => {

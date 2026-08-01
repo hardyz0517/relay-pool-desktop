@@ -14,7 +14,6 @@ export type StationFormState = {
   apiKey: string;
   enabled: boolean;
   creditPerCny: string;
-  lowBalanceThresholdCny: string;
   collectionIntervalMinutes: string;
   note: string;
   loginUsername: string;
@@ -42,7 +41,6 @@ export const emptyForm: StationFormState = {
   apiKey: "",
   enabled: true,
   creditPerCny: "1",
-  lowBalanceThresholdCny: "",
   collectionIntervalMinutes: "5",
   note: "",
   loginUsername: "",
@@ -73,9 +71,7 @@ export function formToInput(form: StationFormState): StationInput {
     collectorProxyUrl: null,
     enabled: form.enabled,
     creditPerCny: Number(form.creditPerCny),
-    lowBalanceThresholdCny: form.lowBalanceThresholdCny.trim()
-      ? Number(form.lowBalanceThresholdCny)
-      : null,
+    lowBalanceThresholdCny: null,
     collectionIntervalMinutes: normalizeCollectionIntervalMinutes(form.collectionIntervalMinutes),
     note: form.note.trim() ? form.note.trim() : null,
   };

@@ -118,17 +118,17 @@ export function LocalRoutingBoundaryFields({
           onChange={onGroupPresetChange}
         />
       </CompactSettingRow>
-      <CompactSettingRow label="默认低余额阈值" description="站点未单独设置时使用。">
+      <CompactSettingRow label="低余额阈值" description="余额达到或低于该值时限制参与路由。">
         <LabeledNumberInput
           hideLabel
           id="routing-low-balance-threshold-cny"
-          label="默认低余额阈值"
+          label="低余额阈值"
           value={draft.lowBalanceThresholdCny}
           error={errors.lowBalanceThresholdCny}
           disabled={disabled}
           min="0"
           step="0.01"
-          suffix="CNY"
+          suffix="USD"
           onChange={onLowBalanceThresholdCnyChange}
         />
       </CompactSettingRow>

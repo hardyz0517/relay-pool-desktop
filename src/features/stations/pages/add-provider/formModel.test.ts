@@ -117,7 +117,6 @@ describe("add provider form model", () => {
       formFromStation(
         station({
           note: "saved note",
-          lowBalanceThresholdCny: 20,
         }),
         credentials({ loginUsername: "alice", rememberPassword: false }),
       ),
@@ -126,7 +125,6 @@ describe("add provider form model", () => {
       apiKey: "",
       loginUsername: "alice",
       rememberPassword: false,
-      lowBalanceThresholdCny: "20",
       note: "saved note",
       collectorProxyMode: "manual",
       collectorProxyUrl: "http://127.0.0.1:7890",

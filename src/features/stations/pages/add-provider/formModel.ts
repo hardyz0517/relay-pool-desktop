@@ -17,7 +17,6 @@ export type AddProviderFormState = {
   loginUsername: string;
   loginPassword: string;
   rememberPassword: boolean;
-  lowBalanceThresholdCny: string;
   collectionIntervalMinutes: string;
   note: string;
 };
@@ -55,7 +54,6 @@ export function createDefaultProviderForm(): AddProviderFormState {
     loginUsername: "",
     loginPassword: "",
     rememberPassword: false,
-    lowBalanceThresholdCny: "",
     collectionIntervalMinutes: "5",
     note: "",
   };
@@ -147,8 +145,6 @@ export function formFromStation(station: Station, credentials: StationCredential
     loginUsername: credentials.loginUsername ?? "",
     loginPassword: "",
     rememberPassword: credentials.rememberPassword,
-    lowBalanceThresholdCny:
-      station.lowBalanceThresholdCny === null ? "" : String(station.lowBalanceThresholdCny),
     collectionIntervalMinutes: String(station.collectionIntervalMinutes),
     note: station.note ?? "",
   };

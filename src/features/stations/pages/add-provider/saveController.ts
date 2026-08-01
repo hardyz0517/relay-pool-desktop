@@ -17,7 +17,7 @@ import {
 } from "./keyGroupModel";
 
 export type SaveKeyRowsDependencies = {
-  createStationKey: (input: CreateStationKeyInput) => Promise<unknown>;
+  createStationKey: (input: CreateStationKeyInput) => Promise<{ id: string }>;
   updateStationKey: (input: UpdateStationKeyInput) => Promise<unknown>;
   deleteStationKey: (id: string) => Promise<unknown>;
 };
@@ -56,6 +56,7 @@ export async function saveKeyRows(
   const visibleRows = rows
     .filter((row) => !row.deleteRequested)
     .filter((row) => row.id || row.apiKey.trim());
+  const createdStationKeyIds: string[] = [];
 
   for (const [priority, row] of visibleRows.entries()) {
     const rateMultiplier = parseOptionalRateMultiplier(row.rateMultiplier);
@@ -90,11 +91,14 @@ export async function saveKeyRows(
       continue;
     }
 
-    await dependencies.createStationKey({
+    const created = await dependencies.createStationKey({
       ...input,
       apiKey: row.apiKey.trim(),
     });
+    createdStationKeyIds.push(created.id);
   }
+
+  return createdStationKeyIds;
 }
 
 export async function saveGroupRows(

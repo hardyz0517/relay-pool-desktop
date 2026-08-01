@@ -48,14 +48,14 @@ describe("AddProviderSections", () => {
       root.render(<ProviderOptionsSection form={form} onFormChange={onFormChange} />),
     );
 
-    const thresholdInput = host.querySelector<HTMLInputElement>('input[placeholder="使用全局设置"]')!;
+    const creditInput = host.querySelector<HTMLInputElement>('input[min="0.01"]')!;
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    valueSetter.call(thresholdInput, "20");
-    await act(async () => thresholdInput.dispatchEvent(new Event("input", { bubbles: true })));
+    valueSetter.call(creditInput, "2");
+    await act(async () => creditInput.dispatchEvent(new Event("input", { bubbles: true })));
 
     expect(onFormChange).toHaveBeenCalledWith({
       ...form,
-      lowBalanceThresholdCny: "20",
+      creditPerCny: "2",
     });
 
     await act(async () => root.unmount());

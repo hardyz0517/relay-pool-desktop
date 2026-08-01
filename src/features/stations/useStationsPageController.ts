@@ -23,6 +23,7 @@ import {
 import { createStation, deleteStation, openStationWebsite, reorderStations, updateStation } from "@/lib/api/stations";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { discoverCreatedStationKeyModels } from "@/lib/stationKeyModelDiscovery";
 import {
   changeEventsQueryOptions,
   currentStationBalanceSnapshotsQueryOptions,
@@ -108,6 +109,17 @@ export function useStationsPageController({
   const loading = stationsQuery.isPending && stationsQuery.data === undefined;
   const queryError = stationsQuery.error ? readError(stationsQuery.error) : null;
   const loadError = queryError ?? error;
+
+  async function autoDiscoverCreatedKeyModels(stationKeyId: string) {
+    const summary = await discoverCreatedStationKeyModels([stationKeyId]);
+    if (summary.failures.length > 0) {
+      toast.info("密钥已创建，模型列表获取失败", readError(summary.failures[0].error));
+    } else if (summary.updatedCount > 0) {
+      toast.success("模型列表已自动获取并保存", `已获取 ${summary.modelCount} 个模型。`);
+    } else {
+      toast.info("密钥已创建，未获取到模型", "模型接口返回了空列表。");
+    }
+  }
   const balanceFactsReady = balancesQuery.data !== undefined;
   const stationAssetsQuery = useActivityQuery(stationAssetsQueryOptions(stationIds));
   const assetSnapshotsByStation = useMemo(
@@ -324,7 +336,6 @@ export function useStationsPageController({
       apiKey: "",
       enabled: station.enabled,
       creditPerCny: String(station.creditPerCny),
-      lowBalanceThresholdCny: station.lowBalanceThresholdCny === null ? "" : String(station.lowBalanceThresholdCny),
       collectionIntervalMinutes: String(station.collectionIntervalMinutes),
       note: station.note ?? "",
       loginUsername: "",
@@ -603,7 +614,8 @@ export function useStationsPageController({
       if (keyForm.id) {
         await updateStationKey(toUpdateKeyInput(keyForm, activeDialogStation.id));
       } else {
-        await createStationKey(toCreateKeyInput(keyForm, activeDialogStation.id));
+        const created = await createStationKey(toCreateKeyInput(keyForm, activeDialogStation.id));
+        await autoDiscoverCreatedKeyModels(created.id);
       }
       setKeyDialogOpen(false);
       setKeyForm(emptyKeyForm);

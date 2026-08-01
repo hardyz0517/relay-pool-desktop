@@ -138,12 +138,9 @@ export function StationDialogs({
           <Field label={dialogMode === "edit" ? "密钥（留空保留旧值）" : "密钥"}>
             <input className={inputClassName} value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder={dialogMode === "edit" ? "留空保留旧密钥" : "sk-..."} required={dialogMode !== "edit"} />
           </Field>
-          <div className="grid gap-3 md:grid-cols-3">
-            <Field label="兑换比例">
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="兑换比例（积分 / USD）">
               <input className={inputClassName} min="0.01" step="0.01" type="number" value={form.creditPerCny} onChange={(event) => onChange({ ...form, creditPerCny: event.target.value })} />
-            </Field>
-            <Field label="低余额阈值">
-              <input className={inputClassName} min="0" step="0.01" type="number" value={form.lowBalanceThresholdCny} onChange={(event) => onChange({ ...form, lowBalanceThresholdCny: event.target.value })} placeholder="使用全局设置" />
             </Field>
             <Field label="采集频率 分钟">
               <input className={inputClassName} min="1" step="1" type="number" value={form.collectionIntervalMinutes} onChange={(event) => onChange({ ...form, collectionIntervalMinutes: event.target.value })} placeholder="5" />
@@ -236,7 +233,7 @@ export function DetailBody({
         <PropertyRow label="站点类型" value={stationTypeLabels[activeDialogStation.stationType]} />
         <PropertyRow label="前端网址" value={<code className="text-xs">{activeDialogStation.websiteUrl}</code>} />
         <PropertyRow label="API Base URL" value={<code className="text-xs">{activeDialogStation.apiBaseUrl}</code>} />
-        <PropertyRow label="余额" value={activeDialogStation.balanceCny === null ? "未采集" : `¥${activeDialogStation.balanceCny.toFixed(2)}`} />
+        <PropertyRow label="余额" value={activeDialogStation.balanceCny === null ? "未采集" : `$${activeDialogStation.balanceCny.toFixed(2)}`} />
         <PropertyRow label="密钥数量" value={keyCountLabel} />
         <PropertyRow label="状态" value={stationStatusLabels[activeDialogStation.status]} />
         <PropertyRow label="采集时间" value={activeDialogStation.lastPricingFetchedAt ?? "未采集"} />

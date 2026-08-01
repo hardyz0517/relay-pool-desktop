@@ -148,6 +148,7 @@ describe("StationDialogs", () => {
     );
 
     const buttons = host.querySelectorAll<HTMLButtonElement>("button");
+    expect(host.textContent).toContain("$8.00");
     await act(async () => buttons[0].dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await act(async () => buttons[1].dispatchEvent(new MouseEvent("click", { bubbles: true })));
 

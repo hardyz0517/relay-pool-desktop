@@ -10,9 +10,11 @@ const generated = vi.hoisted(() => ({
 vi.mock("@/lib/bridge/generated", () => generated);
 
 import {
+  discoverAndPersistStationKeyModels,
+  discoverCreatedStationKeyModels,
   ModelDiscoveryOperationCancelledError,
   runStationKeyModelDiscoveryOperation,
-} from "./modelDiscoveryOperationController";
+} from "@/lib/stationKeyModelDiscovery";
 
 describe("model discovery operation controller", () => {
   beforeEach(() => {
@@ -91,5 +93,66 @@ describe("model discovery operation controller", () => {
     ).rejects.toBeInstanceOf(ModelDiscoveryOperationCancelledError);
 
     expect(generated.cancelOperation).toHaveBeenCalledWith({ operationId: "7", waitMs: 1000 });
+  });
+
+  it("persists discovered models without choosing a default model", async () => {
+    const updateCapabilities = vi.fn(async (input) => ({
+      ...input,
+      updatedAt: "2026-08-01T00:00:00Z",
+    }));
+
+    const result = await discoverAndPersistStationKeyModels("key-1", {
+      runDiscovery: vi.fn(async () => ({
+        stationKeyId: "key-1",
+        models: [" gpt-5 ", "GPT-5", "claude-sonnet"],
+      })),
+      getCapabilities: vi.fn(async () => ({
+        stationKeyId: "key-1",
+        supportsChatCompletions: true,
+        supportsResponses: true,
+        supportsEmbeddings: false,
+        supportsStream: true,
+        supportsTools: true,
+        supportsVision: false,
+        supportsReasoning: true,
+        modelAllowlist: [],
+        modelBlocklist: ["blocked-model"],
+        preferredModels: [],
+        onlyUseAsBackup: false,
+        routingTags: ["new"],
+        updatedAt: "2026-08-01T00:00:00Z",
+      })),
+      updateCapabilities,
+    });
+
+    expect(result.models).toEqual(["claude-sonnet", "gpt-5"]);
+    expect(updateCapabilities).toHaveBeenCalledWith(expect.objectContaining({
+      stationKeyId: "key-1",
+      modelAllowlist: ["claude-sonnet", "gpt-5"],
+      modelBlocklist: ["blocked-model"],
+      preferredModels: [],
+      routingTags: ["new"],
+    }));
+  });
+
+  it("keeps batch creation successful when one model discovery fails", async () => {
+    const summary = await discoverCreatedStationKeyModels(
+      ["key-1", "key-2", "key-1"],
+      async (stationKeyId) => {
+        if (stationKeyId === "key-2") {
+          throw new Error("provider rejected models request");
+        }
+        return { stationKeyId, models: ["gpt-5"] };
+      },
+    );
+
+    expect(summary).toMatchObject({
+      requestedCount: 2,
+      updatedCount: 1,
+      emptyCount: 0,
+      modelCount: 1,
+    });
+    expect(summary.failures).toHaveLength(1);
+    expect(summary.failures[0].stationKeyId).toBe("key-2");
   });
 });

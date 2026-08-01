@@ -1516,6 +1516,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn station_key_model_allowlist_survives_database_reopen() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let database_path = temp.path().join("station-key-model-allowlist.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&database_path)
+            .await
+            .expect("runtime");
+        let clock = Arc::new(SystemClock);
+        let ids = Arc::new(UuidV7Generator);
+        let station_service = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let credential_service = CredentialService::new(
+            runtime.handle(),
+            Arc::new(DataKeyVault::for_test([29; 32])),
+            clock,
+            ids,
+        );
+        let station = station_service
+            .create(CreateStationInput {
+                name: "Model persistence fixture".to_string(),
+                station_type: "newapi".to_string(),
+                website_url: "https://example.com".to_string(),
+                api_base_url: "https://example.com/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "direct".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("create station");
+        let station_key = credential_service
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id,
+                name: "Model key".to_string(),
+                api_key: "sk-model-persistence".to_string(),
+                enabled: true,
+                priority: None,
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: None,
+                manual_rate_multiplier: None,
+                rate_source: None,
+                balance_scope: None,
+                note: None,
+            })
+            .await
+            .expect("create station key");
+
+        credential_service
+            .update_station_key_capabilities(UpdateStationKeyCapabilitiesInput {
+                station_key_id: station_key.id.clone(),
+                supports_chat_completions: true,
+                supports_responses: true,
+                supports_embeddings: false,
+                supports_stream: true,
+                supports_tools: true,
+                supports_vision: false,
+                supports_reasoning: true,
+                model_allowlist: vec!["gpt-5".to_string(), "claude-sonnet".to_string()],
+                model_blocklist: Vec::new(),
+                preferred_models: Vec::new(),
+                only_use_as_backup: false,
+                routing_tags: Vec::new(),
+            })
+            .await
+            .expect("save station key models");
+
+        drop(credential_service);
+        drop(station_service);
+        runtime.close().await.expect("close runtime");
+
+        let reopened = PersistenceRuntime::open_current(&database_path)
+            .await
+            .expect("reopen runtime");
+        let reopened_service = CredentialService::new(
+            reopened.handle(),
+            Arc::new(DataKeyVault::for_test([29; 32])),
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        );
+        let capabilities = reopened_service
+            .get_station_key_capabilities(station_key.id)
+            .await
+            .expect("reload station key models");
+
+        assert_eq!(
+            capabilities.model_allowlist,
+            vec!["gpt-5".to_string(), "claude-sonnet".to_string()]
+        );
+
+        drop(reopened_service);
+        reopened.close().await.expect("close reopened runtime");
+    }
+
+    #[tokio::test]
     async fn importing_an_already_related_remote_key_does_not_create_another_local_key() {
         let temp = tempfile::tempdir().expect("tempdir");
         let database_path = temp.path().join("remote-key-import-ownership.sqlite3");

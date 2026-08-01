@@ -29,7 +29,7 @@ export function providerDraftPayloadFromEditor(
         : null,
     enabled: form.enabled,
     creditPerCny: positiveNumber(form.creditPerCny, 1),
-    lowBalanceThresholdCny: optionalNumber(form.lowBalanceThresholdCny),
+    lowBalanceThresholdCny: null,
     collectionIntervalMinutes: Math.max(1, Math.round(positiveNumber(form.collectionIntervalMinutes, 5))),
     note: form.note.trim() || null,
     loginUsername: form.loginUsername.trim() || null,
@@ -86,8 +86,6 @@ export function editorFromProviderDraft(draft: ProviderDraft): {
       loginUsername: payload.loginUsername ?? "",
       loginPassword: "",
       rememberPassword: payload.rememberPassword,
-      lowBalanceThresholdCny:
-        payload.lowBalanceThresholdCny === null ? "" : String(payload.lowBalanceThresholdCny),
       collectionIntervalMinutes: String(payload.collectionIntervalMinutes),
       note: payload.note ?? "",
     },
@@ -147,10 +145,4 @@ function resolveGroupKeyHash(row: StationGroupDraft) {
 function positiveNumber(value: string, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function optionalNumber(value: string) {
-  if (!value.trim()) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
