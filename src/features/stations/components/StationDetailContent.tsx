@@ -66,6 +66,11 @@ const surfaceToneClassName: Record<DetailTone, string> = {
 };
 
 const usageCardVisualMeta = {
+  balance: {
+    Icon: WalletCards,
+    iconClassName: "bg-success-surface text-success-foreground",
+    valueClassName: "text-success-foreground",
+  },
   request: {
     Icon: Activity,
     iconClassName: "bg-success-surface text-success-foreground",
@@ -85,24 +90,6 @@ const usageCardVisualMeta = {
     Icon: Server,
     iconClassName: "bg-platform-gemini-surface text-platform-gemini-foreground",
     valueClassName: "text-platform-gemini-foreground",
-  },
-} satisfies Record<string, { Icon: LucideIcon; iconClassName: string; valueClassName: string }>;
-
-const balanceCardVisualMeta = {
-  current: {
-    Icon: WalletCards,
-    iconClassName: "bg-success-surface text-success-foreground",
-    valueClassName: "text-success-foreground",
-  },
-  threshold: {
-    Icon: AlertTriangle,
-    iconClassName: "bg-warning-surface text-warning-foreground",
-    valueClassName: "text-warning-foreground",
-  },
-  updatedAt: {
-    Icon: Clock3,
-    iconClassName: "bg-surface-subtle text-muted-foreground",
-    valueClassName: "text-foreground",
   },
   concurrency: {
     Icon: Activity,
@@ -214,46 +201,13 @@ export function StationDetailContent({
           </div>
         )}
 
-        <section className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-          <WalletCards className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">余额</h2>
-        </div>
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 p-4">
-          {viewModel.balanceCards.map((card) => {
-            const visual = balanceCardVisualFor(card.label);
-            return (
-              <div
-                key={card.label}
-                className="flex min-h-[84px] items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface"
-              >
-                <div
-                  className={cn(
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px]",
-                    visual.iconClassName,
-                  )}
-                >
-                  <visual.Icon className="h-4 w-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs text-muted-foreground">{card.label}</div>
-                  <div className={cn("mt-0.5 truncate text-[22px] font-semibold leading-7", visual.valueClassName)}>
-                    {card.value}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
       <section className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <BarChart3 className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">中转站用量</h2>
+          <h2 className="text-sm font-semibold text-foreground">中转站指标</h2>
         </div>
-        <div className="grid gap-3 p-4 md:grid-cols-4">
-          {viewModel.usageCards.map((card) => {
+        <div className="grid gap-3 p-4 md:grid-cols-3">
+          {viewModel.metricCards.map((card) => {
             const visual = usageCardVisualFor(card.label);
             return (
               <div
@@ -304,7 +258,7 @@ export function StationDetailContent({
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-[760px] w-full border-separate border-spacing-0 text-left text-xs">
+              <table className="min-w-[680px] w-full border-separate border-spacing-0 text-left text-xs">
                 <thead>
                   <tr className="text-muted-foreground">
                     <TableHead className="pl-0">分组</TableHead>
@@ -318,7 +272,6 @@ export function StationDetailContent({
                       <RateHead title="用户倍率" helper="手动覆盖" />
                     </TableHead>
                     <TableHead>绑定状态</TableHead>
-                    <TableHead>采集来源</TableHead>
                     <TableHead className="pr-0">最近检查</TableHead>
                   </tr>
                 </thead>
@@ -351,7 +304,6 @@ export function StationDetailContent({
                       <TableCell>
                         <StatusBadge tone={statusToneByDetailTone[row.tone]}>{row.bindingStatus}</StatusBadge>
                       </TableCell>
-                      <TableCell>{row.sourceLabel}</TableCell>
                       <TableCell className="pr-0">{row.lastChecked}</TableCell>
                     </tr>
                   ))}
@@ -374,6 +326,12 @@ export function StationDetailContent({
 }
 
 function usageCardVisualFor(label: string) {
+  if (label.includes("余额")) {
+    return usageCardVisualMeta.balance;
+  }
+  if (label.includes("并发")) {
+    return usageCardVisualMeta.concurrency;
+  }
   if (label.includes("请求")) {
     return usageCardVisualMeta.request;
   }
@@ -387,19 +345,6 @@ function usageCardVisualFor(label: string) {
     return usageCardVisualMeta.totalToken;
   }
   return usageCardVisualMeta.request;
-}
-
-function balanceCardVisualFor(label: string) {
-  if (label.includes("并发")) {
-    return balanceCardVisualMeta.concurrency;
-  }
-  if (label.includes("阈值") || label.includes("低余额")) {
-    return balanceCardVisualMeta.threshold;
-  }
-  if (label.includes("更新") || label.includes("时间")) {
-    return balanceCardVisualMeta.updatedAt;
-  }
-  return balanceCardVisualMeta.current;
 }
 
 function TableHead({

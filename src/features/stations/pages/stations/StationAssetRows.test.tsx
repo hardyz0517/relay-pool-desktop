@@ -97,6 +97,8 @@ describe("StationAssetRows", () => {
       ),
     );
 
+    expect(host.textContent).toContain("8.00USD");
+
     const rowButton = host.querySelector<HTMLElement>('[role="button"]')!;
     await act(async () => rowButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onOpen).toHaveBeenCalledWith(row.station);

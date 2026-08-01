@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use crate::services::collectors::facts::{
-    CollectedBalanceFact, CollectedGroupFact, CollectedModelFact, CollectedRateFact, CollectorFacts,
+    CollectedBalanceFact, CollectedGroupFact, CollectedModelFact, CollectedRateFact,
+    CollectorFacts, NORMALIZED_BALANCE_CURRENCY,
 };
 use crate::services::group_categories::infer_group_category;
 
@@ -80,7 +81,7 @@ pub(crate) fn parse_balance_fact(
         total_input_token_count: parse_i64_field(data, &["total_input_token_count"]),
         total_output_token_count: parse_i64_field(data, &["total_output_token_count"]),
         account_concurrency_limit: None,
-        currency: "USD".to_string(),
+        currency: NORMALIZED_BALANCE_CURRENCY.to_string(),
         credit_unit: quota_per_unit.map(|value| format!("newapi_quota_{value}")),
         status: if remaining == Some(0.0) {
             "depleted"
@@ -330,6 +331,7 @@ mod tests {
         assert_eq!(fact.total_base_consumption, Some(39.75));
         assert_eq!(fact.today_token_count, Some(43210));
         assert_eq!(fact.total_token_count, Some(987654));
+        assert_eq!(fact.account_concurrency_limit, None);
     }
 
     #[test]

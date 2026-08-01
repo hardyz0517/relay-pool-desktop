@@ -1,3 +1,4 @@
+import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
 import { parseTimestampLikeDate } from "@/lib/time";
 import type { StationAssetRow } from "../../stationAssetViewModels";
 
@@ -22,7 +23,7 @@ export function formatStationBalanceParts(row: StationAssetRow) {
   }
   return {
     amount: value.toFixed(2),
-    currency: row.latestBalance?.currency ?? "CNY",
+    currency: BALANCE_CURRENCY,
   };
 }
 

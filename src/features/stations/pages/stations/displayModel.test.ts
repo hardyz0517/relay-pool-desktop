@@ -29,13 +29,20 @@ describe("stations page display model", () => {
         station: { balanceCny: 12.345 },
         latestBalance: null,
       } as StationAssetRow),
-    ).toEqual({ amount: "12.35", currency: "CNY" });
+    ).toEqual({ amount: "12.35", currency: "USD" });
     expect(
       formatStationBalanceParts({
         station: { balanceCny: null },
         latestBalance: { value: 8, currency: "USD" },
       } as StationAssetRow),
     ).toEqual({ amount: "8.00", currency: "USD" });
+
+    expect(
+      formatStationBalanceParts({
+        station: { balanceCny: null },
+        latestBalance: { value: 7.28, currency: "CNY" },
+      } as StationAssetRow),
+    ).toEqual({ amount: "7.28", currency: "USD" });
   });
 
   it("formats relative and nullable times", () => {

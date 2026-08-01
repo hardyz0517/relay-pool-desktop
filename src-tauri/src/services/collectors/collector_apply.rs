@@ -7,7 +7,10 @@ use crate::{
         error::ApplicationError,
     },
     observability::correlation,
-    services::collectors::{facts::CollectedBalanceFact, output::AdapterOutput},
+    services::collectors::{
+        facts::{CollectedBalanceFact, NORMALIZED_BALANCE_CURRENCY},
+        output::AdapterOutput,
+    },
 };
 
 pub(crate) trait CollectorApplyPort: Send + Sync {
@@ -245,7 +248,7 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
         };
         let currency =
             shared_text_value(key_balances.iter().map(|balance| balance.currency.as_str()))
-                .unwrap_or("CNY")
+                .unwrap_or(NORMALIZED_BALANCE_CURRENCY)
                 .to_string();
         let credit_unit = shared_optional_text_value(
             key_balances

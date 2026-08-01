@@ -1,3 +1,4 @@
+import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
 import {
   buildCurrentStationBalanceFacts,
   type StationBalanceCurrentFact,
@@ -200,7 +201,7 @@ export function formatStationBalance(row: StationAssetRow) {
   if (value == null) {
     return "未采集";
   }
-  return `${row.currentBalance.currency} ${value.toFixed(2)}`;
+  return `${BALANCE_CURRENCY} ${value.toFixed(2)}`;
 }
 
 export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
@@ -429,4 +430,3 @@ export function stationRiskTone(row: StationAssetRow): StatusTone {
   }
   return "info";
 }
-

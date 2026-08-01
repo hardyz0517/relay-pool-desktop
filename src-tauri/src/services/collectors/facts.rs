@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+pub const NORMALIZED_BALANCE_CURRENCY: &str = "USD";
+
 #[derive(Debug, Clone)]
 pub struct CollectedBalanceFact {
     pub station_id: String,

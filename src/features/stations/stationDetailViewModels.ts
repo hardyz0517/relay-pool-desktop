@@ -1,3 +1,4 @@
+import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
 import { effectiveRateMultiplierForCredit, formatTrimmedDecimal } from "@/lib/formatters";
 import { currentStationBalanceFor } from "@/lib/projections/balanceFacts";
 import {
@@ -34,7 +35,6 @@ export type StationDetailGroupRow = {
   defaultRate: string;
   userRate: string;
   bindingStatus: string;
-  sourceLabel: string;
   lastChecked: string;
   tone: DetailTone;
   warning: string | null;
@@ -52,8 +52,7 @@ export type StationDetailViewModel = {
   statusLabel: string;
   statusTone: DetailTone;
   lastActivityLabel: string;
-  balanceCards: StationDetailBalanceCard[];
-  usageCards: StationDetailBalanceCard[];
+  metricCards: StationDetailBalanceCard[];
   groupRows: StationDetailGroupRow[];
   groupEmptyMessage: string;
   loginItems: StationDetailDiagnosticItem[];
@@ -91,15 +90,6 @@ const collectorStatusLabels: Record<string, string> = {
   partial: "部分成功",
   failed: "失败",
   manual_required: "需要人工处理",
-};
-
-const rateSourceLabels: Record<string, string> = {
-  binding: "本地绑定",
-  collector: "采集结果",
-  manual: "手动维护",
-  manual_legacy: "旧版手动维护",
-  sub2api_groups_rates: "Sub2API 分组倍率接口",
-  newapi_groups_rates: "NewAPI 分组倍率接口",
 };
 
 const balanceSourceLabels: Record<string, string> = {
@@ -155,7 +145,7 @@ export function formatDetailDate(value: string | null | undefined) {
   }).format(new Date(time));
 }
 
-export function formatMoney(value: number | null | undefined, currency = "CNY") {
+export function formatMoney(value: number | null | undefined, currency = BALANCE_CURRENCY) {
   if (value == null || !Number.isFinite(value)) {
     return "未采集";
   }
@@ -182,16 +172,22 @@ export function latestByTime<T>(items: T[], selectTime: (item: T) => string | nu
   return latest;
 }
 
-export function buildBalanceCards(station: Station, balances: BalanceSnapshot[]): StationDetailBalanceCard[] {
+export function buildMetricCards(station: Station, balances: BalanceSnapshot[]): StationDetailBalanceCard[] {
   const currentBalance = currentStationBalanceFor({ station, balances });
-  const currency = currentBalance.currency;
+  const currency = BALANCE_CURRENCY;
   const currentValue = currentBalance.value;
   const threshold = currentBalance.lowBalanceThreshold;
   const balanceTone = balanceToneFor(currentValue, threshold, currentBalance.status);
   const accountConcurrencyLimit = currentBalance.sourceSnapshot?.accountConcurrencyLimit;
   const balanceSnapshotTime = currentBalance.collectedAt ?? currentBalance.updatedAt;
+  const hasConcurrencyLimit =
+    typeof accountConcurrencyLimit === "number" &&
+    Number.isFinite(accountConcurrencyLimit) &&
+    accountConcurrencyLimit > 0;
+  const hasUsage = hasCollectedUsage(currentBalance.sourceSnapshot);
+  const isNewApi = station.stationType === "newapi";
 
-  const cards: StationDetailBalanceCard[] = [
+  return [
     {
       label: "当前余额",
       value: formatMoney(currentValue, currency),
@@ -199,55 +195,28 @@ export function buildBalanceCards(station: Station, balances: BalanceSnapshot[])
       tone: balanceTone,
     },
     {
-      label: "低余额阈值",
-      value: formatMoney(threshold, currency),
-      helper: threshold == null ? "未设置阈值" : "低于该值时标记为风险",
-      tone: threshold == null ? "muted" : "neutral",
+      label: "今日消费",
+      value: formatUsageMoney(currentBalance.sourceSnapshot?.todayConsumption),
+      helper: `总计：${formatUsageMoney(currentBalance.sourceSnapshot?.totalConsumption)}`,
+      tone: hasUsage ? "neutral" : "muted",
     },
     {
-      label: "余额更新时间",
-      value: formatDetailDate(currentBalance.updatedAt),
-      helper: balanceSnapshotTime
-        ? `快照写入：${formatDetailDate(balanceSnapshotTime)}`
-        : "等待采集器写入余额快照",
-      tone: currentBalance.source !== "missing" ? "neutral" : "muted",
-    },
-  ];
-
-  if (station.stationType === "sub2api") {
-    const hasConcurrencyLimit =
-      typeof accountConcurrencyLimit === "number" &&
-      Number.isFinite(accountConcurrencyLimit) &&
-      accountConcurrencyLimit > 0;
-    cards.push({
       label: "并发限制",
-      value: hasConcurrencyLimit ? `${accountConcurrencyLimit} 路` : "未采集",
-      helper: hasConcurrencyLimit && balanceSnapshotTime
-        ? `来自 Sub2API 账号资料页：${formatDetailDate(balanceSnapshotTime)}`
-        : "等待 Sub2API 账号资料页采集",
-      tone: hasConcurrencyLimit ? "neutral" : "muted",
-    });
-  }
-
-  return cards;
-}
-
-export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): StationDetailBalanceCard[] {
-  const currentBalance = currentStationBalanceFor({ station, balances });
-  const hasUsage = hasCollectedUsage(currentBalance.sourceSnapshot);
-
-  return [
+      value: isNewApi ? "无限制" : hasConcurrencyLimit ? `${accountConcurrencyLimit} 路` : "未采集",
+      helper: isNewApi
+        ? "NewAPI 不提供账号并发上限"
+        : hasConcurrencyLimit && balanceSnapshotTime && station.stationType === "sub2api"
+          ? `来自 Sub2API 账号资料页：${formatDetailDate(balanceSnapshotTime)}`
+          : station.stationType === "sub2api"
+            ? "等待 Sub2API 账号资料页采集"
+            : "该站点暂未提供并发限制",
+      tone: isNewApi || hasConcurrencyLimit ? "neutral" : "muted",
+    },
     {
       label: "今日请求",
       value: formatUsageCount(currentBalance.sourceSnapshot?.todayRequestCount),
       helper: `总计：${formatUsageCount(currentBalance.sourceSnapshot?.totalRequestCount)}`,
       tone: hasUsage ? "good" : "muted",
-    },
-    {
-      label: "今日消费",
-      value: formatUsageMoney(currentBalance.sourceSnapshot?.todayConsumption),
-      helper: `总计：${formatUsageMoney(currentBalance.sourceSnapshot?.totalConsumption)}`,
-      tone: hasUsage ? "neutral" : "muted",
     },
     {
       label: "今日 Token",
@@ -260,12 +229,16 @@ export function buildUsageCards(station: Station, balances: BalanceSnapshot[]): 
     },
     {
       label: "累计 Token",
-      value: formatUsageTokenCount(currentBalance.sourceSnapshot?.totalTokenCount),
-      helper: formatTokenBreakdown(
-        currentBalance.sourceSnapshot?.totalInputTokenCount,
-        currentBalance.sourceSnapshot?.totalOutputTokenCount,
-      ),
-      tone: hasUsage ? "neutral" : "muted",
+      value: isNewApi
+        ? "无法计算"
+        : formatUsageTokenCount(currentBalance.sourceSnapshot?.totalTokenCount),
+      helper: isNewApi
+        ? "NewAPI 不提供账号累计Token"
+        : formatTokenBreakdown(
+            currentBalance.sourceSnapshot?.totalInputTokenCount,
+            currentBalance.sourceSnapshot?.totalOutputTokenCount,
+          ),
+      tone: isNewApi || hasUsage ? "neutral" : "muted",
     },
   ];
 }
@@ -303,7 +276,6 @@ function groupRowFromCurrentFact(
     defaultRate: formatRate(defaultRate),
     userRate: formatRate(userRate, "未覆盖"),
     bindingStatus: formatBindingStatusLabel(fact.bindingStatus),
-    sourceLabel: formatRateSourceLabel(fact.rateSource ?? "binding"),
     lastChecked: formatDetailDate(fact.rateCheckedAt ?? fact.sourceBinding?.updatedAt ?? null),
     tone: warning ? "warning" : "good",
     warning,
@@ -357,8 +329,7 @@ export function buildStationDetailViewModel({
     statusLabel: formatStationStatusLabel(station),
     statusTone: statusTone(station),
     lastActivityLabel: formatDetailDate(latestActivity),
-    balanceCards: buildBalanceCards(station, balances),
-    usageCards: buildUsageCards(station, balances),
+    metricCards: buildMetricCards(station, balances),
     groupRows: buildGroupRows(
       groupBindings.filter((binding) => binding.stationId === station.id),
       groupRates.filter((rate) => rate.stationId === station.id),
@@ -578,10 +549,6 @@ function snapshotTone(status: string | null | undefined): DetailTone {
 
 function formatCollectorStatus(status: string) {
   return collectorStatusLabels[status] ?? status;
-}
-
-function formatRateSourceLabel(source: string) {
-  return rateSourceLabels[source] ?? source.replace(/_/g, " ");
 }
 
 function formatBalanceSourceLabel(source: string) {

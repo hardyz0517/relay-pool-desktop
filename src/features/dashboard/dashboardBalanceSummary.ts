@@ -1,3 +1,4 @@
+import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { Station } from "@/lib/types/stations";
 
@@ -50,7 +51,7 @@ export function summarizeDashboardBalances(
     lowBalanceStations: latestStationBalances.filter(
       (snapshot) => snapshot.status === "low" || snapshot.status === "depleted",
     ).length,
-    primaryBalanceCurrency: latestStationBalances.find((snapshot) => snapshot.currency)?.currency,
+    primaryBalanceCurrency: BALANCE_CURRENCY,
     stationUsage: summarizeStationUsage(latestStationBalances, creditPerCnyByStation),
   };
 }

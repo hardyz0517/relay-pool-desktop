@@ -37,7 +37,7 @@ export function StationListItem({ station, active, onSelect }: StationListItemPr
           <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
             <span>{stationTypeLabels[station.stationType]}</span>
             <span>
-              {station.balanceCny === null ? "余额未采集" : `¥${station.balanceCny.toFixed(2)}`}
+              {station.balanceCny === null ? "余额未采集" : `$${station.balanceCny.toFixed(2)}`}
             </span>
           </div>
           <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">

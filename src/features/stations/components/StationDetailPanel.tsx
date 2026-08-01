@@ -52,17 +52,9 @@ export function StationDetailPanel({
           />
           <KeyValueRow
             label="余额"
-            value={station.balanceCny === null ? "未采集" : `¥${station.balanceCny.toFixed(2)}`}
+            value={station.balanceCny === null ? "未采集" : `$${station.balanceCny.toFixed(2)}`}
           />
-          <KeyValueRow label="兑换比例" value={`1 元 = ${station.creditPerCny} 点`} />
-          <KeyValueRow
-            label="低余额阈值"
-            value={
-              station.lowBalanceThresholdCny === null
-                ? "使用全局设置"
-                : `¥${station.lowBalanceThresholdCny}`
-            }
-          />
+          <KeyValueRow label="兑换比例" value={`1 USD = ${station.creditPerCny} 点`} />
           <KeyValueRow
             label="延迟"
             value={station.latencyMs ? `${station.latencyMs} ms` : "未检测"}

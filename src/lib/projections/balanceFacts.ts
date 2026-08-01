@@ -1,3 +1,4 @@
+import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
 import { toTimestampMillis } from "@/lib/time";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { Station } from "@/lib/types/stations";
@@ -80,7 +81,7 @@ function factForStation(
       stationId: station.id,
       snapshotId: snapshot.id,
       value: snapshot.value,
-      currency: snapshot.currency || "CNY",
+      currency: BALANCE_CURRENCY,
       lowBalanceThreshold: snapshot.lowBalanceThreshold,
       status: snapshot.status,
       source: "balance_snapshot",
@@ -100,7 +101,7 @@ function factForStation(
       stationId: station.id,
       snapshotId: null,
       value: finiteOrNull(station.balanceCny),
-      currency: "CNY",
+      currency: BALANCE_CURRENCY,
       lowBalanceThreshold: finiteOrNull(station.lowBalanceThresholdCny),
       status: balanceStatusFor(station.balanceCny, station.lowBalanceThresholdCny),
       source: "station_cache",
@@ -115,7 +116,7 @@ function factForStation(
     stationId: station.id,
     snapshotId: null,
     value: null,
-    currency: "CNY",
+    currency: BALANCE_CURRENCY,
     lowBalanceThreshold: null,
     status: null,
     source: "missing",

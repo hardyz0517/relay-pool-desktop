@@ -10,6 +10,7 @@ use crate::{
     services::{
         collectors::facts::{
             CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts,
+            NORMALIZED_BALANCE_CURRENCY,
         },
         group_categories::infer_group_category,
     },
@@ -184,7 +185,7 @@ pub fn parse_usage_balance(
             ],
         ),
         account_concurrency_limit: None,
-        currency: "CNY".to_string(),
+        currency: NORMALIZED_BALANCE_CURRENCY.to_string(),
         credit_unit: payload
             .pointer("/quota/unit")
             .and_then(Value::as_str)
@@ -964,7 +965,7 @@ pub(crate) fn merge_dashboard_usage_stats(
             .iter()
             .map(|balance| Some(balance.currency.as_str())),
     )
-    .unwrap_or("CNY")
+    .unwrap_or(NORMALIZED_BALANCE_CURRENCY)
     .to_string();
     let credit_unit = shared_balance_text_value(
         key_balances
@@ -1047,13 +1048,6 @@ pub(crate) fn parse_account_balance(
     }
     let used = parse_account_credit_value(payload, "used", "used");
     let total = parse_account_credit_value(payload, "total", "total");
-    let currency = account_profile_candidates(payload)
-        .into_iter()
-        .flatten()
-        .find_map(|candidate| candidate.get("currency").and_then(Value::as_str))
-        .unwrap_or("CNY")
-        .to_string();
-
     Some(CollectedBalanceFact {
         station_id: station_id.to_string(),
         station_key_id: None,
@@ -1173,7 +1167,7 @@ pub(crate) fn parse_account_balance(
             ],
         ),
         account_concurrency_limit,
-        currency,
+        currency: NORMALIZED_BALANCE_CURRENCY.to_string(),
         credit_unit: None,
         status: if value == Some(0.0) {
             "depleted"
@@ -1288,6 +1282,26 @@ mod tests {
         assert_eq!(facts.groups[0].group_name, "VIP");
         assert_eq!(facts.rates.len(), 1);
         assert_eq!(facts.rates[0].effective_rate_multiplier, Some(1.5));
+    }
+
+    #[test]
+    fn balance_parsers_normalize_currency_to_usd() {
+        let key_balance = parse_usage_balance(
+            "station-1",
+            Some("key-1".to_string()),
+            &json!({"quota": {"remaining": 72.8, "unit": "CNY"}}),
+            10.0,
+        );
+        let account_balance = parse_account_balance(
+            "station-1",
+            &json!({"data": {"balance": 7.28, "currency": "CNY"}}),
+            1.0,
+        )
+        .expect("account balance");
+
+        assert!((key_balance.value.expect("key balance") - 7.28).abs() < f64::EPSILON * 10.0);
+        assert_eq!(key_balance.currency, NORMALIZED_BALANCE_CURRENCY);
+        assert_eq!(account_balance.currency, NORMALIZED_BALANCE_CURRENCY);
     }
 
     #[test]
