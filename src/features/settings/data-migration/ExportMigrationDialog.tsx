@@ -2,7 +2,11 @@ import { useMemo, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Button, Dialog } from "@/components/ui";
 import type { PortableMigrationCapability } from "@/lib/types/dataMigration";
-import { defaultIncludeHistory, validatePassphrase } from "./migrationViewModel";
+import {
+  defaultIncludeHistory,
+  MIN_PASSPHRASE_SCALARS,
+  validatePassphrase,
+} from "./migrationViewModel";
 import type { ExportMigrationDraft } from "./useDataMigrationController";
 
 type ExportMigrationDialogProps = {
@@ -39,7 +43,7 @@ export function ExportMigrationDialog({
   return (
     <Dialog
       open={open}
-      title="导出跨设备搬家包"
+      title="导出跨设备数据包"
       description="生成一个显式密码保护的 .rpd-move 文件。"
       onClose={onClose}
       footer={(
@@ -54,6 +58,7 @@ export function ExportMigrationDialog({
       <div className="grid gap-4 px-5 py-4 text-sm">
         <PasswordField
           label="迁移密码"
+          placeholder={`至少输入 ${MIN_PASSPHRASE_SCALARS} 个字符`}
           type={passwordType}
           value={passphrase}
           onChange={setPassphrase}
@@ -62,6 +67,7 @@ export function ExportMigrationDialog({
         />
         <PasswordField
           label="再次输入"
+          placeholder="再次输入迁移密码"
           type={passwordType}
           value={passphraseConfirmation}
           onChange={setPassphraseConfirmation}
@@ -87,6 +93,7 @@ export function ExportMigrationDialog({
 
 function PasswordField({
   label,
+  placeholder,
   type,
   value,
   visible,
@@ -94,6 +101,7 @@ function PasswordField({
   onToggle,
 }: {
   label: string;
+  placeholder: string;
   type: "password" | "text";
   value: string;
   visible: boolean;
@@ -107,6 +115,7 @@ function PasswordField({
         <input
           className="h-8 min-w-0 flex-1 rounded-[var(--surface-radius)] border border-border bg-control px-3 text-sm text-foreground outline-none focus:border-ring"
           type={type}
+          placeholder={placeholder}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />

@@ -163,7 +163,7 @@ export function useDataMigrationController(): MigrationControllerState {
     try {
       const token = await choosePortableImportFile();
       if (!token) {
-        setMessage("已取消选择搬家包。");
+        setMessage("已取消选择数据包。");
         return;
       }
       const started = await startPortableImportInspection({
@@ -174,7 +174,7 @@ export function useDataMigrationController(): MigrationControllerState {
       safeSessionStorage().setItem(LAST_OPERATION_KEY, started.operationId);
       setOperation(await getPortableMigrationOperation(started.operationId));
     } catch {
-      setMessage("导入检查没有完成。请确认搬家包和迁移密码后重试。");
+      setMessage("导入检查没有完成。请确认数据包和迁移密码后重试。");
     } finally {
       setBusy(false);
     }

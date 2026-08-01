@@ -10,12 +10,12 @@ export const EXPORT_STEP_LABELS = [
   "选择保存位置",
   "设置迁移密码",
   "确认范围",
-  "生成加密搬家包",
+  "生成加密数据包",
   "完成并校验",
 ] as const;
 
 export const IMPORT_STEP_LABELS = [
-  "选择搬家包",
+  "选择数据包",
   "输入迁移密码",
   "读取并校验包",
   "确认数据摘要",
@@ -25,7 +25,7 @@ export const IMPORT_STEP_LABELS = [
   "重启完成激活",
 ] as const;
 
-const MIN_PASSPHRASE_SCALARS = 12;
+export const MIN_PASSPHRASE_SCALARS = 12;
 
 export type PassphraseValidation =
   | { ok: true; scalarCount: number; utf8Bytes: number }
@@ -161,11 +161,11 @@ export function operationProgressLabel(operation: PortableMigrationOperation | n
     case "kdf_finished":
       return "密码处理完成";
     case "reading_package":
-      return `正在读取搬家包 ${latest.percent}%`;
+      return `正在读取数据包 ${latest.percent}%`;
     case "writing_database":
       return `正在写入数据库 ${latest.percent}%`;
     case "publishing_package":
-      return `正在发布搬家包 ${latest.percent}%`;
+      return `正在发布数据包 ${latest.percent}%`;
     case "verifying_package":
       return "正在校验结果";
     default:

@@ -9,7 +9,7 @@ export function DataMigrationSection() {
   const controller = useDataMigrationController();
   const capability = describeCapability(controller.capability);
   return (
-    <div className="border-t border-border">
+    <div>
       <div className="grid gap-4 px-5 py-4 text-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 gap-3">
@@ -19,7 +19,7 @@ export function DataMigrationSection() {
             <div className="min-w-0">
               <p className="font-medium text-foreground">跨设备搬家</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                用密码保护的搬家包把本机数据带到另一台电脑
+                用密码保护的数据包把本机数据带到另一台电脑
               </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 {capability.detail}
@@ -42,11 +42,11 @@ export function DataMigrationSection() {
         <div className="flex flex-wrap gap-2">
           <Button disabled={controller.busy || !capability.enabled} variant="secondary" onClick={controller.openExportDialog}>
             <ArrowUpFromLine className="h-4 w-4" />
-            导出搬家包
+            导出数据包
           </Button>
           <Button disabled={controller.busy || !capability.enabled} variant="outline" onClick={controller.openImportDialog}>
             <ArrowDownToLine className="h-4 w-4" />
-            导入搬家包
+            导入数据包
           </Button>
           <Button disabled={controller.loading} variant="ghost" onClick={() => void controller.refresh()}>
             <RefreshCw className={controller.loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />

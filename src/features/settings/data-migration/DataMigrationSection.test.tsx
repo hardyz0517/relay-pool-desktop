@@ -38,8 +38,9 @@ describe("DataMigrationSection", () => {
     expect(host.textContent).toContain("跨设备搬家");
     expect(host.textContent).toContain("安全策略尚未批准");
     expect([...host.querySelectorAll("button")].some((button) =>
-      button.textContent?.includes("导出搬家包") && button.disabled
+      button.textContent?.includes("导出数据包") && button.disabled
     )).toBe(true);
+    expect(host.firstElementChild?.classList.contains("border-t")).toBe(false);
     expect(host.textContent).not.toContain("RPD_TEST_PASSWORD_CANARY");
   });
 });

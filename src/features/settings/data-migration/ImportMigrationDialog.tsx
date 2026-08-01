@@ -38,7 +38,7 @@ export function ImportMigrationDialog({
   return (
     <Dialog
       open={open}
-      title="导入跨设备搬家包"
+      title="导入跨设备数据包"
       description="先检查包内容，再选择恢复到空数据库或替换当前数据。"
       onClose={onClose}
       footer={(
@@ -72,7 +72,7 @@ export function ImportMigrationDialog({
           </div>
         </label>
         <Button disabled={controller.busy || !capability?.enabled || !passphrase} variant="secondary" onClick={() => void inspect()}>
-          选择搬家包并检查
+          选择数据包并检查
         </Button>
         <ImportMigrationSummary operation={controller.operation} />
         <label className="grid gap-1 text-xs font-medium text-muted-foreground">
