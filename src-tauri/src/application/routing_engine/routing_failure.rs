@@ -1,3 +1,8 @@
+use crate::application::request_finalization::failure::{
+    failure_from_provider_signal, CanonicalFailure, CapabilityApplicabilitySet,
+    ProviderErrorSemanticSignal,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RouteFailureKind {
     AuthError,
@@ -10,7 +15,7 @@ pub(crate) enum RouteFailureKind {
     Upstream5xx,
     Timeout,
     StreamInterrupted,
-    Unknown,
+    Uncertain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,7 +116,7 @@ pub(crate) fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRout
     }
 
     match input.http_status {
-        Some(401 | 403) => ClassifiedRouteFailure::key_health(
+        Some(401) => ClassifiedRouteFailure::key_health(
             RouteFailureKind::AuthError,
             RouteFailureAction::HardFail,
             !input.output_started,
@@ -135,9 +140,7 @@ pub(crate) fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRout
             true,
             input.retry_after_ms,
         ),
-        Some(404) => {
-            ClassifiedRouteFailure::request_only(RouteFailureKind::ModelUnavailable, false)
-        }
+        Some(403 | 404) => ClassifiedRouteFailure::request_only(RouteFailureKind::Uncertain, false),
         Some(405 | 501) => ClassifiedRouteFailure::key_health(
             RouteFailureKind::CapabilityMismatch,
             RouteFailureAction::Observe,
@@ -161,11 +164,120 @@ pub(crate) fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRout
             None,
         ),
         _ => ClassifiedRouteFailure::key_health(
-            RouteFailureKind::Unknown,
-            RouteFailureAction::Observe,
+            RouteFailureKind::Uncertain,
+            RouteFailureAction::IgnoreForKeyHealth,
             !input.output_started,
             None,
         ),
+    }
+}
+
+pub(crate) fn classify_provider_semantic_signal(
+    signal: ProviderErrorSemanticSignal,
+    applicability: CapabilityApplicabilitySet,
+) -> CanonicalFailure {
+    failure_from_provider_signal(signal, applicability)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RoutePlanningFailure {
+    ConfigRequired,
+    PolicyRejected { code: &'static str },
+    EconomicsUnavailable,
+    HealthUnavailable,
+    CapacityExhausted,
+    CandidateLimitExceeded { actual: usize, limit: usize },
+    FactsUnavailable,
+    ConfigUnstable,
+    LifecycleUnavailable,
+    DeadlineExceeded,
+    InvariantViolation { code: &'static str },
+}
+
+impl RoutePlanningFailure {
+    pub(crate) fn into_canonical(
+        self,
+    ) -> crate::application::request_finalization::failure::CanonicalFailure {
+        use crate::application::request_finalization::failure::{
+            planning_failure, FailureClass, FailureTarget, LocalAdapterComponent, RetryDisposition,
+        };
+        match self {
+            Self::ConfigRequired => planning_failure(
+                FailureClass::ConfigRequired,
+                FailureTarget::Request,
+                RetryDisposition::StopRequest,
+            ),
+            Self::PolicyRejected { .. } => planning_failure(
+                FailureClass::PolicyRejected,
+                FailureTarget::Request,
+                RetryDisposition::StopRequest,
+            ),
+            Self::EconomicsUnavailable => planning_failure(
+                FailureClass::EconomicsUnavailable,
+                FailureTarget::Request,
+                RetryDisposition::TryNextCandidate,
+            ),
+            Self::HealthUnavailable => planning_failure(
+                FailureClass::HealthUnavailable,
+                FailureTarget::Request,
+                RetryDisposition::TryNextCandidate,
+            ),
+            Self::CapacityExhausted => planning_failure(
+                FailureClass::CapacityExhausted,
+                FailureTarget::Request,
+                RetryDisposition::WaitThenReplan,
+            ),
+            Self::CandidateLimitExceeded { .. } => planning_failure(
+                FailureClass::CandidateLimit,
+                FailureTarget::Request,
+                RetryDisposition::StopRequest,
+            ),
+            Self::FactsUnavailable => planning_failure(
+                FailureClass::FactsUnavailable,
+                FailureTarget::Request,
+                RetryDisposition::TryNextCandidate,
+            ),
+            Self::ConfigUnstable => planning_failure(
+                FailureClass::ConfigUnstable,
+                FailureTarget::Request,
+                RetryDisposition::TryNextCandidate,
+            ),
+            Self::LifecycleUnavailable => planning_failure(
+                FailureClass::Lifecycle,
+                FailureTarget::LocalAdapter {
+                    component: LocalAdapterComponent::Lifecycle,
+                },
+                RetryDisposition::TryNextCandidate,
+            ),
+            Self::DeadlineExceeded => planning_failure(
+                FailureClass::Deadline,
+                FailureTarget::Request,
+                RetryDisposition::StopRequest,
+            ),
+            Self::InvariantViolation { .. } => planning_failure(
+                FailureClass::Invariant,
+                FailureTarget::LocalAdapter {
+                    component: LocalAdapterComponent::Invariant,
+                },
+                RetryDisposition::StopRequest,
+            ),
+        }
+    }
+
+    pub(crate) fn stable_code(&self) -> &'static str {
+        match self {
+            Self::ConfigRequired => "routing_configuration_required",
+            Self::PolicyRejected { code } => code,
+            Self::EconomicsUnavailable => "route_economics_unavailable",
+            Self::HealthUnavailable => "route_health_unavailable",
+            Self::CapacityExhausted => "route_capacity_exhausted",
+            Self::CandidateLimitExceeded { .. } => "route_candidate_limit_exceeded",
+            Self::FactsUnavailable => "route_facts_unavailable",
+            Self::ConfigUnstable => "route_configuration_changed",
+            Self::LifecycleUnavailable => "route_lifecycle_unavailable",
+            Self::DeadlineExceeded => "route_deadline_exceeded",
+            Self::InvariantViolation { code } => code,
+        }
     }
 }
 
@@ -192,30 +304,72 @@ mod tests {
     }
 
     #[test]
-    fn classifier_treats_model_not_found_as_request_only() {
+    fn generic_not_found_is_uncertain_request_only() {
         let failure = classify_route_failure(RouteFailureInput::http_status(404, false));
 
-        assert_eq!(failure.kind, RouteFailureKind::ModelUnavailable);
+        assert_eq!(failure.kind, RouteFailureKind::Uncertain);
         assert_eq!(failure.action, RouteFailureAction::IgnoreForKeyHealth);
         assert_eq!(failure.scope, RouteFailureScope::RequestOnly);
     }
 
     #[test]
-    fn model_not_found_is_request_scoped_and_not_retryable_without_adapter_signal() {
+    fn model_not_found_is_uncertain_without_adapter_signal() {
         let failure = classify_route_failure(RouteFailureInput::http_status(404, false));
 
-        assert_eq!(failure.kind, RouteFailureKind::ModelUnavailable);
+        assert_eq!(failure.kind, RouteFailureKind::Uncertain);
         assert_eq!(failure.scope, RouteFailureScope::RequestOnly);
         assert!(!failure.retryable_before_output);
     }
 
     #[test]
     fn classifier_retries_candidate_auth_and_temporary_status_before_output() {
-        for status in [401, 403, 408, 425, 429, 500] {
+        for status in [401, 408, 425, 429, 500] {
             let failure = classify_route_failure(RouteFailureInput::http_status(status, false));
 
             assert!(failure.retryable_before_output, "status {status}");
         }
+    }
+
+    #[test]
+    fn generic_forbidden_is_uncertain_and_neutral() {
+        let failure = classify_route_failure(RouteFailureInput::http_status(403, false));
+
+        assert_eq!(failure.kind, RouteFailureKind::Uncertain);
+        assert_eq!(failure.action, RouteFailureAction::IgnoreForKeyHealth);
+        assert_eq!(failure.scope, RouteFailureScope::RequestOnly);
+        assert!(!failure.retryable_before_output);
+    }
+
+    #[test]
+    fn adapter_confirmed_model_not_found_can_update_capability_only_when_applicable() {
+        use crate::application::request_finalization::failure::{
+            CapabilityApplicabilitySet, CapabilityEffect, FailureClass, HealthEffect,
+            ProviderErrorSemanticSignal,
+        };
+
+        let confirmed = classify_provider_semantic_signal(
+            ProviderErrorSemanticSignal::ConfirmedModelNotFound {
+                station_key_id: "key-a".to_string(),
+                model: "gpt-x".to_string(),
+            },
+            CapabilityApplicabilitySet::ConfirmedModelCatalog,
+        );
+        assert_eq!(confirmed.class, FailureClass::ModelUnavailable);
+        assert_eq!(confirmed.health, HealthEffect::Neutral);
+        assert!(matches!(
+            confirmed.capability,
+            CapabilityEffect::ConfirmUnsupportedModel { .. }
+        ));
+
+        let blocked = classify_provider_semantic_signal(
+            ProviderErrorSemanticSignal::ConfirmedModelNotFound {
+                station_key_id: "key-a".to_string(),
+                model: "gpt-x".to_string(),
+            },
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        assert_eq!(blocked.class, FailureClass::Uncertain);
+        assert_eq!(blocked.capability, CapabilityEffect::Neutral);
     }
 
     #[test]

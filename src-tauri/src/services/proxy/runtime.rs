@@ -7,11 +7,13 @@ use std::{
 };
 
 use crate::{
+    application::credentials::ExecutionCredentialResolver,
     models::proxy::{ProxyLifecycle, ProxyStatus},
     observability::correlation,
     services::{
         proxy::{
             execution::{ExecutionEngine, UpstreamAttemptExecutor},
+            finalization::FinalizationOutcome,
             ingress::{self, IngressExecutor, IngressState},
             lifecycle::{
                 delivery::DeliveryTerminal,
@@ -22,9 +24,8 @@ use crate::{
             limits::ProxyServerLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
-                buffered_lifecycle_finalizing_stream,
-                lifecycle_finalizing_stream_with_idle_timeout, FinalizationOutcome,
-                LifecycleFinalizationLease, SelectedAttemptFinalization,
+                dual_terminal_buffered_lifecycle_finalizing_stream,
+                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout,
             },
             routing_repository::RoutingRepository,
             server::{self, RunningServer},
@@ -38,6 +39,7 @@ use futures_util::future::BoxFuture;
 #[derive(Clone)]
 pub struct ProxyStartConfig {
     pub(crate) routing_repository: Arc<dyn RoutingRepository>,
+    pub(crate) credential_resolver: Arc<dyn ExecutionCredentialResolver>,
     pub(crate) lifecycle_store: Arc<dyn RequestLifecycleStore>,
     pub(crate) local_access_key: String,
     pub(crate) port: u16,
@@ -47,12 +49,14 @@ pub struct ProxyStartConfig {
 impl ProxyStartConfig {
     pub(crate) fn new_v2(
         routing_repository: Arc<dyn RoutingRepository>,
+        credential_resolver: Arc<dyn ExecutionCredentialResolver>,
         lifecycle_store: Arc<dyn RequestLifecycleStore>,
         local_access_key: String,
         port: u16,
     ) -> Self {
         Self {
             routing_repository,
+            credential_resolver,
             lifecycle_store,
             local_access_key,
             port,
@@ -188,6 +192,7 @@ impl ProxyRuntimeState {
         let active_requests = Arc::new(AtomicU32::new(0));
         let request_count = Arc::new(AtomicU64::new(0));
         let repository = Arc::clone(&config.routing_repository);
+        let credential_resolver = Arc::clone(&config.credential_resolver);
         let upstream_pool = UpstreamClientPool::new(config.limits.clone()).map_err(|failure| {
             let message = failure.public_message.clone();
             let failed = failed_status(config.port, message.clone());
@@ -204,6 +209,7 @@ impl ProxyRuntimeState {
                 })?;
         let executor = Arc::new(V2ProxyExecutor::new(
             repository,
+            credential_resolver,
             upstream_pool,
             config.limits.clone(),
             lifecycle_writer.clone(),
@@ -383,6 +389,7 @@ struct V2ProxyExecutor {
 impl V2ProxyExecutor {
     fn new(
         repository: Arc<dyn RoutingRepository>,
+        credential_resolver: Arc<dyn ExecutionCredentialResolver>,
         upstream_pool: UpstreamClientPool,
         limits: ProxyServerLimits,
         lifecycle_writer: LifecycleWriter,
@@ -392,6 +399,7 @@ impl V2ProxyExecutor {
         Self {
             engine: ExecutionEngine::new_with_limits_and_lifecycle(
                 repository,
+                credential_resolver,
                 attempts,
                 &limits,
                 lifecycle_writer.clone(),
@@ -444,8 +452,6 @@ impl IngressExecutor for V2ProxyExecutor {
                 let response = match engine.execute(request).await {
                     Ok(response) => response,
                     Err(failure) => {
-                        let finalization_lease =
-                            LifecycleFinalizationLease::new(admission.terminal, None);
                         let request_id = request_context.request_id.clone();
                         let attempt_count = failure.attempt_count().unwrap_or_else(|| {
                             if failure.candidate_id().is_some() {
@@ -483,25 +489,36 @@ impl IngressExecutor for V2ProxyExecutor {
                                 reasoning_effort: request_reasoning_effort.clone(),
                                 first_token_ms: None,
                             };
-                        finalization_lease.finalize(
-                            PendingFinalRequestRecord::new(
-                                request_context.clone(),
-                                failure.candidate_id().map(|_| {
-                                    crate::services::proxy::lifecycle::request::AttemptId::new(
-                                        request_id,
-                                        fallback_count,
-                                    )
-                                }),
-                                attempt_count,
-                                fallback_count,
-                                annotations,
+                        let pending_record = PendingFinalRequestRecord::new(
+                            request_context.clone(),
+                            failure.candidate_id().map(|_| {
+                                crate::services::proxy::lifecycle::request::AttemptId::new(
+                                    request_id,
+                                    fallback_count,
+                                )
+                            }),
+                            attempt_count,
+                            fallback_count,
+                            annotations,
+                        );
+                        let outcome = FinalizationOutcome::Failed {
+                            code: failure.code.as_str().to_string(),
+                            detail: Some(failure.public_message.clone()),
+                        };
+                        let _join = super::attempt::DualTerminalFinalizationLease::new(
+                            super::attempt::DownstreamRequestFinalizationLease::new(
+                                admission.terminal,
+                                request_lease,
                             ),
-                            DeliveryTerminal::NotStarted,
-                            FinalizationOutcome::Failed {
-                                code: failure.code.as_str().to_string(),
-                                detail: Some(failure.public_message.clone()),
-                            },
                             None,
+                            None,
+                        )
+                        .finalize(
+                            pending_record,
+                            DeliveryTerminal::NotStarted,
+                            outcome,
+                            None,
+                            false,
                         );
                         return Err(failure);
                     }
@@ -509,19 +526,6 @@ impl IngressExecutor for V2ProxyExecutor {
                 let status = response.status;
                 let headers = response.headers;
                 let lifecycle = response.lifecycle;
-                let selected_attempt =
-                    if let Some(selected_attempt) = lifecycle.selected_attempt.as_ref() {
-                        Some(SelectedAttemptFinalization::new(
-                            lifecycle_writer
-                                .try_reserve_attempt()
-                                .map_err(lifecycle_admission_failure)?,
-                            selected_attempt.clone(),
-                        ))
-                    } else {
-                        None
-                    };
-                let finalization_lease =
-                    LifecycleFinalizationLease::new(admission.terminal, selected_attempt);
                 let pending_record = PendingFinalRequestRecord::new(
                     request_context.clone(),
                     lifecycle
@@ -532,23 +536,40 @@ impl IngressExecutor for V2ProxyExecutor {
                     lifecycle.fallback_count,
                     lifecycle.annotations,
                 );
+                let selected_attempt = dual_selected_attempt_finalization(
+                    &lifecycle_writer,
+                    lifecycle.selected_attempt.as_ref(),
+                )?;
+                let costs = dual_cost_finalization(
+                    &lifecycle_writer,
+                    lifecycle.attempt_count,
+                    lifecycle.selected_attempt_cost,
+                )?;
                 let payload = match response.body {
                     super::execution::ProxyExecutionBody::Buffered(body) => {
-                        ProxyResponsePayload::Stream(buffered_lifecycle_finalizing_stream(
-                            body,
-                            pending_record,
-                            finalization_lease,
-                            request_lease,
-                        ))
+                        ProxyResponsePayload::Stream(
+                            dual_terminal_buffered_lifecycle_finalizing_stream(
+                                body,
+                                pending_record,
+                                admission.terminal,
+                                selected_attempt,
+                                Some(costs),
+                                request_lease,
+                            ),
+                        )
                     }
                     super::execution::ProxyExecutionBody::Stream(chunks) => {
-                        ProxyResponsePayload::Stream(lifecycle_finalizing_stream_with_idle_timeout(
-                            chunks,
-                            pending_record,
-                            finalization_lease,
-                            request_lease,
-                            stream_idle_timeout,
-                        ))
+                        ProxyResponsePayload::Stream(
+                            dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+                                chunks,
+                                pending_record,
+                                admission.terminal,
+                                selected_attempt,
+                                Some(costs),
+                                request_lease,
+                                stream_idle_timeout,
+                            ),
+                        )
                     }
                 };
                 Ok(ProxyHttpResponse {
@@ -559,6 +580,55 @@ impl IngressExecutor for V2ProxyExecutor {
             },
         ))
     }
+}
+
+fn dual_selected_attempt_finalization(
+    lifecycle_writer: &LifecycleWriter,
+    selected_attempt: Option<&crate::services::proxy::lifecycle::attempt::AttemptContext>,
+) -> Result<
+    Option<(
+        crate::services::proxy::lifecycle::writer::AttemptWriteReservation,
+        crate::services::proxy::lifecycle::attempt::AttemptContext,
+    )>,
+    super::error::ProxyFailure,
+> {
+    selected_attempt
+        .map(|selected_attempt| {
+            Ok((
+                lifecycle_writer
+                    .try_reserve_attempt()
+                    .map_err(lifecycle_admission_failure)?,
+                selected_attempt.clone(),
+            ))
+        })
+        .transpose()
+}
+
+fn dual_cost_finalization(
+    lifecycle_writer: &LifecycleWriter,
+    attempt_count: u16,
+    selected_attempt_cost: Option<crate::services::proxy::attempt::SelectedAttemptCostSnapshot>,
+) -> Result<crate::services::proxy::attempt::CostFinalizationReservations, super::error::ProxyFailure>
+{
+    let mut attempt_costs = Vec::with_capacity(usize::from(attempt_count));
+    for ordinal in 0..attempt_count {
+        attempt_costs.push((
+            ordinal,
+            lifecycle_writer
+                .try_reserve_attempt_cost()
+                .map_err(lifecycle_admission_failure)?,
+        ));
+    }
+    let aggregate = lifecycle_writer
+        .try_reserve_request_cost_aggregate()
+        .map_err(lifecycle_admission_failure)?;
+    Ok(
+        crate::services::proxy::attempt::CostFinalizationReservations::new(
+            attempt_costs,
+            aggregate,
+            selected_attempt_cost,
+        ),
+    )
 }
 
 fn lifecycle_writer_capacity(limits: &ProxyServerLimits) -> usize {
@@ -642,6 +712,9 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use crate::{
+        application::credentials::{
+            ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
+        },
         models::routing::RouteEndpointKind,
         services::proxy::{
             lifecycle::{
@@ -651,7 +724,7 @@ mod tests {
             },
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestLifecycleAdmission, RequestRequirements},
-            routing_types::RichRouteCandidate,
+            routing_repository::OperationalRouteSnapshot,
             test_support::{LoopbackUpstream, ScriptedResponse, V2ProxyTestFixture},
         },
     };
@@ -726,15 +799,35 @@ mod tests {
     }
 
     impl RoutingRepository for CorrelationCapturingRepository {
-        fn load_runtime_candidates(
+        fn load_operational_route_snapshot(
             &self,
-        ) -> BoxFuture<'static, Result<Vec<RichRouteCandidate>, String>> {
+            _request: crate::application::routing_engine::request::RouteRequestFacts,
+        ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
             let captured = Arc::clone(&self.captured);
             Box::pin(async move {
                 *captured.lock().expect("captured correlation lock") =
                     correlation::current_id_string();
-                Ok(Vec::new())
+                Ok(OperationalRouteSnapshot {
+                    candidates: Vec::new(),
+                    targets: Default::default(),
+                    profiles: Default::default(),
+                    snapshot_id: "correlation-test-empty-snapshot".to_string(),
+                    runtime_overlay_revision: 1,
+                    durable_generation: 1,
+                })
             })
+        }
+    }
+
+    struct TestCredentialResolver;
+
+    impl ExecutionCredentialResolver for TestCredentialResolver {
+        fn resolve_station_key_secret_ref(
+            &self,
+            _station_key_id: String,
+            _secret_ref: SecretRef,
+        ) -> BoxFuture<'static, Result<SecretBytes, ExecutionCredentialError>> {
+            Box::pin(async { Ok("test-api-key".to_string().into()) })
         }
     }
 
@@ -754,7 +847,13 @@ mod tests {
             }),
         )
         .expect("lifecycle writer");
-        let executor = V2ProxyExecutor::new(repository, upstream_pool, limits, writer.clone());
+        let executor = V2ProxyExecutor::new(
+            repository,
+            Arc::new(TestCredentialResolver),
+            upstream_pool,
+            limits,
+            writer.clone(),
+        );
         let request_id = "req_0198108c8411_00003039_0000000000000001".to_string();
         let expected = correlation::CorrelationId::for_proxy_request(&request_id);
         let context = RequestContextSnapshot {
@@ -1198,7 +1297,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_uses_persisted_stable_first_routing_strategy() {
+    async fn v2_maps_persisted_stable_first_to_priority_first_ordering() {
         let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
             br#"{"id":"chatcmpl-stable","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}"#.to_vec(),
         )]);
@@ -1267,7 +1366,7 @@ mod tests {
         upstream.wait_for_requests(1);
         assert_eq!(
             upstream.captured_requests()[0].header("authorization"),
-            Some("Bearer sk-v2-stable")
+            Some("Bearer sk-v2-flaky")
         );
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
@@ -1326,8 +1425,9 @@ mod tests {
             .send()
             .await
             .expect("send responses");
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let status = response.status();
         let failure_body: serde_json::Value = response.json().await.expect("failure json");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(failure_body["error"]["code"], "upstream_http_error");
         assert_eq!(failure_body["error"]["message"], "upstream HTTP 502");
         runtime.stop(started.port).await.unwrap();

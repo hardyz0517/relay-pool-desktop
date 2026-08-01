@@ -107,6 +107,26 @@ fn responses_sse_terminal_event_completes_protocol() {
 }
 
 #[test]
+fn responses_sse_failed_terminal_event_is_not_success() {
+    let mut machine = ResponsesSseMachine::new();
+    machine
+        .observe_headers(StatusCode::OK, &HeaderMap::new())
+        .expect("headers");
+    assert_eq!(
+        machine
+            .observe_chunk(&Bytes::from_static(
+                b"data: {\"type\":\"response.failed\"}\n\n"
+            ))
+            .expect("failed"),
+        ProtocolProgress::Terminal(ProtocolTerminal::Failed)
+    );
+    assert_eq!(
+        machine.finish_eof().expect("terminal eof"),
+        ProtocolTerminal::Failed
+    );
+}
+
+#[test]
 fn chat_sse_done_sentinel_is_the_only_clean_stream_success() {
     let mut missing_done = ChatSseMachine::new();
     missing_done

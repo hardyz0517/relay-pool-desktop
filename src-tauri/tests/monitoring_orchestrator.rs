@@ -190,7 +190,7 @@ pub mod planner;
 #[path = "../src/application/monitoring/recorder.rs"]
 pub mod recorder;
 
-use commands::{MonitorExecutionReceipt, MonitorExecutionRequest};
+use commands::MonitorExecutionRequest;
 use models::monitoring::{
     ClientProfileId, ClientProfileRef, DefinitionRevision, FailureKind, HealthPolicy,
     HealthWritebackMode, ProbeOutcome, ProtocolKind, RetryPolicy, RiskPolicy, SchedulePolicy,
@@ -202,7 +202,8 @@ use orchestrator::{
 };
 use planner::{MonitorPlanningSnapshot, ProbePlanner, ProtocolSelection, TargetCapabilitySnapshot};
 use recorder::{
-    MonitoringRecorder, RecordedAttempt, RecordedExecutionSummary, RecordedTargetResult,
+    MonitorExecutionReceipt, MonitoringRecorder, RecordedAttempt, RecordedExecutionSummary,
+    RecordedTargetResult,
 };
 
 #[test]

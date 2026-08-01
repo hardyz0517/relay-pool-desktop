@@ -1,5 +1,6 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type {
+  ConfirmHierarchicalRoutingMigrationInput,
   UpdateSettingsInput,
   UpsertCommonLoginEmailInput,
   UpsertCommonLoginPasswordInput,
@@ -23,6 +24,10 @@ export function importRelayPoolToCCSwitch() {
 
 export function updateSettings(input: UpdateSettingsInput) {
   return getActiveBackendClient().settings.updateSettings(input);
+}
+
+export function confirmHierarchicalRoutingMigration(input: ConfirmHierarchicalRoutingMigrationInput) {
+  return getActiveBackendClient().settings.confirmHierarchicalRoutingMigration(input);
 }
 
 export function chooseDataDir() {

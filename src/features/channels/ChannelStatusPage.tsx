@@ -3,12 +3,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { SegmentedControl } from "@/components/ui";
 import { queryKeys } from "@/lib/query/queryKeys";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { ChannelMonitoringTab } from "./ChannelMonitoringTab";
 import { ChannelStatusTab } from "./ChannelStatusTab";
 
 type ChannelTab = "status" | "monitoring";
 
-export function ChannelStatusPage() {
+type MonitoringRoutingDeepLink = Extract<RoutingDeepLink, { kind: "station-key" }> & {
+  source: "monitoring";
+};
+
+type ChannelStatusPageProps = {
+  onOpenRoutingDeepLink?: (link: MonitoringRoutingDeepLink) => void;
+};
+
+export function ChannelStatusPage({ onOpenRoutingDeepLink }: ChannelStatusPageProps = {}) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<ChannelTab>("status");
   const channelPageTabs = (
@@ -28,6 +37,7 @@ export function ChannelStatusPage() {
       <ChannelMonitoringTab
         headerActions={channelPageTabs}
         onHealthChanged={() => void queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus })}
+        onOpenRoutingDeepLink={onOpenRoutingDeepLink}
       />
     );
   }

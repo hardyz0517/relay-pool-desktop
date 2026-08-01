@@ -67,8 +67,14 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_provider_drafts_single_active_create",
     "idx_remote_station_keys_discovery_order",
     "idx_remote_station_keys_one_local_owner",
+    "idx_route_candidate_decisions_decision",
+    "idx_route_candidate_decisions_request",
+    "idx_route_decisions_created_at",
+    "idx_route_decisions_cursor",
     "idx_request_attempts_station_key_terminal",
     "idx_request_logs_created",
+    "idx_routing_attempt_costs_request",
+    "idx_routing_request_cost_aggregates_updated",
     "idx_station_key_health_observations_key_observed",
     "idx_station_keys_order",
     "idx_station_keys_routing_order",
@@ -116,7 +122,10 @@ impl PortableMigrationCompatibilityRegistry {
         if manifest.database_generation != PORTABLE_MIGRATION_DATABASE_GENERATION {
             return Err(ReaderCompatibilityError::UnsupportedDatabaseGeneration);
         }
-        if manifest.database_schema_version != PORTABLE_MIGRATION_MIN_SCHEMA_VERSION {
+        if manifest.database_schema_version < PORTABLE_MIGRATION_MIN_SCHEMA_VERSION
+            || manifest.database_schema_version
+                > crate::persistence::current_schema_version() as u64
+        {
             return Err(ReaderCompatibilityError::UnsupportedDatabaseSchema);
         }
         if manifest.export_policy_version != PORTABLE_MIGRATION_EXPORT_POLICY_VERSION {
@@ -407,8 +416,10 @@ async fn validate_declared_compatibility(
     .await?;
     let generation: i64 = row.get("database_generation");
     let schema_version: i64 = row.get("schema_version");
+    let current_schema = crate::persistence::current_schema_version();
     if generation != PORTABLE_MIGRATION_DATABASE_GENERATION as i64
-        || schema_version != PORTABLE_MIGRATION_MIN_SCHEMA_VERSION as i64
+        || schema_version < PORTABLE_MIGRATION_MIN_SCHEMA_VERSION as i64
+        || schema_version > current_schema
     {
         return Err(PortableMigrationValidationError::UnsupportedSchema);
     }
@@ -470,8 +481,8 @@ mod tests {
         let fingerprint = trusted_schema_fingerprint_v1();
 
         assert_eq!(fingerprint.sha256, fixture);
-        assert_eq!(fingerprint.table_count, 37);
-        assert_eq!(fingerprint.index_count, 45);
+        assert_eq!(fingerprint.table_count, 43);
+        assert_eq!(fingerprint.index_count, 51);
     }
 
     #[tokio::test]

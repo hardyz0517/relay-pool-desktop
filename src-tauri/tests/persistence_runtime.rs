@@ -41,6 +41,15 @@ mod persistence {
         ));
     }
 
+    pub(crate) mod maintenance {
+        pub(crate) mod request_log_url_sanitizer {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/maintenance/request_log_url_sanitizer.rs"
+            ));
+        }
+    }
+
     pub(crate) mod runtime {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -55,17 +64,17 @@ mod persistence {
         ));
     }
 
-    pub(crate) mod health_check {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/persistence/health_check.rs"
-        ));
-    }
-
     pub(crate) mod schema_registry {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/persistence/schema_registry.rs"
+        ));
+    }
+
+    pub(crate) mod health_check {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/health_check.rs"
         ));
     }
 
@@ -74,6 +83,14 @@ mod persistence {
             env!("CARGO_MANIFEST_DIR"),
             "/src/persistence/migrations.rs"
         ));
+    }
+}
+
+mod services {
+    pub(crate) mod time {
+        pub(crate) fn now_millis_for_services() -> i64 {
+            1_000
+        }
     }
 }
 
@@ -339,7 +356,7 @@ impl V2Fixture {
         let path = temp_db_path("v2");
         persistence::migrations::initialize_v2_database(&path)
             .await
-            .expect("migrate fixture");
+            .expect("initialize fixture");
         Self { path }
     }
 

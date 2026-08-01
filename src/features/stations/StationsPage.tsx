@@ -24,12 +24,22 @@ import {
   useStationsPageController,
   type StationsPageControllerOptions,
 } from "./useStationsPageController";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
+
+type StationRoutingDeepLink = Extract<RoutingDeepLink, { kind: "station" }> & {
+  source: "station_endpoint_health";
+};
 
 type StationsPageProps = StationsPageControllerOptions & {
   onAddProvider?: () => void;
+  onOpenRoutingDeepLink?: (link: StationRoutingDeepLink) => void;
 };
 
-export function StationsPage({ onAddProvider, ...controllerOptions }: StationsPageProps) {
+export function StationsPage({
+  onAddProvider,
+  onOpenRoutingDeepLink,
+  ...controllerOptions
+}: StationsPageProps) {
   const {
     actionSaving,
     activeDialogStation,
@@ -169,6 +179,7 @@ export function StationsPage({ onAddProvider, ...controllerOptions }: StationsPa
                       onCollect={(station) => void handleRunCollect(station)}
                       onDelete={handleDelete}
                       onEdit={openEdit}
+                      onOpenRoutingDeepLink={onOpenRoutingDeepLink}
                       onOpen={openDetail}
                       onOpenWebsite={handleOpenWebsite}
                       onRefreshBalance={(station) => void handleRefreshBalance(station)}
@@ -188,6 +199,7 @@ export function StationsPage({ onAddProvider, ...controllerOptions }: StationsPa
                     onDelete={() => undefined}
                     onEdit={() => undefined}
                     onAuthorize={() => undefined}
+                    onOpenRoutingDeepLink={() => undefined}
                     onOpen={() => undefined}
                     onOpenWebsite={() => undefined}
                     onRefreshBalance={() => undefined}

@@ -6,12 +6,7 @@ import { toTimestampMillis } from "@/lib/time";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate } from "@/lib/types/localRouting";
 import type { RouteEndpointKind } from "@/lib/types/routing";
 import { cn } from "@/lib/utils";
-import {
-  buildCooldownDisplay,
-  formatBalanceStatus,
-  formatMultiplierSource,
-  formatPreviewRejectReason,
-} from "./localRoutingStatusViewModel";
+import { buildCandidateDisplayFacts, buildCooldownDisplay } from "./localRoutingStatusViewModel";
 
 type LocalRoutingCandidateRowProps = {
   candidate: LocalRoutingCandidate;
@@ -71,13 +66,10 @@ export function LocalRoutingCandidateRow({
 }: LocalRoutingCandidateRowProps) {
   const syncLabel = syncLabels[syncState];
   const isSortable = Boolean(dragAttributes || dragListeners);
-  const balanceFact = candidate.facts.find((fact) => fact.kind === "balance");
   const cooldownUntilMs =
     candidate.cooldownUntil == null ? null : toTimestampMillis(candidate.cooldownUntil);
   const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, Date.now());
-  const primaryRejectReason = !candidate.schedulable
-    ? "asset_unavailable"
-    : (candidate.previewRejectReasons[0] ?? null);
+  const displayFacts = buildCandidateDisplayFacts(candidate);
   const participationTone = !candidate.schedulable
     ? "disabled"
     : candidate.previewEligible
@@ -88,15 +80,6 @@ export function LocalRoutingCandidateRow({
     : candidate.previewEligible
       ? "可参与"
       : "不参与";
-  const multiplierLabel =
-    candidate.effectiveMultiplier == null
-      ? "未确认"
-      : `${candidate.effectiveMultiplier.toFixed(4)}x`;
-  const multiplierSourceLabel = formatMultiplierSource(
-    candidate.effectiveMultiplierSource,
-    candidate.effectiveMultiplierConfidence,
-  );
-  const balanceLabel = formatBalanceStatus(balanceFact?.value ?? null);
 
   return (
     <div
@@ -146,17 +129,17 @@ export function LocalRoutingCandidateRow({
             {healthLabels[candidate.healthState]}
           </StatusBadge>
         </div>
-        {!candidate.previewEligible && primaryRejectReason ? (
+        {!candidate.previewEligible && displayFacts.rejectReasonLabel ? (
           <div className="mt-1 text-xs text-warning-foreground">
-            {formatPreviewRejectReason(primaryRejectReason)}
+            {displayFacts.rejectReasonLabel}
           </div>
         ) : null}
         {!candidate.routingGroupMatch ? (
           <div className="mt-1 text-xs text-warning-foreground">分组不匹配</div>
         ) : null}
       </MetricCell>
-      <MetricCell label="有效倍率" value={multiplierLabel} detail={multiplierSourceLabel} />
-      <MetricCell label="余额" value={balanceLabel} />
+      <MetricCell label="有效倍率" value={displayFacts.multiplierLabel} detail={displayFacts.multiplierDetail} />
+      <MetricCell label="余额" value={displayFacts.balanceLabel} detail={displayFacts.balanceDetail} />
       <MetricCell
         label="冷却"
         value={cooldown.label}

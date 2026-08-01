@@ -22,14 +22,13 @@ use crate::{
     persistence::runtime::PersistenceRuntime,
     services::{
         proxy::{http_request::parse_http_request, runtime::ProxyStartConfig},
-        secrets::{crypto::generate_data_key, DeviceKeyResolver},
+        secrets::crypto::generate_data_key,
     },
 };
 
 pub(crate) struct V2ProxyTestFixture {
     pub(crate) services: AppServices,
     runtime: PersistenceRuntime,
-    pub(crate) device_keys: DeviceKeyResolver,
     _root: tempfile::TempDir,
 }
 
@@ -44,7 +43,6 @@ impl V2ProxyTestFixture {
             .await
             .expect("initialize V2 persistence runtime");
         let data_key = generate_data_key();
-        let device_keys = DeviceKeyResolver::for_test(data_key);
         let work_runtime = crate::app_composition::compose_work_runtime(
             crate::app_composition::WorkRuntimeConfig::architecture_budget(),
             tokio::runtime::Handle::current(),
@@ -52,7 +50,7 @@ impl V2ProxyTestFixture {
         .expect("compose work runtime");
         let services = crate::app_composition::compose_app_services(
             runtime.handle(),
-            device_keys.clone(),
+            crate::services::secrets::DeviceKeyResolver::for_test(data_key),
             active_data_dir.to_string_lossy().into_owned(),
             None,
             Arc::new(
@@ -71,7 +69,6 @@ impl V2ProxyTestFixture {
         Self {
             services,
             runtime,
-            device_keys,
             _root: root,
         }
     }
@@ -82,7 +79,6 @@ impl V2ProxyTestFixture {
         > = Arc::new(
             crate::services::proxy::routing_repository::V2RoutingRepository::new(
                 self.services.routing.as_ref().clone(),
-                self.device_keys.clone(),
             ),
         );
         let lifecycle_store: Arc<
@@ -90,6 +86,7 @@ impl V2ProxyTestFixture {
         > = self.services.request_finalization.clone();
         ProxyStartConfig::new_v2(
             routing_repository,
+            self.services.credentials.clone(),
             lifecycle_store,
             "relay-local-secret".to_string(),
             port,

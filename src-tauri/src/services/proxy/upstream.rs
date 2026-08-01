@@ -5,7 +5,10 @@ use futures_util::{StreamExt, TryStreamExt};
 use http::{header, HeaderMap, HeaderValue, StatusCode};
 use tokio::sync::RwLock;
 
-use crate::services::{outbound::current_system_proxy_url, station_endpoints::build_api_url};
+use crate::{
+    application::operational_facts::target_resolver::ExecutionTargetHandle,
+    services::{outbound::current_system_proxy_url, station_endpoints::build_api_url},
+};
 
 use super::{
     endpoint_adapter::PreparedUpstreamRequest,
@@ -14,7 +17,6 @@ use super::{
     protocol::TransportMode,
     redact_error_message,
     request::ByteStream,
-    routing_types::RouteCandidate,
 };
 
 #[derive(Clone)]
@@ -99,17 +101,31 @@ impl UpstreamClientPool {
         Ok(client)
     }
 
-    pub(crate) async fn send(
+    pub(crate) async fn send_resolved(
         &self,
         prepared: PreparedUpstreamRequest,
-        candidate: &RouteCandidate,
+        target: &ExecutionTargetHandle,
     ) -> Result<UpstreamAttempt, ProxyFailure> {
-        let route = ProxyRoute::from_candidate_parts(
-            &candidate.collector_proxy_mode,
-            candidate.collector_proxy_url.as_deref(),
-        )?;
-        let url = build_api_url(&candidate.upstream_base_url, &prepared.path)
-            .map_err(internal_proxy_failure)?;
+        self.send_with_parts(
+            prepared,
+            &target.collector_proxy_mode,
+            target.collector_proxy_url.as_deref(),
+            &target.api_base_url,
+            target.api_key.as_bytes(),
+        )
+        .await
+    }
+
+    async fn send_with_parts(
+        &self,
+        prepared: PreparedUpstreamRequest,
+        collector_proxy_mode: &str,
+        collector_proxy_url: Option<&str>,
+        api_base_url: &str,
+        api_key: &[u8],
+    ) -> Result<UpstreamAttempt, ProxyFailure> {
+        let route = ProxyRoute::from_candidate_parts(collector_proxy_mode, collector_proxy_url)?;
+        let url = build_api_url(api_base_url, &prepared.path).map_err(internal_proxy_failure)?;
         let client = self.client(&route).await?;
         let method = reqwest::Method::from_bytes(prepared.method.as_str().as_bytes())
             .map_err(|error| internal_proxy_failure(format!("invalid upstream method: {error}")))?;
@@ -117,9 +133,12 @@ impl UpstreamClientPool {
         for (name, value) in prepared.headers.iter() {
             request = request.header(name.as_str(), value.clone());
         }
+        let mut authorization = Vec::with_capacity("Bearer ".len() + api_key.len());
+        authorization.extend_from_slice(b"Bearer ");
+        authorization.extend_from_slice(api_key);
         request = request.header(
             header::AUTHORIZATION.as_str(),
-            HeaderValue::from_str(&format!("Bearer {}", candidate.api_key)).map_err(|error| {
+            HeaderValue::from_bytes(&authorization).map_err(|error| {
                 internal_proxy_failure(format!("invalid upstream authorization header: {error}"))
             })?,
         );
@@ -289,6 +308,13 @@ mod tests {
     use http::{HeaderMap, Method, StatusCode};
 
     use crate::{
+        application::{
+            credentials::SecretBytes,
+            operational_facts::target_resolver::ExecutionTargetHandle,
+            routing_engine::capacity::{
+                CompositeCapacityRegistry, CompositeCapacityRequest, ProviderAccountConstraint,
+            },
+        },
         models::proxy::UpstreamApiFormat,
         services::proxy::{
             endpoint_adapter::PreparedUpstreamRequest,
@@ -298,7 +324,6 @@ mod tests {
                 CompletionPolicy, DownstreamTransform, ResponsePlan, TransportMode,
                 UpstreamProtocol,
             },
-            routing_types::RouteCandidate,
             test_support::{LoopbackUpstream, ScriptedResponse},
         },
     };
@@ -323,9 +348,9 @@ mod tests {
         }]);
 
         let outcome = pool
-            .send(
+            .send_resolved(
                 prepared_request("/v1/models"),
-                &test_candidate(&upstream.base_url),
+                &test_target(&upstream.base_url),
             )
             .await
             .expect("upstream outcome");
@@ -337,9 +362,9 @@ mod tests {
     async fn upstream_transport_classifies_connect_timeout_and_http_status() {
         let pool = UpstreamClientPool::new(short_limits()).expect("pool");
         let connect = pool
-            .send(
+            .send_resolved(
                 prepared_request("/v1/models"),
-                &test_candidate("http://127.0.0.1:9"),
+                &test_target("http://127.0.0.1:9"),
             )
             .await
             .expect_err("connect failure");
@@ -350,9 +375,9 @@ mod tests {
             reason: "Too Many Requests",
         }]);
         let status = pool
-            .send(
+            .send_resolved(
                 prepared_request("/v1/models"),
-                &test_candidate(&upstream.base_url),
+                &test_target(&upstream.base_url),
             )
             .await
             .expect("http status response");
@@ -409,20 +434,29 @@ mod tests {
         }
     }
 
-    fn test_candidate(upstream_base_url: &str) -> RouteCandidate {
-        RouteCandidate {
+    fn test_target(upstream_base_url: &str) -> ExecutionTargetHandle {
+        let capacity = CompositeCapacityRegistry::default();
+        let lease = capacity
+            .try_acquire(CompositeCapacityRequest {
+                station_id: "station-test".to_string(),
+                station_key_id: "key-test".to_string(),
+                half_open_probe_id: None,
+                global_max_concurrency: 8,
+                station_account_max_concurrency: 8,
+                station_key_max_concurrency: 8,
+                provider_account_constraint: ProviderAccountConstraint::NotApplicable,
+            })
+            .expect("test capacity lease");
+        ExecutionTargetHandle {
             station_key_id: "key-test".to_string(),
             station_id: "station-test".to_string(),
-            station_endpoint_revision: 1,
-            upstream_base_url: upstream_base_url.to_string(),
-            api_key: "sk-upstream-test".to_string(),
+            endpoint_revision: 1,
+            api_base_url: upstream_base_url.to_string(),
+            upstream_api_format: UpstreamApiFormat::Auto,
             collector_proxy_mode: "direct".to_string(),
             collector_proxy_url: None,
-            upstream_api_format: UpstreamApiFormat::Auto,
-            priority: 0,
-            max_concurrency: 0,
-            load_factor: None,
-            schedulable: true,
+            api_key: SecretBytes::from("sk-upstream-test".to_string()),
+            lease,
         }
     }
 

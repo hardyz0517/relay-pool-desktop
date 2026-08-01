@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use crate::{
     application::{
-        error::ApplicationError, request_finalization::RequestFinalizationService,
-        request_logs::RequestLogService, routing::RoutingService, settings::SettingsService,
+        credentials::CredentialService, error::ApplicationError,
+        request_finalization::RequestFinalizationService,
+        request_lifecycle::ports::LifecycleWriteError, request_logs::RequestLogService,
+        routing::RoutingService, settings::SettingsService,
     },
     models::proxy::ProxyStatus,
     services::proxy::{
@@ -12,7 +14,6 @@ use crate::{
         routing_types::LocalRoutingWorkspace,
         runtime::{ProxyRuntimeState, ProxyStartConfig},
     },
-    services::secrets::DeviceKeyResolver,
 };
 
 #[derive(Debug)]
@@ -42,28 +43,28 @@ pub(crate) struct CcswitchImportProxyTarget {
 pub(crate) struct LocalProxyCommandFacade {
     settings: Arc<SettingsService>,
     routing: Arc<RoutingService>,
+    credentials: Arc<CredentialService>,
     request_logs: Arc<RequestLogService>,
     request_finalization: Arc<RequestFinalizationService>,
     proxy: Arc<ProxyRuntimeState>,
-    device_keys: DeviceKeyResolver,
 }
 
 impl LocalProxyCommandFacade {
     pub(crate) fn new(
         settings: Arc<SettingsService>,
         routing: Arc<RoutingService>,
+        credentials: Arc<CredentialService>,
         request_logs: Arc<RequestLogService>,
         request_finalization: Arc<RequestFinalizationService>,
         proxy: Arc<ProxyRuntimeState>,
-        device_keys: DeviceKeyResolver,
     ) -> Self {
         Self {
             settings,
             routing,
+            credentials,
             request_logs,
             request_finalization,
             proxy,
-            device_keys,
         }
     }
 
@@ -158,21 +159,35 @@ impl LocalProxyCommandFacade {
             String,
             ProxyStartConfig,
         ),
-        ApplicationError,
+        LocalProxyCommandError,
     > {
         let settings = self.settings.load().await?;
         let local_access_key = self.settings.ensure_local_access_key().await?;
-        let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
-            self.routing.as_ref().clone(),
-            self.device_keys.clone(),
-        ));
+        self.request_finalization
+            .reconcile_startup_interrupted_request_lifecycle()
+            .await
+            .map_err(local_proxy_startup_reconciliation_error)?;
+        let routing_repository: Arc<dyn RoutingRepository> =
+            Arc::new(V2RoutingRepository::new(self.routing.as_ref().clone()));
         let lifecycle_store: Arc<dyn RequestLifecycleStore> = self.request_finalization.clone();
         let config = ProxyStartConfig::new_v2(
             routing_repository,
+            self.credentials.clone(),
             lifecycle_store,
             local_access_key.clone(),
             settings.local_proxy_port,
         );
         Ok((settings, local_access_key, config))
+    }
+}
+
+fn local_proxy_startup_reconciliation_error(error: LifecycleWriteError) -> LocalProxyCommandError {
+    match error {
+        LifecycleWriteError::Unavailable(_) => {
+            LocalProxyCommandError::Application(ApplicationError::Unavailable)
+        }
+        LifecycleWriteError::CommitOutcomeUnknown(_) => {
+            LocalProxyCommandError::Application(ApplicationError::CommitOutcomeUnknown)
+        }
     }
 }

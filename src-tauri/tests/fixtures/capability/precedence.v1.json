@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "policy": "adapter_structure > user_block > adapter_semantic_negative > successful_request > complete_inventory_negative > user_allow > collector_positive",
+  "notes": [
+    "Partial or unknown inventory may prove support, but cannot prove a missing model is unsupported.",
+    "Generic 403/404 adapter statuses are uncertain and do not become model unsupported without a semantic adapter signal.",
+    "Strict policy changes admission for Unknown only; it does not rewrite evidence truth."
+  ]
+}

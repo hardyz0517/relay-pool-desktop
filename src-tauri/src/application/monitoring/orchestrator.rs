@@ -2,10 +2,11 @@ use crate::models::monitoring::{FailureKind, ProbeOutcome, SemanticConfidence, T
 use futures_util::future::BoxFuture;
 
 use super::{
-    commands::{MonitorExecutionReceipt, MonitorExecutionRequest},
+    commands::MonitorExecutionRequest,
     planner::{PlanError, ProbePlan, ProbePlanner, ProbeTargetPlan},
     recorder::{
-        MonitoringRecorder, RecordedAttempt, RecordedExecutionSummary, RecordedTargetResult,
+        MonitorExecutionReceipt, MonitoringRecorder, RecordedAttempt, RecordedExecutionSummary,
+        RecordedTargetResult,
     },
 };
 
@@ -279,6 +280,28 @@ fn retry_allowed_for_failure(failure_kind: FailureKind) -> bool {
     )
 }
 
+fn skipped_target_result(
+    execution_id: &str,
+    target: &ProbeTargetPlan,
+    failure_kind: FailureKind,
+) -> RecordedTargetResult {
+    RecordedTargetResult {
+        execution_id: execution_id.to_string(),
+        station_id: target.station_id.clone(),
+        station_key_id: target.station_key_id.clone(),
+        terminal_outcome: ProbeOutcome::Skipped,
+        terminal_failure_kind: Some(failure_kind),
+        decisive_attempt_id: None,
+        requested_model: None,
+        effective_model: None,
+        used_fallback: false,
+        attempt_count: 0,
+        protocol_kind: target.protocol_kind,
+        request_profile_hash: target.request_profile_hash.clone(),
+        endpoint_revision: target.endpoint_revision,
+    }
+}
+
 fn fallback_allowed_after_failure(failure_kind: FailureKind) -> bool {
     matches!(
         failure_kind,
@@ -368,27 +391,5 @@ fn summarize_execution(
         unavailable_count,
         skipped_count,
         summary_outcome,
-    }
-}
-
-fn skipped_target_result(
-    execution_id: &str,
-    target: &ProbeTargetPlan,
-    failure_kind: FailureKind,
-) -> RecordedTargetResult {
-    RecordedTargetResult {
-        execution_id: execution_id.to_string(),
-        station_id: target.station_id.clone(),
-        station_key_id: target.station_key_id.clone(),
-        terminal_outcome: ProbeOutcome::Skipped,
-        terminal_failure_kind: Some(failure_kind),
-        decisive_attempt_id: None,
-        requested_model: None,
-        effective_model: None,
-        used_fallback: false,
-        attempt_count: 0,
-        protocol_kind: target.protocol_kind,
-        request_profile_hash: target.request_profile_hash.clone(),
-        endpoint_revision: target.endpoint_revision,
     }
 }

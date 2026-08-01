@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "3115c408311fefdac9c86297e2294c712b6cab5e618903fed6c7fb9cd386baf8",
+  "contract_hash": "14a2e19e87b26913e688cbeb22f97bf8aac7bcdd55fb47c022124bd3fbfd6425",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -11,7 +11,6 @@
       "output_schema_hash": "4c7ea8b59e76684d62c7be4a2ad533ee2e0615c5baab0736c4451efcaadd3b62",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -23,7 +22,6 @@
       "output_schema_hash": "193cbc463dacdc129ebf6dd0b5de4a2fa472d25032aad9925e0e2d842a718318",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -35,7 +33,6 @@
       "output_schema_hash": "e4f547c7c26ada35762eca2883cead6e0086e52ac95a3c1c62cc49783b6f2488",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -47,7 +44,6 @@
       "output_schema_hash": "64cf0ad52c4e2d9d5e14e1aea9a31ea75269593773c20e181ad40accba0b1c1a",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -59,7 +55,6 @@
       "output_schema_hash": "a48f8d72307a14e15f7a19097d7fb6c5dcc1f35d1bf19819b456f086b826eea7",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -71,7 +66,6 @@
       "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -83,7 +77,6 @@
       "output_schema_hash": "3542fb9cad067f8136df04dad45268372cb538feaa1e85faebc6f9fc2f320f15",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "maintenance_read",
-      "admission_class": "maintenance_read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -95,7 +88,6 @@
       "output_schema_hash": "3542fb9cad067f8136df04dad45268372cb538feaa1e85faebc6f9fc2f320f15",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "maintenance_read",
-      "admission_class": "maintenance_read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -107,7 +99,6 @@
       "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -119,7 +110,6 @@
       "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -131,7 +121,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -143,7 +132,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -155,7 +143,6 @@
       "output_schema_hash": "418227d3e18f931014f0b9252fffe740d3278c22870e5809a425da89c13cd779",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -167,7 +154,6 @@
       "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -179,7 +165,6 @@
       "output_schema_hash": "dc77891187fd3bc69b6f80fdfbb77a473bed0e533a35cd6a3828aac093b6eec1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -191,7 +176,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -203,7 +187,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -215,7 +198,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -227,7 +209,17 @@
       "output_schema_hash": "af8c76579fe949f562e6e4afea71c49f6d694990bea74e869e486baf4a103aed",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "confirm_hierarchical_routing_migration",
+      "transport": "ordinary",
+      "input_schema_hash": "cd8c7f84a72c7922e86a4981cff4994b8c7d17ff02b6afc56a5b294cd8e34275",
+      "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -239,7 +231,6 @@
       "output_schema_hash": "c219e7f9aaccd360517de3736d4c3c1ac0efbfc498ad24dbd9573d0536ec4907",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -251,7 +242,6 @@
       "output_schema_hash": "0883b50b6330024d896b5b374f700ea13f2706075cfc9f76d9eb191d6d23a95e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -263,7 +253,6 @@
       "output_schema_hash": "97d581ffdcdc9d7f17ecf1bb6060d53b28b2273b6c91126dab7e9f0593cea909",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -275,7 +264,6 @@
       "output_schema_hash": "4c7ea8b59e76684d62c7be4a2ad533ee2e0615c5baab0736c4451efcaadd3b62",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -287,7 +275,6 @@
       "output_schema_hash": "e7a2a2c043fe9871c05b015d8f016c4973c4c12f80ba6f558e6ddeab12f2cd49",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -299,7 +286,6 @@
       "output_schema_hash": "8cb495ba73243a163b6fec09c6d57a597645db05fc3cbb10dd8077c6b30314fe",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -311,7 +297,6 @@
       "output_schema_hash": "af8c76579fe949f562e6e4afea71c49f6d694990bea74e869e486baf4a103aed",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -323,7 +308,6 @@
       "output_schema_hash": "e3eda883d95c05a2e36c2e806b528a2fc09c7cdfb8a7283b99ba8baa2ffac8e0",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -335,7 +319,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -347,7 +330,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -359,7 +341,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -371,7 +352,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -383,7 +363,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -395,7 +374,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -407,7 +385,6 @@
       "output_schema_hash": "ebf35f35be6c1409d4015f0c170b3d8a46a6ece1a8f26b15411c243db8cc725e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -419,7 +396,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -431,7 +407,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -443,7 +418,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -455,7 +429,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -467,7 +440,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -479,7 +451,6 @@
       "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -491,7 +462,6 @@
       "output_schema_hash": "0883b50b6330024d896b5b374f700ea13f2706075cfc9f76d9eb191d6d23a95e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -502,10 +472,9 @@
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "1d999400720309c1df84128526206caf5c69bdfc038b9351504bf9a7553e8dd8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "admission_class": "read",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
+      "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
     },
     {
@@ -515,7 +484,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -527,7 +495,6 @@
       "output_schema_hash": "dc77891187fd3bc69b6f80fdfbb77a473bed0e533a35cd6a3828aac093b6eec1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -539,7 +506,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -551,7 +517,6 @@
       "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -563,7 +528,6 @@
       "output_schema_hash": "1ddcf96fe45a8305cba2eb49b020635d5b3ce2a55d7b590a08f98702a88ae36a",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -575,7 +539,6 @@
       "output_schema_hash": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -587,7 +550,6 @@
       "output_schema_hash": "89e5f210bc0c084ae4fa720a65a119e9ef7130d1e32c8bc24717419a61f98a35",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -599,7 +561,6 @@
       "output_schema_hash": "52a54934b9dadc1ae2febec060b7df4a87ee4329eb817d5a90e9141014ab0529",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -611,7 +572,6 @@
       "output_schema_hash": "b2ef230e7f4f315a28cdcc863028da31f7110f3209feb76e76fed0f37b3d8580",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -623,7 +583,6 @@
       "output_schema_hash": "e43b5a2e2392f38799fb2de33d004d165bf03699e2ddd09ac9c27ee16380efeb",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -635,7 +594,6 @@
       "output_schema_hash": "f26cd13df1cc14fbf630e3f743dbbf0a4d5809d4a76bbe80dd95fdfecbf91b5e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -647,7 +605,6 @@
       "output_schema_hash": "11d745cabae0ac569ffb1fc805ce1c40dc58b001bffa7cbe789ceb2e5a639a83",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -659,7 +616,6 @@
       "output_schema_hash": "be22f319cb22314f5f7537916a96e9d26fe7798ef99552266676c89975469eee",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -671,7 +627,6 @@
       "output_schema_hash": "84c36c41bfd2dce30758b834d26515d6329fe9fec6b11a24d8f3f95a4d14702b",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -683,7 +638,6 @@
       "output_schema_hash": "16a6707c6fb7f7fcf1a0e05d475739e796393174148ab3d8a6ac78a31a52a345",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -695,7 +649,6 @@
       "output_schema_hash": "215e77a3c5c4dcd0677bb0523658b8724e89beb70ba612d4c23e8bb9b45cafb5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -707,7 +660,6 @@
       "output_schema_hash": "e7a2a2c043fe9871c05b015d8f016c4973c4c12f80ba6f558e6ddeab12f2cd49",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -719,7 +671,6 @@
       "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -731,7 +682,17 @@
       "output_schema_hash": "cdaeb95a03e8d87cf924c7260bab413b10810b9a3e9e0991d43db9c19db6623f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "get_request_decision_trace",
+      "transport": "ordinary",
+      "input_schema_hash": "11f2b215b55174292da4b568234b69f5cfcf38809a38f5a628589b3baa447b6c",
+      "output_schema_hash": "57718f1e6c549a5c8a3b64e5e8617b680fc74e7f73acaafd7e4a35d5f678f5a1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -743,7 +704,6 @@
       "output_schema_hash": "abcbf5b415bc38777015aa98b0c6e0ec3e827062935f0b71c1d9765c918f06e3",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -755,7 +715,6 @@
       "output_schema_hash": "ebb4ba46fb0ed00515175204bbe035b408bed4cfa9b40e2ab0fabf7499c0628d",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -767,7 +726,6 @@
       "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -779,7 +737,6 @@
       "output_schema_hash": "418227d3e18f931014f0b9252fffe740d3278c22870e5809a425da89c13cd779",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -791,7 +748,6 @@
       "output_schema_hash": "8ce18a4570a174d96d873260ad531adae40536e76d7925b2b2147439f302995e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -803,7 +759,6 @@
       "output_schema_hash": "2279d689dae73ea8a82f0df2cf39c997f4e810a738393335a6f8c8b1a55f138b",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -815,7 +770,6 @@
       "output_schema_hash": "ed520a06d81873407a15e3e26d2f4a553ae57ca9c1173d850859768a28aaee84",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -827,7 +781,17 @@
       "output_schema_hash": "b4497a567d876f9bced5d9611ba51019420a36eb9bd313dae40a91c3b16713e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "get_station_key_operational_detail",
+      "transport": "ordinary",
+      "input_schema_hash": "d5ceafd264e754b47c194a971231bc07af511cdfbc8b3c2161b747012bd1ae00",
+      "output_schema_hash": "4e12d5b10e08314a78e631f9886676ebcfff2f329aa19c92cecb341c40072209",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -839,7 +803,6 @@
       "output_schema_hash": "78c33f70c9e4edfc5338b6a8bc0dd731d15226e466a59605596e171cca5d5603",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -851,7 +814,6 @@
       "output_schema_hash": "bfe0c7f73af9df9084576caa7ccddd55f84e2b3bc50211e0647d2a0ecdeb0fb7",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -863,7 +825,6 @@
       "output_schema_hash": "caee08801d95c3d8b80934347c9266249f317487712b75e02c19f65fa39ebfd9",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -875,7 +836,6 @@
       "output_schema_hash": "caee08801d95c3d8b80934347c9266249f317487712b75e02c19f65fa39ebfd9",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -887,7 +847,6 @@
       "output_schema_hash": "e01bea0b1328ae8adc4cce77f001f2880537a61060ea975a823d2dd9b8523459",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -899,7 +858,6 @@
       "output_schema_hash": "e01bea0b1328ae8adc4cce77f001f2880537a61060ea975a823d2dd9b8523459",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -911,7 +869,6 @@
       "output_schema_hash": "cde44bc95238fe6c21b8689ff65beefb2f5d3de76f32150ff63195884a1df7ec",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -923,7 +880,6 @@
       "output_schema_hash": "6ddb14300570bf361abc05a9a2e485b5ba5e2baaf8cd98f001aab7367207c4bc",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -935,7 +891,6 @@
       "output_schema_hash": "7b20a579468f726c8771048591df2a8957b25f674c410ed10d633683b349a96f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -947,7 +902,6 @@
       "output_schema_hash": "6323eb6cfa164c92b839c82ab2a15a74f1010f0476e93fb584a894260ddb35b6",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -959,7 +913,6 @@
       "output_schema_hash": "761e459d9df284e55f568bae012718a5c63a7486c47674391bb38995173d21fb",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -971,7 +924,6 @@
       "output_schema_hash": "d9afa347bedae3a38164158cbcb967f1860b83d072d12bc59c63524412f56a93",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -983,7 +935,6 @@
       "output_schema_hash": "76012487918ccba8a4a317eec0267811961a991adc54221e2a6c247057a888ec",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -995,7 +946,6 @@
       "output_schema_hash": "1f25ad03dd9345670f834705ef548daa76583018a3fdd34c756d26be3cbaa85e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1007,7 +957,6 @@
       "output_schema_hash": "caee08801d95c3d8b80934347c9266249f317487712b75e02c19f65fa39ebfd9",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1019,7 +968,6 @@
       "output_schema_hash": "ea07141f11f6bd5d252125299ccfcde668817f3b4f85ee3b467b6f5f4d0c860b",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1031,7 +979,6 @@
       "output_schema_hash": "75627923f93a277ee081e4576cfc29ef464a80075f86b4b8df53aa181800e22e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1043,7 +990,6 @@
       "output_schema_hash": "76012487918ccba8a4a317eec0267811961a991adc54221e2a6c247057a888ec",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1055,7 +1001,6 @@
       "output_schema_hash": "cbac08343e5ff6864570233b0af94fe8ea837f53324d0f1a922e26875978d955",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1067,7 +1012,6 @@
       "output_schema_hash": "e25027e88e9040afe252dc4c5dae897314df615575c046417e0b84cf89f921fa",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1079,7 +1023,6 @@
       "output_schema_hash": "2e127a00614e2813f2c036670f516b17d4807fb71e70c46d17efcd0674f1542e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1091,7 +1034,17 @@
       "output_schema_hash": "47a1c41c37386b44ea02f5d86263a2b2b11528204b1211574569348902d1ab23",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "list_recent_route_decisions",
+      "transport": "ordinary",
+      "input_schema_hash": "4a9423c032d06ee32dc5a7e137e41ee9fb91fe74b6820a4ff428f6648e349873",
+      "output_schema_hash": "5ae3f3e9fccb105dad18d7e5fc08b75435f16c51e50a3aa69de4a6f8f1160a85",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1103,7 +1056,6 @@
       "output_schema_hash": "e4f547c7c26ada35762eca2883cead6e0086e52ac95a3c1c62cc49783b6f2488",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1115,7 +1067,6 @@
       "output_schema_hash": "e4fb1d7c07cdbeddc26823d38e2345caff8fe898a75261cf2fcf792f9daf515c",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1127,7 +1078,6 @@
       "output_schema_hash": "3497e212e4f62534a3af54ba1de5706856d56f41f10ca7fc01e407c4f8aa3672",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1139,7 +1089,6 @@
       "output_schema_hash": "93824181fa0e15ccfe27d0b2dd14d7423a911b9eb905c2573c9a91dc2ad21025",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1151,7 +1100,6 @@
       "output_schema_hash": "19cc67139940414ef7376a600303dc11f5b73e335061fc1e21f070c067f964e7",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1163,7 +1111,6 @@
       "output_schema_hash": "efa4bb94e40f19698b79dfcf9733a4adc85623ae7e61de9992db213dbd7c4e86",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1175,7 +1122,6 @@
       "output_schema_hash": "78eaca6662e2e8998231671a1da9a22b1e3efe056919ec16219525cb558f6bd3",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1187,7 +1133,6 @@
       "output_schema_hash": "cd4168ce13096eb221659627167a34584637fa29f47e05e1ac53cff915a9be57",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1199,7 +1144,6 @@
       "output_schema_hash": "553bba9bd20b4d96349f937e607e43d71bac5f50c644f9a7bb4bd5594652b390",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1211,7 +1155,6 @@
       "output_schema_hash": "a533eb0925fc8c487e1f8bbe15432402d8e9b5452759713cbf75c171a31c1b92",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1223,7 +1166,28 @@
       "output_schema_hash": "71e79feba34046e40726a7d2bc7f150f5e860d0256843cd5bd10c03c3563bbf1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "load_routing_runtime_overlay",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "d29ab092cb5ade46d2f3503f418f679d972bd4c1096ee99702b6044c79b13181",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "load_routing_workspace_snapshot",
+      "transport": "ordinary",
+      "input_schema_hash": "50103778c6947ba2932443f36e722dc2d61a8a84a9c002553ea66e402e9fb81a",
+      "output_schema_hash": "3872acc762d101d02635252e62ad2e53882baa51e63d56d375da6ed19f29c0ce",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1234,10 +1198,9 @@
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "9f8b27b1671679d8b0b60ef69a5b2fd4210a394b53ec9d4507a21fa8cf5f0491",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "admission_class": "read",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
+      "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
     },
     {
@@ -1247,7 +1210,6 @@
       "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1259,7 +1221,6 @@
       "output_schema_hash": "e01bea0b1328ae8adc4cce77f001f2880537a61060ea975a823d2dd9b8523459",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1270,10 +1231,9 @@
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "admission_class": "read",
+      "mutation_kind": "non_idempotent",
       "transport_retry": false,
-      "result_unknown": false,
+      "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
     },
     {
@@ -1283,7 +1243,6 @@
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1295,7 +1254,6 @@
       "output_schema_hash": "e7a2a2c043fe9871c05b015d8f016c4973c4c12f80ba6f558e6ddeab12f2cd49",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1307,7 +1265,6 @@
       "output_schema_hash": "bb8ada915a74502c1a2c7b31df29d94343cf7f7745b39c4a6fa960f9b08aae16",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1319,7 +1276,6 @@
       "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1331,7 +1287,6 @@
       "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1342,8 +1297,7 @@
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "89e5f210bc0c084ae4fa720a65a119e9ef7130d1e32c8bc24717419a61f98a35",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "admission_class": "read",
+      "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1355,7 +1309,6 @@
       "output_schema_hash": "75627923f93a277ee081e4576cfc29ef464a80075f86b4b8df53aa181800e22e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1367,7 +1320,6 @@
       "output_schema_hash": "a533eb0925fc8c487e1f8bbe15432402d8e9b5452759713cbf75c171a31c1b92",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1379,7 +1331,6 @@
       "output_schema_hash": "78eaca6662e2e8998231671a1da9a22b1e3efe056919ec16219525cb558f6bd3",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1391,7 +1342,6 @@
       "output_schema_hash": "cd4168ce13096eb221659627167a34584637fa29f47e05e1ac53cff915a9be57",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1403,7 +1353,6 @@
       "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1415,7 +1364,6 @@
       "output_schema_hash": "e25027e88e9040afe252dc4c5dae897314df615575c046417e0b84cf89f921fa",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1427,7 +1375,6 @@
       "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1439,7 +1386,6 @@
       "output_schema_hash": "33e8fcdf0ae1d3d9e2e53626cded4f3e8a4b95eb8c2a1f9e2c5cb7fad0316923",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1451,7 +1397,6 @@
       "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1463,7 +1408,6 @@
       "output_schema_hash": "3e68059fc74396e61be2a71de389d991b36c5fe5f772f929ecd1b45f2076e66a",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1475,7 +1419,6 @@
       "output_schema_hash": "eb18d344b77fd9890114744109f93f22f6fd2052794c4e13cd8dc5bfb1cc376e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1487,7 +1430,6 @@
       "output_schema_hash": "d619fdd04030048a01ec9438a49aa6fa90f43e1fcfad1381377f3c8375986c90",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1499,7 +1441,6 @@
       "output_schema_hash": "d619fdd04030048a01ec9438a49aa6fa90f43e1fcfad1381377f3c8375986c90",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1511,7 +1452,6 @@
       "output_schema_hash": "b760b5bc6c95ad97e6b194a833735ee995ffdeeec1a326fa20113c910b739bcc",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1523,7 +1463,6 @@
       "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1535,7 +1474,6 @@
       "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1547,7 +1485,6 @@
       "output_schema_hash": "68ba54273deaacc04b933c62f633ce21f883f7c78cecd96e67be47f669a58a17",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "maintenance_read",
-      "admission_class": "maintenance_read",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1559,7 +1496,6 @@
       "output_schema_hash": "68ba54273deaacc04b933c62f633ce21f883f7c78cecd96e67be47f669a58a17",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "maintenance_read",
-      "admission_class": "maintenance_read",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1571,7 +1507,6 @@
       "output_schema_hash": "68ba54273deaacc04b933c62f633ce21f883f7c78cecd96e67be47f669a58a17",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "maintenance_activity",
-      "admission_class": "maintenance_activity",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1583,7 +1518,6 @@
       "output_schema_hash": "1038513669880467368fc3ea8e953e47ceb3d749b7ae21f4350d820a689c3ec8",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1595,7 +1529,6 @@
       "output_schema_hash": "fb76f13f8d7673bb657724854c86173a7f8a6ee61d18672ab25aee6f354514dc",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1607,7 +1540,6 @@
       "output_schema_hash": "fb76f13f8d7673bb657724854c86173a7f8a6ee61d18672ab25aee6f354514dc",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1619,7 +1551,6 @@
       "output_schema_hash": "fca495968a68fe3f60ade05a9678e990bf77f61dc09f63fbbf10b1280db2b44f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1631,7 +1562,6 @@
       "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1643,7 +1573,6 @@
       "output_schema_hash": "0b79c4ea9eccf3309568855156a1c05fcdef1896b864303a13357bf3d51a42e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1655,7 +1584,6 @@
       "output_schema_hash": "e4f547c7c26ada35762eca2883cead6e0086e52ac95a3c1c62cc49783b6f2488",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1667,7 +1595,6 @@
       "output_schema_hash": "c219e7f9aaccd360517de3736d4c3c1ac0efbfc498ad24dbd9573d0536ec4907",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1679,7 +1606,6 @@
       "output_schema_hash": "0883b50b6330024d896b5b374f700ea13f2706075cfc9f76d9eb191d6d23a95e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1691,7 +1617,6 @@
       "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1703,7 +1628,6 @@
       "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1715,7 +1639,6 @@
       "output_schema_hash": "af8c76579fe949f562e6e4afea71c49f6d694990bea74e869e486baf4a103aed",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1727,7 +1650,6 @@
       "output_schema_hash": "418227d3e18f931014f0b9252fffe740d3278c22870e5809a425da89c13cd779",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1739,7 +1661,6 @@
       "output_schema_hash": "e3eda883d95c05a2e36c2e806b528a2fc09c7cdfb8a7283b99ba8baa2ffac8e0",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1751,7 +1672,6 @@
       "output_schema_hash": "8ce18a4570a174d96d873260ad531adae40536e76d7925b2b2147439f302995e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1763,7 +1683,6 @@
       "output_schema_hash": "e3eda883d95c05a2e36c2e806b528a2fc09c7cdfb8a7283b99ba8baa2ffac8e0",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1775,7 +1694,6 @@
       "output_schema_hash": "418227d3e18f931014f0b9252fffe740d3278c22870e5809a425da89c13cd779",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1787,7 +1705,6 @@
       "output_schema_hash": "e5838780d3b1f853370aecae59a5850859da79ee977aeda0ba59f67ff1d667cf",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
-      "admission_class": "read",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1799,7 +1716,6 @@
       "output_schema_hash": "4d99aeb268623b00439d825233976a879ab76fdad075af88f04401fcc0c7cd4e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1811,7 +1727,6 @@
       "output_schema_hash": "f0bbbeae937cfb6c469a512ccda6d218e391aef0bc089cd8c0286d02a92dbecd",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1823,7 +1738,6 @@
       "output_schema_hash": "7d458aa60bdcfb8a461219903e2332c6ee07982d033964286e7b8e0285edc4b3",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1835,7 +1749,6 @@
       "output_schema_hash": "c5f89315923fae48c7b2f4c520bb8699c158cd68c23eb5261d8bf577b56072f4",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "non_idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
@@ -1847,7 +1760,6 @@
       "output_schema_hash": "4422b46f9acf2df12157065bc0d072dc405d130c3ec7f26bb957e6fcc31c51cb",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1859,7 +1771,6 @@
       "output_schema_hash": "7994f078994c3a3c5748404b485a29a5bf6f4d4ebe99a7b7fbfb4434c4f4e029",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1871,7 +1782,6 @@
       "output_schema_hash": "792d18c99dfc59ea1306fc8db43fb73807dba6e35f79149c65a004aba51f4d5d",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1883,7 +1793,6 @@
       "output_schema_hash": "ab3a4d8d73592b5a5bdeffd812d6b053c2c7ee7d967a01f3ad10213e2e6b2e5e",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
-      "admission_class": "mutation",
       "transport_retry": false,
       "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
@@ -1892,6 +1801,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "97c09d8392a0c1fdcde0b965d7dec220f17f2c00f6e30347da4c4d2d23ab7508"
+    "serialization_fixture_hash": "f9d4a68ef47a7953dd804c7c5b5da63c0646576e5bbccc854105ce99691c681d"
   }
 }

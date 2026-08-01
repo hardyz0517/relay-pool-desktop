@@ -6,6 +6,7 @@ pub(crate) mod error;
 mod health_check;
 mod inspection;
 pub(crate) mod legacy_import;
+pub(crate) mod maintenance;
 pub(crate) mod migrations;
 pub(crate) use migrations::{
     current_schema_version, upgrade_existing_v2_database, upgrade_existing_v2_database_to_schema,

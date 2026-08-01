@@ -41,6 +41,15 @@ mod persistence {
         ));
     }
 
+    pub(crate) mod maintenance {
+        pub(crate) mod request_log_url_sanitizer {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/maintenance/request_log_url_sanitizer.rs"
+            ));
+        }
+    }
+
     pub(crate) mod runtime {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -55,17 +64,17 @@ mod persistence {
         ));
     }
 
-    pub(crate) mod health_check {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/persistence/health_check.rs"
-        ));
-    }
-
     pub(crate) mod schema_registry {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/persistence/schema_registry.rs"
+        ));
+    }
+
+    pub(crate) mod health_check {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/health_check.rs"
         ));
     }
 
@@ -77,7 +86,16 @@ mod persistence {
     }
 }
 
+mod services {
+    pub(crate) mod time {
+        pub(crate) fn now_millis_for_services() -> i64 {
+            1_000
+        }
+    }
+}
+
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -85,8 +103,10 @@ use std::{
 
 use persistence::{
     backup::temporary_backup_path, error::PersistenceError, read_session::ReadSession,
-    runtime::PersistenceRuntime, write_session::WriteSession,
+    runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility,
+    write_session::WriteSession,
 };
+use semver::Version;
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -242,9 +262,10 @@ impl V2Fixture {
         let path = temp_db_path("sessions");
         persistence::migrations::initialize_v2_database(&path)
             .await
-            .expect("migrate fixture");
+            .expect("initialize fixture");
         let mut connection = SqliteConnectOptions::new()
             .filename(&path)
+            .create_if_missing(false)
             .connect()
             .await
             .expect("connect fixture");
@@ -264,18 +285,25 @@ impl V2Fixture {
     }
 
     async fn open(&self) -> PersistenceRuntime {
-        let runtime = PersistenceRuntime::open(
-            &self.path,
-            persistence::migrations::current_binary_compatibility(),
-        )
-        .await
-        .expect("open runtime");
+        let runtime = PersistenceRuntime::open(&self.path, binary_031())
+            .await
+            .expect("open runtime");
         assert_eq!(runtime.compatibility_decision_code(), "writable");
         assert_eq!(
             runtime.health().await.expect("runtime health").open_mode,
             "writable"
         );
         runtime
+    }
+}
+
+fn binary_031() -> BinaryCompatibility {
+    let schema_version = persistence::migrations::current_schema_version();
+    BinaryCompatibility {
+        app_version: Version::new(0, 3, 1),
+        database_generation: 2,
+        readable_schema: 1..=schema_version,
+        writable_schema: BTreeSet::from([schema_version]),
     }
 }
 

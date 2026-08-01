@@ -5,7 +5,10 @@ use crate::{
         proxy::{normalize_proxy_mode, normalize_proxy_url},
         routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
         secrets::mask_secret,
-        settings::{AppSettings, UpdateSettingsInput},
+        settings::{
+            AppSettings, ConfirmHierarchicalRoutingMigrationInput,
+            HierarchicalRoutingMigrationConfig, UpdateSettingsInput,
+        },
     },
     persistence::{
         error::PersistenceError,
@@ -272,6 +275,38 @@ impl SettingsStore {
         settings_from_connection(write.connection(), data_dir, pending_data_dir).await
     }
 
+    pub(crate) async fn confirm_hierarchical_routing_migration(
+        &self,
+        write: &mut WriteSession,
+        input: ConfirmHierarchicalRoutingMigrationInput,
+        confirmed_at_ms: i64,
+        now: &str,
+        data_dir: &str,
+        pending_data_dir: Option<String>,
+    ) -> Result<AppSettings, PersistenceError> {
+        validate_hierarchical_routing_migration(&input)?;
+        let config = HierarchicalRoutingMigrationConfig {
+            config_version: "hierarchical_routing_migration_v1".to_string(),
+            policy_version: "hierarchical_v1".to_string(),
+            ordering_profile: input.ordering_profile,
+            multiplier_ceiling: input.multiplier_ceiling,
+            group_scope: input.group_scope,
+            allow_depleted_fallback: input.allow_depleted_fallback,
+            affinity_mode: input.affinity_mode,
+            legacy_policy: input.legacy_policy,
+            confirmed_at_ms,
+        };
+        let value = serde_json::to_string(&config).map_err(|_| setting_serialization_failed())?;
+        upsert_setting(
+            write.connection(),
+            "hierarchical_routing_migration_v1_json",
+            &value,
+            now,
+        )
+        .await?;
+        settings_from_connection(write.connection(), data_dir, pending_data_dir).await
+    }
+
     #[cfg_attr(
         test,
         allow(
@@ -384,6 +419,14 @@ async fn settings_from_connection(
             "false",
         )
         .await?,
+        hierarchical_routing_migration: parse_hierarchical_routing_migration(
+            &read_setting_or_default(
+                &mut *connection,
+                "hierarchical_routing_migration_v1_json",
+                "",
+            )
+            .await?,
+        )?,
         developer_mode_enabled: parse_setting_or_default(
             &mut *connection,
             "developer_mode_enabled",
@@ -577,6 +620,24 @@ fn parse_scheduler_advanced_settings(
     Ok(settings)
 }
 
+fn parse_hierarchical_routing_migration(
+    value: &str,
+) -> Result<Option<HierarchicalRoutingMigrationConfig>, PersistenceError> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let config: HierarchicalRoutingMigrationConfig =
+        serde_json::from_str(value).map_err(|_| invalid_persisted_setting())?;
+    if config.config_version != "hierarchical_routing_migration_v1"
+        || config.policy_version != "hierarchical_v1"
+        || !config.multiplier_ceiling.is_finite()
+        || config.multiplier_ceiling < 0.0
+    {
+        return Err(invalid_persisted_setting());
+    }
+    Ok(Some(config))
+}
+
 fn validate_settings(input: &UpdateSettingsInput) -> Result<(), PersistenceError> {
     if input.local_proxy_port == 0
         || input.low_balance_threshold_cny < 0.0
@@ -589,6 +650,26 @@ fn validate_settings(input: &UpdateSettingsInput) -> Result<(), PersistenceError
         || input.collector_max_concurrency == 0
         || input.collector_max_concurrency > 8
     {
+        return Err(PersistenceError::ConstraintViolation);
+    }
+    Ok(())
+}
+
+fn validate_hierarchical_routing_migration(
+    input: &ConfirmHierarchicalRoutingMigrationInput,
+) -> Result<(), PersistenceError> {
+    if !input.multiplier_ceiling.is_finite() || input.multiplier_ceiling < 0.0 {
+        return Err(PersistenceError::ConstraintViolation);
+    }
+    if !matches!(
+        input.legacy_policy.as_str(),
+        "automatic_balanced"
+            | "priority_fallback"
+            | "stable_first"
+            | "backup_only"
+            | "cheap_first"
+            | "cost_stable_first"
+    ) {
         return Err(PersistenceError::ConstraintViolation);
     }
     Ok(())
@@ -640,6 +721,7 @@ fn is_supported_setting_key(key: &str) -> bool {
             | "max_rate_multiplier"
             | "default_routing_group_filter"
             | "scheduler_advanced_settings_json"
+            | "hierarchical_routing_migration_v1_json"
             | "low_balance_threshold_cny"
             | "collector_interval_minutes"
             | "balance_interval_minutes"

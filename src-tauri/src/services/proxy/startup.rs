@@ -7,14 +7,12 @@ use crate::{
         lifecycle::ports::RequestLifecycleStore,
         routing_repository::{RoutingRepository, V2RoutingRepository},
     },
-    services::secrets::DeviceKeyResolver,
 };
 
 use super::runtime::{ProxyRuntimeState, ProxyStartConfig};
 
 pub(crate) async fn start_from_v2_persisted_settings(
     services: &AppServices,
-    device_keys: DeviceKeyResolver,
     proxy: &ProxyRuntimeState,
 ) -> Result<ProxyStatus, String> {
     let settings = services
@@ -27,10 +25,14 @@ pub(crate) async fn start_from_v2_persisted_settings(
         .ensure_local_access_key()
         .await
         .map_err(|error| error.to_string())?;
+    services
+        .request_finalization
+        .reconcile_startup_interrupted_request_lifecycle()
+        .await
+        .map_err(|error| format!("startup request lifecycle reconciliation failed: {error:?}"))?;
     proxy
         .start(config_from_v2_services(
             services,
-            device_keys,
             local_access_key,
             settings.local_proxy_port,
         ))
@@ -39,16 +41,19 @@ pub(crate) async fn start_from_v2_persisted_settings(
 
 pub(crate) fn config_from_v2_services(
     services: &AppServices,
-    device_keys: DeviceKeyResolver,
     local_access_key: String,
     port: u16,
 ) -> ProxyStartConfig {
-    let routing_repository: Arc<dyn RoutingRepository> = Arc::new(V2RoutingRepository::new(
-        services.routing.as_ref().clone(),
-        device_keys,
-    ));
+    let routing_repository: Arc<dyn RoutingRepository> =
+        Arc::new(V2RoutingRepository::new(services.routing.as_ref().clone()));
     let lifecycle_store: Arc<dyn RequestLifecycleStore> = services.request_finalization.clone();
-    ProxyStartConfig::new_v2(routing_repository, lifecycle_store, local_access_key, port)
+    ProxyStartConfig::new_v2(
+        routing_repository,
+        services.credentials.clone(),
+        lifecycle_store,
+        local_access_key,
+        port,
+    )
 }
 
 #[cfg(test)]
@@ -67,13 +72,9 @@ mod tests {
         update_proxy_port(&fixture.services, port).await;
         let runtime = ProxyRuntimeState::for_tests();
 
-        let status = start_from_v2_persisted_settings(
-            &fixture.services,
-            fixture.device_keys.clone(),
-            &runtime,
-        )
-        .await
-        .expect("start proxy");
+        let status = start_from_v2_persisted_settings(&fixture.services, &runtime)
+            .await
+            .expect("start proxy");
 
         assert!(status.running);
         assert_eq!(status.port, port);

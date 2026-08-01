@@ -31,6 +31,14 @@ pub fn build_api_url(base: &str, local_path: &str) -> Result<String, String> {
     append_resource(base, resource)
 }
 
+pub fn normalize_api_base_url(api_base_url: &str) -> Result<String, String> {
+    normalize_endpoint_url(api_base_url, "API Base URL", true)
+}
+
+pub fn sanitized_api_base_url_for_trace(api_base_url: &str) -> String {
+    normalize_api_base_url(api_base_url).unwrap_or_else(|_| "[redacted-invalid-url]".to_string())
+}
+
 pub fn same_origin(left: &str, right: &str) -> Result<bool, String> {
     let left = Url::parse(left).map_err(|error| format!("URL 无效: {error}"))?;
     let right = Url::parse(right).map_err(|error| format!("URL 无效: {error}"))?;

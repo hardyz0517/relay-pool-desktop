@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCheck, RefreshCw, Search, Trash2 } from "lucide-react";
+import { CheckCheck, RefreshCw, Route, Search, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
   ConfirmDialog,
   EmptyState,
+  IconButton,
   Pagination,
   SegmentedControl,
   SelectControl,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import {
   activeSeverityCount,
   buildChangeEventListItem,
@@ -39,7 +41,18 @@ import {
   type ChangeFilter,
 } from "./changeEventViewModels";
 
-export function ChangeCenterPage() {
+type ChangeCenterRoutingDeepLink = Extract<
+  RoutingDeepLink,
+  { kind: "request" } | { kind: "station-key" } | { kind: "station" }
+> & {
+  source: "change_center";
+};
+
+type ChangeCenterPageProps = {
+  onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void;
+};
+
+export function ChangeCenterPage({ onOpenRoutingDeepLink }: ChangeCenterPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const eventsQuery = useActivityQuery(changeEventsQueryOptions(false));
@@ -231,6 +244,7 @@ export function ChangeCenterPage() {
                       stationNamesById={stationNamesById}
                       stationCreditPerCnyById={stationCreditPerCnyById}
                       deferStationIdentifierFallback={stationsQuery.isPending && stationsQuery.data === undefined}
+                      onOpenRoutingDeepLink={onOpenRoutingDeepLink}
                     />
                   ))}
                 </div>
@@ -293,19 +307,22 @@ function ChangeEventRow({
   stationNamesById,
   stationCreditPerCnyById,
   deferStationIdentifierFallback,
+  onOpenRoutingDeepLink,
 }: {
   event: ChangeEvent;
   stationNamesById: Map<string, string>;
   stationCreditPerCnyById: Map<string, number>;
   deferStationIdentifierFallback: boolean;
+  onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void;
 }) {
   const item = buildChangeEventListItem(event, {
     stationNamesById,
     stationCreditPerCnyById,
     deferStationIdentifierFallback,
   });
+  const routingLink = createChangeCenterRoutingLink(event);
   return (
-    <div className="grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px] items-center gap-3 bg-surface px-3 py-2 text-left">
+    <div className="grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px_32px] items-center gap-3 bg-surface px-3 py-2 text-left">
       <div className="flex flex-col items-start gap-1">
         <StatusBadge tone={severityTone[event.severity]}>{item.severityLabel}</StatusBadge>
       </div>
@@ -315,8 +332,44 @@ function ChangeEventRow({
       <div className="flex flex-col items-end text-xs text-muted-foreground">
         <span className="font-medium text-foreground">{formatChangeTime(event.detectedAt)}</span>
       </div>
+      <div className="flex justify-end">
+        {onOpenRoutingDeepLink && routingLink ? (
+          <IconButton
+            className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary"
+            label={`查看路由影响 ${item.title}`}
+            onClick={() => onOpenRoutingDeepLink(routingLink)}
+          >
+            <Route className="h-4 w-4" />
+          </IconButton>
+        ) : null}
+      </div>
     </div>
   );
+}
+
+function createChangeCenterRoutingLink(event: ChangeEvent): ChangeCenterRoutingDeepLink | null {
+  if (event.requestLogId) {
+    return {
+      kind: "request",
+      requestLogId: event.requestLogId,
+      source: "change_center",
+    };
+  }
+  if (event.stationKeyId ?? (event.objectType === "station_key" ? event.objectId : null)) {
+    return {
+      kind: "station-key",
+      stationKeyId: event.stationKeyId ?? event.objectId!,
+      source: "change_center",
+    };
+  }
+  if (event.stationId ?? (event.objectType === "station" ? event.objectId : null)) {
+    return {
+      kind: "station",
+      stationId: event.stationId ?? event.objectId!,
+      source: "change_center",
+    };
+  }
+  return null;
 }
 
 function SummaryTile({ label, value, tone = "text-foreground" }: { label: string; value: number; tone?: string }) {

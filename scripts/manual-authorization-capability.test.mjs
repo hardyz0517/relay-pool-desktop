@@ -96,7 +96,7 @@ assert.deepEqual(
     "finish_web_authorization_session",
     "finish_provider_draft_authorization_session",
   ],
-  "capture windows should only be able to record sanitized events and finish verified web authorization, including provider draft authorization completion",
+  "capture windows should only be able to record sanitized events and finish verified authorization flows",
 );
 
 const buildScript = fs.readFileSync(path.join(repoRoot, "src-tauri", "build.rs"), "utf8");

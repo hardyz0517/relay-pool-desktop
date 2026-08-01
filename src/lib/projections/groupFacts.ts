@@ -1,3 +1,6 @@
+// RPD_ROUTING_BOUNDARY:display-only-routing-truth-compat
+// UI-only compatibility projection for station group pages. Production routing
+// truth is owned by backend operational read models and routing projectors.
 import type { GroupRateRecord, StationGroupBinding, StationGroupOption } from "@/lib/types/groupFacts";
 import {
   effectiveGroupCategory,

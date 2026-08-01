@@ -201,6 +201,7 @@ mod tests {
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureStructuralPreBaseline,
                 StartupUpgradeStep::EnsureSecretBaseline,
+                StartupUpgradeStep::EnsureLatestSchema,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,
@@ -216,6 +217,7 @@ mod tests {
             plan,
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureSecretBaseline,
+                StartupUpgradeStep::EnsureLatestSchema,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,

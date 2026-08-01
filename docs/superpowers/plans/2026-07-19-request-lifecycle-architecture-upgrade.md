@@ -692,7 +692,7 @@ pnpm.cmd tauri:dev
 另开终端执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/verify-local-routing-lifecycle.ps1
+powershell -ExecutionPolicy Bypass -File scripts/verify-local-routing-lifecycle.ps1 -AuthorizeLocalClientSmoke
 powershell -ExecutionPolicy Bypass -File scripts/verify-request-lifecycle-db.ps1
 ```
 

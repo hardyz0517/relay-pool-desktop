@@ -1260,14 +1260,14 @@ mod tests {
                 &final_path,
                 "SELECT schema_version FROM persistence_schema_compatibility"
             ),
-            17
+            persistence::current_schema_version()
         );
         assert_eq!(
             query_i64(
                 &final_path,
                 "SELECT version FROM _sqlx_migrations WHERE success = 1 ORDER BY version DESC LIMIT 1"
             ),
-            17
+            persistence::current_schema_version()
         );
         assert_eq!(
             query_string(
@@ -1454,7 +1454,7 @@ mod tests {
                 &final_path,
                 "SELECT schema_version FROM persistence_schema_compatibility"
             ),
-            17
+            persistence::current_schema_version()
         );
         assert_eq!(
             query_i64(
@@ -1500,7 +1500,7 @@ mod tests {
                 &final_path,
                 "SELECT schema_version FROM persistence_schema_compatibility"
             ),
-            17
+            persistence::current_schema_version()
         );
         assert!(!default_data_dir.join(UPGRADE_JOURNAL_FILE).exists());
         assert!(!default_data_dir.join("backups").exists());

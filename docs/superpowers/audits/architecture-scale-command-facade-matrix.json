@@ -58,6 +58,11 @@
           "command": "update_settings",
           "use_case": "update_settings",
           "dependencies": ["SettingsService", "TrayBehaviorState"]
+        },
+        {
+          "command": "confirm_hierarchical_routing_migration",
+          "use_case": "confirm_hierarchical_routing_migration",
+          "dependencies": ["SettingsService"]
         }
       ],
       "non_goals": [
@@ -207,6 +212,7 @@
       "source_path": "src-tauri/src/application/command_facades/routing.rs",
       "dependencies": [
         "RoutingService",
+        "RequestLogService",
         "endpoint ping probe"
       ],
       "commands": [
@@ -234,6 +240,31 @@
           "command": "list_station_endpoint_health",
           "use_case": "list_station_endpoint_health",
           "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "load_routing_workspace_snapshot",
+          "use_case": "load_routing_workspace_snapshot",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "load_routing_runtime_overlay",
+          "use_case": "load_routing_runtime_overlay",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "list_recent_route_decisions",
+          "use_case": "list_recent_route_decisions",
+          "dependencies": ["RequestLogService"]
+        },
+        {
+          "command": "get_station_key_operational_detail",
+          "use_case": "get_station_key_operational_detail",
+          "dependencies": ["RoutingService"]
+        },
+        {
+          "command": "get_request_decision_trace",
+          "use_case": "get_request_decision_trace",
+          "dependencies": ["RequestLogService"]
         },
         {
           "command": "get_station_key_health",
@@ -293,11 +324,6 @@
         {
           "command": "list_channel_monitors",
           "use_case": "list_channel_monitors",
-          "dependencies": ["MonitoringService"]
-        },
-        {
-          "command": "list_channel_monitor_summaries",
-          "use_case": "list_channel_monitor_summaries",
           "dependencies": ["MonitoringService"]
         },
         {
@@ -577,11 +603,6 @@
       ],
       "commands": [
         {
-          "command": "list_channel_status_summaries",
-          "use_case": "list_channel_status_summaries",
-          "dependencies": ["ChannelStatusQuery"]
-        },
-        {
           "command": "load_channel_status_workspace",
           "use_case": "load_channel_status_workspace",
           "dependencies": ["ChannelStatusQuery"]
@@ -725,9 +746,10 @@
       ],
       "commands": [
         {
-          "command": "test_station_key_connectivity",
+          "command": "start_station_key_connectivity_operation",
           "use_case": "prepare_probe_target",
-          "dependencies": ["CredentialService", "RoutingService"]
+          "dependencies": ["CredentialService", "RoutingService"],
+          "allowed_extra_states": ["ManagedWorkRuntime"]
         }
       ],
       "non_goals": [

@@ -315,7 +315,7 @@ mod models {
 
     pub mod remote_keys {
         pub fn api_key_fingerprint(secret: &str) -> Option<String> {
-            (!secret.trim().is_empty()).then(|| format!("fingerprint:{}", secret.len()))
+            crate::services::remote_keys::api_key_fingerprint(secret)
         }
 
         #[derive(Debug, Clone, PartialEq)]
@@ -463,10 +463,22 @@ mod services {
 
             pub fn mask_secret(secret: &str) -> String {
                 let trimmed = secret.trim();
-                if trimmed.len() <= 8 {
-                    return "[REDACTED]".to_string();
+                if trimmed.is_empty() {
+                    return "未设置".to_string();
                 }
-                format!("{}********{}", &trimmed[..4], &trimmed[trimmed.len() - 4..])
+                if trimmed.chars().count() <= 8 {
+                    return "****".to_string();
+                }
+                let prefix: String = trimmed.chars().take(4).collect();
+                let suffix: String = trimmed
+                    .chars()
+                    .rev()
+                    .take(4)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
+                format!("{prefix}********{suffix}")
             }
         }
     }

@@ -1,4 +1,10 @@
 /.gitattributes text eol=lf
+src-tauri/src/persistence/migrations/0009_provider_drafts.sql text eol=lf
+src-tauri/src/persistence/migrations/0011_remote_key_one_to_one.sql text eol=lf
+src-tauri/src/persistence/migrations/0012_seed_builtin_monitor_templates.sql text eol=lf
+src-tauri/src/persistence/migrations/0013_remote_key_discovery_order.sql text eol=lf
+src-tauri/src/persistence/migrations/0014_monitor_profile_v2.sql text eol=lf
+src-tauri/src/persistence/migrations/0015_monitor_probe_timeout_defaults.sql text eol=lf
 src/lib/bridge/generated.ts -text whitespace=cr-at-eol
 src/lib/bridge/contract.ts -text whitespace=cr-at-eol
 src-tauri/generated/command-registry.json -text whitespace=cr-at-eol

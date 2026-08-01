@@ -5,6 +5,7 @@ const generated = vi.hoisted(() => ({
   getSettings: vi.fn(),
   importRelayPoolToCcswitch: vi.fn(),
   chooseDataDir: vi.fn(),
+  confirmHierarchicalRoutingMigration: vi.fn(),
   resetDataDir: vi.fn(),
   updateLocalAccessKey: vi.fn(),
   updateSettings: vi.fn(),
@@ -21,6 +22,7 @@ import {
   chooseDataDir,
   importRelayPoolToCCSwitch,
   resetDataDir,
+  confirmHierarchicalRoutingMigration,
   updateLocalAccessKey,
 } from "./settings";
 
@@ -35,6 +37,7 @@ describe("settings bootstrap generated transport cutover", () => {
       endpoint: "http://127.0.0.1:8787/v1",
     });
     generated.chooseDataDir.mockReset().mockResolvedValue(fixtureSettings());
+    generated.confirmHierarchicalRoutingMigration.mockReset().mockResolvedValue(fixtureSettings());
     generated.resetDataDir.mockReset().mockResolvedValue(fixtureSettings());
     transport.invoke.mockReset().mockRejectedValue(new Error("legacy transport invoked"));
   });
@@ -70,6 +73,27 @@ describe("settings bootstrap generated transport cutover", () => {
     expect(generated.resetDataDir).toHaveBeenCalledWith();
     expect(transport.invoke).not.toHaveBeenCalled();
   });
+
+  it("routes hierarchical routing migration through the generated wrapper", async () => {
+    await confirmHierarchicalRoutingMigration({
+      orderingProfile: "cost_first",
+      multiplierCeiling: 2,
+      groupScope: "all_groups",
+      allowDepletedFallback: false,
+      affinityMode: "session",
+      legacyPolicy: "cost_stable_first",
+    });
+
+    expect(generated.confirmHierarchicalRoutingMigration).toHaveBeenCalledWith({
+      orderingProfile: "cost_first",
+      multiplierCeiling: 2,
+      groupScope: "all_groups",
+      allowDepletedFallback: false,
+      affinityMode: "session",
+      legacyPolicy: "cost_stable_first",
+    });
+    expect(transport.invoke).not.toHaveBeenCalled();
+  });
 });
 
 function fixtureSettings() {
@@ -92,6 +116,7 @@ function fixtureSettings() {
     collectorTimeoutSeconds: 15,
     collectorMaxConcurrency: 3,
     allowDepletedFallback: false,
+    hierarchicalRoutingMigration: null,
     developerModeEnabled: false,
     trayBehavior: "close_to_tray",
     dataDir: "fixture",

@@ -312,7 +312,7 @@ fn fixture_request_log() -> RequestLog {
         lifecycle_status: Some("completed".into()),
         station_key_id: Some("key-1".into()),
         station_id: Some("station-1".into()),
-        upstream_base_url: Some("https://provider.invalid/v1".into()),
+        upstream_base_url: None,
         fallback_count: 0,
         error_message: None,
         route_policy: Some("automatic_balanced".into()),

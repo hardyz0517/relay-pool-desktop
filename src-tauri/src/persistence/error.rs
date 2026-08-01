@@ -72,8 +72,8 @@ pub(crate) enum PersistenceError {
     BackupVerificationFailed,
     #[error("database operation failed")]
     DatabaseFailed,
-    #[error("migration failed")]
-    MigrationFailed,
+    #[error("migration failed: {0}")]
+    MigrationFailed(String),
 }
 
 impl From<sqlx::Error> for PersistenceError {
@@ -91,8 +91,8 @@ impl From<sqlx::Error> for PersistenceError {
 }
 
 impl From<sqlx::migrate::MigrateError> for PersistenceError {
-    fn from(_: sqlx::migrate::MigrateError) -> Self {
-        Self::MigrationFailed
+    fn from(error: sqlx::migrate::MigrateError) -> Self {
+        Self::MigrationFailed(error.to_string())
     }
 }
 

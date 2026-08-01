@@ -48,17 +48,6 @@ function Invoke-ArchitectureGates {
     Invoke-Checked "Production build entries" node @("scripts/architecture/check-build-entries.mjs")
     Invoke-Checked "Artifact policy" node @("scripts/architecture/check-artifact-policy.mjs")
     Invoke-Checked "Dependency lifecycle" node @("scripts/architecture/check-dependency-lifecycle.mjs")
-    Invoke-Checked "Persistence startup upgrade architecture" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "persistence_architecture", "startup_upgrade", "--", "--nocapture")
-    Invoke-Checked "Persistence normal startup architecture" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "persistence_architecture", "normal_startup", "--", "--nocapture")
-}
-
-function Invoke-PortableMigrationReleaseGates {
-    Invoke-Checked "Portable migration fixture matrix" node @("scripts/portable-migration-fixture-matrix.test.mjs")
-    Invoke-Checked "Portable migration redaction gate" node @("scripts/portable-migration-redaction.test.mjs")
-    Invoke-Checked "Portable migration boundary gate" node @("scripts/portable-migration-boundary.test.mjs")
-    Invoke-Checked "Portable migration e2e integration" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "portable_migration_e2e", "--", "--nocapture")
-    Invoke-Checked "Portable migration fault integration" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "portable_migration_faults", "--", "--nocapture")
-    Invoke-Checked "Portable migration malicious integration" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--test", "portable_migration_malicious", "--", "--nocapture")
 }
 
 function Write-Provenance {
@@ -104,7 +93,7 @@ try {
         Invoke-Checked "Deterministic frontend scale baseline" $pnpm @("architecture:scale-baseline")
         Invoke-Checked "Advisory, license and source policy" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/check-advisories.ps1")
         Invoke-Checked "Frontend contract tests" $pnpm @("test:contracts")
-        Invoke-PortableMigrationReleaseGates
+        Invoke-Checked "Routing operational self-check preflight" node @("scripts/routing-operational-qualification.mjs", "--preflight")
         Invoke-Checked "Frontend unit tests" $pnpm @("test")
         Invoke-Checked "Frontend production build" $pnpm @("build")
         Invoke-Checked "Rust formatting" cargo @("fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check")

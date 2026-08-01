@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt,
     sync::Arc,
     time::{Duration, Instant},
@@ -27,14 +27,32 @@ use super::{
     protocol::DownstreamTransform,
     request::{ByteStream, CanonicalProxyRequest},
     responses_chat_stream::chat_sse_to_responses_stream,
-    router,
-    routing_repository::{RoutingExecutionSettings, RoutingRepository},
-    routing_types::{RichRouteCandidate, RouteRequest},
-    scheduler::SchedulerRuntimeState,
+    routing_repository::{OperationalRouteSnapshot, RoutingExecutionSettings, RoutingRepository},
     upstream::{UpstreamAttempt, UpstreamClientPool},
 };
 
 use crate::{
+    application::{
+        credentials::ExecutionCredentialResolver,
+        operational_facts::target_resolver::{
+            ExecutionTargetHandle, ExecutionTargetRef, ExecutionTargetResolver,
+            LeasedSelectedTarget,
+        },
+        routing_engine::{
+            capacity::CompositeCapacityRegistry,
+            controller::{
+                ActualAttemptTerminal, ControllerDecision, ControllerFailure,
+                ControllerFailureKind, ControllerPlanningInput, FallbackPolicy,
+                RouteAdmissionController, RouteControllerSettings, SelectedRoute,
+            },
+            model_alias,
+            request::{
+                CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind,
+                RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
+            },
+            selector::RoutePlanCandidate,
+        },
+    },
     models::{
         pricing::BalanceSnapshot,
         routing::{RouteEndpointKind, RoutingPolicy},
@@ -45,9 +63,10 @@ use crate::{
 #[derive(Clone)]
 pub(crate) struct ExecutionEngine {
     repository: Arc<dyn RoutingRepository>,
+    credentials: Arc<dyn ExecutionCredentialResolver>,
     attempts: Arc<dyn AttemptExecutor>,
     retry_policy: RetryPolicy,
-    scheduler: Arc<SchedulerRuntimeState>,
+    capacity: CompositeCapacityRegistry,
     lifecycle_writer: Option<LifecycleWriter>,
 }
 
@@ -55,7 +74,7 @@ pub(crate) trait AttemptExecutor: Send + Sync {
     fn attempt<'a>(
         &'a self,
         request: &'a CanonicalProxyRequest,
-        candidate: &'a RichRouteCandidate,
+        target: &'a ExecutionTargetHandle,
         mapped_model: Option<&'a str>,
     ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>>;
 }
@@ -87,6 +106,7 @@ pub(crate) struct ProxyExecutionResponse {
 pub(crate) struct ExecutionLifecycleEvidence {
     pub annotations: RequestLogAnnotations,
     pub selected_attempt: Option<AttemptContext>,
+    pub selected_attempt_cost: Option<super::attempt::SelectedAttemptCostSnapshot>,
     pub attempt_count: u16,
     pub fallback_count: u16,
 }
@@ -133,28 +153,32 @@ impl ExecutionEngine {
     #[cfg(test)]
     pub(crate) fn new(
         repository: Arc<dyn RoutingRepository>,
+        credentials: Arc<dyn ExecutionCredentialResolver>,
         attempts: Arc<dyn AttemptExecutor>,
     ) -> Self {
         Self {
             repository,
+            credentials,
             attempts,
             retry_policy: RetryPolicy::default(),
-            scheduler: Arc::new(SchedulerRuntimeState::default()),
+            capacity: CompositeCapacityRegistry::default(),
             lifecycle_writer: None,
         }
     }
 
     pub(crate) fn new_with_limits_and_lifecycle(
         repository: Arc<dyn RoutingRepository>,
+        credentials: Arc<dyn ExecutionCredentialResolver>,
         attempts: Arc<dyn AttemptExecutor>,
         limits: &ProxyServerLimits,
         lifecycle_writer: LifecycleWriter,
     ) -> Self {
         Self {
             repository,
+            credentials,
             attempts,
             retry_policy: RetryPolicy::from_limits(limits),
-            scheduler: Arc::new(SchedulerRuntimeState::default()),
+            capacity: CompositeCapacityRegistry::default(),
             lifecycle_writer: Some(lifecycle_writer),
         }
     }
@@ -175,11 +199,6 @@ impl ExecutionEngine {
             return self.execute_usage(request).await;
         }
 
-        let candidates = self
-            .repository
-            .load_runtime_candidates()
-            .await
-            .map_err(|error| internal_failure(format!("load route candidates failed: {error}")))?;
         let aliases = self
             .repository
             .load_model_alias_pairs()
@@ -190,43 +209,91 @@ impl ExecutionEngine {
             .load_execution_settings()
             .await
             .map_err(|error| internal_failure(format!("load routing settings failed: {error}")))?;
-        let selection = router::select_route_candidates_with_scheduler(
-            &route_request(&request, &execution_settings),
-            candidates,
-            &aliases,
-            &self.scheduler,
-            &execution_settings.scheduler_advanced_settings,
-        )
-        .map_err(|error| internal_failure(format!("select route candidates failed: {error}")))?;
-        let candidates = selection.accepted;
-        if candidates.is_empty() {
-            let mut failure = ProxyFailure::new(
-                ProxyFailureCode::RouteNoCandidate,
-                FailureSource::Routing,
-                RetryClass::Never,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "no eligible route candidate",
-            );
-            failure.context_mut().route_policy =
-                Some(routing_policy_label(&execution_settings.policy).to_string());
-            return Err(failure);
-        }
+        let mapped_model = model_alias::mapped_model(request.model.as_deref(), &aliases);
+        let route_facts = route_request_facts(
+            &request,
+            &execution_settings,
+            request_started_at_ms,
+            mapped_model.as_deref(),
+        );
+        let snapshot = self
+            .repository
+            .load_operational_route_snapshot(route_facts.clone())
+            .await
+            .map_err(|error| {
+                internal_failure(format!("load operational route snapshot failed: {error}"))
+            })?;
 
         if matches!(request.endpoint, RouteEndpointKind::Models) {
             return self
-                .execute_models(request, candidates, selection.mapped_model)
+                .execute_models(
+                    request,
+                    route_facts,
+                    snapshot,
+                    mapped_model,
+                    request_started_at_ms,
+                    precommit_started,
+                )
                 .await;
         }
 
         let idempotent = request.idempotency_key.is_some();
         let mut last_failure = None;
         let mut attempted_count = 0_i64;
-        for (attempt_index, candidate) in candidates
-            .iter()
-            .take(self.retry_policy.max_attempts(candidates.len()))
-            .enumerate()
-        {
+        let mut controller = RouteAdmissionController::new(
+            route_facts,
+            RouteControllerSettings {
+                deadline_ms: precommit_deadline_ms(
+                    request_started_at_ms,
+                    self.retry_policy.precommit_budget,
+                ),
+                initial_snapshot_id: snapshot.snapshot_id.clone(),
+                initial_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                initial_durable_generation: snapshot.durable_generation,
+                fallback_policy: FallbackPolicy {
+                    has_stable_idempotency_key: idempotent,
+                    non_idempotent: !idempotent,
+                },
+            },
+            0,
+        );
+
+        for attempt_index in 0..self.retry_policy.max_candidate_attempts {
+            if self
+                .retry_policy
+                .remaining_precommit_budget(precommit_started)
+                .is_none()
+            {
+                return Err(precommit_timeout_failure());
+            }
+            let decision = match controller.next(ControllerPlanningInput {
+                candidates: &snapshot.candidates,
+                affinity_station_key_id: None,
+                profiles: &snapshot.profiles,
+                capacity: &self.capacity,
+                current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                now_ms: controller_now_ms(request_started_at_ms, precommit_started),
+                max_waiters_per_constraint: 0,
+            }) {
+                Ok(decision) => decision,
+                Err(failure) if last_failure.is_some() && catalog_planning_exhausted(&failure) => {
+                    break;
+                }
+                Err(failure) => {
+                    return Err(controller_failure(failure, &execution_settings.policy));
+                }
+            };
+            let ControllerDecision::Selected(selected) = decision else {
+                return Err(controller_failure(
+                    ControllerFailure {
+                        kind: ControllerFailureKind::CapacityExhausted,
+                        evidence: Vec::new(),
+                    },
+                    &execution_settings.policy,
+                ));
+            };
             attempted_count = attempted_count.max(attempt_index as i64 + 1);
+            let candidate = selected.candidate.clone();
             let attempt_started_at_ms = now_millis_for_services() as i64;
             let attempt_started = Instant::now();
             let Some(remaining) = self
@@ -235,10 +302,14 @@ impl ExecutionEngine {
             else {
                 return Err(precommit_timeout_failure());
             };
+            let target = self
+                .resolve_selected_target(selected, &snapshot.targets)
+                .await;
             let attempt_result = tokio::time::timeout(remaining, async {
+                let target = target?;
                 let prepared = self
                     .attempts
-                    .attempt(&request, candidate, selection.mapped_model.as_deref())
+                    .attempt(&request, &target, mapped_model.as_deref())
                     .await?;
                 let upstream_headers_ms = attempt_started.elapsed().as_millis() as i64;
                 let prepared = self.bootstrap_stream(prepared).await?;
@@ -248,10 +319,18 @@ impl ExecutionEngine {
             .unwrap_or_else(|_| Err(precommit_timeout_failure()));
             match attempt_result {
                 Ok((prepared, upstream_headers_ms)) => {
+                    controller
+                        .record_actual_terminal_for_station_key(
+                            candidate.station_key_id.clone(),
+                            ActualAttemptTerminal::Succeeded,
+                        )
+                        .map_err(|failure| {
+                            controller_failure(failure, &execution_settings.policy)
+                        })?;
                     let first_token_ms = precommit_started.elapsed().as_millis() as i64;
                     return Ok(ProxyExecutionResponse::from_prepared(
                         prepared,
-                        candidate,
+                        &candidate,
                         attempt_index as i64,
                         &request,
                         &execution_settings.policy,
@@ -263,18 +342,30 @@ impl ExecutionEngine {
                     ));
                 }
                 Err(mut failure) => {
-                    attach_failure_candidate(&mut failure, candidate);
+                    attach_failure_candidate(&mut failure, &candidate);
                     let decision = self.retry_policy.decide(&failure, idempotent, false);
                     self.finish_attempt(failed_attempt_record(
                         &request.request_id,
                         attempt_index as u16,
-                        candidate,
+                        &candidate,
                         &failure,
                         decision,
                         attempt_started_at_ms,
                         false,
                     ))
                     .await?;
+                    controller
+                        .record_actual_terminal_for_station_key(
+                            candidate.station_key_id.clone(),
+                            if decision == RetryDecision::NextCandidate {
+                                ActualAttemptTerminal::FailedBeforeCommit
+                            } else {
+                                ActualAttemptTerminal::PossiblyAccepted
+                            },
+                        )
+                        .map_err(|failure| {
+                            controller_failure(failure, &execution_settings.policy)
+                        })?;
                     last_failure = Some(failure);
                     if decision == RetryDecision::Stop {
                         break;
@@ -296,6 +387,40 @@ impl ExecutionEngine {
         failure.context_mut().route_policy =
             Some(routing_policy_label(&execution_settings.policy).to_string());
         Err(failure)
+    }
+
+    async fn resolve_selected_target(
+        &self,
+        selected: SelectedRoute,
+        targets: &BTreeMap<String, ExecutionTargetRef>,
+    ) -> Result<ExecutionTargetHandle, ProxyFailure> {
+        let station_key_id = selected.candidate.station_key_id.clone();
+        let Some(current) = targets.get(&station_key_id).cloned() else {
+            return Err(ProxyFailure::new(
+                ProxyFailureCode::RouteFactsUnavailable,
+                FailureSource::Routing,
+                RetryClass::BeforeOutput,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "selected route target unavailable",
+            ));
+        };
+        let expected_secret_ref_id = current
+            .api_key_secret_ref
+            .as_ref()
+            .map(|secret_ref| secret_ref.id.clone())
+            .unwrap_or_default();
+        ExecutionTargetResolver::resolve(
+            LeasedSelectedTarget {
+                station_key_id,
+                expected_endpoint_revision: selected.candidate.endpoint_revision,
+                expected_secret_ref_id,
+                lease: selected.lease,
+            },
+            current,
+            self.credentials.as_ref(),
+        )
+        .await
+        .map_err(execution_target_failure)
     }
 
     async fn bootstrap_stream(
@@ -351,8 +476,11 @@ impl ExecutionEngine {
     async fn execute_models(
         &self,
         request: CanonicalProxyRequest,
-        candidates: Vec<RichRouteCandidate>,
+        route_facts: RouteRequestFacts,
+        snapshot: OperationalRouteSnapshot,
         mapped_model: Option<String>,
+        request_started_at_ms: i64,
+        precommit_started: Instant,
     ) -> Result<ProxyExecutionResponse, ProxyFailure> {
         let mut seen_ids = HashSet::new();
         let mut models = Vec::new();
@@ -360,17 +488,81 @@ impl ExecutionEngine {
         let mut failed_count = 0_i64;
         let mut last_failure = None;
         let mut headers = HeaderMap::new();
+        let mut controller = RouteAdmissionController::new(
+            route_facts,
+            RouteControllerSettings {
+                deadline_ms: precommit_deadline_ms(
+                    request_started_at_ms,
+                    self.retry_policy.precommit_budget,
+                ),
+                initial_snapshot_id: snapshot.snapshot_id.clone(),
+                initial_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                initial_durable_generation: snapshot.durable_generation,
+                fallback_policy: FallbackPolicy {
+                    has_stable_idempotency_key: true,
+                    non_idempotent: false,
+                },
+            },
+            0,
+        );
 
-        for (attempt_index, candidate) in candidates
-            .iter()
-            .take(self.retry_policy.max_attempts(candidates.len()))
-            .enumerate()
-        {
+        for attempt_index in 0..self.retry_policy.max_candidate_attempts {
+            if self
+                .retry_policy
+                .remaining_precommit_budget(precommit_started)
+                .is_none()
+            {
+                return Err(precommit_timeout_failure());
+            }
+            let decision = match controller.next(ControllerPlanningInput {
+                candidates: &snapshot.candidates,
+                affinity_station_key_id: None,
+                profiles: &snapshot.profiles,
+                capacity: &self.capacity,
+                current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                now_ms: controller_now_ms(request_started_at_ms, precommit_started),
+                max_waiters_per_constraint: 0,
+            }) {
+                Ok(decision) => decision,
+                Err(failure) if attempted_count > 0 && catalog_planning_exhausted(&failure) => {
+                    break;
+                }
+                Err(failure) => {
+                    return Err(controller_failure(
+                        failure,
+                        &RoutingPolicy::PriorityFallback,
+                    ));
+                }
+            };
+            let ControllerDecision::Selected(selected) = decision else {
+                break;
+            };
+            let candidate = selected.candidate.clone();
             attempted_count = attempted_count.max(attempt_index as i64 + 1);
             let attempt_started_at_ms = now_millis_for_services() as i64;
+            let target = match self
+                .resolve_selected_target(selected, &snapshot.targets)
+                .await
+            {
+                Ok(target) => target,
+                Err(mut failure) => {
+                    attach_failure_candidate(&mut failure, &candidate);
+                    failed_count += 1;
+                    last_failure = Some(failure);
+                    controller
+                        .record_actual_terminal_for_station_key(
+                            candidate.station_key_id.clone(),
+                            ActualAttemptTerminal::FailedBeforeCommit,
+                        )
+                        .map_err(|failure| {
+                            controller_failure(failure, &RoutingPolicy::PriorityFallback)
+                        })?;
+                    continue;
+                }
+            };
             match self
                 .attempts
-                .attempt(&request, candidate, mapped_model.as_deref())
+                .attempt(&request, &target, mapped_model.as_deref())
                 .await
             {
                 Ok(prepared) => {
@@ -390,18 +582,29 @@ impl ExecutionEngine {
                                 self.finish_attempt(success_attempt_record(
                                     &request.request_id,
                                     attempt_index as u16,
-                                    candidate,
+                                    &candidate,
                                     attempt_started_at_ms,
                                     true,
                                 ))
                                 .await?;
+                                controller
+                                    .record_actual_terminal_for_station_key(
+                                        candidate.station_key_id.clone(),
+                                        ActualAttemptTerminal::Succeeded,
+                                    )
+                                    .map_err(|failure| {
+                                        controller_failure(
+                                            failure,
+                                            &RoutingPolicy::PriorityFallback,
+                                        )
+                                    })?;
                             }
                             Err(error) => {
                                 let failure = internal_failure(error.clone());
                                 self.finish_attempt(failed_attempt_record(
                                     &request.request_id,
                                     attempt_index as u16,
-                                    candidate,
+                                    &candidate,
                                     &failure,
                                     RetryDecision::Stop,
                                     attempt_started_at_ms,
@@ -410,6 +613,17 @@ impl ExecutionEngine {
                                 .await?;
                                 failed_count += 1;
                                 last_failure = Some(failure);
+                                controller
+                                    .record_actual_terminal_for_station_key(
+                                        candidate.station_key_id.clone(),
+                                        ActualAttemptTerminal::FailedBeforeCommit,
+                                    )
+                                    .map_err(|failure| {
+                                        controller_failure(
+                                            failure,
+                                            &RoutingPolicy::PriorityFallback,
+                                        )
+                                    })?;
                             }
                         },
                         ProxyExecutionBody::Stream(_) => {
@@ -418,7 +632,7 @@ impl ExecutionEngine {
                             self.finish_attempt(failed_attempt_record(
                                 &request.request_id,
                                 attempt_index as u16,
-                                candidate,
+                                &candidate,
                                 &failure,
                                 RetryDecision::Stop,
                                 attempt_started_at_ms,
@@ -427,16 +641,24 @@ impl ExecutionEngine {
                             .await?;
                             failed_count += 1;
                             last_failure = Some(failure);
+                            controller
+                                .record_actual_terminal_for_station_key(
+                                    candidate.station_key_id.clone(),
+                                    ActualAttemptTerminal::FailedBeforeCommit,
+                                )
+                                .map_err(|failure| {
+                                    controller_failure(failure, &RoutingPolicy::PriorityFallback)
+                                })?;
                         }
                     }
                 }
                 Err(mut failure) => {
-                    attach_failure_candidate(&mut failure, candidate);
+                    attach_failure_candidate(&mut failure, &candidate);
                     let decision = self.retry_policy.decide(&failure, true, false);
                     self.finish_attempt(failed_attempt_record(
                         &request.request_id,
                         attempt_index as u16,
-                        candidate,
+                        &candidate,
                         &failure,
                         decision,
                         attempt_started_at_ms,
@@ -445,6 +667,14 @@ impl ExecutionEngine {
                     .await?;
                     failed_count += 1;
                     last_failure = Some(failure);
+                    controller
+                        .record_actual_terminal_for_station_key(
+                            candidate.station_key_id.clone(),
+                            ActualAttemptTerminal::FailedBeforeCommit,
+                        )
+                        .map_err(|failure| {
+                            controller_failure(failure, &RoutingPolicy::PriorityFallback)
+                        })?;
                 }
             }
         }
@@ -495,7 +725,7 @@ impl ExecutionEngine {
 fn success_attempt_record(
     request_id: &str,
     ordinal: u16,
-    candidate: &RichRouteCandidate,
+    candidate: &RoutePlanCandidate,
     started_at_ms: i64,
     output_committed: bool,
 ) -> AttemptTerminalRecord {
@@ -510,7 +740,7 @@ fn success_attempt_record(
 fn failed_attempt_record(
     request_id: &str,
     ordinal: u16,
-    candidate: &RichRouteCandidate,
+    candidate: &RoutePlanCandidate,
     failure: &ProxyFailure,
     decision: RetryDecision,
     started_at_ms: i64,
@@ -527,14 +757,14 @@ fn failed_attempt_record(
 fn attempt_context(
     request_id: &str,
     ordinal: u16,
-    candidate: &RichRouteCandidate,
+    candidate: &RoutePlanCandidate,
     started_at_ms: i64,
 ) -> AttemptContext {
     AttemptContext {
         attempt_id: AttemptId::new(request_id, ordinal),
-        station_id: candidate.candidate.station_id.clone(),
-        station_key_id: candidate.candidate.station_key_id.clone(),
-        endpoint_revision: candidate.candidate.station_endpoint_revision,
+        station_id: candidate.station_id.clone(),
+        station_key_id: candidate.station_key_id.clone(),
+        endpoint_revision: candidate.endpoint_revision,
         started_at_ms,
     }
 }
@@ -568,6 +798,15 @@ fn attempt_failure_kind(failure: &ProxyFailure) -> AttemptFailureKind {
         ProxyFailureCode::ResponsesChatFallbackIncompatible => {
             AttemptFailureKind::MalformedResponse
         }
+        ProxyFailureCode::UpstreamMalformedResponse => AttemptFailureKind::MalformedResponse,
+        ProxyFailureCode::UpstreamAuthenticationFailed => AttemptFailureKind::Authentication,
+        ProxyFailureCode::UpstreamInsufficientBalance => AttemptFailureKind::Balance,
+        ProxyFailureCode::UpstreamRateLimited => AttemptFailureKind::RateLimit,
+        ProxyFailureCode::UpstreamModelUnavailable
+        | ProxyFailureCode::UpstreamCapabilityMismatch => AttemptFailureKind::CapabilityMismatch,
+        ProxyFailureCode::UpstreamUnavailable | ProxyFailureCode::UpstreamUncertain => {
+            AttemptFailureKind::HttpStatus
+        }
         ProxyFailureCode::UpstreamHttpError => match failure.http_status.as_u16() {
             401 | 403 => AttemptFailureKind::Authentication,
             402 => AttemptFailureKind::Balance,
@@ -577,6 +816,17 @@ fn attempt_failure_kind(failure: &ProxyFailure) -> AttemptFailureKind {
             _ => AttemptFailureKind::HttpStatus,
         },
         ProxyFailureCode::RouteNoCandidate => AttemptFailureKind::CapabilityMismatch,
+        ProxyFailureCode::RouteConfigRequired
+        | ProxyFailureCode::RoutePolicyRejected
+        | ProxyFailureCode::RouteEconomicsUnavailable
+        | ProxyFailureCode::RouteHealthUnavailable
+        | ProxyFailureCode::RouteCandidateLimitExceeded => AttemptFailureKind::CapabilityMismatch,
+        ProxyFailureCode::RouteCapacityExhausted
+        | ProxyFailureCode::RouteFactsUnavailable
+        | ProxyFailureCode::RouteConfigUnstable
+        | ProxyFailureCode::RouteLifecycleUnavailable
+        | ProxyFailureCode::RouteDeadlineExceeded
+        | ProxyFailureCode::RouteInvariantViolation => AttemptFailureKind::LocalAdapter,
         ProxyFailureCode::RequestBodyInvalid
         | ProxyFailureCode::RequestBodyTooLarge
         | ProxyFailureCode::RequestBodyTimeout => AttemptFailureKind::BadRequest,
@@ -605,6 +855,21 @@ fn failure_blame(source: FailureSource) -> FailureBlame {
 fn health_effect(failure: &ProxyFailure) -> HealthEffect {
     if failure.source != FailureSource::Upstream {
         return HealthEffect::Neutral;
+    }
+    match failure.code {
+        ProxyFailureCode::UpstreamAuthenticationFailed
+        | ProxyFailureCode::UpstreamInsufficientBalance => return HealthEffect::HardFail,
+        ProxyFailureCode::UpstreamRateLimited => {
+            return HealthEffect::Cooldown {
+                retry_after_ms: None,
+            };
+        }
+        ProxyFailureCode::UpstreamModelUnavailable
+        | ProxyFailureCode::UpstreamCapabilityMismatch
+        | ProxyFailureCode::UpstreamMalformedResponse
+        | ProxyFailureCode::UpstreamUncertain => return HealthEffect::Neutral,
+        ProxyFailureCode::UpstreamUnavailable => return HealthEffect::ObserveFailure,
+        _ => {}
     }
     match failure.http_status.as_u16() {
         401..=403 => HealthEffect::HardFail,
@@ -661,7 +926,7 @@ impl PreparedAttempt {
 impl ProxyExecutionResponse {
     fn from_prepared(
         prepared: PreparedAttempt,
-        candidate: &RichRouteCandidate,
+        candidate: &RoutePlanCandidate,
         fallback_count: i64,
         request: &CanonicalProxyRequest,
         routing_policy: &RoutingPolicy,
@@ -674,29 +939,29 @@ impl ProxyExecutionResponse {
         };
         let selected_attempt = AttemptContext {
             attempt_id: AttemptId::new(request.request_id.clone(), fallback_count as u16),
-            station_id: candidate.candidate.station_id.clone(),
-            station_key_id: candidate.candidate.station_key_id.clone(),
-            endpoint_revision: candidate.candidate.station_endpoint_revision,
+            station_id: candidate.station_id.clone(),
+            station_key_id: candidate.station_key_id.clone(),
+            endpoint_revision: candidate.endpoint_revision,
             started_at_ms: timings.request_started_at_ms,
         };
         Self {
             status,
             headers,
             body,
-            selected_station_key_id: Some(candidate.candidate.station_key_id.clone()),
-            selected_station_id: Some(candidate.candidate.station_id.clone()),
+            selected_station_key_id: Some(candidate.station_key_id.clone()),
+            selected_station_id: Some(candidate.station_id.clone()),
             fallback_count,
             lifecycle: ExecutionLifecycleEvidence {
                 annotations: RequestLogAnnotations {
                     model: request.model.clone(),
                     stream: request.stream,
-                    selected_station_key_id: Some(candidate.candidate.station_key_id.clone()),
-                    selected_station_id: Some(candidate.candidate.station_id.clone()),
-                    upstream_base_url: Some(candidate.candidate.upstream_base_url.clone()),
+                    selected_station_key_id: Some(candidate.station_key_id.clone()),
+                    selected_station_id: Some(candidate.station_id.clone()),
+                    upstream_base_url: None,
                     route_policy: Some(routing_policy_label(routing_policy).to_string()),
                     route_reason: Some(format!(
                         "selected {} for {}",
-                        candidate.candidate.station_key_id,
+                        candidate.station_key_id,
                         endpoint_path(&request.endpoint)
                     )),
                     rejected_candidates_json: Some("[]".to_string()),
@@ -715,6 +980,16 @@ impl ProxyExecutionResponse {
                     first_token_ms: Some(timings.first_token_ms.max(0)),
                 },
                 selected_attempt: Some(selected_attempt),
+                selected_attempt_cost: Some(super::attempt::SelectedAttemptCostSnapshot {
+                    ordinal: fallback_count as u16,
+                    pricing_basis: pricing_basis_label(candidate.pricing.basis).to_string(),
+                    pricing_status_label: candidate.pricing.status_label.clone(),
+                    currency: candidate.pricing.currency.clone(),
+                    unit: candidate.pricing.unit.clone(),
+                    estimated_input_price: candidate.pricing.estimated_input_price,
+                    estimated_output_price: candidate.pricing.estimated_output_price,
+                    estimated_fixed_price: candidate.pricing.estimated_fixed_price,
+                }),
                 attempt_count: (fallback_count + 1).max(1) as u16,
                 fallback_count: fallback_count.max(0) as u16,
             },
@@ -747,7 +1022,7 @@ impl ProxyExecutionResponse {
         headers: HeaderMap,
         body: Bytes,
         request: &CanonicalProxyRequest,
-        _lifecycle_status: &str,
+        completion_source: &str,
         fallback_count: i64,
         attempt_count: i64,
     ) -> Self {
@@ -774,7 +1049,7 @@ impl ProxyExecutionResponse {
                     upstream_headers_ms: None,
                     failure_source: None,
                     attempts_json: None,
-                    completion_source: Some("local".to_string()),
+                    completion_source: Some(completion_source.to_string()),
                     prompt_tokens: None,
                     completion_tokens: None,
                     total_tokens: None,
@@ -784,6 +1059,7 @@ impl ProxyExecutionResponse {
                     first_token_ms: None,
                 },
                 selected_attempt: None,
+                selected_attempt_cost: None,
                 attempt_count: attempt_count.max(0) as u16,
                 fallback_count: fallback_count.max(0) as u16,
             },
@@ -805,14 +1081,18 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
     fn attempt<'a>(
         &'a self,
         request: &'a CanonicalProxyRequest,
-        candidate: &'a RichRouteCandidate,
+        target: &'a ExecutionTargetHandle,
         mapped_model: Option<&'a str>,
     ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>> {
         Box::pin(async move {
             let adapter = EndpointAdapter::for_endpoint(&request.endpoint);
-            let prepared = adapter.prepare(request, &candidate.candidate, mapped_model)?;
+            let prepared = adapter.prepare_for_format(
+                request,
+                target.upstream_api_format.clone(),
+                mapped_model,
+            )?;
             let response_plan = prepared.response_plan;
-            let attempt = self.pool.send(prepared, &candidate.candidate).await?;
+            let attempt = self.pool.send_resolved(prepared, target).await?;
             match attempt {
                 UpstreamAttempt::Buffered {
                     status,
@@ -991,6 +1271,18 @@ fn internal_failure(message: impl Into<String>) -> ProxyFailure {
     )
 }
 
+fn duration_millis_i64(duration: Duration) -> i64 {
+    duration.as_millis().min(i64::MAX as u128) as i64
+}
+
+fn precommit_deadline_ms(request_started_at_ms: i64, budget: Duration) -> i64 {
+    request_started_at_ms.saturating_add(duration_millis_i64(budget))
+}
+
+fn controller_now_ms(request_started_at_ms: i64, precommit_started: Instant) -> i64 {
+    request_started_at_ms.saturating_add(duration_millis_i64(precommit_started.elapsed()))
+}
+
 fn precommit_timeout_failure() -> ProxyFailure {
     ProxyFailure::new(
         ProxyFailureCode::RouteWaitTimeout,
@@ -1001,34 +1293,203 @@ fn precommit_timeout_failure() -> ProxyFailure {
     )
 }
 
-fn route_request(
+fn route_request_facts(
     request: &CanonicalProxyRequest,
     settings: &RoutingExecutionSettings,
-) -> RouteRequest {
-    RouteRequest {
-        endpoint: request.endpoint.clone(),
-        model: request.model.clone(),
-        stream: request.stream,
-        uses_tools: request.requirements.uses_tools,
-        uses_vision: request.requirements.uses_vision,
-        uses_reasoning: request.requirements.uses_reasoning,
-        policy: settings.policy.clone(),
-        max_rate_multiplier: settings.max_rate_multiplier,
-        routing_group_filter: settings.routing_group_filter.clone(),
-        session_hash: request.session_hash.clone(),
-        previous_response_id: request.previous_response_id.clone(),
-        excluded_key_ids: Vec::new(),
-        current_station_key_id: None,
-        allow_depleted_fallback: settings.allow_depleted_fallback,
-        now_ms: now_millis_for_services() as i64,
+    admitted_at_ms: i64,
+    mapped_model: Option<&str>,
+) -> RouteRequestFacts {
+    RouteRequestClassifier::classify(
+        CanonicalRouteRequest {
+            route_kind: if matches!(request.endpoint, RouteEndpointKind::Models) {
+                RouteKind::ModelCatalog
+            } else {
+                RouteKind::Inference
+            },
+            requested_model: mapped_model.map(ToString::to_string),
+            stream: request.stream,
+            uses_tools: request.requirements.uses_tools,
+            uses_vision: request.requirements.uses_vision,
+            uses_reasoning: request.requirements.uses_reasoning,
+            untrusted_headers: Vec::new(),
+        },
+        ValidatedLocalRouteSettings {
+            ordering_profile: ordering_profile(&settings.policy),
+            max_rate_multiplier: settings.max_rate_multiplier,
+            group_filter_mode: group_filter_mode(&settings.routing_group_filter),
+            required_group_stable_key: required_group_stable_key(&settings.routing_group_filter),
+            preferred_models: Vec::new(),
+            required_tags: Vec::new(),
+            allow_depleted_fallback: settings.allow_depleted_fallback,
+            affinity_enabled: false,
+        },
+        admitted_at_ms,
+    )
+}
+
+fn ordering_profile(policy: &RoutingPolicy) -> OrderingProfile {
+    match policy {
+        RoutingPolicy::CheapFirst | RoutingPolicy::CostStableFirst => OrderingProfile::CostFirst,
+        RoutingPolicy::AutomaticBalanced
+        | RoutingPolicy::PriorityFallback
+        | RoutingPolicy::StableFirst
+        | RoutingPolicy::BackupOnly => OrderingProfile::PriorityFirst,
     }
 }
 
-fn attach_failure_candidate(failure: &mut ProxyFailure, candidate: &RichRouteCandidate) {
+fn group_filter_mode(filter: &crate::models::routing::RoutingGroupFilter) -> GroupFilterMode {
+    match filter {
+        crate::models::routing::RoutingGroupFilter::AllGroups
+        | crate::models::routing::RoutingGroupFilter::UngroupedOnly => GroupFilterMode::Any,
+        crate::models::routing::RoutingGroupFilter::GroupBindingId(_)
+        | crate::models::routing::RoutingGroupFilter::GroupIdHash(_)
+        | crate::models::routing::RoutingGroupFilter::GroupType(_) => GroupFilterMode::Required,
+    }
+}
+
+fn required_group_stable_key(
+    filter: &crate::models::routing::RoutingGroupFilter,
+) -> Option<String> {
+    match filter {
+        crate::models::routing::RoutingGroupFilter::GroupBindingId(id) => {
+            Some(format!("binding:{id}"))
+        }
+        crate::models::routing::RoutingGroupFilter::GroupIdHash(hash) => {
+            Some(format!("group-id:{hash}"))
+        }
+        crate::models::routing::RoutingGroupFilter::GroupType(group_type) => {
+            Some(format!("group-type:{group_type:?}").to_lowercase())
+        }
+        crate::models::routing::RoutingGroupFilter::AllGroups
+        | crate::models::routing::RoutingGroupFilter::UngroupedOnly => None,
+    }
+}
+
+fn execution_target_failure(
+    error: crate::application::operational_facts::target_resolver::ExecutionTargetError,
+) -> ProxyFailure {
+    let mut failure = ProxyFailure::new(
+        ProxyFailureCode::RouteFactsUnavailable,
+        FailureSource::Routing,
+        RetryClass::BeforeOutput,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "selected route target unavailable",
+    );
+    match error {
+        crate::application::operational_facts::target_resolver::ExecutionTargetError::StaleTarget {
+            station_key_id,
+            ..
+        }
+        | crate::application::operational_facts::target_resolver::ExecutionTargetError::StaleCredentialRef {
+            station_key_id,
+            ..
+        }
+        | crate::application::operational_facts::target_resolver::ExecutionTargetError::TargetUnavailable {
+            station_key_id,
+            ..
+        }
+        | crate::application::operational_facts::target_resolver::ExecutionTargetError::MissingCredentialRef {
+            station_key_id,
+            ..
+        }
+        | crate::application::operational_facts::target_resolver::ExecutionTargetError::InvalidEndpoint {
+            station_key_id,
+            ..
+        }
+        | crate::application::operational_facts::target_resolver::ExecutionTargetError::SecretUnavailable {
+            station_key_id,
+        } => {
+            failure.context_mut().candidate_id = Some(station_key_id);
+        }
+    }
+    failure
+}
+
+fn controller_failure(failure: ControllerFailure, policy: &RoutingPolicy) -> ProxyFailure {
+    let (code, status, message) = match failure.kind {
+        ControllerFailureKind::NoEligible => (
+            ProxyFailureCode::RouteNoCandidate,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no eligible route candidate",
+        ),
+        ControllerFailureKind::TemporaryHealth => (
+            ProxyFailureCode::RouteHealthUnavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "route health unavailable",
+        ),
+        ControllerFailureKind::CapacityExhausted => (
+            ProxyFailureCode::RouteCapacityExhausted,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "route capacity exhausted",
+        ),
+        ControllerFailureKind::Deadline => (
+            ProxyFailureCode::RouteDeadlineExceeded,
+            StatusCode::GATEWAY_TIMEOUT,
+            "route deadline exceeded",
+        ),
+        ControllerFailureKind::ConfigUnstable => (
+            ProxyFailureCode::RouteConfigUnstable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "route configuration changed during planning",
+        ),
+        ControllerFailureKind::CandidateLimit => (
+            ProxyFailureCode::RouteCandidateLimitExceeded,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "route candidate limit exceeded",
+        ),
+        ControllerFailureKind::AttemptLimit => (
+            ProxyFailureCode::RouteNoCandidate,
+            StatusCode::BAD_GATEWAY,
+            "all route candidates failed",
+        ),
+        ControllerFailureKind::CommitUncertain => (
+            ProxyFailureCode::RouteInvariantViolation,
+            StatusCode::BAD_GATEWAY,
+            "route commit certainty prevents retry",
+        ),
+    };
+    let mut proxy_failure = ProxyFailure::new(
+        code,
+        FailureSource::Routing,
+        RetryClass::BeforeOutput,
+        status,
+        message,
+    );
+    proxy_failure.context_mut().route_policy = Some(routing_policy_label(policy).to_string());
+    proxy_failure
+}
+
+fn pricing_basis_label(
+    basis: crate::application::operational_facts::pricing_projector::RoutingCostBasis,
+) -> &'static str {
+    match basis {
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::ExactPrice => {
+            "exact_price"
+        }
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::MultiplierProxy => {
+            "multiplier_proxy"
+        }
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::Unpriced => {
+            "unpriced"
+        }
+        crate::application::operational_facts::pricing_projector::RoutingCostBasis::NotApplicable => {
+            "not_applicable"
+        }
+    }
+}
+
+fn catalog_planning_exhausted(failure: &ControllerFailure) -> bool {
+    matches!(
+        failure.kind,
+        ControllerFailureKind::NoEligible | ControllerFailureKind::AttemptLimit
+    )
+}
+
+fn attach_failure_candidate(failure: &mut ProxyFailure, candidate: &RoutePlanCandidate) {
     let context = failure.context_mut();
-    context.candidate_id = Some(candidate.candidate.station_key_id.clone());
-    context.candidate_station_id = Some(candidate.candidate.station_id.clone());
-    context.candidate_upstream_base_url = Some(candidate.candidate.upstream_base_url.clone());
+    context.candidate_id = Some(candidate.station_key_id.clone());
+    context.candidate_station_id = Some(candidate.station_id.clone());
+    context.candidate_upstream_base_url = None;
 }
 
 fn routing_policy_label(policy: &RoutingPolicy) -> &'static str {
@@ -1200,6 +1661,7 @@ fn upstream_first_byte_failure(message: impl Into<String>) -> ProxyFailure {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         sync::{Arc, Mutex},
         time::Duration,
     };
@@ -1209,16 +1671,27 @@ mod tests {
     use http::{HeaderMap, StatusCode};
 
     use crate::{
+        application::{
+            credentials::{
+                ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
+            },
+            operational_facts::target_resolver::{
+                ExecutionTargetHandle, ExecutionTargetRef,
+            },
+            routing_engine::request::RouteRequestFacts,
+        },
         models::{
             proxy::UpstreamApiFormat,
-            routing::{RouteEndpointKind, StationKeyCapabilities},
+            routing::{RouteEndpointKind, RuntimeRoutingCandidate, StationKeyCapabilities},
         },
         services::proxy::{
             error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestRequirements},
-            routing_repository::RoutingRepository,
-            routing_types::{RichRouteCandidate, RouteCandidate},
+            routing_repository::{
+                admission_profile_from_candidate, route_projection_from_runtime,
+                OperationalRouteSnapshot, RoutingRepository,
+            },
         },
     };
 
@@ -1291,7 +1764,7 @@ mod tests {
             Err(failure(429)),
             Ok(buffered_success(b"{\"ok\":true}")),
         ]));
-        let engine = ExecutionEngine::new(repository.clone(), attempts.clone());
+        let engine = test_engine(repository.clone(), attempts.clone());
 
         let response = engine
             .execute(canonical_chat_request().await)
@@ -1315,7 +1788,7 @@ mod tests {
                 br#"{"data":[{"id":"gpt-test","object":"model"}]}"#,
             )),
         ]));
-        let engine = ExecutionEngine::new(repository, attempts.clone());
+        let engine = test_engine(repository, attempts.clone());
 
         let response = engine
             .execute(canonical_models_request().await)
@@ -1341,7 +1814,7 @@ mod tests {
             Err(failure(500)),
             Ok(buffered_success(b"{\"unexpected\":true}")),
         ]));
-        let engine = ExecutionEngine::new(repository, attempts.clone());
+        let engine = test_engine(repository, attempts.clone());
 
         let failure = engine
             .execute(canonical_chat_request().await)
@@ -1365,17 +1838,18 @@ mod tests {
             ],
             Duration::from_millis(20),
         ));
-        let engine = ExecutionEngine::new(repository, attempts.clone()).with_retry_policy(
-            RetryPolicy::for_tests(
+        let engine =
+            test_engine(repository, attempts.clone()).with_retry_policy(RetryPolicy::for_tests(
                 3,
                 Duration::from_millis(5),
                 Duration::from_secs(120),
                 Duration::from_secs(300),
-            ),
-        );
+            ));
 
+        let mut request = canonical_chat_request().await;
+        request.idempotency_key = Some("idem-precommit-budget".to_string());
         let failure = engine
-            .execute(canonical_chat_request().await)
+            .execute(request)
             .await
             .expect_err("precommit budget exhausted");
 
@@ -1390,7 +1864,7 @@ mod tests {
             vec![Ok(stream_success(b"data: ok\n\n"))],
             Duration::from_millis(30),
         ));
-        let engine = ExecutionEngine::new(repository, attempts);
+        let engine = test_engine(repository, attempts);
 
         let response = engine
             .execute(streaming_chat_request().await)
@@ -1425,7 +1899,7 @@ mod tests {
             Ok(stream_error_before_data()),
             Ok(stream_success(b"data: ok\n\n")),
         ]));
-        let engine = ExecutionEngine::new(repository, attempts.clone());
+        let engine = test_engine(repository, attempts.clone());
 
         let mut response = engine
             .execute(streaming_chat_request().await)
@@ -1454,7 +1928,7 @@ mod tests {
             Ok(stream_then_error(b"data: first\n\n")),
             Ok(stream_success(b"data: forbidden\n\n")),
         ]));
-        let engine = ExecutionEngine::new(repository, attempts.clone());
+        let engine = test_engine(repository, attempts.clone());
 
         let mut response = engine
             .execute(streaming_chat_request().await)
@@ -1501,21 +1975,42 @@ mod tests {
     }
 
     struct FakeRepository {
-        candidates: Vec<RichRouteCandidate>,
+        candidates: Vec<RuntimeRoutingCandidate>,
     }
 
     impl FakeRepository {
-        fn with_candidates(candidates: Vec<RichRouteCandidate>) -> Self {
+        fn with_candidates(candidates: Vec<RuntimeRoutingCandidate>) -> Self {
             Self { candidates }
         }
     }
 
     impl RoutingRepository for FakeRepository {
-        fn load_runtime_candidates(
+        fn load_operational_route_snapshot(
             &self,
-        ) -> BoxFuture<'static, Result<Vec<RichRouteCandidate>, String>> {
+            request: RouteRequestFacts,
+        ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
             let candidates = self.candidates.clone();
-            Box::pin(async move { Ok(candidates) })
+            Box::pin(async move {
+                let mut targets = BTreeMap::new();
+                let mut profiles = BTreeMap::new();
+                let mut projections = Vec::new();
+                for candidate in candidates {
+                    targets.insert(candidate.station_key_id.clone(), target_ref(&candidate));
+                    profiles.insert(
+                        candidate.station_key_id.clone(),
+                        admission_profile_from_candidate(&candidate),
+                    );
+                    projections.push(route_projection_from_runtime(&request, candidate)?);
+                }
+                Ok(OperationalRouteSnapshot {
+                    candidates: projections,
+                    targets,
+                    profiles,
+                    snapshot_id: "test-operational-snapshot".to_string(),
+                    runtime_overlay_revision: 1,
+                    durable_generation: 1,
+                })
+            })
         }
     }
 
@@ -1554,13 +2049,13 @@ mod tests {
         fn attempt<'a>(
             &'a self,
             _request: &'a CanonicalProxyRequest,
-            candidate: &'a RichRouteCandidate,
+            target: &'a ExecutionTargetHandle,
             _mapped_model: Option<&'a str>,
         ) -> BoxFuture<'a, Result<PreparedAttempt, ProxyFailure>> {
             self.seen_ids
                 .lock()
                 .expect("seen lock")
-                .push(candidate.candidate.station_key_id.clone());
+                .push(target.station_key_id.clone());
             Box::pin(async move {
                 if let Some(delay) = self.delay {
                     tokio::time::sleep(delay).await;
@@ -1568,6 +2063,25 @@ mod tests {
                 self.responses.lock().expect("responses lock").remove(0)
             })
         }
+    }
+
+    struct FakeCredentialResolver;
+
+    impl ExecutionCredentialResolver for FakeCredentialResolver {
+        fn resolve_station_key_secret_ref(
+            &self,
+            _station_key_id: String,
+            _secret_ref: SecretRef,
+        ) -> BoxFuture<'static, Result<SecretBytes, ExecutionCredentialError>> {
+            Box::pin(async { Ok("test-api-key".to_string().into()) })
+        }
+    }
+
+    fn test_engine(
+        repository: Arc<dyn RoutingRepository>,
+        attempts: Arc<dyn AttemptExecutor>,
+    ) -> ExecutionEngine {
+        ExecutionEngine::new(repository, Arc::new(FakeCredentialResolver), attempts)
     }
 
     fn failure(status: u16) -> ProxyFailure {
@@ -1723,22 +2237,40 @@ mod tests {
         )
     }
 
-    fn rich_candidate(id: &str) -> RichRouteCandidate {
-        RichRouteCandidate {
-            candidate: RouteCandidate {
-                station_key_id: id.to_string(),
-                station_id: format!("station-{id}"),
-                station_endpoint_revision: 1,
-                upstream_base_url: "https://example.test/v1".to_string(),
-                api_key: format!("sk-{id}"),
-                collector_proxy_mode: "direct".to_string(),
-                collector_proxy_url: None,
-                upstream_api_format: UpstreamApiFormat::Auto,
-                priority: 0,
-                max_concurrency: 0,
-                load_factor: None,
-                schedulable: true,
-            },
+    fn target_ref(candidate: &RuntimeRoutingCandidate) -> ExecutionTargetRef {
+        ExecutionTargetRef {
+            station_key_id: candidate.station_key_id.clone(),
+            station_id: candidate.station_id.clone(),
+            endpoint_revision: candidate.station_endpoint_revision,
+            api_base_url: "https://upstream.example.test/v1".to_string(),
+            upstream_api_format: candidate.upstream_api_format.clone(),
+            collector_proxy_mode: candidate.collector_proxy_mode.clone(),
+            collector_proxy_url: candidate.collector_proxy_url.clone(),
+            enabled: candidate.schedulable,
+            api_key_secret_ref: Some(SecretRef {
+                id: format!("secret-{}", candidate.station_key_id),
+                scope: "station_key".to_string(),
+                owner_id: candidate.station_key_id.clone(),
+                kind: "api_key".to_string(),
+            }),
+            inline_api_key_present: false,
+        }
+    }
+
+    fn rich_candidate(id: &str) -> RuntimeRoutingCandidate {
+        RuntimeRoutingCandidate {
+            station_key_id: id.to_string(),
+            station_id: format!("station-{id}"),
+            station_endpoint_revision: 1,
+            sanitized_origin: "https://upstream.example.test".to_string(),
+            upstream_api_format: UpstreamApiFormat::Auto,
+            routing_order: None,
+            priority: 0,
+            max_concurrency: 0,
+            load_factor: None,
+            schedulable: true,
+            collector_proxy_mode: "direct".to_string(),
+            collector_proxy_url: None,
             station_name: format!("Station {id}"),
             key_name: format!("Key {id}"),
             capabilities: StationKeyCapabilities {
@@ -1758,12 +2290,10 @@ mod tests {
                 updated_at: "0".to_string(),
             },
             health: None,
-            economics: None,
-            scheduler_group_binding_id: None,
-            scheduler_group_id_hash: None,
-            scheduler_group_type: None,
-            scheduler_effective_multiplier: None,
-            scheduler_multiplier_reject_reason: None,
+            balance_snapshot: None,
+            economic_snapshot: None,
+            api_key: Some("sk-test".to_string()),
+            api_key_secret: None,
         }
     }
 }

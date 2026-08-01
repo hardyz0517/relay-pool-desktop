@@ -150,7 +150,11 @@ pub(crate) fn compose_routing_command_facade(
     services: &AppServices,
     outbound: AsyncOutboundClient,
 ) -> RoutingCommandFacade {
-    RoutingCommandFacade::new(Arc::clone(&services.routing), outbound)
+    RoutingCommandFacade::new(
+        Arc::clone(&services.routing),
+        Arc::clone(&services.request_logs),
+        outbound,
+    )
 }
 
 pub(crate) fn compose_request_logs_command_facade(
@@ -383,14 +387,13 @@ pub(crate) fn compose_data_directory_command_facade(
 pub(crate) fn compose_local_proxy_command_facade(
     services: &AppServices,
     proxy: Arc<ProxyRuntimeState>,
-    device_keys: DeviceKeyResolver,
 ) -> LocalProxyCommandFacade {
     LocalProxyCommandFacade::new(
         Arc::clone(&services.settings),
         Arc::clone(&services.routing),
+        Arc::clone(&services.credentials),
         Arc::clone(&services.request_logs),
         Arc::clone(&services.request_finalization),
         proxy,
-        device_keys,
     )
 }

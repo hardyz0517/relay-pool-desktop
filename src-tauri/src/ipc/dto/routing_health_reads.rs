@@ -1,6 +1,14 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::application::queries::{
+    operational_detail::{StationKeyOperationalDetail, StationKeyOperationalDetailInput},
+    request_decision_trace::{
+        RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
+    },
+    routing_runtime::RoutingRuntimeOverlay,
+    routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
+};
 #[cfg(test)]
 use crate::models::routing::PricingGroupType;
 use crate::models::{
@@ -20,6 +28,11 @@ const MAX_RATE_MULTIPLIER: f64 = 1.0e6;
 
 pub type ModelAliasDto = ModelAlias;
 pub type RouteSimulationResultDto = RouteSimulationResult;
+pub type RecentRouteDecisionsPageDto = RecentRouteDecisionsPage;
+pub type RequestDecisionTraceDto = RequestDecisionTrace;
+pub type RoutingRuntimeOverlayDto = RoutingRuntimeOverlay;
+pub type StationKeyOperationalDetailDto = StationKeyOperationalDetail;
+pub type RoutingWorkspaceSnapshotDto = RoutingWorkspaceSnapshot;
 pub type StationEndpointHealthDto = StationEndpointHealth;
 pub type StationKeyCapabilitiesDto = StationKeyCapabilities;
 pub type StationKeyHealthDto = StationKeyHealth;
@@ -53,6 +66,161 @@ impl RoutingStationKeyIdInputDto {
         }
         Ok(input)
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RequestDecisionTraceInputDto {
+    pub request_log_id: String,
+}
+
+impl RequestDecisionTraceInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The request decision trace payload is invalid.",
+            )
+        })?;
+        validate_stable_id("requestLogId", &input.request_log_id)?;
+        Ok(input)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecentRouteDecisionsInputDto {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+impl RecentRouteDecisionsInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The recent route decisions payload is invalid.",
+            )
+        })?;
+        if input.limit.is_some_and(|limit| limit == 0 || limit > 200) {
+            return Err(invalid_input(
+                "limit",
+                "out_of_range",
+                "The recent route decisions limit is outside the supported range.",
+            ));
+        }
+        if input.cursor.as_deref().is_some_and(|cursor| {
+            cursor.len() > MAX_TEXT_BYTES || cursor.chars().any(char::is_control)
+        }) {
+            return Err(invalid_input(
+                "cursor",
+                "invalid_text",
+                "The recent route decisions cursor is invalid.",
+            ));
+        }
+        Ok(input)
+    }
+
+    pub fn into_domain(self) -> RecentRouteDecisionsInput {
+        RecentRouteDecisionsInput {
+            limit: self.limit,
+            cursor: self.cursor,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StationKeyOperationalDetailInputDto {
+    pub station_key_id: String,
+}
+
+impl StationKeyOperationalDetailInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The station key operational detail payload is invalid.",
+            )
+        })?;
+        validate_stable_id("stationKeyId", &input.station_key_id)?;
+        Ok(input)
+    }
+
+    pub fn into_domain(self) -> StationKeyOperationalDetailInput {
+        StationKeyOperationalDetailInput {
+            station_key_id: self.station_key_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoutingWorkspaceSnapshotInputDto {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+impl RoutingWorkspaceSnapshotInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The routing workspace snapshot payload is invalid.",
+            )
+        })?;
+        if input.limit.is_some_and(|limit| limit == 0 || limit > 1024) {
+            return Err(invalid_input(
+                "limit",
+                "out_of_range",
+                "The routing workspace snapshot limit is outside the supported range.",
+            ));
+        }
+        if input.cursor.as_deref().is_some_and(|cursor| {
+            cursor.len() > MAX_TEXT_BYTES || cursor.chars().any(char::is_control)
+        }) {
+            return Err(invalid_input(
+                "cursor",
+                "invalid_text",
+                "The routing workspace snapshot cursor is invalid.",
+            ));
+        }
+        Ok(input)
+    }
+
+    pub fn into_domain(self) -> RoutingWorkspaceSnapshotInput {
+        RoutingWorkspaceSnapshotInput {
+            limit: self.limit,
+            cursor: self.cursor,
+        }
+    }
+}
+
+fn validate_stable_id(
+    field: &'static str,
+    value: &str,
+) -> Result<(), crate::commands::error::CommandError> {
+    let valid = !value.is_empty()
+        && value.len() <= MAX_STATION_KEY_ID_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'));
+    if !valid {
+        return Err(invalid_input(
+            field,
+            "invalid_id",
+            "The stable ID is invalid.",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -183,6 +351,168 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command":"list_model_aliases","input":{},"output":[alias]}),
         serde_json::json!({"command":"list_station_key_health","input":{},"output":[health.clone()]}),
         serde_json::json!({"command":"list_station_endpoint_health","input":{},"output":[endpoint_health]}),
+        serde_json::json!({
+            "command":"list_recent_route_decisions",
+            "input":{"limit":50,"cursor":null},
+            "output":{
+                "pageVersion":"recent_route_decisions_v1",
+                "decisions":[{
+                    "requestLogId":"request-log-1",
+                    "requestId":"request-1",
+                    "createdAt":"1700000000000",
+                    "startedAt":"1700000000000",
+                    "finishedAt":"1700000000100",
+                    "durationMs":100,
+                    "endpoint":"/v1/chat/completions",
+                    "model":"fixture-model",
+                    "status":"success",
+                    "lifecycleStatus":"completed",
+                    "stationKeyId":"key-1",
+                    "stationId":"station-1",
+                    "routePolicy":"cost_stable_first",
+                    "routeReason":"selected",
+                    "fallbackCount":0,
+                    "costStatus":"estimated",
+                    "estimatedTotalCost":0.01,
+                    "costCurrency":"USD"
+                }],
+                "nextCursor":null,
+                "readModelStatus":"available"
+            }
+        }),
+        serde_json::json!({
+            "command":"get_station_key_operational_detail",
+            "input":{"stationKeyId":"key-1"},
+            "output":{
+                "detailVersion":"station_key_operational_detail_v1",
+                "stationKeyId":"key-1",
+                "stationId":"station-1",
+                "endpointRevision":1,
+                "facts":[{
+                    "scope":"health",
+                    "name":"station_key_health",
+                    "value":"ready",
+                    "source":"station_key_health.runtime_overlay",
+                    "freshness":"1700000000000",
+                    "reason":null
+                }],
+                "lazyHistoryAvailable":true,
+                "readModelStatus":"available"
+            }
+        }),
+        serde_json::json!({
+            "command":"get_request_decision_trace",
+            "input":{"requestLogId":"request-log-1"},
+            "output":{
+                "traceVersion":"request_decision_trace_v1",
+                "requestLogId":"request-log-1",
+                "status":"legacy_summary",
+                "reason":"legacy_summary_only_before_cutover",
+                "legacySummary":{
+                    "routePolicy":"cost_stable_first",
+                    "routeReason":"selected",
+                    "stationKeyId":"key-1",
+                    "stationId":"station-1",
+                    "fallbackCount":0
+                },
+                "planningRounds":[]
+            }
+        }),
+        serde_json::json!({
+            "command":"load_routing_workspace_snapshot",
+            "input":{"limit":64,"cursor":null},
+            "output":{
+                "readModelVersion":"routing_workspace_read_model_v1",
+                "generatedAtMs":1700000000000_i64,
+                "productionPolicy":"cost_stable_first",
+                "previewPolicyVersion":"hierarchical_v1_preview",
+                "maxRateMultiplier":2.0,
+                "routingGroupFilter":{"group_type":"gpt"},
+                "capacityMode":"snapshot_only",
+                "page":{"limit":64,"returned":1,"nextCursor":null},
+                "candidates":[{
+                    "stationKeyId":"key-1",
+                    "stationId":"station-1",
+                    "stationName":"Station",
+                    "keyName":"Key",
+                    "endpointRevision":1,
+                    "priority":10,
+                    "schedulable":true,
+                    "healthState":"ready",
+                    "group":{
+                        "stableKey":"binding:group-1",
+                        "displayName":"Group 1",
+                        "available":true,
+                        "reason":"bound_group"
+                    },
+                    "multiplier":{
+                        "status":"missing",
+                        "multiplier":null,
+                        "selectedSource":null,
+                        "ceilingRejected":false,
+                        "reason":"multiplier_missing"
+                    },
+                    "capabilitySummary":{
+                        "chatCompletions":true,
+                        "responses":true,
+                        "embeddings":false,
+                        "stream":true,
+                        "tools":false,
+                        "vision":false,
+                        "reasoning":false
+                    },
+                    "capabilityVerdicts":{
+                        "protocol":"allow",
+                        "model":"allow",
+                        "stream":"allow",
+                        "tools":"reject",
+                        "vision":"reject",
+                        "reasoning":"reject",
+                        "rejectionSubjects":[]
+                    },
+                    "priceBasis":"unpriced",
+                    "pricing":{
+                        "basis":"unpriced",
+                        "comparisonValue":null,
+                        "reason":"pricing_context_missing",
+                        "currency":null,
+                        "unit":null,
+                        "sourceChain":["pricing_projector"],
+                        "observedAt":null,
+                        "confidence":null
+                    },
+                    "balanceStatus":null,
+                    "capacity":{"mode":"snapshot_only","maxConcurrency":8,"inFlight":1,"acquired":false},
+                    "sourceRefs":{
+                        "stationKeyId":"key-1",
+                        "stationId":"station-1",
+                        "endpointRevision":1,
+                        "snapshotId":"snapshot-1",
+                        "factVersionVector":"endpoint:1",
+                        "projectorVersion":"route_candidate_projection_v1"
+                    },
+                    "hardRejectionCodes":[]
+                }],
+                "readModelStatus":"available"
+            }
+        }),
+        serde_json::json!({
+            "command":"load_routing_runtime_overlay",
+            "input":{},
+            "output":{
+                "overlayVersion":"routing_runtime_overlay_v1",
+                "sampledAtMs":1700000000000_i64,
+                "revision":1,
+                "candidates":[{
+                    "stationKeyId":"key-1",
+                    "stationId":"station-1",
+                    "endpointRevision":1,
+                    "inFlight":1,
+                    "healthState":"ready",
+                    "cooldownUntil":null
+                }]
+            }
+        }),
         serde_json::json!({"command":"get_station_key_health","input":{"stationKeyId":"key-1"},"output":health}),
         serde_json::json!({
             "command":"simulate_route",
@@ -269,13 +599,16 @@ fn fixture_endpoint_health() -> StationEndpointHealth {
 #[cfg(test)]
 fn fixture_simulation_result() -> RouteSimulationResult {
     RouteSimulationResult {
+        preview_policy_version: "hierarchical_v1_preview".into(),
+        capacity_mode: "snapshot_only".into(),
+        selected_capacity_acquired: false,
         selected_station_key_id: Some("key-1".into()),
         selected_station_id: Some("station-1".into()),
         mapped_model: Some("fixture-model".into()),
         policy: RoutingPolicy::CostStableFirst,
         max_rate_multiplier: Some(2.0),
         routing_group_filter: RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
-        scheduler_error_code: None,
+        planner_error_code: None,
         candidates: Vec::new(),
         message: "Route simulation completed.".into(),
     }

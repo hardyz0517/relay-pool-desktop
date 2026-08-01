@@ -13,6 +13,7 @@ use crate::{
         provider_drafts::ProviderDraftService,
         stations::StationService,
     },
+    background_tasks::BlockingExecutorError,
     models::{
         capture::{CaptureSessionStatus, CapturedHttpEventInput},
         collector::CollectorRunResult,
@@ -46,6 +47,7 @@ use crate::{
 #[derive(Debug)]
 pub(crate) enum CaptureCommandError {
     Application(ApplicationError),
+    Blocking(BlockingExecutorError),
     Message(String),
 }
 
@@ -58,6 +60,12 @@ impl From<ApplicationError> for CaptureCommandError {
 impl From<String> for CaptureCommandError {
     fn from(error: String) -> Self {
         Self::Message(error)
+    }
+}
+
+impl From<BlockingExecutorError> for CaptureCommandError {
+    fn from(error: BlockingExecutorError) -> Self {
+        Self::Blocking(error)
     }
 }
 
@@ -107,7 +115,7 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) async fn prepare_capture_session_start(
+    pub(crate) async fn start_capture_session(
         &self,
         station_id: String,
     ) -> Result<CaptureSessionStartPlan, CaptureCommandError> {
@@ -155,7 +163,7 @@ impl CaptureCommandFacade {
         })
     }
 
-    pub(crate) async fn prepare_provider_draft_capture_session_start(
+    pub(crate) async fn start_provider_draft_authorization(
         &self,
         draft_id: String,
     ) -> Result<CaptureSessionStartPlan, CaptureCommandError> {
@@ -252,7 +260,16 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) async fn finish_web_authorization_session_with_cookie(
+    pub(crate) async fn finish_web_authorization_session(
+        &self,
+        station_id: String,
+        cookie_header: String,
+    ) -> Result<CollectorRunResult, CaptureCommandError> {
+        self.finish_web_authorization_session_with_cookie(station_id, cookie_header)
+            .await
+    }
+
+    async fn finish_web_authorization_session_with_cookie(
         &self,
         station_id: String,
         cookie_header: String,
@@ -315,7 +332,16 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) async fn finish_provider_draft_authorization_session_with_cookie(
+    pub(crate) async fn finish_provider_draft_authorization_session(
+        &self,
+        draft_id: String,
+        cookie_header: String,
+    ) -> Result<ProviderDraftPreview, CaptureCommandError> {
+        self.finish_provider_draft_authorization_session_with_cookie(draft_id, cookie_header)
+            .await
+    }
+
+    async fn finish_provider_draft_authorization_session_with_cookie(
         &self,
         draft_id: String,
         cookie_header: String,
@@ -357,16 +383,8 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) async fn web_authorization_cookie_url(
-        &self,
-        station_id: &str,
-    ) -> Result<String, CaptureCommandError> {
-        Ok(self
-            .capture_owner(station_id)
-            .await?
-            .station()
-            .website_url
-            .clone())
+    pub(crate) fn web_authorization_cookie_url(&self, station_id: &str) -> Result<String, String> {
+        self.sessions.web_authorization_cookie_url(station_id)
     }
 
     pub(crate) fn start_prepared_session(
@@ -374,8 +392,14 @@ impl CaptureCommandFacade {
         station_id: String,
         label: String,
         endpoint_revision: i64,
+        web_authorization_cookie_url: String,
     ) -> Result<CaptureSessionStatus, String> {
-        self.sessions.start(station_id, label, endpoint_revision)
+        self.sessions.start(
+            station_id,
+            label,
+            endpoint_revision,
+            web_authorization_cookie_url,
+        )
     }
 
     async fn verify_newapi_web_authorization_session(

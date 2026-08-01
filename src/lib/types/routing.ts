@@ -1,153 +1,79 @@
-export type RoutingPolicy =
-  | "automatic_balanced"
-  | "priority_fallback"
-  | "stable_first"
-  | "backup_only"
-  | "cheap_first"
-  | "cost_stable_first";
-export type RouteEndpointKind = "models" | "chat_completions" | "responses" | "embeddings";
+import type {
+  ModelAliasDto,
+  OperationalDetailFactDto,
+  PricingGroupTypeDto,
+  RecentRouteDecisionsInputDto,
+  RecentRouteDecisionsPageDto,
+  RecentRouteDecisionSummaryDto,
+  RequestDecisionTraceDto,
+  RouteCandidateExplanationDto,
+  RouteEndpointKindDto,
+  RouteSimulationInputDto,
+  RouteSimulationResultDto,
+  RoutingCandidateCapacitySnapshotDto,
+  RoutingCandidateSourceRefsDto,
+  RoutingCapacityReadModeDto,
+  RoutingCapabilitySummaryDto,
+  RoutingGroupFilterDto,
+  RoutingPolicyDto,
+  RoutingReadModelStatusDto,
+  RoutingReadPageDto,
+  RoutingRuntimeCandidateOverlayDto,
+  RoutingRuntimeOverlayDto,
+  RoutingWorkspaceCandidateDto,
+  RoutingWorkspaceSnapshotDto,
+  RoutingWorkspaceSnapshotInputDto,
+  SchedulerAdvancedSettingsDto,
+  StationKeyCapabilitiesDto,
+  StationKeyHealthDto,
+  StationKeyOperationalDetailDto,
+  UpdateStationKeyCapabilitiesInputDto,
+  UpsertModelAliasInputDto,
+} from "@/lib/bridge/generated";
 
-export type PricingGroupType = "gpt" | "claude" | "gemini" | "grok" | "image_generation";
+export type RoutingPolicy = RoutingPolicyDto;
+export type RouteEndpointKind = RouteEndpointKindDto;
+export type PricingGroupType = PricingGroupTypeDto;
+export type RoutingGroupFilter = RoutingGroupFilterDto;
+export type SchedulerAdvancedSettings = SchedulerAdvancedSettingsDto;
 
-export type RoutingGroupFilter =
-  | "all_groups"
-  | "ungrouped_only"
-  | { group_binding_id: string }
-  | { group_id_hash: string }
-  | { group_type: PricingGroupType };
+export type StationKeyCapabilities = StationKeyCapabilitiesDto;
+export type UpdateStationKeyCapabilitiesInput = UpdateStationKeyCapabilitiesInputDto;
 
-export type SchedulerAdvancedSettings = {
-  topK: number;
-  multiplier: number;
-  priority: number;
-  load: number;
-  queue: number;
-  errorRate: number;
-  ttft: number;
-  quotaHeadroom: number;
-  previousResponse: number;
-  sessionSticky: number;
-  multiplierMinConfidence: number;
-  stickyWeighted: boolean;
-  stickyEscape: boolean;
-  stickyEscapeTtftMs: number;
-  stickyEscapeErrorRate: number;
-  stickySessionTtlSeconds: number;
-  stickyResponseTtlSeconds: number;
-  stickyMaxWaiting: number;
-  stickyWaitTimeoutSeconds: number;
-  fallbackMaxWaiting: number;
-  fallbackWaitTimeoutSeconds: number;
+export type ModelAlias = ModelAliasDto;
+export type UpsertModelAliasInput = UpsertModelAliasInputDto;
+
+export type StationKeyHealth = StationKeyHealthDto;
+
+export type RouteSimulationInput = Omit<
+  RouteSimulationInputDto,
+  "maxRateMultiplier" | "routingGroupFilter" | "sessionHash" | "previousResponseId"
+> & {
+  maxRateMultiplier?: RouteSimulationInputDto["maxRateMultiplier"];
+  routingGroupFilter?: RouteSimulationInputDto["routingGroupFilter"];
+  sessionHash?: RouteSimulationInputDto["sessionHash"];
+  previousResponseId?: RouteSimulationInputDto["previousResponseId"];
 };
+export type RouteCandidateExplanation = RouteCandidateExplanationDto;
+export type RouteSimulationResult = RouteSimulationResultDto;
 
-export type StationKeyCapabilities = {
-  stationKeyId: string;
-  supportsChatCompletions: boolean;
-  supportsResponses: boolean;
-  supportsEmbeddings: boolean;
-  supportsStream: boolean;
-  supportsTools: boolean;
-  supportsVision: boolean;
-  supportsReasoning: boolean;
-  modelAllowlist: string[];
-  modelBlocklist: string[];
-  preferredModels: string[];
-  onlyUseAsBackup: boolean;
-  routingTags: string[];
-  updatedAt: string;
-};
+export type RoutingWorkspaceSnapshotInput = RoutingWorkspaceSnapshotInputDto;
+export type RoutingCapacityReadMode = RoutingCapacityReadModeDto;
+export type RoutingReadModelStatus = RoutingReadModelStatusDto;
+export type RoutingCapabilitySummary = RoutingCapabilitySummaryDto;
+export type RoutingCandidateCapacitySnapshot = RoutingCandidateCapacitySnapshotDto;
+export type RoutingCandidateSourceRefs = RoutingCandidateSourceRefsDto;
+export type RoutingWorkspaceCandidate = RoutingWorkspaceCandidateDto;
+export type RoutingReadPage = RoutingReadPageDto;
+export type RoutingWorkspaceSnapshot = RoutingWorkspaceSnapshotDto;
 
-export type UpdateStationKeyCapabilitiesInput = Omit<StationKeyCapabilities, "updatedAt">;
+export type RoutingRuntimeCandidateOverlay = RoutingRuntimeCandidateOverlayDto;
+export type RoutingRuntimeOverlay = RoutingRuntimeOverlayDto;
 
-export type ModelAlias = {
-  id: string;
-  clientModel: string;
-  upstreamModel: string;
-  enabled: boolean;
-  note: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+export type RecentRouteDecisionsInput = RecentRouteDecisionsInputDto;
+export type RouteDecisionSummary = RecentRouteDecisionSummaryDto;
+export type RecentRouteDecisionsPage = RecentRouteDecisionsPageDto;
 
-export type UpsertModelAliasInput = {
-  id: string | null;
-  clientModel: string;
-  upstreamModel: string;
-  enabled: boolean;
-  note: string | null;
-};
-
-export type StationKeyHealth = {
-  stationKeyId: string;
-  lastSuccessAt: string | null;
-  lastFailureAt: string | null;
-  consecutiveFailures: number;
-  successCount: number;
-  failureCount: number;
-  avgLatencyMs: number | null;
-  lastErrorSummary: string | null;
-  cooldownUntil: string | null;
-  updatedAt: string;
-};
-
-export type RouteSimulationInput = {
-  endpoint: RouteEndpointKind;
-  model: string | null;
-  stream: boolean;
-  usesTools: boolean;
-  usesVision: boolean;
-  usesReasoning: boolean;
-  policy: RoutingPolicy | null;
-  maxRateMultiplier?: number | null;
-  routingGroupFilter?: RoutingGroupFilter | null;
-  sessionHash?: string | null;
-  previousResponseId?: string | null;
-};
-
-export type RouteCandidateExplanation = {
-  stationKeyId: string;
-  stationId: string;
-  stationName: string;
-  keyName: string;
-  accepted: boolean;
-  score: number;
-  reasons: string[];
-  rejectionReasons: string[];
-  mappedModel: string | null;
-  pricingRuleId: string | null;
-  groupBindingId: string | null;
-  rateMultiplier: number | null;
-  normalizationStatus: string | null;
-  priceConfidence: number | null;
-  estimatedInputPrice: number | null;
-  estimatedOutputPrice: number | null;
-  priceCurrency: string | null;
-  balanceStatus: string | null;
-  balanceValue: number | null;
-  balanceScope: string | null;
-  balanceCollectedAt: string | null;
-  economicFreshness: string | null;
-  economicReasons: string[];
-  routingGroupScope: RoutingGroupFilter | null;
-  routingGroupMatch: boolean;
-  groupIdHash: string | null;
-  groupType: PricingGroupType | null;
-  effectiveMultiplierSource: string | null;
-  effectiveMultiplierConfidence: number | null;
-  schedulerScore: number | null;
-  schedulerFactors: string[];
-  topKRank: number | null;
-  slotResult: string | null;
-};
-
-export type RouteSimulationResult = {
-  selectedStationKeyId: string | null;
-  selectedStationId: string | null;
-  mappedModel: string | null;
-  policy: RoutingPolicy;
-  maxRateMultiplier: number | null;
-  routingGroupFilter: RoutingGroupFilter;
-  schedulerErrorCode: string | null;
-  candidates: RouteCandidateExplanation[];
-  message: string;
-};
+export type OperationalDetailFact = OperationalDetailFactDto;
+export type StationKeyOperationalDetail = StationKeyOperationalDetailDto;
+export type RequestDecisionTrace = RequestDecisionTraceDto;

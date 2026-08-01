@@ -68,6 +68,12 @@ mod models {
 }
 
 mod services {
+    pub(crate) mod time {
+        pub(crate) fn now_millis_for_services() -> i64 {
+            1_000
+        }
+    }
+
     pub(crate) mod group_categories {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -241,17 +247,25 @@ mod persistence {
             "/src/persistence/schema_compatibility.rs"
         ));
     }
+    pub(crate) mod schema_registry {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/persistence/schema_registry.rs"
+        ));
+    }
     pub(crate) mod health_check {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/persistence/health_check.rs"
         ));
     }
-    pub(crate) mod schema_registry {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/persistence/schema_registry.rs"
-        ));
+    pub(crate) mod maintenance {
+        pub(crate) mod request_log_url_sanitizer {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/persistence/maintenance/request_log_url_sanitizer.rs"
+            ));
+        }
     }
     pub(crate) mod migrations {
         include!(concat!(
@@ -333,6 +347,7 @@ mod application {
 }
 
 use std::{
+    collections::BTreeSet,
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -360,8 +375,10 @@ use models::{
 };
 use persistence::{
     runtime::PersistenceRuntime,
+    schema_compatibility::BinaryCompatibility,
     stores::change_store::{ChangeCursor, ChangeStore},
 };
+use semver::Version;
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
@@ -798,9 +815,10 @@ impl Fixture {
         let path = root.join("relay-pool-v2.sqlite3");
         persistence::migrations::initialize_v2_database(&path)
             .await
-            .expect("migrate fixture");
+            .expect("initialize fixture");
         let mut connection = SqliteConnectOptions::new()
             .filename(&path)
+            .create_if_missing(false)
             .connect()
             .await
             .expect("connect fixture");
@@ -828,12 +846,9 @@ impl Fixture {
     }
 
     async fn runtime(&self) -> PersistenceRuntime {
-        PersistenceRuntime::open(
-            &self.path,
-            persistence::migrations::current_binary_compatibility(),
-        )
-        .await
-        .expect("open runtime")
+        PersistenceRuntime::open(&self.path, binary_8())
+            .await
+            .expect("open runtime")
     }
 
     async fn execute(&self, sql: &str) {
@@ -869,5 +884,15 @@ impl Fixture {
         let value = row.get(0);
         connection.close().await.expect("close fixture");
         value
+    }
+}
+
+fn binary_8() -> BinaryCompatibility {
+    let schema_version = persistence::migrations::current_schema_version();
+    BinaryCompatibility {
+        app_version: Version::new(0, 3, 1),
+        database_generation: 2,
+        readable_schema: 1..=schema_version,
+        writable_schema: BTreeSet::from([schema_version]),
     }
 }

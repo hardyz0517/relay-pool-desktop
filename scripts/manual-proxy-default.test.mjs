@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 
 const helper = readFileSync("src/lib/proxyDefaults.ts", "utf8");
 const settingsPage = readFileSync("src/features/settings/SettingsPage.tsx", "utf8");
-const addProviderPage = readFileSync("src/features/stations/AddProviderPage.tsx", "utf8");
+const addProviderSections = readFileSync(
+  "src/features/stations/pages/add-provider/AddProviderSections.tsx",
+  "utf8",
+);
 
 assert.match(
   helper,
@@ -18,7 +21,7 @@ assert.match(
 
 for (const [label, source] of [
   ["SettingsPage", settingsPage],
-  ["AddProviderPage", addProviderPage],
+  ["AddProviderSections", addProviderSections],
 ]) {
   assert.ok(
     source.includes("DEFAULT_MANUAL_PROXY_URL"),

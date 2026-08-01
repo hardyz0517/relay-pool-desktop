@@ -4,18 +4,18 @@ pub mod budgets;
 pub mod definitions;
 #[path = "../src/persistence/stores/monitoring/executions.rs"]
 pub mod executions;
-#[path = "../src/models/monitoring/read_model.rs"]
-pub mod monitoring_read_model;
+#[path = "../src/models/monitoring/mod.rs"]
+pub mod monitoring_models;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
 pub mod retention;
-#[path = "../src/persistence/stores/monitoring/status_queries.rs"]
+#[path = "../src/persistence/stores/monitoring/status_read_repository.rs"]
 pub mod status_queries;
 
 mod models {
     pub(crate) mod monitoring {
-        pub(crate) use crate::monitoring_read_model::*;
+        pub(crate) use crate::monitoring_models::*;
     }
 }
 
@@ -24,11 +24,11 @@ mod persistence {
         pub(crate) use crate::persistence_error::PersistenceError;
     }
 
-    pub(crate) mod stores {
-        pub(crate) mod monitoring {
-            pub(crate) mod retention {
-                pub(crate) use crate::retention::*;
-            }
+    pub(crate) struct ReadSession;
+
+    impl ReadSession {
+        pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
+            unimplemented!("path-based repository tests do not construct ReadSession")
         }
     }
 }

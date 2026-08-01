@@ -47,6 +47,7 @@ assert.doesNotMatch(ingress, /access-control-allow-origin:\s*\*/i);
 assert.match(runtime, /V2ProxyExecutor/);
 assert.match(runtime, /RequestLifecycleStore/);
 assert.doesNotMatch(runtime, /RequestFinalizationService/);
+assert.doesNotMatch(runtime, /ProxyFinalizationMode|LegacyRequestCoupled|with_legacy_request_coupled_finalization/);
 assert.match(runtime, /LifecycleWriter::start/);
 assert.doesNotMatch(runtime, /ProxyRuntimeMode/);
 assert.doesNotMatch(runtime, /fn forward_(chat|responses|embeddings)_request/);

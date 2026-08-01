@@ -32,7 +32,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 - P7 已完成价格归一化、余额快照、请求成本和 cheap_first 路由展示。
 - P8 正在推进安全与凭据治理；跨设备数据搬家已在 `codex/cross-device-encrypted-migration` 升级分支获得安全批准并开启 capability，合并/发布仍要求同一 revision 的两机发布资格和签名包证据。
 - P9 真实站点采集与路由事实层：补齐 Sub2API / NewAPI / OpenAI-compatible adapter，建立 group binding、倍率历史、collector run、价格归一化和路由经济解释，让 UI 和路由消费稳定事实而不是 raw snapshot JSON。
-- P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；release 级 live provider、soak、签名包、升级和休眠恢复验证仍是发布门禁。
+- P10 状态监控 V2 已在 `codex/status-monitoring-refactor` 完成 implementation cutover：监控事实模型、协议/profile adapter、统一 orchestrator/scheduler/runtime、健康写回、后端状态 read model 与横向状态 UI 已成为升级主线；当前非稳定产品阶段只要求本地开发自检、必要 smoke/soak 与 reset/reimport/重新配置恢复证明。Routing operational Task 27 已建立 deterministic local self-check runner，用现有 known-schema fixture、upgrade recovery、fresh generation-two、sanitizer resume、startup reconciliation、configured routing 和 catalog loopback 检查证明 current dev binary 的 reset/reimport 基础链路；真实本地客户端 smoke 复用 `scripts/verify-local-routing-lifecycle.ps1 -AuthorizeLocalClientSmoke`，真实 provider 探针复用 `scripts/run-openai-compatible-live-qualification.ps1`，未显式授权或无必要 secret 时均失败关闭，授权运行时只保存 ignored 脱敏 summary 且不落原始 endpoint URL；真实客户端、CCSwitch、sleep/resume 和 UI timeline 核对仍需用户授权或实机观察，不能用本地 fixture 冒充。
 
 ## 2.1 信息架构
 
@@ -189,7 +189,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 
 当前本地 OpenAI-compatible 网关使用 Rust async HTTP 栈承载：本地入口由 Tokio / Hyper / Axum 处理连接、HTTP framing、CORS、认证、请求体限制和 graceful drain；上游转发统一使用 Reqwest client pool；候选选择、fallback、健康反馈和请求日志进入同一条 proxy execution pipeline。
 
-本地网关默认运行 v2 runtime。短期 debug 构建保留 `RELAY_POOL_PROXY_RUNTIME=legacy` 作为迁移观察期回退入口；它不是 UI 设置，也不是长期产品能力。正式删除 legacy runtime 前，必须完成一次默认 v2 发布后的真实客户端回归。
+本地网关默认且唯一运行 v2 runtime。旧 debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 入口和 request-coupled finalization 分支已按开发期 reset/reimport/重新配置恢复策略删除；它们不是 UI 设置、不是长期产品能力，也不作为结构性 blocker 的自动 fallback。当前项目仍处于非稳定成型阶段，结构性不可恢复状态的处理方式是停止 admission，并让用户清空本地开发数据、重新导入或重新配置后继续。
 
 当前本地 OpenAI-compatible 网关只路由以下端点：
 

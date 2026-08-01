@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use crate::{
-    application::{clock::Clock, error::ApplicationError, ids::IdGenerator, pagination::PageLimit},
+    application::{
+        clock::Clock, error::ApplicationError, ids::IdGenerator,
+        operational_facts::pricing_projector::pricing_context_from_resolution,
+        pagination::PageLimit,
+    },
     models::pricing::{
         BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
         UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
@@ -10,10 +14,8 @@ use crate::{
         runtime::PersistenceHandle,
         stores::pricing_store::{
             NewBalanceSnapshotRow, NewModelBasePriceRow, NewPricingRuleRow, PricingStore,
-            SelectedModelBasePriceRow, StationKeyPricingResolutionRow,
         },
     },
-    services::pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
 };
 
 pub(crate) trait BuiltinModelBasePriceCatalog: Send + Sync {
@@ -226,192 +228,14 @@ impl PricingService {
     }
 }
 
-fn pricing_context_from_resolution(
-    station_key_id: &str,
-    requested_model: &str,
-    resolution: Option<&StationKeyPricingResolutionRow>,
-) -> ResolvedPricingContext {
-    let station_id = resolution.map(|row| row.station_id.as_str());
-    let owned = pricing_parts_from_resolution(resolution);
-
-    pricing_context_from_pricing_parts(&owned.as_parts(station_key_id, station_id, requested_model))
-}
-
-fn pricing_parts_from_resolution(
-    resolution: Option<&StationKeyPricingResolutionRow>,
-) -> OwnedPricingParts {
-    let mut owned = OwnedPricingParts::default();
-
-    if let Some(resolution) = resolution {
-        let base_price = resolution.model_base_price.as_ref();
-        if let Some(rule) = resolution.pricing_rule.as_ref() {
-            let has_rule_price = rule.input_price.is_some()
-                || rule.output_price.is_some()
-                || rule.fixed_price.is_some();
-            if !has_rule_price {
-                if let Some(base_price) = base_price {
-                    if let Some(multiplier) = positive(rule.rate_multiplier) {
-                        owned.rate_multiplier = Some(multiplier);
-                        owned.normalization_status = Some("base_price_with_group_rate".to_string());
-                        owned.estimated_input_price =
-                            base_price.input_price.map(|price| price * multiplier);
-                        owned.estimated_output_price =
-                            base_price.output_price.map(|price| price * multiplier);
-                    } else if rule.group_binding_id.is_some() {
-                        owned.pricing_rule_id = Some(rule.id.clone());
-                        owned.normalization_status = Some("missing_rate".to_string());
-                    }
-                    if owned.rate_multiplier.is_some() || owned.pricing_rule_id.is_some() {
-                        owned.pricing_model = Some(base_price.model.clone());
-                        owned.group_binding_id = rule.group_binding_id.clone();
-                        owned.price_confidence =
-                            Some(rule.confidence.min(base_price_confidence(base_price)));
-                        owned.base_input_price = base_price.input_price;
-                        owned.base_output_price = base_price.output_price;
-                        owned.price_currency = Some(base_price.currency.clone());
-                        owned.pricing_source = Some("model_base_price".to_string());
-                        owned.collected_at = rule
-                            .collected_at
-                            .clone()
-                            .or_else(|| base_price.source_checked_at.clone());
-                    }
-                }
-            }
-
-            if owned.pricing_model.is_none() {
-                owned.pricing_rule_id = Some(rule.id.clone());
-                owned.pricing_model = Some(rule.model.clone());
-                owned.group_binding_id = rule.group_binding_id.clone();
-                owned.rate_multiplier = rule.rate_multiplier;
-                owned.normalization_status = Some(rule.normalization_status.clone());
-                owned.price_confidence = Some(rule.confidence);
-                owned.base_input_price = rule.input_price;
-                owned.base_output_price = rule.output_price;
-                owned.base_fixed_price = rule.fixed_price;
-                owned.estimated_input_price = rule.input_price;
-                owned.estimated_output_price = rule.output_price;
-                owned.fixed_price = rule.fixed_price;
-                owned.price_currency = Some(rule.currency.clone());
-                owned.pricing_source = Some(rule.source.clone());
-                owned.collected_at = rule.collected_at.clone();
-            }
-        } else if let Some(base_price) = base_price {
-            if let Some(multiplier) = positive(resolution.group_rate_multiplier) {
-                owned.group_binding_id = resolution.group_binding_id.clone();
-                owned.rate_multiplier = Some(multiplier);
-                owned.normalization_status = Some("base_price_with_group_rate".to_string());
-                owned.price_confidence = Some(
-                    resolution
-                        .group_confidence
-                        .unwrap_or(0.8)
-                        .min(base_price_confidence(base_price)),
-                );
-                owned.estimated_input_price =
-                    base_price.input_price.map(|price| price * multiplier);
-                owned.estimated_output_price =
-                    base_price.output_price.map(|price| price * multiplier);
-                owned.collected_at = resolution
-                    .group_collected_at
-                    .clone()
-                    .or_else(|| base_price.source_checked_at.clone());
-            } else if resolution.group_binding_id.is_some() {
-                owned.group_binding_id = resolution.group_binding_id.clone();
-                owned.normalization_status = Some("missing_rate".to_string());
-                owned.price_confidence = Some(
-                    resolution
-                        .group_confidence
-                        .unwrap_or(0.8)
-                        .min(base_price_confidence(base_price)),
-                );
-                owned.collected_at = resolution
-                    .group_collected_at
-                    .clone()
-                    .or_else(|| base_price.source_checked_at.clone());
-            } else {
-                owned.rate_multiplier = Some(1.0);
-                owned.normalization_status = Some("base_price_only".to_string());
-                owned.price_confidence = Some(base_price_confidence(base_price));
-                owned.estimated_input_price = base_price.input_price;
-                owned.estimated_output_price = base_price.output_price;
-                owned.collected_at = base_price.source_checked_at.clone();
-            }
-            owned.pricing_model = Some(base_price.model.clone());
-            owned.base_input_price = base_price.input_price;
-            owned.base_output_price = base_price.output_price;
-            owned.price_currency = Some(base_price.currency.clone());
-            owned.pricing_source = Some("model_base_price".to_string());
-        }
-    }
-
-    owned
-}
-
-fn positive(value: Option<f64>) -> Option<f64> {
-    value.filter(|value| value.is_finite() && *value > 0.0)
-}
-
-fn base_price_confidence(price: &SelectedModelBasePriceRow) -> f64 {
-    if price.built_in {
-        0.95
-    } else {
-        0.85
-    }
-}
-
-#[derive(Default)]
-struct OwnedPricingParts {
-    pricing_rule_id: Option<String>,
-    pricing_model: Option<String>,
-    group_binding_id: Option<String>,
-    rate_multiplier: Option<f64>,
-    normalization_status: Option<String>,
-    price_confidence: Option<f64>,
-    base_input_price: Option<f64>,
-    base_output_price: Option<f64>,
-    base_fixed_price: Option<f64>,
-    estimated_input_price: Option<f64>,
-    estimated_output_price: Option<f64>,
-    fixed_price: Option<f64>,
-    price_currency: Option<String>,
-    pricing_source: Option<String>,
-    collected_at: Option<String>,
-}
-
-impl OwnedPricingParts {
-    fn as_parts<'a>(
-        &'a self,
-        station_key_id: &'a str,
-        station_id: Option<&'a str>,
-        requested_model: &'a str,
-    ) -> RequestPricingParts<'a> {
-        RequestPricingParts {
-            station_key_id,
-            station_id,
-            model: Some(requested_model),
-            pricing_rule_id: self.pricing_rule_id.as_deref(),
-            pricing_model: self.pricing_model.as_deref(),
-            group_binding_id: self.group_binding_id.as_deref(),
-            rate_multiplier: self.rate_multiplier,
-            normalization_status: self.normalization_status.as_deref(),
-            price_confidence: self.price_confidence,
-            base_input_price: self.base_input_price,
-            base_output_price: self.base_output_price,
-            base_fixed_price: self.base_fixed_price,
-            estimated_input_price: self.estimated_input_price,
-            estimated_output_price: self.estimated_output_price,
-            fixed_price: self.fixed_price,
-            price_currency: self.price_currency.as_deref(),
-            pricing_source: self.pricing_source.as_deref(),
-            collected_at: self.collected_at.as_deref(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        models::pricing::PricingStatus, persistence::stores::pricing_store::SelectedPricingRuleRow,
+        models::pricing::PricingStatus,
+        persistence::stores::pricing_store::{
+            SelectedModelBasePriceRow, SelectedPricingRuleRow, StationKeyPricingResolutionRow,
+        },
     };
 
     fn base_price() -> SelectedModelBasePriceRow {

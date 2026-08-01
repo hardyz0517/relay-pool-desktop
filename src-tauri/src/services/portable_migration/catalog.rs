@@ -98,7 +98,7 @@ pub(crate) enum CatalogError {
     UnknownSecretSelector { scope: String, kind: String },
 }
 
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 37;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 43;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -278,6 +278,8 @@ fn is_token_usage_metric_column(column: &str) -> bool {
             | "today_output_token_count"
             | "total_input_token_count"
             | "total_output_token_count"
+            | "input_tokens"
+            | "output_tokens"
             | "prompt_tokens"
             | "completion_tokens"
             | "total_tokens"
@@ -599,6 +601,97 @@ const REQUEST_ATTEMPTS_COLUMNS: &[&str] = &[
     "sanitized_detail",
     "output_committed",
     "terminal_at_ms",
+];
+const REQUEST_LOG_URL_SANITIZER_PROGRESS_COLUMNS: &[&str] = &[
+    "id",
+    "status",
+    "sanitized_count",
+    "redacted_unparseable_count",
+    "redacted_non_http_count",
+    "last_request_log_id",
+    "last_reason",
+    "updated_at",
+];
+const ROUTE_DECISIONS_COLUMNS: &[&str] = &[
+    "id",
+    "request_id",
+    "decided_at_ms",
+    "ordering_profile",
+    "selected_station_key_id",
+    "selected_station_id",
+    "selected_endpoint_revision",
+    "candidate_count",
+    "candidate_detail_count",
+    "candidate_detail_truncated",
+    "rejection_counts_json",
+    "snapshot_id",
+    "fact_version_vector",
+    "planner_version",
+    "projector_version",
+    "runtime_overlay_revision",
+    "trace_status",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const ROUTE_CANDIDATE_DECISIONS_COLUMNS: &[&str] = &[
+    "id",
+    "decision_id",
+    "request_id",
+    "station_key_id",
+    "station_id",
+    "endpoint_revision",
+    "selected",
+    "attempted",
+    "retained_reason",
+    "availability_tier",
+    "hard_rejection_code",
+    "hard_rejection_gate",
+    "priority",
+    "cost_basis",
+    "cost_currency",
+    "cost_unit",
+    "cost_comparison_value",
+    "snapshot_id",
+    "fact_version_vector",
+    "evidence_json",
+    "created_at_ms",
+];
+const ROUTING_ATTEMPT_COSTS_COLUMNS: &[&str] = &[
+    "request_id",
+    "ordinal",
+    "pricing_context_id",
+    "pricing_basis",
+    "pricing_status_label",
+    "usage_status",
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "cost_status",
+    "currency",
+    "total_cost_micro",
+    "created_at_ms",
+];
+const ROUTING_REQUEST_COST_AGGREGATES_COLUMNS: &[&str] = &[
+    "request_id",
+    "status",
+    "totals_by_currency_json",
+    "compatibility_currency",
+    "compatibility_total_cost_micro",
+    "incomplete_attempts_json",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const ROUTING_LIFECYCLE_RECONCILIATION_PROGRESS_COLUMNS: &[&str] = &[
+    "singleton_key",
+    "last_request_id",
+    "last_run_at_ms",
+    "batches_completed",
+    "requests_interrupted",
+    "attempt_cost_gaps_inserted",
+    "decisions_marked_trace_incomplete",
+    "completed",
 ];
 const COLLECTOR_RUNS_COLUMNS: &[&str] = &[
     "id",
@@ -1166,6 +1259,36 @@ const REQUEST_ATTEMPT_RULES: &[FieldRule] = &[FieldRule {
     name: "sanitized_detail",
     transform: FieldTransform::RedactText,
 }];
+const ROUTE_DECISION_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "rejection_counts_json",
+        transform: FieldTransform::BoundedJson,
+    },
+    FieldRule {
+        name: "fact_version_vector",
+        transform: FieldTransform::BoundedJson,
+    },
+];
+const ROUTE_CANDIDATE_DECISION_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "fact_version_vector",
+        transform: FieldTransform::BoundedJson,
+    },
+    FieldRule {
+        name: "evidence_json",
+        transform: FieldTransform::BoundedJson,
+    },
+];
+const ROUTING_REQUEST_COST_AGGREGATE_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "totals_by_currency_json",
+        transform: FieldTransform::BoundedJson,
+    },
+    FieldRule {
+        name: "incomplete_attempts_json",
+        transform: FieldTransform::BoundedJson,
+    },
+];
 const COLLECTOR_RUN_RULES: &[FieldRule] = &[
     FieldRule {
         name: "status",
@@ -1467,6 +1590,60 @@ const TABLES: &[TableCatalog] = &[
         true,
         REQUEST_ATTEMPTS_COLUMNS,
         REQUEST_ATTEMPT_RULES,
+    ),
+    table(
+        "request_log_url_sanitizer_progress",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        REQUEST_LOG_URL_SANITIZER_PROGRESS_COLUMNS,
+        &[],
+    ),
+    table(
+        "route_decisions",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTE_DECISIONS_COLUMNS,
+        ROUTE_DECISION_RULES,
+    ),
+    table(
+        "route_candidate_decisions",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTE_CANDIDATE_DECISIONS_COLUMNS,
+        ROUTE_CANDIDATE_DECISION_RULES,
+    ),
+    table(
+        "routing_attempt_costs",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_ATTEMPT_COSTS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_request_cost_aggregates",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_REQUEST_COST_AGGREGATES_COLUMNS,
+        ROUTING_REQUEST_COST_AGGREGATE_RULES,
+    ),
+    table(
+        "routing_lifecycle_reconciliation_progress",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_LIFECYCLE_RECONCILIATION_PROGRESS_COLUMNS,
+        &[],
     ),
     table(
         "collector_runs",

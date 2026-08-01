@@ -21,8 +21,12 @@ import { KeyRowContent, SortableKeyRow, TableHeadCell, keyPoolGridClassName } fr
 import { useKeyPoolPageController, type KeyPoolPageControllerOptions } from "./useKeyPoolPageController";
 
 type KeyPoolPageProps = KeyPoolPageControllerOptions;
+type KeyPoolPageShellProps = KeyPoolPageProps & {
+  onOpenRoutingDeepLink?: (link: { kind: "station-key"; stationKeyId: string; source: "key_pool" }) => void;
+};
 
-export function KeyPoolPage(props: KeyPoolPageProps) {
+export function KeyPoolPage(props: KeyPoolPageShellProps) {
+  const { onOpenRoutingDeepLink, ...controllerProps } = props;
   const {
     activeDragItem,
     closeConnectivityDialog,
@@ -73,7 +77,7 @@ export function KeyPoolPage(props: KeyPoolPageProps) {
     stationOptions,
     stations,
     testingKeyId,
-  } = useKeyPoolPageController(props);
+  } = useKeyPoolPageController(controllerProps);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   return (
@@ -175,6 +179,16 @@ export function KeyPoolPage(props: KeyPoolPageProps) {
                       monitor={monitorByKey.get(item.id) ?? null}
                       monitoring={monitoringKeyId === item.id}
                       onToggleMonitoring={handleToggleMonitoring}
+                      onOpenRoutingImpact={
+                        onOpenRoutingDeepLink
+                          ? (candidate) =>
+                              onOpenRoutingDeepLink({
+                                kind: "station-key",
+                                stationKeyId: candidate.id,
+                                source: "key_pool",
+                              })
+                          : undefined
+                      }
                     />
                   ))}
                 </div>

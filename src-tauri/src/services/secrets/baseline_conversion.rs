@@ -400,10 +400,10 @@ fn execute_baseline_candidate_validated(
     let candidate_path = baseline_candidate_path(active_path, journal)?;
     if candidate_path.is_file() {
         assert_candidate_identity(&candidate_path, journal)?;
-        remove_sqlite_sidecars(active_path)?;
-        remove_sqlite_sidecars(&candidate_path)?;
+        stabilize_sqlite_identity(active_path)?;
+        stabilize_sqlite_identity(&candidate_path)?;
         publish_prepared_database(&candidate_path, active_path)?;
-        remove_sqlite_sidecars(active_path)?;
+        stabilize_sqlite_identity(active_path)?;
     } else if !matches!(
         baseline_precondition_state(active_path)?,
         BaselinePreconditionState::EncryptedBaseline
@@ -1231,7 +1231,7 @@ fn publish_prepared_database(prepared: &Path, active_path: &Path) -> Result<(), 
 
 fn remove_sqlite_sidecars(path: &Path) -> Result<(), String> {
     for sidecar in [wal_path(path), shm_path(path)] {
-        remove_file_with_short_retry(&sidecar).map_err(|error| {
+        remove_file_with_bounded_retry(&sidecar).map_err(|error| {
             format!(
                 "failed to remove stale sqlite sidecar {}: {error}",
                 sidecar.display()
@@ -1243,7 +1243,7 @@ fn remove_sqlite_sidecars(path: &Path) -> Result<(), String> {
 
 fn remove_database_artifacts(path: &Path) -> Result<(), String> {
     for artifact in [path.to_path_buf(), wal_path(path), shm_path(path)] {
-        remove_file_with_short_retry(&artifact).map_err(|error| {
+        remove_file_with_bounded_retry(&artifact).map_err(|error| {
             format!(
                 "failed to remove encrypted-secret baseline artifact {}: {error}",
                 artifact.display()
@@ -1275,27 +1275,38 @@ fn stabilize_sqlite_identity(path: &Path) -> Result<(), String> {
     remove_sqlite_sidecars(path)
 }
 
-fn remove_file_with_short_retry(path: &Path) -> Result<(), std::io::Error> {
-    const ATTEMPTS: usize = 20;
+fn remove_file_with_bounded_retry(path: &Path) -> Result<(), std::io::Error> {
+    // Windows can keep SQLite WAL/SHM handles busy briefly after SQLx closes the pool.
+    // Full-suite runs on Windows can delay handle release well past the SQLite busy timeout,
+    // so keep the retry bounded but long enough to absorb transient WAL/SHM locks.
+    const ATTEMPTS: usize = 800;
+    const RETRY_DELAY: Duration = Duration::from_millis(25);
     for attempt in 0..ATTEMPTS {
         match fs::remove_file(path) {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error)
-                if attempt + 1 < ATTEMPTS
-                    && matches!(
-                        error.kind(),
-                        std::io::ErrorKind::PermissionDenied
-                            | std::io::ErrorKind::WouldBlock
-                            | std::io::ErrorKind::Other
-                    ) =>
+            Err(error) if attempt + 1 < ATTEMPTS && is_transient_file_lock(&error) =>
             {
-                std::thread::sleep(Duration::from_millis(25));
+                std::thread::sleep(RETRY_DELAY);
             }
             Err(error) => return Err(error),
         }
     }
     Ok(())
+}
+
+fn is_transient_file_lock(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::Other
+    ) || matches!(
+        error.raw_os_error(),
+        // ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION. On Windows these can be
+        // returned after SQLite closes while the WAL/SHM handle is still being released.
+        Some(32 | 33)
+    )
 }
 
 fn baseline_backup_path(

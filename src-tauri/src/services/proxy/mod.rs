@@ -1,7 +1,9 @@
 pub mod adapters;
+pub(crate) mod attempt;
 pub mod endpoint_adapter;
 pub mod error;
 pub mod execution;
+pub(crate) mod finalization;
 // The raw TCP parser supports loopback fixtures; production ingress is Hyper-based.
 #[cfg(test)]
 pub mod http_request;
@@ -15,9 +17,7 @@ pub mod request;
 pub mod response_body;
 pub mod responses_chat_fallback;
 pub mod responses_chat_stream;
-pub(crate) use crate::application::routing_engine::{
-    router, routing_failure, routing_types, scheduler,
-};
+pub(crate) use crate::application::routing_engine::{routing_failure, routing_types};
 pub mod routing_repository;
 pub mod runtime;
 pub mod server;
@@ -91,11 +91,11 @@ mod tests {
     fn should_fallback_only_for_retryable_upstream_statuses() {
         assert!(should_fallback(401));
         assert!(should_fallback(402));
-        assert!(should_fallback(403));
         assert!(should_fallback(429));
         assert!(should_fallback(500));
         assert!(should_fallback(503));
         assert!(!should_fallback(400));
+        assert!(!should_fallback(403));
         assert!(!should_fallback(404));
         assert!(!should_fallback(200));
     }

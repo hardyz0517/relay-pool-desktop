@@ -19,6 +19,7 @@ import {
   collectSub2apiStation,
   cleanupBeforeUpdate,
   chooseDataDir,
+  confirmHierarchicalRoutingMigration,
   createChannelMonitor,
   createChannelMonitorTemplate,
   createLocalStationKeyFromRemote,
@@ -187,6 +188,14 @@ describe("generated settings/stations transport envelopes", () => {
     await getSettings();
     await listStations();
     await updateSettings(settingsInput);
+    await confirmHierarchicalRoutingMigration({
+      orderingProfile: "cost_first",
+      multiplierCeiling: 2,
+      groupScope: "all_groups",
+      allowDepletedFallback: false,
+      affinityMode: "session",
+      legacyPolicy: "cost_stable_first",
+    });
     await createStation(stationInput);
     await updateStation({ ...stationInput, id: "station-1", apiKey: null });
     await deleteStation({ id: "station-1" });
@@ -196,6 +205,19 @@ describe("generated settings/stations transport envelopes", () => {
       ["get_settings", { input: {} }],
       ["list_stations", { input: {} }],
       ["update_settings", { input: settingsInput }],
+      [
+        "confirm_hierarchical_routing_migration",
+        {
+          input: {
+            orderingProfile: "cost_first",
+            multiplierCeiling: 2,
+            groupScope: "all_groups",
+            allowDepletedFallback: false,
+            affinityMode: "session",
+            legacyPolicy: "cost_stable_first",
+          },
+        },
+      ],
       ["update_station", { input: { ...stationInput, id: "station-1", apiKey: null } }],
       ["delete_station", { input: { id: "station-1" } }],
       ["reorder_stations", { input: { stationIds: ["station-1"] } }],

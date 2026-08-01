@@ -28,14 +28,22 @@ for (const required of [
   "test:contracts",
   "Frontend unit tests",
   "Frontend production build",
-  "Portable migration e2e integration",
-  "portable_migration_faults",
-  "portable_migration_malicious",
   "cargo",
   "--locked",
   "verify:release-bundle",
 ]) {
   assert.ok(verifier.includes(required), `shared verifier is missing ${required}`);
+}
+
+for (const nonGate of [
+  "Portable migration e2e integration",
+  "portable_migration_faults",
+  "portable_migration_malicious",
+]) {
+  assert.ok(
+    !verifier.includes(nonGate),
+    `portable migration qualification should stay out of the shared release gate during the current pre-stable product phase: ${nonGate}`,
+  );
 }
 
 assert.ok(tagCheckIndex >= 0 && prebundleIndex > tagCheckIndex, "tag/source mismatch must fail before full prebundle verification");

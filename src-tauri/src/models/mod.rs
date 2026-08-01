@@ -7,6 +7,7 @@ pub mod credentials;
 pub mod group_facts;
 pub(crate) mod health;
 pub mod monitoring;
+pub mod operational;
 pub mod pricing;
 pub mod provider_drafts;
 pub mod proxy;

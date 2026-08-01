@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Route, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -23,6 +23,7 @@ import {
   settingsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
+import type { VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import { RequestLogPagination, RequestLogTable } from "./RequestLogTable";
 import {
   formatKeyName,
@@ -37,7 +38,12 @@ import {
   statusFallback,
 } from "./requestLogViewModels";
 
-export function LogsPage() {
+type LogsPageProps = {
+  deepLink?: VersionedRequestLogDeepLink | null;
+  onOpenRoutingDeepLink?: (link: { kind: "request"; requestLogId: string; source: "request_log" }) => void;
+};
+
+export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
@@ -61,8 +67,19 @@ export function LogsPage() {
     () => paginateRequestLogs(logs, page, pageSize),
     [logs, page, pageSize],
   );
-  const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? pageInfo.logs[0] ?? null;
+  const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? (selectedId ? null : pageInfo.logs[0] ?? null);
   const keyById = useMemo(() => new Map(keys.map((key) => [key.id, key] as const)), [keys]);
+
+  useEffect(() => {
+    if (!deepLink || deepLink.kind !== "request-log") {
+      return;
+    }
+    const index = logs.findIndex((log) => log.id === deepLink.requestLogId);
+    if (index >= 0) {
+      setPage(Math.floor(index / pageSize) + 1);
+    }
+    setSelectedId(deepLink.requestLogId);
+  }, [deepLink?.sequence, logs, pageSize]);
 
   async function refreshLogs(showSuccess = false) {
     setPage(1);
@@ -159,6 +176,24 @@ export function LogsPage() {
           <InspectorPanel
             title="日志详情"
             description={selected ? `${selected.method} ${selected.path}` : "未选择请求"}
+            actions={
+              selected && onOpenRoutingDeepLink ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    onOpenRoutingDeepLink({
+                      kind: "request",
+                      requestLogId: selected.id,
+                      source: "request_log",
+                    })
+                  }
+                >
+                  <Route className="h-4 w-4" />
+                  查看路由链路
+                </Button>
+              ) : null
+            }
           >
             {selected ? (
               <div className="space-y-4 p-4">

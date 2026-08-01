@@ -1,5 +1,6 @@
 use std::{fmt, sync::Arc};
 
+use futures_util::future::BoxFuture;
 use zeroize::Zeroizing;
 
 use crate::{
@@ -91,6 +92,19 @@ impl SecretRef {
             crate::services::secrets::CURRENT_SECRET_ENCRYPTION_VERSION,
         )
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExecutionCredentialError {
+    pub(crate) station_key_id: String,
+}
+
+pub(crate) trait ExecutionCredentialResolver: Send + Sync {
+    fn resolve_station_key_secret_ref(
+        &self,
+        station_key_id: String,
+        secret_ref: SecretRef,
+    ) -> BoxFuture<'static, Result<SecretBytes, ExecutionCredentialError>>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -683,6 +697,25 @@ impl CredentialService {
         let store = self.store;
         let mut read = self.runtime.begin_read().await?;
         let secret = store.station_key_secret(&mut read, &station_key_id).await?;
+        self.decrypt_stored_secret(secret).map_err(Into::into)
+    }
+
+    pub(crate) async fn resolve_station_key_secret_ref(
+        &self,
+        station_key_id: String,
+        secret_ref: SecretRef,
+    ) -> Result<SecretBytes, ApplicationError> {
+        if secret_ref.scope != "station_key"
+            || secret_ref.owner_id != station_key_id
+            || secret_ref.kind != "api_key"
+        {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        let store = self.store;
+        let mut read = self.runtime.begin_read().await?;
+        let secret = store
+            .station_key_secret_by_ref(&mut read, &station_key_id, &secret_ref.id)
+            .await?;
         self.decrypt_stored_secret(secret).map_err(Into::into)
     }
 
@@ -1281,6 +1314,25 @@ impl CredentialService {
 
     fn now_ms_string(&self) -> String {
         self.clock.now_utc().timestamp_millis().to_string()
+    }
+}
+
+impl ExecutionCredentialResolver for CredentialService {
+    fn resolve_station_key_secret_ref(
+        &self,
+        station_key_id: String,
+        secret_ref: SecretRef,
+    ) -> BoxFuture<'static, Result<SecretBytes, ExecutionCredentialError>> {
+        let service = self.clone();
+        let error_station_key_id = station_key_id.clone();
+        Box::pin(async move {
+            service
+                .resolve_station_key_secret_ref(station_key_id, secret_ref)
+                .await
+                .map_err(|_| ExecutionCredentialError {
+                    station_key_id: error_station_key_id,
+                })
+        })
     }
 }
 

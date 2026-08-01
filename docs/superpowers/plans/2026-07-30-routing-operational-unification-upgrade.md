@@ -1,6 +1,6 @@
 # Relay Pool 路由与运行事实一体化升级实施计划
 
-状态：Proposed，等待按 Task 顺序执行
+状态：Development implementation complete；截至 2026-08-01，自动化实现、全量 Rust 测试、前端构建、开发期本地自检、单轮 deterministic soak 和 Task 28 反回流检查已在 `codex/routing-operational-upgrade` 工作区通过。授权真实客户端/provider/CCSwitch/sleep-resume 观察仍需用户环境与显式授权，记录为未运行的外部信心观察；它们不作为 debug legacy runtime、request-coupled finalization 或 release gate 保留理由。
 日期：2026-07-30
 目标规范：`docs/superpowers/specs/2026-07-30-routing-operational-unification-upgrade-spec.md`
 上位规范：`AGENTS.md`、`docs/README.md`、`docs/PROJECT_PLAN.md`、`docs/PRODUCT_MODEL.md`、`docs/SECURITY_EXPORT_IMPORT.md`
@@ -33,8 +33,34 @@ Canonical facts/evidence
 - capacity miss、actual attempt failure、wait wake-up 和 execution-fence rebuild 使用不同状态，不互相冒充；
 - attempt/protocol 与 request/delivery 生命周期独立终结且顺序可证明；
 - monitoring、collector、pricing、routing、logs 和 UI 消费同源 facts/projections；
-- 预迁移版本、正式 cutover、rollback 和 debug-only legacy runtime 均按目标规范执行；
-- Stage 7 的 architecture、migration、fault、concurrency、performance、soak、真实客户端和 release gates 全部退出 0。
+- 切换前开发期基线记录、正式 cutover 和开发期重来恢复策略均按目标规范执行；已删除的 debug-only legacy runtime、环境入口和 request-coupled finalization 不得回流；
+- Stage 7 的 architecture、migration、fault、concurrency、performance、单轮 deterministic soak 和开发期本地自检全部退出 0；真实客户端/provider/CCSwitch/sleep-resume 观察只有在用户提供环境与显式授权时才要求退出 0，未授权时必须记录 `not-run-without-user-authorization`，不阻塞当前开发期完成。这些检查只是开发期自检。60 分钟长 soak 只作为可选信心检查，不是当前开发期阻塞项。
+
+2026-08-01 完成审计补充：本工作区已按开发期 reset/reimport 决策完成自动化范围内的实现与验证。真实客户端/provider/CCSwitch/sleep-resume 项需要本机真实配置、secret 和显式授权，当前证据记录为 `not-run-without-user-authorization`；不得因此恢复第二 runtime owner、旧 binary rollback、签名安装包 release gate 或 request-coupled finalizer。
+
+最新自动化证据：
+
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml`
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`
+- `pnpm.cmd exec tsc --noEmit`
+- `pnpm.cmd build`
+- `pnpm.cmd test:contracts`
+- `node scripts/routing-operational-qualification.mjs`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke`
+- `pnpm.cmd architecture:fixtures`
+- `pnpm.cmd architecture:typescript`
+- `pnpm.cmd architecture:commands`
+- `pnpm.cmd architecture:security`
+- `pnpm.cmd architecture:artifacts`
+- `pnpm.cmd architecture:scale-baseline`
+- `git diff --check`
+
+生成的本地证据位于：
+
+- `output/routing-operational/self-check/local-self-check/routing-operational-local-self-check-latest.json`
+- `output/routing-operational/self-check/soak/routing-operational-soak-latest.json`
+- `output/architecture-scale/baseline/frontend-report.json`
 
 ## 2. 执行纪律
 
@@ -43,28 +69,34 @@ Canonical facts/evidence
 3. 严格 RED-GREEN-REFACTOR。行为任务必须先观察指定测试因缺失能力失败，再做最小完整实现，再运行任务回归。
 4. 不使用 `git add .` 或 `git add -A`。提交时只 stage 当前 Task 的明确路径；重叠文件使用 `git add -p`，并检查 `git diff --cached --check` 和 `git diff --cached`。
 5. Stage 1-4 不接 production composition，不对真实请求双 selector、双 acquire、双 feedback 或双写；验证只使用 pure fixtures、read-only diagnostics 和 loopback harness。
-6. Stage 5 与 Stage 6 可以分 commit/review，但不能拆成两个正式发布版本。正式 release candidate 必须同时完成 data-plane cutover、UI 语义切换和 default-v2 旧路径删除。
-7. `RELAY_POOL_PROXY_RUNTIME=legacy` 只按 `PROJECT_PLAN.md` 作为 process-start 级、debug-only 的完整旧 owner；不得拼接新组件、自动 fallback、进入 UI 或掩盖 default v2 红项。
+6. Stage 5 与 Stage 6 可以分 commit/review，但不能拆成两个对用户可见的混合版本。cutover candidate 必须同时完成 data-plane cutover、UI 语义切换和 default-v2 旧路径删除。
+7. `RELAY_POOL_PROXY_RUNTIME=legacy`、process-start debug legacy runtime 和 request-coupled finalization 已按开发期 reset/reimport/重新配置恢复决策删除；不得重新作为 fallback、UI 设置、诊断捷径或第二 owner 接回。
 8. 所有 queue、registry、candidate set、fan-out、wait、retry、trace、background task 和 response body 都必须有硬上限和 shutdown 行为。
-9. fixture、日志、trace、截图和 qualification artifact 不得包含 API key、Cookie、Authorization、完整 URL query/userinfo、完整 prompt/response 或可还原账号身份的数据。
+9. fixture、日志、trace、截图和 self-check artifact 不得包含 API key、Cookie、Authorization、完整 URL query/userinfo、完整 prompt/response 或可还原账号身份的数据。
 10. 真实 provider 验证必须单独授权、低频、有预算、从环境解析 secret，不进入默认 CI，也不能把原始响应保存进仓库。
 11. Task 的任一必跑命令没有真实退出 0，则 Task 保持未完成。不得以“已有类似测试”“只跑了单测”或“看起来可用”代替退出证据。
 12. Sub2API、claude-code-hub 和其他外部项目只作为架构模式/行为对照；不得复制 AGPL/LGPL 核心实现。Task 0 必须记录来源、许可证、借鉴点与本项目独立实现边界。
 
-## 3. 发布序列与不可跨越门禁
+## 3. 开发期序列与硬性自检边界
+
+**2026-07-31 决策更新：** 当前项目仍处于非稳定成型阶段，用户可接受“重来”：清空本地开发数据、重新导入/重新配置后继续使用。因此，本计划只保留开发期本地自检：架构、schema、redaction、build/check、单轮 deterministic soak、真实客户端 smoke，以及 reset/reimport/重新配置重来证明；不要求签名安装包、安装/升级矩阵、旧 binary 恢复链路或产品化发布门禁。60 分钟 soak 仅用于追查生命周期泄漏，不作为当前开发期阻塞项。
+
+执行含义：遇到结构性不可恢复状态时停止 admission，并要求用户 reset/reimport/重新配置。不要为开发期体验保留双 owner 或按请求回退链路。
+
+本文后续出现的 `gate`、`Exit gate`、`architecture gate` 或“门禁”，均只表示开发期工程自检/架构护栏；它们用于防止职责混乱、链路断裂和旧路径回流，不代表稳定产品发版门禁，也不要求安装器、签名、旧版本升级或回滚证明。
 
 ```text
 Stage 0 baseline + ADR freeze
   -> Stage 1 canonical facts/projectors
   -> Stage 2 backend read models + migration readiness UI
-  -> PRE-MIGRATION RELEASE (旧 production router 保持原行为)
+  -> PRE-CUTOVER DEVELOPMENT BASELINE (旧 production router 保持原行为)
   -> Stage 3 planner/capacity kernel in non-production harness
   -> Stage 4 outcomes/cost/full loopback harness
   -> Stage 5 atomic default-v2 data-plane cutover
   -> Stage 6 integrated UI + old default-v2 path deletion
-  -> ONE RELEASE CANDIDATE for Stage 5+6
-  -> Stage 7 qualification/release
-  -> later debug legacy runtime deletion ticket after required observation
+  -> ONE CUTOVER CANDIDATE for Stage 5+6
+  -> Stage 7 local self-check/reset-reimport proof
+  -> Task 28 debug legacy runtime deletion applied under explicit dev reset decision
 ```
 
 以下情况必须停止推进，不得临场绕过：
@@ -91,7 +123,7 @@ Stage 0 baseline + ADR freeze
   -> 8 Route request/progress/candidate projection
   -> 9 Backend read models and simulation preview
   -> 10 Migration readiness UI
-  -> 11 Pre-migration release qualification
+  -> 11 Pre-migration development self-check
   -> 12 Hierarchical selector kernel
   -> 13 Decision trace persistence/retention
   -> 14 Runtime metrics/outlier/half-open
@@ -106,9 +138,9 @@ Stage 0 baseline + ADR freeze
   -> 23 Integrated routing workspace/deep links
   -> 24 Default-v2 legacy deletion and architecture gates
   -> 25 Security/history migration
-  -> 26 Full fault/performance/soak qualification
-  -> 27 Release and rollback proof
-  -> 28 Debug legacy runtime deletion follow-up (separate precondition)
+  -> 26 Full fault/performance/soak development self-check
+  -> 27 Local self-check and reset/reimport proof
+  -> 28 Debug legacy runtime deletion and anti-regression gate
 ```
 
 Tasks 4-7 可以在 Task 3 后并行开发，但 Task 8 必须等四者的类型和 precedence fixtures 全部冻结。其余 Task 默认按编号顺序执行。
@@ -155,7 +187,7 @@ Tasks 4-7 可以在 Task 3 后并行开发，但 Task 8 必须等四者的类型
 | backend read models/UI 贯通 | 9, 10, 23 | no frontend truth、deep links、preview/production parity |
 | legacy policy migration | 10, 11, 22 | readiness fixture、user-confirmed config、fail-closed cutover |
 | default-v2 单 owner/deletion | 22-24 | production composition and source gates |
-| release reliability/security | 25-28 | migration matrix、fault/soak/live/rollback evidence |
+| local self-check/security | 25-28 | migration fixtures、fault/soak/live/reset-reimport evidence |
 
 ## 7. Task 0：冻结基线、冲突清单与四份 ADR
 
@@ -572,7 +604,7 @@ pnpm.cmd test:contracts
 
 **Commit:** `feat: add backend routing operational read models`
 
-## 17. Task 10：删除 frontend 权威拼装并交付预迁移 readiness UI
+## 17. Task 10：删除 frontend 权威拼装并交付切换前 readiness UI
 
 **Files:**
 
@@ -613,14 +645,12 @@ pnpm.cmd build
 
 **Commit:** `feat: add hierarchical routing migration readiness`
 
-## 18. Task 11：预迁移版本资格与发布
+## 18. Task 11：切换前开发期基线与本地自检
 
 **Files:**
 
-- Create: `docs/release/routing-hierarchical-premigration-qualification.md`
-- Modify: version/changelog/release metadata for the authorized pre-migration release
-- Modify: `scripts/run-install-upgrade-matrix.ps1`，将 `OldInstaller`/`NewInstaller`/`OldVersion`/`NewVersion`/`OutputPath` 全部改为 mandatory 且无版本化默认值，并移除 0.3.2/0.3.3 labels/assertions
-- Create: `scripts/install-upgrade-matrix-contract.test.mjs`，证明版本、installer 和 output path 均来自显式参数
+- Create: `docs/superpowers/audits/routing-hierarchical-precutover-self-check.md`
+- Modify: local candidate/baseline metadata for the authorized pre-cutover development baseline
 - Modify: `scripts/run-contract-tests.mjs`
 - Modify: `src-tauri/src/application/request_finalization.rs` 与 request-log write/query DTO，停止对新 request 持久化完整 `upstream_base_url`
 - Modify: `scripts/local-routing-redaction.test.mjs`
@@ -628,38 +658,42 @@ pnpm.cmd build
 
 **Steps:**
 
-- [ ] fresh schema、released schema、已有五种 legacy policy fixtures 均能启动。
+- [ ] fresh schema、known schema、已有五种 legacy policy fixtures 均能启动。
 - [ ] 未迁移用户继续使用旧 router 原行为；readiness 只读检查不得改变 selection。
 - [ ] 已迁移 config 被完整保存，但本版本不让新 selector接真实流量。
 - [ ] import/export 保留 legacy fields 并标记 ignored-after-cutover，不丢用户数据。
-- [ ] 预迁移 binary 能容忍历史 `request_logs.upstream_base_url` 为 NULL/redacted；这是 Task 25 清洗后仍可完整 binary rollback 的前置合同。
-- [ ] 预迁移 binary 对所有新 request 将 legacy `upstream_base_url` 写为 NULL，只保留已有 station/key identity 和安全 path/endpoint classification；UI/query 不用当前 Station URL 回填历史显示。
+- [ ] current dev binary 能容忍历史 `request_logs.upstream_base_url` 为 NULL/redacted；这是 Task 25 清洗后开发期 reset/reimport 恢复的前置合同。
+- [ ] 当前 dev binary 对所有新 request 将 legacy `upstream_base_url` 写为 NULL，只保留已有 station/key identity 和安全 path/endpoint classification；UI/query 不用当前 Station URL 回填历史显示。
 - [ ] 记录本地 configuration readiness 统计时只保存低基数聚合，不记录实体 ID/模型/URL。
-- [ ] 冻结 version/release notes，创建符合仓库规则的 release tag；执行现有 prebundle -> signed bundle -> postbundle 流程。
-- [ ] install/upgrade matrix 不包含写死版本；调用者显式提供 baseline/new installer 与两个版本，报告记录其 hash/version。
-- [ ] `RELAY_BASELINE_INSTALLER`、`RELAY_CANDIDATE_INSTALLER`、`RELAY_BASELINE_VERSION`、`RELAY_CANDIDATE_VERSION`、`RELAY_UPGRADE_REPORT` 在执行前显式设置并校验为本次发布值；不得依赖脚本默认路径。
-- [ ] 将签名预迁移版本发布到受支持的更新/下载渠道，并至少完成一次上一正式版 -> 预迁移版安装验证；只生成 qualification 文档不算完成。
+- [ ] 记录 checkpoint revision，仅用于复现和诊断。
+- [ ] 开发期以 fresh/known schema、readiness、redaction、import/export 和 local build 证据作为本 Task gate。
+- [ ] Task 12 可在开发期自检通过后继续。用户恢复策略为清空本地数据、重新导入或重新配置。
 
-**Pre-migration release freeze:**
+**Pre-migration development freeze:**
 
-- [ ] 先提交实现、version/release notes、脚本和 qualification 文档，记录 clean `premigration_revision`，再让 release tag 直接指向该 revision。
-- [ ] release/build/install evidence 写 ignored output/CI artifact；发布前后不得修改 tag 所指 revision。若 tracked 文件变化，形成新 commit 后重跑 `verify:full`、release build 和安装矩阵。
+- [ ] 先提交实现、脚本和自检文档，记录 `precutover_baseline_revision`，后续 Task 以该 commit 作为开发期基线。
+- [ ] build/install evidence 若存在写 ignored output/CI artifact；若 tracked 文件变化，形成新 commit 后按影响范围重跑对应自检。
 
 **Run:**
 
 ```powershell
-pnpm.cmd verify:fast
-pnpm.cmd verify:full
-node scripts/install-upgrade-matrix-contract.test.mjs
+pnpm.cmd architecture:fixtures
+pnpm.cmd architecture:typescript
+pnpm.cmd generate:bindings --check
+pnpm.cmd architecture:commands
+pnpm.cmd architecture:security
+pnpm.cmd architecture:artifacts
+pnpm.cmd test:contracts
+pnpm.cmd build
 node scripts/local-routing-redaction.test.mjs
-pnpm.cmd verify:release-version --require-tag
-pnpm.cmd verify:release
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-install-upgrade-matrix.ps1 -OldInstaller $env:RELAY_BASELINE_INSTALLER -NewInstaller $env:RELAY_CANDIDATE_INSTALLER -OldVersion $env:RELAY_BASELINE_VERSION -NewVersion $env:RELAY_CANDIDATE_VERSION -OutputPath $env:RELAY_UPGRADE_REPORT
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-**Exit gate:** 签名预迁移版本已经真实发布且可安装，旧 production behavior 未变，用户能完成所有 cutover-required config。没有发布授权时 Task 11 保持 `blocked`，Task 12 不得开始；不得用 qualification 文档冒充发布。
+若本机 Node/工具链版本满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full`；版本不匹配时记录环境限制，不把产品化发布流程中的依赖矩阵作为本开发 checkpoint 的阻塞项。
 
-**Commit:** `chore: release hierarchical routing premigration`（在 release tag 与签名验证前创建并冻结）
+**完成条件:** 开发期自检证明旧 production behavior 未变、用户能完成所有 cutover-required config、新 request log 不再写完整 upstream URL、fresh/known schema 与导入导出合同仍通过。Task 12 可在上述本地自检通过后开始。
+
+**Commit:** `chore: qualify hierarchical routing precutover baseline`
 
 ## 19. Task 12：实现 hierarchical eligibility 与两个 sealed ordering profiles
 
@@ -716,7 +750,7 @@ node scripts/routing-operational-architecture.test.mjs
 - Create: `src-tauri/src/persistence/stores/routing_decisions/retention.rs`
 - Modify: persistence store registry/runtime wiring in non-production test composition
 - Create: `src-tauri/tests/routing_decision_store.rs`
-- Create: released-schema fixtures/SQLx metadata required by repository rules
+- Create: known-schema fixtures/SQLx metadata required by repository rules
 
 **RED:**
 
@@ -731,7 +765,7 @@ node scripts/routing-operational-architecture.test.mjs
 **GREEN:**
 
 - [ ] decision evidence 先保存在 bounded request memory，后续随 AttemptOutcome/RequestOutcome transaction upsert；本 Task 不添加 pre-upstream decision DB barrier。
-- [ ] migration forward-only/idempotent；旧 binary 可忽略新表。
+- [ ] migration forward-only/idempotent；current dev binary 对缺失或旧数据给出明确 unavailable/ignored 状态。
 - [ ] maintenance 与 request-log retention 同 owner 编排。
 
 **Run:**
@@ -743,7 +777,7 @@ pnpm.cmd test:contracts
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-**Exit gate:** fresh/released schema、retention、pagination、redaction 和 million-row query fixture 全绿；尚未接 production writer。
+**Exit gate:** fresh/known schema、retention、pagination、redaction 和 million-row query fixture 全绿；尚未接 production writer。
 
 **Commit:** `feat: add bounded routing decision persistence`
 
@@ -818,7 +852,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml application::routing_en
 
 - [ ] 保留成熟 Tokio/Rust RAII primitive；不引入 Redis/分布式锁。
 - [ ] `PlanningRoundCapacityState` 只记录 unavailable_this_pass 和 wait observations，不写 actual-attempt exclusion。
-- [ ] resource gauges 和 impossible transition diagnostics 可用于 soak gate。
+- [ ] resource gauges 和 impossible transition diagnostics 可用于 deterministic soak self-check。
 - [ ] 新 capacity registry 只由非生产 harness composition 构造；旧/new capacity 不共享 semaphore、counter、waiter 或 feedback。
 
 **Run:**
@@ -974,7 +1008,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - Create: `src-tauri/tests/routing_outcome_domain.rs`
 - Create: `src-tauri/tests/routing_outcome_persistence.rs`
 - Create: `src-tauri/tests/routing_lifecycle_reconciliation.rs`
-- Create: released-schema fixtures and SQLx metadata required by repository rules
+- Create: known-schema fixtures and SQLx metadata required by repository rules
 
 **RED:**
 
@@ -998,7 +1032,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] 复用 Request Lifecycle 的 Start/Finish writer、permit reservation、bounded queue、ack 与 shutdown owner；不创建第二个 routing writer。
 - [ ] 旧 production lifecycle command 在 Task 22 前继续走兼容 transaction；新 `AttemptOutcome`/`RequestOutcome` command 只由 harness composition 提交，二者共享同一 writer capacity/health gate 但绝不双写同一 terminal。
 - [ ] 显式 orchestrator 固定调用 journal、scoped observation、cost 和 decision store ports；不实现动态 handler/event bus。
-- [ ] transaction schema 使用稳定 unique key 和 CAS；migration forward-only、幂等，旧 binary 可忽略新表/列。
+- [ ] transaction schema 使用稳定 unique key 和 CAS；migration forward-only、幂等；current dev binary 对旧数据/缺失列有明确 projection fallback。
 - [ ] runtime feedback 仍由 AttemptLifecycle 唯一 owner apply once；durable transaction 不反向操作 runtime registry。
 - [ ] `/v1/models` outcome 的 pricing/cost sealed 为 `NotApplicable`，不进入 inference cost aggregation。
 - [ ] reconciliation 由 `RequestFinalizationService` 的窄 startup method 拥有，不另建后台 writer；完成后返回明确 ack 供 composition gate 使用。
@@ -1121,7 +1155,7 @@ pnpm.cmd test:contracts
 
 ## 29. Task 22：原子切换 default-v2 production composition
 
-**Depends on:** Task 21 全绿；预迁移版本已发布且本机 readiness 没有未确认 blocker。
+**Depends on:** Task 21 全绿；本地 pre-cutover readiness/baseline 没有未确认 blocker。开发期不要求公开过渡版本或旧 binary 恢复链路。
 
 **Files:**
 
@@ -1139,7 +1173,7 @@ pnpm.cmd test:contracts
 **Pre-cutover checklist:**
 
 - [ ] 对所有本地 profiles 执行 readiness scan；缺少 ordering profile、可信 multiplier ceiling 或 required migration confirmation 时停止，不能静默猜测。
-- [ ] 保存 cutover 前 `verify:full`、released-schema、loopback、redaction 和 rollback compatibility 证据。
+- [ ] 保存 cutover 前开发期目标检查集、known-schema、loopback、redaction 和 reset/reimport compatibility 证据；本机工具链版本满足 ledger 时可附加 `verify:full` 聚合证据。
 - [ ] 审核 composition diff，确认 selector、capacity、writer、feedback、pricing、target resolver 与 shutdown 是一个完整 owner 组合。
 
 **RED:**
@@ -1147,18 +1181,18 @@ pnpm.cmd test:contracts
 - [ ] default-v2 production test 从真实 ingress 到 loopback upstream，证明只经过新 fact reader/projectors/planner/controller/outcome orchestrator。
 - [ ] 每个 SelectedRoute 都有真实 composite lease、reserved FinishAttempt permit 和 revision-fenced target；任何缺失都 fail closed。
 - [ ] production build 不能引用 test-only scheduler facade、simulated acquire、static ordered candidate fallback 或 preload-secret candidate。
-- [ ] default-v2 每个 terminal 只提交新 typed outcome command；旧 `finish_attempt`/`finish_request` compatibility mapping 只允许 isolated debug legacy owner 调用，不能与新 effect/cost transaction 双写。
+- [ ] default-v2 每个 terminal 只提交新 typed outcome command；旧 `finish_attempt`/`finish_request` compatibility mapping 不得由第二 runtime 调用，也不能与新 effect/cost transaction 双写。
 - [ ] lifecycle writer unhealthy、fact reader unavailable、config required、candidate limit 和 startup invariant 都阻止新 upstream admission。
 - [ ] persistence ready 后先完成 request lifecycle reconciliation，再发布 proxy ready/start admission；reconciliation 失败时 UI 可显示 typed startup failure，但不能启动本地转发。
-- [ ] process-start debug legacy runtime 若仍保留，构造完整旧 composition；它与 default-v2 无共享 selector/lease/feedback/write path，也不是请求级自动 fallback。
+- [ ] process-start debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 入口和 request-coupled finalization 已删除，并由反回流门禁证明不能重新成为 fallback 或第二 owner。
 - [ ] shutdown 严格执行：stop admission -> stop monitor/collector schedule -> wake/cancel waiters -> drain attempts/runs -> release leases -> close producers -> drain writers -> close persistence。
 - [ ] Stage 5 transaction/writer blocker 不自动回到 legacy 或双写。
 
 **GREEN:**
 
 - [ ] composition root 唯一构造 fact/runtime/capacity/finalization registries 并交给 `TaskSupervisor`；planner 仍只看 immutable input。
-- [ ] 切换与 legacy compatibility config 保留分开；rollback 依赖上一完整 binary，而不是同 binary 混合 owner。
-- [ ] 本 Task 可以合并到 release-candidate branch，但在 Tasks 23-26 完成前不得发布正式版本。
+- [ ] 切换与 legacy compatibility config 保留分开；开发期恢复依赖 reset/reimport，而不是同 binary 混合 owner。
+- [ ] 本 Task 可以合并到 cutover-candidate branch，但在 Tasks 23-26 完成前不得交付为默认可用路径。
 
 **Run:**
 
@@ -1167,10 +1201,12 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_producti
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_production_startup_shutdown -- --nocapture
 node scripts/local-proxy-v2-boundary.test.mjs
 node scripts/manual-proxy-default.test.mjs
-pnpm.cmd verify:full
+pnpm.cmd test:contracts
+pnpm.cmd build
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-**Exit gate:** default-v2 只有一个完整 production owner；未满足 readiness 的安装明确拒绝新 admission；尚未发布正式版本。
+**Exit gate:** default-v2 只有一个完整 production owner；未满足 readiness 的本地配置明确拒绝新 admission；不等待正式版本发布。
 
 **Commit:** `feat: cut over default v2 routing composition`
 
@@ -1232,7 +1268,7 @@ pnpm.cmd build
 
 ## 31. Task 24：删除 default-v2 旧 selector、static fallback、frontend matcher 与临时 facade
 
-**Depends on:** Tasks 22、23；同一个 release-candidate 已完成稳定观察窗口，deletion ledger 获得批准。
+**Depends on:** Tasks 22、23；同一个 cutover candidate 已完成稳定观察窗口，deletion ledger 获得批准。
 
 **Files:**
 
@@ -1246,12 +1282,12 @@ pnpm.cmd build
 - Modify: `scripts/routing-operational-architecture.test.mjs`
 - Modify: Rust production-composition/architecture tests
 
-**Pre-deletion release-candidate gate:**
+**Pre-deletion cutover-candidate gate:**
 
-- [ ] 从 Tasks 22-23 的同一 commit 构建未公开的内部 release-candidate；它不是独立正式版本，也不允许用户在 old/new owner 间切换。
-- [ ] 使用 Task 21 runner 完成一次至少 1 小时的代表性 loopback soak，并运行 production composition、stream/drop、writer fault 和 redaction tests。
-- [ ] 观察窗口内 lease/waiter/writer/task gauges 归零，无未决 P0/P1；结果写入 deletion ledger approval。
-- [ ] 删除完成后仍必须按 Task 26 对最终代码重新执行完整 1 小时 soak；删除前结果不能替代最终资格。
+- [ ] 从 Tasks 22-23 的同一 commit 构建未公开的内部 cutover candidate；它不是独立正式版本，也不允许用户在 old/new owner 间切换。
+- [ ] 使用 Task 21 runner 完成一次单轮 deterministic loopback self-check，并运行 production composition、stream/drop、writer fault 和 redaction tests。
+- [ ] 观察窗口内 lease/waiter/writer/task gauges 归零，无未决 P0/P1；结果写入 deletion ledger approval。60 分钟 soak 可作为额外信心证据，但不是删除批准条件。
+- [ ] 删除完成后仍必须按 Task 26 对最终代码重新执行开发期目标检查集；删除前结果不能替代最终自检。
 
 **Run before deletion:**
 
@@ -1259,20 +1295,20 @@ pnpm.cmd build
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_production_composition -- --nocapture
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_stream_finalization_faults -- --nocapture
 node scripts/local-routing-redaction.test.mjs
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke
 ```
 
 **Deletion checklist:**
 
-- [ ] 删除 default-v2 第二套 selector/score/weighted random/legacy weights reader；保留的 compatibility config 只能供完整 old binary rollback 或 isolated debug owner 使用。
-- [ ] 删除 default-v2 旧 `scheduler/{affinity,metrics,capacity,scoring,selection}` runtime 及其 feedback/bind facade；若观察期仍需 debug legacy，则整套原样移动到 `services/proxy/legacy_runtime/`，只允许 process-start legacy composition import，并登记 Task 28 删除。
+- [ ] 删除 default-v2 第二套 selector/score/weighted random/legacy weights reader；保留的 compatibility config 只能供 import/export、历史只读 projection 或未来稳定发布 ADR 明确要求的兼容检查使用。
+- [ ] 删除 default-v2 旧 `scheduler/{affinity,metrics,capacity,scoring,selection}` runtime 及其 feedback/bind facade；不得把旧 runtime 原样移动成 process-start legacy composition。
 - [ ] 删除 acquire 后立即 release 的 simulated capacity 与 `slot unavailable -> ordered candidate` 语义。
 - [ ] 删除 proxy 对静态 candidate IDs 的遍历 fallback；所有 fallback 由 controller replan 驱动。
 - [ ] 删除 candidate 构造阶段全量 credential 解密、full endpoint URL 携带和 routing DTO 被 monitoring 复用的路径。
 - [ ] 删除 duplicate group/multiplier/pricing/capability resolver 和 frontend authoritative matcher。
 - [ ] 删除 planner failure -> string -> internal 500 与 arbitrary error-body health classification。
 - [ ] 删除已迁移 IPC/read-model adapter、test-only facade、unused fields/imports/feature flags；每项在 ledger 标记 commit 与 gate。
-- [ ] compatibility cache 若 rollback window 尚需保留，必须有只读 owner、expiry condition 和独立删除票据，不能参与 default-v2 truth。
+- [ ] compatibility cache 若因 import/export、历史只读 projection 或未来稳定发布 ADR 暂留，必须有只读 owner、expiry condition 和独立删除票据，不能参与 default-v2 truth。
 
 **Architecture gates:**
 
@@ -1291,11 +1327,11 @@ node scripts/local-proxy-v2-boundary.test.mjs
 pnpm.cmd architecture:typescript
 pnpm.cmd test:contracts
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_production_composition -- --nocapture
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke
 cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-**Exit gate:** default-v2 old paths 物理删除且有反回流门禁；剩余 debug legacy runtime 是完整隔离 owner，并由 Task 28 单独治理。
+**Exit gate:** default-v2 old paths、debug legacy runtime 入口和 request-coupled finalization 物理删除且有反回流门禁；不存在需要 Task 28 另行托管的第二 runtime owner。
 
 **Commit:** `refactor: remove default v2 routing legacy paths`
 
@@ -1315,7 +1351,7 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - Create: `src-tauri/tests/routing_url_sanitizer_migration.rs`
 - Create: `src-tauri/tests/routing_security_boundaries.rs`
 - Extend: `scripts/local-routing-redaction.test.mjs`
-- Modify: released-schema fixtures and persistence artifact manifest
+- Modify: known-schema fixtures and persistence artifact manifest
 
 **RED:**
 
@@ -1327,9 +1363,9 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 - [ ] “可恢复”严格指 crash/resume，不指把敏感原 URL 反向恢复；不得在日志、升级 journal 或 error 中打印 before/after raw value。
 - [ ] 全部 logical rows 完成后执行受控 WAL checkpoint/truncate 与 SQLite rebuild/`VACUUM`，清理 free pages；关闭相关 producers 后再处理 `-wal`/`-shm` sidecars。
 - [ ] 枚举并清理应用管理范围内由本次升级产生的 pre-sanitization backup/temp artifact；路径必须由 persistence artifact policy 验证，不能递归删除用户目录或外部备份。
-- [ ] canary fixture 对主 DB、WAL、SHM、upgrade journal 和应用管理 backup 做原始字节扫描；发布证据明确这只是应用管理存储范围内的 best-effort purge，不宣称 SSD/文件系统级不可恢复。
-- [ ] fresh schema、每个 released schema 和中断恢复 fixture 均可升级；Task 11 预迁移 binary 必须能在清洗后忽略新列、容忍原字段 NULL，并启动完整旧 owner。
-- [ ] source/runtime scan 证明 candidate、outcome、decision、IPC、UI、trace、error、snapshot 和 qualification artifact 不含 secret/full URL/user payload。
+- [ ] canary fixture 对主 DB、WAL、SHM、upgrade journal 和应用管理 backup 做原始字节扫描；本地自检证据明确这只是应用管理存储范围内的 best-effort purge，不宣称 SSD/文件系统级不可恢复。
+- [ ] fresh schema、known schema 和中断恢复 fixture 均可升级；清洗后的恢复路径是 current dev binary reset/reimport。
+- [ ] source/runtime scan 证明 candidate、outcome、decision、IPC、UI、trace、error、snapshot 和 self-check artifact 不含 secret/full URL/user payload。
 - [ ] redaction 对 Authorization、API key、Cookie、token、完整 headers 和 prompt/response 同样生效。
 
 **GREEN:**
@@ -1355,28 +1391,28 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 **Commit:** `security: sanitize persisted upstream routing metadata`
 
-## 33. Task 26：执行 fault、并发、性能与 soak 发布资格
+## 33. Task 26：执行 fault、并发、性能与 soak 开发期自检
 
-**Depends on:** Tasks 22-25；release build 配置与最终 schema 已冻结。
+**Depends on:** Tasks 22-25；build/check 配置与最终 schema 已冻结。
 
 **Files:**
 
 - Create/extend: routing fault/concurrency/performance integration tests
 - Extend: `scripts/run-routing-operational-soak.ps1` with final fault mix、metrics and report output
 - Create: `scripts/routing-operational-qualification.mjs`
-- Modify: `scripts/verify.ps1` release profile，只增加 deterministic routing qualification/artifact validator；1 小时 soak 保持独立显式 step
-- Modify: `.github/workflows/release.yml` 与 `scripts/release-verification-entrypoint.test.mjs`，在 signed bundle 前运行同 revision soak + qualification artifact validation
+- Modify: `scripts/verify.ps1` full profile，只增加 deterministic routing self-check preflight；长 soak 保持独立可选 step
+- Do not modify for this development upgrade: `.github/workflows/release.yml` 与 release verification entrypoint
 - Modify: architecture scale baseline datasets/reports
-- Modify: version/changelog/release metadata，和实现/门禁脚本一起形成最终 candidate commit
-- Create: `docs/superpowers/audits/` 下不含运行结果的 qualification manifest/template
-- Do not commit: 最终运行结果；写入现有 ignored `output/architecture-scale/qualification/release/` 并由 CI 上传 artifact
+- Modify: local self-check metadata；不维护 release version、changelog 或候选发布元数据
+- Create: `docs/superpowers/audits/` 下不含运行结果的 development self-check manifest/template
+- Do not commit: 最终运行结果；写入 ignored output 或 CI artifact path
 
-**Candidate freeze before final qualification:**
+**Development self-check boundary:**
 
-- [ ] 先完成所有实现、tests、workflow、version/changelog 和 qualification manifest，运行 focused tests 后提交 `test: qualify routing operational cutover`。
-- [ ] 记录 `candidate_revision = git rev-parse HEAD`，要求 `git status --porcelain` 为空；以下 final Run 全部针对该 revision。
-- [ ] soak/performance/security 输出携带 candidate revision、工具版本和参数，只写 ignored output/CI artifact；不得在 Run 后修改 tracked 文件。
-- [ ] 任一 tracked change、依赖变化或 generated drift 都使证据失效：提交修复后从 `verify:full` 与 1 小时 soak 重新开始。
+- [ ] 先完成所有实现、tests、workflow 和 self-check manifest，运行 focused tests 后提交 `test: qualify routing operational cutover`。
+- [ ] soak/performance/security 输出携带 source revision、工具版本和参数，只写 ignored output/CI artifact；source revision 仅用于诊断，不代表产品化发布候选。
+- [ ] source revision 只用于复现和诊断；不冻结产品化发布候选。
+- [ ] 若自检后继续修改 tracked 文件，只需针对修改范围重跑对应检查；影响路由闭环、schema、安全或生命周期时重跑完整开发期目标检查集与单轮 deterministic soak；本机工具链版本满足 ledger 时可附加 `verify:full`，需要追查泄漏时可附加 60 分钟长 soak。
 
 **Fault and concurrency matrix:**
 
@@ -1391,16 +1427,17 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 **Performance gates:**
 
-- [ ] release build、记录 CPU/OS：100 candidates pure planner p95 `<= 2ms`。
+- [ ] optimized Rust build、记录 CPU/OS：100 candidates pure planner p95 `<= 2ms`。
 - [ ] warmed SQLite、100 candidates、单 read session fact assembly p95 `<= 50ms`；SQL query count 是固定上限。
 - [ ] runtime overlay query p95 `<= 5ms`，且 query plan 不访问价格/历史表。
 - [ ] 10,000 requests / 30,000 attempts / 1,000,000 candidate rows：decision detail 首屏 p95 `<= 100ms`，cursor pagination 无 offset drift。
 - [ ] 1024-candidate hard-limit rejection bounded；64-candidate catalog、8-way fan-out 内存和 task count 不越界。
 - [ ] 基线回归超过 Stage 0 约定阈值时必须分析并记录，不得只因绝对门槛通过而忽略显著退化。
 
-**Soak gates:**
+**Soak checks:**
 
-- [ ] 至少 1 小时混合 buffered/stream/catalog/fallback/cancel/slow-client workload；使用 deterministic loopback，不消耗真实 provider 配额。
+- [ ] 必跑检查为单轮 mixed buffered/stream/catalog/fallback/cancel/slow-client deterministic loopback；不消耗真实 provider 配额。
+- [ ] 60 分钟 mixed workload soak 只作为可选信心检查，用于追查生命周期泄漏或长期资源漂移，不作为当前开发期阻塞项。
 - [ ] 期间周期采样 active request/attempt/lease/retry/half-open/waiter/body budget/writer/task/runtime registry/SQLite size。
 - [ ] 结束并 shutdown 后所有瞬态计数归零；registry/trace/DB size 符合 TTL/count/retention 上限，无单调泄漏。
 - [ ] tracing 开/关各跑一轮 canary secret scan；报告仅保存聚合指标和脱敏失败代码。
@@ -1409,125 +1446,133 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 **Run:**
 
 ```powershell
-pnpm.cmd verify:full
+pnpm.cmd architecture:fixtures
+pnpm.cmd architecture:typescript
+pnpm.cmd architecture:commands
+pnpm.cmd architecture:security
+pnpm.cmd architecture:artifacts
+pnpm.cmd test:contracts
+pnpm.cmd build
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 pnpm.cmd architecture:scale-baseline
-cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke
 node scripts/routing-operational-qualification.mjs
 ```
 
-**Exit gate:** fault/concurrency/performance/soak 全绿，ignored/CI qualification artifact 记录同一 candidate commit、命令、版本、环境、阈值与脱敏结果，且 worktree 仍 clean；任一红项阻止 Task 27。Task 26 不运行需要 release tag/签名密钥的 `verify:release`，该门禁唯一归 Task 27。
+若本机 Node/工具链版本恰好满足 dependency lifecycle ledger，可额外运行 `pnpm.cmd verify:full` 作为聚合检查；当前开发期不为了通过它放宽依赖 ledger。
 
-**Commit:** `test: qualify routing operational cutover`（在 final Run 之前创建并冻结，Run 后不得再修改 tracked 文件）
+**完成条件:** fault/concurrency/performance/单轮 deterministic soak 全绿，ignored/CI self-check artifact 记录 source revision、命令、版本、环境、阈值与脱敏结果；任一红项阻止 Task 27。60 分钟 soak 可选；Task 27 负责 reset/reimport 重来恢复和授权客户端 smoke。
 
-## 34. Task 27：正式 release、升级/回滚与真实客户端验证
+**Commit:** `test: qualify routing operational cutover`
 
-**Depends on:** Task 26；版本、签名和 release process 使用仓库既有规则。
+## 34. Task 27：开发期本地自检、重来恢复与真实客户端验证
+
+**Depends on:** Task 26。恢复策略是停止 admission 后 reset local data、reimport config 或重新配置。
 
 **Files:**
 
-- Create: release tag/release entry for the exact Task 26 candidate revision；不再修改 version、schema、code、dependency 或 generated binding
-- Produce: release/upgrade/rollback evidence under ignored output/CI artifact path
-- After successful publication only: Modify `docs/PROJECT_PLAN.md` completion status and remaining debug-legacy gate in a separate post-release documentation commit
+- Produce: local self-check/reset-reimport evidence under ignored output/CI artifact path
+- Create/extend: `scripts/run-routing-operational-local-self-check.ps1` and a contract test that verifies it reuses existing deterministic recovery/routing suites and does not become a product-release workflow
+- Create: `docs/superpowers/audits/routing-operational-local-self-check-template.md` without filled runtime results
+- After successful local self-check only: Modify `docs/PROJECT_PLAN.md` completion status and remaining debug-legacy cleanup note in a separate documentation commit
 - Do not commit: real credentials、local DB、raw logs、screenshots containing private data
 
-**Release freeze:**
+**Local development self-check boundary:**
 
-- [ ] Task 26 通过后禁止任何 pre-tag tracked change，包括 version/changelog、实现、schema、generated binding 或依赖；若发生变化，提交后回到 Task 26 重跑完整资格。
-- [ ] release tag 必须直接指向 qualification artifact 中的 `candidate_revision`，且 tag 前 worktree clean。
-- [ ] 本地/CI 均使用 `scripts/verify.ps1` 既有 release phases；不得维护另一份手抄 release test 列表。
+- [ ] Task 26 通过后若继续修改实现、schema、generated binding 或依赖，按影响范围重跑对应自检；影响路由闭环、schema、安全或生命周期时回到 Task 26 重跑完整自检。
+- [ ] self-check evidence 必须记录 `source_revision`、dirty status、命令和环境，dirty status 只用于诊断，不作为产品化发布候选冻结。
+- [ ] 本地/CI 优先使用仓库既有 verify/build phases；不得维护另一份手抄 test 列表。
 
-**Upgrade matrix:**
+**Reset/reimport matrix:**
 
-- [ ] 显式设置并校验五个 `RELAY_*` install-matrix 环境变量；baseline 必须是已支持的预迁移正式版本，candidate 必须是当前 tag 生成的签名 bundle。
-- [ ] fresh install -> new binary；上一正式版 DB -> new binary；预迁移版 configured/unconfigured profiles -> new binary。
-- [ ] released-schema fixtures 升级后 route readiness、monitoring facts、pricing、request logs 和 decision/cost stores 正常。
-- [ ] unconfigured legacy policy 明确阻止 routing admission，但 UI 仍可打开并完成配置；不 panic、不静默自动映射。
+- [ ] fresh local data -> current dev binary；legacy fixture DB -> current dev binary；configured/unconfigured profiles -> current dev binary。
+- [ ] known-schema fixtures 升级后 route readiness、monitoring facts、pricing、request logs 和 decision/cost stores 正常。
+- [ ] unconfigured legacy policy 明确阻止 routing admission，但 UI 仍可打开并完成配置或提示 reset/reimport；不 panic、不静默自动映射。
 - [ ] sanitizer migration 中断、resume、完成后的 startup 行为可证明。
 
-**Rollback proof:**
+**Reset/reimport recovery proof:**
 
-- [ ] 在隔离副本上 new binary -> 上一完整 binary，证明新表/列被忽略、legacy config 在窗口内仍可读取，旧 owner 完整启动。
-- [ ] rollback 不 drop 新表、不反向迁移、不按请求混用 owner；回到新 binary 后 migration/decision/outcome uniqueness 仍正确。
-- [ ] writer unhealthy 或 cutover blocker 的操作手册是 stop admission + 完整 binary rollback，不是切局部 feature flag。
-- [ ] 明确 rollback 会暂时恢复上一版本语义，并记录新版本期间产生的 trace/cost 如何显示为 unavailable/ignored，而不是伪造兼容结果。
+- [ ] 在隔离副本上证明 reset local data/reimport config 后 current dev binary 可启动。
+- [ ] reset/reimport 不 drop 用户未授权路径、不按请求混用 owner；回到 current dev binary 后 migration/decision/outcome uniqueness 仍正确。
+- [ ] writer unhealthy 或 cutover blocker 的操作手册是 stop admission + reset/reimport，不是切局部 feature flag。
+- [ ] 新版本期间产生的 trace/cost 在 reset 后可丢弃或显示为 unavailable/ignored，而不是伪造兼容结果。
 
 **Real client/provider verification:**
 
 - [ ] 使用用户授权的至少一种真实 OpenAI-compatible 客户端验证 buffered、streaming、cancel、model listing、fallback 和稳定错误 body。
 - [ ] 真实 provider 验证低频、有预算，覆盖 adapter-confirmed auth/model semantic fixture；无法确认的 403/404 仍为 Uncertain/neutral。
-- [ ] CCSwitch 配合场景验证固定本地入口、启动/停止、端口占用、sleep/resume 和 upgrade 后配置不漂移。
+- [ ] CCSwitch 配合场景验证固定本地入口、启动/停止、端口占用、sleep/resume，以及 reset/reimport 后配置来源明确、不静默漂移。
 - [ ] 核对 SQLite journal/decision/health/cost 与 UI timeline；所有数量、attempt order、currency aggregate 和 selected route 一致。
-- [ ] 检查 release logs、trace、UI、errors 和 support snapshot 无 secret、完整 headers/URL 或 payload。
+- [ ] 检查 local self-check logs、trace、UI、errors 和 support snapshot 无 secret、完整 headers/URL 或 payload。
 
 **Run:**
 
 ```powershell
-pnpm.cmd verify:full
-pnpm.cmd verify:release-version --require-tag
-pnpm.cmd verify:release
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-install-upgrade-matrix.ps1 -OldInstaller $env:RELAY_BASELINE_INSTALLER -NewInstaller $env:RELAY_CANDIDATE_INSTALLER -OldVersion $env:RELAY_BASELINE_VERSION -NewVersion $env:RELAY_CANDIDATE_VERSION -OutputPath $env:RELAY_UPGRADE_REPORT
+pnpm.cmd test:contracts
+pnpm.cmd build
+cargo check --locked --manifest-path src-tauri/Cargo.toml
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1
+node scripts/routing-operational-qualification.mjs
 ```
 
-**Exit gate:** 签名 release bundle、升级/回滚、真实客户端与安全核对全部通过；发布后保存版本/commit/证据索引，不保存秘密或原始 provider payload。
+`pnpm.cmd verify:full` 只在本机 Node/依赖生命周期版本满足 ledger 时作为额外聚合检查；版本不匹配时记录环境限制并使用上面的开发期目标检查集。
 
-**Commit:** `docs: record unified routing operational release`（仅在发布成功后提交，不属于已签名 release revision）
+**完成条件:** 本地自检、reset/reimport recovery、授权真实客户端与安全核对全部通过；保存版本/commit/证据索引，不保存秘密或原始 provider payload。
 
-## 35. Task 28：登记并执行 debug legacy runtime 后续删除票据
+**Commit:** `docs: record unified routing operational local self-check`
 
-**Depends on:** 不是本次 cutover 的组成部分；必须满足 `PROJECT_PLAN.md` 规定的 default-v2 正式发布后真实客户端观察门禁。
+## 35. Task 28：执行 debug legacy runtime 删除与反回流门禁
+
+**Depends on:** Tasks 22-27 的可用本地自检证据，以及 2026-07-31 开发期恢复决策。结构性不可恢复状态的受支持路径是 stop admission 后 reset/reimport/重新配置。
 
 **Files:**
 
-- Create/update: deletion ticket/ledger entry with owner、deadline、evidence and exact paths
-- Later modify/delete: process-start legacy runtime composition and `RELAY_POOL_PROXY_RUNTIME=legacy`
+- Update: deletion ledger entry with owner、evidence、exact deleted paths and anti-regression gates
+- Delete/forbid: process-start legacy runtime composition, `RELAY_POOL_PROXY_RUNTIME=legacy`, request-coupled finalization branch and dedicated tests/docs/dependencies
 - Modify: `docs/PROJECT_PLAN.md`
 - Extend: default-v2 single-owner architecture gates
 
-**Ticket acceptance before code deletion:**
+**Deletion acceptance:**
 
-- [ ] 至少一个 default-v2 正式版本完成规定观察期，真实客户端、provider、sleep/resume、upgrade/rollback 无未决 P0/P1。
-- [ ] support/debug 记录证明 legacy process-start runtime 不再是必要诊断手段。
-- [ ] binary rollback window 已关闭或有新的完整 rollback 版本；删除不会破坏受支持回滚路径。
-- [ ] ledger 列出 legacy composition、env switch、tests、docs、compat config consumers 与最终 migration owner，不只删除入口字符串。
-
-**Deletion execution:**
-
-- [ ] 删除完整 debug legacy composition、环境开关、专属 tests/docs/dependencies 和仅服务于它的 compatibility adapter。
+- [ ] 删除完整 debug legacy composition、环境开关、专属 tests/docs/dependencies 和仅服务于它的 compatibility adapter，不只删除入口字符串。
+- [ ] 删除 request-coupled finalization；response body 只保留 dual-terminal finalization path。
 - [ ] 保留仍有历史数据语义的 compatibility fields 时，迁移到只读 projection 或明确清理；不得让 default-v2 重读 legacy policy。
-- [ ] architecture gate 禁止 legacy runtime symbol/env/config owner 回流。
-- [ ] 重跑 production composition、upgrade fixture、release 和真实客户端 smoke tests。
+- [ ] architecture/doc gate 禁止 legacy runtime symbol/env/config owner、isolated debug legacy owner 叙述和 request-coupled finalization 回流。
+- [ ] manual observations 仍用于信心记录，但不能成为保留第二 runtime/finalizer 的理由。
+- [ ] 重跑 production composition、local proxy boundary、manual observation ledger、build/check 和 local self-check。
 
-**Run when ticket preconditions are met:**
+**Run:**
 
 ```powershell
 node scripts/routing-single-owner.test.mjs
 node scripts/local-proxy-v2-boundary.test.mjs
-pnpm.cmd verify:full
-cargo build --release --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+node scripts/routing-operational-legacy-doc-consistency.test.mjs
+pnpm.cmd test:contracts
+cargo check --locked --manifest-path src-tauri/Cargo.toml
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-local-self-check.ps1
 ```
 
-**Exit gate:** debug legacy runtime 及其专属债务物理删除，rollback/support 文档指向受支持的完整 binary 流程。
+**Exit gate:** debug legacy runtime 及其专属债务物理删除，support 文档指向受支持的 reset/reimport 流程。
 
 **Commit:** `refactor: remove debug legacy proxy runtime`
 
 ## 36. 每个 Task 的执行、提交与证据模板
 
-每个 Task 必须按以下顺序执行，不能把“实现完成”和“发布资格”混为一谈：
+每个 Task 必须按以下顺序执行，不能把“实现完成”和“本地自检”混为一谈：
 
 1. **Preflight**：运行 `git status --short --branch`，确认依赖 Task 的 exit gate 和证据；枚举 migration 最大编号；记录重叠 dirty files 与 owner。
 2. **Scope freeze**：从本计划复制该 Task 的 files、RED、Run、Exit gate 到工作记录；新增文件或行为必须说明为何仍在 spec 范围内。
 3. **RED evidence**：先增加行为测试/contract fixture，保存预期失败的测试名与原因；不是编译错误凑 RED。
 4. **GREEN**：实现最小完整 vertical slice；不得临时接 production 双轨绕过尚未完成的 owner。
 5. **Focused verification**：运行 Task 列出的全部命令；失败必须修复或保持 Task 未完成。
-6. **Regression**：至少运行受影响模块的 Rust/TS/contract tests；跨 stage、composition、schema 或 security 的 Task 运行 `verify:full`。
+6. **Regression**：至少运行受影响模块的 Rust/TS/contract tests；跨 stage、composition、schema 或 security 的 Task 运行开发期目标检查集；本机工具链版本满足 dependency lifecycle ledger 时可附加 `verify:full`。
 7. **Diff review**：运行 `git diff --check`、`git diff --stat`、`git diff -- <明确路径>`，检查 secret、generated churn、临时 allow 和未登记 adapter。
 8. **Stage**：只用 `git add <明确路径>`；重叠 dirty file 使用 `git add -p`。禁止 `git add .`、`git add -A`。
 9. **Cached review**：运行 `git diff --cached --check` 和 `git diff --cached`；确认没有 stage 用户的无关 monitoring/UI 改动、local DB、日志或 credentials。
 10. **Commit**：使用 Task 建议 message 或同等清晰的 conventional commit；schema、consumer、cutover、deletion 保持可独立 review。
-11. **Evidence**：在 stage audit 中记录 commit、命令、exit code、环境、阈值、已知限制和下一个 gate。只有最终 qualification 保存聚合报告，不提交原始敏感输出。
+11. **Evidence**：在 stage audit 中记录 commit、命令、exit code、环境、阈值、已知限制和下一个自检项。只有最终 self-check 保存聚合报告，不提交原始敏感输出。
 
-Tasks 11 和 26 是发布顺序例外：先完成 focused verification、提交并冻结 candidate revision，再在 clean worktree 上执行 release/final qualification；运行证据写 ignored output/CI artifact，Run 后不再形成 tracked diff。Task 11 的预迁移 tag 与 Task 27 的正式 tag 都只能指向各自已验证 revision。若 final Run 失败，修复形成新 commit 后必须重新执行相应完整资格。
+Tasks 11 和 26 是自检顺序例外：先完成 focused verification 并提交脚本/文档/测试，再执行开发期本地自检；运行证据写 ignored output/CI artifact，不提交运行结果。source revision 与 dirty status 只用于诊断。若自检失败，修复后按影响范围重跑，影响路由闭环、schema、安全或生命周期时重跑完整自检。
 
 一个 Task 的状态只能是：`not_started`、`red_confirmed`、`implemented_unverified`、`blocked`、`complete`。只有所有 Run 命令退出 0 且 Exit gate 满足才可标 `complete`。
 
@@ -1551,7 +1596,7 @@ Tasks 11 和 26 是发布顺序例外：先完成 focused verification、提交�
 | 14 | 全部资源/fan-out 有上限 | 3、9、13-16、19-21、26 | bounds table + soak gauges |
 | 15 | default production 单 owner | 22、24、28 | production composition + source gate |
 | 16 | weights/cache/adapter 有删除账本 | 0、10、24、28 | approved zero/dated deletion ledger |
-| 17 | 全部 release qualification 通过 | 11、21、25-27 | release audit index |
+| 17 | 全部 local self-check 通过 | 11、21、25-27 | self-check audit index |
 | 18 | secret/header/payload 不泄露 | 11、17、18、21、25-27 | canary redaction scans |
 | 19 | 所有写入配置字段有生产语义 | 8、10-12、15、21 | `routing_policy_field_e2e` |
 | 20 | planner failures 穷尽稳定映射 | 18、21-23 | Rust exhaustive + HTTP/UI fixtures |
@@ -1562,11 +1607,11 @@ Tasks 11 和 26 是发布顺序例外：先完成 focused verification、提交�
 | 25 | inference 不能绕倍率；query 独立 admission | 7、8、12、21 | inference/catalog E2E |
 | 26 | 两 profile 同 kernel；CostFirst basis 真实一致 | 7、12、21 | property + simulation/trace parity |
 
-Stage 7 release audit 必须逐行填写实际 commit/test/report 链接。任何一行只有单元测试、没有 production composition 或 E2E 证据时，都不能签字完成。
+Stage 7 self-check audit 必须逐行填写实际 commit/test/report 链接。任何一行只有单元测试、没有 production composition 或 E2E/授权客户端 smoke 证据时，都不能签字完成。
 
 ## 38. 最终删除与保留清单
 
-**本次正式 release 前必须删除：**
+**本次 default-v2 cutover 本地自检前必须删除：**
 
 - default-v2 simulated capacity、acquire-then-release 和 slot-unavailable-as-selected 语义；
 - default-v2 static candidate fallback、第二 selector、weighted score/legacy weight reader；
@@ -1577,20 +1622,19 @@ Stage 7 release audit 必须逐行填写实际 commit/test/report 链接。任�
 - arbitrary string/body failure classification 与 planner string-to-500 路径；
 - 已完成迁移的 temporary adapter、test-only production facade 和 boundary exceptions。
 
-**在 rollback/观察窗口内允许保留，但必须隔离：**
+**在 import/export、历史只读 projection 或未来稳定发布 ADR 明确要求时允许暂留，但必须隔离：**
 
-- 上一完整 binary 所需 legacy config values；
-- debug-only、process-start 级完整 legacy runtime；
+- import/export、debug 观察或未来稳定发布 ADR 可能需要的 legacy config values；
 - 只读 legacy request cost/trace compatibility projection；
-- 尚在 rollback window 的 compatibility cache。
+- 未来稳定发布 ADR 允许期内的 compatibility cache。
 
-允许保留项不得进入 default-v2 selection、pricing、feedback、capacity、read-model truth 或 UI 设置。每项必须在 deletion ledger 有 owner、理由、最后使用者、删除前置条件和截止版本；Task 28 结束后相应项归零。
+允许保留项不得进入 default-v2 selection、pricing、feedback、capacity、read-model truth 或 UI 设置。每项必须在 deletion ledger 有 owner、理由、最后使用者、删除前置条件和截止版本；Task 28 结束后 debug legacy runtime/env/finalizer 项归零。
 
 **明确长期保留并复用：**
 
 - 现有 SQLite/Persistence V2、Request Lifecycle writer/permits、response-body wrapper 和 TaskSupervisor；
 - PricingProjector/CostCalculator、HealthTransitionService 和 monitoring/collector 的 typed evidence ports；
-- Tauri/React Query/IPC registry、现有安全和 release gates；
+- Tauri/React Query/IPC registry、现有安全和本地 self-check gates；
 - 单进程模块化单体、SQLite、Tokio RAII primitives，不引入 Redis/outbox/microservice/event bus。
 
 ## 39. 风险、暂停条件与决策升级
@@ -1599,47 +1643,47 @@ Stage 7 release audit 必须逐行填写实际 commit/test/report 链接。任�
 |---|---|---|
 | monitoring V2 baseline/target scope 仍变化 | 暂停 Task 3/6，先冻结共享 fact/observation port | routing 复制 monitoring DTO/reducer |
 | provider account concurrency scope 无可信 provenance | 只显示 evidence gap，不启用 account lease | 猜测为 per-key 或 station limit |
-| automatic profile 缺 multiplier ceiling/ordering confirmation | 预迁移 UI 引导并停止 cutover | 默认 1.0、无限上限或猜 enum |
+| automatic profile 缺 multiplier ceiling/ordering confirmation | 切换前 UI 引导并停止 cutover | 默认 1.0、无限上限或猜 enum |
 | CostFirst 缺 exact comparable basis | 使用已批准 multiplier proxy 或 unpriced fallback | input+output 单价直接相加 |
 | provider 403/404 无 sealed semantic signal | `Uncertain` + neutral effect | 解析任意正文并 hard block |
 | lifecycle permit/ack 或 writer unhealthy | 停止新 upstream admission，drain/诊断 | 先发送再补 journal、自动回 legacy |
 | target/config revision churn 超预算 | typed temporary failure | 每候选循环查 DB 或忽略 fence |
 | crash 发生在 observation 与 durable commit 间 | reconciliation 标 `interrupted/trace_incomplete` | 伪造 usage/cost/success terminal |
-| performance/soak 未达标 | 保持 release blocked，profile/query/index 后重跑 | 调大无界 queue/registry |
-| Stage 5 后发现结构性 blocker | 完整 binary rollback 到上一 owner | 请求级双 selector/双写/局部回退 |
+| performance/soak 未达标 | 保持 self-check blocked，profile/query/index 后重跑 | 调大无界 queue/registry |
+| Stage 5 后发现结构性 blocker | 停止 admission，要求用户 reset/reimport 到一致状态 | 请求级双 selector/双写/局部回退 |
 | 新需求需要 LLM、bandit 或在线学习 | 独立 RFC、离线收益和隐私评估 | 塞进 hierarchical_v1 kernel |
 | 实测证明 crash gap 不可接受 | 单独评估轻量 local WAL ADR | 直接引入分布式 outbox/Redis |
 
-会改变 canonical ownership、事务边界、public error、release/rollback owner 或资源上限的新事实，必须更新 spec/ADR 后再实现；普通文件移动、测试命名和局部 trait 命名可在 Task diff 中记录，不需要重开架构评审。
+会改变 canonical ownership、事务边界、public error、恢复策略 owner 或资源上限的新事实，必须更新 spec/ADR 后再实现；普通文件移动、测试命名和局部 trait 命名可在 Task diff 中记录，不需要重开架构评审。
 
 ## 40. 推荐执行批次与评审切点
 
-| 批次 | Tasks | 可并行项 | 评审/发布结果 |
+| 批次 | Tasks | 可并行项 | 评审/资格结果 |
 |---|---|---|---|
 | A 基线冻结 | 0-2 | 无 | ADR、ownership、纯类型；不改运行行为 |
 | B 事实投影 | 3-7 | 4/5/6/7 可在 Task 3 后并行 | canonical facts/projectors；不接 data-plane |
-| C 控制面预迁移 | 8-11 | 9/10 在 8 后部分并行 | backend preview/readiness + 一次预迁移正式发布 |
+| C 控制面切换前准备 | 8-11 | 9/10 在 8 后部分并行 | backend preview/readiness + 一次切换前开发期基线记录 |
 | D 决策与运行内核 | 12-18 | 13/14 可在 12 后并行；15 依赖 runtime contract | non-production planner/capacity/failure kernel |
 | E 生命周期闭环 | 19-21 | outcome domain 与 harness fixtures 可分工 | 完整 loopback，无 production cutover |
-| F 原子切换 | 22-25 | UI 与 deletion review 可预备，不可提前发布 | 一个 Stage 5+6 release-candidate，单 owner + security migration |
-| G 发布资格 | 26-27 | performance、security、upgrade fixtures 可并行执行 | fault/soak/build/真实 E2E 后正式发布 |
-| H 后续清债 | 28 | 无 | 满足观察门禁后删除 debug legacy runtime |
+| F 原子切换 | 22-25 | UI 与 deletion review 可预备，不可提前交付 | 一个 Stage 5+6 cutover candidate，单 owner + security migration |
+| G 本地自检 | 26-27 | performance、security、reset/reimport fixtures 可并行执行 | fault/soak/build/授权真实 E2E 后完成本地 self-check |
+| H 后续清债 | 28 | 无 | 按开发期 reset/reimport 决策删除 debug legacy runtime 并建立反回流门禁 |
 
-推荐评审至少设置六个强制切点：ADR/ownership、projector contracts、预迁移 release、planner/capacity kernel、outcome/loopback、production cutover/deletion。F 批次内部可以多 commit，但只能形成一个正式 release owner；不得为了减少单次 diff 而发布混合 composition。
+推荐评审至少设置六个强制切点：ADR/ownership、projector contracts、切换前开发期基线、planner/capacity kernel、outcome/loopback、production cutover/deletion。F 批次内部可以多 commit，但只能形成一个 production owner；不得为了减少单次 diff 而交付混合 composition。
 
 ## 41. 整体 Definition of Done
 
 最终只有以下全部为真才能关闭升级：
 
-- Tasks 0-27 均为 `complete`；Task 28 已有满足格式的独立票据，若其观察前置条件已满足则也完成删除；
+- Tasks 0-28 均为 `complete`；debug legacy runtime、`RELAY_POOL_PROXY_RUNTIME=legacy` 和 request-coupled finalization 已删除且有反回流门禁；
 - 第 37 节 26 行均有实际自动化和 production/E2E 证据；
-- pre-migration release 与 Stage 5+6 release-candidate 的顺序可从版本/commit 证明；
-- `verify:release`、Tauri release build、bundle verification、upgrade/rollback、1 小时 soak 和授权真实客户端验证退出 0；
-- fresh/released schema、sanitizer resume、旧 binary ignore-new-schema、new binary re-open 均通过；
+- pre-cutover development baseline 与 Stage 5+6 cutover candidate 的顺序可从 commit 证明；
+- Tauri/Rust build checks、local self-check verification、reset/reimport recovery、单轮 deterministic soak 和授权真实客户端验证退出 0；60 分钟长 soak 只作为可选信心证据；
+- fresh/known schema、sanitizer resume、reset/reimport recovery、current dev binary re-open 均通过；
 - default-v2 source/composition 没有第二 truth/selector/capacity/feedback；
 - 所有瞬态资源在测试与 shutdown 后归零，持久化 totals/journal/trace 可核对；
 - secret/full URL/header/payload canary 扫描无泄漏；
 - deletion ledger 无无 owner、无期限的临时项；
 - `docs/PROJECT_PLAN.md`、相关 ADR/spec、命令/IPC fixtures 与实现一致。
 
-本计划不以算法复杂度作为先进性目标。完成后的技术路线是成熟工程软件常用的 deterministic layered eligibility、lexicographic ordering、bounded retry/wait、RAII admission、outlier/half-open、immutable snapshot、typed outcomes 和 request-time settlement；其优势来自单一事实所有权、可证明生命周期、可解释决策和完整发布闭环，而不是 LLM 或不可审计的在线学习。
+本计划不以算法复杂度作为先进性目标。完成后的技术路线是成熟工程软件常用的 deterministic layered eligibility、lexicographic ordering、bounded retry/wait、RAII admission、outlier/half-open、immutable snapshot、typed outcomes 和 request-time settlement；其优势来自单一事实所有权、可证明生命周期、可解释决策和本地自检闭环，而不是 LLM、不可审计的在线学习或当前阶段不需要的产品化发布体系。

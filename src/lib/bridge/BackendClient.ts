@@ -31,6 +31,7 @@ import type {
   CommonLoginEmail,
   CommonLoginOptions,
   CommonLoginPassword,
+  ConfirmHierarchicalRoutingMigrationInput,
   UpdateSettingsInput,
   UpsertCommonLoginEmailInput,
   UpsertCommonLoginPasswordInput,
@@ -102,8 +103,15 @@ import type {
 } from "@/lib/types/providerDrafts";
 import type {
   ModelAlias,
+  RecentRouteDecisionsInput,
+  RecentRouteDecisionsPage,
+  RequestDecisionTrace,
   RouteSimulationInput,
   RouteSimulationResult,
+  RoutingRuntimeOverlay,
+  RoutingWorkspaceSnapshot,
+  RoutingWorkspaceSnapshotInput,
+  StationKeyOperationalDetail,
   StationKeyCapabilities,
   StationKeyHealth,
   UpdateStationKeyCapabilitiesInput,
@@ -119,6 +127,7 @@ export type SettingsDomainClient = {
   updateLocalAccessKey(value: string): Promise<AppSettings>;
   importRelayPoolToCCSwitch(): Promise<CcswitchImportResult>;
   updateSettings(input: UpdateSettingsInput): Promise<AppSettings>;
+  confirmHierarchicalRoutingMigration(input: ConfirmHierarchicalRoutingMigrationInput): Promise<AppSettings>;
   chooseDataDir(): Promise<AppSettings>;
   resetDataDir(): Promise<AppSettings>;
   listCommonLoginOptions(): Promise<CommonLoginOptions>;
@@ -279,6 +288,11 @@ export type RoutingDomainClient = {
   upsertModelAlias(input: UpsertModelAliasInput): Promise<ModelAlias>;
   deleteModelAlias(id: string): Promise<void>;
   listStationKeyHealth(): Promise<StationKeyHealth[]>;
+  loadRoutingWorkspaceSnapshot(input?: RoutingWorkspaceSnapshotInput): Promise<RoutingWorkspaceSnapshot>;
+  loadRoutingRuntimeOverlay(): Promise<RoutingRuntimeOverlay>;
+  listRecentRouteDecisions(input?: RecentRouteDecisionsInput): Promise<RecentRouteDecisionsPage>;
+  getStationKeyOperationalDetail(stationKeyId: string): Promise<StationKeyOperationalDetail>;
+  getRequestDecisionTrace(requestLogId: string): Promise<RequestDecisionTrace>;
   getStationKeyHealth(stationKeyId: string): Promise<StationKeyHealth>;
   simulateRoute(input: RouteSimulationInput): Promise<RouteSimulationResult>;
 };

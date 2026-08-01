@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "status": "task26_development_self_check_manifest",
+  "captured_at": "2026-07-31",
+  "branch": "codex/routing-operational-upgrade",
+  "owner_task": 26,
+  "artifact_policy": {
+    "tracked_results_allowed": false,
+    "runtime_output_root": "output/routing-operational/self-check/",
+    "scale_baseline_output_root": "output/architecture-scale/baseline/",
+    "secret_policy": "no API keys, cookies, authorization headers, full upstream URLs, prompts, responses, provider payloads, local database files, WAL/SHM files, screenshots, or raw logs are tracked"
+  },
+  "required_development_commands": [
+    "pnpm.cmd architecture:fixtures",
+    "pnpm.cmd architecture:typescript",
+    "pnpm.cmd architecture:commands",
+    "pnpm.cmd architecture:security",
+    "pnpm.cmd architecture:artifacts",
+    "pnpm.cmd test:contracts",
+    "pnpm.cmd build",
+    "cargo check --locked --manifest-path src-tauri/Cargo.toml",
+    "pnpm.cmd architecture:scale-baseline",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -Smoke",
+    "node scripts/routing-operational-qualification.mjs"
+  ],
+  "optional_aggregate_commands": [
+    "pnpm.cmd verify:full"
+  ],
+  "optional_confidence_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-routing-operational-soak.ps1 -DurationMinutes 60",
+    "node scripts/routing-operational-qualification.mjs --require-long-soak"
+  ],
+  "required_soak_suites": [
+    "routing_production_composition",
+    "routing_planner_controller",
+    "routing_capacity_faults",
+    "routing_runtime_state",
+    "proxy_lifecycle_concurrency",
+    "proxy_lifecycle_faults",
+    "routing_stream_finalization_faults",
+    "routing_url_sanitizer_migration",
+    "routing_security_boundaries",
+    "routing_loopback_e2e",
+    "routing_catalog_loopback",
+    "routing_policy_field_e2e"
+  ],
+  "required_thresholds": {
+    "required_default_duration_minutes": 0,
+    "optional_confidence_duration_minutes": 60,
+    "failures": 0,
+    "minimum_iterations": 1,
+    "candidate_limit": 1024,
+    "max_runtime_replans": 8
+  },
+  "artifact_inputs": {
+    "soak_report": "output/routing-operational/self-check/soak/routing-operational-soak-latest.json",
+    "scale_baseline_report": "output/architecture-scale/baseline/frontend-report.json",
+    "scale_baseline_fixtures": "output/architecture-scale/baseline/fixtures-first.json"
+  }
+}

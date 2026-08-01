@@ -210,18 +210,18 @@ impl MonitoringService {
             return Err(ApplicationError::ConstraintViolation);
         }
         let now_ms = self.now_ms();
-        let executions = MonitoringExecutionRepository;
         self.runtime
             .write(move |write| {
                 Box::pin(async move {
-                    executions
+                    let executions = MonitoringExecutionRepository;
+                    let row = executions
                         .cancel_execution(write.connection(), &execution_id, now_ms)
-                        .await
-                        .map(|row| CancelChannelMonitorExecutionReceipt {
-                            execution_id: row.execution_id,
-                            status: row.status,
-                            cancelled: row.cancelled,
-                        })
+                        .await?;
+                    Ok(CancelChannelMonitorExecutionReceipt {
+                        execution_id: row.execution_id,
+                        status: row.status,
+                        cancelled: row.cancelled,
+                    })
                 })
             })
             .await
@@ -236,10 +236,11 @@ impl MonitoringService {
             return Err(ApplicationError::ConstraintViolation);
         }
         let mut read = self.runtime.begin_read().await?;
-        self.execution_store()
+        let executions = MonitoringExecutionRepository;
+        executions
             .find_by_trigger_request_id(read.connection(), trigger_request_id)
             .await
-            .map(|row| row.map(|row| (row.execution_id, row.monitor_id, row.status)))
+            .map(|row| row.map(|row| (row.id, row.monitor_id, row.status)))
             .map_err(Into::into)
     }
 
@@ -287,12 +288,12 @@ impl MonitoringService {
         }
         let execution_id = execution_id.to_string();
         let now_ms = self.now_ms();
-        let executions = MonitoringExecutionRepository;
         self.runtime
             .write(|write| {
                 Box::pin(async move {
+                    let executions = MonitoringExecutionRepository;
                     executions
-                        .start_queued(write.connection(), &execution_id, now_ms)
+                        .start_queued_execution(write.connection(), &execution_id, now_ms)
                         .await
                 })
             })
@@ -309,12 +310,12 @@ impl MonitoringService {
         }
         let execution_id = execution_id.to_string();
         let now_ms = self.now_ms();
-        let executions = MonitoringExecutionRepository;
         self.runtime
             .write(|write| {
                 Box::pin(async move {
+                    let executions = MonitoringExecutionRepository;
                     executions
-                        .interrupt(write.connection(), &execution_id, now_ms)
+                        .interrupt_execution(write.connection(), &execution_id, now_ms)
                         .await
                 })
             })
@@ -369,9 +370,7 @@ impl MonitoringService {
     ) -> Result<ExecutionSummaryRow, ApplicationError> {
         let committer = MonitoringExecutionCommitter::new();
         self.runtime
-            .write(|write| {
-                Box::pin(async move { committer.commit(write.connection(), &execution).await })
-            })
+            .write(|write| Box::pin(async move { committer.commit(write, &execution).await }))
             .await
             .map_err(Into::into)
     }
@@ -516,10 +515,6 @@ impl MonitoringService {
 
     fn now_ms_string(&self) -> String {
         self.now_ms().to_string()
-    }
-
-    fn execution_store(&self) -> MonitoringExecutionRepository {
-        MonitoringExecutionRepository
     }
 }
 

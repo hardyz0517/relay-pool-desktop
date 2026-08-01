@@ -19,6 +19,7 @@ export class DemoBackend implements BackendClient {
     updateLocalAccessKey: (_value: string) => this.rejectUnsupported("settings.local_access_key"),
     importRelayPoolToCCSwitch: () => this.rejectUnsupported("settings.ccswitch_import"),
     updateSettings: () => this.rejectUnsupported("settings"),
+    confirmHierarchicalRoutingMigration: () => this.rejectUnsupported("settings.routing_migration"),
     chooseDataDir: () => this.rejectUnsupported("settings.data_dir"),
     resetDataDir: () => this.rejectUnsupported("settings.data_dir"),
     listCommonLoginOptions: () => this.rejectUnsupported("settings.common_login_options"),
@@ -156,6 +157,13 @@ export class DemoBackend implements BackendClient {
     upsertModelAlias: () => this.rejectUnsupported("routing"),
     deleteModelAlias: (_id: string) => this.rejectUnsupported("routing"),
     listStationKeyHealth: () => this.rejectUnsupported("routing"),
+    loadRoutingWorkspaceSnapshot: () => this.rejectUnsupported("routing.workspace_snapshot"),
+    loadRoutingRuntimeOverlay: () => this.rejectUnsupported("routing.runtime_overlay"),
+    listRecentRouteDecisions: () => this.rejectUnsupported("routing.route_decisions"),
+    getStationKeyOperationalDetail: (_stationKeyId: string) =>
+      this.rejectUnsupported("routing.operational_detail"),
+    getRequestDecisionTrace: (_requestLogId: string) =>
+      this.rejectUnsupported("routing.decision_trace"),
     getStationKeyHealth: (_stationKeyId: string) => this.rejectUnsupported("routing"),
     simulateRoute: () => this.rejectUnsupported("routing"),
   };

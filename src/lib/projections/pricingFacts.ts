@@ -1,3 +1,6 @@
+// RPD_ROUTING_BOUNDARY:display-only-routing-truth-compat
+// UI-only compatibility projection for pricing/group pages. Production routing
+// truth is owned by backend operational read models and routing projectors.
 import { buildCurrentStationGroupFacts, type StationGroupCurrentFact } from "@/lib/projections/groupFacts";
 import type { PricingRule } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";

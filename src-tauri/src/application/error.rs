@@ -35,7 +35,7 @@ impl From<crate::persistence::error::PersistenceError> for ApplicationError {
             PersistenceError::MissingCompatibilityMetadata
             | PersistenceError::InvalidCompatibilityMetadata
             | PersistenceError::MissingMigrationMetadata => Self::IncompatibleSchema,
-            PersistenceError::MigrationFailed => Self::MigrationFailed,
+            PersistenceError::MigrationFailed(_) => Self::MigrationFailed,
             PersistenceError::IoFailed { .. } => Self::IoFailed,
             PersistenceError::SessionClosed => Self::Internal,
             PersistenceError::InvariantViolation(_) => Self::Internal,
@@ -69,7 +69,9 @@ mod tests {
             ApplicationError::Internal
         ));
         assert!(matches!(
-            ApplicationError::from(PersistenceError::MigrationFailed),
+            ApplicationError::from(PersistenceError::MigrationFailed(
+                "version mismatch".to_string()
+            )),
             ApplicationError::MigrationFailed
         ));
     }

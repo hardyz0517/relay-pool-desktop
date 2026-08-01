@@ -9,6 +9,8 @@ pub mod outbound;
 mod persistence;
 mod runtime_composition;
 mod services;
+#[cfg(debug_assertions)]
+pub mod test_support;
 
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -925,13 +927,20 @@ pub fn run() {
                             app_composition::compose_local_proxy_command_facade(
                                 &app_services,
                                 Arc::clone(&proxy_runtime),
-                                device_keys.clone(),
                             );
                         tauri::async_runtime::block_on(
                             app_services.pricing.ensure_builtin_model_base_prices(),
                         )
                         .map_err(|error| {
                             format!("failed to initialize built-in model prices: {error}")
+                        })?;
+                        tauri::async_runtime::block_on(
+                            app_services
+                                .monitoring
+                                .recover_startup_interrupted_monitoring_executions(),
+                        )
+                        .map_err(|error| {
+                            format!("failed to recover interrupted monitor executions: {error}")
                         })?;
                         let settings = tauri::async_runtime::block_on(app_services.settings.load())
                             .map_err(|error| {

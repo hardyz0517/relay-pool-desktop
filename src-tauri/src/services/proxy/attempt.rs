@@ -1,0 +1,398 @@
+#![allow(
+    dead_code,
+    reason = "Task 20 adds the explicit dual-terminal composition path before Task 22 production cutover"
+)]
+
+use tokio::task::JoinHandle;
+
+use super::{
+    finalization::FinalizationOutcome,
+    lifecycle::{
+        attempt::{AttemptContext, AttemptTerminal, AttemptTerminalRecord},
+        delivery::DeliveryTerminal,
+        request::{AttemptId, PendingFinalRequestRecord, RequestLogAnnotations},
+        writer::{
+            AttemptCostWriteReservation, AttemptWriteReservation,
+            RequestCostAggregateWriteReservation, RequestTerminalReservation,
+        },
+    },
+    limits::RequestLease,
+};
+use crate::{
+    application::request_finalization::{
+        outcome::{
+            aggregate_request_costs, AttemptCostSnapshot, AttemptCostStatus, AttemptUsageSnapshot,
+            AttemptUsageStatus, FrozenPricingAssessment, FrozenPricingBasis, TokenUsage,
+        },
+        outcome_orchestrator::{
+            attempt_cost_commit_record, interrupted_attempt_cost,
+            request_cost_aggregate_commit_record,
+        },
+    },
+    services::time::now_millis_for_services,
+};
+
+pub(crate) struct UpstreamAttemptFinalizationLease {
+    reservation: AttemptWriteReservation,
+    context: AttemptContext,
+}
+
+impl UpstreamAttemptFinalizationLease {
+    pub(crate) fn new(reservation: AttemptWriteReservation, context: AttemptContext) -> Self {
+        Self {
+            reservation,
+            context,
+        }
+    }
+}
+
+pub(crate) struct DownstreamRequestFinalizationLease {
+    terminal: RequestTerminalReservation,
+    request_lease: RequestLease,
+}
+
+impl DownstreamRequestFinalizationLease {
+    pub(crate) fn new(terminal: RequestTerminalReservation, request_lease: RequestLease) -> Self {
+        Self {
+            terminal,
+            request_lease,
+        }
+    }
+}
+
+pub(crate) struct DualTerminalFinalizationLease {
+    request: Option<DownstreamRequestFinalizationLease>,
+    selected_attempt: Option<UpstreamAttemptFinalizationLease>,
+    costs: Option<CostFinalizationReservations>,
+    finalized: bool,
+}
+
+impl DualTerminalFinalizationLease {
+    pub(crate) fn new(
+        request: DownstreamRequestFinalizationLease,
+        selected_attempt: Option<UpstreamAttemptFinalizationLease>,
+        costs: Option<CostFinalizationReservations>,
+    ) -> Self {
+        Self {
+            request: Some(request),
+            selected_attempt,
+            costs,
+            finalized: false,
+        }
+    }
+
+    pub(crate) fn finalize(
+        mut self,
+        record: PendingFinalRequestRecord,
+        delivery: DeliveryTerminal,
+        outcome: FinalizationOutcome,
+        attempt_terminal: Option<AttemptTerminal>,
+        output_committed: bool,
+    ) -> Option<JoinHandle<()>> {
+        if self.finalized {
+            return None;
+        }
+        self.finalized = true;
+        let request = self.request.take()?;
+        let costs = self.costs.take();
+        let attempt =
+            self.selected_attempt
+                .take()
+                .zip(attempt_terminal)
+                .map(|(attempt, terminal)| {
+                    (
+                        AttemptTerminalRecord {
+                            context: attempt.context,
+                            terminal,
+                            output_committed,
+                            terminal_at_ms: now_millis_for_services() as i64,
+                        },
+                        attempt.reservation,
+                    )
+                });
+        Some(tokio::spawn(async move {
+            if let Some((attempt_record, attempt_reservation)) = attempt {
+                let attempt_ack = attempt_reservation.send(attempt_record).await;
+                match attempt_ack {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(_)) | Err(_) => {
+                        drop(request.request_lease);
+                        return;
+                    }
+                }
+            }
+
+            if let Some(costs) = costs {
+                if !costs.write(&record).await {
+                    drop(request.request_lease);
+                    return;
+                }
+            }
+
+            let final_record = match outcome {
+                FinalizationOutcome::Completed => record.complete(delivery),
+                FinalizationOutcome::Failed { code, detail } => record.fail(code, detail, delivery),
+                FinalizationOutcome::Interrupted { detail } => record.interrupt(delivery, detail),
+            };
+            let request_ack = request.terminal.send(final_record).await;
+            let _ = request_ack;
+            drop(request.request_lease);
+        }))
+    }
+}
+
+pub(crate) struct CostFinalizationReservations {
+    attempt_costs: Vec<(u16, AttemptCostWriteReservation)>,
+    aggregate: RequestCostAggregateWriteReservation,
+    selected_attempt_cost: Option<SelectedAttemptCostSnapshot>,
+}
+
+impl CostFinalizationReservations {
+    pub(crate) fn new(
+        attempt_costs: Vec<(u16, AttemptCostWriteReservation)>,
+        aggregate: RequestCostAggregateWriteReservation,
+        selected_attempt_cost: Option<SelectedAttemptCostSnapshot>,
+    ) -> Self {
+        Self {
+            attempt_costs,
+            aggregate,
+            selected_attempt_cost,
+        }
+    }
+
+    async fn write(self, record: &PendingFinalRequestRecord) -> bool {
+        let now_ms = now_millis_for_services() as i64;
+        let request_id = record.context().request_id.clone();
+        let attempted_ordinals = self
+            .attempt_costs
+            .iter()
+            .map(|(ordinal, _)| *ordinal)
+            .collect::<Vec<_>>();
+        let durable_costs = attempted_ordinals
+            .iter()
+            .map(|ordinal| {
+                self.cost_snapshot_for_ordinal(
+                    AttemptId::new(request_id.clone(), *ordinal),
+                    record.annotations(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (ordinal, reservation) in self.attempt_costs {
+            let record = durable_costs
+                .iter()
+                .find(|snapshot| snapshot.attempt_id.ordinal == ordinal)
+                .map(|snapshot| attempt_cost_commit_record(snapshot, now_ms))
+                .unwrap_or_else(|| {
+                    interrupted_attempt_cost(AttemptId::new(request_id.clone(), ordinal), now_ms)
+                });
+            match reservation.send(record).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) | Err(_) => return false,
+            }
+        }
+
+        let Ok(aggregate) = aggregate_request_costs(
+            &attempted_ordinals
+                .iter()
+                .map(|ordinal| AttemptId::new(request_id.clone(), *ordinal))
+                .collect::<Vec<_>>(),
+            &durable_costs,
+        ) else {
+            return false;
+        };
+        let aggregate = request_cost_aggregate_commit_record(request_id, &aggregate, now_ms);
+        match self.aggregate.send(aggregate).await {
+            Ok(Ok(_)) => true,
+            Ok(Err(_)) | Err(_) => false,
+        }
+    }
+
+    fn cost_snapshot_for_ordinal(
+        &self,
+        attempt_id: AttemptId,
+        annotations: &RequestLogAnnotations,
+    ) -> AttemptCostSnapshot {
+        let Some(selected) = self
+            .selected_attempt_cost
+            .as_ref()
+            .filter(|selected| selected.ordinal == attempt_id.ordinal)
+        else {
+            return interrupted_cost_snapshot(attempt_id);
+        };
+        selected.to_cost_snapshot(attempt_id, annotations)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SelectedAttemptCostSnapshot {
+    pub(crate) ordinal: u16,
+    pub(crate) pricing_basis: String,
+    pub(crate) pricing_status_label: String,
+    pub(crate) currency: Option<String>,
+    pub(crate) unit: Option<String>,
+    pub(crate) estimated_input_price: Option<f64>,
+    pub(crate) estimated_output_price: Option<f64>,
+    pub(crate) estimated_fixed_price: Option<f64>,
+}
+
+impl SelectedAttemptCostSnapshot {
+    fn to_cost_snapshot(
+        &self,
+        attempt_id: AttemptId,
+        annotations: &RequestLogAnnotations,
+    ) -> AttemptCostSnapshot {
+        let pricing = self.frozen_pricing();
+        if self.pricing_basis == "not_applicable" {
+            return AttemptCostSnapshot::unavailable(
+                attempt_id,
+                pricing,
+                AttemptUsageSnapshot {
+                    status: AttemptUsageStatus::NotApplicable,
+                    tokens: None,
+                },
+                AttemptCostStatus::NotApplicable,
+            )
+            .expect("not-applicable cost snapshot");
+        }
+
+        let Some(usage) = complete_usage(annotations) else {
+            return AttemptCostSnapshot::unavailable(
+                attempt_id,
+                pricing,
+                AttemptUsageSnapshot {
+                    status: AttemptUsageStatus::MissingUsage,
+                    tokens: None,
+                },
+                AttemptCostStatus::MissingUsage,
+            )
+            .expect("missing-usage cost snapshot");
+        };
+        let usage_snapshot = AttemptUsageSnapshot {
+            status: AttemptUsageStatus::Complete,
+            tokens: Some(usage.clone()),
+        };
+        let Some(total_cost_micro) = self.total_cost_micro(&usage) else {
+            return AttemptCostSnapshot::unavailable(
+                attempt_id,
+                pricing,
+                usage_snapshot,
+                AttemptCostStatus::PricingIncomplete,
+            )
+            .expect("pricing-incomplete cost snapshot");
+        };
+        match AttemptCostSnapshot::priced(
+            attempt_id.clone(),
+            pricing,
+            usage_snapshot,
+            total_cost_micro,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(_) => interrupted_cost_snapshot(attempt_id),
+        }
+    }
+
+    fn frozen_pricing(&self) -> FrozenPricingAssessment {
+        FrozenPricingAssessment {
+            pricing_context_id: format!("selected_attempt_{}", self.ordinal),
+            basis: match self.pricing_basis.as_str() {
+                "exact_price" => FrozenPricingBasis::ExactPrice,
+                "multiplier_proxy" => FrozenPricingBasis::MultiplierProxy,
+                "not_applicable" => FrozenPricingBasis::NotApplicable,
+                _ => FrozenPricingBasis::Unpriced,
+            },
+            currency: self.currency.clone(),
+            input_unit_price_micro: self
+                .estimated_input_price
+                .map(currency_units_to_micro)
+                .map(clamp_f64_to_i64),
+            output_unit_price_micro: self
+                .estimated_output_price
+                .map(currency_units_to_micro)
+                .map(clamp_f64_to_i64),
+            fixed_price_micro: self
+                .estimated_fixed_price
+                .map(currency_units_to_micro)
+                .map(clamp_f64_to_i64),
+            status_label: self.pricing_status_label.clone(),
+        }
+    }
+
+    fn total_cost_micro(&self, usage: &TokenUsage) -> Option<i64> {
+        if self.pricing_basis != "exact_price" {
+            return None;
+        }
+        if self
+            .unit
+            .as_deref()
+            .is_some_and(|unit| !unit.eq_ignore_ascii_case("per_1m_tokens"))
+            && self.estimated_fixed_price.is_none()
+        {
+            return None;
+        }
+        self.currency.as_ref().filter(|value| !value.is_empty())?;
+        let mut total = 0.0_f64;
+        let mut has_component = false;
+        if let Some(price) = self.estimated_input_price.filter(|value| value.is_finite()) {
+            total +=
+                currency_units_to_micro(price) * usage.input_tokens.max(0) as f64 / 1_000_000.0;
+            has_component = true;
+        }
+        if let Some(price) = self
+            .estimated_output_price
+            .filter(|value| value.is_finite())
+        {
+            total +=
+                currency_units_to_micro(price) * usage.output_tokens.max(0) as f64 / 1_000_000.0;
+            has_component = true;
+        }
+        if let Some(price) = self.estimated_fixed_price.filter(|value| value.is_finite()) {
+            total += currency_units_to_micro(price);
+            has_component = true;
+        }
+        has_component.then(|| clamp_f64_to_i64(total))
+    }
+}
+
+fn complete_usage(annotations: &RequestLogAnnotations) -> Option<TokenUsage> {
+    let input_tokens = annotations.prompt_tokens?;
+    let output_tokens = annotations.completion_tokens?;
+    let total_tokens = annotations
+        .total_tokens
+        .unwrap_or_else(|| input_tokens.saturating_add(output_tokens));
+    Some(TokenUsage {
+        input_tokens,
+        output_tokens,
+        total_tokens,
+        cache_creation_tokens: annotations.cache_creation_tokens,
+        cache_read_tokens: annotations.cache_read_tokens,
+    })
+}
+
+fn interrupted_cost_snapshot(attempt_id: AttemptId) -> AttemptCostSnapshot {
+    AttemptCostSnapshot::unavailable(
+        attempt_id.clone(),
+        FrozenPricingAssessment {
+            pricing_context_id: "trace_incomplete".to_string(),
+            basis: FrozenPricingBasis::Unpriced,
+            currency: None,
+            input_unit_price_micro: None,
+            output_unit_price_micro: None,
+            fixed_price_micro: None,
+            status_label: "trace_incomplete".to_string(),
+        },
+        AttemptUsageSnapshot {
+            status: AttemptUsageStatus::MissingUsage,
+            tokens: None,
+        },
+        AttemptCostStatus::MissingUsage,
+    )
+    .expect("interrupted cost snapshot")
+}
+
+fn currency_units_to_micro(value: f64) -> f64 {
+    value * 1_000_000.0
+}
+
+fn clamp_f64_to_i64(value: f64) -> i64 {
+    value.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64
+}

@@ -12,12 +12,17 @@ use sqlx::{
 use crate::persistence::{
     backup::{create_verified_backup_from_path, validate_read_only_sqlite},
     error::PersistenceError,
+    maintenance::request_log_url_sanitizer::{
+        sanitize_request_log_upstream_urls, sanitize_request_log_upstream_urls_before_schema18,
+        RequestLogUrlSanitizerOptions,
+    },
     schema_compatibility::{decide_open_mode, load_schema_compatibility, BinaryCompatibility},
     schema_registry,
 };
 
 pub(crate) fn migrator() -> &'static sqlx::migrate::Migrator {
-    schema_registry::migrator()
+    static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/persistence/migrations");
+    &MIGRATOR
 }
 
 pub(crate) async fn applied_schema_version<'e, E>(executor: E) -> Result<i64, PersistenceError>
@@ -40,7 +45,6 @@ where
 }
 
 pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), PersistenceError> {
-    schema_registry::validate_migration_registry()?;
     if path.exists() {
         return Err(PersistenceError::InvariantViolation(
             "generation 2 database already exists".to_string(),
@@ -51,21 +55,34 @@ pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), Persistenc
     }
     let pool = migration_pool_create(path).await?;
     migrator().run(&pool).await?;
-    let latest_schema = current_schema_version();
-    sqlx::query!(
-        r#"
-        UPDATE persistence_schema_compatibility
-        SET schema_version = ?1,
-            min_reader_app_version = '0.3.3',
-            min_writer_app_version = '0.3.3',
-            updated_by_migration = ?1,
-            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-        WHERE singleton_key = 1
-        "#,
-        latest_schema,
-    )
-    .execute(&pool)
-    .await?;
+    sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default()).await?;
+    let compatibility = load_schema_compatibility(&pool).await?;
+    let schema_version = applied_schema_version(&pool).await?;
+    decide_open_mode(
+        &current_binary_compatibility(),
+        &compatibility,
+        schema_version,
+    )?;
+    pool.close().await;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) async fn initialize_v2_database_at_schema_for_test(
+    path: &Path,
+    target_schema: i64,
+) -> Result<(), PersistenceError> {
+    if path.exists() {
+        return Err(PersistenceError::InvariantViolation(
+            "generation 2 database already exists".to_string(),
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let pool = migration_pool_create(path).await?;
+    let bounded = migrator_through(target_schema)?;
+    bounded.run(&pool).await?;
     pool.close().await;
     Ok(())
 }
@@ -73,7 +90,6 @@ pub(crate) async fn initialize_v2_database(path: &Path) -> Result<(), Persistenc
 pub(crate) async fn upgrade_existing_v2_database(
     path: &Path,
 ) -> Result<Option<PathBuf>, PersistenceError> {
-    schema_registry::validate_migration_registry()?;
     if !path.is_file() {
         return Err(PersistenceError::MissingDatabase);
     }
@@ -84,6 +100,10 @@ pub(crate) async fn upgrade_existing_v2_database(
     let binary = current_binary_compatibility();
     let open_mode = decide_open_mode(&binary, &compatibility, schema_version)?;
     if open_mode == crate::persistence::schema_compatibility::OpenMode::Writable {
+        if schema_version >= 18 {
+            sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default())
+                .await?;
+        }
         pool.close().await;
         return Ok(None);
     }
@@ -95,12 +115,12 @@ pub(crate) async fn upgrade_existing_v2_database(
             "generation 2 schema is not eligible for an in-place upgrade".to_string(),
         ));
     }
-    if schema_version < schema_registry::ENCRYPTED_SECRET_BASELINE_SCHEMA {
-        pool.close().await;
-        return Err(PersistenceError::InvariantViolation(
-            "generation 2 schema must reach the encrypted-secret baseline before latest migration"
-                .to_string(),
-        ));
+    if (5..18).contains(&schema_version) {
+        sanitize_request_log_upstream_urls_before_schema18(
+            &pool,
+            RequestLogUrlSanitizerOptions::default(),
+        )
+        .await?;
     }
     pool.close().await;
 
@@ -112,6 +132,7 @@ pub(crate) async fn upgrade_existing_v2_database(
         pool.close().await;
         return Err(error.into());
     }
+    sanitize_request_log_upstream_urls(&pool, RequestLogUrlSanitizerOptions::default()).await?;
     let compatibility = load_schema_compatibility(&pool).await?;
     let schema_version = applied_schema_version(&pool).await?;
     let mode = decide_open_mode(&binary, &compatibility, schema_version)?;
@@ -139,15 +160,15 @@ pub(crate) async fn upgrade_existing_v2_database_to_schema(
 
     let pool = migration_pool_existing(path).await?;
     let compatibility = load_schema_compatibility(&pool).await?;
-    let sqlx_version = applied_schema_version(&pool).await?;
+    let schema_version = applied_schema_version(&pool).await?;
     let binary = current_binary_compatibility();
-    let open_mode = decide_open_mode(&binary, &compatibility, sqlx_version)?;
-    if compatibility.schema_version == target_schema && sqlx_version >= target_schema {
+    let open_mode = decide_open_mode(&binary, &compatibility, schema_version)?;
+    if compatibility.schema_version == target_schema && schema_version >= target_schema {
         pool.close().await;
         return Ok(None);
     }
     if compatibility.schema_version > target_schema
-        || sqlx_version != compatibility.schema_version
+        || schema_version != compatibility.schema_version
         || open_mode == crate::persistence::schema_compatibility::OpenMode::Writable
     {
         pool.close().await;
@@ -168,9 +189,9 @@ pub(crate) async fn upgrade_existing_v2_database_to_schema(
         return Err(error.into());
     }
     let compatibility = load_schema_compatibility(&pool).await?;
-    let sqlx_version = applied_schema_version(&pool).await?;
+    let schema_version = applied_schema_version(&pool).await?;
     pool.close().await;
-    if compatibility.schema_version != target_schema || sqlx_version != target_schema {
+    if compatibility.schema_version != target_schema || schema_version != target_schema {
         return Err(PersistenceError::InvariantViolation(
             "bounded schema upgrade did not reach the requested target".to_string(),
         ));
@@ -184,7 +205,11 @@ pub(crate) fn current_binary_compatibility() -> BinaryCompatibility {
 }
 
 pub(crate) fn current_schema_version() -> i64 {
-    schema_registry::latest_schema()
+    migrator()
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .unwrap_or_default()
 }
 
 async fn migration_pool_create(database_path: &Path) -> Result<sqlx::SqlitePool, PersistenceError> {
@@ -223,7 +248,14 @@ fn schema_upgrade_backup_path(
     database_path: &Path,
     source_schema: i64,
 ) -> Result<PathBuf, PersistenceError> {
-    schema_upgrade_backup_path_to_schema(database_path, source_schema, current_schema_version())
+    let parent = database_path.parent().ok_or(PersistenceError::IoFailed {
+        kind: std::io::ErrorKind::InvalidInput,
+    })?;
+    Ok(parent.join("backups").join(format!(
+        "relay-pool-v2-schema-{source_schema}-to-{}-{}.sqlite3",
+        current_schema_version(),
+        uuid::Uuid::now_v7()
+    )))
 }
 
 fn schema_upgrade_backup_path_to_schema(
@@ -235,8 +267,7 @@ fn schema_upgrade_backup_path_to_schema(
         kind: std::io::ErrorKind::InvalidInput,
     })?;
     Ok(parent.join("backups").join(format!(
-        "relay-pool-v2-schema-{source_schema}-to-{}-{}.sqlite3",
-        target_schema,
+        "relay-pool-v2-schema-{source_schema}-to-{target_schema}-{}.sqlite3",
         uuid::Uuid::now_v7()
     )))
 }
@@ -266,31 +297,13 @@ pub(crate) fn migrator_through(
 }
 
 #[cfg(test)]
-pub(crate) async fn initialize_v2_database_at_schema_for_test(
-    path: &Path,
-    target_schema: i64,
-) -> Result<(), PersistenceError> {
-    if path.exists() {
-        return Err(PersistenceError::InvariantViolation(
-            "generation 2 database already exists".to_string(),
-        ));
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let pool = migration_pool_create(path).await?;
-    migrator_through(target_schema)?.run(&pool).await?;
-    pool.close().await;
-    Ok(())
-}
-
-#[cfg(test)]
 mod tests {
     use std::borrow::Cow;
 
-    use sqlx::{migrate::Migrator, query, Row};
+    use sqlx::{migrate::Migrator, Row};
 
     use super::*;
+    use crate::persistence::runtime::PersistenceRuntime;
 
     #[tokio::test]
     async fn current_schema_seeds_builtin_monitor_templates_idempotently() {
@@ -325,43 +338,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn existing_schema_is_backed_up_and_migrated_to_structural_baseline() {
+    async fn existing_schema_is_backed_up_and_migrated_to_current() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");
         initialize_database_through(&path, 9).await;
         write_migration_canary(&path).await;
 
-        let backup = upgrade_existing_v2_database_to_schema(
-            &path,
-            schema_registry::PRE_SECRET_BASELINE_SCHEMA,
-        )
-        .await
-        .expect("upgrade schema")
-        .expect("backup path");
+        let backup = upgrade_existing_v2_database(&path)
+            .await
+            .expect("upgrade schema")
+            .expect("backup path");
 
         assert!(backup.is_file());
         assert_eq!(database_schema_version(&backup).await, 9);
         assert_eq!(
             database_schema_version(&path).await,
-            schema_registry::PRE_SECRET_BASELINE_SCHEMA
+            current_schema_version()
         );
         assert_eq!(read_migration_canary(&backup).await, "preserved");
         assert_eq!(read_migration_canary(&path).await, "preserved");
-    }
-
-    #[tokio::test]
-    async fn pre_baseline_schema_cannot_run_unbounded_latest_migration() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let path = root.path().join("relay-pool-v2.sqlite3");
-        initialize_database_through(&path, 15).await;
-
-        let error = upgrade_existing_v2_database(&path)
+        let runtime = PersistenceRuntime::open_current(&path)
             .await
-            .expect_err("pre-baseline schema must be bounded first");
-
-        assert!(
-            matches!(error, PersistenceError::InvariantViolation(message) if message.contains("encrypted-secret baseline"))
+            .expect("open migrated runtime");
+        assert_eq!(
+            runtime.health().await.expect("health").open_mode,
+            "writable"
         );
+        runtime.close().await.expect("close runtime");
     }
 
     #[tokio::test]
@@ -382,47 +385,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schema_registry_is_the_single_latest_schema_source() {
-        let latest_from_migrator = migrator()
-            .iter()
-            .map(|migration| migration.version)
-            .max()
-            .expect("embedded migrations");
-
-        assert_eq!(current_schema_version(), latest_from_migrator);
-        assert_eq!(
-            current_binary_compatibility().writable_schema,
-            std::collections::BTreeSet::from([current_schema_version()])
-        );
-    }
-
-    #[tokio::test]
-    async fn fresh_database_metadata_matches_registry_latest_schema() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let path = root.path().join("relay-pool-v2.sqlite3");
-        initialize_v2_database(&path)
-            .await
-            .expect("initialize database");
-
-        let pool = migration_pool_existing(&path).await.expect("open database");
-        let sqlx_schema = applied_schema_version(&pool).await.expect("sqlx schema");
-        let compatibility = query(
-            "SELECT schema_version, updated_by_migration
-             FROM persistence_schema_compatibility
-             WHERE singleton_key = 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("compatibility metadata");
-        pool.close().await;
-
-        let latest = current_schema_version();
-        assert_eq!(sqlx_schema, latest);
-        assert_eq!(compatibility.get::<i64, _>("schema_version"), latest);
-        assert_eq!(compatibility.get::<i64, _>("updated_by_migration"), latest);
-    }
-
-    #[tokio::test]
     async fn remote_key_upgrade_repairs_duplicate_local_owners_before_enforcing_uniqueness() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");
@@ -430,7 +392,7 @@ mod tests {
         let pool = migration_pool_existing(&path)
             .await
             .expect("migration pool");
-        query(
+        sqlx::query(
             "INSERT INTO stations (
                 id, name, station_type, website_url, api_base_url, created_at, updated_at
              ) VALUES ('station-1', 'Station', 'sub2api', 'https://example.test',
@@ -439,7 +401,7 @@ mod tests {
         .execute(&pool)
         .await
         .expect("insert station");
-        query(
+        sqlx::query(
             "INSERT INTO station_keys (id, station_id, note)
              VALUES ('local-1', 'station-1', '由远端发现开关自动创建：remote-owned')",
         )
@@ -449,7 +411,7 @@ mod tests {
         for (id, confidence, collected_at) in
             [("remote-other", 1.0, "3"), ("remote-owned", 0.9, "2")]
         {
-            query(
+            sqlx::query(
                 "INSERT INTO remote_station_keys (
                     id, station_id, remote_key_id_hash, raw_source, match_status,
                     matched_station_key_id, match_confidence, collected_at, updated_at
@@ -465,7 +427,7 @@ mod tests {
         }
         pool.close().await;
 
-        upgrade_existing_v2_database_to_schema(&path, 11)
+        upgrade_existing_v2_database(&path)
             .await
             .expect("upgrade schema");
 
@@ -485,7 +447,7 @@ mod tests {
         .await
         .expect("repaired duplicate");
         assert_eq!(repaired, ("unbound".to_string(), None, 0.0));
-        let duplicate = query(
+        let duplicate = sqlx::query(
             "UPDATE remote_station_keys
              SET matched_station_key_id = 'local-1', match_status = 'matched'
              WHERE id = 'remote-other'",
@@ -507,7 +469,7 @@ mod tests {
         let pool = migration_pool_existing(&path)
             .await
             .expect("migration pool");
-        query(
+        sqlx::query(
             "INSERT INTO stations (
                 id, name, station_type, website_url, api_base_url, created_at, updated_at
              ) VALUES (
@@ -527,7 +489,7 @@ mod tests {
             ("grok-v1", "grok_cli_compat", 1),
             ("codex-future", "codex_cli_compat", 3),
         ] {
-            query(
+            sqlx::query(
                 "INSERT INTO channel_monitors (
                     id, name, target_type, station_id, template_id,
                     interval_seconds, timeout_seconds, created_at, updated_at,
@@ -546,7 +508,7 @@ mod tests {
         }
         pool.close().await;
 
-        upgrade_existing_v2_database_to_schema(&path, 14)
+        upgrade_existing_v2_database(&path)
             .await
             .expect("upgrade schema");
 
@@ -594,7 +556,7 @@ mod tests {
 
     async fn database_schema_version(path: &Path) -> i64 {
         let pool = migration_pool_existing(path).await.expect("open database");
-        let row = query(
+        let row = sqlx::query(
             "SELECT schema_version FROM persistence_schema_compatibility WHERE singleton_key = 1",
         )
         .fetch_one(&pool)
@@ -607,7 +569,7 @@ mod tests {
 
     async fn write_migration_canary(path: &Path) {
         let pool = migration_pool_existing(path).await.expect("open database");
-        query(
+        sqlx::query(
             "INSERT INTO settings (key, value, updated_at) VALUES ('schema-upgrade-canary', 'preserved', '1')",
         )
         .execute(&pool)
@@ -618,7 +580,7 @@ mod tests {
 
     async fn read_migration_canary(path: &Path) -> String {
         let pool = migration_pool_existing(path).await.expect("open database");
-        let row = query("SELECT value FROM settings WHERE key = 'schema-upgrade-canary'")
+        let row = sqlx::query("SELECT value FROM settings WHERE key = 'schema-upgrade-canary'")
             .fetch_one(&pool)
             .await
             .expect("read canary");

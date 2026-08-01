@@ -41,6 +41,7 @@ impl CaptureSessionStore {
         station_id: String,
         window_label: String,
         endpoint_revision: i64,
+        web_authorization_cookie_url: String,
     ) -> Result<CaptureSessionStatus, String> {
         let mut sessions = self.sessions()?;
         if sessions
@@ -54,6 +55,7 @@ impl CaptureSessionStore {
             window_label,
             generation: NEXT_CAPTURE_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed),
             endpoint_revision,
+            web_authorization_cookie_url,
             phase: CaptureSessionPhase::Capturing,
             active_commit_id: None,
             events: Vec::new(),
@@ -108,6 +110,14 @@ impl CaptureSessionStore {
                     generation: session.generation,
                 })
         }))
+    }
+
+    pub fn web_authorization_cookie_url(&self, station_id: &str) -> Result<String, String> {
+        let sessions = self.sessions()?;
+        sessions
+            .get(station_id)
+            .map(|session| session.web_authorization_cookie_url.clone())
+            .ok_or_else(|| "capture session does not exist".to_string())
     }
 
     pub(crate) fn begin_finish(&self, station_id: &str) -> Result<CaptureCommit, String> {
@@ -242,6 +252,7 @@ struct CaptureSession {
     window_label: String,
     generation: u64,
     endpoint_revision: i64,
+    web_authorization_cookie_url: String,
     phase: CaptureSessionPhase,
     active_commit_id: Option<u64>,
     events: Vec<CapturedHttpEvent>,
@@ -325,7 +336,12 @@ mod tests {
     fn authorization_candidate_is_retained_in_native_session_state() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("start capture");
 
         let status = push_authorization_candidate(&store, captured_event(), "42");
@@ -337,7 +353,12 @@ mod tests {
     fn event_from_another_window_is_rejected_before_session_mutation() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("start capture");
         let mut event = captured_event();
         event.source_window_id = "capture-station-2".to_string();
@@ -354,7 +375,12 @@ mod tests {
     fn stale_authorization_candidate_cannot_commit_after_session_restart() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("start first capture");
         push_authorization_candidate(&store, captured_event(), "42");
         let candidate = store
@@ -363,7 +389,12 @@ mod tests {
             .expect("candidate exists");
 
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("replace capture");
         let error = store
             .begin_web_authorization_commit("station-1", &candidate)
@@ -376,7 +407,12 @@ mod tests {
     fn current_authorization_candidate_commits_and_returns_its_events() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("start capture");
         push_authorization_candidate(&store, captured_event(), "42");
         let candidate = store
@@ -403,7 +439,12 @@ mod tests {
     fn capture_session_retains_its_start_revision() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("start capture");
 
         let receipt = store
@@ -416,7 +457,12 @@ mod tests {
     fn capture_commit_blocks_mutation_and_abort_restores_the_session() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("start capture");
         let commit = store.begin_finish("station-1").expect("begin finish");
 
@@ -438,7 +484,12 @@ mod tests {
     fn stale_commit_token_cannot_complete_a_new_attempt() {
         let store = CaptureSessionStore::default();
         store
-            .start("station-1".to_string(), "capture-station-1".to_string(), 4)
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
             .expect("start capture");
         let first = store.begin_finish("station-1").expect("first commit");
         store

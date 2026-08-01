@@ -13,6 +13,8 @@ import {
 } from "@/app/pageTransitionPolicy";
 import { AddKeyPage, EditKeyPage } from "@/features/key-pool";
 import { ModelBasePricesPage } from "@/features/pricing";
+import type { RequestLogDeepLink, VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
+import type { RoutingDeepLink, VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { AddProviderPage, StationDetailPage } from "@/features/stations";
 import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
@@ -38,6 +40,10 @@ export function App() {
   const [detailStationPreview, setDetailStationPreview] = useState<Station | null>(null);
   const [initialKeyStationId, setInitialKeyStationId] = useState<string | null>(null);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
+  const [routingDeepLink, setRoutingDeepLink] = useState<VersionedRoutingDeepLink | null>(null);
+  const [requestLogDeepLink, setRequestLogDeepLink] = useState<VersionedRequestLogDeepLink | null>(null);
+  const routingDeepLinkSequenceRef = useRef(0);
+  const requestLogDeepLinkSequenceRef = useRef(0);
   const lastShellFocusTargetRef = useRef<HTMLElement | null>(null);
   const transientReturnFocusRef = useRef<HTMLElement | null>(null);
   const activeRouteIdRef = useRef<AppPageId>(activeRouteId);
@@ -184,6 +190,18 @@ export function App() {
     navigateTo("modelBasePrices");
   }, [navigateTo]);
 
+  const openRoutingDeepLink = useCallback((link: RoutingDeepLink) => {
+    routingDeepLinkSequenceRef.current += 1;
+    setRoutingDeepLink({ ...link, sequence: routingDeepLinkSequenceRef.current });
+    navigateTo("routing");
+  }, [navigateTo]);
+
+  const openRequestLogDeepLink = useCallback((link: RequestLogDeepLink) => {
+    requestLogDeepLinkSequenceRef.current += 1;
+    setRequestLogDeepLink({ ...link, sequence: requestLogDeepLinkSequenceRef.current });
+    navigateTo("logs");
+  }, [navigateTo]);
+
   const shellPageActions = useMemo<ShellPageActions>(
     () => ({
       addProvider: openAddProvider,
@@ -192,8 +210,23 @@ export function App() {
       addKey: openAddKey,
       editKey: openEditKey,
       openModelBasePrices,
+      openRoutingDeepLink,
+      routingDeepLink,
+      openRequestLogDeepLink,
+      requestLogDeepLink,
     }),
-    [openAddProvider, openEditProvider, openStationDetail, openAddKey, openEditKey, openModelBasePrices],
+    [
+      openAddProvider,
+      openEditProvider,
+      openStationDetail,
+      openAddKey,
+      openEditKey,
+      openModelBasePrices,
+      openRoutingDeepLink,
+      routingDeepLink,
+      openRequestLogDeepLink,
+      requestLogDeepLink,
+    ],
   );
 
   function renderTransientPage(pageId: TransientPageId): TransientPageDescriptor {
@@ -228,6 +261,7 @@ export function App() {
               initialStation={detailStationPreview}
               onBack={returnToStations}
               onEditProvider={openEditProvider}
+              onOpenRoutingDeepLink={openRoutingDeepLink}
             />
           ),
         };
@@ -263,6 +297,7 @@ export function App() {
             <ModelBasePricesPage
               backLabel={`返回${activeShellRouteLabel}`}
               onBack={() => navigateTo(activeShellRouteId)}
+              onOpenRoutingDeepLink={openRoutingDeepLink}
             />
           ),
         };

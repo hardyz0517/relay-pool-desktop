@@ -13,61 +13,12 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "3115c408311fefdac9c86297e2294c712b6cab5e618903fed6c7fb9cd386baf8";
+    "14a2e19e87b26913e688cbeb22f97bf8aac7bcdd55fb47c022124bd3fbfd6425";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
 pub struct CommandDescriptor {
     pub name: &'static str,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandAdmissionClass {
-    Read,
-    Mutation,
-    MaintenanceRead,
-    MaintenanceActivity,
-    ActivationCommit,
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn command_admission_class(command: &str) -> Option<CommandAdmissionClass> {
-    if !COMMANDS.iter().any(|descriptor| descriptor.name == command) {
-        return None;
-    }
-    Some(match command {
-        "get_operation_status"
-        | "app_status"
-        | "get_runtime_contract_info"
-        | "get_runtime_status"
-        | "get_data_store_startup_state"
-        | "refresh_data_store_candidates"
-        | "locate_data_store_candidate"
-        | "open_data_store_backup_dir"
-        | "export_data_store_diagnostic"
-        | "updater_network_config"
-        | "inspect_latest_update_manifest"
-        | "test_station_login_input" => CommandAdmissionClass::Read,
-        "choose_portable_export_path"
-        | "choose_portable_import_file"
-        | "start_portable_export"
-        | "start_portable_import_inspection" => CommandAdmissionClass::MaintenanceRead,
-        "start_portable_import_prepare" => CommandAdmissionClass::MaintenanceActivity,
-        "resolve_change_event" => CommandAdmissionClass::Mutation,
-        name if command_name_is_read_like(name) => CommandAdmissionClass::Read,
-        _ => CommandAdmissionClass::Mutation,
-    })
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn command_name_is_read_like(command: &str) -> bool {
-    command.starts_with("get_")
-        || command.starts_with("list_")
-        || command.starts_with("load_")
-        || command.starts_with("resolve_")
-        || command.starts_with("simulate_")
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -134,6 +85,7 @@ macro_rules! ipc_command_registry {
             updater_network_config => $crate::commands::updater::updater_network_config,
             inspect_latest_update_manifest => $crate::commands::updater::inspect_latest_update_manifest,
             update_settings => $crate::commands::settings::update_settings,
+            confirm_hierarchical_routing_migration => $crate::commands::settings::confirm_hierarchical_routing_migration,
             choose_data_dir => $crate::commands::data_directory::choose_data_dir,
             reset_data_dir => $crate::commands::data_directory::reset_data_dir,
             get_proxy_status => $crate::commands::local_proxy::get_proxy_status,
@@ -170,6 +122,11 @@ macro_rules! ipc_command_registry {
             delete_model_alias => $crate::commands::model_aliases::delete_model_alias,
             list_station_key_health => $crate::commands::routing_health::list_station_key_health,
             list_station_endpoint_health => $crate::commands::routing_health::list_station_endpoint_health,
+            load_routing_workspace_snapshot => $crate::commands::routing_health::load_routing_workspace_snapshot,
+            load_routing_runtime_overlay => $crate::commands::routing_health::load_routing_runtime_overlay,
+            list_recent_route_decisions => $crate::commands::routing_health::list_recent_route_decisions,
+            get_station_key_operational_detail => $crate::commands::routing_health::get_station_key_operational_detail,
+            get_request_decision_trace => $crate::commands::routing_health::get_request_decision_trace,
             list_channel_monitors => $crate::commands::channel_monitoring::list_channel_monitors,
             load_channel_status_workspace => $crate::commands::channel_status::load_channel_status_workspace,
             list_channel_monitor_executions => $crate::commands::channel_status::list_channel_monitor_executions,
@@ -286,7 +243,6 @@ struct RegistryCommand<'a> {
     output_schema_hash: String,
     error_schema_hash: String,
     mutation_kind: &'static str,
-    admission_class: CommandAdmissionClass,
     transport_retry: bool,
     result_unknown: bool,
     runtime_validation: &'static str,
@@ -337,6 +293,12 @@ fn command_contract(name: &str) -> CommandContract {
         "update_settings" => {
             migrated_mutation("UpdateSettingsInputDto", "SettingsDto", "idempotent", false)
         }
+        "confirm_hierarchical_routing_migration" => migrated_mutation(
+            "ConfirmHierarchicalRoutingMigrationInputDto",
+            "SettingsDto",
+            "idempotent",
+            false,
+        ),
         "create_station" => migrated_mutation(
             "CreateStationInputDto",
             "StationDto",
@@ -731,6 +693,24 @@ fn command_contract(name: &str) -> CommandContract {
         "list_station_endpoint_health" => {
             migrated_read("EmptyInputDto", "Vec<StationEndpointHealthDto>")
         }
+        "load_routing_workspace_snapshot" => migrated_read(
+            "RoutingWorkspaceSnapshotInputDto",
+            "RoutingWorkspaceSnapshotDto",
+        ),
+        "load_routing_runtime_overlay" => {
+            migrated_read("EmptyInputDto", "RoutingRuntimeOverlayDto")
+        }
+        "list_recent_route_decisions" => migrated_read(
+            "RecentRouteDecisionsInputDto",
+            "RecentRouteDecisionsPageDto",
+        ),
+        "get_station_key_operational_detail" => migrated_read(
+            "StationKeyOperationalDetailInputDto",
+            "StationKeyOperationalDetailDto",
+        ),
+        "get_request_decision_trace" => {
+            migrated_read("RequestDecisionTraceInputDto", "RequestDecisionTraceDto")
+        }
         "get_station_key_health" => {
             migrated_read("RoutingStationKeyIdInputDto", "StationKeyHealthDto")
         }
@@ -815,12 +795,18 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_mutation("EmptyInputDto", "ProxyStatusDto", "non_idempotent", true)
         }
         "get_data_store_startup_state" => migrated_read("EmptyInputDto", "DataStoreStartupViewDto"),
-        "refresh_data_store_candidates" => {
-            migrated_read("EmptyInputDto", "DataStoreStartupViewDto")
-        }
-        "locate_data_store_candidate" => {
-            migrated_read("EmptyInputDto", "Option<DataStoreCandidateViewDto>")
-        }
+        "refresh_data_store_candidates" => migrated_mutation(
+            "EmptyInputDto",
+            "DataStoreStartupViewDto",
+            "idempotent",
+            false,
+        ),
+        "locate_data_store_candidate" => migrated_mutation(
+            "EmptyInputDto",
+            "Option<DataStoreCandidateViewDto>",
+            "non_idempotent",
+            true,
+        ),
         "activate_data_store_candidate" => migrated_mutation(
             "ActivateDataStoreCandidateInputDto",
             "ActivationResultDto",
@@ -833,8 +819,12 @@ fn command_contract(name: &str) -> CommandContract {
             "non_idempotent",
             true,
         ),
-        "open_data_store_backup_dir" => migrated_read("EmptyInputDto", "unit"),
-        "export_data_store_diagnostic" => migrated_read("EmptyInputDto", "Option<String>"),
+        "open_data_store_backup_dir" => {
+            migrated_mutation("EmptyInputDto", "unit", "non_idempotent", true)
+        }
+        "export_data_store_diagnostic" => {
+            migrated_mutation("EmptyInputDto", "Option<String>", "non_idempotent", true)
+        }
         "get_portable_migration_capability" => {
             migrated_read("EmptyInputDto", "PortableMigrationCapabilityDto")
         }
@@ -1005,6 +995,7 @@ fn pilot_serialization_fixture() -> String {
         collector_timeout_seconds: 15,
         collector_max_concurrency: 3,
         allow_depleted_fallback: false,
+        hierarchical_routing_migration: None,
         developer_mode_enabled: false,
         tray_behavior: "close_to_tray".into(),
         data_dir: "fixture-data-dir-redacted".into(),
@@ -1023,6 +1014,18 @@ fn pilot_serialization_fixture() -> String {
         "developerModeEnabled": false
     }))
     .expect("settings fixture input");
+    let hierarchical_migration =
+        super::dto::settings::ConfirmHierarchicalRoutingMigrationInputDto::parse(
+            serde_json::json!({
+                "orderingProfile": "cost_first",
+                "multiplierCeiling": 2.0,
+                "groupScope": "all_groups",
+                "allowDepletedFallback": false,
+                "affinityMode": "session",
+                "legacyPolicy": "cost_stable_first"
+            }),
+        )
+        .expect("hierarchical migration fixture input");
     let create_station = super::dto::stations::CreateStationInputDto::parse(serde_json::json!({
         "name": "Fixture Station", "stationType": "newapi",
         "websiteUrl": "https://provider.invalid", "apiBaseUrl": "https://provider.invalid/v1",
@@ -1049,7 +1052,8 @@ fn pilot_serialization_fixture() -> String {
     let mut commands = vec![
         serde_json::json!({"command": "get_settings", "input": {}, "output": settings.clone()}),
         serde_json::json!({"command": "list_stations", "input": {}, "output": [station.clone()]}),
-        serde_json::json!({"command": "update_settings", "input": update_settings, "output": settings}),
+        serde_json::json!({"command": "update_settings", "input": update_settings, "output": settings.clone()}),
+        serde_json::json!({"command": "confirm_hierarchical_routing_migration", "input": hierarchical_migration, "output": settings}),
         serde_json::json!({"command": "create_station", "input": create_station, "output": station.clone()}),
         serde_json::json!({"command": "update_station", "input": update_station, "output": station.clone()}),
         serde_json::json!({"command": "delete_station", "input": delete_station, "output": null}),
@@ -1099,6 +1103,18 @@ fn render_typescript(contract_hash: &str) -> String {
         .replace(
             r#"import { invoke } from "@/lib/bridge/transport";"#,
             r#"import { invoke, invokeNonIdempotent } from "@/lib/bridge/transport";"#,
+        )
+        .replace(
+            r#"export function updateSettings(input: UpdateSettingsInputDto): Promise<SettingsDto> {
+  return invokeCommand<SettingsDto>("update_settings", { input });
+}"#,
+            r#"export function updateSettings(input: UpdateSettingsInputDto): Promise<SettingsDto> {
+  return invokeCommand<SettingsDto>("update_settings", { input });
+}
+
+export function confirmHierarchicalRoutingMigration(input: ConfirmHierarchicalRoutingMigrationInputDto): Promise<SettingsDto> {
+  return invokeCommand<SettingsDto>("confirm_hierarchical_routing_migration", { input });
+}"#,
         )
         .replace(
             r#"return invokeCommand<StationDto>("create_station", { input });"#,
@@ -1442,6 +1458,26 @@ export function listStationEndpointHealth(input: EmptyInputDto = {}): Promise<St
   return invokeCommand<StationEndpointHealthDto[]>("list_station_endpoint_health", { input });
 }
 
+export function loadRoutingWorkspaceSnapshot(input: RoutingWorkspaceSnapshotInputDto = {}): Promise<RoutingWorkspaceSnapshotDto> {
+  return invokeCommand<RoutingWorkspaceSnapshotDto>("load_routing_workspace_snapshot", { input });
+}
+
+export function loadRoutingRuntimeOverlay(input: EmptyInputDto = {}): Promise<RoutingRuntimeOverlayDto> {
+  return invokeCommand<RoutingRuntimeOverlayDto>("load_routing_runtime_overlay", { input });
+}
+
+export function listRecentRouteDecisions(input: RecentRouteDecisionsInputDto = {}): Promise<RecentRouteDecisionsPageDto> {
+  return invokeCommand<RecentRouteDecisionsPageDto>("list_recent_route_decisions", { input });
+}
+
+export function getStationKeyOperationalDetail(input: StationKeyOperationalDetailInputDto): Promise<StationKeyOperationalDetailDto> {
+  return invokeCommand<StationKeyOperationalDetailDto>("get_station_key_operational_detail", { input });
+}
+
+export function getRequestDecisionTrace(input: RequestDecisionTraceInputDto): Promise<RequestDecisionTraceDto> {
+  return invokeCommand<RequestDecisionTraceDto>("get_request_decision_trace", { input });
+}
+
 export function getStationKeyHealth(input: RoutingStationKeyIdInputDto): Promise<StationKeyHealthDto> {
   return invokeCommand<StationKeyHealthDto>("get_station_key_health", { input });
 }
@@ -1670,8 +1706,6 @@ fn render_registry(contract_hash: &str, fixture_hash: &str) -> String {
                 output_schema_hash: sha256(contract.output),
                 error_schema_hash: sha256(contract.error),
                 mutation_kind: contract.mutation_kind,
-                admission_class: command_admission_class(command.name)
-                    .expect("registered command has admission class"),
                 transport_retry: contract.transport_retry,
                 result_unknown: contract.result_unknown,
                 runtime_validation: contract.runtime_validation,
@@ -1724,43 +1758,6 @@ mod tests {
         assert!(names.contains(&"get_settings"));
         assert!(names.contains(&"list_stations"));
         assert!(names.contains(&"get_runtime_contract_info"));
-    }
-
-    #[test]
-    fn every_registered_command_has_central_admission_metadata() {
-        for command in COMMANDS {
-            let admission = command_admission_class(command.name)
-                .unwrap_or_else(|| panic!("{} missing admission metadata", command.name));
-            let contract = command_contract(command.name);
-            let expected = match contract.mutation_kind {
-                "read" => CommandAdmissionClass::Read,
-                "maintenance_read" => CommandAdmissionClass::MaintenanceRead,
-                "maintenance_activity" => CommandAdmissionClass::MaintenanceActivity,
-                _ => CommandAdmissionClass::Mutation,
-            };
-            assert_eq!(
-                admission, expected,
-                "{} command admission should match contract metadata",
-                command.name
-            );
-        }
-        assert_eq!(
-            command_admission_class("create_station"),
-            Some(CommandAdmissionClass::Mutation)
-        );
-        assert_eq!(
-            command_admission_class("list_stations"),
-            Some(CommandAdmissionClass::Read)
-        );
-        assert_eq!(command_admission_class("not_registered"), None);
-        assert_eq!(
-            command_admission_class("start_portable_export"),
-            Some(CommandAdmissionClass::MaintenanceRead)
-        );
-        assert_eq!(
-            command_admission_class("start_portable_import_prepare"),
-            Some(CommandAdmissionClass::MaintenanceActivity)
-        );
     }
 
     #[test]
@@ -2043,6 +2040,31 @@ mod tests {
                 "list_station_endpoint_health",
                 "EmptyInputDto",
                 "Vec<StationEndpointHealthDto>",
+            ),
+            (
+                "load_routing_workspace_snapshot",
+                "RoutingWorkspaceSnapshotInputDto",
+                "RoutingWorkspaceSnapshotDto",
+            ),
+            (
+                "load_routing_runtime_overlay",
+                "EmptyInputDto",
+                "RoutingRuntimeOverlayDto",
+            ),
+            (
+                "list_recent_route_decisions",
+                "RecentRouteDecisionsInputDto",
+                "RecentRouteDecisionsPageDto",
+            ),
+            (
+                "get_station_key_operational_detail",
+                "StationKeyOperationalDetailInputDto",
+                "StationKeyOperationalDetailDto",
+            ),
+            (
+                "get_request_decision_trace",
+                "RequestDecisionTraceInputDto",
+                "RequestDecisionTraceDto",
             ),
             (
                 "get_station_key_health",
@@ -2476,24 +2498,6 @@ mod tests {
             "resetModelBasePricesToBuiltins",
             "upsertPricingRule",
             "deletePricingRule",
-        ] {
-            assert!(
-                source.contains(&format!("function {function}(")),
-                "{function}"
-            );
-        }
-        for function in [
-            "getPortableMigrationCapability",
-            "choosePortableExportPath",
-            "startPortableExport",
-            "getPortableExportResult",
-            "choosePortableImportFile",
-            "startPortableImportInspection",
-            "getPortableImportInspection",
-            "startPortableImportPrepare",
-            "getPortableImportPrepareResult",
-            "getPortableMigrationOperation",
-            "getPortableImportRecoveryState",
         ] {
             assert!(
                 source.contains(&format!("function {function}(")),

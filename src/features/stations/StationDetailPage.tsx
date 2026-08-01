@@ -14,6 +14,7 @@ import type { CollectorSnapshot, CollectorTaskType } from "@/lib/types/collector
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import type { StationCredentials, StationKey } from "@/lib/types/stationKeys";
 import type { Station } from "@/lib/types/stations";
 import {
@@ -31,6 +32,11 @@ type StationDetailPageProps = {
   initialStation?: Station | null;
   onBack: () => void;
   onEditProvider: (stationId: string) => void;
+  onOpenRoutingDeepLink?: (link: StationDetailRoutingDeepLink) => void;
+};
+
+type StationDetailRoutingDeepLink = Extract<RoutingDeepLink, { kind: "station" }> & {
+  source: "station_endpoint_health";
 };
 
 type DetailData = {
@@ -64,6 +70,7 @@ export function StationDetailPage({
   initialStation = null,
   onBack,
   onEditProvider,
+  onOpenRoutingDeepLink,
 }: StationDetailPageProps) {
   const toast = useToast();
   const mountedRef = useRef(true);
@@ -294,6 +301,16 @@ export function StationDetailPage({
       sectionError={sectionError}
       onBack={onBack}
       onEdit={() => onEditProvider(viewModel.station.id)}
+      onOpenRoutingDeepLink={
+        onOpenRoutingDeepLink
+          ? () =>
+              onOpenRoutingDeepLink({
+                kind: "station",
+                stationId: viewModel.station.id,
+                source: "station_endpoint_health",
+              })
+          : undefined
+      }
       onAuthorize={() => void handleManualAuthorization()}
       onRefresh={(action) => void handleRefresh(action)}
     />

@@ -2,7 +2,13 @@ use bytes::Bytes;
 use http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use serde_json::Value;
 
-use crate::models::{proxy::UpstreamApiFormat, routing::RouteEndpointKind};
+use crate::{
+    application::request_finalization::failure::{
+        planning_failure, CanonicalFailure, FailureClass, FailureTarget, LocalAdapterComponent,
+        RetryDisposition,
+    },
+    models::{proxy::UpstreamApiFormat, routing::RouteEndpointKind},
+};
 
 use super::{
     adapters::responses::upstream_responses_path,
@@ -14,7 +20,6 @@ use super::{
     responses_chat_fallback::{
         normalize_for_chat, normalize_for_chat_streaming, responses_fallback_error_message,
     },
-    routing_types::RouteCandidate,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,10 +40,10 @@ impl EndpointAdapter {
         }
     }
 
-    pub(crate) fn prepare(
+    pub(crate) fn prepare_for_format(
         self,
         request: &CanonicalProxyRequest,
-        candidate: &RouteCandidate,
+        upstream_api_format: UpstreamApiFormat,
         mapped_model: Option<&str>,
     ) -> Result<PreparedUpstreamRequest, ProxyFailure> {
         match self {
@@ -87,7 +92,7 @@ impl EndpointAdapter {
                     },
                 ),
             }),
-            Self::Responses => prepare_responses(request, candidate, mapped_model),
+            Self::Responses => prepare_responses(request, upstream_api_format, mapped_model),
         }
     }
 }
@@ -118,11 +123,11 @@ pub(crate) fn response_headers_for_downstream(headers: &HeaderMap) -> HeaderMap 
 
 fn prepare_responses(
     request: &CanonicalProxyRequest,
-    candidate: &RouteCandidate,
+    upstream_api_format: UpstreamApiFormat,
     mapped_model: Option<&str>,
 ) -> Result<PreparedUpstreamRequest, ProxyFailure> {
     if matches!(
-        candidate.upstream_api_format,
+        upstream_api_format,
         UpstreamApiFormat::OpenAiChatCompletions
     ) {
         let body = parse_json_body(&request.body)?;
@@ -169,7 +174,7 @@ fn prepare_responses(
 
     Ok(PreparedUpstreamRequest {
         method: Method::POST,
-        path: upstream_responses_path(&candidate.upstream_api_format).to_string(),
+        path: upstream_responses_path(&upstream_api_format).to_string(),
         headers: upstream_headers(
             &request.forwarded_headers,
             Some(if request.stream {
@@ -294,6 +299,26 @@ fn responses_chat_fallback_failure(message: impl Into<String>) -> ProxyFailure {
     )
 }
 
+pub(crate) fn endpoint_adapter_error_semantic(code: ProxyFailureCode) -> Option<CanonicalFailure> {
+    match code {
+        ProxyFailureCode::RequestBodyInvalid
+        | ProxyFailureCode::RequestBodyTooLarge
+        | ProxyFailureCode::RequestBodyTimeout => Some(planning_failure(
+            FailureClass::BadRequest,
+            FailureTarget::Request,
+            RetryDisposition::StopRequest,
+        )),
+        ProxyFailureCode::ResponsesChatFallbackIncompatible => Some(planning_failure(
+            FailureClass::MalformedResponse,
+            FailureTarget::LocalAdapter {
+                component: LocalAdapterComponent::ResponseTransform,
+            },
+            RetryDisposition::StopRequest,
+        )),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{atomic::AtomicU32, Arc};
@@ -308,7 +333,6 @@ mod tests {
         services::proxy::{
             limits::{BodyBudget, RequestLease},
             request::{CanonicalProxyRequest, RequestRequirements},
-            routing_types::RouteCandidate,
         },
     };
 
@@ -327,10 +351,13 @@ mod tests {
             ]),
         )
         .await;
-        let candidate = candidate(UpstreamApiFormat::OpenAiResponses, "upstream-model");
 
         let prepared = EndpointAdapter::Responses
-            .prepare(&request, &candidate, Some("upstream-model"))
+            .prepare_for_format(
+                &request,
+                UpstreamApiFormat::OpenAiResponses,
+                Some("upstream-model"),
+            )
             .expect("prepared");
 
         assert_eq!(prepared.method, Method::POST);
@@ -360,10 +387,13 @@ mod tests {
             HeaderMap::new(),
         )
         .await;
-        let candidate = candidate(UpstreamApiFormat::OpenAiChatCompletions, "gpt-test");
 
         let prepared = EndpointAdapter::Responses
-            .prepare(&request, &candidate, Some("gpt-test"))
+            .prepare_for_format(
+                &request,
+                UpstreamApiFormat::OpenAiChatCompletions,
+                Some("gpt-test"),
+            )
             .expect("streaming bridge prepared");
 
         assert_eq!(prepared.path, "/v1/chat/completions");
@@ -421,18 +451,15 @@ mod tests {
             HeaderMap::new(),
         )
         .await;
-        let direct = candidate(UpstreamApiFormat::Auto, "upstream-model");
-        let chat_bridge = candidate(UpstreamApiFormat::OpenAiChatCompletions, "bridge-model");
-
         assert_eq!(
             EndpointAdapter::Models
-                .prepare(&models, &direct, None)
+                .prepare_for_format(&models, UpstreamApiFormat::Auto, None)
                 .unwrap()
                 .path,
             "/v1/models"
         );
         let embeddings = EndpointAdapter::Embeddings
-            .prepare(&embeddings, &direct, Some("upstream-model"))
+            .prepare_for_format(&embeddings, UpstreamApiFormat::Auto, Some("upstream-model"))
             .unwrap();
         assert_eq!(embeddings.path, "/v1/embeddings");
         assert_eq!(
@@ -440,7 +467,7 @@ mod tests {
             "upstream-model"
         );
         let chat = EndpointAdapter::ChatCompletions
-            .prepare(&chat, &direct, Some("upstream-model"))
+            .prepare_for_format(&chat, UpstreamApiFormat::Auto, Some("upstream-model"))
             .unwrap();
         assert_eq!(chat.path, "/v1/chat/completions");
         assert_eq!(
@@ -453,7 +480,11 @@ mod tests {
             )
         );
         let bridged = EndpointAdapter::Responses
-            .prepare(&responses, &chat_bridge, Some("bridge-model"))
+            .prepare_for_format(
+                &responses,
+                UpstreamApiFormat::OpenAiChatCompletions,
+                Some("bridge-model"),
+            )
             .unwrap();
         assert_eq!(bridged.path, "/v1/chat/completions");
         assert_eq!(
@@ -551,22 +582,5 @@ mod tests {
             HeaderValue::from_static("Bearer local"),
         );
         output
-    }
-
-    fn candidate(format: UpstreamApiFormat, mapped_model: &str) -> RouteCandidate {
-        RouteCandidate {
-            station_key_id: format!("key-{mapped_model}"),
-            station_id: format!("station-{mapped_model}"),
-            station_endpoint_revision: 1,
-            upstream_base_url: "https://upstream.example/v1".to_string(),
-            api_key: "sk-upstream".to_string(),
-            collector_proxy_mode: "direct".to_string(),
-            collector_proxy_url: None,
-            upstream_api_format: format,
-            priority: 0,
-            max_concurrency: 0,
-            load_factor: None,
-            schedulable: true,
-        }
     }
 }

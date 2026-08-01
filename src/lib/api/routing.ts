@@ -1,6 +1,8 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type {
+  RecentRouteDecisionsInput,
   RouteSimulationInput,
+  RoutingWorkspaceSnapshotInput,
   UpdateStationKeyCapabilitiesInput,
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
@@ -27,6 +29,26 @@ export function deleteModelAlias(id: string) {
 
 export function listStationKeyHealth() {
   return getActiveBackendClient().routing.listStationKeyHealth();
+}
+
+export function loadRoutingWorkspaceSnapshot(input: RoutingWorkspaceSnapshotInput = {}) {
+  return getActiveBackendClient().routing.loadRoutingWorkspaceSnapshot(input);
+}
+
+export function loadRoutingRuntimeOverlay() {
+  return getActiveBackendClient().routing.loadRoutingRuntimeOverlay();
+}
+
+export function listRecentRouteDecisions(input: RecentRouteDecisionsInput = {}) {
+  return getActiveBackendClient().routing.listRecentRouteDecisions(input);
+}
+
+export function getStationKeyOperationalDetail(stationKeyId: string) {
+  return getActiveBackendClient().routing.getStationKeyOperationalDetail(stationKeyId);
+}
+
+export function getRequestDecisionTrace(requestLogId: string) {
+  return getActiveBackendClient().routing.getRequestDecisionTrace(requestLogId);
 }
 
 export function getStationKeyHealth(stationKeyId: string) {

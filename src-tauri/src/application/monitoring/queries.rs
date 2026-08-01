@@ -12,23 +12,21 @@ use crate::{
     },
     models::monitoring::{
         ChannelMonitorAttemptCursor, ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
-        ChannelMonitorAttemptRecord, ChannelMonitorExecutionCursor, ChannelMonitorExecutionDetail,
+        ChannelMonitorExecutionCursor, ChannelMonitorExecutionDetail,
         ChannelMonitorExecutionIdInput, ChannelMonitorExecutionListInput,
-        ChannelMonitorExecutionPage, ChannelMonitorExecutionSummaryV2,
-        ChannelMonitorTargetResultRecord, ChannelStatusAggregate, ChannelStatusBucket,
+        ChannelMonitorExecutionPage, ChannelStatusAggregate, ChannelStatusBucket,
         ChannelStatusBucketBoundary, ChannelStatusBucketCounts, ChannelStatusBucketKind,
         ChannelStatusBucketLayout, ChannelStatusBucketState, ChannelStatusCursor,
-        ChannelStatusEndpointPing, ChannelStatusFreshness, ChannelStatusLatestResult,
-        ChannelStatusMonitor, ChannelStatusOutcome, ChannelStatusPage, ChannelStatusRecentPoint,
-        ChannelStatusRow, ChannelStatusRunningExecution, ChannelStatusSortDirection,
-        ChannelStatusSortField, ChannelStatusTarget, ChannelStatusTimezone,
-        ChannelStatusTimezoneSource, ChannelStatusWindowSummaryV2, ChannelStatusWorkspaceInput,
-        ChannelStatusWorkspaceV2, ChannelStatusWorkspaceWindow,
+        ChannelStatusFreshness, ChannelStatusLatestResult, ChannelStatusMonitor,
+        ChannelStatusOutcome, ChannelStatusPage, ChannelStatusRecentPoint, ChannelStatusRow,
+        ChannelStatusSortDirection, ChannelStatusSortField, ChannelStatusTarget,
+        ChannelStatusTimezone, ChannelStatusTimezoneSource, ChannelStatusWindowSummaryV2,
+        ChannelStatusWorkspaceInput, ChannelStatusWorkspaceV2, ChannelStatusWorkspaceWindow,
     },
     persistence::{
         runtime::PersistenceHandle,
-        stores::monitoring::status_queries::{
-            MonitoringStatusQueryRepository, StatusRowKey, WorkspaceDirtyRange, WorkspaceRollupCell,
+        stores::monitoring::status_read_repository::{
+            DirtyRange, MonitoringStatusQueryRepository, RollupCell,
         },
     },
 };
@@ -45,13 +43,11 @@ const HOURLY_BUCKET_COUNT: u32 = 24;
 const DAILY_BUCKET_COUNT: u32 = 30;
 const DEGRADED_WEIGHT_BPS: u32 = 5_000;
 
-type RowKey = StatusRowKey;
-
 #[derive(Clone)]
 pub(crate) struct ChannelStatusReadModelQuery {
     runtime: PersistenceHandle,
     clock: Arc<dyn Clock>,
-    status_queries: MonitoringStatusQueryRepository,
+    store: MonitoringStatusQueryRepository,
 }
 
 impl ChannelStatusReadModelQuery {
@@ -59,7 +55,7 @@ impl ChannelStatusReadModelQuery {
         Self {
             runtime,
             clock,
-            status_queries: MonitoringStatusQueryRepository,
+            store: MonitoringStatusQueryRepository,
         }
     }
 
@@ -78,29 +74,29 @@ impl ChannelStatusReadModelQuery {
 
         let mut read = self.runtime.begin_read().await?;
         let base_rows = self
-            .status_queries
-            .workspace_base_rows(read.connection(), &input, MAX_BASE_SCAN_ROWS)
+            .store
+            .workspace_base_rows(&mut read, &input, MAX_BASE_SCAN_ROWS)
             .await?;
         let row_keys = base_rows
             .iter()
             .map(|row| (row.monitor_id.clone(), row.station_key_id.clone()))
             .collect::<Vec<_>>();
         let recent = self
-            .status_queries
+            .store
             .workspace_recent_results(
-                read.connection(),
+                &mut read,
                 &row_keys,
                 i64::from(recent_target_result_limit()),
             )
             .await?;
         let running = self
-            .status_queries
-            .workspace_running_executions(read.connection(), &row_keys)
+            .store
+            .workspace_running_executions(&mut read, &row_keys)
             .await?;
         let hourly_rollups = self
-            .status_queries
+            .store
             .workspace_rollups(
-                read.connection(),
+                &mut read,
                 &row_keys,
                 "hour",
                 hourly_windows
@@ -116,9 +112,9 @@ impl ChannelStatusReadModelQuery {
             )
             .await?;
         let daily_rollups = self
-            .status_queries
+            .store
             .workspace_rollups(
-                read.connection(),
+                &mut read,
                 &row_keys,
                 "day",
                 daily_windows
@@ -134,9 +130,9 @@ impl ChannelStatusReadModelQuery {
             )
             .await?;
         let dirty_ranges = self
-            .status_queries
+            .store
             .workspace_dirty_ranges(
-                read.connection(),
+                &mut read,
                 &row_keys,
                 min_window_start(&hourly_windows.windows, &daily_windows.windows),
                 max_window_end(&hourly_windows.windows, &daily_windows.windows),
@@ -267,8 +263,8 @@ impl ChannelStatusReadModelQuery {
             .clamp(1, MAX_EXECUTION_LIMIT);
         let mut read = self.runtime.begin_read().await?;
         let mut items = self
-            .status_queries
-            .list_executions_v2(read.connection(), &input, limit)
+            .store
+            .list_execution_summaries(&mut read, &input, limit.saturating_add(1))
             .await?;
         let next_cursor = if items.len() > limit as usize {
             items.pop().map(|item| ChannelMonitorExecutionCursor {
@@ -286,11 +282,10 @@ impl ChannelStatusReadModelQuery {
         input: ChannelMonitorExecutionIdInput,
     ) -> Result<ChannelMonitorExecutionDetail, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
-        let (execution, targets) = self
-            .status_queries
-            .execution_detail_v2(read.connection(), &input)
-            .await?;
-        Ok(ChannelMonitorExecutionDetail { execution, targets })
+        self.store
+            .execution_detail(&mut read, &input.execution_id)
+            .await
+            .map_err(Into::into)
     }
 
     pub(crate) async fn list_attempt_history(
@@ -303,8 +298,8 @@ impl ChannelStatusReadModelQuery {
             .clamp(1, MAX_ATTEMPT_LIMIT);
         let mut read = self.runtime.begin_read().await?;
         let mut items = self
-            .status_queries
-            .attempt_history_v2(read.connection(), &input, limit)
+            .store
+            .attempt_history(&mut read, &input, limit.saturating_add(1))
             .await?;
         let next_cursor = if items.len() > limit as usize {
             items.pop().map(|item| ChannelMonitorAttemptCursor {
@@ -317,9 +312,6 @@ impl ChannelStatusReadModelQuery {
         Ok(ChannelMonitorAttemptPage { items, next_cursor })
     }
 }
-
-type RollupCell = WorkspaceRollupCell;
-type DirtyRange = WorkspaceDirtyRange;
 
 fn build_buckets(
     windows: &[BucketWindow],
@@ -704,6 +696,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
 
     use super::*;
+    use crate::models::monitoring::ChannelStatusEndpointPing;
     use crate::persistence::runtime::PersistenceRuntime;
 
     struct FixedClock;

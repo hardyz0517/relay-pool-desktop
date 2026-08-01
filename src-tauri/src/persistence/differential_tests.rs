@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -13,6 +14,12 @@ use crate::{
             CredentialError, CredentialService, CredentialVault, EncryptedSecret, SecretBytes,
         },
         ids::IdGenerator,
+        operational_facts::{
+            pricing_projector::RoutingCostBasis,
+            runtime_candidate_adapter::{
+                route_projection_from_runtime_candidate_with_pricing, validated_route_settings,
+            },
+        },
         request_finalization::RequestFinalizationService,
         request_lifecycle::{
             delivery::DeliveryTerminal,
@@ -23,11 +30,13 @@ use crate::{
             },
         },
         routing::RoutingService,
+        routing_engine::request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
         settings::SettingsService,
         stations::StationService,
     },
     models::{
         remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
+        routing::{RoutingGroupFilter, RoutingPolicy, RuntimeRoutingSettings},
         settings::UpdateSettingsInput,
         station_keys::{CreateStationKeyInput, UpdateStationKeyInput},
         stations::{CreateStationInput, UpdateStationInput},
@@ -35,6 +44,7 @@ use crate::{
     persistence::{self, runtime::PersistenceRuntime, schema_compatibility::BinaryCompatibility},
 };
 use chrono::{TimeZone, Utc};
+use semver::Version;
 use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Connection, Row};
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -729,8 +739,8 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
             'binding-a',
             'hash-a',
             1.5,
-            NULL,
-            NULL,
+            1.25,
+            '123456',
             'manual',
             'station',
             'unchecked',
@@ -744,6 +754,45 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     .execute(&mut connection)
     .await
     .expect("station key");
+    sqlx::query(
+        r#"
+        INSERT INTO station_group_bindings (
+            id, station_id, station_key_id, binding_kind, parent_group_binding_id,
+            group_key_hash, group_id_hash, group_name, binding_status,
+            default_rate_multiplier, user_rate_multiplier, effective_rate_multiplier,
+            inferred_group_category, group_category_override, rate_source, confidence,
+            last_seen_at, last_checked_at, last_rate_changed_at, raw_json_redacted,
+            created_at, updated_at
+        ) VALUES (
+            'binding-a',
+            ?1,
+            NULL,
+            'station_group',
+            NULL,
+            'group-key-a',
+            'binding-hash-a',
+            'Bound Group A',
+            'bound',
+            1.0,
+            0.8,
+            0.8,
+            'gpt',
+            NULL,
+            'collector',
+            0.92,
+            '123450',
+            '123455',
+            '123455',
+            NULL,
+            '123450',
+            '123455'
+        )
+        "#,
+    )
+    .bind(&station.id)
+    .execute(&mut connection)
+    .await
+    .expect("group binding");
     sqlx::query(
         r#"
         INSERT INTO station_key_capabilities (
@@ -840,6 +889,47 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     .expect("balance");
     sqlx::query(
         r#"
+        INSERT INTO pricing_rules (
+            id, station_id, station_key_id, group_binding_id, group_name, tier_label,
+            model, input_price, output_price, fixed_price, rate_multiplier,
+            currency, unit, price_type, base_price_source, normalization_status,
+            source, confidence, enabled, note, collected_at, valid_from, valid_until,
+            created_at, updated_at
+        ) VALUES (
+            'pricing-routing',
+            ?1,
+            'routing-key',
+            'binding-a',
+            'Bound Group A',
+            'Tier 1',
+            'gpt-5',
+            NULL,
+            NULL,
+            0.42,
+            NULL,
+            'USD',
+            'per_request',
+            'fixed',
+            'manual',
+            'complete',
+            'manual',
+            0.93,
+            1,
+            'routing exact price',
+            '123457',
+            NULL,
+            NULL,
+            '123457',
+            '123457'
+        )
+        "#,
+    )
+    .bind(&station.id)
+    .execute(&mut connection)
+    .await
+    .expect("pricing rule");
+    sqlx::query(
+        r#"
         INSERT INTO model_aliases (
             id, client_model, upstream_model, enabled, note, created_at, updated_at
         ) VALUES (
@@ -859,7 +949,33 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     connection.close().await.expect("close fixture");
 
     let service = RoutingService::new(fixture.runtime().await.handle());
-    let candidates = service.load_runtime_candidates().await.expect("candidates");
+    let request = RouteRequestClassifier::classify(
+        CanonicalRouteRequest {
+            route_kind: RouteKind::Inference,
+            requested_model: Some("gpt-5".to_string()),
+            stream: false,
+            uses_tools: false,
+            uses_vision: false,
+            uses_reasoning: false,
+            untrusted_headers: Vec::new(),
+        },
+        validated_route_settings(&RuntimeRoutingSettings {
+            policy: RoutingPolicy::CostStableFirst,
+            max_rate_multiplier: Some(2.0),
+            routing_group_filter: RoutingGroupFilter::AllGroups,
+            scheduler_advanced_settings: Default::default(),
+            allow_depleted_fallback: false,
+        }),
+        123457,
+    );
+    let priced_candidates = service
+        .load_runtime_candidates_with_request_pricing(&request)
+        .await
+        .expect("request-scoped routing candidates");
+    let candidates = priced_candidates
+        .iter()
+        .map(|row| &row.candidate)
+        .collect::<Vec<_>>();
     let proxy_defaults = service.load_proxy_defaults().await.expect("defaults");
     let alias_pairs = service.list_model_alias_pairs().await.expect("alias pairs");
     let health = service
@@ -890,6 +1006,38 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     assert_eq!(candidates[0].collector_proxy_mode, "inherit");
     assert_eq!(candidates[0].collector_proxy_url.as_deref(), None);
     assert_eq!(candidates[0].capabilities.preferred_models, vec!["gpt-5.1"]);
+    let economics = candidates[0]
+        .economic_snapshot
+        .as_ref()
+        .expect("runtime economic snapshot");
+    assert_eq!(economics.group_binding_id.as_deref(), Some("binding-a"));
+    assert_eq!(economics.group_key_hash.as_deref(), Some("group-key-a"));
+    assert_eq!(economics.group_id_hash.as_deref(), Some("hash-a"));
+    assert_eq!(economics.group_name.as_deref(), Some("Bound Group A"));
+    assert_eq!(economics.group_status.as_deref(), Some("bound"));
+    assert_eq!(economics.group_confidence, Some(0.92));
+    assert_eq!(economics.group_checked_at.as_deref(), Some("123455"));
+    assert_eq!(economics.rate_multiplier, Some(1.5));
+    assert_eq!(economics.manual_rate_multiplier, Some(1.25));
+    assert_eq!(economics.manual_rate_updated_at.as_deref(), Some("123456"));
+    assert_eq!(economics.rate_source.as_deref(), Some("manual"));
+    assert_eq!(priced_candidates.len(), 1);
+    let pricing_context = priced_candidates[0]
+        .pricing_context
+        .as_ref()
+        .expect("request-scoped pricing context");
+    assert_eq!(pricing_context.pricing_status.as_str(), "priced");
+    assert_eq!(pricing_context.estimated_fixed_price, Some(0.42));
+    let projection = route_projection_from_runtime_candidate_with_pricing(
+        &request,
+        priced_candidates[0].candidate.clone(),
+        priced_candidates[0].pricing_context.as_ref(),
+    )
+    .expect("priced projection");
+    assert_eq!(projection.pricing.basis, RoutingCostBasis::ExactPrice);
+    assert_eq!(projection.pricing.comparison_value, Some(0.42));
+    assert_eq!(projection.pricing.currency.as_deref(), Some("USD"));
+    assert_eq!(projection.pricing.status_label, "priced");
     assert!(candidates[0].api_key_secret.is_some());
     assert!(matches!(
         candidates[0]
@@ -1058,7 +1206,9 @@ impl CredentialVault for DeterministicCredentialVault {
             masked_value: mask_secret_bytes(plaintext.as_bytes()),
             key_id: "deterministic-test-key".to_string(),
             encryption_version: crate::services::secrets::CURRENT_SECRET_ENCRYPTION_VERSION,
-            value_hash: "deterministic-value-hash".to_string(),
+            value_hash: crate::services::secrets::crypto::hash_secret(&String::from_utf8_lossy(
+                plaintext.as_bytes(),
+            )),
         })
     }
 
@@ -1113,8 +1263,10 @@ impl V2Fixture {
         SettingsService::new(
             self.runtime().await.handle(),
             Arc::new(FixedClock),
-            Arc::new(SequenceIds::new(vec!["settings-local-key-secret"])),
-            Arc::new(DeterministicCredentialVault::new([3; 32])),
+            Arc::new(SequenceIds::new(vec!["settings-secret-1"])),
+            Arc::new(crate::services::secrets::vault::DataKeyVault::for_test(
+                [44; 32],
+            )),
             "fixture-data-dir".to_string(),
             None,
         )
@@ -1134,7 +1286,7 @@ impl V2Fixture {
     }
 
     async fn runtime(&self) -> PersistenceRuntime {
-        PersistenceRuntime::open(&self.path, binary_031())
+        PersistenceRuntime::open(&self.path, current_test_binary())
             .await
             .expect("open runtime")
     }
@@ -1285,8 +1437,14 @@ impl V2Fixture {
     }
 }
 
-fn binary_031() -> BinaryCompatibility {
-    persistence::migrations::current_binary_compatibility()
+fn current_test_binary() -> BinaryCompatibility {
+    let schema_version = persistence::current_schema_version();
+    BinaryCompatibility {
+        app_version: Version::new(0, 3, 3),
+        database_generation: 2,
+        readable_schema: 1..=schema_version,
+        writable_schema: BTreeSet::from([schema_version]),
+    }
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -1298,7 +1456,9 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 
 fn temp_db_path(name: &str) -> PathBuf {
     let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("relay-pool-persistence-{name}-{id}"));
+    let process_id = std::process::id();
+    let root =
+        std::env::temp_dir().join(format!("relay-pool-persistence-{name}-{process_id}-{id}"));
     if root.exists() {
         std::fs::remove_dir_all(&root).expect("clean stale fixture dir");
     }

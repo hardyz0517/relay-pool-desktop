@@ -20,6 +20,22 @@ mod models {
 }
 
 mod persistence {
+    pub(crate) struct WriteSession {
+        connection: *mut sqlx::SqliteConnection,
+    }
+
+    impl WriteSession {
+        pub(crate) fn new(connection: &mut sqlx::SqliteConnection) -> Self {
+            Self { connection }
+        }
+
+        pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
+            // SAFETY: test-local wrapper is created from one mutable connection
+            // borrow and is used synchronously by the included application code.
+            unsafe { &mut *self.connection }
+        }
+    }
+
     pub(crate) mod error {
         pub(crate) use crate::persistence_error::*;
     }
@@ -52,6 +68,15 @@ use sqlx::{Connection, Row, SqliteConnection};
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
 
+async fn record_observation(
+    service: &HealthTransitionService,
+    connection: &mut SqliteConnection,
+    observation: HealthObservation,
+) -> Result<health_transitions::HealthTransitionAck, PersistenceError> {
+    let mut write = persistence::WriteSession::new(connection);
+    service.record_observation(&mut write, observation).await
+}
+
 #[tokio::test]
 async fn transaction_rollback_covers_attempt_target_health_execution_rollup_and_budget_phases() {
     let mut connection = ready_connection().await;
@@ -81,13 +106,13 @@ async fn transaction_rollback_covers_attempt_target_health_execution_rollup_and_
         )
         .await
         .expect("target finalization");
-    health
-        .record_observation(
-            &mut tx,
-            observation("observation-rollback", Some("target-rollback"), 1_120),
-        )
-        .await
-        .expect("health observation");
+    record_observation(
+        &health,
+        &mut *tx,
+        observation("observation-rollback", Some("target-rollback"), 1_120),
+    )
+    .await
+    .expect("health observation");
     executions
         .finalize_execution_and_advance_schedule(
             &mut tx,
@@ -174,10 +199,13 @@ async fn commit_outcome_unknown_replay_is_idempotent_for_budget_and_health_obser
             )
             .await
             .expect("budget replay"));
-        health
-            .record_observation(&mut tx, observation("observation-replay", None, 1_000))
-            .await
-            .expect("health replay");
+        record_observation(
+            &health,
+            &mut *tx,
+            observation("observation-replay", None, 1_000),
+        )
+        .await
+        .expect("health replay");
         tx.commit().await.expect("commit replay tx");
     }
 
