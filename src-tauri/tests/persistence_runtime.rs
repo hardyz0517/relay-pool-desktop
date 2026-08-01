@@ -178,11 +178,13 @@ async fn readable_but_not_writable_opens_in_inspection_only_mode() {
         .iter()
         .next_back()
         .expect("current writable schema");
+    let mut min_writer_app_version = binary.app_version.clone();
+    min_writer_app_version.patch += 1;
     db.set_compatibility(SchemaCompatibility {
         database_generation: 2,
         schema_version: current_schema,
         min_reader_app_version: Version::new(0, 3, 1),
-        min_writer_app_version: Version::new(0, 4, 0),
+        min_writer_app_version,
         updated_by_migration: current_schema,
     })
     .await;

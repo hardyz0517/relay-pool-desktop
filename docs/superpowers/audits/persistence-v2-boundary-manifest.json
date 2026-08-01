@@ -182,11 +182,6 @@
     },
     {
       "from": "application",
-      "to": "models",
-      "temporary": false
-    },
-    {
-      "from": "application",
       "to": "models::change_events",
       "temporary": false
     },
@@ -1932,11 +1927,6 @@
     },
     {
       "from": "services::collectors",
-      "to": "models",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors",
       "to": "models::collector",
       "temporary": false
     },
@@ -2042,26 +2032,6 @@
     },
     {
       "from": "services::collectors::drivers::newapi",
-      "to": "services::collectors::failure",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
-      "to": "outbound",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
-      "to": "services::collectors::contract",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
-      "to": "services::collectors::evidence",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
       "to": "services::collectors::failure",
       "temporary": false
     },

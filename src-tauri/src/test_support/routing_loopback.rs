@@ -162,7 +162,7 @@ impl RoutingLoopbackHarness {
             .stations
             .create(CreateStationInput {
                 name: format!("Loopback station {suffix}"),
-                station_type: "openai-compatible".to_string(),
+                station_type: "newapi".to_string(),
                 website_url: upstream_base_url.to_string(),
                 api_base_url: format!("{}/v1", upstream_base_url.trim_end_matches('/')),
                 api_key: String::new(),

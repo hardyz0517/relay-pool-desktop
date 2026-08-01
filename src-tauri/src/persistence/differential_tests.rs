@@ -99,7 +99,7 @@ async fn station_endpoint_change_is_atomic_and_matches_v1_contract_boundary() {
     let station = station_service
         .create(CreateStationInput {
             name: "Relay".to_string(),
-            station_type: "openai-compatible".to_string(),
+            station_type: "newapi".to_string(),
             website_url: "https://console.example".to_string(),
             api_base_url: "https://api.example/v1".to_string(),
             api_key: "sk-test-station".to_string(),
@@ -119,7 +119,7 @@ async fn station_endpoint_change_is_atomic_and_matches_v1_contract_boundary() {
         .update_station(UpdateStationInput {
             id: station.id.clone(),
             name: "Relay Updated".to_string(),
-            station_type: "openai-compatible".to_string(),
+            station_type: "newapi".to_string(),
             website_url: "https://console-next.example".to_string(),
             api_base_url: "https://api-next.example/v1".to_string(),
             api_key: None,
@@ -1051,7 +1051,7 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
 fn station_input(name: &str) -> CreateStationInput {
     CreateStationInput {
         name: name.to_string(),
-        station_type: "openai-compatible".to_string(),
+        station_type: "newapi".to_string(),
         website_url: format!("https://{name}.example"),
         api_base_url: format!("https://{name}.example/v1"),
         api_key: String::new(),

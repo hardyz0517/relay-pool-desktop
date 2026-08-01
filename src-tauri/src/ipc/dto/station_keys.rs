@@ -1456,7 +1456,7 @@ mod tests {
             .create(
                 CreateStationInputDto::parse(serde_json::json!({
                     "name": "Headless DTO Station",
-                    "stationType": "openai-compatible",
+                    "stationType": "newapi",
                     "websiteUrl": "https://station.invalid",
                     "apiBaseUrl": "https://station.invalid/v1",
                     "apiKey": "",

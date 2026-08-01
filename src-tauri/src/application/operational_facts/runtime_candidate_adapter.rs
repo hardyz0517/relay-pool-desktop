@@ -926,7 +926,7 @@ mod tests {
         RuntimeRoutingCandidate {
             station_key_id: "key-1".to_string(),
             station_id: "station-1".to_string(),
-            station_type: "openai-compatible".to_string(),
+            station_type: "newapi".to_string(),
             station_account_concurrency_limit: None,
             station_endpoint_revision: 1,
             sanitized_origin: "https://station.example.test".to_string(),
