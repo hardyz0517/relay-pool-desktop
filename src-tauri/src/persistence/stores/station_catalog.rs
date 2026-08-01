@@ -530,10 +530,7 @@ fn validate_station_fields(
         || website_url.trim().is_empty()
         || credit_per_cny <= 0.0
         || collection_interval_minutes == 0
-        || !matches!(
-            station_type,
-            "sub2api" | "newapi" | "openai-compatible" | "custom"
-        )
+        || !matches!(station_type, "sub2api" | "newapi")
     {
         return Err(PersistenceError::ConstraintViolation);
     }

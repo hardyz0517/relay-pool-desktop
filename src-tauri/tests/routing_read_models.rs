@@ -298,6 +298,8 @@ fn candidate(id: &str, load: Option<i64>) -> RuntimeRoutingCandidate {
     RuntimeRoutingCandidate {
         station_key_id: id.to_string(),
         station_id: "station-1".to_string(),
+        station_type: "newapi".to_string(),
+        station_account_concurrency_limit: None,
         station_endpoint_revision: 7,
         sanitized_origin: "https://secret.example".to_string(),
         upstream_api_format: models::proxy::UpstreamApiFormat::OpenAiChatCompletions,

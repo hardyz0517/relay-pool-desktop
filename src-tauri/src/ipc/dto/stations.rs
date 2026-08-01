@@ -21,8 +21,6 @@ const MAX_COLLECTION_INTERVAL_MINUTES: u16 = 10_080;
 pub enum StationTypeDto {
     Sub2api,
     Newapi,
-    OpenaiCompatible,
-    Custom,
 }
 
 impl StationTypeDto {
@@ -441,7 +439,7 @@ impl From<Station> for StationDto {
 #[cfg_attr(not(test), allow(dead_code))]
 pub const STATION_TYPE: TypeDescriptor = TypeDescriptor {
     name: "StationDto",
-    typescript: r#"export type StationTypeInput = "sub2api" | "newapi" | "openai-compatible" | "custom";
+    typescript: r#"export type StationTypeInput = "sub2api" | "newapi";
 
 export type StationProxyModeInput = "inherit" | "direct" | "system" | "manual";
 

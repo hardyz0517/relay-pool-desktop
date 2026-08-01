@@ -85,6 +85,9 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
     [selectedStationId, stations],
   );
   const selectedCollectorStationId = selectedStation?.id ?? "";
+  const selectedStationSupportsCollection = selectedStation
+    ? supportsCollectorStation(selectedStation)
+    : false;
   const latestSnapshotQuery = useActivityQuery({
     ...stationAssetQueryOptions(selectedCollectorStationId),
     enabled: Boolean(selectedCollectorStationId),
@@ -173,7 +176,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
   }
 
   async function handleCollect() {
-    if (!selectedStation) return;
+    if (!selectedStation || !supportsCollectorStation(selectedStation)) return;
     setTaskStatus("collecting");
     setError(null);
     try {
@@ -189,7 +192,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
   }
 
   async function handleSaveManualSession() {
-    if (!selectedStation) return;
+    if (!selectedStation || !supportsCollectorStation(selectedStation)) return;
     setError(null);
     try {
       await updateStationSession({
@@ -214,7 +217,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
   }
 
   async function handleTestLogin() {
-    if (!selectedStation) return;
+    if (!selectedStation || !supportsCollectorStation(selectedStation)) return;
     setTaskStatus("testingLogin");
     setError(null);
     try {
@@ -230,7 +233,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
   }
 
   async function handleDetect() {
-    if (!selectedStation) return;
+    if (!selectedStation || !supportsCollectorStation(selectedStation)) return;
     setTaskStatus("detecting");
     setError(null);
     try {
@@ -246,7 +249,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
   }
 
   async function handleStartCapture() {
-    if (!selectedStation) return;
+    if (!selectedStation || !supportsCollectorStation(selectedStation)) return;
     setTaskStatus("capturing");
     setError(null);
     try {
@@ -333,22 +336,21 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
           <SelectControl
             ariaLabel="采集任务"
             className={selectClassName}
-            disabled={!selectedStation || actionBusy}
+            disabled={!selectedStationSupportsCollection || actionBusy}
             value={taskType}
             options={[
               { value: "detect", label: "探测" },
               { value: "balance", label: "余额" },
               { value: "groups", label: "分组 / 倍率" },
-              { value: "models", label: "模型" },
               { value: "full", label: "完整采集" },
             ]}
             onChange={(value) => setTaskType(value as CollectorTaskType)}
           />
-          <Button variant="secondary" onClick={handleCollect} disabled={actionBusy || !selectedStation}>
+          <Button variant="secondary" onClick={handleCollect} disabled={actionBusy || !selectedStationSupportsCollection}>
             <Database className="h-4 w-4" />
             {taskStatus === "collecting" ? "采集中" : "运行任务"}
           </Button>
-          <Button variant="secondary" onClick={handleTestLogin} disabled={actionBusy || !selectedStation}>
+          <Button variant="secondary" onClick={handleTestLogin} disabled={actionBusy || !selectedStationSupportsCollection}>
             <ShieldCheck className="h-4 w-4" />
             {taskStatus === "testingLogin" ? "测试中" : "测试登录"}
           </Button>
@@ -474,7 +476,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
               title="手动登录态"
               description="保存后不会回显原文。"
               action={
-                <Button variant="secondary" onClick={handleSaveManualSession} disabled={!selectedStation || actionBusy}>
+                <Button variant="secondary" onClick={handleSaveManualSession} disabled={!selectedStationSupportsCollection || actionBusy}>
                   保存登录态
                 </Button>
               }
@@ -548,7 +550,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
                       variant="outline"
                       className="w-full justify-start"
                       onClick={handleDetect}
-                      disabled={actionBusy || !selectedStation}
+                      disabled={actionBusy || !selectedStationSupportsCollection}
                     >
                       <Radar className="h-4 w-4" />
                       {taskStatus === "detecting" ? "高级探测中" : "重新探测接口"}
@@ -562,7 +564,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
                           variant="outline"
                           className="w-full justify-start"
                           onClick={handleFinishCapture}
-                          disabled={actionBusy || !selectedStation}
+                          disabled={actionBusy || !selectedStationSupportsCollection}
                         >
                           <ShieldCheck className="h-4 w-4" />
                           {taskStatus === "finishingCapture" ? "保存中" : "完成采集"}
@@ -587,7 +589,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
                         variant="outline"
                         className="w-full justify-start"
                         onClick={handleStartCapture}
-                        disabled={actionBusy || !selectedStation}
+                        disabled={actionBusy || !selectedStationSupportsCollection}
                       >
                         <ShieldCheck className="h-4 w-4" />
                         网页登录授权
@@ -906,10 +908,12 @@ function readNumber(value: unknown) {
 function adapterForStation(station: Station) {
   if (station.stationType === "sub2api") return "登录态采集";
   if (station.stationType === "newapi") return "NewAPI 采集（待接入）";
-  if (station.stationType === "openai-compatible") return "OpenAI 兼容探测";
   return "自动探测";
 }
 
+function supportsCollectorStation(station: Station) {
+  return station.stationType === "sub2api" || station.stationType === "newapi";
+}
 function sourceLabel(source: string) {
   if (source.includes("detect")) return "接口探测";
   if (source.includes("collect")) return "信息采集";
@@ -952,7 +956,6 @@ function taskTypeLabel(value: string) {
   if (value === "detect") return "探测";
   if (value === "balance") return "余额";
   if (value === "groups") return "分组";
-  if (value === "models") return "模型";
   if (value === "full") return "完整";
   return value;
 }

@@ -1,10 +1,8 @@
-use std::collections::HashSet;
-
 use serde_json::Value;
 
 use crate::services::collectors::facts::{
-    CollectedBalanceFact, CollectedGroupFact, CollectedModelFact, CollectedRateFact,
-    CollectorFacts, NORMALIZED_BALANCE_CURRENCY,
+    CollectedBalanceFact, CollectedGroupFact, CollectedRateFact, CollectorFacts,
+    NORMALIZED_BALANCE_CURRENCY,
 };
 use crate::services::group_categories::infer_group_category;
 
@@ -133,27 +131,6 @@ pub(crate) fn parse_group_facts(station_id: &str, data: &Value) -> CollectorFact
     }
 
     facts
-}
-
-pub(crate) fn parse_models(station_id: &str, data: &Value) -> Vec<CollectedModelFact> {
-    let mut seen = HashSet::new();
-    data.as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            let name = value.as_str()?.trim();
-            if name.is_empty() || !seen.insert(name.to_string()) {
-                return None;
-            }
-            Some(CollectedModelFact {
-                station_id: station_id.to_string(),
-                model: name.to_string(),
-                available: true,
-                source: "newapi_user_models".to_string(),
-                confidence: 0.9,
-            })
-        })
-        .collect()
 }
 
 fn parse_optional_f64(value: Option<&Value>) -> Option<f64> {
@@ -381,29 +358,4 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn models_accept_standard_strings_without_duplicates() {
-        let models = parse_models(
-            "station-1",
-            &json!(["gpt-4.1-mini", "claude-sonnet", "gpt-4.1-mini"]),
-        );
-        assert_eq!(
-            models
-                .iter()
-                .map(|model| model.model.as_str())
-                .collect::<Vec<_>>(),
-            vec!["gpt-4.1-mini", "claude-sonnet",]
-        );
-    }
-
-    #[test]
-    fn models_reject_nonstandard_object_entries() {
-        let models = parse_models(
-            "station-1",
-            &json!(["gpt-4.1-mini", {"id": "guessed-model"}]),
-        );
-
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0].model, "gpt-4.1-mini");
-    }
 }

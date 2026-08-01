@@ -60,9 +60,6 @@ use crate::models::provider_drafts::{ProviderDraftPreview, ProviderDraftPreviewG
 use collector_apply::CollectorApplyPort;
 use output::{AdapterOutput, CollectorTask};
 
-const SUB2API_CHILD_TASK_TIMEOUT: Duration = Duration::from_secs(30);
-const NEWAPI_CHILD_TASK_TIMEOUT: Duration = Duration::from_secs(20);
-
 /// Consumer-owned read/write boundary required by provider collection drivers.
 ///
 /// Production composition supplies this port from catalog, settings, and
@@ -242,33 +239,12 @@ fn application_error(error: ApplicationError) -> String {
 
 pub(crate) enum PreparedStationCollectionRoute {
     Sub2Api(PreparedSub2ApiCollection),
-    OpenAiCompatible(PreparedOpenAiCompatibleCollection),
     NewApi(PreparedNewApiCollection),
 }
 
 pub(crate) enum PreparedStationTaskRoute {
     Sub2Api(PreparedSub2ApiCollection),
-    OpenAiCompatible(PreparedOpenAiCompatibleCollection),
     NewApi(PreparedNewApiCollection),
-}
-
-pub(crate) enum PreparedOpenAiCompatibleCollection {
-    Immediate(PreparedStationCollection),
-    Driver(PreparedOpenAiCompatibleDriverCollection),
-}
-
-pub(crate) struct PreparedOpenAiCompatibleDriverCollection {
-    station_id: String,
-    endpoint_revision: i64,
-    task: CollectorTask,
-    output_task: CollectorTask,
-    driver_task: contract::CollectorTaskKind,
-    enabled_key_count: usize,
-    api_base_url: String,
-    website_url: Option<String>,
-    proxy: ProxyPolicy,
-    credential_handle: contract::OpaqueCredentialHandle,
-    secret_accessor: StaticSecretAccessor,
 }
 
 pub(crate) enum PreparedNewApiCollection {
@@ -284,6 +260,7 @@ pub(crate) struct PreparedNewApiDriverCollection {
     enabled_key_count: usize,
     website_url: String,
     proxy: ProxyPolicy,
+    timeout: Duration,
     credential_handle: contract::OpaqueCredentialHandle,
     auth_context: Option<contract::ProviderAuthContext>,
     secret_accessor: StaticSecretAccessor,
@@ -308,6 +285,7 @@ pub(crate) struct PreparedSub2ApiDriverCollection {
     api_base_url: String,
     website_url: String,
     proxy: ProxyPolicy,
+    timeout: Duration,
     credential_handle: contract::OpaqueCredentialHandle,
     auth_context: contract::ProviderAuthContext,
     secret_accessor: MultiSecretAccessor,
@@ -384,10 +362,6 @@ pub(crate) fn prepare_station_collection_route_v2(
             .map(PreparedStationCollectionRoute::Sub2Api),
         contract::ProviderKind::NewApi => prepare_newapi_collection_v2(source, station, task)
             .map(PreparedStationCollectionRoute::NewApi),
-        contract::ProviderKind::OpenAiCompatible => {
-            prepare_openai_compatible_collection_v2(source, station, task)
-                .map(PreparedStationCollectionRoute::OpenAiCompatible)
-        }
     }
 }
 
@@ -406,126 +380,7 @@ pub(crate) fn prepare_station_task_route_v2(
             .map(PreparedStationTaskRoute::Sub2Api),
         contract::ProviderKind::NewApi => prepare_newapi_collection_v2(source, station, task)
             .map(PreparedStationTaskRoute::NewApi),
-        contract::ProviderKind::OpenAiCompatible => {
-            prepare_openai_compatible_collection_v2(source, station, task)
-                .map(PreparedStationTaskRoute::OpenAiCompatible)
-        }
     }
-}
-
-fn prepare_openai_compatible_collection_v2(
-    source: &dyn CollectorSourcePort,
-    station: Station,
-    task: CollectorTask,
-) -> Result<PreparedOpenAiCompatibleCollection, ApplicationError> {
-    let station_id = station.id.clone();
-    let tasks = if task == CollectorTask::Full {
-        vec![CollectorTask::Models]
-    } else {
-        vec![task]
-    };
-    if tasks.len() != 1 {
-        return Err(ApplicationError::ConstraintViolation);
-    }
-    let child_task = tasks[0];
-    if !matches!(child_task, CollectorTask::Detect | CollectorTask::Models) {
-        return Ok(PreparedOpenAiCompatibleCollection::Immediate(
-            prepared_openai_immediate_collection(
-                station_id,
-                station.endpoint_revision,
-                task,
-                child_task,
-                manual_required_output(
-                    child_task,
-                    "unsupported_task",
-                    "OpenAI-compatible 站点不支持该采集能力。",
-                ),
-                0,
-            ),
-        ));
-    }
-    let keys = source
-        .list_station_keys(station_id.clone())
-        .map_err(|_| ApplicationError::Internal)?;
-    let enabled_key_count = keys.iter().filter(|key| key.enabled).count();
-    let Some(key) = keys
-        .into_iter()
-        .find(|key| key.enabled && key.api_key_present)
-    else {
-        return Ok(PreparedOpenAiCompatibleCollection::Immediate(
-            prepared_openai_immediate_collection(
-                station_id,
-                station.endpoint_revision,
-                task,
-                child_task,
-                manual_required_output(
-                    child_task,
-                    "api_key_required",
-                    "模型采集需要可用 API Key。",
-                ),
-                enabled_key_count,
-            ),
-        ));
-    };
-    let api_key = match source.resolve_station_key_secret(&key.id) {
-        Ok(api_key) => api_key,
-        Err(error) => {
-            return Ok(PreparedOpenAiCompatibleCollection::Immediate(
-                prepared_openai_immediate_collection(
-                    station_id,
-                    station.endpoint_revision,
-                    task,
-                    child_task,
-                    manual_required_output(
-                        child_task,
-                        "api_key_required",
-                        &format!(
-                            "API Key 不可解密：{}",
-                            crate::services::secrets::mask::redact_text(&error)
-                        ),
-                    ),
-                    enabled_key_count,
-                ),
-            ));
-        }
-    };
-    let settings = source
-        .get_settings()
-        .map_err(|_| ApplicationError::Internal)?;
-    let proxy = crate::services::outbound::resolve_proxy_config(
-        &station.collector_proxy_mode,
-        station.collector_proxy_url.clone(),
-        &settings.collector_proxy_mode,
-        settings.collector_proxy_url,
-    );
-    let proxy =
-        proxy_policy_from_collector_config(proxy).map_err(|_| ApplicationError::Internal)?;
-    let credential_handle = contract::OpaqueCredentialHandle {
-        station_id: station_id.clone(),
-        credential_revision: station.endpoint_revision,
-        scope: contract::CredentialScope::StationKey,
-    };
-    let driver_task =
-        collector_task_kind(child_task).ok_or(ApplicationError::ConstraintViolation)?;
-    Ok(PreparedOpenAiCompatibleCollection::Driver(
-        PreparedOpenAiCompatibleDriverCollection {
-            station_id: station_id.clone(),
-            endpoint_revision: station.endpoint_revision,
-            task,
-            output_task: child_task,
-            driver_task,
-            enabled_key_count,
-            api_base_url: station.api_base_url,
-            website_url: (!station.website_url.trim().is_empty()).then_some(station.website_url),
-            proxy,
-            credential_handle: credential_handle.clone(),
-            secret_accessor: StaticSecretAccessor {
-                expected: credential_handle,
-                purpose: contract::CredentialSecretPurpose::AuthorizationHeader,
-                secret: api_key,
-            },
-        },
-    ))
 }
 
 fn prepare_sub2api_collection_v2(
@@ -658,6 +513,7 @@ fn prepare_sub2api_collection_v2(
             api_base_url: station.api_base_url,
             website_url: station.website_url,
             proxy,
+            timeout: Duration::from_secs(u64::from(settings.collector_timeout_seconds)),
             credential_handle,
             auth_context: contract::ProviderAuthContext::Sub2Api {
                 station_keys: station_key_credentials,
@@ -795,6 +651,7 @@ fn prepare_newapi_collection_v2(
             enabled_key_count,
             website_url: station.website_url,
             proxy,
+            timeout: Duration::from_secs(u64::from(settings.collector_timeout_seconds)),
             credential_handle: credential_handle.clone(),
             auth_context,
             secret_accessor: StaticSecretAccessor {
@@ -820,67 +677,6 @@ fn prepare_newapi_password_login(
     Some(PreparedNewApiPasswordLogin { username, password })
 }
 
-pub(crate) async fn finish_openai_compatible_collection_v2(
-    registry: &orchestration::ProviderRegistry,
-    outbound: &AsyncOutboundClient,
-    prepared: PreparedOpenAiCompatibleCollection,
-    cancellation_token: CancellationToken,
-    correlation_id: Option<String>,
-) -> Result<PreparedStationCollection, ApplicationError> {
-    match prepared {
-        PreparedOpenAiCompatibleCollection::Immediate(prepared) => Ok(prepared),
-        PreparedOpenAiCompatibleCollection::Driver(prepared) => {
-            let driver = registry
-                .collector(contract::ProviderKind::OpenAiCompatible)
-                .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let context = contract::CollectorContext {
-                station: contract::StationIdentity {
-                    station_id: prepared.station_id.clone(),
-                    endpoint_revision: prepared.endpoint_revision,
-                    provider: contract::ProviderKind::OpenAiCompatible,
-                },
-                endpoints: contract::ProviderEndpoints {
-                    api_base_url: Some(prepared.api_base_url),
-                    website_url: prepared.website_url,
-                },
-                credential: prepared.credential_handle,
-                auth: None,
-                secrets: &prepared.secret_accessor,
-                outbound,
-                proxy: prepared.proxy,
-                budget: RequestBudget::from_now(Duration::from_secs(20)),
-                cancellation: cancellation_token,
-                correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
-            };
-            let output = driver
-                .collect(&context, prepared.driver_task)
-                .await
-                .map(|output| {
-                    driver_output_to_adapter_output(
-                        "openai-compatible",
-                        prepared.output_task,
-                        output,
-                    )
-                })
-                .unwrap_or_else(|failure| {
-                    driver_failure_to_adapter_output(
-                        "openai-compatible",
-                        prepared.output_task,
-                        failure,
-                    )
-                });
-            Ok(PreparedStationCollection {
-                station_id: prepared.station_id,
-                endpoint_revision: prepared.endpoint_revision,
-                adapter: "openai-compatible".to_string(),
-                task: prepared.task,
-                outputs: vec![output],
-                enabled_key_count: prepared.enabled_key_count,
-            })
-        }
-    }
-}
-
 pub(crate) async fn finish_sub2api_collection_v2(
     registry: &orchestration::ProviderRegistry,
     outbound: &AsyncOutboundClient,
@@ -893,7 +689,7 @@ pub(crate) async fn finish_sub2api_collection_v2(
             let driver = registry
                 .collector(contract::ProviderKind::Sub2Api)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let mut context = contract::CollectorContext {
+            let context = contract::CollectorContext {
                 station: contract::StationIdentity {
                     station_id: prepared.station_id.clone(),
                     endpoint_revision: prepared.endpoint_revision,
@@ -908,7 +704,7 @@ pub(crate) async fn finish_sub2api_collection_v2(
                 secrets: &prepared.secret_accessor,
                 outbound,
                 proxy: prepared.proxy,
-                budget: RequestBudget::from_now(SUB2API_CHILD_TASK_TIMEOUT),
+                budget: RequestBudget::from_now(prepared.timeout),
                 cancellation: cancellation_token,
                 correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
             };
@@ -924,7 +720,6 @@ pub(crate) async fn finish_sub2api_collection_v2(
                 .collect::<Result<Vec<_>, ApplicationError>>()?;
             let mut adapter_outputs = Vec::with_capacity(outputs.len());
             for (child_task, driver_task) in outputs {
-                renew_child_task_budget(&mut context.budget, SUB2API_CHILD_TASK_TIMEOUT);
                 let output = driver
                     .collect(&context, driver_task)
                     .await
@@ -954,29 +749,6 @@ pub(crate) async fn finish_sub2api_task_v2(
     correlation_id: Option<String>,
 ) -> Result<(String, i64, AdapterOutput), ApplicationError> {
     let prepared = finish_sub2api_collection_v2(
-        registry,
-        outbound,
-        prepared,
-        cancellation_token,
-        correlation_id,
-    )
-    .await?;
-    let output = prepared
-        .outputs
-        .into_iter()
-        .next()
-        .ok_or(ApplicationError::ConstraintViolation)?;
-    Ok((prepared.station_id, prepared.endpoint_revision, output))
-}
-
-pub(crate) async fn finish_openai_compatible_task_v2(
-    registry: &orchestration::ProviderRegistry,
-    outbound: &AsyncOutboundClient,
-    prepared: PreparedOpenAiCompatibleCollection,
-    cancellation_token: CancellationToken,
-    correlation_id: Option<String>,
-) -> Result<(String, i64, AdapterOutput), ApplicationError> {
-    let prepared = finish_openai_compatible_collection_v2(
         registry,
         outbound,
         prepared,
@@ -1056,7 +828,7 @@ pub(crate) async fn finish_newapi_collection_v2(
             let driver = registry
                 .collector(contract::ProviderKind::NewApi)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let mut context = contract::CollectorContext {
+            let context = contract::CollectorContext {
                 station: contract::StationIdentity {
                     station_id: prepared.station_id.clone(),
                     endpoint_revision: prepared.endpoint_revision,
@@ -1071,7 +843,7 @@ pub(crate) async fn finish_newapi_collection_v2(
                 secrets: &prepared.secret_accessor,
                 outbound,
                 proxy: prepared.proxy,
-                budget: RequestBudget::from_now(NEWAPI_CHILD_TASK_TIMEOUT),
+                budget: RequestBudget::from_now(prepared.timeout),
                 cancellation: cancellation_token,
                 correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
             };
@@ -1087,7 +859,6 @@ pub(crate) async fn finish_newapi_collection_v2(
                 .collect::<Result<Vec<_>, ApplicationError>>()?;
             let mut adapter_outputs = Vec::with_capacity(outputs.len());
             for (child_task, driver_task) in outputs {
-                renew_child_task_budget(&mut context.budget, NEWAPI_CHILD_TASK_TIMEOUT);
                 let output = driver
                     .collect(&context, driver_task)
                     .await
@@ -1187,7 +958,6 @@ pub(crate) fn provider_draft_preview_from_prepared(
     collected_at: String,
 ) -> ProviderDraftPreview {
     let mut groups = Vec::<ProviderDraftPreviewGroup>::new();
-    let mut models = Vec::<String>::new();
     let mut balance = None;
     let mut summaries = Vec::new();
     let mut status = "success".to_string();
@@ -1220,11 +990,6 @@ pub(crate) fn provider_draft_preview_from_prepared(
                 });
             }
         }
-        for model in output.facts.models {
-            if model.available && !models.contains(&model.model) {
-                models.push(model.model);
-            }
-        }
         if balance.is_none() {
             balance = output.facts.balances.iter().find_map(|item| item.value);
         }
@@ -1235,7 +1000,7 @@ pub(crate) fn provider_draft_preview_from_prepared(
         runtime_fingerprint,
         status,
         groups,
-        models,
+        models: Vec::new(),
         balance,
         summary_json: serde_json::json!({
             "adapter": prepared.adapter,
@@ -1519,11 +1284,6 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
         .collect::<Vec<_>>();
     let business =
         full_business_summary_from_outputs(&prepared.outputs, prepared.enabled_key_count);
-    let models = prepared
-        .outputs
-        .iter()
-        .flat_map(|output| output.facts.models.iter().cloned())
-        .collect::<Vec<_>>();
     let error_message =
         (status == "failed").then(|| "all full collector child tasks failed".to_string());
 
@@ -1531,10 +1291,7 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
         adapter: prepared.adapter.clone(),
         task: CollectorTask::Full,
         status: status.clone(),
-        facts: facts::CollectorFacts {
-            models,
-            ..facts::CollectorFacts::default()
-        },
+        facts: facts::CollectorFacts::default(),
         summary_json: json!({
             "adapter": prepared.adapter,
             "task": "full",
@@ -1555,7 +1312,6 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
             "balanceLabel": business.balance_label,
             "groups": business.groups,
             "rateMultipliers": business.rate_multipliers,
-            "models": business.models,
             "childRuns": child_runs,
         }),
         raw_json_redacted: None,
@@ -1632,18 +1388,11 @@ fn full_business_summary_from_outputs(
             })
         })
         .collect();
-    let models = outputs
-        .iter()
-        .flat_map(|output| &output.facts.models)
-        .filter(|model| model.available)
-        .map(|model| model.model.clone())
-        .collect();
     FullBusinessSummary {
         balance_value,
         balance_label,
         groups,
         rate_multipliers,
-        models,
         key_count,
     }
 }
@@ -1654,7 +1403,6 @@ struct FullBusinessSummary {
     balance_label: Option<String>,
     groups: Vec<Value>,
     rate_multipliers: Vec<Value>,
-    models: Vec<String>,
     key_count: usize,
 }
 
@@ -1663,42 +1411,36 @@ impl FullBusinessSummary {
         usize::from(self.balance_label.is_some())
             + self.groups.len()
             + self.rate_multipliers.len()
-            + self.models.len()
     }
 }
 
 fn conclusion_for_full_status(status: &str) -> &'static str {
     match status {
-        "success" => "已采集",
-        "partial" => "部分采集",
-        "manual_required" => "需要登录",
-        "failed" => "失败",
-        _ => "已检查",
+        "success" => "Collected",
+        "partial" => "Partially collected",
+        "manual_required" => "Manual action required",
+        "failed" => "Failed",
+        _ => "Checked",
     }
 }
 
 fn full_summary_message(summary: &FullBusinessSummary) -> String {
     let mut parts = Vec::new();
     if summary.balance_label.is_some() {
-        parts.push("余额");
+        parts.push("balance");
     }
     if !summary.groups.is_empty() {
-        parts.push("分组");
+        parts.push("groups");
     }
     if !summary.rate_multipliers.is_empty() {
-        parts.push("倍率");
+        parts.push("rates");
     }
-    if !summary.models.is_empty() {
-        parts.push("模型");
-    }
-
     if parts.is_empty() {
-        "Full 采集已完成，但暂未识别到可展示的业务字段。".to_string()
+        "Full collection completed without displayable business facts.".to_string()
     } else {
-        format!("Full 采集已识别{}。", parts.join("、"))
+        format!("Full collection recognized {}.", parts.join(", "))
     }
 }
-
 fn format_balance_label(value: f64, currency: &str) -> String {
     let mut amount = format!("{value:.6}");
     while amount.contains('.') && amount.ends_with('0') {
@@ -1713,31 +1455,6 @@ fn format_balance_label(value: f64, currency: &str) -> String {
     } else {
         format!("{amount} {currency}")
     }
-}
-
-fn prepared_openai_immediate_collection(
-    station_id: String,
-    endpoint_revision: i64,
-    task: CollectorTask,
-    child_task: CollectorTask,
-    output: AdapterOutput,
-    enabled_key_count: usize,
-) -> PreparedStationCollection {
-    PreparedStationCollection {
-        station_id,
-        endpoint_revision,
-        adapter: "openai-compatible".to_string(),
-        task,
-        outputs: vec![AdapterOutput {
-            task: child_task,
-            ..output
-        }],
-        enabled_key_count,
-    }
-}
-
-fn manual_required_output(task: CollectorTask, code: &str, message: &str) -> AdapterOutput {
-    manual_required_output_for_adapter("openai-compatible", task, code, message)
 }
 
 fn manual_required_output_for_adapter(
@@ -1914,9 +1631,8 @@ fn collector_task_kind(task: CollectorTask) -> Option<contract::CollectorTaskKin
     match task {
         CollectorTask::Balance => Some(contract::CollectorTaskKind::Balance),
         CollectorTask::Groups => Some(contract::CollectorTaskKind::Groups),
-        CollectorTask::Models => Some(contract::CollectorTaskKind::Models),
-        CollectorTask::Full => Some(contract::CollectorTaskKind::Full),
         CollectorTask::Detect => Some(contract::CollectorTaskKind::Detect),
+        CollectorTask::Full => None,
     }
 }
 
@@ -1928,7 +1644,7 @@ fn proxy_policy_from_collector_config(
         "system" => Ok(ProxyPolicy::System),
         "manual" => {
             let Some(url) = proxy.url.as_deref() else {
-                return Err("手动采集代理地址不能为空".to_string());
+                return Err("鎵嬪姩閲囬泦浠ｇ悊鍦板潃涓嶈兘涓虹┖".to_string());
             };
             ManualProxy::parse(url)
                 .map(ProxyPolicy::Manual)
@@ -1942,25 +1658,33 @@ fn provider_kind_for_station_type(station_type: &str) -> Result<contract::Provid
     match station_type.trim() {
         "sub2api" => Ok(contract::ProviderKind::Sub2Api),
         "newapi" => Ok(contract::ProviderKind::NewApi),
-        "openai-compatible" | "openai_compatible" | "custom" => {
-            Ok(contract::ProviderKind::OpenAiCompatible)
-        }
-        other => Err(format!("不支持的站点类型: {other}")),
+        other => Err(format!("unsupported station type: {other}")),
     }
 }
 
 fn full_child_tasks(provider: contract::ProviderKind) -> Vec<CollectorTask> {
-    match provider {
-        contract::ProviderKind::NewApi => vec![
-            CollectorTask::Balance,
-            CollectorTask::Groups,
-            CollectorTask::Models,
-        ],
-        contract::ProviderKind::Sub2Api => vec![CollectorTask::Balance, CollectorTask::Groups],
-        contract::ProviderKind::OpenAiCompatible => vec![CollectorTask::Models],
-    }
+    drivers::static_provider_entries()
+        .into_iter()
+        .find(|entry| entry.descriptor.kind == provider)
+        .and_then(|entry| entry.descriptor.capabilities.collector)
+        .map(|capability| {
+            capability
+                .full_tasks
+                .iter()
+                .copied()
+                .map(collector_task_from_kind)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
+fn collector_task_from_kind(task: contract::CollectorTaskKind) -> CollectorTask {
+    match task {
+        contract::CollectorTaskKind::Balance => CollectorTask::Balance,
+        contract::CollectorTaskKind::Groups => CollectorTask::Groups,
+        contract::CollectorTaskKind::Detect => CollectorTask::Detect,
+    }
+}
 pub(crate) async fn test_station_login_input_async(
     outbound: &AsyncOutboundClient,
     input: StationLoginTestInput,
@@ -1978,68 +1702,75 @@ fn has_login_credentials(username: &Option<String>, password_present: bool) -> b
         && password_present
 }
 
-fn renew_child_task_budget(budget: &mut RequestBudget, timeout: Duration) {
-    *budget = RequestBudget::from_now(timeout);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn openai_driver_output_keeps_child_task_for_full_parent() {
-        let output = driver_output_to_adapter_output(
-            "openai-compatible",
-            CollectorTask::Models,
-            contract::DriverOutput {
-                facts: facts::CollectorFacts {
-                    models: vec![facts::CollectedModelFact {
-                        station_id: "station-1".to_string(),
-                        model: "gpt-4o-mini".to_string(),
-                        available: true,
-                        source: "openai_models".to_string(),
-                        confidence: 0.9,
-                    }],
-                    ..facts::CollectorFacts::default()
-                },
-                evidence: Vec::new(),
-                status: contract::DriverOutputStatus::Success,
-                diagnostics: contract::RedactedDiagnostics {
-                    summary: None,
-                    raw_json_redacted: None,
-                },
-            },
-        );
-
+    fn full_parent_keeps_canonical_facts_empty() {
         let prepared = PreparedStationCollection {
             station_id: "station-1".to_string(),
             endpoint_revision: 7,
-            adapter: "openai-compatible".to_string(),
+            adapter: "newapi".to_string(),
             task: CollectorTask::Full,
-            outputs: vec![output],
+            outputs: vec![AdapterOutput {
+                adapter: "newapi".to_string(),
+                task: CollectorTask::Balance,
+                status: "success".to_string(),
+                facts: facts::CollectorFacts {
+                    balances: vec![facts::CollectedBalanceFact {
+                        station_id: "station-1".to_string(),
+                        station_key_id: None,
+                        scope: "station".to_string(),
+                        value: Some(12.0),
+                        used_value: None,
+                        total_value: None,
+                        today_request_count: None,
+                        total_request_count: None,
+                        today_consumption: None,
+                        total_consumption: None,
+                        today_base_consumption: None,
+                        total_base_consumption: None,
+                        today_token_count: None,
+                        total_token_count: None,
+                        today_input_token_count: None,
+                        today_output_token_count: None,
+                        total_input_token_count: None,
+                        total_output_token_count: None,
+                        account_concurrency_limit: None,
+                        currency: "USD".to_string(),
+                        credit_unit: None,
+                        status: "normal".to_string(),
+                        source: "test".to_string(),
+                        confidence: 1.0,
+                        collected_at: None,
+                    }],
+                    ..facts::CollectorFacts::default()
+                },
+                summary_json: json!({"endpointResults": []}),
+                normalized_json: json!({}),
+                raw_json_redacted: None,
+                error_code: None,
+                error_message: None,
+            }],
             enabled_key_count: 1,
         };
         let full = aggregate_full_output_v2(&prepared);
 
-        assert_eq!(prepared.outputs[0].task, CollectorTask::Models);
         assert_eq!(full.task, CollectorTask::Full);
-        assert_eq!(
-            full.normalized_json["childRuns"][0]["task"],
-            CollectorTask::Models.as_str()
-        );
-        assert_eq!(full.normalized_json["models"][0], "gpt-4o-mini");
+        assert!(full.facts.balances.is_empty());
+        assert!(full.facts.groups.is_empty());
+        assert!(full.facts.rates.is_empty());
+        assert!(full.facts.models.is_empty());
     }
 
     #[test]
-    fn collector_task_kind_preserves_detect_and_models_for_openai_driver() {
+    fn collector_task_kind_rejects_parent_task() {
         assert_eq!(
             collector_task_kind(CollectorTask::Detect),
             Some(contract::CollectorTaskKind::Detect)
         );
-        assert_eq!(
-            collector_task_kind(CollectorTask::Models),
-            Some(contract::CollectorTaskKind::Models)
-        );
+        assert_eq!(collector_task_kind(CollectorTask::Full), None);
     }
 
     #[test]
@@ -2083,27 +1814,18 @@ mod tests {
     fn full_tasks_are_bounded_by_provider_capability() {
         assert_eq!(
             full_child_tasks(contract::ProviderKind::NewApi),
-            vec![
-                CollectorTask::Balance,
-                CollectorTask::Groups,
-                CollectorTask::Models,
-            ],
+            vec![CollectorTask::Balance, CollectorTask::Groups],
         );
         assert_eq!(
-            full_child_tasks(contract::ProviderKind::OpenAiCompatible),
-            vec![CollectorTask::Models],
+            full_child_tasks(contract::ProviderKind::Sub2Api),
+            vec![CollectorTask::Balance, CollectorTask::Groups],
         );
     }
 
     #[test]
-    fn full_collection_renews_request_budget_for_each_child_task() {
-        let mut budget = RequestBudget::from_deadline(std::time::Instant::now());
-        assert!(budget.remaining().is_none());
-
-        renew_child_task_budget(&mut budget, Duration::from_secs(20));
-
-        assert!(budget
-            .remaining()
-            .is_some_and(|remaining| remaining > Duration::from_secs(19)));
+    fn old_openai_provider_station_types_are_rejected() {
+        assert!(provider_kind_for_station_type("openai-compatible").is_err());
+        assert!(provider_kind_for_station_type("openai_compatible").is_err());
+        assert!(provider_kind_for_station_type("custom").is_err());
     }
 }

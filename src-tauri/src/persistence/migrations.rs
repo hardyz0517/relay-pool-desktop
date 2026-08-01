@@ -536,6 +536,152 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn schema_21_quarantines_removed_collector_providers_without_deleting_assets() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 20).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+
+        for (id, station_type) in [
+            ("legacy-openai", "openai-compatible"),
+            ("legacy-custom", "custom"),
+            ("newapi-station", "newapi"),
+            ("sub2api-station", "sub2api"),
+        ] {
+            sqlx::query(
+                "INSERT INTO stations (
+                    id, name, station_type, website_url, api_base_url,
+                    enabled, status, created_at, updated_at
+                 ) VALUES (?1, ?1, ?2, 'https://example.test',
+                           'https://example.test/v1', 1, 'healthy', '1', '1')",
+            )
+            .bind(id)
+            .bind(station_type)
+            .execute(&pool)
+            .await
+            .expect("insert station");
+            sqlx::query(
+                "INSERT INTO station_keys (id, station_id, created_at, updated_at)
+                 VALUES (?1 || '-key', ?1, '1', '1')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("insert station key");
+            sqlx::query(
+                "INSERT INTO collector_runs (
+                    id, run_key, request_hash, station_id, endpoint_revision,
+                    adapter, task_type, status, started_at, created_at
+                 ) VALUES (?1 || '-run', ?1 || '-run-key', 'hash', ?1, 1,
+                           ?2, 'models', 'success', '1', '1')",
+            )
+            .bind(id)
+            .bind(station_type)
+            .execute(&pool)
+            .await
+            .expect("insert collector run");
+            sqlx::query(
+                "INSERT INTO collector_task_state (
+                    station_id, task_type, last_run_id, last_status, updated_at
+                 ) VALUES (?1, 'models', ?1 || '-run', 'success', '1')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("insert task state");
+            sqlx::query(
+                "INSERT INTO collector_model_facts (
+                    station_id, model, available, source, confidence, last_seen_run_id, updated_at
+                 ) VALUES (?1, 'fixture-model', 1, 'fixture', 1.0, ?1 || '-run', '1')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("insert model fact");
+            sqlx::query(
+                "INSERT INTO change_events (
+                    id, severity, event_type, status, title, message, object_type,
+                    object_id, station_id, dedupe_key, source, detected_at, created_at, updated_at
+                 ) VALUES (
+                    ?1 || '-model-event', 'info', 'model_added', 'unread',
+                    'Model added', 'fixture', 'model', 'fixture-model', ?1,
+                    ?1 || '-model-event', 'collector', '1', '1', '1'
+                 )",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("insert change event");
+        }
+        pool.close().await;
+
+        upgrade_existing_v2_database(&path)
+            .await
+            .expect("upgrade schema");
+
+        let pool = migration_pool_existing(&path).await.expect("upgraded pool");
+        let disabled_legacy_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM stations
+             WHERE station_type IN ('openai-compatible', 'openai_compatible', 'custom')
+               AND enabled = 0
+               AND status = 'disabled'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("disabled legacy count");
+        assert_eq!(disabled_legacy_count, 2);
+        let station_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stations")
+            .fetch_one(&pool)
+            .await
+            .expect("station count");
+        let station_key_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM station_keys")
+            .fetch_one(&pool)
+            .await
+            .expect("station key count");
+        assert_eq!(station_count, 4);
+        assert_eq!(station_key_count, 4);
+        let remaining_model_facts: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM collector_model_facts
+             WHERE station_id IN ('newapi-station', 'legacy-openai', 'legacy-custom')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("remaining model facts");
+        assert_eq!(remaining_model_facts, 0);
+        let sub2api_model_facts: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM collector_model_facts WHERE station_id = 'sub2api-station'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("sub2api model facts");
+        assert_eq!(sub2api_model_facts, 1);
+        let removed_model_task_state: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM collector_task_state WHERE task_type = 'models'")
+                .fetch_one(&pool)
+                .await
+                .expect("models task state");
+        assert_eq!(removed_model_task_state, 0);
+        let removed_model_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_events WHERE event_type IN ('model_added', 'model_removed')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("model events");
+        assert_eq!(removed_model_events, 0);
+        let model_setting_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM settings WHERE key = 'model_list_interval_minutes'")
+                .fetch_one(&pool)
+                .await
+                .expect("model setting");
+        assert_eq!(model_setting_count, 0);
+        pool.close().await;
+
+        assert_eq!(database_schema_version(&path).await, 21);
+    }
+
     async fn initialize_database_through(path: &Path, target_version: i64) {
         let pool = migration_pool_create(path).await.expect("migration pool");
         let partial = Migrator {

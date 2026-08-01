@@ -1,4 +1,8 @@
-export type StationType = "sub2api" | "newapi" | "openai-compatible" | "custom";
+export type StationType = "sub2api" | "newapi";
+
+export function isStationType(value: string): value is StationType {
+  return value === "sub2api" || value === "newapi";
+}
 
 export type StationStatus =
   | "healthy"
@@ -12,7 +16,7 @@ export type StationProxyMode = "inherit" | "direct" | "system" | "manual";
 export type Station = {
   id: string;
   name: string;
-  stationType: StationType;
+  stationType: string;
   websiteUrl: string;
   apiBaseUrl: string;
   endpointRevision: number;
@@ -75,19 +79,15 @@ export type EndpointPingResult = {
   errorSummary: string | null;
 };
 
-export const stationTypeLabels: Record<StationType, string> = {
+export const stationTypeLabels: Record<string, string> = {
   sub2api: "Sub2API",
   newapi: "NewAPI",
-  "openai-compatible": "自定义接口",
-  custom: "自定义接口",
 };
 
 export const stationTypeOptions: Array<{ value: StationType; label: string }> = [
   { value: "sub2api", label: stationTypeLabels.sub2api },
   { value: "newapi", label: stationTypeLabels.newapi },
-  { value: "custom", label: stationTypeLabels.custom },
 ];
-
 export const stationStatusLabels: Record<StationStatus, string> = {
   healthy: "采集正常",
   warning: "采集需关注",

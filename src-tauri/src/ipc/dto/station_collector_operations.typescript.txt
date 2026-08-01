@@ -1,4 +1,4 @@
-export type StationCollectorTaskTypeDto = "detect" | "balance" | "groups" | "models" | "full";
+export type StationCollectorTaskTypeDto = "detect" | "balance" | "groups" | "full";
 export type CaptureStationIdInputDto = { stationId: string };
 export type StationCollectorTaskInputDto = { stationId: string; taskType: StationCollectorTaskTypeDto };
 export type StationLoginProviderDto = "sub2api" | "newapi";

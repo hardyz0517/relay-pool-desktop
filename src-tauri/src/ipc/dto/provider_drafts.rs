@@ -92,7 +92,6 @@ impl CollectProviderDraftPreviewInputDto {
             "detect" => CollectorTask::Detect,
             "balance" => CollectorTask::Balance,
             "groups" => CollectorTask::Groups,
-            "models" => CollectorTask::Models,
             "full" => CollectorTask::Full,
             _ => {
                 return Err(invalid(

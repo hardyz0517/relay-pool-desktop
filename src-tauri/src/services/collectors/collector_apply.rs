@@ -1,8 +1,8 @@
 use crate::{
     application::{
         collectors::{
-            CanonicalBalanceFact, CanonicalCollectorFacts, CanonicalGroupFact, CanonicalModelFact,
-            CanonicalRateFact, CollectorApplyOutcome, CollectorApplyRequest, CollectorService,
+            CanonicalBalanceFact, CanonicalCollectorFacts, CanonicalGroupFact, CanonicalRateFact,
+            CollectorApplyOutcome, CollectorApplyRequest, CollectorService,
         },
         error::ApplicationError,
     },
@@ -170,17 +170,7 @@ async fn apply_adapter_output(
                     raw_json_redacted: fact.raw_json_redacted,
                 })
                 .collect(),
-            models: facts
-                .models
-                .into_iter()
-                .map(|fact| CanonicalModelFact {
-                    station_id: fact.station_id,
-                    model: fact.model,
-                    available: fact.available,
-                    source: fact.source,
-                    confidence: fact.confidence,
-                })
-                .collect(),
+            models: Vec::new(),
         },
         summary_json: output.summary_json,
         normalized_json: output.normalized_json,

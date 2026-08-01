@@ -1,5 +1,4 @@
 pub mod newapi;
-pub mod openai_compatible;
 pub mod sub2api;
 
 use std::sync::Arc;
@@ -19,6 +18,7 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                 capabilities: DriverCapabilities {
                     collector: Some(CollectorCapabilityDescriptor {
                         supported_tasks: sub2api::SUPPORTED_COLLECTOR_TASKS,
+                        full_tasks: sub2api::FULL_COLLECTOR_TASKS,
                     }),
                     remote_key: Some(RemoteKeyCapabilityDescriptor {
                         supports_list: true,
@@ -42,6 +42,7 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
                 capabilities: DriverCapabilities {
                     collector: Some(CollectorCapabilityDescriptor {
                         supported_tasks: newapi::SUPPORTED_COLLECTOR_TASKS,
+                        full_tasks: newapi::FULL_COLLECTOR_TASKS,
                     }),
                     remote_key: Some(RemoteKeyCapabilityDescriptor {
                         supports_list: true,
@@ -60,28 +61,7 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
             remote_key: Some(Arc::new(newapi::NewApiRemoteKeyDriver)),
             authorization: Some(Arc::new(newapi::NewApiAuthorizationDriver)),
         },
-        ProviderEntry {
-            descriptor: ProviderDescriptor {
-                kind: ProviderKind::OpenAiCompatible,
-                display_name: "OpenAI-compatible",
-                station_types: &["openai-compatible", "openai_compatible"],
-                capabilities: DriverCapabilities {
-                    collector: Some(CollectorCapabilityDescriptor {
-                        supported_tasks: openai_compatible::SUPPORTED_COLLECTOR_TASKS,
-                    }),
-                    remote_key: None,
-                    authorization: None,
-                },
-            },
-            collector: Some(Arc::new(openai_compatible::OpenAiCompatibleCollectorDriver)),
-            remote_key: None,
-            authorization: None,
-        },
     ]
 }
 
-pub const REQUIRED_PROVIDER_KINDS: &[ProviderKind] = &[
-    ProviderKind::Sub2Api,
-    ProviderKind::NewApi,
-    ProviderKind::OpenAiCompatible,
-];
+pub const REQUIRED_PROVIDER_KINDS: &[ProviderKind] = &[ProviderKind::Sub2Api, ProviderKind::NewApi];

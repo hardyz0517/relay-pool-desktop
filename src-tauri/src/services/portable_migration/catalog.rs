@@ -129,7 +129,6 @@ pub(crate) fn setting_policy(key: &str) -> Option<SettingPolicy> {
         | "collector_interval_minutes"
         | "balance_interval_minutes"
         | "group_rate_interval_minutes"
-        | "model_list_interval_minutes"
         | "pricing_refresh_interval_minutes"
         | "collector_timeout_seconds"
         | "collector_max_concurrency"

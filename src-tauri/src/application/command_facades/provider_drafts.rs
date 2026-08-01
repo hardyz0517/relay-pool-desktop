@@ -126,16 +126,6 @@ impl ProviderDraftCommandFacade {
                 )
                 .await?
             }
-            collectors::PreparedStationCollectionRoute::OpenAiCompatible(prepared) => {
-                collectors::finish_openai_compatible_collection_v2(
-                    self.providers.as_ref(),
-                    &self.outbound,
-                    prepared,
-                    tokio_util::sync::CancellationToken::new(),
-                    current_correlation_id(),
-                )
-                .await?
-            }
             collectors::PreparedStationCollectionRoute::NewApi(prepared) => {
                 let source = self.source(finish_draft_id);
                 collectors::finish_newapi_collection_v2(

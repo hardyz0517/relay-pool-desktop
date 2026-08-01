@@ -87,7 +87,6 @@ pub async fn collect_station_task(
             StationCollectorTaskTypeDto::Detect => collectors::output::CollectorTask::Detect,
             StationCollectorTaskTypeDto::Balance => collectors::output::CollectorTask::Balance,
             StationCollectorTaskTypeDto::Groups => collectors::output::CollectorTask::Groups,
-            StationCollectorTaskTypeDto::Models => collectors::output::CollectorTask::Models,
             StationCollectorTaskTypeDto::Full => collectors::output::CollectorTask::Full,
         };
         facade

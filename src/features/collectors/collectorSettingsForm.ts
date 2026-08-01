@@ -9,7 +9,6 @@ export type CollectorFrequencyPreset =
 export type CollectorSettingsDraft = {
   balanceIntervalMinutes: string;
   groupRateIntervalMinutes: string;
-  modelListIntervalMinutes: string;
   pricingRefreshIntervalMinutes: string;
   collectorTimeoutSeconds: string;
   collectorMaxConcurrency: string;
@@ -30,19 +29,16 @@ const FREQUENCY_PRESETS = {
   timely: {
     balanceIntervalMinutes: "2",
     groupRateIntervalMinutes: "10",
-    modelListIntervalMinutes: "30",
     pricingRefreshIntervalMinutes: "30",
   },
   balanced: {
     balanceIntervalMinutes: "5",
     groupRateIntervalMinutes: "20",
-    modelListIntervalMinutes: "60",
     pricingRefreshIntervalMinutes: "60",
   },
   resource_saver: {
     balanceIntervalMinutes: "15",
     groupRateIntervalMinutes: "60",
-    modelListIntervalMinutes: "180",
     pricingRefreshIntervalMinutes: "180",
   },
 } as const;
@@ -53,7 +49,6 @@ export function createCollectorSettingsDraft(
   return {
     balanceIntervalMinutes: String(settings.balanceIntervalMinutes),
     groupRateIntervalMinutes: String(settings.groupRateIntervalMinutes),
-    modelListIntervalMinutes: String(settings.modelListIntervalMinutes),
     pricingRefreshIntervalMinutes: String(settings.pricingRefreshIntervalMinutes),
     collectorTimeoutSeconds: String(settings.collectorTimeoutSeconds),
     collectorMaxConcurrency: String(settings.collectorMaxConcurrency),
@@ -98,7 +93,6 @@ export function parseCollectorSettingsDraft(
   const intervalFields: CollectorSettingsField[] = [
     "balanceIntervalMinutes",
     "groupRateIntervalMinutes",
-    "modelListIntervalMinutes",
     "pricingRefreshIntervalMinutes",
   ];
 

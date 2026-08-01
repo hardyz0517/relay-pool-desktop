@@ -44,6 +44,8 @@ pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
     CollectorTaskKind::Balance,
     CollectorTaskKind::Groups,
 ];
+pub const FULL_COLLECTOR_TASKS: &[CollectorTaskKind] =
+    &[CollectorTaskKind::Balance, CollectorTaskKind::Groups];
 
 pub struct Sub2ApiCollectorDriver;
 
@@ -64,12 +66,6 @@ impl CollectorDriver for Sub2ApiCollectorDriver {
                 CollectorTaskKind::Detect => Ok(detect_output()),
                 CollectorTaskKind::Balance => collect_balance(context).await,
                 CollectorTaskKind::Groups => collect_groups(context).await,
-                CollectorTaskKind::Models => Err(DriverFailure::unsupported(
-                    "Sub2API collector does not support models",
-                )),
-                CollectorTaskKind::Full => Err(DriverFailure::unsupported(
-                    "Sub2API full collection is split by the collector parent task",
-                )),
             }
         }
         .boxed()

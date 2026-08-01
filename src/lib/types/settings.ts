@@ -78,7 +78,6 @@ export type AppSettings = {
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
   groupRateIntervalMinutes: number;
-  modelListIntervalMinutes: number;
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
@@ -132,7 +131,6 @@ export type UpdateSettingsInput = {
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
   groupRateIntervalMinutes: number;
-  modelListIntervalMinutes: number;
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
@@ -153,7 +151,6 @@ export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsI
     collectorIntervalMinutes: settings.collectorIntervalMinutes,
     balanceIntervalMinutes: settings.balanceIntervalMinutes,
     groupRateIntervalMinutes: settings.groupRateIntervalMinutes,
-    modelListIntervalMinutes: settings.modelListIntervalMinutes,
     pricingRefreshIntervalMinutes: settings.pricingRefreshIntervalMinutes,
     collectorTimeoutSeconds: settings.collectorTimeoutSeconds,
     collectorMaxConcurrency: settings.collectorMaxConcurrency,

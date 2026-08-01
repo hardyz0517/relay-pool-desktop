@@ -53,7 +53,6 @@ commands.allow = [
   "list_recent_route_decisions",
   "get_request_decision_trace",
   "get_station_key_operational_detail",
-  "confirm_hierarchical_routing_migration",
   "start_local_proxy",
   "stop_local_proxy",
   "cleanup_before_update",

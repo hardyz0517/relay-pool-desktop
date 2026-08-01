@@ -131,18 +131,18 @@ describe("add provider form model", () => {
     });
   });
 
-  it("drafts remote-key capability only for supported station types", () => {
+  it("drafts remote-key capability for supported station types", () => {
     expect(draftRemoteCapability("sub2api")).toMatchObject({
       canListRemoteKeys: true,
       canCreateRemoteKey: false,
       canDeleteRemoteKeys: false,
       canReadGroups: true,
     });
-    expect(draftRemoteCapability("custom")).toMatchObject({
-      canListRemoteKeys: false,
+    expect(draftRemoteCapability("newapi")).toMatchObject({
+      canListRemoteKeys: true,
       canCreateRemoteKey: false,
       canDeleteRemoteKeys: false,
-      canReadGroups: false,
+      canReadGroups: true,
     });
   });
 });

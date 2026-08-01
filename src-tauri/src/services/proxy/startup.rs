@@ -104,7 +104,6 @@ mod tests {
                 collector_interval_minutes: settings.collector_interval_minutes,
                 balance_interval_minutes: settings.balance_interval_minutes,
                 group_rate_interval_minutes: settings.group_rate_interval_minutes,
-                model_list_interval_minutes: settings.model_list_interval_minutes,
                 pricing_refresh_interval_minutes: settings.pricing_refresh_interval_minutes,
                 collector_timeout_seconds: settings.collector_timeout_seconds,
                 collector_max_concurrency: settings.collector_max_concurrency,

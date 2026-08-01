@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "049413f3fb9ccf553fea36972d3ca13c7e7e1bfe6a19eba6ae6812bb2ccae1a6";
+    "e29e86973ac943795ea1994ea0a4a51d0a3e9d329b5d15e28e92ad0590727850";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -983,7 +983,6 @@ fn pilot_serialization_fixture() -> String {
         collector_interval_minutes: 30,
         balance_interval_minutes: 5,
         group_rate_interval_minutes: 20,
-        model_list_interval_minutes: 60,
         pricing_refresh_interval_minutes: 60,
         collector_timeout_seconds: 15,
         collector_max_concurrency: 3,
@@ -1000,8 +999,8 @@ fn pilot_serialization_fixture() -> String {
         "maxRateMultiplier": null, "defaultRoutingGroupFilter": "all_groups",
         "schedulerAdvancedSettings": null, "lowBalanceThresholdCny": 15.0,
         "collectorIntervalMinutes": 30, "balanceIntervalMinutes": 5,
-        "groupRateIntervalMinutes": 20, "modelListIntervalMinutes": 60,
-        "pricingRefreshIntervalMinutes": 60, "collectorTimeoutSeconds": 15,
+        "groupRateIntervalMinutes": 20, "pricingRefreshIntervalMinutes": 60,
+        "collectorTimeoutSeconds": 15,
         "collectorMaxConcurrency": 3, "allowDepletedFallback": false,
         "developerModeEnabled": false
     }))

@@ -214,7 +214,6 @@ pub struct UpdateSettingsInputDto {
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
     pub group_rate_interval_minutes: u16,
-    pub model_list_interval_minutes: u16,
     pub pricing_refresh_interval_minutes: u16,
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
@@ -246,7 +245,6 @@ impl UpdateSettingsInputDto {
             collector_interval_minutes: self.collector_interval_minutes,
             balance_interval_minutes: self.balance_interval_minutes,
             group_rate_interval_minutes: self.group_rate_interval_minutes,
-            model_list_interval_minutes: self.model_list_interval_minutes,
             pricing_refresh_interval_minutes: self.pricing_refresh_interval_minutes,
             collector_timeout_seconds: self.collector_timeout_seconds,
             collector_max_concurrency: self.collector_max_concurrency,
@@ -301,7 +299,6 @@ impl UpdateSettingsInputDto {
             ("collectorIntervalMinutes", self.collector_interval_minutes),
             ("balanceIntervalMinutes", self.balance_interval_minutes),
             ("groupRateIntervalMinutes", self.group_rate_interval_minutes),
-            ("modelListIntervalMinutes", self.model_list_interval_minutes),
             (
                 "pricingRefreshIntervalMinutes",
                 self.pricing_refresh_interval_minutes,
@@ -406,7 +403,6 @@ pub struct SettingsDto {
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
     pub group_rate_interval_minutes: u16,
-    pub model_list_interval_minutes: u16,
     pub pricing_refresh_interval_minutes: u16,
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
@@ -434,7 +430,6 @@ impl From<AppSettings> for SettingsDto {
             collector_interval_minutes: value.collector_interval_minutes,
             balance_interval_minutes: value.balance_interval_minutes,
             group_rate_interval_minutes: value.group_rate_interval_minutes,
-            model_list_interval_minutes: value.model_list_interval_minutes,
             pricing_refresh_interval_minutes: value.pricing_refresh_interval_minutes,
             collector_timeout_seconds: value.collector_timeout_seconds,
             collector_max_concurrency: value.collector_max_concurrency,
@@ -511,7 +506,6 @@ export type UpdateSettingsInputDto = {
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
   groupRateIntervalMinutes: number;
-  modelListIntervalMinutes: number;
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
@@ -542,7 +536,6 @@ export type SettingsDto = {
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
   groupRateIntervalMinutes: number;
-  modelListIntervalMinutes: number;
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
@@ -579,7 +572,6 @@ mod input_contract_tests {
             "collectorIntervalMinutes": 30,
             "balanceIntervalMinutes": 5,
             "groupRateIntervalMinutes": 20,
-            "modelListIntervalMinutes": 60,
             "pricingRefreshIntervalMinutes": 60,
             "collectorTimeoutSeconds": 15,
             "collectorMaxConcurrency": 3,

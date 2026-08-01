@@ -7,7 +7,6 @@ pub enum CollectorTask {
     Detect,
     Balance,
     Groups,
-    Models,
     Full,
 }
 
@@ -17,7 +16,6 @@ impl CollectorTask {
             CollectorTask::Detect => "detect",
             CollectorTask::Balance => "balance",
             CollectorTask::Groups => "groups",
-            CollectorTask::Models => "models",
             CollectorTask::Full => "full",
         }
     }

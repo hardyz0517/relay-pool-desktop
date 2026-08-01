@@ -207,7 +207,10 @@ mod tests {
         background_tasks::{BlockingExecutorConfig, OperationRegistryConfig, TaskId},
         outbound::{AsyncOutboundClientConfig, OutboundHeaderPolicy, TimeoutPolicy},
         runtime_composition::RuntimeCompositionError,
-        services::collectors::{contract::ProviderKind, failure::DriverFailureKind},
+        services::collectors::{
+            contract::ProviderKind,
+            drivers::REQUIRED_PROVIDER_KINDS,
+        },
     };
 
     #[test]
@@ -277,7 +280,7 @@ mod tests {
     fn provider_registry_composition_registers_every_known_provider() {
         let registry = compose_provider_registry().expect("provider registry");
 
-        assert_eq!(registry.len(), 3);
+        assert_eq!(registry.len(), 2);
         assert_eq!(
             registry
                 .descriptor(ProviderKind::Sub2Api)
@@ -292,26 +295,15 @@ mod tests {
                 .display_name,
             "NewAPI"
         );
-        assert_eq!(
-            registry
-                .descriptor(ProviderKind::OpenAiCompatible)
-                .expect("openai-compatible descriptor")
-                .display_name,
-            "OpenAI-compatible"
-        );
     }
 
     #[test]
-    fn provider_registry_composition_registers_openai_reference_collector_only() {
+    fn provider_registry_composition_registers_collectors_for_required_providers() {
         let registry = compose_provider_registry().expect("provider registry");
 
-        assert!(registry.collector(ProviderKind::OpenAiCompatible).is_ok());
-        let failure = match registry.remote_key(ProviderKind::OpenAiCompatible) {
-            Ok(_) => panic!("OpenAI-compatible has no remote-key capability"),
-            Err(failure) => failure,
-        };
-
-        assert_eq!(failure.kind, DriverFailureKind::Unsupported);
+        for provider in REQUIRED_PROVIDER_KINDS {
+            assert!(registry.collector(*provider).is_ok(), "{provider:?}");
+        }
     }
 }
 

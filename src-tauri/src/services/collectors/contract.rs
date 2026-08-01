@@ -19,7 +19,6 @@ use crate::{
 pub enum ProviderKind {
     Sub2Api,
     NewApi,
-    OpenAiCompatible,
 }
 
 impl ProviderKind {
@@ -27,7 +26,6 @@ impl ProviderKind {
         match self {
             Self::Sub2Api => "sub2api",
             Self::NewApi => "newapi",
-            Self::OpenAiCompatible => "openai-compatible",
         }
     }
 
@@ -35,7 +33,6 @@ impl ProviderKind {
         match value.trim() {
             "sub2api" => Some(Self::Sub2Api),
             "newapi" => Some(Self::NewApi),
-            "openai-compatible" | "openai_compatible" => Some(Self::OpenAiCompatible),
             _ => None,
         }
     }
@@ -75,6 +72,7 @@ impl DriverCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CollectorCapabilityDescriptor {
     pub supported_tasks: &'static [CollectorTaskKind],
+    pub full_tasks: &'static [CollectorTaskKind],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,8 +94,6 @@ pub struct AuthorizationCapabilityDescriptor {
 pub enum CollectorTaskKind {
     Balance,
     Groups,
-    Models,
-    Full,
     Detect,
 }
 
@@ -432,10 +428,8 @@ mod tests {
     fn provider_kind_is_closed_and_does_not_map_custom() {
         assert_eq!(ProviderKind::parse("sub2api"), Some(ProviderKind::Sub2Api));
         assert_eq!(ProviderKind::parse("newapi"), Some(ProviderKind::NewApi));
-        assert_eq!(
-            ProviderKind::parse("openai_compatible"),
-            Some(ProviderKind::OpenAiCompatible)
-        );
+        assert_eq!(ProviderKind::parse("openai-compatible"), None);
+        assert_eq!(ProviderKind::parse("openai_compatible"), None);
         assert_eq!(ProviderKind::parse("custom"), None);
         assert_eq!(ProviderKind::parse("unknown"), None);
     }

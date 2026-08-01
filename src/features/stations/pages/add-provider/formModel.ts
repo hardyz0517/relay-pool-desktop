@@ -1,5 +1,5 @@
 import type { RemoteKeyCapability, StationCredentials } from "@/lib/types/stationKeys";
-import type { Station, StationProxyMode, StationType } from "@/lib/types/stations";
+import { isStationType, type Station, type StationProxyMode, type StationType } from "@/lib/types/stations";
 import type { StationGroupDraft } from "../../components/StationGroupRowsEditor";
 import type { StationKeyDraft } from "../../components/StationKeyRowsEditor";
 import { providerPresets, type ProviderPresetId } from "../../providerPresets";
@@ -101,40 +101,29 @@ function normalizeProviderKeyRowsForDirtyCheck(rows: StationKeyDraft[]) {
 }
 
 export function getPresetDefaultStationName(preset: (typeof providerPresets)[number]) {
-  return preset.id === "custom" ? "" : preset.name;
+  return preset.name;
 }
 
 export function draftRemoteCapability(stationType: StationType): RemoteKeyCapability {
-  if (stationType === "sub2api" || stationType === "newapi") {
-    return {
-      stationId: "",
-      stationType,
-      canListRemoteKeys: true,
-      canCreateRemoteKey: false,
-      canDeleteRemoteKeys: false,
-      canReadGroups: true,
-      requiresManualSession: true,
-      unsupportedReason: null,
-    };
-  }
   return {
     stationId: "",
     stationType,
-    canListRemoteKeys: false,
+    canListRemoteKeys: true,
     canCreateRemoteKey: false,
     canDeleteRemoteKeys: false,
-    canReadGroups: false,
-    requiresManualSession: false,
-    unsupportedReason: `当前仅 Sub2API 支持获取远端 Key`,
+    canReadGroups: true,
+    requiresManualSession: true,
+    unsupportedReason: null,
   };
 }
 
 export function formFromStation(station: Station, credentials: StationCredentials): AddProviderFormState {
-  const preset = providerPresets.find((item) => item.stationType === station.stationType) ?? defaultPreset;
+  const stationType = isStationType(station.stationType) ? station.stationType : defaultPreset.stationType;
+  const preset = providerPresets.find((item) => item.stationType === stationType) ?? defaultPreset;
   return {
     presetId: preset.id,
     name: station.name,
-    stationType: station.stationType,
+    stationType,
     websiteUrl: station.websiteUrl,
     apiBaseUrl: station.apiBaseUrl,
     apiKey: "",

@@ -27,13 +27,13 @@ describe("AddProviderSections", () => {
       ),
     );
 
-    const customPreset = providerPresets.find((preset) => preset.id === "custom")!;
-    const customButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent?.includes(customPreset.name),
+    const sub2apiPreset = providerPresets.find((preset) => preset.id === "sub2api")!;
+    const sub2apiButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.includes(sub2apiPreset.name),
     )!;
-    await act(async () => customButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await act(async () => sub2apiButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
-    expect(onApplyPreset).toHaveBeenCalledWith("custom");
+    expect(onApplyPreset).toHaveBeenCalledWith("sub2api");
 
     await act(async () => root.unmount());
   });

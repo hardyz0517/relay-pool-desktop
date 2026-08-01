@@ -44,7 +44,6 @@ pub enum StationCollectorTaskTypeDto {
     Detect,
     Balance,
     Groups,
-    Models,
     Full,
 }
 

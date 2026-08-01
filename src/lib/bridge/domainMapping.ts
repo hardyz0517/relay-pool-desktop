@@ -47,7 +47,6 @@ export function normalizeSettings(settings: SettingsDto | AppSettings): AppSetti
     ),
     balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
     groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),
-    modelListIntervalMinutes: normalizeNumber(maybeSettings.modelListIntervalMinutes, 60),
     pricingRefreshIntervalMinutes: normalizeNumber(maybeSettings.pricingRefreshIntervalMinutes, 60),
     collectorTimeoutSeconds: normalizeNumber(maybeSettings.collectorTimeoutSeconds, 15),
     collectorMaxConcurrency: normalizeNumber(maybeSettings.collectorMaxConcurrency, 3),
@@ -73,7 +72,6 @@ export function toUpdateSettingsDto(input: UpdateSettingsInput): UpdateSettingsI
     collectorIntervalMinutes: input.collectorIntervalMinutes,
     balanceIntervalMinutes: input.balanceIntervalMinutes,
     groupRateIntervalMinutes: input.groupRateIntervalMinutes,
-    modelListIntervalMinutes: input.modelListIntervalMinutes,
     pricingRefreshIntervalMinutes: input.pricingRefreshIntervalMinutes,
     collectorTimeoutSeconds: input.collectorTimeoutSeconds,
     collectorMaxConcurrency: input.collectorMaxConcurrency,
@@ -85,12 +83,7 @@ export function toUpdateSettingsDto(input: UpdateSettingsInput): UpdateSettingsI
 export function normalizeStation(station: StationDto): Station {
   return {
     ...station,
-    stationType:
-      station.stationType === "sub2api" ||
-      station.stationType === "newapi" ||
-      station.stationType === "openai-compatible"
-        ? station.stationType
-        : "custom",
+    stationType: station.stationType,
     collectorProxyMode:
       station.collectorProxyMode === "direct" ||
       station.collectorProxyMode === "system" ||

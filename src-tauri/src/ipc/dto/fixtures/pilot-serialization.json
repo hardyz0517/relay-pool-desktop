@@ -22,7 +22,6 @@
         "localProxyStartOnLaunch": false,
         "lowBalanceThresholdCny": 15.0,
         "maxRateMultiplier": null,
-        "modelListIntervalMinutes": 60,
         "pendingDataDir": null,
         "pricingRefreshIntervalMinutes": 60,
         "schedulerAdvancedSettings": {
@@ -101,7 +100,6 @@
         "localProxyPort": 8787,
         "lowBalanceThresholdCny": 15.0,
         "maxRateMultiplier": null,
-        "modelListIntervalMinutes": 60,
         "pricingRefreshIntervalMinutes": 60,
         "schedulerAdvancedSettings": null,
         "trayBehavior": null
@@ -125,7 +123,6 @@
         "localProxyStartOnLaunch": false,
         "lowBalanceThresholdCny": 15.0,
         "maxRateMultiplier": null,
-        "modelListIntervalMinutes": 60,
         "pendingDataDir": null,
         "pricingRefreshIntervalMinutes": 60,
         "schedulerAdvancedSettings": {

@@ -131,7 +131,7 @@ import {
 
 const stationInput: CreateStationInputDto = {
   name: "Smoke station",
-  stationType: "openai-compatible",
+  stationType: "newapi",
   websiteUrl: "https://example.test",
   apiBaseUrl: "https://example.test/v1",
   apiKey: "sk-smoke-redacted",
@@ -154,7 +154,6 @@ const settingsInput = {
   collectorIntervalMinutes: 5,
   balanceIntervalMinutes: 5,
   groupRateIntervalMinutes: 20,
-  modelListIntervalMinutes: 60,
   pricingRefreshIntervalMinutes: 60,
   collectorTimeoutSeconds: 15,
   collectorMaxConcurrency: 3,

@@ -33,7 +33,7 @@ use crate::{
             collector_store::{
                 BalanceWrite, CollectorRunFinish, CollectorRunStart, CollectorSnapshotWrite,
                 CollectorStore, CollectorTaskStateWrite, GroupState, GroupTransition, GroupWrite,
-                ModelWrite, RateTransition, RateWrite, StationGroupBindingWrite,
+                RateTransition, RateWrite, StationGroupBindingWrite,
                 StoredCollectorApply,
             },
             station_catalog::StationCatalogStore,
@@ -239,7 +239,7 @@ impl CollectorService {
         interval_minutes: u16,
         limit: crate::application::pagination::PageLimit,
     ) -> Result<Vec<Station>, ApplicationError> {
-        if !matches!(task_type, "balance" | "groups" | "models") || interval_minutes == 0 {
+        if !matches!(task_type, "balance" | "groups") || interval_minutes == 0 {
             return Err(ApplicationError::ConstraintViolation);
         }
         let mut read = self.runtime.begin_read().await?;
@@ -800,56 +800,6 @@ impl CollectorService {
                             .await?;
                     }
 
-                    if matches!(request.task_type.as_str(), "models" | "full") {
-                        let models = request
-                            .facts
-                            .models
-                            .iter()
-                            .map(|model| ModelWrite {
-                                station_id: model.station_id.clone(),
-                                model: model.model.clone(),
-                                available: model.available,
-                                source: model.source.clone(),
-                                confidence: model.confidence,
-                                run_id: run_id.clone(),
-                                now: now.clone(),
-                            })
-                            .collect::<Vec<_>>();
-                        let transitions = collectors
-                            .replace_models(write, &request.station_id, &run_id, &models, &now)
-                            .await?;
-                        if supports_model_events(&request.adapter) {
-                            for model in transitions.added {
-                                changes
-                                    .upsert(
-                                        write,
-                                        &model_event(
-                                            ids.as_ref(),
-                                            &request.station_id,
-                                            &model,
-                                            true,
-                                            &now,
-                                        ),
-                                    )
-                                    .await?;
-                            }
-                            for model in transitions.removed {
-                                changes
-                                    .upsert(
-                                        write,
-                                        &model_event(
-                                            ids.as_ref(),
-                                            &request.station_id,
-                                            &model,
-                                            false,
-                                            &now,
-                                        ),
-                                    )
-                                    .await?;
-                            }
-                        }
-                    }
-
                     let failure_key =
                         collector_failure_key(&request.station_id, &request.task_type);
                     if matches!(request.status.as_str(), "success" | "partial") {
@@ -1009,7 +959,7 @@ fn validate_request(request: &CollectorApplyRequest) -> Result<(), ApplicationEr
         || request.adapter.trim().is_empty()
         || !matches!(
             request.task_type.as_str(),
-            "detect" | "balance" | "groups" | "models" | "full"
+                "detect" | "balance" | "groups" | "full"
         )
         || !matches!(
             request.status.as_str(),
@@ -1255,48 +1205,6 @@ fn rate_event(
     }
 }
 
-fn model_event(
-    ids: &dyn IdGenerator,
-    station_id: &str,
-    model: &str,
-    added: bool,
-    now: &str,
-) -> NewChangeEvent {
-    let event_type = if added {
-        "model_added"
-    } else {
-        "model_removed"
-    };
-    NewChangeEvent {
-        id: ids.next_id(),
-        severity: if added { "info" } else { "warning" }.to_string(),
-        event_type: event_type.to_string(),
-        title: if added {
-            "Model added"
-        } else {
-            "Model removed"
-        }
-        .to_string(),
-        message: format!(
-            "Model {model} was {}",
-            if added { "added" } else { "removed" }
-        ),
-        object_type: "station".to_string(),
-        object_id: Some(station_id.to_string()),
-        station_id: Some(station_id.to_string()),
-        station_key_id: None,
-        pricing_rule_id: None,
-        request_log_id: None,
-        old_value_json: (!added).then(|| json!({ "model": model }).to_string()),
-        new_value_json: added.then(|| json!({ "model": model }).to_string()),
-        impact_json: (!added)
-            .then(|| json!({ "routingRisk": "model_candidates_may_change" }).to_string()),
-        dedupe_key: format!("collector:{station_id}:{event_type}:{model}"),
-        source: "collector".to_string(),
-        now: now.to_string(),
-    }
-}
-
 fn collector_failure_event(
     ids: &dyn IdGenerator,
     request: &CollectorApplyRequest,
@@ -1343,10 +1251,6 @@ fn group_value(group: &GroupState) -> String {
         "effectiveRateMultiplier": group.effective_rate_multiplier
     })
     .to_string()
-}
-
-fn supports_model_events(adapter: &str) -> bool {
-    matches!(adapter, "sub2api" | "newapi" | "openai-compatible")
 }
 
 #[cfg(test)]

@@ -35,7 +35,7 @@ import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationCredentials, StationKey } from "@/lib/types/stationKeys";
-import type { Station } from "@/lib/types/stations";
+import { isStationType, type Station } from "@/lib/types/stations";
 import {
   buildStationAssetRows,
   filterStationAssetRowsByIssue,
@@ -330,7 +330,7 @@ export function useStationsPageController({
     setDetailStationId(null);
     setForm({
       name: station.name,
-      stationType: station.stationType,
+      stationType: isStationType(station.stationType) ? station.stationType : "sub2api",
       websiteUrl: station.websiteUrl,
       apiBaseUrl: station.apiBaseUrl,
       apiKey: "",
