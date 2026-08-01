@@ -2261,6 +2261,8 @@ mod tests {
         RuntimeRoutingCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
+            station_type: "openai-compatible".to_string(),
+            station_account_concurrency_limit: None,
             station_endpoint_revision: 1,
             sanitized_origin: "https://upstream.example.test".to_string(),
             upstream_api_format: UpstreamApiFormat::Auto,

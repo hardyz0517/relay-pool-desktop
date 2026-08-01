@@ -121,8 +121,8 @@ pub(crate) fn admission_profile_from_runtime_candidate(
         credential_revision: 1,
         durable_generation: 1,
         global_max_concurrency: 1024,
-        station_account_max_concurrency: 1024,
-        station_key_max_concurrency: positive_u32(candidate.max_concurrency).unwrap_or(1),
+        station_account_max_concurrency: station_account_max_concurrency(candidate),
+        station_key_max_concurrency: station_key_max_concurrency(candidate),
         provider_account_constraint: ProviderAccountConstraint::NotApplicable,
         half_open_probe_id: None,
     }
@@ -660,10 +660,20 @@ fn effective_health(
 }
 
 fn capacity_projection(candidate: &RuntimeRoutingCandidate) -> CapacityProjection {
-    let limit = positive_u32(candidate.max_concurrency);
+    let (scope, limit) = if uses_station_account_capacity(&candidate.station_type) {
+        (
+            CapacityScope::StationAccount,
+            positive_u32(station_account_max_concurrency(candidate).into()),
+        )
+    } else {
+        (
+            CapacityScope::StationKey,
+            positive_u32(candidate.max_concurrency),
+        )
+    };
     CapacityProjection {
         scopes: vec![CapacityScopeSnapshot {
-            scope: CapacityScope::StationKey,
+            scope,
             limit,
             in_flight: candidate
                 .load_factor
@@ -672,6 +682,33 @@ fn capacity_projection(candidate: &RuntimeRoutingCandidate) -> CapacityProjectio
             available: true,
             source_revision: Some(candidate.station_endpoint_revision),
         }],
+    }
+}
+
+fn uses_station_account_capacity(station_type: &str) -> bool {
+    matches!(
+        station_type.trim().to_ascii_lowercase().as_str(),
+        "sub2api" | "newapi"
+    )
+}
+
+fn station_account_max_concurrency(candidate: &RuntimeRoutingCandidate) -> u32 {
+    match candidate.station_type.trim().to_ascii_lowercase().as_str() {
+        "newapi" => 0,
+        "sub2api" => candidate
+            .station_account_concurrency_limit
+            .and_then(positive_u32)
+            .or_else(|| positive_u32(candidate.max_concurrency))
+            .unwrap_or(1),
+        _ => 0,
+    }
+}
+
+fn station_key_max_concurrency(candidate: &RuntimeRoutingCandidate) -> u32 {
+    if uses_station_account_capacity(&candidate.station_type) {
+        0
+    } else {
+        positive_u32(candidate.max_concurrency).unwrap_or(1)
     }
 }
 
@@ -687,6 +724,37 @@ mod tests {
         proxy::UpstreamApiFormat,
         routing::{PricingGroupType, RuntimeRoutingEconomicSnapshot, StationKeyCapabilities},
     };
+
+    #[test]
+    fn sub2api_uses_collected_account_concurrency_as_shared_capacity() {
+        let mut candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot::default());
+        candidate.station_type = "sub2api".to_string();
+        candidate.max_concurrency = 3;
+        candidate.station_account_concurrency_limit = Some(8);
+
+        let profile = admission_profile_from_runtime_candidate(&candidate);
+        let projection = capacity_projection(&candidate);
+
+        assert_eq!(profile.station_account_max_concurrency, 8);
+        assert_eq!(profile.station_key_max_concurrency, 0);
+        assert_eq!(projection.scopes[0].scope, CapacityScope::StationAccount);
+        assert_eq!(projection.scopes[0].limit, Some(8));
+    }
+
+    #[test]
+    fn newapi_has_unlimited_station_and_key_capacity() {
+        let mut candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot::default());
+        candidate.station_type = "newapi".to_string();
+        candidate.max_concurrency = 3;
+
+        let profile = admission_profile_from_runtime_candidate(&candidate);
+        let projection = capacity_projection(&candidate);
+
+        assert_eq!(profile.station_account_max_concurrency, 0);
+        assert_eq!(profile.station_key_max_concurrency, 0);
+        assert_eq!(projection.scopes[0].scope, CapacityScope::StationAccount);
+        assert_eq!(projection.scopes[0].limit, None);
+    }
 
     #[test]
     fn runtime_candidate_projection_carries_group_multiplier_and_proxy_pricing() {
@@ -858,6 +926,8 @@ mod tests {
         RuntimeRoutingCandidate {
             station_key_id: "key-1".to_string(),
             station_id: "station-1".to_string(),
+            station_type: "openai-compatible".to_string(),
+            station_account_concurrency_limit: None,
             station_endpoint_revision: 1,
             sanitized_origin: "https://station.example.test".to_string(),
             upstream_api_format: UpstreamApiFormat::CustomOpenAiCompatible,

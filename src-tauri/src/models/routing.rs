@@ -204,8 +204,6 @@ impl Default for SchedulerAdvancedSettings {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SchedulerConfigError {
     #[cfg(test)]
-    MultiplierLimitNotConfigured,
-    #[cfg(test)]
     InvalidMultiplierLimit,
     InvalidAdvancedSetting(&'static str),
 }
@@ -213,11 +211,10 @@ pub enum SchedulerConfigError {
 #[cfg(test)]
 impl AutomaticSchedulerSettings {
     pub fn validate_for_routing(&self) -> Result<(), SchedulerConfigError> {
-        let Some(max_rate_multiplier) = self.max_rate_multiplier else {
-            return Err(SchedulerConfigError::MultiplierLimitNotConfigured);
-        };
-        if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
-            return Err(SchedulerConfigError::InvalidMultiplierLimit);
+        if let Some(max_rate_multiplier) = self.max_rate_multiplier {
+            if !max_rate_multiplier.is_finite() || max_rate_multiplier < 0.0 {
+                return Err(SchedulerConfigError::InvalidMultiplierLimit);
+            }
         }
         self.advanced.validate()
     }
@@ -428,6 +425,8 @@ pub struct RuntimeRoutingEconomicSnapshot {
 pub struct RuntimeRoutingCandidate {
     pub station_key_id: String,
     pub station_id: String,
+    pub station_type: String,
+    pub station_account_concurrency_limit: Option<i64>,
     pub station_endpoint_revision: i64,
     pub sanitized_origin: String,
     pub upstream_api_format: crate::models::proxy::UpstreamApiFormat,
@@ -554,17 +553,15 @@ mod automatic_scheduler_contract_tests {
     }
 
     #[test]
-    fn routeable_settings_require_a_multiplier_ceiling() {
+    fn routeable_settings_allow_unlimited_multiplier_ceiling() {
         let settings = AutomaticSchedulerSettings {
             max_rate_multiplier: None,
             default_routing_group_filter: RoutingGroupFilter::AllGroups,
             advanced: SchedulerAdvancedSettings::default(),
         };
 
-        let error = settings
+        settings
             .validate_for_routing()
-            .expect_err("missing multiplier ceiling should fail routing validation");
-
-        assert_eq!(error, SchedulerConfigError::MultiplierLimitNotConfigured);
+            .expect("missing multiplier ceiling should mean unlimited routing");
     }
 }

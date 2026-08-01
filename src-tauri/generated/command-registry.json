@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "14a2e19e87b26913e688cbeb22f97bf8aac7bcdd55fb47c022124bd3fbfd6425",
+  "contract_hash": "049413f3fb9ccf553fea36972d3ca13c7e7e1bfe6a19eba6ae6812bb2ccae1a6",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -207,17 +207,6 @@
       "transport": "ordinary",
       "input_schema_hash": "a2f8aa3005db2a53f8890e5a08dc493f01e4858874fe423aaf1b926776c076e5",
       "output_schema_hash": "af8c76579fe949f562e6e4afea71c49f6d694990bea74e869e486baf4a103aed",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "idempotent",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "confirm_hierarchical_routing_migration",
-      "transport": "ordinary",
-      "input_schema_hash": "cd8c7f84a72c7922e86a4981cff4994b8c7d17ff02b6afc56a5b294cd8e34275",
-      "output_schema_hash": "188562d545305afeaa4b61f5d2aa5fe777d60efcbd50d6d7b23107e5db7023d5",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
       "transport_retry": false,
@@ -1801,6 +1790,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "f9d4a68ef47a7953dd804c7c5b5da63c0646576e5bbccc854105ce99691c681d"
+    "serialization_fixture_hash": "ec4e8253cd9b6006a935fd01eacedc040058af724dcad366928743aa9ae245af"
   }
 }

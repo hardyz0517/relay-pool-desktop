@@ -29,6 +29,7 @@ assert.match(routingPage, /useActivityQuery/);
 assert.doesNotMatch(routingPage, /SETTINGS_UPDATED_EVENT|addEventListener\(SETTINGS_UPDATED_EVENT/);
 assert.match(settingsEditor, /queryClient\.setQueryData\(queryKeys\.settings, nextSettings\)/);
 assert.match(settingsEditor, /queryClient\.invalidateQueries\(\{ queryKey: queryKeys\.localRoutingWorkspace \}\)/);
+assert.match(settingsEditor, /queryClient\.invalidateQueries\(\{ queryKey: routingQueryKeys\.all \}\)/);
 assert.match(localRoutingApi, /getActiveBackendClient\(\)\.localRouting\.loadLocalRoutingWorkspace\(\)/);
 assert.match(localRoutingApi, /getActiveBackendClient\(\)\.localRouting\.reorderLocalRoutingKeys\(input\)/);
 assert.doesNotMatch(localRoutingApi, /getSettings|settings\.localProxyPort/);
@@ -61,6 +62,8 @@ assert.match(rustSnapshot, /settings\.default_routing_group_filter/);
 assert.doesNotMatch(rustSnapshot, /fn evaluate_candidate/);
 
 assert.match(statusTab, /maxRateMultiplier/);
+assert.match(statusTab, /effectiveMaxRateMultiplier/);
+assert.match(statusTab, /不限制/);
 assert.match(statusTab, /previewEligibleCandidateCount/);
 assert.match(statusTab, /previewExcludedCandidateCount/);
 assert.match(statusTab, /分组筛选/);

@@ -293,13 +293,13 @@ function checkSimulationDtoUsesPlannerProjectionLanguage() {
 }
 
 function checkFrontendDoesNotOwnRoutingTruth() {
-  const routingWorkspacePanelFile = "src/features/routing/RoutingOperationalPreviewPanel.tsx";
+  const routingWorkspacePanelFile = "src/features/routing/RoutingStatusDiagnosticsPanel.tsx";
   const routingWorkspacePanel = read(routingWorkspacePanelFile);
   reject(
     routingWorkspacePanel,
     routingWorkspacePanelFile,
     /capabilitySummary|priceBasis|pricing unavailable/u,
-    "routing operational workspace UI must render backend capabilityVerdicts/pricing snapshots without deriving fallback truth from summary fields",
+    "routing status diagnostics UI must render backend operational snapshots without deriving fallback truth from compatibility fields",
   );
   for (const file of [
     "src/features/routing/LocalRoutingCandidateRow.tsx",

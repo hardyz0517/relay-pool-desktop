@@ -10,7 +10,6 @@ import {
   clearChangeEvents as clearChangeEventsBinding,
   clearRequestLogs as clearRequestLogsBinding,
   clearCaptureSession as clearCaptureSessionBinding,
-  confirmHierarchicalRoutingMigration as confirmHierarchicalRoutingMigrationBinding,
   cancelChannelMonitorExecution as cancelChannelMonitorExecutionBinding,
   chooseDataDir as chooseDataDirBinding,
   choosePortableExportPath as choosePortableExportPathBinding,
@@ -186,9 +185,6 @@ export class DesktopBackend implements BackendClient {
     importRelayPoolToCCSwitch: () => importRelayPoolToCcswitchBinding(),
     updateSettings: (input: Parameters<BackendClient["settings"]["updateSettings"]>[0]) =>
       updateSettingsBinding(toUpdateSettingsDto(input)).then(normalizeSettings),
-    confirmHierarchicalRoutingMigration: (
-      input: Parameters<BackendClient["settings"]["confirmHierarchicalRoutingMigration"]>[0],
-    ) => confirmHierarchicalRoutingMigrationBinding(input).then(normalizeSettings),
     chooseDataDir: () => chooseDataDirBinding().then(normalizeSettings),
     resetDataDir: () => resetDataDirBinding().then(normalizeSettings),
     listCommonLoginOptions: () => listCommonLoginOptionsBinding(),

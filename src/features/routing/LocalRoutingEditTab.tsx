@@ -20,7 +20,10 @@ import { reorderLocalRoutingKeys } from "@/lib/api/localRouting";
 import { readError } from "@/lib/errors";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate, LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import { cn } from "@/lib/utils";
-import { LocalRoutingCandidateRow } from "./LocalRoutingCandidateRow";
+import {
+  LocalRoutingCandidateHeader,
+  LocalRoutingCandidateRow,
+} from "./LocalRoutingCandidateRow";
 import { LocalRoutingSettingsEditor } from "./LocalRoutingSettingsEditor";
 
 type LocalRoutingEditTabProps = {
@@ -128,7 +131,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
 
   return (
     <div className="grid gap-3">
-      <LocalRoutingSettingsEditor workspace={workspace} />
+      <LocalRoutingSettingsEditor />
 
       <SectionCard
         title="候选预览与顺序修正"
@@ -147,16 +150,19 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={candidateIds} strategy={verticalListSortingStrategy}>
-              <div className="divide-y divide-border">
-                {candidates.map((candidate, index) => (
-                  <SortableLocalRoutingCandidateRow
-                    key={candidate.stationKeyId}
-                    candidate={candidate}
-                    order={index + 1}
-                    syncState={syncState}
-                    disabled={syncState === "saving"}
-                  />
-                ))}
+              <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
+                <LocalRoutingCandidateHeader />
+                <div className="divide-y divide-border">
+                  {candidates.map((candidate, index) => (
+                    <SortableLocalRoutingCandidateRow
+                      key={candidate.stationKeyId}
+                      candidate={candidate}
+                      order={index + 1}
+                      syncState={syncState}
+                      disabled={syncState === "saving"}
+                    />
+                  ))}
+                </div>
               </div>
             </SortableContext>
           </DndContext>

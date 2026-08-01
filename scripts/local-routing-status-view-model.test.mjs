@@ -23,7 +23,7 @@ assert.equal(buildCooldownDisplay("cooldown", 59_999, 60_000).label, "即将结�
 
 assert.equal(formatPreviewRejectReason("routing_group_mismatch"), "分组不匹配");
 assert.equal(formatPreviewRejectReason("multiplier_evidence_low_confidence"), "费率可信度不足");
-assert.equal(formatPreviewRejectReason("routing_multiplier_limit_not_configured"), "倍率上限未设置");
+assert.equal(formatPreviewRejectReason("routing_multiplier_limit_not_configured"), "未启用倍率硬上限");
 
 const latestDecision = {
   id: "decision-1",

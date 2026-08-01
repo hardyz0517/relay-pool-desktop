@@ -19,7 +19,6 @@ import {
   collectSub2apiStation,
   cleanupBeforeUpdate,
   chooseDataDir,
-  confirmHierarchicalRoutingMigration,
   createChannelMonitor,
   createChannelMonitorTemplate,
   createLocalStationKeyFromRemote,
@@ -44,11 +43,13 @@ import {
   getLatestCollectorSnapshot,
   getLocalAccessKey,
   getProxyStatus,
+  getRequestDecisionTrace,
   getRuntimeStatus,
   getSettings,
   getStationKeyCapabilities,
   getStationCredentials,
   getStationKeyHealth,
+  getStationKeyOperationalDetail,
   importRelayPoolToCcswitch,
   inspectLatestUpdateManifest,
   listKeyPoolItems,
@@ -69,8 +70,11 @@ import {
   loadChannelStatusWorkspace,
   loadPricingComparisonWorkspace,
   loadLocalRoutingWorkspace,
+  loadRoutingRuntimeOverlay,
+  loadRoutingWorkspaceSnapshot,
   listRemoteStationKeys,
   listRequestLogs,
+  listRecentRouteDecisions,
   listModelAliases,
   listPricingRules,
   listStationEndpointHealth,
@@ -188,14 +192,6 @@ describe("generated settings/stations transport envelopes", () => {
     await getSettings();
     await listStations();
     await updateSettings(settingsInput);
-    await confirmHierarchicalRoutingMigration({
-      orderingProfile: "cost_first",
-      multiplierCeiling: 2,
-      groupScope: "all_groups",
-      allowDepletedFallback: false,
-      affinityMode: "session",
-      legacyPolicy: "cost_stable_first",
-    });
     await createStation(stationInput);
     await updateStation({ ...stationInput, id: "station-1", apiKey: null });
     await deleteStation({ id: "station-1" });
@@ -205,19 +201,6 @@ describe("generated settings/stations transport envelopes", () => {
       ["get_settings", { input: {} }],
       ["list_stations", { input: {} }],
       ["update_settings", { input: settingsInput }],
-      [
-        "confirm_hierarchical_routing_migration",
-        {
-          input: {
-            orderingProfile: "cost_first",
-            multiplierCeiling: 2,
-            groupScope: "all_groups",
-            allowDepletedFallback: false,
-            affinityMode: "session",
-            legacyPolicy: "cost_stable_first",
-          },
-        },
-      ],
       ["update_station", { input: { ...stationInput, id: "station-1", apiKey: null } }],
       ["delete_station", { input: { id: "station-1" } }],
       ["reorder_stations", { input: { stationIds: ["station-1"] } }],
@@ -581,6 +564,11 @@ describe("generated settings/stations transport envelopes", () => {
     await listModelAliases();
     await listStationKeyHealth();
     await listStationEndpointHealth();
+    await loadRoutingWorkspaceSnapshot({ limit: 25, cursor: null });
+    await loadRoutingRuntimeOverlay();
+    await listRecentRouteDecisions({ limit: 10, cursor: "cursor-1" });
+    await getStationKeyOperationalDetail({ stationKeyId: "key-1" });
+    await getRequestDecisionTrace({ requestLogId: "request-1" });
     await getStationKeyHealth({ stationKeyId: "key-1" });
     await simulateRoute({
       endpoint: "chat_completions",
@@ -601,6 +589,11 @@ describe("generated settings/stations transport envelopes", () => {
       ["list_model_aliases", { input: {} }],
       ["list_station_key_health", { input: {} }],
       ["list_station_endpoint_health", { input: {} }],
+      ["load_routing_workspace_snapshot", { input: { limit: 25, cursor: null } }],
+      ["load_routing_runtime_overlay", { input: {} }],
+      ["list_recent_route_decisions", { input: { limit: 10, cursor: "cursor-1" } }],
+      ["get_station_key_operational_detail", { input: { stationKeyId: "key-1" } }],
+      ["get_request_decision_trace", { input: { requestLogId: "request-1" } }],
       ["get_station_key_health", { input: { stationKeyId: "key-1" } }],
       [
         "simulate_route",

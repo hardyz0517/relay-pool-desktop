@@ -10,6 +10,18 @@ type LocalRoutingStatusCandidateRowProps = {
   nowMs: number;
 };
 
+export function LocalRoutingStatusCandidateHeader() {
+  return (
+    <div className="hidden min-h-9 grid-cols-[minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)] items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground sm:grid">
+      <span>候选密钥</span>
+      <span>参与状态</span>
+      <span>有效倍率</span>
+      <span>余额</span>
+      <span>冷却</span>
+    </div>
+  );
+}
+
 export function LocalRoutingStatusCandidateRow({
   candidate,
   order,
@@ -77,7 +89,7 @@ function MetricCell({
 }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[11px] text-muted-foreground sm:hidden">{label}</div>
       {children ?? (
         <div
           className={

@@ -10,9 +10,7 @@ use crate::{
         error::ApplicationError,
         ids::IdGenerator,
     },
-    models::settings::{
-        AppSettings, ConfirmHierarchicalRoutingMigrationInput, UpdateSettingsInput,
-    },
+    models::settings::{AppSettings, UpdateSettingsInput},
     persistence::{
         runtime::PersistenceHandle,
         stores::{
@@ -176,33 +174,6 @@ impl SettingsService {
                 Box::pin(async move {
                     store
                         .update(write, update, &projection.active, projection.pending)
-                        .await
-                })
-            })
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn confirm_hierarchical_routing_migration(
-        &self,
-        input: ConfirmHierarchicalRoutingMigrationInput,
-    ) -> Result<AppSettings, ApplicationError> {
-        let store = self.store;
-        let now = self.now_ms_string();
-        let confirmed_at_ms = self.clock.now_utc().timestamp_millis();
-        let projection = self.data_directory_projection()?;
-        self.runtime
-            .write(|write| {
-                Box::pin(async move {
-                    store
-                        .confirm_hierarchical_routing_migration(
-                            write,
-                            input,
-                            confirmed_at_ms,
-                            &now,
-                            &projection.active,
-                            projection.pending,
-                        )
                         .await
                 })
             })

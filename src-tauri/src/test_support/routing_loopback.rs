@@ -22,11 +22,8 @@ use crate::{
     models::{
         pricing::UpsertBalanceSnapshotInput,
         proxy::RequestLog,
-        routing::{RoutingGroupFilter, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
-        settings::{
-            ConfirmHierarchicalRoutingMigrationInput, HierarchicalRoutingAffinityMode,
-            HierarchicalRoutingOrderingProfile, UpdateSettingsInput,
-        },
+        routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
+        settings::UpdateSettingsInput,
         station_keys::CreateStationKeyInput,
         stations::CreateStationInput,
     },
@@ -87,19 +84,6 @@ impl RoutingLoopbackHarness {
             .update_local_access_key(LOCAL_ACCESS_KEY.to_string())
             .await
             .expect("persist local access key");
-        services
-            .settings
-            .confirm_hierarchical_routing_migration(ConfirmHierarchicalRoutingMigrationInput {
-                ordering_profile: HierarchicalRoutingOrderingProfile::PriorityFirst,
-                multiplier_ceiling: 5.0,
-                group_scope: RoutingGroupFilter::AllGroups,
-                allow_depleted_fallback: true,
-                affinity_mode: HierarchicalRoutingAffinityMode::Disabled,
-                legacy_policy: "priority_fallback".to_string(),
-            })
-            .await
-            .expect("confirm hierarchical routing migration");
-
         Self {
             services,
             runtime,

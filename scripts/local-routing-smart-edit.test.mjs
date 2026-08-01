@@ -106,23 +106,43 @@ assert.doesNotMatch(
   "sticky escape is an internal default-on safeguard and must not render as a user switch",
 );
 
-const promotedStickyIndex = fields.indexOf('field="stickyWeighted"');
+const stickyGroupIndex = fields.indexOf('title="粘性与逃逸"');
 const scoreGroupIndex = fields.indexOf('title="综合评分"');
-assert.ok(promotedStickyIndex >= 0, "stickyWeighted must render as an explicit promoted row");
+const waitingGroupIndex = fields.indexOf('title="等待与兜底"');
+assert.ok(stickyGroupIndex >= 0, "sticky group must render scheduler stickiness controls");
 assert.ok(
-  promotedStickyIndex < scoreGroupIndex,
-  "stickyWeighted must render above the score parameter group",
+  scoreGroupIndex < stickyGroupIndex && stickyGroupIndex < waitingGroupIndex,
+  "sticky settings must stay between score and waiting groups",
 );
-assert.match(fields, /PROMOTED_BOOLEAN_FIELDS[\s\S]*stickyWeighted/);
+assert.match(fields, /SCHEDULER_BOOLEAN_FIELD_META[\s\S]*stickyWeighted/);
 assert.doesNotMatch(fields, /field="stickyEscape"/);
-assert.match(fields, /!PROMOTED_BOOLEAN_FIELDS\.has\(field\)/);
 assert.match(
   fields,
-  /function PromotedBooleanSettingRow[\s\S]*showLabel=\{false\}[\s\S]*border-0[\s\S]*bg-transparent/,
+  /group === "sticky"[\s\S]*stickyWeightedMeta\.label[\s\S]*onBooleanChange\("stickyWeighted"\)/,
+  "stickyWeighted must render next to the sticky group title instead of as a parameter",
+);
+assert.match(
+  fields,
+  /meta\.group === group && !\(group === "sticky" && field === "stickyWeighted"\)/,
+  "stickyWeighted must be excluded from the sticky parameter grid",
+);
+assert.match(
+  fields,
+  /STICKY_CONTROLLED_NUMERIC_FIELDS[\s\S]*previousResponse[\s\S]*stickyWaitTimeoutSeconds/,
+  "turning off weighted stickiness must disable sticky-related numeric fields",
+);
+assert.match(
+  fields,
+  /disabled=\{isSchedulerNumberInputDisabled\(field, draft, disabled\)\}/,
+  "scheduler numeric inputs must opt into sticky-aware disabling",
+);
+assert.match(
+  fields,
+  /加权粘性关闭时，粘性参数不可编辑/,
 );
 assert.doesNotMatch(fields, /<legend/);
 assert.match(fields, /role="group"[\s\S]*aria-label=\{title\}/);
-assert.match(fields, /<h3 className="mb-3 text-xs font-semibold text-foreground">\{title\}<\/h3>/);
+assert.match(fields, /<h3 className="text-xs font-semibold text-foreground">\{title\}<\/h3>/);
 
 assert.match(form, /SCHEDULER_ADVANCED_FIELD_KINDS/);
 assert.match(settingsTypes, /SCHEDULER_ADVANCED_FIELD_KINDS/);

@@ -20,7 +20,7 @@ for (const label of [
 for (const snippet of [
   'suffix="×"',
   'suffix="CNY"',
-  "关闭时自动路由不可用",
+  "关闭时不按价格倍率设置硬过滤",
   "站点未单独设置时使用",
   "showLabel={false}",
 ]) {
@@ -30,8 +30,6 @@ for (const snippet of [
 for (const snippet of [
   "handleBoundarySave",
   "保存路由边界",
-  "previewEligibleCandidateCount",
-  "candidateCount",
 ]) {
   assert.ok(editorSource.includes(snippet), `missing editor source snippet: ${snippet}`);
 }
@@ -41,6 +39,10 @@ for (const removedSnippet of [
   "boundarySaveTimeoutRef",
   "eligibleUnderMultiplierLimitCount",
   "enabledCandidateCount",
+  "当前预览",
+  "previewEligibleCandidateCount",
+  "candidateCount",
+  "LocalRoutingWorkspace",
 ]) {
   assert.ok(
     !editorSource.includes(removedSnippet),
@@ -49,8 +51,8 @@ for (const removedSnippet of [
 }
 
 assert.ok(
-  editTabSource.includes("<LocalRoutingSettingsEditor workspace={workspace} />"),
-  "LocalRoutingEditTab should pass workspace to LocalRoutingSettingsEditor",
+  editTabSource.includes("<LocalRoutingSettingsEditor />"),
+  "LocalRoutingEditTab should render LocalRoutingSettingsEditor without preview workspace data",
 );
 
 console.log("local routing boundary controls source contract ok");

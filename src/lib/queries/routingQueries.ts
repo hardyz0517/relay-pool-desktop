@@ -37,6 +37,7 @@ export async function loadRoutingWorkspace(): Promise<RoutingWorkspace> {
 }
 
 export const routingQueryKeys = {
+  all: ["routing"] as const,
   workspaceSnapshot: (input: RoutingWorkspaceSnapshotInput = {}) =>
     ["routing", "workspaceSnapshot", input.limit ?? null, input.cursor ?? null] as const,
   runtimeOverlay: () => ["routing", "runtimeOverlay"] as const,

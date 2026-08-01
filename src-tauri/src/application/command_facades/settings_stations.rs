@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     application::{error::ApplicationError, settings::SettingsService, stations::StationService},
     models::{
-        settings::{AppSettings, ConfirmHierarchicalRoutingMigrationInput, UpdateSettingsInput},
+        settings::{AppSettings, UpdateSettingsInput},
         stations::{CreateStationInput, Station, UpdateStationInput},
     },
     TrayBehavior, TrayBehaviorState,
@@ -81,14 +81,5 @@ impl SettingsStationsCommandFacade {
         self.tray_behavior
             .set(TrayBehavior::from_setting(&settings.tray_behavior));
         Ok(settings)
-    }
-
-    pub(crate) async fn confirm_hierarchical_routing_migration(
-        &self,
-        input: ConfirmHierarchicalRoutingMigrationInput,
-    ) -> Result<AppSettings, ApplicationError> {
-        self.settings
-            .confirm_hierarchical_routing_migration(input)
-            .await
     }
 }

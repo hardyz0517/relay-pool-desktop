@@ -33,7 +33,16 @@ const booleanFieldEntries = Object.entries(SCHEDULER_BOOLEAN_FIELD_META) as Arra
   { label: string; group: SchedulerFieldGroup },
 ]>;
 
-const PROMOTED_BOOLEAN_FIELDS = new Set<SchedulerVisibleBooleanField>(["stickyWeighted"]);
+const STICKY_CONTROLLED_NUMERIC_FIELDS = new Set<SchedulerNumericField>([
+  "previousResponse",
+  "sessionSticky",
+  "stickyEscapeTtftMs",
+  "stickyEscapeErrorRate",
+  "stickySessionTtlSeconds",
+  "stickyResponseTtlSeconds",
+  "stickyMaxWaiting",
+  "stickyWaitTimeoutSeconds",
+]);
 
 export function LocalRoutingBoundaryFields({
   draft,
@@ -70,7 +79,7 @@ export function LocalRoutingBoundaryFields({
         description={
           draft.maxRateLimitEnabled
             ? "超过上限的 Key 不参与自动路由。"
-            : "关闭时自动路由不可用。"
+            : "关闭时不按价格倍率设置硬过滤。"
         }
       >
         <SwitchControl
@@ -177,12 +186,6 @@ export function LocalRoutingSchedulerFields({
 }) {
   return (
     <>
-      <PromotedBooleanSettingRow
-        field="stickyWeighted"
-        draft={draft}
-        disabled={disabled}
-        onBooleanChange={onBooleanChange}
-      />
       {errors.baseWeights ? (
         <div className="border-b border-danger-border bg-danger-surface px-4 py-2 text-xs text-danger-foreground">
           {errors.baseWeights}
@@ -241,33 +244,6 @@ function CompactSettingRow({
   );
 }
 
-function PromotedBooleanSettingRow({
-  field,
-  draft,
-  disabled,
-  onBooleanChange,
-}: {
-  field: SchedulerVisibleBooleanField;
-  draft: LocalRoutingSettingsDraft;
-  disabled: boolean;
-  onBooleanChange: BooleanChangeHandler;
-}) {
-  const meta = SCHEDULER_BOOLEAN_FIELD_META[field];
-  return (
-    <div className="flex min-h-12 items-center justify-between gap-4 border-b border-border px-4 py-2">
-      <span className="text-sm font-medium text-foreground">{meta.label}</span>
-      <SwitchControl
-        ariaLabel={meta.label}
-        checked={draft.scheduler[field]}
-        disabled={disabled}
-        onCheckedChange={() => onBooleanChange(field)}
-        showLabel={false}
-        className="h-6 min-w-0 border-0 bg-transparent p-0 shadow-none hover:bg-transparent"
-      />
-    </div>
-  );
-}
-
 function SchedulerFieldGroup({
   title,
   group,
@@ -287,8 +263,10 @@ function SchedulerFieldGroup({
 }) {
   const numericFields = numericFieldEntries.filter(([, meta]) => meta.group === group);
   const booleanFields = booleanFieldEntries.filter(
-    ([field, meta]) => meta.group === group && !PROMOTED_BOOLEAN_FIELDS.has(field),
+    ([field, meta]) => meta.group === group && !(group === "sticky" && field === "stickyWeighted"),
   );
+  const stickyControlsDisabled = group === "sticky" && !draft.scheduler.stickyWeighted;
+  const stickyWeightedMeta = SCHEDULER_BOOLEAN_FIELD_META.stickyWeighted;
 
   return (
     <div
@@ -296,18 +274,28 @@ function SchedulerFieldGroup({
       aria-label={title}
       className="border-b border-border px-4 py-3 last:border-b-0"
     >
-      <h3 className="mb-3 text-xs font-semibold text-foreground">{title}</h3>
+      <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="text-xs font-semibold text-foreground">{title}</h3>
+          {group === "sticky" ? (
+            <label className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <span>{stickyWeightedMeta.label}</span>
+              <SwitchControl
+                ariaLabel={stickyWeightedMeta.label}
+                checked={draft.scheduler.stickyWeighted}
+                disabled={disabled}
+                onCheckedChange={() => onBooleanChange("stickyWeighted")}
+                showLabel={false}
+                className="h-5 min-w-0 border-0 bg-transparent p-0 shadow-none hover:bg-transparent"
+              />
+            </label>
+          ) : null}
+        </div>
+        {stickyControlsDisabled ? (
+          <span className="text-xs text-muted-foreground">加权粘性关闭时，粘性参数不可编辑</span>
+        ) : null}
+      </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {numericFields.map(([field]) => (
-          <SchedulerNumberInput
-            key={field}
-            field={field}
-            draft={draft}
-            disabled={disabled}
-            error={errors[field]}
-            onChange={onNumericChange}
-          />
-        ))}
         {booleanFields.map(([field, meta]) => (
           <label key={field} className="grid min-w-0 content-start gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">{meta.label}</span>
@@ -319,9 +307,27 @@ function SchedulerFieldGroup({
             />
           </label>
         ))}
+        {numericFields.map(([field]) => (
+          <SchedulerNumberInput
+            key={field}
+            field={field}
+            draft={draft}
+            disabled={isSchedulerNumberInputDisabled(field, draft, disabled)}
+            error={errors[field]}
+            onChange={onNumericChange}
+          />
+        ))}
       </div>
     </div>
   );
+}
+
+function isSchedulerNumberInputDisabled(
+  field: SchedulerNumericField,
+  draft: LocalRoutingSettingsDraft,
+  disabled: boolean,
+) {
+  return disabled || (!draft.scheduler.stickyWeighted && STICKY_CONTROLLED_NUMERIC_FIELDS.has(field));
 }
 
 function SchedulerNumberInput({

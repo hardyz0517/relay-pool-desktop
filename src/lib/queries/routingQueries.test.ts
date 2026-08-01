@@ -92,6 +92,7 @@ describe("routing query owner", () => {
   });
 
   it("keeps durable workspace and runtime overlay cache keys separate", () => {
+    expect(routingQueryKeys.all).toEqual(["routing"]);
     expect(routingQueryKeys.workspaceSnapshot({ limit: 50, cursor: null })).toEqual([
       "routing",
       "workspaceSnapshot",

@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
-import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import { routingQueryKeys } from "@/lib/queries/routingQueries";
 import {
   appSettingsToUpdateInput,
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
@@ -57,11 +57,7 @@ const saveStateTones: Record<VisibleSaveState, "info" | "warning" | "healthy" | 
   error: "error",
 };
 
-type LocalRoutingSettingsEditorProps = {
-  workspace: LocalRoutingWorkspace | null;
-};
-
-export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEditorProps) {
+export function LocalRoutingSettingsEditor() {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -95,7 +91,10 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
   }
 
   async function refreshRoutingWorkspace() {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace }),
+      queryClient.invalidateQueries({ queryKey: routingQueryKeys.all }),
+    ]);
   }
 
   const schedulerDirty = useMemo(
@@ -138,9 +137,6 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
       : boundaryDirty
         ? "dirty"
         : boundarySaveState;
-  const candidateCount = workspace?.summary.candidateCount ?? 0;
-  const previewEligibleCandidateCount = workspace?.summary.previewEligibleCandidateCount ?? 0;
-
   async function loadCurrentSettings() {
     const operationId = loadOperationRef.current + 1;
     loadOperationRef.current = operationId;
@@ -486,9 +482,6 @@ export function LocalRoutingSettingsEditor({ workspace }: LocalRoutingSettingsEd
           onBooleanChange={updateBooleanField}
           onNumericChange={updateBoundaryNumericField}
         />
-        <div className="border-t border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
-          当前预览：{previewEligibleCandidateCount} / {candidateCount} 个候选可参与路由。
-        </div>
         {boundarySaveError ? (
           <div className="border-t border-danger-border bg-danger-surface px-4 py-2 text-xs text-danger-foreground">
             {boundarySaveError}

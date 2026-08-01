@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "14a2e19e87b26913e688cbeb22f97bf8aac7bcdd55fb47c022124bd3fbfd6425";
+    "049413f3fb9ccf553fea36972d3ca13c7e7e1bfe6a19eba6ae6812bb2ccae1a6";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -85,7 +85,6 @@ macro_rules! ipc_command_registry {
             updater_network_config => $crate::commands::updater::updater_network_config,
             inspect_latest_update_manifest => $crate::commands::updater::inspect_latest_update_manifest,
             update_settings => $crate::commands::settings::update_settings,
-            confirm_hierarchical_routing_migration => $crate::commands::settings::confirm_hierarchical_routing_migration,
             choose_data_dir => $crate::commands::data_directory::choose_data_dir,
             reset_data_dir => $crate::commands::data_directory::reset_data_dir,
             get_proxy_status => $crate::commands::local_proxy::get_proxy_status,
@@ -293,12 +292,6 @@ fn command_contract(name: &str) -> CommandContract {
         "update_settings" => {
             migrated_mutation("UpdateSettingsInputDto", "SettingsDto", "idempotent", false)
         }
-        "confirm_hierarchical_routing_migration" => migrated_mutation(
-            "ConfirmHierarchicalRoutingMigrationInputDto",
-            "SettingsDto",
-            "idempotent",
-            false,
-        ),
         "create_station" => migrated_mutation(
             "CreateStationInputDto",
             "StationDto",
@@ -995,7 +988,6 @@ fn pilot_serialization_fixture() -> String {
         collector_timeout_seconds: 15,
         collector_max_concurrency: 3,
         allow_depleted_fallback: false,
-        hierarchical_routing_migration: None,
         developer_mode_enabled: false,
         tray_behavior: "close_to_tray".into(),
         data_dir: "fixture-data-dir-redacted".into(),
@@ -1014,18 +1006,6 @@ fn pilot_serialization_fixture() -> String {
         "developerModeEnabled": false
     }))
     .expect("settings fixture input");
-    let hierarchical_migration =
-        super::dto::settings::ConfirmHierarchicalRoutingMigrationInputDto::parse(
-            serde_json::json!({
-                "orderingProfile": "cost_first",
-                "multiplierCeiling": 2.0,
-                "groupScope": "all_groups",
-                "allowDepletedFallback": false,
-                "affinityMode": "session",
-                "legacyPolicy": "cost_stable_first"
-            }),
-        )
-        .expect("hierarchical migration fixture input");
     let create_station = super::dto::stations::CreateStationInputDto::parse(serde_json::json!({
         "name": "Fixture Station", "stationType": "newapi",
         "websiteUrl": "https://provider.invalid", "apiBaseUrl": "https://provider.invalid/v1",
@@ -1053,7 +1033,6 @@ fn pilot_serialization_fixture() -> String {
         serde_json::json!({"command": "get_settings", "input": {}, "output": settings.clone()}),
         serde_json::json!({"command": "list_stations", "input": {}, "output": [station.clone()]}),
         serde_json::json!({"command": "update_settings", "input": update_settings, "output": settings.clone()}),
-        serde_json::json!({"command": "confirm_hierarchical_routing_migration", "input": hierarchical_migration, "output": settings}),
         serde_json::json!({"command": "create_station", "input": create_station, "output": station.clone()}),
         serde_json::json!({"command": "update_station", "input": update_station, "output": station.clone()}),
         serde_json::json!({"command": "delete_station", "input": delete_station, "output": null}),
@@ -1103,18 +1082,6 @@ fn render_typescript(contract_hash: &str) -> String {
         .replace(
             r#"import { invoke } from "@/lib/bridge/transport";"#,
             r#"import { invoke, invokeNonIdempotent } from "@/lib/bridge/transport";"#,
-        )
-        .replace(
-            r#"export function updateSettings(input: UpdateSettingsInputDto): Promise<SettingsDto> {
-  return invokeCommand<SettingsDto>("update_settings", { input });
-}"#,
-            r#"export function updateSettings(input: UpdateSettingsInputDto): Promise<SettingsDto> {
-  return invokeCommand<SettingsDto>("update_settings", { input });
-}
-
-export function confirmHierarchicalRoutingMigration(input: ConfirmHierarchicalRoutingMigrationInputDto): Promise<SettingsDto> {
-  return invokeCommand<SettingsDto>("confirm_hierarchical_routing_migration", { input });
-}"#,
         )
         .replace(
             r#"return invokeCommand<StationDto>("create_station", { input });"#,

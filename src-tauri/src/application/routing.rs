@@ -1073,6 +1073,8 @@ mod tests {
         RuntimeRoutingCandidate {
             station_key_id: station_key_id.to_string(),
             station_id: station_id.to_string(),
+            station_type: "openai-compatible".to_string(),
+            station_account_concurrency_limit: None,
             station_endpoint_revision: priority,
             sanitized_origin: format!("https://{station_key_id}.example.test"),
             upstream_api_format: UpstreamApiFormat::CustomOpenAiCompatible,

@@ -42,10 +42,10 @@ describe("local routing status view model", () => {
   it("renders candidate economics from backend facts without legacy multiplier fields", () => {
     const display = buildCandidateDisplayFacts(candidate());
 
-    expect(display.multiplierLabel).toBe("1.2500x via backend_projection");
-    expect(display.multiplierDetail).toBe("Effective multiplier");
+    expect(display.multiplierLabel).toBe("1.2500x");
+    expect(display.multiplierDetail).toBeNull();
     expect(display.balanceLabel).toBe("正常");
-    expect(display.balanceDetail).toBe("Balance");
+    expect(display.balanceDetail).toBeNull();
   });
 
   it("uses backend rejection codes and stays explicit when facts are missing", () => {

@@ -35,7 +35,7 @@ const previewRejectReasonLabels: Record<string, string> = {
   multiplier_evidence_unbound_group: "倍率未绑定分组",
   multiplier_evidence_low_confidence: "费率可信度不足",
   multiplier_over_ceiling: "超过倍率上限",
-  routing_multiplier_limit_not_configured: "倍率上限未设置",
+  routing_multiplier_limit_not_configured: "未启用倍率硬上限",
 };
 
 const balanceStatusLabels: Record<string, string> = {
@@ -124,15 +124,20 @@ export function buildCandidateDisplayFacts(candidate: LocalRoutingCandidateRow):
 
   return {
     rejectReasonLabel: rejectReason ? formatPreviewRejectReason(rejectReason) : null,
-    multiplierLabel: multiplierFact?.value ?? "后端未提供",
-    multiplierDetail: multiplierFact?.label ?? null,
+    multiplierLabel: formatMultiplierFactValue(multiplierFact?.value),
+    multiplierDetail: null,
     balanceLabel: balanceFact ? formatBalanceStatus(balanceFact.value) : "后端未提供",
-    balanceDetail: balanceFact?.label ?? null,
+    balanceDetail: null,
   };
 }
 
 export function formatBalanceStatus(value: string | null) {
   return balanceStatusLabels[value ?? ""] ?? "未知";
+}
+
+function formatMultiplierFactValue(value: string | null | undefined) {
+  if (!value) return "后端未提供";
+  return value.replace(/\s+via\s+\S+\s*$/i, "").trim() || "后端未提供";
 }
 
 export function formatRoutingDecisionTime(value: string | null) {

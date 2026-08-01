@@ -20,7 +20,7 @@ function assertExcludes(source, needle, label) {
 }
 
 const routingPage = read("src/features/routing/RoutingPage.tsx");
-const workspacePanel = read("src/features/routing/RoutingOperationalPreviewPanel.tsx");
+const diagnosticsPanel = read("src/features/routing/RoutingStatusDiagnosticsPanel.tsx");
 const routingQueries = read("src/lib/queries/routingQueries.ts");
 const routingTypes = read("src/lib/types/routing.ts");
 const routingDeepLinks = read("src/lib/types/routingDeepLinks.ts");
@@ -41,11 +41,16 @@ const manualTauriScript = read("scripts/run-routing-workspace-tauri-manual.ps1")
 const fixtureServer = read("scripts/routing-workspace-fixture-server.mjs");
 const tauriCdpVerifier = read("scripts/verify-routing-workspace-tauri-cdp.mjs");
 
-assertIncludes(routingPage, '{ value: "workspace", label: "工作台" }', "RoutingPage");
-assertIncludes(routingPage, "refetchInterval: queryEnabled && activeTab === \"workspace\" ? 1_000 : false", "RoutingPage");
+assertIncludes(routingPage, 'type LocalRoutingTab = "status" | "edit"', "RoutingPage");
+assertIncludes(routingPage, "RoutingStatusDiagnosticsPanel", "RoutingPage");
+assertIncludes(routingPage, "refetchInterval: queryEnabled && activeTab === \"status\" ? 1_000 : false", "RoutingPage");
 assertIncludes(routingPage, "routingQueryKeys.workspaceSnapshot({ limit: 50 })", "RoutingPage");
 assertIncludes(routingPage, "routingQueryKeys.runtimeOverlay()", "RoutingPage");
 assertIncludes(routingPage, "routingQueryKeys.recentDecisions({ limit: 8 })", "RoutingPage");
+assertIncludes(routingPage, "maxRateMultiplier={routingSnapshotQuery.data?.maxRateMultiplier}", "RoutingPage");
+assertIncludes(routingPage, "deepLink={deepLink}", "RoutingPage");
+assertExcludes(routingPage, 'value: "workspace"', "RoutingPage");
+assertExcludes(routingPage, "RoutingOperationalPreviewPanel", "RoutingPage");
 assertExcludes(routingPage, "loadRoutingWorkspace()", "RoutingPage");
 assertExcludes(routingPage, "cancelQueries", "RoutingPage");
 assertExcludes(routingPage, "removeQueries", "RoutingPage");
@@ -55,31 +60,26 @@ assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQu
 assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.runtimeOverlay() })", "RoutingPage");
 assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.recentDecisions({ limit: 8 }) })", "RoutingPage");
 
-assertIncludes(workspacePanel, "DataTableLite", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "getStationKeyOperationalDetailQuery", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "getRequestDecisionTraceQuery", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "simulateRouteQuery", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "snapshot-only", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "trace.timeline", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "timelineStatusTone", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "formatTimelineKind", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "onOpenRequestLog", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "查看使用记录", "RoutingOperationalPreviewPanel");
-assertExcludes(workspacePanel, "trace.planningRounds", "RoutingOperationalPreviewPanel");
-assertExcludes(workspacePanel, "JSON.stringify", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "deepLink.kind === \"station-key\"", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "deepLink.kind === \"station\"", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "deepLink.kind === \"request\"", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "deepLink.kind === \"simulate-model\"", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "scopedCandidates", "RoutingOperationalPreviewPanel");
-assertIncludes(workspacePanel, "candidate.stationId === stationScopeId", "RoutingOperationalPreviewPanel");
-assertExcludes(workspacePanel, "pricing_projector", "RoutingOperationalPreviewPanel");
-assertExcludes(workspacePanel, "candidate_projector", "RoutingOperationalPreviewPanel");
-assertExcludes(workspacePanel, "routing_engine", "RoutingOperationalPreviewPanel");
+assertIncludes(diagnosticsPanel, "simulateRouteQuery", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "snapshot.productionPolicy", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "snapshot.maxRateMultiplier", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "snapshot.routingGroupFilter", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "runtimeOverlay?.candidates", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "decisions?.decisions", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "onOpenRequestLog", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "deepLink.kind === \"station-key\"", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "deepLink.kind === \"station\"", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "deepLink.kind === \"simulate-model\"", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "candidate.stationId === stationScopeId", "RoutingStatusDiagnosticsPanel");
+assertExcludes(diagnosticsPanel, "pricing_projector", "RoutingStatusDiagnosticsPanel");
+assertExcludes(diagnosticsPanel, "candidate_projector", "RoutingStatusDiagnosticsPanel");
+assertExcludes(diagnosticsPanel, "routing_engine", "RoutingStatusDiagnosticsPanel");
+assertExcludes(diagnosticsPanel, "JSON.stringify", "RoutingStatusDiagnosticsPanel");
+assertExcludes(diagnosticsPanel, "DataTableLite", "RoutingStatusDiagnosticsPanel");
 
 assertIncludes(routingQueries, 'runtimeOverlay: () => ["routing", "runtimeOverlay"] as const', "routingQueries");
+assertIncludes(routingQueries, 'all: ["routing"] as const', "routingQueries");
 assertIncludes(routingQueries, 'workspaceSnapshot: (input: RoutingWorkspaceSnapshotInput = {})', "routingQueries");
-
 assertIncludes(routingTypes, 'from "@/lib/bridge/generated"', "routing types");
 assertIncludes(routingTypes, "export type RoutingWorkspaceSnapshot = RoutingWorkspaceSnapshotDto", "routing types");
 assertIncludes(routingTypes, "export type RouteSimulationResult = RouteSimulationResultDto", "routing types");
@@ -108,31 +108,25 @@ assertIncludes(logsPage, 'kind: "request"', "LogsPage");
 assertIncludes(logsPage, "VersionedRequestLogDeepLink", "LogsPage");
 assertIncludes(logsPage, "deepLink.requestLogId", "LogsPage");
 assertIncludes(logsPage, "setSelectedId(deepLink.requestLogId)", "LogsPage");
-assertIncludes(logsPage, "查看路由链路", "LogsPage");
 assertIncludes(modelBasePricesPage, 'kind: "simulate-model"', "ModelBasePricesPage");
 assertIncludes(modelBasePricesPage, 'source: "pricing"', "ModelBasePricesPage");
-assertIncludes(modelBasePricesPage, "模拟", "ModelBasePricesPage");
 assertIncludes(channelStatusPage, "ChannelMonitoringTab", "ChannelStatusPage");
 assertIncludes(channelStatusPage, "onOpenRoutingDeepLink={onOpenRoutingDeepLink}", "ChannelStatusPage");
 assertIncludes(channelMonitoringTab, 'source: "monitoring"', "ChannelMonitoringTab");
 assertIncludes(channelMonitoringTab, "createMonitoringRoutingLink", "ChannelMonitoringTab");
 assertIncludes(channelMonitoringTab, 'monitor.targetType !== "station_key"', "ChannelMonitoringTab");
-assertIncludes(channelMonitoringTab, "路由影响", "ChannelMonitoringTab");
 assertIncludes(collectorsPage, 'source: "collector"', "CollectorsPage");
 assertIncludes(collectorsPage, 'kind: "station"', "CollectorsPage");
-assertIncludes(collectorsPage, "查看路由影响", "CollectorsPage");
 assertIncludes(changeCenterPage, "createChangeCenterRoutingLink", "ChangeCenterPage");
 assertIncludes(changeCenterPage, 'source: "change_center"', "ChangeCenterPage");
 assertIncludes(changeCenterPage, "event.requestLogId", "ChangeCenterPage");
 assertIncludes(changeCenterPage, 'event.objectType === "station_key"', "ChangeCenterPage");
 assertIncludes(changeCenterPage, 'event.objectType === "station"', "ChangeCenterPage");
-assertIncludes(changeCenterPage, "查看路由影响", "ChangeCenterPage");
 assertIncludes(stationsPage, "onOpenRoutingDeepLink", "StationsPage");
 assertIncludes(stationAssetRows, 'source: "station_endpoint_health"', "StationAssetRows");
 assertIncludes(stationAssetRows, 'kind: "station"', "StationAssetRows");
-assertIncludes(stationAssetRows, "查看路由影响", "StationAssetRows");
 assertIncludes(stationDetailPage, 'source: "station_endpoint_health"', "StationDetailPage");
-assertIncludes(stationDetailContent, "查看路由影响", "StationDetailContent");
+assertIncludes(stationDetailContent, "onOpenRoutingDeepLink", "StationDetailContent");
 
 assertIncludes(manualTauriScript, "output\\manual-routing-workspace\\$ProfileName", "manual Tauri routing workspace script");
 assertIncludes(manualTauriScript, 'dev.relaypool.desktop.routing-workspace-manual', "manual Tauri routing workspace script");
@@ -169,4 +163,4 @@ assertExcludes(tauriCdpVerifier, "Remove-Item", "routing workspace Tauri CDP ver
 assertExcludes(tauriCdpVerifier, "git add", "routing workspace Tauri CDP verifier");
 assertExcludes(tauriCdpVerifier, "https://", "routing workspace Tauri CDP verifier");
 
-console.log("routing workspace integration contract ok");
+console.log("routing status integration contract ok");

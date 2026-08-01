@@ -132,6 +132,7 @@ impl RoutingStore {
             SELECT
                 k.id AS station_key_id,
                 k.station_id,
+                s.station_type,
                 s.endpoint_revision,
                 s.api_base_url,
                 s.upstream_api_format,
@@ -190,6 +191,7 @@ impl RoutingStore {
         let mut health = load_runtime_health(read).await?;
         let mut key_balances = load_latest_key_balances(read).await?;
         let station_balances = load_latest_station_balances(read).await?;
+        let station_concurrency_limits = load_latest_station_concurrency_limits(read).await?;
 
         Ok(candidates
             .into_iter()
@@ -199,6 +201,9 @@ impl RoutingStore {
                     candidate.capabilities = value;
                 }
                 candidate.health = health.remove(&candidate.station_key_id);
+                candidate.station_account_concurrency_limit = station_concurrency_limits
+                    .get(&candidate.station_id)
+                    .copied();
                 candidate.balance_snapshot = newest_balance(
                     key_balances.remove(&candidate.station_key_id),
                     station_balances.get(&candidate.station_id),
@@ -820,6 +825,41 @@ async fn load_latest_station_balances(
         .collect())
 }
 
+async fn load_latest_station_concurrency_limits(
+    read: &mut ReadSession,
+) -> Result<HashMap<String, i64>, PersistenceError> {
+    let rows = sqlx::query(
+        r#"
+        WITH eligible_stations AS (
+            SELECT DISTINCT k.station_id
+            FROM station_keys k
+            JOIN stations s ON s.id = k.station_id
+            WHERE k.enabled = 1
+              AND s.enabled = 1
+              AND (TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL)
+        ), ranked AS (
+            SELECT b.station_id, b.account_concurrency_limit,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY b.station_id
+                       ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                   ) AS row_number
+            FROM balance_snapshots b
+            JOIN eligible_stations e ON e.station_id = b.station_id
+            WHERE b.account_concurrency_limit > 0
+        )
+        SELECT station_id, account_concurrency_limit
+        FROM ranked
+        WHERE row_number = 1
+        "#,
+    )
+    .fetch_all(read.connection())
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
+}
+
 async fn model_alias_by_pair(
     write: &mut WriteSession,
     client_model: &str,
@@ -967,6 +1007,8 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> RuntimeRoutingCandi
     RuntimeRoutingCandidate {
         station_key_id: station_key_id.clone(),
         station_id: row.get(runtime_candidate_column::STATION_ID),
+        station_type: row.get(runtime_candidate_column::STATION_TYPE),
+        station_account_concurrency_limit: None,
         station_endpoint_revision: row.get(runtime_candidate_column::ENDPOINT_REVISION),
         sanitized_origin: crate::models::station_endpoints::sanitized_api_base_url_for_trace(
             &row.get::<String, _>(runtime_candidate_column::API_BASE_URL),
@@ -1074,35 +1116,36 @@ fn row_to_operational_monitoring_target_snapshot(
 mod runtime_candidate_column {
     pub(super) const STATION_KEY_ID: usize = 0;
     pub(super) const STATION_ID: usize = 1;
-    pub(super) const ENDPOINT_REVISION: usize = 2;
-    pub(super) const API_BASE_URL: usize = 3;
-    pub(super) const UPSTREAM_API_FORMAT: usize = 4;
-    pub(super) const ROUTING_ORDER: usize = 5;
-    pub(super) const PRIORITY: usize = 6;
-    pub(super) const MAX_CONCURRENCY: usize = 7;
-    pub(super) const LOAD_FACTOR: usize = 8;
-    pub(super) const SCHEDULABLE: usize = 9;
-    pub(super) const COLLECTOR_PROXY_MODE: usize = 10;
-    pub(super) const COLLECTOR_PROXY_URL: usize = 11;
-    pub(super) const STATION_NAME: usize = 12;
-    pub(super) const KEY_NAME: usize = 13;
-    pub(super) const API_KEY: usize = 14;
-    pub(super) const GROUP_NAME: usize = 15;
-    pub(super) const GROUP_BINDING_ID: usize = 16;
-    pub(super) const GROUP_ID_HASH: usize = 17;
-    pub(super) const RATE_MULTIPLIER: usize = 18;
-    pub(super) const MANUAL_RATE_MULTIPLIER: usize = 19;
-    pub(super) const MANUAL_RATE_UPDATED_AT: usize = 20;
-    pub(super) const RATE_SOURCE: usize = 21;
-    pub(super) const RATE_COLLECTED_AT: usize = 22;
-    pub(super) const KEY_UPDATED_AT: usize = 23;
-    pub(super) const BINDING_GROUP_KEY_HASH: usize = 24;
-    pub(super) const BINDING_GROUP_ID_HASH: usize = 25;
-    pub(super) const BINDING_GROUP_NAME: usize = 26;
-    pub(super) const BINDING_STATUS: usize = 27;
-    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 28;
-    pub(super) const BINDING_CONFIDENCE: usize = 29;
-    pub(super) const BINDING_LAST_CHECKED_AT: usize = 30;
+    pub(super) const STATION_TYPE: usize = 2;
+    pub(super) const ENDPOINT_REVISION: usize = 3;
+    pub(super) const API_BASE_URL: usize = 4;
+    pub(super) const UPSTREAM_API_FORMAT: usize = 5;
+    pub(super) const ROUTING_ORDER: usize = 6;
+    pub(super) const PRIORITY: usize = 7;
+    pub(super) const MAX_CONCURRENCY: usize = 8;
+    pub(super) const LOAD_FACTOR: usize = 9;
+    pub(super) const SCHEDULABLE: usize = 10;
+    pub(super) const COLLECTOR_PROXY_MODE: usize = 11;
+    pub(super) const COLLECTOR_PROXY_URL: usize = 12;
+    pub(super) const STATION_NAME: usize = 13;
+    pub(super) const KEY_NAME: usize = 14;
+    pub(super) const API_KEY: usize = 15;
+    pub(super) const GROUP_NAME: usize = 16;
+    pub(super) const GROUP_BINDING_ID: usize = 17;
+    pub(super) const GROUP_ID_HASH: usize = 18;
+    pub(super) const RATE_MULTIPLIER: usize = 19;
+    pub(super) const MANUAL_RATE_MULTIPLIER: usize = 20;
+    pub(super) const MANUAL_RATE_UPDATED_AT: usize = 21;
+    pub(super) const RATE_SOURCE: usize = 22;
+    pub(super) const RATE_COLLECTED_AT: usize = 23;
+    pub(super) const KEY_UPDATED_AT: usize = 24;
+    pub(super) const BINDING_GROUP_KEY_HASH: usize = 25;
+    pub(super) const BINDING_GROUP_ID_HASH: usize = 26;
+    pub(super) const BINDING_GROUP_NAME: usize = 27;
+    pub(super) const BINDING_STATUS: usize = 28;
+    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 29;
+    pub(super) const BINDING_CONFIDENCE: usize = 30;
+    pub(super) const BINDING_LAST_CHECKED_AT: usize = 31;
 }
 
 fn default_runtime_capabilities(station_key_id: &str) -> StationKeyCapabilities {

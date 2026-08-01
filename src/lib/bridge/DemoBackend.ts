@@ -19,7 +19,6 @@ export class DemoBackend implements BackendClient {
     updateLocalAccessKey: (_value: string) => this.rejectUnsupported("settings.local_access_key"),
     importRelayPoolToCCSwitch: () => this.rejectUnsupported("settings.ccswitch_import"),
     updateSettings: () => this.rejectUnsupported("settings"),
-    confirmHierarchicalRoutingMigration: () => this.rejectUnsupported("settings.routing_migration"),
     chooseDataDir: () => this.rejectUnsupported("settings.data_dir"),
     resetDataDir: () => this.rejectUnsupported("settings.data_dir"),
     listCommonLoginOptions: () => this.rejectUnsupported("settings.common_login_options"),

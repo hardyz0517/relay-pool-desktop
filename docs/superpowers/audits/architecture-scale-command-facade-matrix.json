@@ -58,11 +58,6 @@
           "command": "update_settings",
           "use_case": "update_settings",
           "dependencies": ["SettingsService", "TrayBehaviorState"]
-        },
-        {
-          "command": "confirm_hierarchical_routing_migration",
-          "use_case": "confirm_hierarchical_routing_migration",
-          "dependencies": ["SettingsService"]
         }
       ],
       "non_goals": [

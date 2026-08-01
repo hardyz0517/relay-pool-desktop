@@ -6,10 +6,14 @@ import {
   buildLatestDecisionDisplay,
   formatRoutingDecisionTime,
 } from "./localRoutingStatusViewModel";
-import { LocalRoutingStatusCandidateRow } from "./LocalRoutingStatusCandidateRow";
+import {
+  LocalRoutingStatusCandidateHeader,
+  LocalRoutingStatusCandidateRow,
+} from "./LocalRoutingStatusCandidateRow";
 
 type LocalRoutingStatusTabProps = {
   workspace: LocalRoutingWorkspace | null;
+  maxRateMultiplier?: number | null;
   loading: boolean;
   nowMs: number;
   proxyActionPending: boolean;
@@ -27,6 +31,7 @@ const routeMetricValueClassName = "text-[20px] leading-6 text-foreground";
 
 export function LocalRoutingStatusTab({
   workspace,
+  maxRateMultiplier,
   loading,
   nowMs,
   proxyActionPending,
@@ -55,10 +60,14 @@ export function LocalRoutingStatusTab({
     workspace.proxyStatus.running,
     workspace.latestDecision,
   );
+  const effectiveMaxRateMultiplier =
+    maxRateMultiplier === undefined ? workspace.settings.maxRateMultiplier : maxRateMultiplier;
   const multiplierLimitLabel =
-    workspace.settings.maxRateMultiplier == null
-      ? "未设置"
-      : `${workspace.settings.maxRateMultiplier}x`;
+    effectiveMaxRateMultiplier == null ? "不限制" : `${effectiveMaxRateMultiplier}x`;
+  const multiplierLimitDetail =
+    effectiveMaxRateMultiplier == null
+      ? "未启用价格倍率硬上限"
+      : "高于此倍率不参与自动路由";
   const routingGroupFilterLabel = formatRoutingGroupFilter(workspace.settings.routingGroupFilter);
   const candidateStatusLabel = `${workspace.summary.previewEligibleCandidateCount} / ${workspace.summary.previewExcludedCandidateCount}`;
   const latestDecisionTimeLabel = formatRoutingDecisionTime(latestDecision.decidedAt);
@@ -108,7 +117,7 @@ export function LocalRoutingStatusTab({
           {
             label: "倍率上限",
             value: multiplierLimitLabel,
-            detail: "自动路由上限",
+            detail: multiplierLimitDetail,
             icon: Gauge,
             accent: "slate",
             valueClassName: routeMetricValueClassName,
@@ -173,15 +182,18 @@ export function LocalRoutingStatusTab({
             description="当前配置下没有可预览的路由密钥。"
           />
         ) : (
-          <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface divide-y divide-border">
-            {workspace.candidates.map((candidate, index) => (
-              <LocalRoutingStatusCandidateRow
-                key={candidate.stationKeyId}
-                candidate={candidate}
-                order={index + 1}
-                nowMs={nowMs}
-              />
-            ))}
+          <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
+            <LocalRoutingStatusCandidateHeader />
+            <div className="divide-y divide-border">
+              {workspace.candidates.map((candidate, index) => (
+                <LocalRoutingStatusCandidateRow
+                  key={candidate.stationKeyId}
+                  candidate={candidate}
+                  order={index + 1}
+                  nowMs={nowMs}
+                />
+              ))}
+            </div>
           </div>
         )}
       </section>

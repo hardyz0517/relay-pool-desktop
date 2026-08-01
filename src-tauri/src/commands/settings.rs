@@ -6,8 +6,8 @@ use crate::{
     commands::error,
     ipc::dto::{
         settings::{
-            ConfirmHierarchicalRoutingMigrationInputDto, OpenExternalUrlInputDto, SettingsDto,
-            UpdateLocalAccessKeyInputDto, UpdateSettingsInputDto,
+            OpenExternalUrlInputDto, SettingsDto, UpdateLocalAccessKeyInputDto,
+            UpdateSettingsInputDto,
         },
         EmptyInputDto,
     },
@@ -70,22 +70,6 @@ pub async fn update_settings(
         let input = UpdateSettingsInputDto::parse(input)?.into_domain()?;
         let settings = facade
             .update_settings(input)
-            .await
-            .map_err(super::public_command_application_error)?;
-        Ok(SettingsDto::from(settings))
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn confirm_hierarchical_routing_migration(
-    facade: State<'_, SettingsStationsCommandFacade>,
-    input: Value,
-) -> Result<SettingsDto, error::CommandError> {
-    correlation::in_command_scope("confirm_hierarchical_routing_migration", async {
-        let input = ConfirmHierarchicalRoutingMigrationInputDto::parse(input)?.into_domain()?;
-        let settings = facade
-            .confirm_hierarchical_routing_migration(input)
             .await
             .map_err(super::public_command_application_error)?;
         Ok(SettingsDto::from(settings))

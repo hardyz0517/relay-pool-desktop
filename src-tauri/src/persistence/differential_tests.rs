@@ -1001,6 +1001,7 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     assert_eq!(balances[0].scope, "station");
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].station_key_id, "routing-key");
+    assert_eq!(candidates[0].station_account_concurrency_limit, Some(8));
     assert_eq!(candidates[0].priority, 7);
     assert_eq!(candidates[0].routing_order, None);
     assert_eq!(candidates[0].collector_proxy_mode, "inherit");
