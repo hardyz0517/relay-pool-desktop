@@ -238,14 +238,14 @@
     {
       "ecosystem": "tool",
       "component": "rust",
-      "resolved_version": "1.97.1",
+      "resolved_version": "1.95.0",
       "support_status": "supported-stable",
       "decision": "keep",
       "owner": "Portable Migration Task 0",
       "checked_on": "2026-07-29",
       "next_review_on": "2026-10-29",
       "source_urls": ["https://doc.rust-lang.org/book/appendix-07-nightly-rust.html", "https://releases.rs/"],
-      "notes": "Repository crate MSRV remains 1.89 and edition 2021; local qualification uses rustc 1.97.1."
+      "notes": "Repository crate MSRV remains 1.89 and edition 2021; CI and release qualification use the pinned rustc 1.95.0 toolchain."
     }
   ],
   "external_tools": [
