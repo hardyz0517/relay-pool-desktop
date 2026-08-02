@@ -354,18 +354,19 @@ impl ExecutionEngine {
                         false,
                     ))
                     .await?;
-                    controller
-                        .record_actual_terminal_for_station_key(
-                            candidate.station_key_id.clone(),
-                            if decision == RetryDecision::NextCandidate {
-                                ActualAttemptTerminal::FailedBeforeCommit
-                            } else {
-                                ActualAttemptTerminal::PossiblyAccepted
-                            },
-                        )
-                        .map_err(|failure| {
+                    let terminal_result = controller.record_actual_terminal_for_station_key(
+                        candidate.station_key_id.clone(),
+                        if decision == RetryDecision::NextCandidate {
+                            ActualAttemptTerminal::FailedBeforeCommit
+                        } else {
+                            ActualAttemptTerminal::PossiblyAccepted
+                        },
+                    );
+                    if decision == RetryDecision::NextCandidate {
+                        terminal_result.map_err(|failure| {
                             controller_failure(failure, &execution_settings.policy)
                         })?;
+                    }
                     last_failure = Some(failure);
                     if decision == RetryDecision::Stop {
                         break;
@@ -1844,10 +1845,8 @@ mod tests {
                 Duration::from_secs(300),
             ));
 
-        let mut request = canonical_chat_request().await;
-        request.idempotency_key = Some("idem-precommit-budget".to_string());
         let failure = engine
-            .execute(request)
+            .execute(canonical_chat_request().await)
             .await
             .expect_err("precommit budget exhausted");
 

@@ -1436,6 +1436,7 @@ mod tests {
         let prebaseline =
             initialize_pre_baseline_runtime_for_import(&final_path).expect("schema 16 database");
         block_on(prebaseline.close()).expect("close prebaseline");
+        drop(prebaseline);
         execute_sql(
             &final_path,
             "UPDATE settings SET value = 'sk-schema16-local-canary' WHERE key = 'local_key'",
@@ -1602,6 +1603,7 @@ mod tests {
         let prebaseline =
             initialize_pre_baseline_runtime_for_import(&final_path).expect("schema 16 database");
         block_on(prebaseline.close()).expect("close prebaseline");
+        drop(prebaseline);
         fs::write(
             default_data_dir.join(UPGRADE_JOURNAL_FILE),
             b"not a valid upgrade journal",

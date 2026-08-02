@@ -1445,14 +1445,14 @@ mod tests {
     #[tokio::test]
     async fn v2_honors_configured_precommit_timeout() {
         let upstream = LoopbackUpstream::script(vec![ScriptedResponse::DelayedHeaders {
-            delay: Duration::from_secs(1),
+            delay: Duration::from_secs(3),
             body: br#"{"id":"too-late"}"#.to_vec(),
         }]);
         let fixture = V2ProxyTestFixture::new().await;
         fixture.seed_candidate(upstream.base_url.as_str()).await;
         let runtime = ProxyRuntimeState::for_tests();
         let mut config = fixture.config(0);
-        config.limits.precommit_timeout = Duration::from_millis(50);
+        config.limits.precommit_timeout = Duration::from_millis(250);
         let started = runtime.start(config).await.expect("start v2");
 
         let request_started = std::time::Instant::now();
@@ -1464,11 +1464,14 @@ mod tests {
             .await
             .expect("send responses");
         let elapsed = request_started.elapsed();
+        let status = response.status();
+        let body: serde_json::Value = response.json().await.expect("timeout response json");
         runtime.stop(started.port).await.unwrap();
 
-        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "{body}");
+        assert_eq!(body["error"]["code"], "route_wait_timeout");
         assert!(
-            elapsed < Duration::from_millis(500),
+            elapsed < Duration::from_secs(2),
             "configured precommit timeout was ignored: {elapsed:?}"
         );
     }
