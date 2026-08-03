@@ -83,6 +83,12 @@ try {
         return
     }
 
+    if ($Profile -eq "release") {
+        Invoke-Checked "Release version contract" $pnpm @("verify:release-version", "--require-tag")
+    }
+
+    Invoke-Checked "Dead code policy fixtures" node @("scripts/dead-code-inventory-policy.test.mjs")
+    Invoke-Checked "Dead code CI policy" node @("scripts/dead-code-inventory.mjs", "--mode", "ci", "--scope", "production")
     Invoke-ArchitectureGates
     Invoke-Checked "ESLint" $pnpm @("lint")
     Invoke-Checked "TypeScript check" $pnpm @("exec", "tsc", "--noEmit")
@@ -99,11 +105,12 @@ try {
         Invoke-Checked "Rust formatting" cargo @("fmt", "--manifest-path", "src-tauri/Cargo.toml", "--", "--check")
         Invoke-Checked "Rust clippy" cargo @("clippy", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets")
         Invoke-Checked "Rust check" cargo @("check", "--locked", "--manifest-path", "src-tauri/Cargo.toml")
+        Invoke-Checked "Rust all-targets check" cargo @("check", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--all-targets")
+        Invoke-Checked "Rust release lib check" cargo @("check", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--release", "--lib")
         Invoke-Checked "Rust tests" cargo @("test", "--locked", "--manifest-path", "src-tauri/Cargo.toml")
     }
 
     if ($Profile -eq "release") {
-        Invoke-Checked "Release version contract" $pnpm @("verify:release-version", "--require-tag")
         Invoke-Checked "Locked Rust release build" cargo @("build", "--release", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--target", "x86_64-pc-windows-msvc")
         if ($ReleasePhase -eq "all") {
             $privateKey = [Environment]::GetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY")

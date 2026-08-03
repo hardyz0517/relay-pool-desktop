@@ -46,8 +46,8 @@ assert.equal(releaseJob["runs-on"], "windows-latest", "release workflow must bui
 assert.equal(tauriAction.with.releaseDraft, true, "release must start as a Draft");
 assert.ok(tauriAction.env.TAURI_SIGNING_PRIVATE_KEY, "release workflow must use updater signing key");
 assert.equal(tauriAction.with.args, "--target x86_64-pc-windows-msvc", "release must target Windows x86_64");
-assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase prebundle")), "release workflow must use the shared prebundle verification gate");
-assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase postbundle")), "release workflow must use the shared postbundle verification gate");
+assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("pnpm verify:release:prebundle")), "release workflow must use the shared prebundle verification gate");
+assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("pnpm verify:release:postbundle")), "release workflow must use the shared postbundle verification gate");
 assert.match(
   contractRunner,
   /"scripts\/updater-current-version-fallback\.test\.mjs"/,

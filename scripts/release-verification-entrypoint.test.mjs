@@ -12,15 +12,26 @@ const portableMigrationFacade = await readFile("src-tauri/src/application/data_m
 const steps = workflow.jobs.release.steps;
 const checkoutStep = steps.find((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
 const actionIndex = steps.findIndex((step) => String(step.uses ?? "").startsWith("tauri-apps/tauri-action@"));
-const prebundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase prebundle"));
-const postbundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("-Profile release -ReleasePhase postbundle"));
+const prebundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("pnpm verify:release:prebundle"));
+const postbundleIndex = steps.findIndex((step) => String(step.run ?? "").includes("pnpm verify:release:postbundle"));
 const tagCheckIndex = steps.findIndex((step) => String(step.run ?? "").includes("verify:release-version --require-tag"));
+const releaseVersionGateIndex = verifier.indexOf('Invoke-Checked "Release version contract"');
+const sharedGateStartIndex = verifier.indexOf("Invoke-ArchitectureGates", verifier.indexOf("verify start="));
 
 assert.equal(pkg.scripts["test:contracts"], "node scripts/run-contract-tests.mjs");
 assert.equal(pkg.scripts["verify:release-version"], "node scripts/verify-release-version.mjs");
 assert.equal(pkg.scripts["verify:persistence-artifacts"], "node scripts/verify-persistence-v2-artifacts.mjs --tracked");
 assert.match(pkg.scripts["verify:release-bundle"], /verify-persistence-v2-artifacts\.mjs --artifact/);
+assert.equal(pkg.scripts["test:dead-code-policy"], "node scripts/dead-code-inventory-policy.test.mjs");
 assert.equal(pkg.scripts["verify:release"], "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release");
+assert.equal(
+  pkg.scripts["verify:release:prebundle"],
+  "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release -ReleasePhase prebundle",
+);
+assert.equal(
+  pkg.scripts["verify:release:postbundle"],
+  "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release -ReleasePhase postbundle",
+);
 
 for (const required of [
   "verify:persistence-artifacts",
@@ -28,8 +39,14 @@ for (const required of [
   "test:contracts",
   "Frontend unit tests",
   "Frontend production build",
+  "Dead code policy fixtures",
+  "Dead code CI policy",
+  "dead-code-inventory.mjs",
   "cargo",
   "--locked",
+  "--all-targets",
+  "--release",
+  "--lib",
   "verify:release-bundle",
 ]) {
   assert.ok(verifier.includes(required), `shared verifier is missing ${required}`);
@@ -46,10 +63,18 @@ for (const nonGate of [
   );
 }
 
-assert.ok(tagCheckIndex >= 0 && prebundleIndex > tagCheckIndex, "tag/source mismatch must fail before full prebundle verification");
+assert.equal(tagCheckIndex, -1, "release workflow must route release tag/source checks through the shared verifier");
+assert.ok(
+  releaseVersionGateIndex >= 0 && sharedGateStartIndex > releaseVersionGateIndex,
+  "tag/source mismatch must fail inside the shared verifier before full prebundle verification",
+);
 assert.ok(
   !steps.some((step) => String(step.run ?? "").includes("verify:release-version -- --require-tag")),
   "release workflow must not forward a literal -- to the release version script",
+);
+assert.ok(
+  !steps.some((step) => String(step.run ?? "").includes("verify:release -- -ReleasePhase")),
+  "release workflow must not forward a literal -- to the PowerShell release verifier",
 );
 assert.equal(
   checkoutStep?.with?.["fetch-depth"],

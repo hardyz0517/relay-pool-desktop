@@ -74,12 +74,30 @@ function workflowNodeVersions() {
   return versions;
 }
 
+function workflowRustVersions() {
+  const versions = new Map();
+  for (const workflow of [".github/workflows/ci.yml", ".github/workflows/release.yml"]) {
+    const parsed = parseYaml(fs.readFileSync(path.join(repoRoot, workflow), "utf8"));
+    for (const [jobName, job] of Object.entries(parsed.jobs ?? {})) {
+      if (jobName === "msrv") continue;
+      const setup = (job.steps ?? []).filter((step) => typeof step.uses === "string" && step.uses.startsWith("dtolnay/rust-toolchain@"));
+      assert(setup.length === 1, `${workflow}:${jobName} must contain exactly one pinned Rust toolchain step`);
+      const toolchain = String(setup[0].with?.toolchain ?? "");
+      const version = toolchain.match(/^(\d+\.\d+\.\d+)(?:-.+)?$/)?.[1] ?? "";
+      assert(version, `${workflow}:${jobName} Rust toolchain must use an exact semver`);
+      versions.set(`${workflow}:${jobName}`, version);
+    }
+  }
+  return versions;
+}
+
 runMain(() => {
   const ledger = readRequiredManifest("docs/superpowers/audits/architecture-scale-dependency-lifecycle.json", ["schema_version"]);
   assert(ledger.schema_version === 1, "dependency lifecycle schema_version must be 1");
   const entries = entriesOf(ledger);
   const actual = resolvedVersions();
   const workflowNodes = workflowNodeVersions();
+  const workflowRust = workflowRustVersions();
   const now = new Date();
   const localDate = [
     now.getFullYear(),
@@ -119,6 +137,13 @@ runMain(() => {
       assert(entry.local_reference_version === recorded, "tool:node resolved_version must identify local_reference_version");
       assert(entry.qualified_versions.includes(entry.ci_version), "tool:node ci_version must be qualified");
       for (const [workflow, version] of workflowNodes) assert(version === entry.ci_version, `${workflow} Node ${version} != ledger ci_version ${entry.ci_version}`);
+    } else if (ecosystem === "tool" && name === "rust") {
+      assert(Array.isArray(entry.qualified_versions) && entry.qualified_versions.length >= 2, "tool:rust requires exact qualified_versions for CI and local reference runtimes");
+      assert(entry.qualified_versions.every((version) => /^\d+\.\d+\.\d+$/.test(version)), "tool:rust qualified_versions must be exact semver values");
+      assert(entry.qualified_versions.includes(String(resolved).replace(/^v/, "")), `tool:rust current ${resolved} is not a qualified runtime`);
+      assert(entry.local_reference_version === recorded, "tool:rust resolved_version must identify local_reference_version");
+      assert(entry.qualified_versions.includes(entry.ci_version), "tool:rust ci_version must be qualified");
+      for (const [workflow, version] of workflowRust) assert(version === entry.ci_version, `${workflow} Rust ${version} != ledger ci_version ${entry.ci_version}`);
     } else {
       const resolvedVersions = Array.isArray(resolved) ? resolved : [String(resolved)];
       assert(

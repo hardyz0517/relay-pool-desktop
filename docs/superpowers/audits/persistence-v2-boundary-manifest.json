@@ -1717,11 +1717,6 @@
     },
     {
       "from": "persistence",
-      "to": "models",
-      "temporary": false
-    },
-    {
-      "from": "persistence",
       "to": "models::change_events",
       "temporary": false
     },
@@ -2782,11 +2777,6 @@
     },
     {
       "from": "application::monitoring",
-      "to": "services::monitoring::adapters::protocol_auto",
-      "temporary": false
-    },
-    {
-      "from": "application::monitoring",
       "to": "services::monitoring::profiles::registry",
       "temporary": false
     },
@@ -3081,11 +3071,6 @@
       "temporary": false
     },
     {
-      "from": "application::operational_facts::assembler",
-      "to": "models::operational",
-      "temporary": false
-    },
-    {
       "from": "application::operational_facts::balance_projector",
       "to": "models::operational",
       "temporary": false
@@ -3111,11 +3096,6 @@
       "temporary": false
     },
     {
-      "from": "application::operational_facts::reader",
-      "to": "models::operational",
-      "temporary": false
-    },
-    {
       "from": "application::operational_facts::runtime_candidate_adapter",
       "to": "models::operational",
       "temporary": false
@@ -3133,11 +3113,6 @@
     {
       "from": "application::request_finalization",
       "to": "persistence::stores::request_outcome_store",
-      "temporary": false
-    },
-    {
-      "from": "application::request_finalization::outcome",
-      "to": "application::request_lifecycle::delivery",
       "temporary": false
     },
     {
@@ -3163,11 +3138,6 @@
     {
       "from": "persistence::maintenance::request_log_url_sanitizer",
       "to": "services::time",
-      "temporary": false
-    },
-    {
-      "from": "persistence::stores::operational_facts::queries",
-      "to": "models::operational",
       "temporary": false
     },
     {
@@ -3466,21 +3436,6 @@
       "temporary": false
     },
     {
-      "from": "application::request_finalization::effect_planner",
-      "to": "application::request_finalization::failure",
-      "temporary": false
-    },
-    {
-      "from": "application::request_finalization::effect_planner",
-      "to": "application::request_finalization::outcome",
-      "temporary": false
-    },
-    {
-      "from": "application::request_finalization::outcome",
-      "to": "application::request_finalization::failure",
-      "temporary": false
-    },
-    {
       "from": "application::request_finalization::outcome_orchestrator",
       "to": "application::request_finalization::outcome",
       "temporary": false
@@ -3608,6 +3563,46 @@
     {
       "from": "application::routing_engine::selector",
       "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::pricing",
+      "to": "models::pricing_group_monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::operational_facts::runtime_candidate_adapter",
+      "to": "application::routing_engine::routing_health",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::pricing_group_monitor_status",
+      "to": "models::pricing_group_monitoring",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::pricing_group_monitor_status",
+      "to": "persistence::stores::monitoring::group_status_repository",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::pricing_reads",
+      "to": "models::pricing_group_monitoring",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::monitoring::group_status_repository",
+      "to": "models::pricing_group_monitoring",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::request_finalization::failure",
+      "temporary": false
+    },
+    {
+      "from": "services::proxy::execution",
+      "to": "application::routing_engine::affinity",
       "temporary": false
     },
     {

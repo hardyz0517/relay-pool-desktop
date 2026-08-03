@@ -34,10 +34,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
-      - name: Verify release tag and source version
-        env:
-          RELAY_POOL_RELEASE_TAG: ${{ github.ref_name }}
-        run: pnpm verify:release-version --require-tag
       - name: Load release notes
         id: release_notes
         shell: pwsh
@@ -60,7 +56,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}\output\cargo\release
           RELAY_POOL_RELEASE_TAG: ${{ github.ref_name }}
-        run: ./scripts/verify.ps1 -Profile release -ReleasePhase prebundle
+        run: pnpm verify:release:prebundle
       - uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,4 +71,4 @@ jobs:
           args: --target x86_64-pc-windows-msvc
       - name: Scan final release bundle
         shell: pwsh
-        run: ./scripts/verify.ps1 -Profile release -ReleasePhase postbundle
+        run: pnpm verify:release:postbundle
