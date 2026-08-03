@@ -16,7 +16,7 @@ assert(
 );
 
 assert(
-  /<div className="flex min-w-0 items-baseline gap-2">[\s\S]*?\{request\.model \?\? request\.path\}[\s\S]*?Key：\{requestKeyName\}[\s\S]*?<\/div>\s*<div className="mt-0\.5 truncate text-xs text-slate-500">\s*\{formatDateTime\(request\.startedAt\)\}/.test(
+  /<div className="flex min-w-0 items-baseline gap-2">[\s\S]*?\{request\.model \?\? request\.path\}[\s\S]*?Key：\{requestKeyName\}[\s\S]*?<\/div>\s*<div className="mt-0\.5 truncate text-xs text-muted-foreground">\s*\{formatDateTime\(request\.startedAt\)\}/.test(
     dashboardSource,
   ),
   "dashboard recent usage rows should show the key inline after the model and keep time on the next line",

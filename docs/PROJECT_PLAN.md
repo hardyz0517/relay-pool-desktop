@@ -36,7 +36,7 @@ Relay Pool Desktop 是一个本地桌面端 AI 中转站与 Key 池管理工具�
 
 ## 2.1 信息架构
 
-- 总览：回答“现在有什么风险？”，展示本地代理、未读风险、今日请求、失败率和成本摘要。
+- 总览：回答“现在有什么风险？”，展示本地代理、未读风险、今日请求、失败率和成本摘要；请求指标来自后端 live/cumulative aggregate read model 与 Dashboard rollup 投影，request logs 只负责明细和最近使用列表。`codex/dashboard-request-metrics-read-model` 分支已完成 request metrics cutover、rollup 晋级和 100k/500k 性能重新资格。
 - 中转站资产：回答“哪个站点资产状态好不好？”，展示站点、类型、前端网址、API Base URL、余额、倍率摘要、采集状态、Key 数、健康、更新时间和路由参与状态。
 - Key 池：回答“哪把 Key 能不能路由？”，管理 Station Key 的启用、优先级、能力、模型范围、健康和备用状态。
 - 路由规则：回答“为什么请求会走这把 Key？”，管理自动调度、候选分组、倍率限制、低余额边界、耗尽兜底、模型映射和路由模拟解释。

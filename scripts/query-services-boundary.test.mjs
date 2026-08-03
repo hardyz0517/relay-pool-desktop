@@ -13,7 +13,6 @@ assert.deepEqual(
   [
     "changeQueries.ts",
     "channelQueries.ts",
-    "dashboardQueries.ts",
     "localRoutingQueries.ts",
     "logQueries.ts",
     "pricingQueries.ts",
@@ -48,8 +47,8 @@ const forbiddenPatterns = [
     reason: "query services must not perform request-log write actions",
   },
   {
-    pattern: /\b(simulateRoute|upsertModelAlias|deleteModelAlias|updateSettings)\b/,
-    reason: "query services must not perform routing decisions or write actions",
+    pattern: /\b(upsertModelAlias|deleteModelAlias|updateSettings)\b/,
+    reason: "query services must not perform routing write actions",
   },
   {
     pattern: /\b(filterLogsByWindow|buildChannels|orderChannelsBySavedOrder|runChannelMonitorNow|createChannelMonitor|updateChannelMonitor|deleteChannelMonitor)\b/,

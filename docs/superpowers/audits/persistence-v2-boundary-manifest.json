@@ -182,11 +182,6 @@
     },
     {
       "from": "application",
-      "to": "models",
-      "temporary": false
-    },
-    {
-      "from": "application",
       "to": "models::change_events",
       "temporary": false
     },
@@ -1932,11 +1927,6 @@
     },
     {
       "from": "services::collectors",
-      "to": "models",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors",
       "to": "models::collector",
       "temporary": false
     },
@@ -2042,26 +2032,6 @@
     },
     {
       "from": "services::collectors::drivers::newapi",
-      "to": "services::collectors::failure",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
-      "to": "outbound",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
-      "to": "services::collectors::contract",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
-      "to": "services::collectors::evidence",
-      "temporary": false
-    },
-    {
-      "from": "services::collectors::drivers::openai_compatible",
       "to": "services::collectors::failure",
       "temporary": false
     },
@@ -3638,6 +3608,61 @@
     {
       "from": "application::routing_engine::selector",
       "to": "application::routing_engine::request",
+      "temporary": false
+    },
+    {
+      "from": "application::command_facades::dashboard",
+      "to": "models::dashboard_metrics",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::dashboard_metrics",
+      "to": "models::dashboard_metrics",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::dashboard_metrics",
+      "to": "persistence::stores::dashboard_metrics_read",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::dashboard_metrics",
+      "to": "persistence::stores::dashboard_metrics_rollup",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::request_log_store",
+      "to": "persistence::stores::dashboard_metrics_rollup",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::request_outcome_store",
+      "to": "persistence::stores::dashboard_metrics_rollup",
+      "temporary": false
+    },
+    {
+      "from": "commands::dashboard",
+      "to": "commands::error",
+      "temporary": false
+    },
+    {
+      "from": "commands::dashboard",
+      "to": "ipc::dto::dashboard_reads",
+      "temporary": false
+    },
+    {
+      "from": "ipc::dto::dashboard_reads",
+      "to": "models::dashboard_metrics",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::dashboard_metrics_read",
+      "to": "models::dashboard_metrics",
+      "temporary": false
+    },
+    {
+      "from": "persistence::stores::dashboard_metrics_rollup",
+      "to": "models::dashboard_metrics",
       "temporary": false
     }
   ],
