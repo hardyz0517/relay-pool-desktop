@@ -136,7 +136,7 @@ impl V2ProxyTestFixture {
             .stations
             .create(CreateStationInput {
                 name: format!("V2 proxy station {suffix}"),
-                station_type: "openai-compatible".to_string(),
+                station_type: "newapi".to_string(),
                 website_url: upstream_base_url.to_string(),
                 api_base_url: format!("{}/v1", upstream_base_url.trim_end_matches('/')),
                 api_key: String::new(),

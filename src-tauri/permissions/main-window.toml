@@ -60,6 +60,8 @@ commands.allow = [
   "restart_local_proxy",
   "list_request_logs",
   "clear_request_logs",
+  "load_dashboard_live_request_metrics",
+  "load_dashboard_cumulative_request_metrics",
   "list_station_keys",
   "create_station_key",
   "update_station_key",

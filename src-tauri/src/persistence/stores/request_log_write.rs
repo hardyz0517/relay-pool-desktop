@@ -68,6 +68,7 @@ pub(crate) struct RequestTerminalWrite {
     pub received_at_ms: i64,
     pub status: String,
     pub lifecycle_status: String,
+    pub usage_status: String,
     pub terminal_kind: String,
     pub terminal_code: Option<String>,
     pub terminal_detail: Option<String>,

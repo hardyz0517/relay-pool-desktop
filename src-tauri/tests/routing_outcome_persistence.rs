@@ -20,6 +20,8 @@ mod persistence {
 
 #[path = "../src/persistence/stores/request_outcome_store.rs"]
 mod request_outcome_store;
+#[path = "../src/persistence/stores/request_cost_write.rs"]
+mod request_cost_write;
 
 use request_outcome_store::{AttemptCostWrite, RequestCostAggregateWrite, RequestOutcomeStore};
 use sqlx::{

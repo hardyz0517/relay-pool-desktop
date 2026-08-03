@@ -4,6 +4,7 @@ pub mod channel_monitors;
 pub mod collector;
 pub mod collector_runs;
 pub mod credentials;
+pub mod dashboard_metrics;
 pub mod group_facts;
 pub(crate) mod health;
 pub mod monitoring;

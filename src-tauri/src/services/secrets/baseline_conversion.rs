@@ -1285,8 +1285,7 @@ fn remove_file_with_bounded_retry(path: &Path) -> Result<(), std::io::Error> {
         match fs::remove_file(path) {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) if attempt + 1 < ATTEMPTS && is_transient_file_lock(&error) =>
-            {
+            Err(error) if attempt + 1 < ATTEMPTS && is_transient_file_lock(&error) => {
                 std::thread::sleep(RETRY_DELAY);
             }
             Err(error) => return Err(error),

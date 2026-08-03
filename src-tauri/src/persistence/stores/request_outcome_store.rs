@@ -2,6 +2,10 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::error::PersistenceError;
 
+#[cfg(not(test))]
+use super::dashboard_metrics_rollup::record_cost_aggregate_rollup;
+pub(crate) use super::request_cost_write::RequestCostAggregateWrite;
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct RequestOutcomeStore;
 
@@ -22,17 +26,6 @@ pub(crate) struct AttemptCostWrite {
     pub(crate) currency: Option<String>,
     pub(crate) total_cost_micro: Option<i64>,
     pub(crate) created_at_ms: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RequestCostAggregateWrite {
-    pub(crate) request_id: String,
-    pub(crate) status: String,
-    pub(crate) totals_by_currency_json: String,
-    pub(crate) compatibility_currency: Option<String>,
-    pub(crate) compatibility_total_cost_micro: Option<i64>,
-    pub(crate) incomplete_attempts_json: String,
-    pub(crate) written_at_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +127,8 @@ impl RequestOutcomeStore {
         }
 
         update_request_log_cost_projection(connection, record).await?;
+        #[cfg(not(test))]
+        record_cost_aggregate_rollup(connection, record).await?;
         Ok(InsertAck { inserted: true })
     }
 }

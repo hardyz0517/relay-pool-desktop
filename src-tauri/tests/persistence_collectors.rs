@@ -466,8 +466,8 @@ async fn stale_revision_and_unsupported_model_events_have_no_side_effects() {
     service
         .apply_result(full_result("run-custom", 1, "custom"))
         .await
-        .expect("custom facts persist");
-    assert_eq!(fixture.count("collector_model_facts").await, 1);
+        .expect("custom collector result persists");
+    assert_eq!(fixture.count("collector_model_facts").await, 0);
     assert_eq!(
         fixture
             .scalar::<i64>(

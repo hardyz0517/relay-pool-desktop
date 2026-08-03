@@ -172,12 +172,12 @@ async fn generation_mismatch_fails_before_health_write() {
 #[tokio::test]
 async fn readable_but_not_writable_opens_in_inspection_only_mode() {
     let db = V2Fixture::create().await;
-    let binary = binary_031();
-    let current_schema = *binary
+    let current_schema = *binary_031()
         .writable_schema
         .iter()
         .next_back()
         .expect("current writable schema");
+    let binary = binary_for_schema(current_schema);
     db.set_compatibility(SchemaCompatibility {
         database_generation: 2,
         schema_version: current_schema,

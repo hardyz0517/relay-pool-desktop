@@ -357,5 +357,4 @@ mod tests {
             rate.group_name == "vip" && rate.effective_rate_multiplier == Some(0.8)
         }));
     }
-
 }

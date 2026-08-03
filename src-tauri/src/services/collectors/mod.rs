@@ -1408,9 +1408,7 @@ struct FullBusinessSummary {
 
 impl FullBusinessSummary {
     fn matched_field_count(&self) -> usize {
-        usize::from(self.balance_label.is_some())
-            + self.groups.len()
-            + self.rate_multipliers.len()
+        usize::from(self.balance_label.is_some()) + self.groups.len() + self.rate_multipliers.len()
     }
 }
 

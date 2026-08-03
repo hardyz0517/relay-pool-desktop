@@ -881,6 +881,9 @@ pub fn run() {
                             );
                         let request_logs_command_facade =
                             app_composition::compose_request_logs_command_facade(&app_services);
+                        let dashboard_metrics_command_facade =
+                            app_composition::compose_dashboard_metrics_command_facade(&app_services);
+                        app.manage(dashboard_metrics_command_facade);
                         let monitoring_runner =
                             services::monitoring::runner::compose_monitoring_runner(&app_services);
                         let channel_monitoring_command_facade =
