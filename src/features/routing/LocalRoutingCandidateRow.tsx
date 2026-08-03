@@ -6,7 +6,11 @@ import { toTimestampMillis } from "@/lib/time";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate } from "@/lib/types/localRouting";
 import type { RouteEndpointKind } from "@/lib/types/routing";
 import { cn } from "@/lib/utils";
-import { buildCandidateDisplayFacts, buildCooldownDisplay } from "./localRoutingStatusViewModel";
+import {
+  buildCandidateDisplayFacts,
+  buildCandidateHealthDisplay,
+  buildCooldownDisplay,
+} from "./localRoutingStatusViewModel";
 
 type LocalRoutingCandidateRowProps = {
   candidate: LocalRoutingCandidate;
@@ -15,22 +19,6 @@ type LocalRoutingCandidateRowProps = {
   dragDisabled?: boolean;
   dragAttributes?: DraggableAttributes;
   dragListeners?: DraggableSyntheticListeners;
-};
-
-const healthLabels: Record<LocalRoutingCandidate["healthState"], string> = {
-  ready: "就绪",
-  cooldown: "冷却",
-  degraded: "降级",
-  offline: "离线",
-  unknown: "未知",
-};
-
-const healthTones: Record<LocalRoutingCandidate["healthState"], "healthy" | "warning" | "error" | "disabled" | "info"> = {
-  ready: "healthy",
-  cooldown: "warning",
-  degraded: "warning",
-  offline: "error",
-  unknown: "disabled",
 };
 
 const syncLabels: Record<NonNullable<LocalRoutingCandidateRowProps["syncState"]>, string | null> = {
@@ -58,10 +46,11 @@ const endpointLabels: Record<RouteEndpointKind, string> = {
 
 export function LocalRoutingCandidateHeader() {
   return (
-    <div className="hidden min-h-9 grid-cols-[24px_minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)] items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground sm:grid">
+    <div className="hidden min-h-9 grid-cols-[24px_minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)] items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
       <span aria-hidden="true" />
       <span>候选密钥</span>
       <span>参与状态</span>
+      <span>健康状态</span>
       <span>有效倍率</span>
       <span>余额</span>
       <span>冷却</span>
@@ -82,6 +71,7 @@ export function LocalRoutingCandidateRow({
   const cooldownUntilMs =
     candidate.cooldownUntil == null ? null : toTimestampMillis(candidate.cooldownUntil);
   const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, Date.now());
+  const health = buildCandidateHealthDisplay(candidate.healthState);
   const displayFacts = buildCandidateDisplayFacts(candidate);
   const participationTone = !candidate.schedulable
     ? "disabled"
@@ -97,10 +87,10 @@ export function LocalRoutingCandidateRow({
   return (
     <div
       className={cn(
-        "grid min-h-[68px] gap-3 px-3 py-2.5 sm:items-center",
+        "grid min-h-[68px] gap-3 px-3 py-2.5 lg:items-center",
         isSortable
-          ? "sm:grid-cols-[24px_minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)]"
-          : "sm:grid-cols-[minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)]",
+          ? "lg:grid-cols-[24px_minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)]"
+          : "lg:grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)]",
       )}
     >
       {isSortable ? (
@@ -111,7 +101,7 @@ export function LocalRoutingCandidateRow({
           tabIndex={dragDisabled ? -1 : 0}
           disabled={dragDisabled}
           className={cn(
-            "flex h-7 w-5 items-center justify-center self-start text-muted-foreground/45 sm:self-center",
+            "flex h-7 w-5 items-center justify-center self-start text-muted-foreground/45 lg:self-center",
             dragDisabled ? "cursor-not-allowed" : "cursor-grab active:cursor-grabbing hover:text-muted-foreground",
           )}
           {...dragAttributes}
@@ -138,9 +128,6 @@ export function LocalRoutingCandidateRow({
         <div className="flex flex-wrap items-center gap-1.5">
           <StatusBadge tone={participationTone}>{participationLabel}</StatusBadge>
           {!candidate.enabled ? <StatusBadge tone="disabled">停用</StatusBadge> : null}
-          <StatusBadge tone={healthTones[candidate.healthState]}>
-            {healthLabels[candidate.healthState]}
-          </StatusBadge>
         </div>
         {!candidate.previewEligible && displayFacts.rejectReasonLabel ? (
           <div className="mt-1 text-xs text-warning-foreground">
@@ -150,6 +137,9 @@ export function LocalRoutingCandidateRow({
         {!candidate.routingGroupMatch ? (
           <div className="mt-1 text-xs text-warning-foreground">分组不匹配</div>
         ) : null}
+      </MetricCell>
+      <MetricCell label="健康状态">
+        <StatusBadge tone={health.tone}>{health.label}</StatusBadge>
       </MetricCell>
       <MetricCell label="有效倍率" value={displayFacts.multiplierLabel} detail={displayFacts.multiplierDetail} />
       <MetricCell label="余额" value={displayFacts.balanceLabel} detail={displayFacts.balanceDetail} />
@@ -177,7 +167,7 @@ function MetricCell({
 }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground sm:hidden">{label}</div>
+      <div className="text-[11px] text-muted-foreground lg:hidden">{label}</div>
       {children ?? (
         <div
           className={

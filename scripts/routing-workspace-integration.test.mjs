@@ -22,6 +22,7 @@ function assertExcludes(source, needle, label) {
 const routingPage = read("src/features/routing/RoutingPage.tsx");
 const diagnosticsPanel = read("src/features/routing/RoutingStatusDiagnosticsPanel.tsx");
 const routingQueries = read("src/lib/queries/routingQueries.ts");
+const routingSynchronization = read("src/lib/query/routingQuerySynchronization.ts");
 const routingTypes = read("src/lib/types/routing.ts");
 const routingDeepLinks = read("src/lib/types/routingDeepLinks.ts");
 const shellRegistry = read("src/app/shellPageRegistry.tsx");
@@ -56,9 +57,10 @@ assertExcludes(routingPage, "cancelQueries", "RoutingPage");
 assertExcludes(routingPage, "removeQueries", "RoutingPage");
 assertExcludes(routingPage, "resetQueries", "RoutingPage");
 assertExcludes(routingPage, "setQueryData(routingQueryKeys.runtimeOverlay()", "RoutingPage");
-assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.workspaceSnapshot({ limit: 50 }) })", "RoutingPage");
-assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.runtimeOverlay() })", "RoutingPage");
-assertIncludes(routingPage, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.recentDecisions({ limit: 8 }) })", "RoutingPage");
+assertIncludes(routingPage, "refreshRoutingQueries(queryClient)", "RoutingPage");
+assertIncludes(routingSynchronization, "queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace })", "routing query synchronization");
+assertIncludes(routingSynchronization, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.all })", "routing query synchronization");
+assertIncludes(routingSynchronization, "synchronizeRoutingQueriesAfterMutation", "routing query synchronization");
 
 assertIncludes(diagnosticsPanel, "simulateRouteQuery", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "snapshot.productionPolicy", "RoutingStatusDiagnosticsPanel");

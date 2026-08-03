@@ -6,6 +6,7 @@ import { Button, SegmentedControl, useToast } from "@/components/ui";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { localRoutingWorkspaceQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
@@ -101,12 +102,7 @@ export function RoutingPage({
   }, [proxyActionPending, queryClient, toast, workspace]);
 
   const handleRefresh = useCallback(() => {
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace }),
-      queryClient.invalidateQueries({ queryKey: routingQueryKeys.workspaceSnapshot({ limit: 50 }) }),
-      queryClient.invalidateQueries({ queryKey: routingQueryKeys.runtimeOverlay() }),
-      queryClient.invalidateQueries({ queryKey: routingQueryKeys.recentDecisions({ limit: 8 }) }),
-    ]);
+    void refreshRoutingQueries(queryClient);
   }, [queryClient]);
 
   useEffect(() => {

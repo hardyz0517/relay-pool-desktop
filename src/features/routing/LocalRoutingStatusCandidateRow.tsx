@@ -2,7 +2,11 @@ import type { ReactNode } from "react";
 import { StatusBadge } from "@/components/ui";
 import { toTimestampMillis } from "@/lib/time";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate } from "@/lib/types/localRouting";
-import { buildCandidateDisplayFacts, buildCooldownDisplay } from "./localRoutingStatusViewModel";
+import {
+  buildCandidateDisplayFacts,
+  buildCandidateHealthDisplay,
+  buildCooldownDisplay,
+} from "./localRoutingStatusViewModel";
 
 type LocalRoutingStatusCandidateRowProps = {
   candidate: LocalRoutingCandidate;
@@ -12,9 +16,10 @@ type LocalRoutingStatusCandidateRowProps = {
 
 export function LocalRoutingStatusCandidateHeader() {
   return (
-    <div className="hidden min-h-9 grid-cols-[minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)] items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground sm:grid">
+    <div className="hidden min-h-9 grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)] items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
       <span>候选密钥</span>
       <span>参与状态</span>
+      <span>健康状态</span>
       <span>有效倍率</span>
       <span>余额</span>
       <span>冷却</span>
@@ -30,6 +35,7 @@ export function LocalRoutingStatusCandidateRow({
   const cooldownUntilMs =
     candidate.cooldownUntil == null ? null : toTimestampMillis(candidate.cooldownUntil);
   const cooldown = buildCooldownDisplay(candidate.healthState, cooldownUntilMs, nowMs);
+  const health = buildCandidateHealthDisplay(candidate.healthState);
   const displayFacts = buildCandidateDisplayFacts(candidate);
   const participationTone = !candidate.schedulable
     ? "disabled"
@@ -43,7 +49,7 @@ export function LocalRoutingStatusCandidateRow({
       : "不参与";
 
   return (
-    <div className="grid min-h-[68px] gap-3 px-3 py-2.5 sm:grid-cols-[minmax(220px,1.6fr)_minmax(120px,.8fr)_minmax(104px,.65fr)_minmax(92px,.55fr)_minmax(88px,.5fr)] sm:items-center">
+    <div className="grid min-h-[68px] gap-3 px-3 py-2.5 lg:grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)] lg:items-center">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-muted-foreground">#{order}</span>
@@ -62,6 +68,9 @@ export function LocalRoutingStatusCandidateRow({
             {displayFacts.rejectReasonLabel}
           </div>
         ) : null}
+      </MetricCell>
+      <MetricCell label="健康状态">
+        <StatusBadge tone={health.tone}>{health.label}</StatusBadge>
       </MetricCell>
       <MetricCell label="有效倍率" value={displayFacts.multiplierLabel} detail={displayFacts.multiplierDetail} />
       <MetricCell label="余额" value={displayFacts.balanceLabel} detail={displayFacts.balanceDetail} />
@@ -89,7 +98,7 @@ function MetricCell({
 }) {
   return (
     <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground sm:hidden">{label}</div>
+      <div className="text-[11px] text-muted-foreground lg:hidden">{label}</div>
       {children ?? (
         <div
           className={

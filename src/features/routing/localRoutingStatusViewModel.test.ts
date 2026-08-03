@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { LocalRoutingCandidateRow } from "@/lib/types/localRouting";
-import { buildCandidateDisplayFacts } from "./localRoutingStatusViewModel";
+import {
+  buildCandidateDisplayFacts,
+  buildCandidateHealthDisplay,
+} from "./localRoutingStatusViewModel";
 
 function candidate(overrides: Partial<LocalRoutingCandidateRow> = {}): LocalRoutingCandidateRow {
   return {
@@ -39,6 +42,17 @@ function candidate(overrides: Partial<LocalRoutingCandidateRow> = {}): LocalRout
 }
 
 describe("local routing status view model", () => {
+  it("maps routing health into a shared candidate display", () => {
+    expect(buildCandidateHealthDisplay("ready")).toEqual({
+      label: "就绪",
+      tone: "healthy",
+    });
+    expect(buildCandidateHealthDisplay("unknown")).toEqual({
+      label: "未知",
+      tone: "disabled",
+    });
+  });
+
   it("renders candidate economics from backend facts without legacy multiplier fields", () => {
     const display = buildCandidateDisplayFacts(candidate());
 

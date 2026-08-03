@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
-import { routingQueryKeys } from "@/lib/queries/routingQueries";
+import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import {
   appSettingsToUpdateInput,
   DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
@@ -88,13 +88,6 @@ export function LocalRoutingSettingsEditor() {
     settingsRef.current = nextSettings;
     setSettings(nextSettings);
     queryClient.setQueryData(queryKeys.settings, nextSettings);
-  }
-
-  async function refreshRoutingWorkspace() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace }),
-      queryClient.invalidateQueries({ queryKey: routingQueryKeys.all }),
-    ]);
   }
 
   const schedulerDirty = useMemo(
@@ -213,8 +206,12 @@ export function LocalRoutingSettingsEditor() {
       setDraft((current) => (current ? { ...current, scheduler: nextDraft.scheduler } : nextDraft));
       setSavedDraft((current) => (current ? { ...current, scheduler: nextDraft.scheduler } : nextDraft));
       setSchedulerSaveState("saved");
-      await refreshRoutingWorkspace();
-      toast.success("调度参数已保存");
+      const synchronization = await refreshRoutingQueries(queryClient);
+      if (synchronization.refreshed) {
+        toast.success("调度参数已保存");
+      } else {
+        toast.error("调度参数已保存，但路由状态刷新失败", readError(synchronization.errors[0]));
+      }
     } catch (requestError) {
       if (operationId !== schedulerSaveOperationRef.current) {
         return;
@@ -307,8 +304,12 @@ export function LocalRoutingSettingsEditor() {
           : nextSavedDraft,
       );
       setBoundarySaveState("saved");
-      await refreshRoutingWorkspace();
-      toast.success("路由边界已保存");
+      const synchronization = await refreshRoutingQueries(queryClient);
+      if (synchronization.refreshed) {
+        toast.success("路由边界已保存");
+      } else {
+        toast.error("路由边界已保存，但路由状态刷新失败", readError(synchronization.errors[0]));
+      }
     } catch (requestError) {
       if (operationId !== boundarySaveOperationRef.current) {
         return;

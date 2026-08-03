@@ -15,9 +15,11 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { EmptyState, SectionCard, StatusBadge, useToast } from "@/components/ui";
+import { useQueryClient } from "@tanstack/react-query";
+import { EmptyState, StatusBadge, useToast } from "@/components/ui";
 import { reorderLocalRoutingKeys } from "@/lib/api/localRouting";
 import { readError } from "@/lib/errors";
+import { synchronizeRoutingQueriesAfterMutation } from "@/lib/query/routingQuerySynchronization";
 import type { LocalRoutingCandidateRow as LocalRoutingCandidate, LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import { cn } from "@/lib/utils";
 import {
@@ -48,6 +50,7 @@ const reorderSyncTones: Record<Exclude<ReorderSyncState, "idle">, "healthy" | "w
 
 export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabProps) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [candidates, setCandidates] = useState<LocalRoutingCandidate[]>([]);
   const [syncState, setSyncState] = useState<ReorderSyncState>("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -106,17 +109,9 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
     setSyncState("saving");
     setSyncError(null);
 
+    let nextWorkspace: LocalRoutingWorkspace;
     try {
-      const nextWorkspace = await reorderLocalRoutingKeys({ stationKeyIds: nextStationKeyIds });
-      if (operationId !== saveOperationRef.current || workspaceVersionAtStart !== workspaceVersionRef.current) {
-        return;
-      }
-      setCandidates(
-        nextWorkspace.candidates.length === nextCandidates.length
-          ? nextWorkspace.candidates
-          : nextCandidates,
-      );
-      setSyncState("synced");
+      nextWorkspace = await reorderLocalRoutingKeys({ stationKeyIds: nextStationKeyIds });
     } catch (requestError) {
       if (operationId !== saveOperationRef.current || workspaceVersionAtStart !== workspaceVersionRef.current) {
         return;
@@ -126,6 +121,26 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
       const message = readError(requestError);
       setSyncError(message);
       toast.error("保存候选顺序失败", message);
+      return;
+    }
+
+    const operationIsCurrent =
+      operationId === saveOperationRef.current &&
+      workspaceVersionAtStart === workspaceVersionRef.current;
+    if (operationIsCurrent) {
+      setCandidates(
+        nextWorkspace.candidates.length === nextCandidates.length
+          ? nextWorkspace.candidates
+          : nextCandidates,
+      );
+      setSyncState("synced");
+    }
+
+    const synchronization = await synchronizeRoutingQueriesAfterMutation(queryClient, {
+      localWorkspace: nextWorkspace,
+    });
+    if (!synchronization.refreshed && operationIsCurrent) {
+      toast.error("候选顺序已保存，但状态刷新失败", readError(synchronization.errors[0]));
     }
   }
 
@@ -133,11 +148,18 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
     <div className="grid gap-3">
       <LocalRoutingSettingsEditor />
 
-      <SectionCard
-        title="候选预览与顺序修正"
-        action={syncLabel && syncState !== "idle" ? <StatusBadge tone={reorderSyncTones[syncState]}>{syncLabel}</StatusBadge> : null}
-        contentClassName="grid gap-2"
-      >
+      <section className="grid gap-2" aria-labelledby="local-routing-edit-candidates-title">
+        <header className="flex min-h-8 flex-wrap items-center justify-between gap-3">
+          <h2
+            id="local-routing-edit-candidates-title"
+            className="text-sm font-semibold text-foreground"
+          >
+            候选预览与顺序修正
+          </h2>
+          {syncLabel && syncState !== "idle" ? (
+            <StatusBadge tone={reorderSyncTones[syncState]}>{syncLabel}</StatusBadge>
+          ) : null}
+        </header>
         {syncError && (
           <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-xs text-danger-foreground">
             {syncError}
@@ -167,7 +189,7 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
             </SortableContext>
           </DndContext>
         )}
-      </SectionCard>
+      </section>
     </div>
   );
 }

@@ -21,6 +21,22 @@ export type CandidateDisplayFacts = {
   balanceDetail: string | null;
 };
 
+export type CandidateHealthDisplay = {
+  label: string;
+  tone: "healthy" | "warning" | "error" | "disabled";
+};
+
+const candidateHealthDisplays: Record<
+  LocalRoutingCandidateRow["healthState"],
+  CandidateHealthDisplay
+> = {
+  ready: { label: "就绪", tone: "healthy" },
+  cooldown: { label: "冷却", tone: "warning" },
+  degraded: { label: "降级", tone: "warning" },
+  offline: { label: "离线", tone: "error" },
+  unknown: { label: "未知", tone: "disabled" },
+};
+
 const previewRejectReasonLabels: Record<string, string> = {
   asset_unavailable: "候选不可用",
   routing_group_mismatch: "分组不匹配",
@@ -45,6 +61,12 @@ const balanceStatusLabels: Record<string, string> = {
   insufficient: "不足",
   blocked: "已阻断",
 };
+
+export function buildCandidateHealthDisplay(
+  healthState: LocalRoutingCandidateRow["healthState"],
+): CandidateHealthDisplay {
+  return candidateHealthDisplays[healthState];
+}
 
 export function buildCooldownDisplay(
   healthState: LocalRoutingCandidateRow["healthState"],
