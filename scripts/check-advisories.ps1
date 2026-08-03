@@ -17,7 +17,17 @@ try {
     $generatedConfig = "output/architecture-scale/generated/deny.toml"
     & node scripts/architecture/prepare-cargo-deny-config.mjs --output $generatedConfig
     if ($LASTEXITCODE -ne 0) { throw "cargo-deny config generation failed with exit code $LASTEXITCODE" }
-    & cargo deny --manifest-path src-tauri/Cargo.toml --config $generatedConfig --target x86_64-pc-windows-msvc check advisories bans licenses sources
+    $cargoDenyArgs = @()
+    if ([Environment]::GetEnvironmentVariable("RELAY_POOL_CARGO_DENY_OFFLINE") -eq "1") {
+        $cargoDenyArgs += "--offline"
+    }
+    $cargoDenyArgs += @(
+        "--manifest-path", "src-tauri/Cargo.toml",
+        "--config", $generatedConfig,
+        "--target", "x86_64-pc-windows-msvc",
+        "check", "advisories", "bans", "licenses", "sources"
+    )
+    & cargo deny @cargoDenyArgs
     if ($LASTEXITCODE -ne 0) { throw "cargo deny failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location

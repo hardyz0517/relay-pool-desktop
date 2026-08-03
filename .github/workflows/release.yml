@@ -34,6 +34,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Fetch cargo-deny advisory database
+        shell: pwsh
+        timeout-minutes: 6
+        run: cargo deny fetch db
       - name: Load release notes
         id: release_notes
         shell: pwsh
@@ -55,6 +59,7 @@ jobs:
         shell: pwsh
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}\output\cargo\release
+          RELAY_POOL_CARGO_DENY_OFFLINE: "1"
           RELAY_POOL_RELEASE_TAG: ${{ github.ref_name }}
         run: pnpm verify:release:prebundle
       - uses: tauri-apps/tauri-action@fce9c6108b31ea247710505d3aaaa893ee6768d4
