@@ -4,6 +4,7 @@ import type { StationKey } from "@/lib/types/stationKeys";
 import type { StationGroupBinding } from "@/lib/types/groupFacts";
 import type { PricingGroupMonitorSummary, PricingGroupMonitorStatusWorkspace } from "@/lib/types/pricingMonitoring";
 import {
+  buildPricingMonitorRefs,
   buildPricingComparisonViewModel,
   type PricingComparisonInput,
 } from "./pricingComparisonViewModel";
@@ -151,7 +152,27 @@ function input(overrides: Partial<PricingComparisonInput> = {}): PricingComparis
 }
 
 describe("buildPricingComparisonViewModel", () => {
-  it("merges summaries without changing price order or cheapest selection", () => {
+  it("keeps frontend canonical keys out of the strict IPC payload", () => {
+    const refs = buildPricingMonitorRefs(input());
+
+    expect(refs).toEqual([
+      {
+        stationId: "station-1",
+        groupBindingId: "binding-1",
+        groupIdHash: "group-id-binding-1",
+        groupKeyHash: "group-key-binding-1",
+      },
+      {
+        stationId: "station-1",
+        groupBindingId: "binding-2",
+        groupIdHash: "group-id-binding-2",
+        groupKeyHash: "group-key-binding-2",
+      },
+    ]);
+    expect(refs.every((ref) => !("canonicalKey" in ref))).toBe(true);
+  });
+
+  it("merges summaries without changing price order", () => {
     const model = buildPricingComparisonViewModel(
       input({
         monitorWorkspace: workspace([
@@ -163,7 +184,6 @@ describe("buildPricingComparisonViewModel", () => {
     const rows = model.sections.flatMap((section) => section.rows);
 
     expect(rows.map((row) => row.groupBindingId)).toEqual(["binding-1", "binding-2"]);
-    expect(rows.filter((row) => row.isCheapest).map((row) => row.groupBindingId)).toEqual(["binding-1"]);
     expect(rows.map((row) => row.monitorDisplayState)).toEqual(["unavailable", "available"]);
   });
 

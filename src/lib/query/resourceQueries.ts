@@ -238,6 +238,7 @@ export const pricingGroupMonitorStatusQueryOptions = (
     queryKey: queryKeys.pricingGroupMonitorStatus(input),
     enabled,
     queryFn: () => loadPricingGroupMonitorStatus(input),
+    meta: { suppressGlobalErrorNotification: true },
     // A failed optional projection must not turn into a permanent request loop.
     // The next explicit refresh/focus can retry it after the underlying runtime
     // or schema issue has been repaired.

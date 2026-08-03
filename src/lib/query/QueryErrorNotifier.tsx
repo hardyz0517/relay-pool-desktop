@@ -22,6 +22,7 @@ export function QueryErrorNotifier() {
           return;
         }
         if (event.action.type !== "error") return;
+        if (event.query.meta?.suppressGlobalErrorNotification === true) return;
         if (!notificationCycle.current.shouldNotify(event.query.queryHash)) return;
 
         toast.error("数据刷新失败", "已保留最近一次成功数据，请稍后重试。");

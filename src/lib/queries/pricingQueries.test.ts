@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { BackendClient } from "@/lib/bridge/BackendClient";
+import { pricingGroupMonitorStatusQueryOptions } from "@/lib/query/resourceQueries";
 
 import { loadPricingComparisonWorkspace } from "./pricingQueries";
 
@@ -47,6 +48,15 @@ describe("pricing workspace backend cutover", () => {
     });
 
     expect(pricing.loadPricingComparisonWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps optional monitoring projection failures out of global error notifications", () => {
+    const options = pricingGroupMonitorStatusQueryOptions(
+      { schemaVersion: 1, groupRefsHash: "fixture", groups: [] },
+      true,
+    );
+
+    expect(options.meta).toEqual({ suppressGlobalErrorNotification: true });
   });
 });
 

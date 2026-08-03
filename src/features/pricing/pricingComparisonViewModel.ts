@@ -63,7 +63,6 @@ export type PricingComparisonRow = {
   effectiveMultiplier: number | null;
   source: string;
   checkedAt: string | null;
-  isCheapest: boolean;
   monitorSummary: PricingGroupMonitorSummary | null;
   monitorDisplayState: PricingGroupMonitorDisplayState;
   monitorRef: PricingGroupRefInput;
@@ -164,12 +163,10 @@ export function buildPricingComparisonViewModel(
   const sections = visibleGroupTypeDefinitions(input.developerModeEnabled === true)
     .filter((definition) => filters.groupType === "all" || filters.groupType === definition.groupType)
     .map((definition) => {
-      const sectionRows = markCheapestRows(
-        rows
-          .filter((row) => row.groupType === definition.groupType)
-          .filter((row) => rowMatchesFilters(row, filters, definition.title))
-          .sort(compareRows),
-      );
+      const sectionRows = rows
+        .filter((row) => row.groupType === definition.groupType)
+        .filter((row) => rowMatchesFilters(row, filters, definition.title))
+        .sort(compareRows);
       return { ...definition, rows: sectionRows };
     })
     .filter((section) => section.rows.length > 0);
@@ -224,7 +221,12 @@ export function buildPricingMonitorRefs(input: Omit<PricingComparisonInput, "fil
     groupKeyHash: candidate.groupKeyHash,
   }));
   try {
-    return canonicalizePricingGroupRefs(refs);
+    return canonicalizePricingGroupRefs(refs).map((group) => ({
+      stationId: group.stationId,
+      groupBindingId: group.groupBindingId,
+      groupIdHash: group.groupIdHash,
+      groupKeyHash: group.groupKeyHash,
+    }));
   } catch {
     return [];
   }
@@ -278,7 +280,6 @@ function createRowFromCandidate(
     effectiveMultiplier,
     source: candidate.source,
     checkedAt: candidate.checkedAt,
-    isCheapest: false,
     monitorSummary,
     monitorDisplayState,
     monitorRef,
@@ -402,14 +403,6 @@ function normalizeText(value: string) {
 
 function safeCreditPerCny(value: number) {
   return Number.isFinite(value) && value > 0 ? value : 1;
-}
-
-function markCheapestRows(rows: PricingComparisonRow[]) {
-  const cheapestIndex = rows.findIndex((row) => row.effectiveMultiplier !== null);
-  if (cheapestIndex < 0) {
-    return rows;
-  }
-  return rows.map((row, index) => ({ ...row, isCheapest: index === cheapestIndex }));
 }
 
 function buildMetrics(sections: PricingGroupSection[]): PricingComparisonMetrics {

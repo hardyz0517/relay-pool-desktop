@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Coins, Image, RefreshCw, RotateCcw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
   EmptyState,
   MetricCard,
-  SegmentedControl,
   SectionCard,
   SelectControl,
   Toolbar,
@@ -229,30 +228,35 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
     }
   }
 
+  function resetFilters() {
+    setGroupTypeFilter("all");
+    setQuery("");
+    setSelectedStationId("all");
+    setKeyPresenceFilter("all");
+    setMonitorPresenceFilter("all");
+    setMonitorOutcomeFilter("all");
+  }
+
   return (
     <PageScaffold
       title="价格 / 倍率"
       actions={
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="secondary" onClick={onOpenModelBasePrices}>
-            <Coins className="h-4 w-4" />
-            模型基准价格
-          </Button>
-          <Button variant="secondary" disabled={pricingQuery.isFetching} onClick={() => void refresh(true)}>
-            <RefreshCw className="h-4 w-4" />
-            刷新
-          </Button>
-        </div>
+        <Button variant="secondary" onClick={onOpenModelBasePrices}>
+          <Coins className="h-4 w-4" />
+          模型基准价格
+        </Button>
       }
     >
       <div className="grid gap-[var(--shell-page-gap)] md:grid-cols-2">
         <MetricCard
+          className="!shadow-none"
           icon={ShieldCheck}
           label="可比分组"
           value={`${viewModel.metrics.comparableGroupCount}`}
           detail="已采集并可折算的分组倍率"
         />
         <MetricCard
+          className="!shadow-none"
           icon={TrendingDown}
           label="最低倍率"
           value={
@@ -267,103 +271,127 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
 
       <SectionCard
         title="分组倍率比较"
-        contentClassName="overflow-visible rounded-none border-0 bg-transparent p-0 shadow-none"
+        contentClassName="overflow-visible rounded-none border-0 bg-transparent p-0 !shadow-none"
       >
-        <Toolbar className="items-start border-x-0 border-t-0 bg-transparent px-0">
-          <div className="flex w-full flex-wrap items-center gap-2">
-            <SegmentedControl
-              ariaLabel="按分组类型筛选"
-              value={groupTypeFilter}
-              options={visibleGroupTypeFilterOptions(developerModeEnabled)}
-              onChange={setGroupTypeFilter}
-              className="w-full max-w-[560px] sm:w-auto"
-            />
-            <label className="sr-only" htmlFor="pricing-group-search">
-              搜索中转站 / Key / 分组
-            </label>
-            <input
-              id="pricing-group-search"
-              className={inputClassName}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索中转站 / Key / 分组"
-            />
-            <SelectControl
-              ariaLabel="按中转站筛选"
-              className="w-[180px]"
-              value={selectedStationId}
-              options={[
-                { value: "all", label: "全部中转站" },
-                ...stations.map((station) => ({ value: station.id, label: station.name })),
-              ]}
-              onChange={setSelectedStationId}
-            />
-            <SelectControl
-              ariaLabel="Key 筛选"
-              className="w-[150px]"
-              value={keyPresenceFilter}
-              options={[
-                { value: "all", label: "全部 Key" },
-                { value: "with_key", label: "仅有 Key" },
-                { value: "with_credentialed_key", label: "仅有凭据 Key" },
-              ]}
-              onChange={setKeyPresenceFilter}
-            />
-            <SelectControl
-              ariaLabel="监控存在性筛选"
-              className="w-[150px]"
-              value={monitorPresenceFilter}
-              options={[
-                { value: "all", label: "全部监控" },
-                { value: "monitored", label: "仅有监控" },
-                { value: "unmonitored", label: "无监控" },
-              ]}
-              onChange={setMonitorPresenceFilter}
-            />
-            <SelectControl
-              ariaLabel="监控结果筛选"
-              className="w-[150px]"
-              value={monitorOutcomeFilter}
-              options={[
-                { value: "all", label: "全部结果" },
-                { value: "success", label: "仅成功" },
-                { value: "degraded", label: "仅降级" },
-                { value: "failure", label: "仅失败" },
-                { value: "skipped", label: "仅跳过" },
-                { value: "running", label: "运行中" },
-                { value: "untested", label: "未测试" },
-                { value: "unavailable_data", label: "摘要暂不可用" },
-                { value: "unresolved", label: "无法解析" },
-              ]}
-              onChange={setMonitorOutcomeFilter}
-            />
+        <Toolbar className="mb-4 items-end rounded-[var(--surface-radius)] border bg-surface px-4 py-3 !shadow-none">
+          <div className="grid w-full grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-[repeat(6,minmax(0,1fr))_auto]">
+            <FilterField label="分组类型">
+              <SelectControl
+                ariaLabel="按分组类型筛选"
+                className="w-full !shadow-none"
+                value={groupTypeFilter}
+                options={visibleGroupTypeFilterOptions(developerModeEnabled)}
+                onChange={setGroupTypeFilter}
+              />
+            </FilterField>
+            <FilterField label="搜索">
+              <input
+                id="pricing-group-search"
+                aria-label="搜索中转站、Key 或分组"
+                className={`${inputClassName} w-full`}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="中转站 / Key / 分组"
+              />
+            </FilterField>
+            <FilterField label="中转站">
+              <SelectControl
+                ariaLabel="按中转站筛选"
+                className="w-full !shadow-none"
+                value={selectedStationId}
+                options={[
+                  { value: "all", label: "全部中转站" },
+                  ...stations.map((station) => ({ value: station.id, label: station.name })),
+                ]}
+                onChange={setSelectedStationId}
+              />
+            </FilterField>
+            <FilterField label="Key">
+              <SelectControl
+                ariaLabel="Key 筛选"
+                className="w-full !shadow-none"
+                value={keyPresenceFilter}
+                options={[
+                  { value: "all", label: "全部 Key" },
+                  { value: "with_key", label: "仅有 Key" },
+                  { value: "with_credentialed_key", label: "仅有凭据 Key" },
+                ]}
+                onChange={setKeyPresenceFilter}
+              />
+            </FilterField>
+            <FilterField label="监控">
+              <SelectControl
+                ariaLabel="监控存在性筛选"
+                className="w-full !shadow-none"
+                value={monitorPresenceFilter}
+                options={[
+                  { value: "all", label: "全部监控" },
+                  { value: "monitored", label: "仅有监控" },
+                  { value: "unmonitored", label: "无监控" },
+                ]}
+                onChange={setMonitorPresenceFilter}
+              />
+            </FilterField>
+            <FilterField label="监控结果">
+              <SelectControl
+                ariaLabel="监控结果筛选"
+                className="w-full !shadow-none"
+                value={monitorOutcomeFilter}
+                options={[
+                  { value: "all", label: "全部结果" },
+                  { value: "success", label: "仅正常" },
+                  { value: "degraded", label: "仅降级" },
+                  { value: "failure", label: "仅失败" },
+                  { value: "skipped", label: "仅跳过" },
+                  { value: "running", label: "运行中" },
+                  { value: "untested", label: "未测试" },
+                  { value: "unavailable_data", label: "摘要暂不可用" },
+                  { value: "unresolved", label: "无法解析" },
+                ]}
+                onChange={setMonitorOutcomeFilter}
+              />
+            </FilterField>
+            <div className="flex items-center justify-end gap-2 sm:col-span-2 lg:col-span-2 2xl:col-span-1">
+              <Button variant="secondary" disabled={pricingQuery.isFetching} onClick={() => void refresh(true)}>
+                <RefreshCw className="h-4 w-4" />
+                刷新
+              </Button>
+              <Button variant="secondary" onClick={resetFilters}>
+                <RotateCcw className="h-4 w-4" />
+                重置
+              </Button>
+            </div>
           </div>
         </Toolbar>
 
-        {error && (
-          <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
-            {error}
-          </div>
-        )}
+        <div className="space-y-4">
+          {error && (
+            <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+              {error}
+            </div>
+          )}
 
-        {loading ? (
-          <div className="px-4 py-5 text-sm text-muted-foreground">正在读取分组倍率...</div>
-        ) : viewModel.sections.length === 0 ? (
-          <div className="p-4">
-            <PricingEmptyState reason={viewModel.emptyReason} />
-          </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {viewModel.sections.map((section) => (
-              <GroupPricingSection
-                key={section.groupType}
-                section={section}
-                onOpenStation={handleOpenStation}
-                onOpenRoutingDeepLink={onOpenRoutingDeepLink}
-              />
-            ))}
-          </div>
-        )}
+          {loading ? (
+            <div className="rounded-[var(--surface-radius)] border border-border bg-surface px-4 py-5 text-sm text-muted-foreground">
+              正在读取分组倍率...
+            </div>
+          ) : viewModel.sections.length === 0 ? (
+            <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-4">
+              <PricingEmptyState reason={viewModel.emptyReason} />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {viewModel.sections.map((section) => (
+                <GroupPricingSection
+                  key={section.groupType}
+                  section={section}
+                  onOpenStation={handleOpenStation}
+                  onOpenRoutingDeepLink={onOpenRoutingDeepLink}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </SectionCard>
     </PageScaffold>
   );
@@ -379,7 +407,7 @@ function GroupPricingSection({
   onOpenRoutingDeepLink?: (link: RoutingDeepLink) => void;
 }) {
   return (
-    <section className="grid gap-3 px-4 py-4">
+    <section className="grid gap-3 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {section.groupType === "image_generation" && (
@@ -431,7 +459,7 @@ function PricingRowsTable({
         </thead>
         <tbody className="divide-y divide-border">
           {rows.map((row) => (
-            <tr key={row.id} className={row.isCheapest ? cheapestRowClassName : undefined}>
+            <tr key={row.id}>
               <td className={tableCellClassName}>
                 <button
                   type="button"
@@ -445,9 +473,6 @@ function PricingRowsTable({
               </td>
               <td className={tableCellClassName}>
                 <PricingGroupBadge row={row} />
-                {row.isCheapest && (
-                  <div className="mt-0.5 text-xs font-medium text-success-foreground">当前最低</div>
-                )}
               </td>
               <td className={tableCellClassName}>
                 <PricingMonitorStatus row={row} onOpenRoutingDeepLink={onOpenRoutingDeepLink} />
@@ -479,7 +504,7 @@ function PricingMonitorStatus({
     unmonitored: { label: "无监控", className: "border-border bg-muted text-muted-foreground" },
     running: { label: "运行中", className: "border-info-border bg-info-surface text-info-foreground" },
     untested: { label: "未测试", className: "border-border bg-muted text-muted-foreground" },
-    available: { label: "成功", className: "border-success-border bg-success-surface text-success-foreground" },
+    available: { label: "正常", className: "border-success-border bg-success-surface text-success-foreground" },
     degraded: { label: "降级", className: "border-warning-border bg-warning-surface text-warning-foreground" },
     unavailable: { label: "失败", className: "border-danger-border bg-danger-surface text-danger-foreground" },
     skipped: { label: "跳过", className: "border-border bg-muted text-muted-foreground" },
@@ -554,6 +579,15 @@ function PricingEmptyState({ reason }: { reason: EmptyReason }) {
   );
 }
 
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid min-w-0 gap-1.5 text-xs font-medium text-muted-foreground">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
 function formatNullableMultiplier(value: number | null) {
   return value === null ? "倍率未知" : formatMultiplier(value);
 }
@@ -583,7 +617,7 @@ function formatDecimal(value: number, fractionDigits: number) {
 }
 
 const inputClassName =
-  "h-8 w-[220px] rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30";
+  "h-8 min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30";
 
 const tableScrollClassName = "overflow-x-auto border-y border-border";
 const tableClassName = "min-w-[720px] w-full table-fixed text-left text-sm";
@@ -591,4 +625,3 @@ const tableHeaderClassName = "px-2.5 py-2 text-xs font-medium text-muted-foregro
 const tableCellClassName = "px-2.5 py-2.5 align-top text-sm text-foreground";
 const updatedAtHeaderClassName = `${tableHeaderClassName} whitespace-nowrap`;
 const updatedAtCellClassName = `${tableCellClassName} whitespace-nowrap text-muted-foreground`;
-const cheapestRowClassName = "bg-success-surface";
