@@ -1,6 +1,6 @@
 # 价格分组与状态监控联动规范
 
-状态：Draft，待评审  
+状态：Draft v2，评审修订后待确认  
 日期：2026-08-03  
 适用范围：价格 / 倍率页面、渠道状态页面、Station Key 分组绑定与监控状态读模型  
 提案类型：跨域只读投影与价格页筛选升级  
@@ -30,6 +30,7 @@
 3. 同一分组的代表监控选择规则确定、稳定、可测试，不依赖 SQL 或数组偶然顺序。
 4. 联动状态不写入价格表，不维护第二套健康状态机。
 5. 分组身份优先使用 `groupBindingId`，不默认使用分组名称模糊匹配。
+6. 价格工作区和摘要工作区通过规范化 `groupRefsHash` 绑定，引用变化时不得复用旧摘要。
 
 ## 2. 背景与现状
 
@@ -96,6 +97,15 @@ groupBindingId: string | null
 groupKeyHash: string
 ```
 
+前端必须将引用规范化为稳定键，格式固定为：
+
+```text
+station:{stationId}:binding:{groupBindingId}
+station:{stationId}:group-key:{groupKeyHash}
+```
+
+引用先按规范化键排序、去重，再参与 React Query key 和 `groupRefsHash` 计算。`groupBindingId` 非空时不得同时使用 group-key 作为主合并键。
+
 现有价格页的 `identityKey` 可以继续用于 UI 行 key，但跨域匹配不得只依赖显示名称或 UI 行 key。
 
 ### 6.2 Key 到分组的匹配优先级
@@ -104,7 +114,7 @@ groupKeyHash: string
 
 1. `stationKey.groupBindingId == priceGroup.groupBindingId`；
 2. Key 绑定指向 `key_binding` 时，沿 `parentGroupBindingId` 匹配站点级分组；
-3. 没有可用 binding id 时，使用非空且相等的 `groupIdHash`；
+3. 没有可用 binding id 时，使用同站点、非空且唯一的 `groupIdHash`；
 4. `groupName` 不作为默认唯一身份。
 
 匹配结果必须记录：
@@ -113,7 +123,7 @@ groupKeyHash: string
 matchKind: exact_binding | parent_binding | group_id_hash | unresolved
 ```
 
-`unresolved` 不得被当成“有 Key”或“有监控”，也不得因为同名而自动合并。
+`unresolved` 不得被当成“有 Key”或“有监控”，也不得因为同名而自动合并。若同一站点存在多个候选分组使用相同 hash，必须返回 `unresolved`，不能择一匹配。
 
 ### 6.3 数据异常处理
 
@@ -147,7 +157,7 @@ monitor.created_at
 monitor.id
 ```
 
-这一定义把“第一把 Key”解释为站点内可审计的 Key 顺序。如果产品最终要求“最早创建的 Monitor 优先”，必须在实施前修改本节并同步测试，不能由实现者自行改变。
+本规范冻结“第一把 Key”的定义为站点内可审计的 Key 顺序。除非新增产品决策并修改本规范，否则实现不得改成“最近成功”或“最早创建 Monitor”。
 
 ### 7.3 同一 Key 的多个 Monitor
 
@@ -168,10 +178,14 @@ stationId: string
 groupBindingId: string | null
 groupKeyHash: string
 matchKind: exact_binding | parent_binding | group_id_hash | unresolved
-hasKey: boolean
+resolutionState: resolved | unresolved
+hasBoundKey: boolean
 boundKeyCount: number
 enabledKeyCount: number
-enabledMonitorCount: number
+credentialedKeyCount: number
+enabledMonitorDefinitionCount: number
+monitoredKeyCount: number
+testedKeyCount: number
 representativeKeyId: string | null
 representativeMonitorId: string | null
 latestOutcome: available | degraded | unavailable | skipped | missing
@@ -183,12 +197,23 @@ generatedAtMs: number
 
 `latestOutcome` 和 `running` 必须分开。运行中的 Monitor 不应覆写最近终态，但 UI 展示可以优先显示“检测中”。
 
+字段定义：
+
+- `boundKeyCount`：存在且成功匹配到该分组的 Station Key 记录数量，包含禁用 Key；
+- `enabledKeyCount`：上述 Key 中 `enabled = true` 的数量；
+- `credentialedKeyCount`：上述 Key 中存在可发送凭据的数量；
+- `enabledMonitorDefinitionCount`：匹配到该分组的启用 Monitor Definition 数量；
+- `monitoredKeyCount`：至少被一个启用 Monitor 覆盖的不同 Key 数量；
+- `testedKeyCount`：至少存在一个已完成 Target Result 的不同 Key 数量；
+- `hasBoundKey` 等价于 `boundKeyCount > 0`，不等价于 Key 可调度或有凭据。
+
 ### 8.2 展示状态
 
 | 条件 | 展示 |
 |---|---|
-| `hasKey = false` 且没有可解析绑定 | 无 Key |
-| `hasKey = true` 且 `enabledMonitorCount = 0` | 无监控 |
+| `resolutionState = unresolved` | 无法关联 |
+| `resolutionState = resolved` 且 `hasBoundKey = false` | 无 Key |
+| `hasBoundKey = true` 且 `enabledMonitorDefinitionCount = 0` | 无监控 |
 | `running = true` | 检测中 |
 | 没有运行中且 `latestOutcome = missing` | 未检测 |
 | `available` | 正常 |
@@ -203,18 +228,21 @@ generatedAtMs: number
 筛选由三个相互独立的维度组成，并与现有分组类型、站点和关键词筛选使用 AND：
 
 ```text
-keyPresence: all | with_key | without_key
+keyPresence: all | with_key | without_key | with_credentialed_key
 monitorPresence: all | monitored | unmonitored
-outcome: all | available | degraded | unavailable | skipped | missing | running
+outcome: all | available | degraded | unavailable | skipped | missing | running | unresolved | unavailable_data
 ```
 
 规则：
 
-- `monitored` 表示 `enabledMonitorCount > 0`，不表示已经成功运行；
+- `with_key` 表示 `hasBoundKey = true`；
+- `with_credentialed_key` 表示 `credentialedKeyCount > 0`；
+- `monitored` 表示 `enabledMonitorDefinitionCount > 0`，不表示已经成功运行；
 - `unmonitored` 表示没有启用 Monitor Definition，停用定义不计入；
 - `available` 按最近终态判断，运行中但最近终态仍为 `available` 时仍属于成功筛选；
 - `running` 按 `running = true` 判断；
-- 没有候选的分组不得因为 `latestOutcome = missing` 被误判为“已监控未检测”，必须先看 `enabledMonitorCount`。
+- 没有候选的分组不得因为 `latestOutcome = missing` 被误判为“已监控未检测”，必须先看 `enabledMonitorDefinitionCount`；
+- `unresolved` 和 `unavailable_data` 只能被显式筛选，不能伪装成无 Key 或失败。
 
 ## 9. 后端读取接口
 
