@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { BalanceSnapshot } from "@/lib/types/economics";
+import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { Station } from "@/lib/types/stations";
-import { buildMetricCards } from "./stationDetailViewModels";
+import { buildMetricCards, buildStationDetailViewModel } from "./stationDetailViewModels";
 
 function station(stationType: Station["stationType"]): Station {
   return {
@@ -99,3 +100,56 @@ describe("buildMetricCards", () => {
     });
   });
 });
+
+describe("buildStationDetailViewModel", () => {
+  it("uses the latest top-level collector run instead of a stale station status", () => {
+    const currentStation = { ...station("sub2api"), status: "unchecked" as const };
+    const parentRun = collectorRun({ id: "parent", status: "partial" });
+    const childRun = collectorRun({
+      id: "child",
+      parentRunId: parentRun.id,
+      status: "failed",
+      startedAt: "2026-08-01T02:00:00Z",
+      finishedAt: "2026-08-01T02:01:00Z",
+    });
+
+    const viewModel = buildStationDetailViewModel({
+      station: currentStation,
+      balances: [],
+      groupBindings: [],
+      groupRates: [],
+      collectorRuns: [childRun, parentRun],
+      latestSnapshot: null,
+      credentials: null,
+      stationKeys: [],
+      changes: [],
+    });
+
+    expect(viewModel.statusLabel).toBe("采集需关注");
+    expect(viewModel.statusTone).toBe("warning");
+    expect(viewModel.collectorItems[0]?.value).toBe("全量 · 部分成功");
+  });
+});
+
+function collectorRun(overrides: Partial<CollectorRun> = {}): CollectorRun {
+  return {
+    id: "run-1",
+    stationId: "station-1",
+    parentRunId: null,
+    adapter: "sub2api",
+    taskType: "full",
+    status: "success",
+    startedAt: "2026-08-01T01:00:00Z",
+    finishedAt: "2026-08-01T01:01:00Z",
+    durationMs: 60_000,
+    endpointCount: 3,
+    successCount: 3,
+    failureCount: 0,
+    manualActionRequired: false,
+    errorCode: null,
+    errorMessage: null,
+    snapshotId: "snapshot-1",
+    createdAt: "2026-08-01T01:00:00Z",
+    ...overrides,
+  };
+}

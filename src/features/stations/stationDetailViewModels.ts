@@ -312,7 +312,9 @@ export function buildStationDetailViewModel({
     )
     .sort((left, right) => toTime(right.detectedAt) - toTime(left.detectedAt));
   const stationRuns = collectorRuns.filter((run) => run.stationId === station.id);
-  const latestRun = latestByTime(stationRuns, (run) => run.finishedAt ?? run.startedAt);
+  const topLevelRuns = stationRuns.filter((run) => run.parentRunId === null);
+  const latestRun = latestByTime(topLevelRuns, (run) => run.finishedAt ?? run.startedAt);
+  const collectionStatus = buildCollectionStatus(station, latestRun, latestSnapshot);
   const stationKeyTotalCount = stationKeys.filter((key) => key.stationId === station.id).length;
   const stationKeyEnabledCount = stationKeys.filter((key) => key.stationId === station.id && key.enabled).length;
   const latestActivity = latestTime([
@@ -326,8 +328,8 @@ export function buildStationDetailViewModel({
   return {
     station,
     stationTypeLabel: formatStationTypeLabel(station),
-    statusLabel: formatStationStatusLabel(station),
-    statusTone: statusTone(station),
+    statusLabel: collectionStatus.label,
+    statusTone: collectionStatus.tone,
     lastActivityLabel: formatDetailDate(latestActivity),
     metricCards: buildMetricCards(station, balances),
     groupRows: buildGroupRows(
@@ -341,6 +343,30 @@ export function buildStationDetailViewModel({
     snapshotItems: buildSnapshotItems(latestSnapshot),
     changeItems: buildChangeItems(activeChanges),
   };
+}
+
+function buildCollectionStatus(
+  station: Station,
+  latestRun: CollectorRun | null,
+  latestSnapshot: CollectorSnapshot | null,
+): { label: string; tone: DetailTone } {
+  if (!station.enabled) {
+    return { label: "禁用", tone: "muted" };
+  }
+  const status = latestRun?.status ?? latestSnapshot?.status;
+  if (status === "running") {
+    return { label: "采集中", tone: "warning" };
+  }
+  if (status === "success" || status === "normal") {
+    return { label: "采集正常", tone: "good" };
+  }
+  if (status === "partial" || status === "manual_required" || status === "needs_confirmation" || status === "warning") {
+    return { label: "采集需关注", tone: "warning" };
+  }
+  if (status === "failed" || status === "error") {
+    return { label: "采集异常", tone: "error" };
+  }
+  return { label: formatStationStatusLabel(station), tone: statusTone(station) };
 }
 
 function buildLoginItems(
