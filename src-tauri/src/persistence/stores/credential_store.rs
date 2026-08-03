@@ -5,7 +5,6 @@ use crate::{
     models::{
         credentials::{
             CommonLoginEmail, CommonLoginOptions, CommonLoginPassword, StationCredentials,
-            StationSessionCredentialKind,
         },
         group_facts::UpdateStationKeyGroupBindingInput,
         remote_keys::{RemoteKeyMatchStatus, RemoteStationKey},
@@ -588,45 +587,6 @@ impl CredentialStore {
             return Err(PersistenceError::StaleRevision);
         }
         self.update_station_session(write, patch).await
-    }
-
-    pub(crate) async fn invalidate_station_session_credential(
-        &self,
-        write: &mut WriteSession,
-        station_id: &str,
-        kind: StationSessionCredentialKind,
-        now: &str,
-    ) -> Result<(), PersistenceError> {
-        ensure_station_exists(write.connection(), station_id).await?;
-        let column = match kind {
-            StationSessionCredentialKind::AccessToken => "access_token_secret_id",
-            StationSessionCredentialKind::RefreshToken => "refresh_token_secret_id",
-            StationSessionCredentialKind::Cookie => "cookie_secret_id",
-        };
-        let secret_id =
-            station_credential_secret_id(write.connection(), station_id, column).await?;
-        let query = format!(
-            r#"
-            UPDATE station_credentials
-            SET {column} = NULL,
-                session_status = CASE
-                    WHEN access_token_secret_id IS NULL
-                     AND refresh_token_secret_id IS NULL
-                     AND cookie_secret_id IS NULL
-                    THEN 'manual_required'
-                    ELSE session_status
-                END,
-                updated_at = ?1
-            WHERE station_id = ?2
-            "#
-        );
-        sqlx::query(&query)
-            .bind(now)
-            .bind(station_id)
-            .execute(write.connection())
-            .await?;
-        refresh_station_session_status(write.connection(), station_id, now).await?;
-        delete_unreferenced_secret(write.connection(), secret_id.as_deref()).await
     }
 
     pub(crate) async fn clear_station_credentials(
@@ -1728,32 +1688,6 @@ async fn station_session_secret_ids(
             )
         })
         .unwrap_or((None, None, None)))
-}
-
-async fn refresh_station_session_status(
-    connection: &mut SqliteConnection,
-    station_id: &str,
-    now: &str,
-) -> Result<(), PersistenceError> {
-    sqlx::query(
-        r#"
-        UPDATE station_credentials
-        SET session_status = CASE
-                WHEN access_token_secret_id IS NOT NULL
-                  OR refresh_token_secret_id IS NOT NULL
-                  OR cookie_secret_id IS NOT NULL
-                THEN 'valid'
-                ELSE 'manual_required'
-            END,
-            updated_at = ?1
-        WHERE station_id = ?2
-        "#,
-    )
-    .bind(now)
-    .bind(station_id)
-    .execute(connection)
-    .await?;
-    Ok(())
 }
 
 async fn station_all_credential_secret_ids(

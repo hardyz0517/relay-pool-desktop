@@ -36,7 +36,13 @@ impl CancelChannelMonitorExecutionInputDto {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const CHANNEL_MONITOR_OPERATIONS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "ChannelMonitorOperationsDto",
     typescript: include_str!("channel_monitor_operations.typescript.txt"),

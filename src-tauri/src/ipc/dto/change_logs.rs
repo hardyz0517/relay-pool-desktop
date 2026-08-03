@@ -236,7 +236,13 @@ fn validate_optional_json(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const CHANGE_LOGS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "ChangeLogsDto",
     typescript: include_str!("change_logs.typescript.txt"),

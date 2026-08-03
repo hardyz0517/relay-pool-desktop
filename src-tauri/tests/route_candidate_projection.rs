@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[path = "../src/models/operational/mod.rs"]
 mod operational_model;
 
@@ -304,20 +302,18 @@ fn classifier_freezes_local_policy_and_ignores_untrusted_request_policy_hints() 
 }
 
 #[test]
-fn route_progress_owns_attempt_exclusions_ordinal_and_monotonic_deadline() {
+fn route_progress_owns_attempt_exclusions_ordinal_and_deadline_snapshot() {
     let mut progress = RouteProgress::new(10_000);
 
     progress.record_actual_attempt("key-1");
     progress.record_snapshot_rebuild();
     progress.record_runtime_rebuild();
-    assert!(progress.tighten_deadline(9_000));
-    assert!(!progress.tighten_deadline(12_000));
 
     let view = progress.view();
     assert_eq!(view.ordinal, 1);
     assert_eq!(view.attempt_count, 1);
     assert!(view.excludes_station_key("key-1"));
-    assert_eq!(view.deadline_ms, 9_000);
+    assert_eq!(view.deadline_ms, 10_000);
     assert_eq!(view.snapshot_rebuild_count, 1);
     assert_eq!(view.runtime_rebuild_count, 1);
 }

@@ -81,7 +81,13 @@ impl From<RuntimeTaskStatus> for RuntimeTaskStatusDto {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const RUNTIME_STATUS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "RuntimeStatusDto",
     typescript: include_str!("runtime_status.typescript.txt"),

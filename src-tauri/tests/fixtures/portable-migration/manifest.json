@@ -41,7 +41,7 @@
       "profile": "encrypted-secrets-v1",
       "requiredFeatures": [],
       "path": "v1/schema-fingerprint.txt",
-      "sha256": "9690d689f7013126dfb3e5eba4ae3b8fa926a07ddaa4f943596336ca9f85a73c",
+      "sha256": "396685cc01d062cb5061c5a2d80b232de9f774a9df41cf45ac7f8c491db5bac0",
       "expected": {
         "outcome": "valid",
         "reader": "V1EncryptedSecrets"

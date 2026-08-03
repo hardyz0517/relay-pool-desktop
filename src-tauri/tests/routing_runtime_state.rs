@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod routing_engine {
     #[path = "../../src/application/routing_engine/affinity.rs"]
     pub(crate) mod affinity;
@@ -57,12 +55,46 @@ fn runtime_metric_key_bounds_unknown_and_high_cardinality_model_class() {
         RuntimeModelClass::normalize(Some("GPT-4O.MINI")),
         RuntimeModelClass::Named("gpt-4o.mini".to_string())
     );
+    assert_eq!(
+        RuntimeMetricKey::new(
+            "key-responses",
+            RuntimeEndpointKind::Responses,
+            Some("gpt-4o-mini"),
+            10,
+            20
+        )
+        .endpoint_kind,
+        RuntimeEndpointKind::Responses
+    );
+    assert_eq!(
+        RuntimeMetricKey::new(
+            "key-catalog",
+            RuntimeEndpointKind::ModelCatalog,
+            None,
+            10,
+            20
+        )
+        .endpoint_kind,
+        RuntimeEndpointKind::ModelCatalog
+    );
+    assert_eq!(
+        RuntimeMetricKey::new(
+            "key-other",
+            RuntimeEndpointKind::Other("embeddings".to_string()),
+            None,
+            10,
+            20
+        )
+        .endpoint_kind,
+        RuntimeEndpointKind::Other("embeddings".to_string())
+    );
 
     let policy = RuntimeOutlierPolicyV1 {
         max_entries: 2,
         ..RuntimeOutlierPolicyV1::default()
     };
     let mut state = RuntimeRouteState::new(policy).expect("policy");
+    assert_eq!(state.policy_version(), "runtime_outlier_policy_v1");
     failure(&mut state, "a", key("key-a"), 1);
     failure(&mut state, "b", key("key-b"), 2);
     failure(&mut state, "c", key("key-c"), 3);
@@ -214,6 +246,36 @@ fn half_open_requires_two_successes_cancel_releases_and_recovery_slow_starts() {
     assert_eq!(
         snapshot.entries[&key_a].admission,
         RuntimeAdmission::Available
+    );
+}
+
+#[test]
+fn half_open_failure_resets_successes_and_reenters_cooldown() {
+    let mut state = RuntimeRouteState::default();
+    let key_a = key("key-a");
+    suppress_with_five_failures(&mut state, key_a.clone());
+
+    let first = state
+        .try_acquire_half_open_probe(&key_a, 30_004)
+        .expect("first half-open permit");
+    first.record_success(30_004);
+    assert_eq!(
+        state.snapshot_overlay(&[key_a.clone()], 30_005).entries[&key_a].admission,
+        RuntimeAdmission::HalfOpen { successes: 1 }
+    );
+
+    let second = state
+        .try_acquire_half_open_probe(&key_a, 30_006)
+        .expect("second half-open permit");
+    second.record_failure(30_006);
+    assert_eq!(
+        state
+            .snapshot_overlay(&[key_a.clone(), key("key-b")], 30_007)
+            .entries[&key_a]
+            .admission,
+        RuntimeAdmission::Suppressed {
+            until_ms: 30_006 + 60_000
+        }
     );
 }
 

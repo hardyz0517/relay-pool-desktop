@@ -13,6 +13,8 @@ use std::{
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{SecondsFormat, Utc};
 
+#[cfg(test)]
+use crate::services::secrets::{baseline_conversion::resolver_from_parts, LEGACY_DEVICE_KEY_ID};
 use crate::{
     persistence::{
         self,
@@ -55,10 +57,10 @@ use crate::{
         secrets::{
             baseline_conversion::{
                 finalize_pre_baseline_database, initialize_fresh_database_at_baseline,
-                initialize_pre_baseline_runtime_for_import, resolver_from_parts,
+                initialize_pre_baseline_runtime_for_import,
             },
             validation::validate_database_secrets,
-            DeviceKeyResolver, LEGACY_DEVICE_KEY_ID,
+            DeviceKeyResolver,
         },
     },
 };
@@ -79,6 +81,7 @@ pub(crate) fn current_schema_version() -> i64 {
     persistence::current_schema_version()
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_generation_two(
     default_data_dir: &Path,
     active_data_dir: &Path,
@@ -289,6 +292,7 @@ fn canonical_v2_secret_scope<'a>(scope: &'a str, kind: &str) -> Result<&'a str, 
     }
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_generation_two_with_faults(
     default_data_dir: &Path,
     active_data_dir: &Path,

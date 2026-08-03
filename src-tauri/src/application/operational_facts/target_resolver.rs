@@ -1,11 +1,9 @@
-#![allow(dead_code)]
-
 use std::fmt;
 
 use crate::{
     application::{
         credentials::{ExecutionCredentialResolver, SecretBytes, SecretRef},
-        routing_engine::capacity::CapacityLease,
+        routing_engine::capacity::{CapacityLease, RetryPermit},
     },
     models::{
         proxy::UpstreamApiFormat,
@@ -33,6 +31,7 @@ pub(crate) struct LeasedSelectedTarget {
     pub(crate) expected_endpoint_revision: i64,
     pub(crate) expected_secret_ref_id: String,
     pub(crate) lease: CapacityLease,
+    pub(crate) retry_permit: Option<RetryPermit>,
 }
 
 pub(crate) struct ExecutionTargetResolver;
@@ -97,6 +96,7 @@ impl ExecutionTargetResolver {
             collector_proxy_url: current.collector_proxy_url,
             api_key,
             lease: selected.lease,
+            _retry_permit: selected.retry_permit,
         })
     }
 }
@@ -110,7 +110,15 @@ pub(crate) struct ExecutionTargetHandle {
     pub(crate) collector_proxy_mode: String,
     pub(crate) collector_proxy_url: Option<String>,
     pub(crate) api_key: SecretBytes,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=execution-target-handle.raii-lease; owner=application/operational_facts; remove_when=upstream request scope releases capacity without handle ownership"
+        )
+    )]
     pub(crate) lease: CapacityLease,
+    pub(crate) _retry_permit: Option<RetryPermit>,
 }
 
 impl fmt::Debug for ExecutionTargetHandle {

@@ -1,10 +1,11 @@
-#![allow(dead_code)]
-
+#[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+#[cfg(test)]
 const RUNTIME_OUTLIER_POLICY_VERSION: &str = "runtime_outlier_policy_v1";
 const MODEL_CLASS_MAX_LEN: usize = 64;
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum RuntimeEndpointKind {
     ChatCompletions,
@@ -37,6 +38,7 @@ impl RuntimeModelClass {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct RuntimeMetricKey {
     pub(crate) station_key_id: String,
@@ -46,6 +48,7 @@ pub(crate) struct RuntimeMetricKey {
     pub(crate) credential_revision: i64,
 }
 
+#[cfg(test)]
 impl RuntimeMetricKey {
     pub(crate) fn new(
         station_key_id: impl Into<String>,
@@ -64,6 +67,7 @@ impl RuntimeMetricKey {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeOutlierPolicyV1 {
     pub(crate) version: &'static str,
@@ -82,6 +86,7 @@ pub(crate) struct RuntimeOutlierPolicyV1 {
     pub(crate) entry_ttl_ms: i64,
 }
 
+#[cfg(test)]
 impl Default for RuntimeOutlierPolicyV1 {
     fn default() -> Self {
         Self {
@@ -103,6 +108,7 @@ impl Default for RuntimeOutlierPolicyV1 {
     }
 }
 
+#[cfg(test)]
 impl RuntimeOutlierPolicyV1 {
     pub(crate) fn validate(&self) -> Result<(), RuntimePolicyError> {
         if self.failure_window_max_samples != 20
@@ -140,36 +146,42 @@ impl RuntimeOutlierPolicyV1 {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RuntimePolicyError {
     InvalidV1Contract,
     InvalidBounds,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RuntimeFailureKind {
     Ordinary,
     RateLimited { retry_after_ms: Option<i64> },
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RuntimeAttemptObservation {
     Success,
     Failure(RuntimeFailureKind),
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeFeedbackOutcome {
     pub(crate) applied: bool,
     pub(crate) policy_version: &'static str,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuntimeOverlaySnapshot {
     pub(crate) policy_version: &'static str,
     pub(crate) entries: BTreeMap<RuntimeMetricKey, RuntimeCandidateOverlay>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RuntimeCandidateOverlay {
     pub(crate) admission: RuntimeAdmission,
@@ -177,6 +189,7 @@ pub(crate) struct RuntimeCandidateOverlay {
     pub(crate) slow_start_penalty: f64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RuntimeAdmission {
     Available,
@@ -185,14 +198,15 @@ pub(crate) enum RuntimeAdmission {
     HalfOpen { successes: u8 },
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeDegradedReason {
     MaxPassiveEjectionProtected,
     SingleCandidateOutlierProtected,
-    HalfOpenPending,
     SlowStart,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct RuntimeRouteState {
     policy: RuntimeOutlierPolicyV1,
@@ -200,6 +214,7 @@ pub(crate) struct RuntimeRouteState {
     applied_attempt_ids: BTreeSet<String>,
 }
 
+#[cfg(test)]
 impl RuntimeRouteState {
     pub(crate) fn new(policy: RuntimeOutlierPolicyV1) -> Result<Self, RuntimePolicyError> {
         policy.validate()?;
@@ -410,12 +425,14 @@ impl RuntimeRouteState {
     }
 }
 
+#[cfg(test)]
 impl Default for RuntimeRouteState {
     fn default() -> Self {
         Self::new(RuntimeOutlierPolicyV1::default()).expect("default runtime policy is valid")
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct HalfOpenProbePermit<'a> {
     state: &'a mut RuntimeRouteState,
@@ -423,6 +440,7 @@ pub(crate) struct HalfOpenProbePermit<'a> {
     completed: bool,
 }
 
+#[cfg(test)]
 impl HalfOpenProbePermit<'_> {
     pub(crate) fn record_success(mut self, now_ms: i64) {
         self.state
@@ -437,6 +455,7 @@ impl HalfOpenProbePermit<'_> {
     }
 }
 
+#[cfg(test)]
 impl Drop for HalfOpenProbePermit<'_> {
     fn drop(&mut self) {
         if !self.completed {
@@ -445,6 +464,7 @@ impl Drop for HalfOpenProbePermit<'_> {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 struct RuntimeMetricEntry {
     failure_window: VecDeque<RuntimeOutcomeSample>,
@@ -456,6 +476,7 @@ struct RuntimeMetricEntry {
     last_touched_ms: i64,
 }
 
+#[cfg(test)]
 impl RuntimeMetricEntry {
     fn record_observation(
         &mut self,
@@ -556,12 +577,14 @@ impl RuntimeMetricEntry {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct RuntimeOutcomeSample {
     failed: bool,
     observed_at_ms: i64,
 }
 
+#[cfg(test)]
 pub(crate) fn parse_retry_after_ms(value: Option<&str>) -> Option<i64> {
     let value = value?.trim();
     if value.is_empty() || value.starts_with('-') {

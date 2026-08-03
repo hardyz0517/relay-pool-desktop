@@ -63,7 +63,9 @@ pub(crate) struct PortableImportPrepareArtifact {
     pub(crate) target_sha256: String,
     pub(crate) target_key_id: String,
     pub(crate) row_counts: BTreeMap<String, usize>,
+    #[cfg(test)]
     pub(crate) rekey_report: SecretRekeyReport,
+    #[cfg(test)]
     pub(crate) mode: PortableImportMode,
 }
 
@@ -100,6 +102,7 @@ pub(crate) async fn build_target_from_inspection(
     });
     let mut reader = PortableSchemaReader::open_v1(&lease.staging_path).await?;
     let mut batches = Vec::new();
+    #[cfg(test)]
     let mut rekey_report = None;
 
     for table_name in ordered_import_tables_v1() {
@@ -110,7 +113,12 @@ pub(crate) async fn build_target_from_inspection(
             with_target_local_defaults(rows, &request.target_updated_at)
         } else if table_name == "secrets" {
             let (rows, report) = rekey_secret_rows(rows, &transport_key, &request.target_keys)?;
-            rekey_report = Some(report);
+            #[cfg(test)]
+            {
+                rekey_report = Some(report);
+            }
+            #[cfg(not(test))]
+            let _ = report;
             rows
         } else {
             rows
@@ -153,6 +161,7 @@ pub(crate) async fn build_target_from_inspection(
         target_sha256,
         target_key_id: request.target_keys.active_key_id().as_str().to_string(),
         row_counts,
+        #[cfg(test)]
         rekey_report: rekey_report.unwrap_or(SecretRekeyReport {
             from_key_id: transport_key.key_id().to_string(),
             to_key_id: request.target_keys.active_key_id().as_str().to_string(),
@@ -161,6 +170,7 @@ pub(crate) async fn build_target_from_inspection(
             reset_rows: 0,
             code: "ok",
         }),
+        #[cfg(test)]
         mode: request.mode,
     })
 }

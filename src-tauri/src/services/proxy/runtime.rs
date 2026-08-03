@@ -1428,8 +1428,8 @@ mod tests {
         let status = response.status();
         let failure_body: serde_json::Value = response.json().await.expect("failure json");
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(failure_body["error"]["code"], "upstream_http_error");
-        assert_eq!(failure_body["error"]["message"], "upstream HTTP 502");
+        assert_eq!(failure_body["error"]["code"], "upstream_unavailable");
+        assert_eq!(failure_body["error"]["message"], "upstream is unavailable");
         runtime.stop(started.port).await.unwrap();
 
         let logs = fixture.request_logs().await;

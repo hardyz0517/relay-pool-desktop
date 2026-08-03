@@ -162,16 +162,8 @@ mod models {
 pub mod monitoring_auth;
 #[path = "../src/services/monitoring/profiles/mod.rs"]
 pub mod monitoring_profiles;
-#[path = "../src/services/monitoring/adapters/protocol_auto.rs"]
-pub mod monitoring_protocol_auto;
-
 mod services {
     pub mod monitoring {
-        pub mod adapters {
-            pub mod protocol_auto {
-                pub use crate::monitoring_protocol_auto::*;
-            }
-        }
         pub mod auth {
             pub use crate::monitoring_auth::*;
         }
@@ -206,6 +198,17 @@ use recorder::{
     RecordedTargetResult,
 };
 
+fn available_transport_result(latency_ms: u64) -> ProbeTransportResult {
+    ProbeTransportResult {
+        outcome: ProbeOutcome::Available,
+        failure_kind: None,
+        retryable: false,
+        retry_after_ms: None,
+        latency_ms,
+        semantic_confidence: models::monitoring::SemanticConfidence::ProtocolValidated,
+    }
+}
+
 #[test]
 fn planner_freezes_station_scope_targets_and_profile_hashes() {
     let snapshot = snapshot(ProtocolSelection::Explicit(ProtocolKind::OpenAiResponses));
@@ -227,66 +230,9 @@ fn planner_freezes_station_scope_targets_and_profile_hashes() {
 }
 
 #[tokio::test]
-async fn auto_protocol_unknown_is_skipped_without_transport() {
-    let request = execution_request(
-        TriggerKind::Scheduled,
-        None,
-        snapshot(ProtocolSelection::Auto),
-        vec![TargetCapabilitySnapshot {
-            station_id: "station-1".to_string(),
-            station_key_id: "key-a".to_string(),
-            endpoint_revision: 7,
-            provider_protocol: None,
-            endpoint_protocol: None,
-        }],
-    );
-    let mut orchestrator = harness(FakeTransport::default());
-
-    let receipt = orchestrator
-        .request_execution(request)
-        .await
-        .expect("execution");
-    let (_, _, recorder, transport) = orchestrator.into_parts();
-
-    assert_eq!(receipt.execution_id, "execution-1");
-    assert!(transport.requests.is_empty());
-    assert_eq!(recorder.targets.len(), 1);
-    assert_eq!(recorder.targets[0].terminal_outcome, ProbeOutcome::Skipped);
-    assert_eq!(
-        recorder.targets[0].terminal_failure_kind,
-        Some(FailureKind::NeedsConfiguration)
-    );
-}
-
-#[tokio::test]
-async fn auto_protocol_resolves_only_from_persisted_capability_facts() {
-    let mut transport = FakeTransport::default();
-    transport.push_for_key("key-a", ProbeTransportResult::available(10));
-    let mut orchestrator = harness(transport);
-
-    orchestrator
-        .request_execution(execution_request(
-            TriggerKind::Scheduled,
-            None,
-            snapshot(ProtocolSelection::Auto),
-            vec![target("key-a", Some(ProtocolKind::GeminiNative))],
-        ))
-        .await
-        .expect("execution");
-    let (_, _, recorder, transport) = orchestrator.into_parts();
-
-    assert_eq!(transport.requests.len(), 1);
-    assert_eq!(
-        recorder.targets[0].protocol_kind,
-        Some(ProtocolKind::GeminiNative)
-    );
-    assert!(recorder.targets[0].request_profile_hash.is_some());
-}
-
-#[tokio::test]
 async fn slow_success_is_degraded_and_attempt_uses_its_own_deadline() {
     let mut transport = FakeTransport::default();
-    transport.push_for_key("key-a", ProbeTransportResult::available(16_000));
+    transport.push_for_key("key-a", available_transport_result(16_000));
     let mut orchestrator = harness(transport);
     let mut request = default_request(vec![target("key-a", Some(ProtocolKind::OpenAiResponses))]);
     request.snapshot.schedule_policy =
@@ -317,7 +263,7 @@ async fn slow_success_is_degraded_and_attempt_uses_its_own_deadline() {
 #[tokio::test]
 async fn sub2api_slow_latency_boundary_degrades_at_six_seconds() {
     let mut just_fast_transport = FakeTransport::default();
-    just_fast_transport.push_for_key("key-a", ProbeTransportResult::available(5_999));
+    just_fast_transport.push_for_key("key-a", available_transport_result(5_999));
     let mut just_fast = harness(just_fast_transport);
     let mut request = default_request(vec![target("key-a", Some(ProtocolKind::OpenAiResponses))]);
     request.snapshot.schedule_policy =
@@ -335,7 +281,7 @@ async fn sub2api_slow_latency_boundary_degrades_at_six_seconds() {
     );
 
     let mut boundary_transport = FakeTransport::default();
-    boundary_transport.push_for_key("key-a", ProbeTransportResult::available(6_000));
+    boundary_transport.push_for_key("key-a", available_transport_result(6_000));
     let mut boundary = harness(boundary_transport);
     boundary
         .request_execution(request)
@@ -400,7 +346,7 @@ async fn rate_limit_retries_same_model_with_retry_after_but_never_fallbacks() {
         "key-a",
         ProbeTransportResult::failure(FailureKind::RateLimit, true, Some(300), 20),
     );
-    transport.push_for_key("key-a", ProbeTransportResult::available(25));
+    transport.push_for_key("key-a", available_transport_result(25));
     let mut orchestrator = harness(transport);
 
     orchestrator
@@ -462,7 +408,7 @@ async fn retry_and_fallback_recovery_is_degraded_with_one_target_denominator() {
         "key-a",
         ProbeTransportResult::failure(FailureKind::ServerError, true, None, 10),
     );
-    transport.push_for_key("key-a", ProbeTransportResult::available(10));
+    transport.push_for_key("key-a", available_transport_result(10));
     let mut orchestrator = harness(transport);
 
     orchestrator
@@ -556,7 +502,7 @@ async fn manual_idempotency_key_returns_existing_execution_without_transport() {
 
 async fn run_two_targets(order: Vec<&str>) -> RecordedExecutionSummary {
     let mut transport = FakeTransport::default();
-    transport.push_for_key("key-a", ProbeTransportResult::available(10));
+    transport.push_for_key("key-a", available_transport_result(10));
     transport.push_for_key(
         "key-b",
         ProbeTransportResult::failure(FailureKind::ServerError, false, None, 10),
@@ -694,7 +640,7 @@ impl ProbeTransport for FakeTransport {
             .responses_by_key
             .get_mut(&request.station_key_id)
             .and_then(VecDeque::pop_front)
-            .unwrap_or_else(|| ProbeTransportResult::available(1));
+            .unwrap_or_else(|| available_transport_result(1));
         self.requests.push(request);
         Box::pin(async move { response })
     }

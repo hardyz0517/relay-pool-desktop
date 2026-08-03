@@ -271,7 +271,13 @@ fn parse_value<T: for<'de> Deserialize<'de>>(
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const OPERATIONS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "OperationSnapshotDto",
     typescript: include_str!("operations.typescript.txt"),

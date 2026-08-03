@@ -3,16 +3,12 @@ use crate::{
         ClientProfileRef, DefinitionRevision, FailureKind, HealthPolicy, ProtocolKind, RetryPolicy,
         RiskPolicy, SchedulePolicy, TargetScope, TriggerKind,
     },
-    services::monitoring::{
-        adapters::protocol_auto::{resolve_protocol_auto, ProtocolCapabilityFacts},
-        profiles::registry::BuiltinProfileRegistry,
-    },
+    services::monitoring::profiles::registry::BuiltinProfileRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProtocolSelection {
     Explicit(ProtocolKind),
-    Auto,
 }
 
 #[derive(Debug, Clone)]
@@ -125,17 +121,8 @@ impl ProbePlanner {
         ];
 
         for target in targets {
-            let resolution = match snapshot.protocol_selection {
-                ProtocolSelection::Explicit(protocol_kind) => Some(protocol_kind),
-                ProtocolSelection::Auto => {
-                    let resolution = resolve_protocol_auto(ProtocolCapabilityFacts {
-                        provider_protocol: target.provider_protocol,
-                        endpoint_protocol: target.endpoint_protocol,
-                    });
-                    debug_assert_eq!(resolution.network_call_count, 0);
-                    resolution.protocol_kind
-                }
-            };
+            let ProtocolSelection::Explicit(protocol_kind) = snapshot.protocol_selection;
+            let resolution = Some(protocol_kind);
 
             let (request_profile_hash, skip_failure_kind) = match resolution {
                 Some(protocol_kind) => {

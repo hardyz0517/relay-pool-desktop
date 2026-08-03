@@ -5,7 +5,10 @@ use serde::Serialize;
 #[allow(unused_imports)]
 pub(crate) use crate::application::operational_facts::candidate_projector::RouteCandidateProjection;
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "contract=local_routing_workspace.economics DTO; owner=application/routing; remove_when=workspace DTO removes economics fields"
+)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RouteCandidateEconomics {
     pub(crate) pricing_rule_id: Option<String>,

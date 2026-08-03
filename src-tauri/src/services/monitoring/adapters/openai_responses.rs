@@ -27,10 +27,6 @@ impl OpenAiResponsesAdapter {
 }
 
 impl ProtocolAdapter for OpenAiResponsesAdapter {
-    fn protocol_kind(&self) -> ProtocolKind {
-        ProtocolKind::OpenAiResponses
-    }
-
     fn request_descriptor(&self) -> RequestDescriptor {
         RequestDescriptor {
             method: "POST".to_string(),

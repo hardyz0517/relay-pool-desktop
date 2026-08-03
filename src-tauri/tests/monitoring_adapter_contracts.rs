@@ -23,8 +23,6 @@ pub mod http_mapping;
 pub mod openai_chat;
 #[path = "../src/services/monitoring/adapters/openai_responses.rs"]
 pub mod openai_responses;
-#[path = "../src/services/monitoring/adapters/protocol_auto.rs"]
-pub mod protocol_auto;
 #[path = "../src/services/monitoring/adapters/sse.rs"]
 pub mod sse;
 #[path = "../src/services/monitoring/adapters/xai_grok.rs"]
@@ -46,8 +44,6 @@ mod services {
             pub use crate::openai_chat;
             #[allow(unused_imports)]
             pub use crate::openai_responses;
-            #[allow(unused_imports)]
-            pub use crate::protocol_auto;
             pub use crate::sse;
             #[allow(unused_imports)]
             pub use crate::xai_grok;
@@ -347,7 +343,6 @@ fn openai_responses_json_and_stream_terminal_semantics_are_distinct() {
     assert_eq!(stream.outcome, ProbeOutcome::Available);
     assert_eq!(stream.output_text.as_deref(), Some("RP_ANSWER=42"));
 }
-
 #[test]
 fn generic_openai_only_accepts_minimal_chat_compatible_intersection() {
     let adapter = generic_openai::GenericOpenAiAdapter::new(false);
@@ -511,34 +506,4 @@ fn gemini_native_json_and_stream_distinguish_stop_from_safety_or_api_error() {
     );
     assert_eq!(stream.outcome, ProbeOutcome::Available);
     assert_eq!(stream.output_text.as_deref(), Some("RP_ANSWER=42"));
-}
-
-#[test]
-fn protocol_auto_uses_capability_facts_without_network_fallback_probing() {
-    let selected = protocol_auto::resolve_protocol_auto(protocol_auto::ProtocolCapabilityFacts {
-        provider_protocol: Some(ProtocolKind::AnthropicMessages),
-        endpoint_protocol: Some(ProtocolKind::AnthropicMessages),
-    });
-    assert_eq!(
-        selected.protocol_kind,
-        Some(ProtocolKind::AnthropicMessages)
-    );
-    assert_eq!(selected.network_call_count, 0);
-    assert_eq!(selected.failure_kind, None);
-
-    let unknown = protocol_auto::resolve_protocol_auto(protocol_auto::ProtocolCapabilityFacts {
-        provider_protocol: None,
-        endpoint_protocol: None,
-    });
-    assert_eq!(unknown.protocol_kind, None);
-    assert_eq!(unknown.network_call_count, 0);
-    assert_eq!(unknown.failure_kind, Some(FailureKind::NeedsConfiguration));
-
-    let conflict = protocol_auto::resolve_protocol_auto(protocol_auto::ProtocolCapabilityFacts {
-        provider_protocol: Some(ProtocolKind::GeminiNative),
-        endpoint_protocol: Some(ProtocolKind::GenericOpenAi),
-    });
-    assert_eq!(conflict.protocol_kind, None);
-    assert_eq!(conflict.network_call_count, 0);
-    assert_eq!(conflict.failure_kind, Some(FailureKind::NeedsConfiguration));
 }

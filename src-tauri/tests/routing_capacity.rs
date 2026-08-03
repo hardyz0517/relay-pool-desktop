@@ -1,11 +1,11 @@
-#![allow(dead_code)]
-
 #[path = "../src/application/routing_engine/capacity.rs"]
 mod capacity;
 
 use capacity::{
     effective_load_denominator, CapacityAcquireFailure, CapacityConstraintKey,
-    CompositeCapacityRegistry, CompositeCapacityRequest, ProviderAccountConstraint,
+    CapacityMissObservation, CapacityWaitMiss, CompositeCapacityRegistry, CompositeCapacityRequest,
+    PlanningRoundCapacityState, ProviderAccountConstraint, RetryBudgetMiss, RetryBudgetRegistry,
+    RetryPermitDecision,
 };
 
 fn request(station_id: &str, station_key_id: &str) -> CompositeCapacityRequest {
@@ -26,6 +26,14 @@ fn composite_capacity_acquires_fixed_order_and_rolls_back_middle_failure() {
     let mut first = request("station-a", "key-a");
     first.station_account_max_concurrency = 1;
     let first_lease = registry.try_acquire(first).expect("first lease");
+    assert_eq!(
+        first_lease.constraints(),
+        &[
+            CapacityConstraintKey::Global,
+            CapacityConstraintKey::StationAccount("station-a".to_string()),
+            CapacityConstraintKey::StationKey("key-a".to_string())
+        ]
+    );
     assert_eq!(registry.gauge(&CapacityConstraintKey::Global).active, 1);
     assert_eq!(
         registry
@@ -168,4 +176,110 @@ fn runtime_limit_down_keeps_existing_lease_but_blocks_new_acquire() {
             ..
         })
     ));
+}
+
+#[test]
+fn wait_queue_tracks_tickets_and_releases_permits() {
+    let registry = CompositeCapacityRegistry::default();
+    let constraint = CapacityConstraintKey::StationKey("key-a".to_string());
+
+    assert!(matches!(
+        registry.try_enter_wait(constraint.clone(), 1, 100, 100),
+        Err(CapacityWaitMiss::NotAdmitted)
+    ));
+
+    let mut first = registry
+        .try_enter_wait(constraint.clone(), 1, 100, 150)
+        .expect("first waiter admitted");
+    assert_eq!(first.ticket(), 0);
+    assert_eq!(registry.gauge(&constraint).waiting, 1);
+    assert!(matches!(
+        registry.try_enter_wait(constraint.clone(), 1, 100, 150),
+        Err(CapacityWaitMiss::QueueFull)
+    ));
+
+    first.release();
+    assert_eq!(registry.gauge(&constraint).waiting, 0);
+    let second = registry
+        .try_enter_wait(constraint.clone(), 1, 100, 150)
+        .expect("second waiter admitted after release");
+    assert_eq!(second.ticket(), 1);
+    drop(second);
+    assert_eq!(registry.gauge(&constraint).waiting, 0);
+}
+
+#[test]
+fn planning_round_builds_wait_plan_from_waitable_miss() {
+    let mut round = PlanningRoundCapacityState::default();
+    assert_eq!(
+        round.build_wait_plan(100, 150, 1),
+        Err(CapacityWaitMiss::NotAdmitted)
+    );
+
+    round.record_miss(CapacityMissObservation {
+        constraint: CapacityConstraintKey::Global,
+        waitable: false,
+        in_flight: 8,
+        max_concurrency: 8,
+    });
+    round.record_miss(CapacityMissObservation {
+        constraint: CapacityConstraintKey::StationKey("key-a".to_string()),
+        waitable: true,
+        in_flight: 1,
+        max_concurrency: 1,
+    });
+
+    let wait_plan = round
+        .build_wait_plan(100, 175, 2)
+        .expect("waitable miss should build wait plan");
+    assert_eq!(
+        wait_plan.constraint,
+        CapacityConstraintKey::StationKey("key-a".to_string())
+    );
+    assert_eq!(wait_plan.max_waiters, 2);
+    assert_eq!(wait_plan.timeout_ms, 75);
+    assert_eq!(round.unavailable_this_pass.len(), 2);
+    assert_eq!(round.wait_observations.len(), 1);
+
+    round.clear();
+    assert!(round.unavailable_this_pass.is_empty());
+    assert!(round.wait_observations.is_empty());
+}
+
+#[test]
+fn retry_budget_caps_retry_permits_and_releases_on_drop() {
+    let registry = RetryBudgetRegistry::new(5);
+    assert_eq!(registry.max_active(), 1);
+    assert!(matches!(
+        registry.acquire_for_round(0),
+        Ok(RetryPermitDecision::NotRequired)
+    ));
+
+    let permit = match registry
+        .acquire_for_round(1)
+        .expect("first retry permit should fit 20 percent budget")
+    {
+        RetryPermitDecision::Acquired(permit) => permit,
+        RetryPermitDecision::NotRequired => panic!("retry round requires a permit"),
+    };
+    assert_eq!(registry.active(), 1);
+    assert!(matches!(
+        registry.acquire_for_round(2),
+        Err(RetryBudgetMiss::Exhausted {
+            active: 1,
+            max_active: 1,
+        })
+    ));
+
+    drop(permit);
+    assert_eq!(registry.active(), 0);
+    let mut next_permit = match registry
+        .acquire_for_round(2)
+        .expect("released budget should be reusable")
+    {
+        RetryPermitDecision::Acquired(permit) => permit,
+        RetryPermitDecision::NotRequired => panic!("retry round requires a permit"),
+    };
+    next_permit.release();
+    assert_eq!(registry.active(), 0);
 }

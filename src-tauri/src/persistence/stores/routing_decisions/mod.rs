@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub(crate) mod queries;
 pub(crate) mod retention;
 pub(crate) mod write;

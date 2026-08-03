@@ -9,12 +9,14 @@ use age::{
 
 use super::{
     format::{
-        read_framed_payload, write_framed_payload, ParsedPortablePayload,
-        ParsedPortablePayloadInfo, PortableFormatError, PortableMigrationManifest,
-        TransportKeyMaterial,
+        write_framed_payload, ParsedPortablePayloadInfo, PortableFormatError,
+        PortableMigrationManifest, TransportKeyMaterial,
     },
     limits::{LimitViolation, PortableMigrationLimitsV1},
 };
+
+#[cfg(test)]
+use super::format::{read_framed_payload, ParsedPortablePayload};
 
 pub(crate) const DEFAULT_SCRYPT_WORK_FACTOR: u8 = 15;
 pub(crate) const DEFAULT_MAX_ACCEPTED_SCRYPT_WORK_FACTOR: u8 = 18;
@@ -50,7 +52,6 @@ impl Default for AgeEnvelopeOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgeEnvelopeErrorCode {
     AuthenticationFailed,
-    Cancelled,
     ExcessiveWork,
     InvalidFormat,
     Io,
@@ -61,7 +62,6 @@ impl AgeEnvelopeErrorCode {
     pub(crate) const fn stable_code(self) -> &'static str {
         match self {
             Self::AuthenticationFailed => "authentication_failed",
-            Self::Cancelled => "cancelled",
             Self::ExcessiveWork => "excessive_work",
             Self::InvalidFormat => "invalid_format",
             Self::Io => "io",
@@ -80,12 +80,9 @@ impl AgeEnvelopeError {
         Self { code }
     }
 
+    #[cfg(test)]
     pub(crate) const fn code(&self) -> AgeEnvelopeErrorCode {
         self.code
-    }
-
-    pub(crate) const fn stable_code(&self) -> &'static str {
-        self.code.stable_code()
     }
 }
 
@@ -157,6 +154,7 @@ pub(crate) fn encrypt_framed_payload<W: Write, R: Read>(
     Ok(digest)
 }
 
+#[cfg(test)]
 pub(crate) fn decrypt_framed_payload<R: Read>(
     reader: R,
     passphrase: &str,
@@ -214,7 +212,7 @@ fn limit_error(error: LimitViolation) -> AgeEnvelopeError {
         LimitViolation::PassphraseTooLarge => {
             AgeEnvelopeError::new(AgeEnvelopeErrorCode::LimitExceeded)
         }
-        LimitViolation::RegularFieldTooLarge | LimitViolation::LargeRedactedJsonFieldTooLarge => {
+        LimitViolation::LargeRedactedJsonFieldTooLarge => {
             AgeEnvelopeError::new(AgeEnvelopeErrorCode::LimitExceeded)
         }
     }

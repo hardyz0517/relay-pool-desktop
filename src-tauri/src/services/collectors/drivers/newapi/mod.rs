@@ -945,7 +945,6 @@ struct NewApiUsageStats {
 struct NewApiDashboardUsageWindow {
     request_count: Option<i64>,
     token_count: Option<i64>,
-    quota: Option<i64>,
     consumption: Option<f64>,
 }
 
@@ -1041,7 +1040,6 @@ async fn collect_dashboard_usage_window(
         NewApiDashboardUsageWindow {
             request_count,
             token_count,
-            quota,
             consumption: quota_per_unit
                 .zip(quota)
                 .map(|(quota_per_unit, quota)| quota as f64 / quota_per_unit),
@@ -1136,15 +1134,6 @@ fn local_today_start_timestamp(fallback_now: i64) -> i64 {
         .earliest()
         .map(|value| value.timestamp())
         .unwrap_or(fallback_now)
-}
-
-fn numeric_f64_field(value: &Value, keys: &[&str]) -> Option<f64> {
-    keys.iter().find_map(|key| {
-        value
-            .get(*key)
-            .and_then(|item| item.as_f64().or_else(|| item.as_str()?.trim().parse().ok()))
-            .filter(|value| value.is_finite())
-    })
 }
 
 fn numeric_i64_field(value: &Value, keys: &[&str]) -> Option<i64> {
@@ -1627,7 +1616,6 @@ mod tests {
         let output = detect_output();
 
         assert_eq!(output.status, DriverOutputStatus::Success);
-        assert!(output.facts.models.is_empty());
         assert!(output.evidence.is_empty());
     }
 

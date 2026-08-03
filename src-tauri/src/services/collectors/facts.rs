@@ -61,19 +61,9 @@ pub struct CollectedRateFact {
     pub raw_json_redacted: Option<Value>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CollectedModelFact {
-    pub station_id: String,
-    pub model: String,
-    pub available: bool,
-    pub source: String,
-    pub confidence: f64,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct CollectorFacts {
     pub balances: Vec<CollectedBalanceFact>,
     pub groups: Vec<CollectedGroupFact>,
     pub rates: Vec<CollectedRateFact>,
-    pub models: Vec<CollectedModelFact>,
 }

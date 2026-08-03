@@ -7,28 +7,51 @@ use super::dto::REGISTERED_TYPES;
 #[cfg(test)]
 use super::runtime_contract::RUNTIME_CONTRACT_TYPESCRIPT;
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-registry-document; owner=ipc; remove_when=registry document is exported in production binding generation"
+    )
+)]
 pub const GENERATOR_VERSION: u32 = 1;
-#[cfg_attr(not(test), allow(dead_code))]
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "0fa1f04d463c41f9a91634bc158da6abbf3f3be5bbca4edab3f407bc20ddd030";
+    "8c308ad6c007f080c245a924658a8ece57316b70e36cd660dfbab11cc44aff0b";
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-registry-document; owner=ipc; remove_when=registry document is exported in production binding generation"
+    )
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct CommandDescriptor {
     pub name: &'static str,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-registry-document; owner=ipc; remove_when=registry document is exported in production binding generation"
+    )
+)]
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransportKind {
     Ordinary,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-registry-document; owner=ipc; remove_when=registry document is exported in production binding generation"
+    )
+)]
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct StreamingSurface {
     pub command: &'static str,
@@ -37,7 +60,13 @@ pub struct StreamingSurface {
     pub transport: TransportKind,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-registry-document; owner=ipc; remove_when=registry document is exported in production binding generation"
+    )
+)]
 pub const STREAMING_SURFACES: &[StreamingSurface] = &[];
 
 #[macro_export]
@@ -215,7 +244,7 @@ macro_rules! ipc_command_registry {
 
 macro_rules! compile_descriptors {
     ($( $name:ident => $handler:path, )*) => {
-        #[cfg_attr(not(test), allow(dead_code))]
+        #[cfg_attr(not(test), expect(dead_code, reason = "contract=ipc-registry-document; owner=ipc; remove_when=registry document is exported in production binding generation"))]
         pub const COMMANDS: &[CommandDescriptor] = &[
             $(CommandDescriptor { name: stringify!($name) },)*
         ];

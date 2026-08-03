@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod application {
     pub(crate) mod operational_facts {
         pub(crate) mod balance_projector {
@@ -158,6 +156,48 @@ fn request_facts() -> RouteRequestFacts {
     )
 }
 
+#[test]
+fn request_classifier_exposes_complete_catalog_policy_snapshot() {
+    let facts = RouteRequestClassifier::classify(
+        CanonicalRouteRequest {
+            route_kind: RouteKind::ModelCatalog,
+            requested_model: None,
+            stream: false,
+            uses_tools: true,
+            uses_vision: true,
+            uses_reasoning: true,
+            untrusted_headers: Vec::new(),
+        },
+        ValidatedLocalRouteSettings {
+            ordering_profile: OrderingProfile::CostFirst,
+            max_rate_multiplier: Some(1.5),
+            group_filter_mode: GroupFilterMode::Required,
+            required_group_stable_key: Some("binding:group-a".to_string()),
+            preferred_models: vec!["gpt-test".to_string()],
+            required_tags: vec!["fast".to_string()],
+            allow_depleted_fallback: false,
+            affinity_enabled: true,
+        },
+        2_000,
+    );
+
+    assert_eq!(facts.route_kind(), RouteKind::ModelCatalog);
+    assert_eq!(facts.requested_model(), None);
+    assert_eq!(facts.stream(), false);
+    assert_eq!(facts.uses_tools(), true);
+    assert_eq!(facts.uses_vision(), true);
+    assert_eq!(facts.uses_reasoning(), true);
+    assert_eq!(facts.ordering_profile(), OrderingProfile::CostFirst);
+    assert_eq!(facts.max_rate_multiplier(), Some(1.5));
+    assert_eq!(facts.group_filter_mode(), GroupFilterMode::Required);
+    assert_eq!(facts.required_group_stable_key(), Some("binding:group-a"));
+    assert_eq!(facts.preferred_models(), &["gpt-test".to_string()]);
+    assert_eq!(facts.required_tags(), &["fast".to_string()]);
+    assert_eq!(facts.allow_depleted_fallback(), false);
+    assert_eq!(facts.affinity_enabled(), true);
+    assert_eq!(facts.admitted_at_ms(), 2_000);
+}
+
 fn controller(policy: FallbackPolicy) -> RouteAdmissionController {
     RouteAdmissionController::new(
         request_facts(),
@@ -271,6 +311,101 @@ fn selected_id(decision: ControllerDecision) -> String {
 }
 
 #[test]
+fn planner_fixture_contract_covers_reserved_capacity_and_pricing_states() {
+    assert_eq!(format!("{:?}", RoutingCostBasis::Unpriced), "Unpriced");
+    assert_eq!(
+        format!("{:?}", RoutingCostBasis::NotApplicable),
+        "NotApplicable"
+    );
+
+    let capacity = CompositeCapacityRegistry::default();
+    let mut provider_scoped = profile(&candidate("provider-a", 1));
+    provider_scoped.provider_account_constraint = ProviderAccountConstraint::Trusted {
+        provider_account_id: "provider-a".to_string(),
+        max_concurrency: 1,
+    };
+    let plan_candidate = selector::RoutePlanCandidate {
+        station_key_id: "provider-a".to_string(),
+        station_id: "station-provider-a".to_string(),
+        endpoint_revision: 3,
+        priority: 1,
+        tier: selector::AvailabilityTier::Primary,
+        pricing: selector::RoutePlanPricingSnapshot {
+            basis: RoutingCostBasis::ExactPrice,
+            currency: Some("USD".to_string()),
+            unit: Some("per_1m_tokens".to_string()),
+            estimated_input_price: Some(1.0),
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            status_label: "priced".to_string(),
+        },
+        evidence: Vec::new(),
+    };
+    let lease = capacity
+        .try_acquire(provider_scoped.capacity_request(&plan_candidate))
+        .expect("provider scoped lease");
+    assert!(lease
+        .constraints()
+        .contains(&CapacityConstraintKey::ProviderAccount(
+            "provider-a".to_string()
+        )));
+    assert_eq!(
+        capacity
+            .gauge(&CapacityConstraintKey::StationKey("provider-a".to_string()))
+            .active,
+        1
+    );
+
+    let blocked = capacity.try_acquire(provider_scoped.capacity_request(&plan_candidate));
+    assert!(matches!(
+        blocked,
+        Err(capacity::CapacityAcquireFailure::ConstraintUnavailable {
+            constraint: CapacityConstraintKey::ProviderAccount(provider),
+            ..
+        }) if provider == "provider-a"
+    ));
+    drop(lease);
+
+    capacity.set_runtime_max(
+        CapacityConstraintKey::StationKey("runtime-a".to_string()),
+        1,
+    );
+    assert_eq!(
+        capacity
+            .gauge(&CapacityConstraintKey::StationKey("runtime-a".to_string()))
+            .load_denominator,
+        1
+    );
+
+    let mut evidence_gap = profile(&candidate("gap-a", 1));
+    evidence_gap.provider_account_constraint = ProviderAccountConstraint::EvidenceGap {
+        reason: "provider_scope_untrusted",
+    };
+    let gap_plan_candidate = selector::RoutePlanCandidate {
+        station_key_id: "gap-a".to_string(),
+        station_id: "station-gap-a".to_string(),
+        ..plan_candidate.clone()
+    };
+    let gap_lease = capacity
+        .try_acquire(evidence_gap.capacity_request(&gap_plan_candidate))
+        .expect("evidence gap should not enforce provider capacity");
+    assert_eq!(
+        gap_lease.evidence_gaps()[0].reason,
+        "provider_scope_untrusted"
+    );
+
+    let retry_budget = capacity::RetryBudgetRegistry::new(16);
+    assert_eq!(retry_budget.max_active(), 4);
+    assert_eq!(retry_budget.active(), 0);
+
+    let stratum = selector::RoutePlanStratum {
+        tier: selector::AvailabilityTier::Primary,
+        candidates: vec![plan_candidate],
+    };
+    assert_eq!(stratum.candidate_ids(), vec!["provider-a"]);
+}
+
+#[test]
 fn capacity_miss_continues_plan_without_attempt_progress_or_retry_token() {
     let mut primary = candidate("primary", 10);
     let mut backup = candidate("backup", 1);
@@ -337,21 +472,50 @@ fn actual_terminal_adds_monotonic_exclusion_and_prevents_duplicate_key_attempts(
         other => panic!("expected selected route, got {other:?}"),
     };
     assert_eq!(first.candidate.station_key_id, "a");
+    assert!(first.retry_permit.is_none());
+    assert!(!first.evidence.is_empty());
+    assert!(first
+        .lease
+        .constraints()
+        .contains(&CapacityConstraintKey::StationKey("a".to_string())));
     controller
         .record_actual_terminal(first, ActualAttemptTerminal::FailedBeforeCommit)
         .expect("retry-safe terminal");
 
-    let second_id = selected_id(
-        controller
-            .next(next_input(&candidates, &profiles, &capacity, 1, 1_200))
-            .expect("second selected"),
-    );
-    assert_eq!(second_id, "b");
+    let second = match controller
+        .next(next_input(&candidates, &profiles, &capacity, 1, 1_200))
+        .expect("second selected")
+    {
+        ControllerDecision::Selected(selected) => selected,
+        other => panic!("expected selected route, got {other:?}"),
+    };
+    assert_eq!(second.candidate.station_key_id, "b");
+    assert!(second.retry_permit.is_some());
     assert_eq!(controller.progress_view().attempt_count, 1);
     assert!(controller
         .progress_view()
         .actual_attempt_exclusions
         .contains("a"));
+}
+
+#[test]
+fn successful_terminal_records_attempt_without_scheduling_retry() {
+    let candidates = vec![candidate("a", 1)];
+    let profiles = profiles(&candidates);
+    let capacity = CompositeCapacityRegistry::default();
+    let mut controller = controller(retry_safe_policy());
+
+    let selected = match controller
+        .next(next_input(&candidates, &profiles, &capacity, 1, 1_100))
+        .expect("selected")
+    {
+        ControllerDecision::Selected(selected) => selected,
+        other => panic!("expected selected route, got {other:?}"),
+    };
+    controller
+        .record_actual_terminal(selected, ActualAttemptTerminal::Succeeded)
+        .expect("successful terminal");
+    assert_eq!(controller.progress_view().attempt_count, 1);
 }
 
 #[test]
@@ -382,22 +546,23 @@ fn wait_wakeup_clears_pass_state_refreshes_overlay_and_allows_unattempted_key() 
         .expect("blocking a");
     let mut controller = controller(retry_safe_policy());
 
-    let wait = controller
+    let wait_permit = match controller
         .next(next_input(&candidates, &profiles, &capacity, 1, 1_100))
-        .expect("wait entered");
-    assert!(matches!(
-        wait,
-        ControllerDecision::Wait {
-            constraint: CapacityConstraintKey::StationKey(_),
-            ..
+        .expect("wait entered")
+    {
+        ControllerDecision::Wait { constraint, permit } => {
+            assert!(matches!(constraint, CapacityConstraintKey::StationKey(_)));
+            assert_eq!(permit.ticket(), 0);
+            permit
         }
-    ));
+        other => panic!("expected wait decision, got {other:?}"),
+    };
     assert_eq!(
         controller.pass_capacity_state().unavailable_this_pass.len(),
         1
     );
 
-    drop(wait);
+    drop(wait_permit);
     drop(blocking);
     controller.record_wait_wakeup(2);
     assert!(controller

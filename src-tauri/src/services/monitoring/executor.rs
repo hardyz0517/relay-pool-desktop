@@ -59,15 +59,22 @@ pub struct ProbeExecutionOutput {
     pub failure_kind: Option<FailureKind>,
     pub retryable: bool,
     pub latency_ms: u64,
+    #[cfg(test)]
     pub http_status: Option<u16>,
+    #[cfg(test)]
     pub response_model: Option<String>,
     pub semantic_confidence: SemanticConfidence,
+    #[cfg(test)]
     pub request_profile_hash: String,
+    #[cfg(test)]
     pub response_bytes: usize,
+    #[cfg(test)]
     pub output_bytes: usize,
+    #[cfg(test)]
     pub debug_summary: ProbeExecutionDebugSummary,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeExecutionDebugSummary {
     pub method: String,
@@ -222,12 +229,18 @@ where
             failure_kind: parsed.failure_kind,
             retryable: retryable(parsed.failure_kind),
             latency_ms: transport_response.total_latency_ms,
+            #[cfg(test)]
             http_status: parsed.http_status,
+            #[cfg(test)]
             response_model: parsed.model,
             semantic_confidence: SemanticConfidence::ProtocolValidated,
+            #[cfg(test)]
             request_profile_hash: request_profile_hash.clone(),
+            #[cfg(test)]
             response_bytes: parsed.response_bytes,
+            #[cfg(test)]
             output_bytes: parsed.output_bytes,
+            #[cfg(test)]
             debug_summary: ProbeExecutionDebugSummary {
                 method: transport_response.evidence.method,
                 relative_path: transport_response.evidence.relative_path,
@@ -264,9 +277,6 @@ fn profile_public_headers(
         .iter()
         .filter_map(|header| match &header.value {
             HeaderValue::Static(value) => Some((header.name.clone(), value.clone())),
-            HeaderValue::StableLocalIdentity { scope } => {
-                Some((header.name.clone(), format!("relay-pool-desktop:{scope}")))
-            }
             HeaderValue::RequestValue { kind } => Some((
                 header.name.clone(),
                 request_context.request_value(*kind).to_string(),
@@ -307,33 +317,39 @@ fn transport_failure_output(
 }
 
 fn failure_output(
-    protocol_kind: ProtocolKind,
-    http_status: Option<u16>,
+    _protocol_kind: ProtocolKind,
+    _http_status: Option<u16>,
     failure_kind: FailureKind,
     started: Instant,
-    request_profile_hash: String,
-    error_summary: Option<String>,
+    _request_profile_hash: String,
+    _error_summary: Option<String>,
 ) -> ProbeExecutionOutput {
     ProbeExecutionOutput {
         outcome: ProbeOutcome::Unavailable,
         failure_kind: Some(failure_kind),
         retryable: retryable(Some(failure_kind)),
         latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        http_status,
+        #[cfg(test)]
+        http_status: _http_status,
+        #[cfg(test)]
         response_model: None,
         semantic_confidence: SemanticConfidence::ProtocolValidated,
-        request_profile_hash: request_profile_hash.clone(),
+        #[cfg(test)]
+        request_profile_hash: _request_profile_hash.clone(),
+        #[cfg(test)]
         response_bytes: 0,
+        #[cfg(test)]
         output_bytes: 0,
+        #[cfg(test)]
         debug_summary: ProbeExecutionDebugSummary {
             method: "POST".to_string(),
             relative_path: String::new(),
-            protocol_kind,
-            request_profile_hash,
+            protocol_kind: _protocol_kind,
+            request_profile_hash: _request_profile_hash,
             header_names: Vec::new(),
             response_bytes: 0,
             output_bytes: 0,
-            error_summary,
+            error_summary: _error_summary,
         },
     }
 }

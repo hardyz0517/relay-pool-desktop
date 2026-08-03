@@ -3,7 +3,6 @@ use chrono_tz::Tz;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BucketWindowKind {
-    Recent,
     Hour,
     Day,
 }

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod application {
     pub(crate) mod operational_facts {
         pub(crate) mod balance_projector {
@@ -156,7 +154,7 @@ use application::{
         OrderingProfile, PlanningRoundContext, RouteProgressView, RouteRequestFacts,
     },
 };
-use planner::{plan_route, PlanningInput};
+use planner::{ordered_plan_candidates, plan_candidate_count, plan_route, PlanningInput};
 use selector::{AvailabilityTier, RoutePlannerError};
 
 fn context(profile: OrderingProfile) -> PlanningRoundContext {
@@ -292,6 +290,27 @@ fn cost_first_uses_exact_comparable_basis_before_priority_and_does_not_cross_cur
     assert_eq!(
         plan.selected_station_key_id.as_deref(),
         Some("cheap-same-basis")
+    );
+    assert_eq!(plan_candidate_count(&plan), 3);
+    assert_eq!(
+        ordered_plan_candidates(&plan)
+            .into_iter()
+            .map(|candidate| candidate.station_key_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "cheap-same-basis",
+            "expensive-priority",
+            "different-currency"
+        ]
+    );
+}
+
+#[test]
+fn planner_fixture_pricing_basis_contract_covers_unpriced_and_not_applicable() {
+    assert_eq!(format!("{:?}", RoutingCostBasis::Unpriced), "Unpriced");
+    assert_eq!(
+        format!("{:?}", RoutingCostBasis::NotApplicable),
+        "NotApplicable"
     );
 }
 

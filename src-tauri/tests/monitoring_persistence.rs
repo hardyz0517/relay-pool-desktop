@@ -10,9 +10,6 @@ pub mod monitoring_models;
 pub mod persistence_error;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
 pub mod retention;
-#[path = "../src/persistence/stores/monitoring/status_read_repository.rs"]
-pub mod status_queries;
-
 mod models {
     pub(crate) mod monitoring {
         pub(crate) use crate::monitoring_models::*;
@@ -22,14 +19,6 @@ mod models {
 mod persistence {
     pub mod error {
         pub(crate) use crate::persistence_error::PersistenceError;
-    }
-
-    pub(crate) struct ReadSession;
-
-    impl ReadSession {
-        pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
-            unimplemented!("path-based repository tests do not construct ReadSession")
-        }
     }
 }
 
@@ -41,7 +30,6 @@ use executions::{
 use persistence::error::PersistenceError;
 use retention::MonitoringRetentionRepository;
 use sqlx::{Connection, Row, SqliteConnection};
-use status_queries::MonitoringStatusQueryRepository;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
 
@@ -435,10 +423,9 @@ async fn startup_recovery_marks_queued_and_running_interrupted_without_replaying
 }
 
 #[tokio::test]
-async fn monitoring_list_queries_are_bounded_cursor_stable_and_indexed() {
+async fn monitoring_list_queries_are_bounded_and_indexed() {
     let mut connection = ready_connection().await;
     let definitions = MonitoringDefinitionRepository;
-    let statuses = MonitoringStatusQueryRepository;
     seed_finalized_target(&mut connection, "execution-1", "target-a", "key-1").await;
     sqlx::query(
         "UPDATE channel_monitor_target_results SET finished_at_ms = 100 WHERE id = 'target-a'",
@@ -473,23 +460,6 @@ async fn monitoring_list_queries_are_bounded_cursor_stable_and_indexed() {
         .expect("due list");
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].id, "monitor-1");
-
-    let first = statuses
-        .recent_target_results(&mut connection, "monitor-1", None, 1)
-        .await
-        .expect("recent first");
-    assert_eq!(first.len(), 1);
-    assert_eq!(first[0].id, "target-b");
-    let second = statuses
-        .recent_target_results(
-            &mut connection,
-            "monitor-1",
-            Some((first[0].finished_at_ms.unwrap(), first[0].id.clone())),
-            1,
-        )
-        .await
-        .expect("recent second");
-    assert_eq!(second[0].id, "target-a");
 
     assert_plan_uses(
         &mut connection,

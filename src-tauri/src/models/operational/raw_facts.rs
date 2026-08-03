@@ -6,6 +6,7 @@ pub(crate) struct OperationalFactReadOptions {
 }
 
 impl OperationalFactReadOptions {
+    #[cfg(test)]
     pub(crate) fn for_request_model(model: impl Into<String>) -> Self {
         Self {
             candidate_limit: MAX_OPERATIONAL_CANDIDATES,
@@ -14,6 +15,7 @@ impl OperationalFactReadOptions {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn for_model_catalog() -> Self {
         Self {
             candidate_limit: MAX_OPERATIONAL_CANDIDATES,
@@ -22,6 +24,7 @@ impl OperationalFactReadOptions {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn with_candidate_limit(mut self, candidate_limit: usize) -> Self {
         self.candidate_limit = candidate_limit;
         self
@@ -40,6 +43,7 @@ impl OperationalFactReadOptions {
     }
 }
 
+#[cfg(test)]
 pub(crate) const MAX_OPERATIONAL_CANDIDATES: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

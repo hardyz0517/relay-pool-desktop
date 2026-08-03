@@ -3,6 +3,13 @@ use crate::models::operational::{RateMultiplier, RecordRevision, UnixMillis};
 use super::group_projector::ProjectionTrace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=route-read-model.multiplier-source; owner=application/operational_facts; remove_when=read model drops non-emitted multiplier precedence sources"
+    )
+)]
 pub(crate) enum MultiplierEvidenceKind {
     BindingLatestUser,
     BindingLatestEffective,

@@ -1,11 +1,7 @@
 export type PortableMigrationBlockedReasonDto =
   | "security_policy_not_approved"
   | "unsupported_platform"
-  | "security_baseline_incomplete"
-  | "credential_store_key_missing"
-  | "credential_store_unavailable"
-  | "data_store_not_writable"
-  | "maintenance_in_progress";
+  | "data_store_not_writable";
 
 export type PortableMigrationLimitsDto = {
   maxAgeFileBytes: number;
@@ -143,7 +139,6 @@ export type PortableImportPrepareResultDto = {
 
 export type PortableImportRecoveryReasonCodeDto =
   | "activation_validation_failed"
-  | "atomic_replace_failed"
   | "journal_invalid"
   | "artifact_identity_mismatch"
   | "rollback_validation_failed";

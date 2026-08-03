@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[path = "../src/models/proxy.rs"]
 mod proxy_model;
 #[path = "../src/models/routing.rs"]
@@ -260,13 +258,16 @@ use application::routing_engine::request::{GroupFilterMode, RouteKind};
 use models::{
     proxy::RequestLog,
     routing::{
-        RouteEndpointKind, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingCandidate,
+        ModelAlias, RouteCandidateExplanation, RouteEndpointKind, RouteSimulationInput,
+        RouteSimulationResult, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingCandidate,
         RuntimeRoutingSettings, StationKeyCapabilities, StationKeyHealth,
+        UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput,
     },
 };
 use request_decision_trace::{
-    decision_trace_from_legacy_log, RequestDecisionTimelineKind, RequestDecisionTimelineStatus,
-    RequestDecisionTraceStatus,
+    decision_trace_from_legacy_log, recent_route_decisions_from_logs, RecentRouteDecisionsInput,
+    RequestDecisionTimelineKind, RequestDecisionTimelineStatus, RequestDecisionTraceStatus,
+    RouteDecisionReadModelStatus, RECENT_ROUTE_DECISION_PAGE_VERSION,
 };
 use routing_runtime::runtime_overlay_from_candidates;
 use routing_workspace::{
@@ -494,6 +495,195 @@ fn projection(
         },
         hard_rejection_codes,
     }
+}
+
+#[test]
+fn legacy_route_decision_page_filters_monitor_logs_and_paginates_contract_rows() {
+    let first = legacy_request_log();
+    let mut monitor = legacy_request_log();
+    monitor.id = "monitor-log".to_string();
+    monitor.route_policy = Some("channel_monitor".to_string());
+    let mut second = legacy_request_log();
+    second.id = "request-log-2".to_string();
+    second.request_id = Some("request-2".to_string());
+
+    let page = recent_route_decisions_from_logs(
+        vec![first, monitor, second],
+        RecentRouteDecisionsInput {
+            limit: Some(1),
+            cursor: None,
+        },
+    );
+
+    assert_eq!(page.page_version, RECENT_ROUTE_DECISION_PAGE_VERSION);
+    assert_eq!(
+        page.read_model_status,
+        RouteDecisionReadModelStatus::Available
+    );
+    assert_eq!(page.decisions.len(), 1);
+    assert_eq!(page.decisions[0].request_log_id, "request-log-1");
+    assert_eq!(page.decisions[0].endpoint, "/v1/chat/completions");
+    assert_eq!(page.next_cursor.as_deref(), Some("offset:1"));
+
+    let json = serde_json::to_string(&page).expect("serialize recent decision page");
+    assert!(json.contains("pageVersion"));
+    assert!(!json.contains("monitor-log"));
+}
+
+#[test]
+fn legacy_routing_preview_dtos_keep_stable_camel_case_contract() {
+    let update_capabilities = UpdateStationKeyCapabilitiesInput {
+        station_key_id: "key-1".to_string(),
+        supports_chat_completions: true,
+        supports_responses: true,
+        supports_embeddings: false,
+        supports_stream: true,
+        supports_tools: false,
+        supports_vision: false,
+        supports_reasoning: false,
+        model_allowlist: vec!["gpt-5-mini".to_string()],
+        model_blocklist: Vec::new(),
+        preferred_models: vec!["gpt-5-mini".to_string()],
+        only_use_as_backup: false,
+        routing_tags: vec!["fast".to_string()],
+    };
+    let alias = ModelAlias {
+        id: "alias-1".to_string(),
+        client_model: "gpt-local".to_string(),
+        upstream_model: "gpt-5-mini".to_string(),
+        enabled: true,
+        note: None,
+        created_at: "1000".to_string(),
+        updated_at: "1000".to_string(),
+    };
+    let upsert_alias = UpsertModelAliasInput {
+        id: Some("alias-1".to_string()),
+        client_model: "gpt-local".to_string(),
+        upstream_model: "gpt-5-mini".to_string(),
+        enabled: true,
+        note: Some("fixture".to_string()),
+    };
+    let input = RouteSimulationInput {
+        endpoint: RouteEndpointKind::ChatCompletions,
+        model: Some("gpt-5-mini".to_string()),
+        stream: true,
+        uses_tools: false,
+        uses_vision: false,
+        uses_reasoning: false,
+        policy: Some(RoutingPolicy::PriorityFallback),
+        max_rate_multiplier: Some(2.0),
+        routing_group_filter: Some(RoutingGroupFilter::AllGroups),
+        session_hash: Some("session-a".to_string()),
+        previous_response_id: None,
+    };
+    let explanation = RouteCandidateExplanation {
+        station_key_id: "key-1".to_string(),
+        station_id: "station-1".to_string(),
+        station_name: "Station".to_string(),
+        key_name: "Key".to_string(),
+        accepted: true,
+        reasons: vec!["selected".to_string()],
+        rejection_reasons: Vec::new(),
+        mapped_model: Some("gpt-5-mini".to_string()),
+        pricing_rule_id: Some("rule-1".to_string()),
+        group_binding_id: Some("group-1".to_string()),
+        rate_multiplier: Some(1.25),
+        normalization_status: Some("exact".to_string()),
+        price_confidence: Some(0.92),
+        estimated_input_price: Some(0.001),
+        estimated_output_price: Some(0.002),
+        price_currency: Some("USD".to_string()),
+        balance_status: Some("healthy".to_string()),
+        balance_value: Some(10.0),
+        balance_scope: Some("key".to_string()),
+        balance_collected_at: Some("1000".to_string()),
+        economic_freshness: Some("fresh".to_string()),
+        economic_reasons: vec!["priced".to_string()],
+        routing_group_scope: Some(RoutingGroupFilter::AllGroups),
+        routing_group_match: true,
+        top_k_rank: Some(1),
+        slot_result: Some("available".to_string()),
+    };
+    let result = RouteSimulationResult {
+        preview_policy_version: "legacy_preview_v1".to_string(),
+        capacity_mode: "snapshot_only".to_string(),
+        selected_capacity_acquired: false,
+        selected_station_key_id: Some("key-1".to_string()),
+        selected_station_id: Some("station-1".to_string()),
+        mapped_model: Some("gpt-5-mini".to_string()),
+        policy: RoutingPolicy::PriorityFallback,
+        max_rate_multiplier: Some(2.0),
+        routing_group_filter: RoutingGroupFilter::AllGroups,
+        planner_error_code: None,
+        candidates: vec![explanation],
+        message: "selected".to_string(),
+    };
+
+    let json = serde_json::json!({
+        "updateCapabilities": update_capabilities,
+        "alias": alias,
+        "upsertAlias": upsert_alias,
+        "input": input,
+        "result": result,
+    });
+
+    assert_eq!(json["updateCapabilities"]["stationKeyId"], "key-1");
+    assert_eq!(json["alias"]["clientModel"], "gpt-local");
+    assert_eq!(json["upsertAlias"]["upstreamModel"], "gpt-5-mini");
+    assert_eq!(json["input"]["usesReasoning"], false);
+    assert_eq!(json["result"]["selectedCapacityAcquired"], false);
+}
+
+#[test]
+fn projection_stub_status_labels_cover_non_happy_read_model_states() {
+    assert_eq!(format!("{:?}", GroupFilterMode::Required), "Required");
+    assert_eq!(RoutingCostBasis::ExactPrice.as_str(), "exact_price");
+    assert_eq!(
+        RoutingCostBasis::MultiplierProxy.as_str(),
+        "multiplier_proxy"
+    );
+    assert_eq!(RoutingCostBasis::Unpriced.as_str(), "unpriced");
+    assert_eq!(RoutingCostBasis::NotApplicable.as_str(), "not_applicable");
+
+    for (status, expected) in [
+        (BalanceProjectionStatus::Healthy, "Healthy"),
+        (BalanceProjectionStatus::Missing, "Missing"),
+        (
+            BalanceProjectionStatus::DepletedEmergency,
+            "DepletedEmergency",
+        ),
+    ] {
+        assert_eq!(format!("{status:?}"), expected);
+    }
+    for (status, expected) in [
+        (MultiplierResolutionStatus::Resolved, "Resolved"),
+        (MultiplierResolutionStatus::Missing, "Missing"),
+        (MultiplierResolutionStatus::Disabled, "Disabled"),
+        (MultiplierResolutionStatus::Stale, "Stale"),
+        (MultiplierResolutionStatus::Ambiguous, "Ambiguous"),
+    ] {
+        assert_eq!(format!("{status:?}"), expected);
+    }
+    for (admission, expected) in [
+        (HealthAdmission::Admit, "Admit"),
+        (HealthAdmission::AdmitDegraded, "AdmitDegraded"),
+        (
+            HealthAdmission::SuppressOrdinaryRuntime,
+            "SuppressOrdinaryRuntime",
+        ),
+        (
+            HealthAdmission::SuppressDurableCooldown,
+            "SuppressDurableCooldown",
+        ),
+        (HealthAdmission::HardReject, "HardReject"),
+        (HealthAdmission::Unknown, "Unknown"),
+    ] {
+        assert_eq!(format!("{admission:?}"), expected);
+    }
+    assert_eq!(
+        format!("{:?}", CapabilityDecision::RequireStrictConfirmation),
+        "RequireStrictConfirmation"
+    );
 }
 
 #[test]

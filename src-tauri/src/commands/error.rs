@@ -106,36 +106,16 @@ pub enum CommandErrorInvariant {
     InvalidDetails,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DriverFailure {
-    Authentication,
     Unsupported,
     ExternalUnavailable {
         provider: Option<String>,
         upstream_status: Option<u16>,
     },
     ResultUnknown,
-    Internal,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum OutboundFailure {
-    Timeout {
-        retry_after_ms: Option<u64>,
-    },
-    Overloaded {
-        retry_after_ms: Option<u64>,
-    },
-    ExternalUnavailable {
-        provider: Option<String>,
-        upstream_status: Option<u16>,
-    },
-    Internal,
-}
-
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkFailure {
     Timeout,
@@ -239,12 +219,6 @@ impl CommandError {
 
     pub(crate) fn from_driver(error: DriverFailure) -> Self {
         let (code, message, retryable, details) = match error {
-            DriverFailure::Authentication => (
-                CommandErrorCode::PermissionDenied,
-                "The provider rejected the current credentials.",
-                false,
-                None,
-            ),
             DriverFailure::Unsupported => (
                 CommandErrorCode::Unsupported,
                 "The provider does not support this operation.",
@@ -269,49 +243,11 @@ impl CommandError {
                 false,
                 None,
             ),
-            DriverFailure::Internal => return Self::internal(None),
         };
         Self::try_new(code, message, retryable, details, current_correlation_id())
             .unwrap_or_else(|_| Self::internal(None))
     }
 
-    #[allow(
-        dead_code,
-        reason = "Task 4 freezes this mapping before Task 14 connects the shared outbound client"
-    )]
-    pub(crate) fn from_outbound(error: OutboundFailure) -> Self {
-        let (code, message, details) = match error {
-            OutboundFailure::Timeout { retry_after_ms } => (
-                CommandErrorCode::Timeout,
-                "The external request timed out.",
-                Some(PublicErrorDetails::Retry { retry_after_ms }),
-            ),
-            OutboundFailure::Overloaded { retry_after_ms } => (
-                CommandErrorCode::Overloaded,
-                "The external request capacity is full.",
-                Some(PublicErrorDetails::Retry { retry_after_ms }),
-            ),
-            OutboundFailure::ExternalUnavailable {
-                provider,
-                upstream_status,
-            } => (
-                CommandErrorCode::ExternalUnavailable,
-                "The external provider is unavailable.",
-                Some(PublicErrorDetails::External {
-                    provider,
-                    upstream_status,
-                }),
-            ),
-            OutboundFailure::Internal => return Self::internal(None),
-        };
-        Self::try_new(code, message, true, details, current_correlation_id())
-            .unwrap_or_else(|_| Self::internal(None))
-    }
-
-    #[allow(
-        dead_code,
-        reason = "Task 4 freezes this mapping before Tasks 14-15 connect work lifecycle errors"
-    )]
     pub(crate) fn from_work(error: WorkFailure) -> Self {
         let (code, message, retryable) = match error {
             WorkFailure::Timeout => (CommandErrorCode::Timeout, "The operation timed out.", true),
@@ -581,20 +517,9 @@ mod tests {
             CommandError::from_application(ApplicationError::NotFound).code,
             CommandErrorCode::NotFound
         );
-        let driver = CommandError::from_driver(DriverFailure::Authentication);
-        assert_eq!(driver.code, CommandErrorCode::PermissionDenied);
+        let driver = CommandError::from_driver(DriverFailure::Unsupported);
+        assert_eq!(driver.code, CommandErrorCode::Unsupported);
         assert!(!driver.retryable);
-        let outbound = CommandError::from_outbound(OutboundFailure::Timeout {
-            retry_after_ms: Some(250),
-        });
-        assert_eq!(outbound.code, CommandErrorCode::Timeout);
-        assert!(outbound.retryable);
-        assert!(matches!(
-            outbound.details,
-            Some(PublicErrorDetails::Retry {
-                retry_after_ms: Some(250)
-            })
-        ));
         let work = CommandError::from_work(WorkFailure::ResultUnknown);
         assert_eq!(work.code, CommandErrorCode::Conflict);
         assert!(!work.retryable);

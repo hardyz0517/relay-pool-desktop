@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[path = "../src/application/routing_engine/capacity.rs"]
 mod capacity;
 
@@ -27,6 +25,10 @@ fn capacity_lease_and_half_open_release_on_drop_without_underflow() {
     let lease = registry
         .try_acquire(request("station-a", "key-a"))
         .expect("lease");
+    assert_eq!(
+        lease.constraints()[0],
+        CapacityConstraintKey::HalfOpen("half-open-key-a".to_string())
+    );
     assert_eq!(registry.gauge(&CapacityConstraintKey::Global).active, 1);
     assert_eq!(
         registry
@@ -53,6 +55,64 @@ fn capacity_lease_and_half_open_release_on_drop_without_underflow() {
     lease.release();
     lease.release();
     assert_eq!(registry.gauge(&CapacityConstraintKey::Global).active, 0);
+}
+
+#[test]
+fn runtime_and_provider_account_faults_report_the_enforced_scope() {
+    let registry = CompositeCapacityRegistry::default();
+    let mut trusted = request("station-a", "key-a");
+    trusted.half_open_probe_id = None;
+    trusted.provider_account_constraint = ProviderAccountConstraint::Trusted {
+        provider_account_id: "provider-a".to_string(),
+        max_concurrency: 1,
+    };
+    let _trusted_lease = registry
+        .try_acquire(trusted.clone())
+        .expect("trusted lease");
+
+    let mut same_provider = request("station-b", "key-b");
+    same_provider.half_open_probe_id = None;
+    same_provider.provider_account_constraint = ProviderAccountConstraint::Trusted {
+        provider_account_id: "provider-a".to_string(),
+        max_concurrency: 1,
+    };
+    assert!(matches!(
+        registry.try_acquire(same_provider),
+        Err(capacity::CapacityAcquireFailure::ConstraintUnavailable {
+            constraint: CapacityConstraintKey::ProviderAccount(provider),
+            in_flight: 1,
+            max_concurrency: 1,
+            ..
+        }) if provider == "provider-a"
+    ));
+
+    registry.set_runtime_max(CapacityConstraintKey::StationKey("key-c".to_string()), 1);
+    let mut first = request("station-c", "key-c");
+    first.half_open_probe_id = None;
+    let _first = registry
+        .try_acquire(first.clone())
+        .expect("first key lease");
+    assert!(matches!(
+        registry.try_acquire(first),
+        Err(capacity::CapacityAcquireFailure::ConstraintUnavailable {
+            constraint: CapacityConstraintKey::StationKey(key),
+            in_flight: 1,
+            max_concurrency: 1,
+            ..
+        }) if key == "key-c"
+    ));
+
+    let mut evidence_gap = request("station-d", "key-d");
+    evidence_gap.provider_account_constraint = ProviderAccountConstraint::EvidenceGap {
+        reason: "provider_scope_untrusted",
+    };
+    let gap_lease = registry
+        .try_acquire(evidence_gap)
+        .expect("provider evidence gaps do not enforce capacity");
+    assert_eq!(
+        gap_lease.evidence_gaps()[0].reason,
+        "provider_scope_untrusted"
+    );
 }
 
 #[test]
@@ -136,4 +196,7 @@ fn non_waitable_or_expired_round_does_not_admit_wait() {
         round.build_wait_plan(2_000, 1_000, 1),
         Err(CapacityWaitMiss::NotAdmitted)
     );
+    round.clear();
+    assert!(round.unavailable_this_pass.is_empty());
+    assert!(round.wait_observations.is_empty());
 }

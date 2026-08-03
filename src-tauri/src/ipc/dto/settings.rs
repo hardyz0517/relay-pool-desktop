@@ -443,7 +443,13 @@ impl From<AppSettings> for SettingsDto {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const SETTINGS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "SettingsDto",
     typescript: r#"export type EmptyInputDto = Record<string, never>;

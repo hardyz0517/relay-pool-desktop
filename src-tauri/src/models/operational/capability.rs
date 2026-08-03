@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use super::{
     identity::ModelName,
     provenance::{EvidenceCoverage, FactProvenance},
@@ -13,12 +14,14 @@ pub enum CapabilityVerdict {
 }
 
 impl CapabilityVerdict {
+    #[cfg(test)]
     pub fn is_supported(self) -> bool {
         matches!(self, Self::Supported)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub enum CapabilityDimension {
     Tools,
     Vision,
@@ -26,6 +29,7 @@ pub enum CapabilityDimension {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct CapabilityEvidence {
     dimension: CapabilityDimension,
     verdict: CapabilityVerdict,
@@ -33,6 +37,7 @@ pub struct CapabilityEvidence {
     provenance: FactProvenance,
 }
 
+#[cfg(test)]
 impl CapabilityEvidence {
     pub fn new(
         dimension: CapabilityDimension,
@@ -66,12 +71,14 @@ impl CapabilityEvidence {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct StationKeyCapabilityFacts {
     tools: CapabilityEvidence,
     vision: CapabilityEvidence,
     reasoning: CapabilityEvidence,
 }
 
+#[cfg(test)]
 impl StationKeyCapabilityFacts {
     pub fn new(
         tools: CapabilityEvidence,
@@ -99,6 +106,7 @@ impl StationKeyCapabilityFacts {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct RequestModelCapabilityAssessment {
     model: ModelName,
     verdict: CapabilityVerdict,
@@ -106,6 +114,7 @@ pub struct RequestModelCapabilityAssessment {
     provenance: FactProvenance,
 }
 
+#[cfg(test)]
 impl RequestModelCapabilityAssessment {
     pub fn new(
         model: ModelName,

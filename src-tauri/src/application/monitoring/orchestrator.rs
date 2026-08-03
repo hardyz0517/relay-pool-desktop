@@ -44,17 +44,6 @@ pub(crate) struct ProbeTransportResult {
 }
 
 impl ProbeTransportResult {
-    pub(crate) fn available(latency_ms: u64) -> Self {
-        Self {
-            outcome: ProbeOutcome::Available,
-            failure_kind: None,
-            retryable: false,
-            retry_after_ms: None,
-            latency_ms,
-            semantic_confidence: SemanticConfidence::ProtocolValidated,
-        }
-    }
-
     pub(crate) fn failure(
         failure_kind: FailureKind,
         retryable: bool,

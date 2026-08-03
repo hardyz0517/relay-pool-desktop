@@ -42,7 +42,6 @@ mod services {
         pub(crate) mod limits;
 
         pub(crate) mod finalization {
-            #[allow(dead_code)]
             pub(crate) enum FinalizationOutcome {
                 Completed,
                 Failed {

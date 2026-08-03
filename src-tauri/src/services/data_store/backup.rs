@@ -11,7 +11,7 @@ use crate::persistence::create_verified_backup_from_path;
 
 use super::{
     file_identity::{identity_for_path, FileIdentity},
-    inspect::{inspect_candidate, inspect_candidate_async},
+    inspect::inspect_candidate_async,
     types::{CandidateHealth, CandidateRole},
 };
 
@@ -199,17 +199,6 @@ async fn write_sqlite_backup(source_path: &Path, temp_backup_path: &Path) -> Res
         .await
         .map(|_| ())
         .map_err(|error| format!("failed to create verified sqlite backup: {error}"))
-}
-
-fn verify_backup(path: &Path) -> Result<(), String> {
-    let inspected = inspect_candidate(path, CandidateRole::Backup)?;
-    if inspected.candidate.health != CandidateHealth::Healthy {
-        return Err(format!(
-            "backup failed validation with health {:?}",
-            inspected.candidate.health
-        ));
-    }
-    Ok(())
 }
 
 async fn verify_backup_async(path: &Path) -> Result<(), String> {

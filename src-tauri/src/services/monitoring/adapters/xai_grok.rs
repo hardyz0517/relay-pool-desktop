@@ -21,10 +21,6 @@ impl XaiGrokAdapter {
 }
 
 impl ProtocolAdapter for XaiGrokAdapter {
-    fn protocol_kind(&self) -> ProtocolKind {
-        ProtocolKind::XaiGrok
-    }
-
     fn request_descriptor(&self) -> RequestDescriptor {
         RequestDescriptor {
             method: "POST".to_string(),

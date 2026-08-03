@@ -302,7 +302,13 @@ fn validate_optional_timestamp(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const PRICING_MUTATIONS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "PricingMutationsDto",
     typescript: include_str!("pricing_mutations.typescript.txt"),

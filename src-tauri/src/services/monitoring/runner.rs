@@ -723,7 +723,6 @@ impl MonitoringRunnerState {
         })
     }
 
-    #[allow(dead_code)]
     pub fn stop(&self) {
         let _ = self.supervisor.cancel(&self.task_id);
     }

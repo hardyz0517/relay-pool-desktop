@@ -18,7 +18,6 @@ pub(crate) enum DataMaintenanceState {
     InspectingImport,
     PreparingImport,
     ActivationPending,
-    Recovering,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,15 +37,6 @@ impl DataMaintenanceActivity {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DataCommandAdmission {
-    Read,
-    Mutation,
-    MaintenanceRead,
-    MaintenanceActivity(DataMaintenanceActivity),
-    ActivationCommit,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum DataMaintenanceError {
     #[error("data maintenance activity is already active")]
@@ -55,10 +45,6 @@ pub(crate) enum DataMaintenanceError {
     InvalidTransition,
     #[error("data maintenance activation is pending restart")]
     ActivationPending,
-    #[error("data maintenance recovery is active")]
-    Recovering,
-    #[error("mutation is rejected during data maintenance activation")]
-    MutationRejected,
     #[error("background operations did not stop before the maintenance deadline")]
     OperationDrainTimedOut,
     #[error("background runner did not stop before the maintenance deadline")]
@@ -96,34 +82,9 @@ impl DataMaintenanceCoordinator {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn state(&self) -> DataMaintenanceState {
         self.inner.lock().expect("maintenance mutex").state
-    }
-
-    pub(crate) fn admit_command(
-        &self,
-        admission: DataCommandAdmission,
-    ) -> Result<(), DataMaintenanceError> {
-        let state = self.state();
-        match (state, admission) {
-            (_, DataCommandAdmission::Read | DataCommandAdmission::MaintenanceRead) => Ok(()),
-            (DataMaintenanceState::Normal, DataCommandAdmission::Mutation) => Ok(()),
-            (
-                DataMaintenanceState::Exporting
-                | DataMaintenanceState::InspectingImport
-                | DataMaintenanceState::PreparingImport,
-                DataCommandAdmission::Mutation,
-            ) => Ok(()),
-            (DataMaintenanceState::Normal, DataCommandAdmission::MaintenanceActivity(_)) => Ok(()),
-            (DataMaintenanceState::PreparingImport, DataCommandAdmission::ActivationCommit) => {
-                Ok(())
-            }
-            (DataMaintenanceState::ActivationPending, _) => {
-                Err(DataMaintenanceError::ActivationPending)
-            }
-            (DataMaintenanceState::Recovering, _) => Err(DataMaintenanceError::Recovering),
-            _ => Err(DataMaintenanceError::Busy),
-        }
     }
 
     pub(crate) fn begin(
@@ -134,7 +95,6 @@ impl DataMaintenanceCoordinator {
         if inner.state != DataMaintenanceState::Normal {
             return Err(match inner.state {
                 DataMaintenanceState::ActivationPending => DataMaintenanceError::ActivationPending,
-                DataMaintenanceState::Recovering => DataMaintenanceError::Recovering,
                 _ => DataMaintenanceError::Busy,
             });
         }
@@ -146,24 +106,6 @@ impl DataMaintenanceCoordinator {
             lease_id: inner.lease_id,
             active: true,
         })
-    }
-
-    pub(crate) fn enter_recovery(&self) -> Result<(), DataMaintenanceError> {
-        let mut inner = self.inner.lock().expect("maintenance mutex");
-        if inner.state != DataMaintenanceState::Normal {
-            return Err(DataMaintenanceError::Busy);
-        }
-        inner.state = DataMaintenanceState::Recovering;
-        Ok(())
-    }
-
-    pub(crate) fn finish_recovery(&self) -> Result<(), DataMaintenanceError> {
-        let mut inner = self.inner.lock().expect("maintenance mutex");
-        if inner.state != DataMaintenanceState::Recovering {
-            return Err(DataMaintenanceError::InvalidTransition);
-        }
-        inner.state = DataMaintenanceState::Normal;
-        Ok(())
     }
 
     fn release(&self, activity: DataMaintenanceActivity, lease_id: u64) {
@@ -180,37 +122,6 @@ impl DataMaintenanceCoordinator {
         }
         inner.state = DataMaintenanceState::ActivationPending;
         Ok(())
-    }
-
-    pub(crate) async fn freeze_for_activation(
-        &self,
-        lease: &mut DataMaintenanceLease,
-        runtime: &PersistenceRuntime,
-        operations: &OperationRegistry,
-        runner: Option<&StationCollectorRunnerState>,
-        proxy: Option<&ProxyRuntimeState>,
-        deadline: Duration,
-    ) -> Result<ActivationFreezeEvidence, DataMaintenanceError> {
-        let evidence = self
-            .freeze_dependencies_for_activation(lease, runtime, operations, runner, proxy, deadline)
-            .await?;
-        self.commit_activation_lease(lease)?;
-        Ok(evidence)
-    }
-
-    pub(crate) async fn freeze_dependencies_for_activation(
-        &self,
-        lease: &DataMaintenanceLease,
-        runtime: &PersistenceRuntime,
-        operations: &OperationRegistry,
-        runner: Option<&StationCollectorRunnerState>,
-        proxy: Option<&ProxyRuntimeState>,
-        deadline: Duration,
-    ) -> Result<ActivationFreezeEvidence, DataMaintenanceError> {
-        self.freeze_dependencies_for_activation_except(
-            lease, runtime, operations, None, runner, proxy, deadline,
-        )
-        .await
     }
 
     pub(crate) async fn freeze_dependencies_for_activation_except(
@@ -275,6 +186,7 @@ pub(crate) struct DataMaintenanceLease {
 }
 
 impl DataMaintenanceLease {
+    #[cfg(test)]
     pub(crate) fn activity(&self) -> DataMaintenanceActivity {
         self.activity
     }
@@ -294,8 +206,8 @@ mod tests {
 
     use crate::{
         application::data_maintenance::{
-            DataCommandAdmission, DataMaintenanceActivity, DataMaintenanceCoordinator,
-            DataMaintenanceError, DataMaintenanceState,
+            DataMaintenanceActivity, DataMaintenanceCoordinator, DataMaintenanceError,
+            DataMaintenanceState,
         },
         background_tasks::{
             OperationOwner, OperationRegistry, OperationRegistryConfig, OperationStartRequest,
@@ -326,21 +238,6 @@ mod tests {
     }
 
     #[test]
-    fn export_and_inspection_do_not_block_business_mutations() {
-        for activity in [
-            DataMaintenanceActivity::Export,
-            DataMaintenanceActivity::InspectImport,
-        ] {
-            let coordinator = DataMaintenanceCoordinator::new();
-            let _lease = coordinator.begin(activity).expect("lease");
-            assert_eq!(
-                coordinator.admit_command(DataCommandAdmission::Mutation),
-                Ok(())
-            );
-        }
-    }
-
-    #[test]
     fn activation_pending_rejects_mutations_and_new_maintenance() {
         let coordinator = DataMaintenanceCoordinator::new();
         let lease = coordinator
@@ -353,14 +250,6 @@ mod tests {
         drop(lease);
 
         assert_eq!(coordinator.state(), DataMaintenanceState::ActivationPending);
-        assert_eq!(
-            coordinator.admit_command(DataCommandAdmission::Read),
-            Ok(())
-        );
-        assert_eq!(
-            coordinator.admit_command(DataCommandAdmission::Mutation),
-            Err(DataMaintenanceError::ActivationPending)
-        );
         assert!(matches!(
             coordinator.begin(DataMaintenanceActivity::Export),
             Err(DataMaintenanceError::ActivationPending)
@@ -381,26 +270,26 @@ mod tests {
         let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
 
         coordinator
-            .freeze_for_activation(
-                &mut lease,
+            .freeze_dependencies_for_activation_except(
+                &lease,
                 &runtime,
                 &operations,
+                None,
                 None,
                 None,
                 Duration::from_secs(1),
             )
             .await
             .expect("freeze");
+        coordinator
+            .commit_activation_lease(&mut lease)
+            .expect("activation commit");
 
         assert_eq!(coordinator.state(), DataMaintenanceState::ActivationPending);
         assert!(matches!(
             runtime.handle().begin_write().await,
             Err(PersistenceError::RuntimeUnavailable)
         ));
-        assert_eq!(
-            coordinator.admit_command(DataCommandAdmission::Mutation),
-            Err(DataMaintenanceError::ActivationPending)
-        );
     }
 
     #[tokio::test]
@@ -429,16 +318,20 @@ mod tests {
             .expect("operation starts");
 
         coordinator
-            .freeze_for_activation(
-                &mut lease,
+            .freeze_dependencies_for_activation_except(
+                &lease,
                 &runtime,
                 &operations,
+                None,
                 None,
                 None,
                 Duration::from_secs(1),
             )
             .await
             .expect("freeze");
+        coordinator
+            .commit_activation_lease(&mut lease)
+            .expect("activation commit");
 
         let status = operations.status(id).expect("status retained");
         assert_eq!(status.terminal, Some(OperationTerminal::Cancelled));

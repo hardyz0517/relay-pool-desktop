@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[path = "../src/models/pricing.rs"]
 mod pricing_model;
 
@@ -64,7 +62,9 @@ mod persistence {
 #[path = "../src/application/operational_facts/pricing_projector.rs"]
 mod pricing_projector;
 
-use models::pricing::PricingStatus;
+use models::pricing::{
+    PricingStatus, UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
+};
 use persistence::stores::pricing_store::{
     SelectedModelBasePriceRow, SelectedPricingRuleRow, StationKeyPricingResolutionRow,
 };
@@ -111,6 +111,102 @@ fn group_rate_only_rule() -> SelectedPricingRuleRow {
         confidence: 0.8,
         collected_at: Some("300".to_string()),
     }
+}
+
+#[test]
+fn pricing_mutation_inputs_keep_stable_camel_case_contract() {
+    let pricing_rule = UpsertPricingRuleInput {
+        id: Some("rule-1".to_string()),
+        station_id: "station-1".to_string(),
+        station_key_id: Some("key-1".to_string()),
+        group_binding_id: Some("binding-1".to_string()),
+        group_name: Some("Group".to_string()),
+        tier_label: None,
+        model: "gpt-5-mini".to_string(),
+        input_price: Some(0.25),
+        output_price: Some(2.0),
+        fixed_price: None,
+        rate_multiplier: Some(1.25),
+        currency: "USD".to_string(),
+        unit: "per_1m_tokens".to_string(),
+        price_type: "token".to_string(),
+        base_price_source: Some("builtin".to_string()),
+        normalization_status: Some("exact".to_string()),
+        source: "manual".to_string(),
+        confidence: 0.9,
+        enabled: true,
+        note: None,
+        collected_at: Some("100".to_string()),
+        valid_from: None,
+        valid_until: None,
+    };
+    let base_price = UpsertModelBasePriceInput {
+        id: None,
+        provider: "openai".to_string(),
+        model: "gpt-5-mini".to_string(),
+        input_price: Some(0.25),
+        output_price: Some(2.0),
+        currency: "USD".to_string(),
+        unit: "per_1m_tokens".to_string(),
+        source_url: "https://example.invalid/pricing".to_string(),
+        source_label: "fixture".to_string(),
+        source_checked_at: Some("100".to_string()),
+        enabled: true,
+        built_in: false,
+        note: None,
+    };
+    let balance = UpsertBalanceSnapshotInput {
+        id: None,
+        station_id: "station-1".to_string(),
+        station_key_id: Some("key-1".to_string()),
+        scope: "station_key".to_string(),
+        value: Some(10.0),
+        currency: "USD".to_string(),
+        credit_unit: Some("credit".to_string()),
+        used_value: Some(1.0),
+        total_value: Some(11.0),
+        today_request_count: Some(1),
+        total_request_count: Some(10),
+        today_consumption: Some(0.1),
+        total_consumption: Some(1.0),
+        today_base_consumption: Some(0.1),
+        total_base_consumption: Some(1.0),
+        today_token_count: Some(100),
+        total_token_count: Some(1_000),
+        today_input_token_count: Some(40),
+        today_output_token_count: Some(60),
+        total_input_token_count: Some(400),
+        total_output_token_count: Some(600),
+        account_concurrency_limit: Some(8),
+        low_balance_threshold: Some(2.0),
+        status: "healthy".to_string(),
+        source: "collector".to_string(),
+        confidence: 0.9,
+        collected_at: Some("100".to_string()),
+    };
+
+    let json = serde_json::json!({
+        "pricingRule": pricing_rule,
+        "basePrice": base_price,
+        "balance": balance,
+    });
+
+    assert_eq!(json["pricingRule"]["stationKeyId"], "key-1");
+    assert_eq!(json["pricingRule"]["basePriceSource"], "builtin");
+    assert_eq!(json["basePrice"]["sourceCheckedAt"], "100");
+    assert_eq!(json["balance"]["accountConcurrencyLimit"], 8);
+    assert_eq!(json["balance"]["todayInputTokenCount"], 40);
+}
+
+#[test]
+fn routing_cost_basis_labels_are_stable() {
+    assert_eq!(RoutingCostBasis::ExactPrice.as_str(), "exact_price");
+    assert_eq!(
+        RoutingCostBasis::MultiplierProxy.as_str(),
+        "multiplier_proxy"
+    );
+    assert_eq!(RoutingCostBasis::Unpriced.as_str(), "unpriced");
+    assert_eq!(RoutingCostBasis::NotApplicable.as_str(), "not_applicable");
 }
 
 #[test]

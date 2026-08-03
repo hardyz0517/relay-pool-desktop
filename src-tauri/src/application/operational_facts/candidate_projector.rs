@@ -13,6 +13,13 @@ use crate::application::{
 pub(crate) const ROUTE_CANDIDATE_PROJECTION_VERSION: &str = "route_candidate_projection_v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=route-read-model.capacity-scope; owner=application/operational_facts; remove_when=runtime candidate adapter stops reserving endpoint/model capacity scopes"
+    )
+)]
 pub(crate) enum CapacityScope {
     StationKey,
     StationAccount,

@@ -47,6 +47,7 @@ impl PortableActivationFaults for InjectPortableActivationFault {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum PortableActivationFault {
+    #[cfg(test)]
     #[error("injected portable activation fault at {0:?}")]
     Injected(PortableActivationStep),
 }

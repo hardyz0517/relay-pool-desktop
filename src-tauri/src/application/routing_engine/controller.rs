@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use crate::application::routing_engine::{
@@ -230,12 +228,14 @@ impl RouteAdmissionController {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn record_wait_wakeup(&mut self, runtime_overlay_revision: u64) {
         self.pass_capacity.clear();
         self.runtime_overlay_revision = runtime_overlay_revision;
         self.trace_event(ControllerTransition::WaitWakeup, "wait_wakeup_replan");
     }
 
+    #[cfg(test)]
     pub(crate) fn record_actual_terminal(
         &mut self,
         selected: SelectedRoute,
@@ -264,16 +264,19 @@ impl RouteAdmissionController {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn progress_view(
         &self,
     ) -> crate::application::routing_engine::request::RouteProgressView {
         self.progress.view()
     }
 
+    #[cfg(test)]
     pub(crate) fn pass_capacity_state(&self) -> &PlanningRoundCapacityState {
         &self.pass_capacity
     }
 
+    #[cfg(test)]
     pub(crate) fn trace(&self) -> &[ControllerTraceEvent] {
         &self.trace
     }
@@ -294,6 +297,7 @@ impl RouteAdmissionController {
                 CapacityConstraintKey::StationKey(station_key_id) => {
                     station_key_id == &candidate.station_key_id
                 }
+                #[cfg(test)]
                 CapacityConstraintKey::ProviderAccount(provider_account_id) => {
                     matches!(
                         &profile.provider_account_constraint,
@@ -474,6 +478,7 @@ pub(crate) enum ControllerTransition {
     CapacityMiss,
     CapacityAcquired,
     WaitEntered,
+    #[cfg(test)]
     WaitWakeup,
     AttemptTerminal,
 }

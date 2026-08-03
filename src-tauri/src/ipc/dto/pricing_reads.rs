@@ -8,6 +8,7 @@ use crate::models::{
     pricing_group_monitoring::{
         canonicalize_group_refs, group_refs_hash, CanonicalGroupRef,
         PricingGroupMonitorStatusInput, PricingGroupMonitorStatusWorkspace,
+        PRICING_GROUP_MONITORING_SCHEMA_VERSION,
     },
     shared_capabilities::PricingComparisonWorkspace,
 };
@@ -100,7 +101,9 @@ impl PricingGroupMonitorStatusInputDto {
                 "The group reference hash is invalid.",
             )
         })?;
-        if self.schema_version != 1 || self.group_refs_hash != expected_hash {
+        if self.schema_version != PRICING_GROUP_MONITORING_SCHEMA_VERSION
+            || self.group_refs_hash != expected_hash
+        {
             return Err(invalid_input(
                 "groupRefsHash",
                 "hash_mismatch",
@@ -192,7 +195,13 @@ impl From<PricingComparisonWorkspace> for PricingComparisonWorkspaceDto {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const PRICING_READS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "PricingReadsDto",
     typescript: include_str!("pricing_reads.typescript.txt"),
@@ -222,9 +231,9 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
         serde_json::json!({"command":"load_pricing_comparison_workspace","input":{},"output":workspace}),
         serde_json::json!({
             "command":"load_pricing_group_monitor_status",
-            "input":{"schemaVersion":1,"groupRefsHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","groups":[]},
+            "input":{"schemaVersion":PRICING_GROUP_MONITORING_SCHEMA_VERSION,"groupRefsHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","groups":[]},
             "output":{
-                "schemaVersion":1,
+                "schemaVersion":PRICING_GROUP_MONITORING_SCHEMA_VERSION,
                 "generatedAtMs":1700000000000i64,
                 "groupRefsHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                 "requestedGroupCount":0,
@@ -324,7 +333,7 @@ mod tests {
 
     fn monitor_input(group: Value) -> Value {
         serde_json::json!({
-            "schemaVersion": 1,
+            "schemaVersion": PRICING_GROUP_MONITORING_SCHEMA_VERSION,
             "groupRefsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
             "groups": group
         })

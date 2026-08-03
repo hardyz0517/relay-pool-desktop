@@ -457,6 +457,7 @@ mod tests {
             collector_proxy_url: None,
             api_key: SecretBytes::from("sk-upstream-test".to_string()),
             lease,
+            _retry_permit: None,
         }
     }
 

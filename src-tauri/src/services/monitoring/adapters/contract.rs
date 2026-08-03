@@ -1,5 +1,3 @@
-use serde_json::Value;
-
 use crate::{
     models::monitoring::{FailureKind, ProbeOutcome, ProtocolKind},
     services::monitoring::challenge::ChallengeValidator,
@@ -107,7 +105,6 @@ impl ParsedProbeResponse {
 }
 
 pub trait ProtocolAdapter: Send + Sync {
-    fn protocol_kind(&self) -> ProtocolKind;
     fn request_descriptor(&self) -> RequestDescriptor;
     fn parse_response(
         &self,
@@ -154,12 +151,14 @@ pub(crate) fn validate_output_text(
     ParsedProbeResponse::available(protocol_kind, http_status, output_text, response_bytes)
 }
 
+#[cfg(test)]
 pub(crate) fn extract_text_fields(value: &Value) -> String {
     let mut text = String::new();
     collect_text(value, &mut text);
     text
 }
 
+#[cfg(test)]
 fn collect_text(value: &Value, output: &mut String) {
     match value {
         Value::Object(map) => {
@@ -180,3 +179,6 @@ fn collect_text(value: &Value, output: &mut String) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+use serde_json::Value;

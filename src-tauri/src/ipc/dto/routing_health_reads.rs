@@ -334,7 +334,13 @@ fn validate_group_filter(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const ROUTING_HEALTH_READS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "RoutingHealthReadsDto",
     typescript: include_str!("routing_health_reads.typescript.txt"),

@@ -26,7 +26,10 @@ pub(crate) enum UpstreamProtocol {
     ChatCompletionsSse,
     EmbeddingsJson,
     ModelsJson,
-    #[expect(dead_code, reason = "reserved by the local-response protocol contract")]
+    #[expect(
+        dead_code,
+        reason = "contract=local-response-protocol; owner=services/proxy; remove_when=response protocol drops reserved variant"
+    )]
     LocalJson,
 }
 
@@ -41,7 +44,10 @@ pub(crate) enum CompletionPolicy {
     ValidatedJsonBody,
     ResponsesTerminalEvent,
     ChatDoneSentinel,
-    #[expect(dead_code, reason = "reserved by the local-response protocol contract")]
+    #[expect(
+        dead_code,
+        reason = "contract=local-response-protocol; owner=services/proxy; remove_when=response protocol drops reserved variant"
+    )]
     LocalConstruction,
 }
 

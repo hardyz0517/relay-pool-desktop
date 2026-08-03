@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod application {
     pub(crate) mod credentials {
         use std::fmt;
@@ -54,23 +52,124 @@ mod application {
 
     pub(crate) mod routing_engine {
         pub(crate) mod capacity {
-            pub(crate) use crate::capacity::*;
+            use std::{
+                collections::BTreeMap,
+                sync::{Arc, Mutex},
+            };
+
+            #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+            pub(crate) enum CapacityConstraintKey {
+                StationKey(String),
+            }
+
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            pub(crate) enum ProviderAccountConstraint {
+                NotApplicable,
+            }
+
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            pub(crate) struct CompositeCapacityRequest {
+                pub(crate) station_id: String,
+                pub(crate) station_key_id: String,
+                pub(crate) half_open_probe_id: Option<String>,
+                pub(crate) global_max_concurrency: u32,
+                pub(crate) station_account_max_concurrency: u32,
+                pub(crate) station_key_max_concurrency: u32,
+                pub(crate) provider_account_constraint: ProviderAccountConstraint,
+            }
+
+            #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+            pub(crate) struct CapacityGauge {
+                pub(crate) active: u32,
+            }
+
+            #[derive(Debug, Default, Clone)]
+            pub(crate) struct CompositeCapacityRegistry {
+                active_by_constraint: Arc<Mutex<BTreeMap<CapacityConstraintKey, u32>>>,
+            }
+
+            impl CompositeCapacityRegistry {
+                pub(crate) fn try_acquire(
+                    &self,
+                    request: CompositeCapacityRequest,
+                ) -> Result<CapacityLease, &'static str> {
+                    let _fixture_contract = (
+                        &request.station_id,
+                        &request.half_open_probe_id,
+                        request.global_max_concurrency,
+                        request.station_account_max_concurrency,
+                        request.station_key_max_concurrency,
+                        &request.provider_account_constraint,
+                    );
+                    let constraint = CapacityConstraintKey::StationKey(request.station_key_id);
+                    let mut active_by_constraint = self
+                        .active_by_constraint
+                        .lock()
+                        .expect("fixture capacity registry poisoned");
+                    *active_by_constraint.entry(constraint.clone()).or_default() += 1;
+                    Ok(CapacityLease {
+                        active_by_constraint: Some(Arc::clone(&self.active_by_constraint)),
+                        constraint,
+                        released: false,
+                    })
+                }
+
+                pub(crate) fn gauge(&self, constraint: &CapacityConstraintKey) -> CapacityGauge {
+                    let active_by_constraint = self
+                        .active_by_constraint
+                        .lock()
+                        .expect("fixture capacity registry poisoned");
+                    CapacityGauge {
+                        active: active_by_constraint
+                            .get(constraint)
+                            .copied()
+                            .unwrap_or_default(),
+                    }
+                }
+            }
+
+            #[derive(Debug)]
+            pub(crate) struct CapacityLease {
+                active_by_constraint: Option<Arc<Mutex<BTreeMap<CapacityConstraintKey, u32>>>>,
+                constraint: CapacityConstraintKey,
+                released: bool,
+            }
+
+            impl CapacityLease {
+                pub(crate) fn release(&mut self) {
+                    if self.released {
+                        return;
+                    }
+                    self.released = true;
+                    let Some(active_by_constraint) = &self.active_by_constraint else {
+                        return;
+                    };
+                    let mut active_by_constraint = active_by_constraint
+                        .lock()
+                        .expect("fixture capacity registry poisoned");
+                    if let Some(active) = active_by_constraint.get_mut(&self.constraint) {
+                        *active = active.saturating_sub(1);
+                    }
+                }
+            }
+
+            impl Drop for CapacityLease {
+                fn drop(&mut self) {
+                    self.release();
+                }
+            }
+
+            #[derive(Debug)]
+            pub(crate) struct RetryPermit;
         }
     }
 }
 
 mod models {
-    pub(crate) mod credentials {
-        pub(crate) use crate::application::credentials::*;
-    }
-
     pub(crate) mod proxy {
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum UpstreamApiFormat {
             Auto,
-            OpenAiChatCompletions,
-            OpenAiResponses,
-            CustomOpenAiCompatible,
         }
     }
 
@@ -79,8 +178,6 @@ mod models {
     }
 }
 
-#[path = "../src/application/routing_engine/capacity.rs"]
-mod capacity;
 #[path = "../src/models/station_endpoints.rs"]
 mod station_endpoints;
 #[path = "../src/application/operational_facts/target_resolver.rs"]
@@ -91,7 +188,9 @@ use futures_util::future::BoxFuture;
 use application::credentials::{
     ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
 };
-use capacity::{CapacityConstraintKey, CompositeCapacityRegistry, CompositeCapacityRequest};
+use application::routing_engine::capacity::{
+    CapacityConstraintKey, CompositeCapacityRegistry, CompositeCapacityRequest,
+};
 use models::{proxy::UpstreamApiFormat, station_endpoints::sanitized_api_base_url_for_trace};
 use target_resolver::{
     ExecutionTargetError, ExecutionTargetRef, ExecutionTargetResolver, LeasedSelectedTarget,
@@ -160,7 +259,8 @@ fn leased_selected(
             global_max_concurrency: 4,
             station_account_max_concurrency: 4,
             station_key_max_concurrency: 1,
-            provider_account_constraint: capacity::ProviderAccountConstraint::NotApplicable,
+            provider_account_constraint:
+                application::routing_engine::capacity::ProviderAccountConstraint::NotApplicable,
         })
         .expect("selected route capacity lease");
     LeasedSelectedTarget {
@@ -168,6 +268,7 @@ fn leased_selected(
         expected_endpoint_revision,
         expected_secret_ref_id: expected_secret_ref_id.to_string(),
         lease,
+        retry_permit: None,
     }
 }
 
@@ -188,6 +289,13 @@ async fn resolver_returns_non_clone_handle_and_debug_redacts_plaintext_secret() 
     .expect("resolved target");
 
     assert_eq!(handle.api_key.as_bytes(), b"sk-task17-secret-canary");
+    assert_eq!(handle.station_id, "station-key-a");
+    assert_eq!(handle.endpoint_revision, 3);
+    assert_eq!(handle.api_base_url, "https://relay.example/proxy/v1");
+    assert_eq!(handle.upstream_api_format, UpstreamApiFormat::Auto);
+    assert_eq!(handle.collector_proxy_mode, "direct");
+    assert_eq!(handle.collector_proxy_url, None);
+    assert!(format!("{:?}", &handle.lease).contains("CapacityLease"));
     let debug = format!("{handle:?}");
     assert!(debug.contains("key-a"));
     assert!(!debug.contains("relay.example"));

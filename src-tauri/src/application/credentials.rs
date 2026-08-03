@@ -9,8 +9,8 @@ use crate::{
         credentials::{
             token_is_fresh, CommonLoginEmail, CommonLoginOptions, CommonLoginPassword,
             PersistStationSessionInput, ResolvedSession, SessionResolveStatus, StationCredentials,
-            StationSessionCredentialKind, UpdateStationCredentialsInput, UpdateStationSessionInput,
-            UpsertCommonLoginEmailInput, UpsertCommonLoginPasswordInput,
+            UpdateStationCredentialsInput, UpdateStationSessionInput, UpsertCommonLoginEmailInput,
+            UpsertCommonLoginPasswordInput,
         },
         group_facts::UpdateStationKeyGroupBindingInput,
         remote_keys::{
@@ -131,7 +131,6 @@ pub(crate) trait CredentialVault: Send + Sync {
         plaintext: SecretBytes,
     ) -> Result<EncryptedSecret, CredentialError>;
 
-    #[allow(dead_code)]
     fn decrypt(
         &self,
         aad: &str,
@@ -852,27 +851,6 @@ impl CredentialService {
         .await
     }
 
-    pub(crate) async fn update_station_session_if_revision(
-        &self,
-        input: UpdateStationSessionInput,
-        expected_revision: i64,
-    ) -> Result<StationCredentials, ApplicationError> {
-        self.persist_station_session_if_revision(
-            PersistStationSessionInput {
-                station_id: input.station_id,
-                access_token: input.access_token,
-                refresh_token: input.refresh_token,
-                cookie: input.cookie,
-                newapi_user_id: input.newapi_user_id,
-                session_expires_at: input.token_expires_at.clone(),
-                token_expires_at: input.token_expires_at,
-                session_source: "manual_token".to_string(),
-            },
-            expected_revision,
-        )
-        .await
-    }
-
     pub(crate) async fn persist_station_session(
         &self,
         input: PersistStationSessionInput,
@@ -899,25 +877,6 @@ impl CredentialService {
                 Box::pin(async move {
                     store
                         .update_station_session_if_revision(write, patch, expected_revision)
-                        .await
-                })
-            })
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn invalidate_station_session_credential(
-        &self,
-        station_id: String,
-        kind: StationSessionCredentialKind,
-    ) -> Result<(), ApplicationError> {
-        let store = self.store;
-        let now = self.now_ms_string();
-        self.runtime
-            .write(|write| {
-                Box::pin(async move {
-                    store
-                        .invalidate_station_session_credential(write, &station_id, kind, &now)
                         .await
                 })
             })

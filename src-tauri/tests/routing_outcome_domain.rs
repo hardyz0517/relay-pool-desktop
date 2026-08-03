@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod application {
     pub(crate) mod request_finalization {
         pub(crate) mod failure {

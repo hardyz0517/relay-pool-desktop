@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,15 +176,6 @@ impl RouteProgress {
         self.ordinal = self.ordinal.saturating_add(1);
         self.attempt_count = self.attempt_count.saturating_add(1);
         self.actual_attempt_exclusions.insert(station_key_id.into());
-    }
-
-    pub(crate) fn tighten_deadline(&mut self, deadline_ms: i64) -> bool {
-        if deadline_ms <= self.deadline_ms {
-            self.deadline_ms = deadline_ms;
-            true
-        } else {
-            false
-        }
     }
 
     pub(crate) fn record_snapshot_rebuild(&mut self) {

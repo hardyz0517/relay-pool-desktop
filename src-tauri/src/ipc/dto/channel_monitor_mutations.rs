@@ -716,7 +716,13 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const CHANNEL_MONITOR_MUTATIONS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "ChannelMonitorMutationsDto",
     typescript: include_str!("channel_monitor_mutations.typescript.txt"),

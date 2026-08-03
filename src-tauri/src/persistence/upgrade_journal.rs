@@ -608,10 +608,6 @@ impl BaselineConversionJournal {
         &self.payload
     }
 
-    pub(crate) fn canonical_payload_checksum(&self) -> &Sha256Digest {
-        &self.canonical_payload_checksum
-    }
-
     pub(crate) fn validate(&self) -> Result<(), JournalValidationError> {
         self.payload.validate()?;
         self.canonical_payload_checksum.validate()?;

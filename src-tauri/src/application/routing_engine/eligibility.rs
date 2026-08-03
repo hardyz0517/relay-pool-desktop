@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::application::{
     operational_facts::candidate_projector::RouteCandidateProjection,
     routing_engine::request::RouteProgressView,

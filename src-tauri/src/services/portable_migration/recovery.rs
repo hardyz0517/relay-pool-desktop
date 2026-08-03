@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use serde::Serialize;
 
@@ -23,7 +20,6 @@ use crate::{
 use super::activation_journal::{
     read_journal, remove_journal, write_journal, PortableActivationArtifact,
     PortableActivationJournal, PortableActivationJournalError, PortableActivationPhase,
-    ACTIVATION_JOURNAL_FILE,
 };
 
 const ACTIVATION_RECEIPT_FILE: &str = "portable-migration-activation-receipt.json";
@@ -34,23 +30,18 @@ pub(crate) enum PortableActivationStartup {
     Activated {
         operation_id: String,
         target_key_id: String,
-        target_keys: DeviceKeyResolver,
     },
     RolledBack {
         operation_id: String,
     },
     ManualRecoveryRequired {
-        operation_id: Option<String>,
         reason: PortableActivationManualReason,
-        candidates: Vec<PortableActivationCandidate>,
     },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PortableActivationManualReason {
-    JournalMalformed,
-    UnsupportedJournal,
     PathRejected,
     MissingArtifact,
     IdentityMismatch,
@@ -58,15 +49,6 @@ pub(crate) enum PortableActivationManualReason {
     NewActiveInvalid,
     RollbackFailed,
     KeyUnavailable,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PortableActivationCandidate {
-    pub(crate) role: &'static str,
-    pub(crate) path: PathBuf,
-    pub(crate) length: Option<u64>,
-    pub(crate) sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,8 +86,6 @@ pub(crate) async fn recover_portable_activation_for_startup(
         Ok(manager) => manager,
         Err(_) => {
             return Ok(manual_from_journal(
-                config_dir,
-                journal,
                 PortableActivationManualReason::KeyUnavailable,
             ));
         }
@@ -134,7 +114,7 @@ pub(crate) async fn recover_portable_activation_with_resolver(
             .advance(PortableActivationPhase::ManualRecoveryRequired, None)
             .unwrap_or_else(|_| journal.clone());
         let _ = write_journal(config_dir, &manual);
-        return Ok(manual_from_journal(config_dir, manual, reason));
+        return Ok(manual_from_journal(reason));
     }
 
     let mut journal = journal;
@@ -224,7 +204,6 @@ pub(crate) async fn recover_portable_activation_with_resolver(
                 return Ok(PortableActivationStartup::Activated {
                     operation_id: journal.payload.operation_id,
                     target_key_id: journal.payload.target_device_key_id,
-                    target_keys,
                 });
             }
             RecoveryPlan::KeepRolledBack => {
@@ -518,19 +497,11 @@ fn mark_manual(
         )
         .unwrap_or_else(|_| journal.clone());
     let _ = write_journal(config_dir, &manual);
-    manual_from_journal(config_dir, manual, reason)
+    manual_from_journal(reason)
 }
 
-fn manual_from_journal(
-    _config_dir: &Path,
-    journal: PortableActivationJournal,
-    reason: PortableActivationManualReason,
-) -> PortableActivationStartup {
-    PortableActivationStartup::ManualRecoveryRequired {
-        operation_id: Some(journal.payload.operation_id.clone()),
-        reason,
-        candidates: candidate_views(&journal),
-    }
+fn manual_from_journal(reason: PortableActivationManualReason) -> PortableActivationStartup {
+    PortableActivationStartup::ManualRecoveryRequired { reason }
 }
 
 fn observe_artifacts(journal: &PortableActivationJournal) -> ObservedArtifacts {
@@ -579,26 +550,6 @@ fn approve_artifact_leaf(
     ApprovedLeaf::approve(parent, leaf)
 }
 
-fn candidate_views(journal: &PortableActivationJournal) -> Vec<PortableActivationCandidate> {
-    [
-        ("active", &journal.payload.active.path),
-        ("staged", &journal.payload.staged.path),
-        ("rollback", &journal.payload.rollback.path),
-        ("backup", &journal.payload.backup.path),
-    ]
-    .into_iter()
-    .map(|(role, path)| {
-        let identity = optional_identity(path);
-        PortableActivationCandidate {
-            role,
-            path: path.clone(),
-            length: identity.as_ref().map(|identity| identity.length),
-            sha256: identity.map(|identity| identity.sha256),
-        }
-    })
-    .collect()
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PortableActivationReceipt {
@@ -631,17 +582,13 @@ fn write_receipt(config_dir: &Path, receipt: &PortableActivationReceipt) -> Resu
     Ok(())
 }
 
-pub(crate) fn activation_journal_exists(config_dir: &Path) -> bool {
-    config_dir.join(ACTIVATION_JOURNAL_FILE).is_file()
-}
-
 #[cfg(test)]
 mod tests {
     use sha2::{Digest, Sha256};
 
     use super::*;
     use crate::services::portable_migration::activation_journal::{
-        write_prepared_journal, PortableActivationArtifact,
+        write_prepared_journal, PortableActivationArtifact, ACTIVATION_JOURNAL_FILE,
     };
 
     #[test]

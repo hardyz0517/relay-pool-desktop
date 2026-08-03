@@ -1,3 +1,4 @@
+#[cfg(test)]
 use std::cmp::Reverse;
 
 use crate::models::operational::{
@@ -5,6 +6,13 @@ use crate::models::operational::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=route-read-model.capability-protocol; owner=application/operational_facts; remove_when=runtime adapter no longer reserves non-chat protocol variants"
+    )
+)]
 pub(crate) enum CapabilityProtocol {
     ChatCompletions,
     Responses,
@@ -27,6 +35,13 @@ pub(crate) enum CapabilitySubject {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=canonical-capability-reducer; owner=application/operational_facts; remove_when=production projection no longer keeps reducer evidence taxonomy"
+    )
+)]
 pub(crate) enum CapabilityEvidenceSource {
     AdapterStructure,
     UserBlock,
@@ -50,6 +65,7 @@ pub(crate) struct CanonicalCapabilityEvidence {
 }
 
 impl CanonicalCapabilityEvidence {
+    #[cfg(test)]
     pub(crate) fn is_expired(&self, now: UnixMillis) -> bool {
         self.expires_at
             .map(|expires_at| expires_at.get() <= now.get())
@@ -58,6 +74,13 @@ impl CanonicalCapabilityEvidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=canonical-capability-policy; owner=application/operational_facts; remove_when=runtime adapter no longer reserves strict unknown decisions"
+    )
+)]
 pub(crate) enum CapabilityDecision {
     Allow,
     Reject,
@@ -65,6 +88,7 @@ pub(crate) enum CapabilityDecision {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(test)]
 pub(crate) struct CapabilityProjectionPolicy {
     pub(crate) strict_unknown: bool,
 }
@@ -79,6 +103,7 @@ pub(crate) struct CapabilityProjection {
     pub(crate) conflict_reason: Option<&'static str>,
 }
 
+#[cfg(test)]
 pub(crate) fn project_capability(
     subject: CapabilitySubject,
     evidence: &[CanonicalCapabilityEvidence],
@@ -128,6 +153,7 @@ pub(crate) fn project_capability(
     }
 }
 
+#[cfg(test)]
 fn normalize_evidence_for_reduction(
     evidence: &CanonicalCapabilityEvidence,
 ) -> Option<CanonicalCapabilityEvidence> {
@@ -147,6 +173,7 @@ fn normalize_evidence_for_reduction(
     }
 }
 
+#[cfg(test)]
 fn precedence(evidence: &CanonicalCapabilityEvidence) -> u8 {
     match (evidence.source, evidence.verdict) {
         (CapabilityEvidenceSource::AdapterStructure, CapabilityVerdict::Unsupported) => 0,
@@ -161,6 +188,7 @@ fn precedence(evidence: &CanonicalCapabilityEvidence) -> u8 {
     }
 }
 
+#[cfg(test)]
 fn conflict_reason(
     winner: Option<&CanonicalCapabilityEvidence>,
     overridden: &[CanonicalCapabilityEvidence],

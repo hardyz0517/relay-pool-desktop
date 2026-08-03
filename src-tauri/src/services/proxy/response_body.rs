@@ -379,7 +379,7 @@ fn failure_source_label(source: FailureSource) -> &'static str {
 
 #[expect(
     dead_code,
-    reason = "reserved by the downstream-disconnect failure contract"
+    reason = "contract=local-proxy.downstream-disconnect; owner=services/proxy; remove_when=response body handling drops downstream disconnect classification"
 )]
 pub(crate) fn downstream_disconnected_failure() -> ProxyFailure {
     ProxyFailure::new(

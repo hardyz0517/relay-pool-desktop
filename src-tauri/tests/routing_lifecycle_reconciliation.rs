@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod persistence {
     pub(crate) mod error {
         #[derive(Debug, thiserror::Error)]
@@ -19,7 +17,10 @@ mod persistence {
 #[path = "../src/persistence/stores/request_lifecycle_reconciliation.rs"]
 mod reconciliation;
 
-use reconciliation::reconcile_startup_interrupted_batch;
+use reconciliation::{
+    default_startup_reconciliation_batch_size, reconcile_startup_interrupted_batch,
+    StartupReconciliationReport,
+};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Row, SqlitePool,
@@ -190,6 +191,8 @@ async fn startup_reconciliation_marks_in_progress_requests_trace_incomplete_with
 
 #[tokio::test]
 async fn startup_reconciliation_uses_bounded_batches_and_durable_progress() {
+    assert_eq!(default_startup_reconciliation_batch_size(), 64);
+
     let pool = test_pool().await;
     for request_id in ["req-batch-1", "req-batch-2", "req-batch-3"] {
         seed_in_progress_request(&pool, request_id, 1_000).await;
@@ -207,6 +210,11 @@ async fn startup_reconciliation_uses_bounded_batches_and_durable_progress() {
         .expect("second batch");
     assert!(!second.has_more);
     assert_eq!(second.report.requests_interrupted, 1);
+    let mut total = StartupReconciliationReport::empty();
+    total.add_batch(first);
+    total.add_batch(second);
+    assert_eq!(total.batches_completed, 2);
+    assert_eq!(total.requests_interrupted, 3);
 
     let progress = sqlx::query(
         "SELECT batches_completed, requests_interrupted, completed

@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 
 use serde_json::Value;
 use sqlx::Row;
@@ -200,23 +200,6 @@ pub(crate) struct RateTransition {
     pub group_name: String,
     pub old_effective_rate_multiplier: Option<f64>,
     pub new_effective_rate_multiplier: Option<f64>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ModelWrite {
-    pub station_id: String,
-    pub model: String,
-    pub available: bool,
-    pub source: String,
-    pub confidence: f64,
-    pub run_id: String,
-    pub now: String,
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct ModelTransitions {
-    pub added: Vec<String>,
-    pub removed: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -934,62 +917,6 @@ impl CollectorStore {
             old_effective_rate_multiplier: old,
             new_effective_rate_multiplier: rate.effective_rate_multiplier,
         }))
-    }
-
-    pub(crate) async fn replace_models(
-        &self,
-        session: &mut WriteSession,
-        station_id: &str,
-        run_id: &str,
-        models: &[ModelWrite],
-        now: &str,
-    ) -> Result<ModelTransitions, PersistenceError> {
-        let previous = sqlx::query_scalar::<_, String>(
-            "SELECT model FROM collector_model_facts WHERE station_id = ?1 AND available = 1",
-        )
-        .bind(station_id)
-        .fetch_all(session.connection())
-        .await?
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-        let current = models
-            .iter()
-            .filter(|model| model.available)
-            .map(|model| model.model.clone())
-            .collect::<BTreeSet<_>>();
-        for model in models {
-            sqlx::query(
-                "INSERT INTO collector_model_facts (
-                    station_id, model, available, source, confidence, last_seen_run_id, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT(station_id, model) DO UPDATE SET
-                    available = excluded.available, source = excluded.source,
-                    confidence = excluded.confidence, last_seen_run_id = excluded.last_seen_run_id,
-                    updated_at = excluded.updated_at",
-            )
-            .bind(&model.station_id)
-            .bind(&model.model)
-            .bind(i64::from(model.available))
-            .bind(&model.source)
-            .bind(model.confidence.clamp(0.0, 1.0))
-            .bind(&model.run_id)
-            .bind(&model.now)
-            .execute(session.connection())
-            .await?;
-        }
-        sqlx::query(
-            "UPDATE collector_model_facts SET available = 0, last_seen_run_id = ?1, updated_at = ?2
-             WHERE station_id = ?3 AND available = 1 AND last_seen_run_id != ?1",
-        )
-        .bind(run_id)
-        .bind(now)
-        .bind(station_id)
-        .execute(session.connection())
-        .await?;
-        Ok(ModelTransitions {
-            added: current.difference(&previous).cloned().collect(),
-            removed: previous.difference(&current).cloned().collect(),
-        })
     }
 
     pub(crate) async fn update_task_state(

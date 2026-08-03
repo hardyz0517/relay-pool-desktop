@@ -8,7 +8,13 @@ pub type ProxyStatusDto = ProxyStatus;
 pub type LocalRoutingWorkspaceDto =
     crate::application::routing_engine::routing_types::LocalRoutingWorkspace;
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const PROXY_WORKSPACE_READS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "ProxyWorkspaceReadsDto",
     typescript: include_str!("proxy_workspace_reads.typescript.txt"),

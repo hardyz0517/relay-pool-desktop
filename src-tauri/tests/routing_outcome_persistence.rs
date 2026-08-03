@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod persistence {
     pub(crate) mod error {
         #[derive(Debug, thiserror::Error)]
@@ -18,10 +16,10 @@ mod persistence {
     }
 }
 
-#[path = "../src/persistence/stores/request_outcome_store.rs"]
-mod request_outcome_store;
 #[path = "../src/persistence/stores/request_cost_write.rs"]
 mod request_cost_write;
+#[path = "../src/persistence/stores/request_outcome_store.rs"]
+mod request_outcome_store;
 
 use request_outcome_store::{AttemptCostWrite, RequestCostAggregateWrite, RequestOutcomeStore};
 use sqlx::{

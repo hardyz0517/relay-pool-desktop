@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex},
@@ -10,16 +8,19 @@ pub(crate) enum CapacityConstraintKey {
     HalfOpen(String),
     Global,
     StationAccount(String),
+    #[cfg(test)]
     ProviderAccount(String),
     StationKey(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProviderAccountConstraint {
+    #[cfg(test)]
     Trusted {
         provider_account_id: String,
         max_concurrency: u32,
     },
+    #[cfg(test)]
     EvidenceGap {
         reason: &'static str,
     },
@@ -53,6 +54,7 @@ pub(crate) enum CapacityAcquireFailure {
     },
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct CapacityGauge {
     pub(crate) active: u32,
@@ -72,16 +74,7 @@ impl CompositeCapacityRegistry {
     ) -> Result<CapacityLease, CapacityAcquireFailure> {
         let mut state = self.shared.lock().expect("capacity registry poisoned");
         let mut acquired = Vec::new();
-        let mut evidence_gaps = Vec::new();
-
-        if let ProviderAccountConstraint::EvidenceGap { reason } =
-            request.provider_account_constraint
-        {
-            evidence_gaps.push(CapacityEvidenceGap {
-                constraint: "provider_account",
-                reason,
-            });
-        }
+        let evidence_gaps = provider_evidence_gaps(&request.provider_account_constraint);
 
         let ordered_constraints = ordered_constraints(&request);
         for (constraint, max_concurrency) in ordered_constraints {
@@ -109,10 +102,11 @@ impl CompositeCapacityRegistry {
             shared: Some(Arc::clone(&self.shared)),
             constraints: acquired,
             released: false,
-            evidence_gaps,
+            _evidence_gaps: evidence_gaps,
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn gauge(&self, constraint: &CapacityConstraintKey) -> CapacityGauge {
         let state = self.shared.lock().expect("capacity registry poisoned");
         state
@@ -122,6 +116,7 @@ impl CompositeCapacityRegistry {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub(crate) fn set_runtime_max(&self, constraint: CapacityConstraintKey, max_concurrency: u32) {
         let mut state = self.shared.lock().expect("capacity registry poisoned");
         state
@@ -183,6 +178,7 @@ fn ordered_constraints(request: &CompositeCapacityRequest) -> Vec<(CapacityConst
         CapacityConstraintKey::StationAccount(request.station_id.clone()),
         request.station_account_max_concurrency,
     ));
+    #[cfg(test)]
     if let ProviderAccountConstraint::Trusted {
         provider_account_id,
         max_concurrency,
@@ -239,6 +235,7 @@ struct CapacityCounter {
 }
 
 impl CapacityCounter {
+    #[cfg(test)]
     fn public(&self) -> CapacityGauge {
         CapacityGauge {
             active: self.active,
@@ -253,16 +250,35 @@ pub(crate) struct CapacityLease {
     shared: Option<Arc<Mutex<CapacityState>>>,
     constraints: Vec<CapacityConstraintKey>,
     released: bool,
-    evidence_gaps: Vec<CapacityEvidenceGap>,
+    _evidence_gaps: Vec<CapacityEvidenceGap>,
+}
+
+#[cfg(test)]
+fn provider_evidence_gaps(constraint: &ProviderAccountConstraint) -> Vec<CapacityEvidenceGap> {
+    if let ProviderAccountConstraint::EvidenceGap { reason } = constraint {
+        vec![CapacityEvidenceGap {
+            constraint: "provider_account",
+            reason,
+        }]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(not(test))]
+fn provider_evidence_gaps(_constraint: &ProviderAccountConstraint) -> Vec<CapacityEvidenceGap> {
+    Vec::new()
 }
 
 impl CapacityLease {
+    #[cfg(test)]
     pub(crate) fn constraints(&self) -> &[CapacityConstraintKey] {
         &self.constraints
     }
 
+    #[cfg(test)]
     pub(crate) fn evidence_gaps(&self) -> &[CapacityEvidenceGap] {
-        &self.evidence_gaps
+        &self._evidence_gaps
     }
 
     pub(crate) fn release(&mut self) {
@@ -299,6 +315,7 @@ pub(crate) struct CapacityWaitPermit {
 }
 
 impl CapacityWaitPermit {
+    #[cfg(test)]
     pub(crate) fn ticket(&self) -> u64 {
         self.ticket
     }
@@ -425,10 +442,12 @@ impl RetryBudgetRegistry {
         }))
     }
 
+    #[cfg(test)]
     pub(crate) fn active(&self) -> u32 {
         self.shared.lock().expect("retry budget poisoned").active
     }
 
+    #[cfg(test)]
     pub(crate) fn max_active(&self) -> u32 {
         self.shared
             .lock()

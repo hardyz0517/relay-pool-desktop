@@ -1012,13 +1012,6 @@ fn validate_request(request: &CollectorApplyRequest) -> Result<(), ApplicationEr
                 .iter()
                 .map(|fact| fact.station_id.as_str()),
         )
-        .chain(
-            request
-                .facts
-                .models
-                .iter()
-                .map(|fact| fact.station_id.as_str()),
-        )
         .all(|station_id| station_id == request.station_id);
     if !same_station {
         return Err(ApplicationError::ConstraintViolation);

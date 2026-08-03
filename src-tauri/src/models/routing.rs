@@ -447,13 +447,6 @@ pub struct RuntimeRoutingCandidate {
     pub api_key_secret: Option<RuntimeRoutingSecret>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RoutingProxyDefaults {
-    pub collector_proxy_mode: String,
-    pub collector_proxy_url: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteSimulationInput {

@@ -57,10 +57,6 @@ impl PortableMigrationLimitsV1 {
         Duration::from_secs(self.prepare_deadline_secs)
     }
 
-    pub(crate) const fn drain_deadline(self) -> Duration {
-        Duration::from_secs(self.drain_deadline_secs)
-    }
-
     pub(crate) fn decrypted_payload_upper_bound(
         self,
         manifest_len: usize,
@@ -79,13 +75,6 @@ impl PortableMigrationLimitsV1 {
     pub(crate) fn validate_passphrase(self, passphrase: &str) -> Result<(), LimitViolation> {
         if passphrase.len() > self.max_passphrase_utf8_bytes {
             return Err(LimitViolation::PassphraseTooLarge);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_regular_field_len(self, len: usize) -> Result<(), LimitViolation> {
-        if len > self.max_regular_field_bytes {
-            return Err(LimitViolation::RegularFieldTooLarge);
         }
         Ok(())
     }
@@ -111,8 +100,6 @@ impl Default for PortableMigrationLimitsV1 {
 pub(crate) enum LimitViolation {
     #[error("portable migration passphrase exceeds v1 limit")]
     PassphraseTooLarge,
-    #[error("portable migration regular field exceeds v1 limit")]
-    RegularFieldTooLarge,
     #[error("portable migration large redacted JSON field exceeds v1 limit")]
     LargeRedactedJsonFieldTooLarge,
 }
@@ -128,7 +115,6 @@ mod tests {
         assert_eq!(limits.export_deadline().as_secs(), 2 * 60 * 60);
         assert_eq!(limits.inspection_deadline().as_secs(), 30 * 60);
         assert_eq!(limits.prepare_deadline().as_secs(), 2 * 60 * 60);
-        assert_eq!(limits.drain_deadline().as_secs(), 30);
     }
 
     #[test]
@@ -146,19 +132,6 @@ mod tests {
                 .validate_passphrase(&"a".repeat(limits.max_passphrase_utf8_bytes + 1))
                 .unwrap_err(),
             LimitViolation::PassphraseTooLarge
-        );
-
-        assert!(limits
-            .validate_regular_field_len(limits.max_regular_field_bytes - 1)
-            .is_ok());
-        assert!(limits
-            .validate_regular_field_len(limits.max_regular_field_bytes)
-            .is_ok());
-        assert_eq!(
-            limits
-                .validate_regular_field_len(limits.max_regular_field_bytes + 1)
-                .unwrap_err(),
-            LimitViolation::RegularFieldTooLarge
         );
     }
 

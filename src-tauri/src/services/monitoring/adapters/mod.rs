@@ -5,6 +5,6 @@ pub mod generic_openai;
 pub mod http_mapping;
 pub mod openai_chat;
 pub mod openai_responses;
-pub mod protocol_auto;
+#[cfg(test)]
 pub mod sse;
 pub mod xai_grok;

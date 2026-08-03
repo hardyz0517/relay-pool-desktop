@@ -5,10 +5,7 @@ use crate::{
         error::ApplicationError, provider_drafts::ProviderDraftService, settings::SettingsService,
     },
     models::{
-        credentials::{
-            PersistStationSessionInput, ResolvedSession, StationCredentials,
-            StationSessionCredentialKind, UpdateStationSessionInput,
-        },
+        credentials::{PersistStationSessionInput, ResolvedSession, StationCredentials},
         group_facts::StationGroupBinding,
         provider_drafts::{
             CommitProviderDraftInput, CreateProviderDraftInput, PatchProviderDraftInput,
@@ -233,15 +230,6 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
         block_on_draft_source(self.drafts.resolve_session(&station_id)).map_err(app_error)
     }
 
-    fn update_station_session(
-        &self,
-        input: UpdateStationSessionInput,
-        expected_revision: i64,
-    ) -> Result<StationCredentials, String> {
-        block_on_draft_source(self.drafts.update_session(input, expected_revision))
-            .map_err(app_error)
-    }
-
     fn persist_station_session<'a>(
         &'a self,
         input: PersistStationSessionInput,
@@ -254,15 +242,6 @@ impl CollectorSourcePort for ProviderDraftCollectorSource {
                 .await
                 .map_err(app_error)
         })
-    }
-
-    fn invalidate_station_session_credential(
-        &self,
-        station_id: &str,
-        kind: StationSessionCredentialKind,
-    ) -> Result<(), String> {
-        block_on_draft_source(self.drafts.invalidate_session_credential(station_id, kind))
-            .map_err(app_error)
     }
 
     fn list_station_group_bindings(

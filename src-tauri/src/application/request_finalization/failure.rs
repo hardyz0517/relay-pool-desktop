@@ -1,8 +1,13 @@
-#![allow(dead_code)]
-
 use http::StatusCode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.failure-target; owner=application/request_finalization; remove_when=canonical failure mapping drops downstream/protocol target scopes"
+    )
+)]
 pub(crate) enum FailureTarget {
     Request,
     ModelOnKey {
@@ -30,6 +35,13 @@ pub(crate) enum FailureTarget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.provider-protocol; owner=application/request_finalization; remove_when=provider error mapping drops non-emitted protocol variants"
+    )
+)]
 pub(crate) enum ProviderProtocolKind {
     OpenAiChatCompletions,
     OpenAiResponses,
@@ -38,6 +50,13 @@ pub(crate) enum ProviderProtocolKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.local-adapter-component; owner=application/request_finalization; remove_when=failure attribution drops request/lifecycle components"
+    )
+)]
 pub(crate) enum LocalAdapterComponent {
     RequestBody,
     ResponseTransform,
@@ -46,6 +65,13 @@ pub(crate) enum LocalAdapterComponent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.failure-class; owner=application/request_finalization; remove_when=canonical outcome taxonomy removes non-constructed failure classes"
+    )
+)]
 pub(crate) enum FailureClass {
     ConfigRequired,
     PolicyRejected,
@@ -81,6 +107,13 @@ pub(crate) enum RetryDisposition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.health-effect; owner=application/request_finalization; remove_when=finalization effects drop reserved health transitions"
+    )
+)]
 pub(crate) enum HealthEffect {
     Success,
     ObserveFailure,
@@ -102,6 +135,13 @@ pub(crate) enum CapabilityEffect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.capability-applicability; owner=application/request_finalization; remove_when=learning contract drops broader applicability states"
+    )
+)]
 pub(crate) enum CapabilityApplicabilitySet {
     ConfirmedModelCatalog,
     UnknownModelCatalog,
@@ -318,6 +358,13 @@ pub(crate) fn public_error_for_class(class: FailureClass) -> PublicError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.provider-semantic-signal; owner=application/request_finalization; remove_when=canonical failure mapping drops transport/timeout signal classes"
+    )
+)]
 pub(crate) enum ProviderErrorSemanticSignal {
     ConfirmedAuthentication {
         station_key_id: String,

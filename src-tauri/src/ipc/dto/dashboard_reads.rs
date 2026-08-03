@@ -37,7 +37,13 @@ impl DashboardRequestMetricsInputDto {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const DASHBOARD_READS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "DashboardReadsDto",
     typescript: include_str!("dashboard_reads.typescript.txt"),

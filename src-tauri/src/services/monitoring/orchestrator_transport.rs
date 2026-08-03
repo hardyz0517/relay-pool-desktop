@@ -15,13 +15,16 @@ use crate::{
         queries::routing_runtime::RoutingMonitoringTargetSnapshot,
     },
     models::monitoring::{ClientProfileId, FailureKind, ProtocolKind},
-    outbound::{AsyncOutboundClient, ProxyPolicy, TimeoutPolicy},
+    outbound::{AsyncOutboundClient, ProxyPolicy},
     services::monitoring::{
         challenge::ProbeChallenge,
         executor::{ProbeExecutionInput, ProbeExecutor, ProbeSecretResolver, ResolvedProbeSecret},
         transport::{MonitoringTransport, MonitoringTransportConfig},
     },
 };
+
+#[cfg(test)]
+use crate::outbound::TimeoutPolicy;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProbeTargetEndpoint {
@@ -106,14 +109,18 @@ impl ProbeTransport for ProbeExecutorTransport {
                 MonitoringTransportConfig {
                     base_url: endpoint.base_url.clone(),
                     proxy: ProxyPolicy::Direct,
+                    #[cfg(test)]
                     timeouts: TimeoutPolicy {
                         connect_timeout: Duration::from_secs(10),
                         first_byte_timeout: Duration::from_secs(30),
                         body_read_timeout: Duration::from_secs(30),
                         total_timeout: Duration::from_millis(remaining_ms),
                     },
+                    #[cfg(test)]
                     success_body_max_bytes: 64 * 1024,
+                    #[cfg(test)]
                     error_body_max_bytes: 8 * 1024,
+                    #[cfg(test)]
                     redirect_max_hops: 2,
                 },
             );

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use super::identity::{EvidenceHash, OperationalValidationError, RecordRevision, UnixMillis};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -10,6 +11,7 @@ pub enum EvidenceCoverage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub enum EvidenceFreshness {
     Fresh,
     Stale,
@@ -21,6 +23,7 @@ pub enum EvidenceFreshness {
 pub struct EvidenceConfidence(f64);
 
 impl EvidenceConfidence {
+    #[cfg(test)]
     pub fn new(value: f64) -> Result<Self, OperationalValidationError> {
         if !value.is_finite() || !(0.0..=1.0).contains(&value) {
             return Err(OperationalValidationError::InvalidConfidence {
@@ -31,12 +34,14 @@ impl EvidenceConfidence {
         Ok(Self(value))
     }
 
+    #[cfg(test)]
     pub fn get(self) -> f64 {
         self.0
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub enum EvidenceSource {
     ManualConfig,
     Collector,
@@ -46,6 +51,7 @@ pub enum EvidenceSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct FactProvenance {
     source: EvidenceSource,
     record_revision: RecordRevision,
@@ -54,6 +60,7 @@ pub struct FactProvenance {
     evidence_hash: Option<EvidenceHash>,
 }
 
+#[cfg(test)]
 impl FactProvenance {
     pub fn new(
         source: EvidenceSource,

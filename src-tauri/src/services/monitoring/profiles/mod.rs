@@ -15,7 +15,6 @@ pub mod standard;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderValue {
     Static(String),
-    StableLocalIdentity { scope: String },
     RequestValue { kind: RequestValueKind },
     ModelTemplate { template: String },
 }
@@ -41,10 +40,6 @@ impl HeaderValue {
             Self::Static(value) => HeaderHashValue {
                 kind: "static",
                 value,
-            },
-            Self::StableLocalIdentity { scope } => HeaderHashValue {
-                kind: "stable_local_identity",
-                value: scope,
             },
             Self::RequestValue { kind } => HeaderHashValue {
                 kind: "request_value",

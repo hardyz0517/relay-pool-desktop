@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod application {
     pub(crate) mod request_finalization {
         pub(crate) mod failure {
@@ -206,23 +204,6 @@ fn effect_planner_keeps_retry_health_and_capability_axes_separate() {
 fn route_planning_failures_have_stable_codes_and_public_proxy_mapping() {
     let failures = [
         (
-            routing_failure::RoutePlanningFailure::ConfigRequired,
-            "routing_configuration_required",
-            StatusCode::SERVICE_UNAVAILABLE,
-        ),
-        (
-            routing_failure::RoutePlanningFailure::PolicyRejected {
-                code: "route_group_rejected",
-            },
-            "route_group_rejected",
-            StatusCode::SERVICE_UNAVAILABLE,
-        ),
-        (
-            routing_failure::RoutePlanningFailure::EconomicsUnavailable,
-            "route_economics_unavailable",
-            StatusCode::SERVICE_UNAVAILABLE,
-        ),
-        (
             routing_failure::RoutePlanningFailure::HealthUnavailable,
             "route_health_unavailable",
             StatusCode::SERVICE_UNAVAILABLE,
@@ -241,18 +222,8 @@ fn route_planning_failures_have_stable_codes_and_public_proxy_mapping() {
             StatusCode::SERVICE_UNAVAILABLE,
         ),
         (
-            routing_failure::RoutePlanningFailure::FactsUnavailable,
-            "route_facts_unavailable",
-            StatusCode::SERVICE_UNAVAILABLE,
-        ),
-        (
             routing_failure::RoutePlanningFailure::ConfigUnstable,
             "route_configuration_changed",
-            StatusCode::SERVICE_UNAVAILABLE,
-        ),
-        (
-            routing_failure::RoutePlanningFailure::LifecycleUnavailable,
-            "route_lifecycle_unavailable",
             StatusCode::SERVICE_UNAVAILABLE,
         ),
         (

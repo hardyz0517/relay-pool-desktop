@@ -654,23 +654,6 @@ async fn load_costs_raw(
     })
 }
 
-async fn load_period(
-    connection: &mut SqliteConnection,
-    start_ms: i64,
-    end_ms: i64,
-) -> Result<RawPeriod, PersistenceError> {
-    load_period_window(connection, start_ms, end_ms).await
-}
-
-async fn load_costs(
-    connection: &mut SqliteConnection,
-    start_ms: i64,
-    end_ms: i64,
-) -> Result<(DashboardCostMetrics, u64), PersistenceError> {
-    let raw = load_costs_window(connection, start_ms, end_ms).await?;
-    Ok((raw.metrics, raw.corrupt_cost_aggregate_count))
-}
-
 fn bucket_floor_ms(value: i64) -> i64 {
     value.div_euclid(ROLLUP_BUCKET_MS) * ROLLUP_BUCKET_MS
 }
@@ -1859,7 +1842,9 @@ mod tests {
         )
         .await;
 
-        let result = load_period(&mut connection, 1_000, 2_000).await.unwrap();
+        let result = load_period_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
 
         assert_eq!(result.period.request_count, 7);
         assert_eq!(result.period.terminal_count, 6);
@@ -1941,7 +1926,11 @@ mod tests {
         )
         .await;
 
-        let (metrics, corrupt) = load_costs(&mut connection, 1_000, 2_000).await.unwrap();
+        let raw_costs = load_costs_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
+        let metrics = raw_costs.metrics;
+        let corrupt = raw_costs.corrupt_cost_aggregate_count;
 
         assert_eq!(metrics.complete_single_currency_count, 3);
         assert_eq!(metrics.complete_mixed_currency_count, 1);
@@ -1974,14 +1963,17 @@ mod tests {
         )
         .await;
 
-        let before_period = load_period(&mut connection, 1_000, 2_000).await.unwrap();
-        let (before_costs, before_corrupt) =
-            load_costs(&mut connection, 1_000, 2_000).await.unwrap();
+        let before_period = load_period_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
+        let before_costs = load_costs_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
 
         assert_eq!(before_period.period.request_count, 1);
-        assert_eq!(before_costs.legacy_or_missing_aggregate_count, 1);
-        assert_eq!(before_corrupt, 0);
-        assert!(!before_costs.cost_totals_complete);
+        assert_eq!(before_costs.metrics.legacy_or_missing_aggregate_count, 1);
+        assert_eq!(before_costs.corrupt_cost_aggregate_count, 0);
+        assert!(!before_costs.metrics.cost_totals_complete);
 
         insert_cost(
             &mut connection,
@@ -1991,15 +1983,19 @@ mod tests {
         )
         .await;
 
-        let after_period = load_period(&mut connection, 1_000, 2_000).await.unwrap();
-        let (after_costs, after_corrupt) = load_costs(&mut connection, 1_000, 2_000).await.unwrap();
+        let after_period = load_period_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
+        let after_costs = load_costs_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
 
         assert_eq!(after_period.period, before_period.period);
-        assert_eq!(after_costs.legacy_or_missing_aggregate_count, 0);
-        assert_eq!(after_corrupt, 0);
-        assert!(after_costs.cost_totals_complete);
-        assert_eq!(after_costs.totals[0].currency, "USD");
-        assert_eq!(after_costs.totals[0].amount_micro, 9_000);
+        assert_eq!(after_costs.metrics.legacy_or_missing_aggregate_count, 0);
+        assert_eq!(after_costs.corrupt_cost_aggregate_count, 0);
+        assert!(after_costs.metrics.cost_totals_complete);
+        assert_eq!(after_costs.metrics.totals[0].currency, "USD");
+        assert_eq!(after_costs.metrics.totals[0].amount_micro, 9_000);
     }
 
     #[tokio::test]
@@ -2036,7 +2032,9 @@ mod tests {
         )
         .await;
 
-        let result = load_period(&mut connection, 1_000, 2_000).await.unwrap();
+        let result = load_period_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
 
         assert_eq!(result.period.request_count, 2);
         assert_eq!(result.period.terminal_count, 2);
@@ -2094,14 +2092,18 @@ mod tests {
                 .fetch_one(&mut connection)
                 .await
                 .unwrap();
-        let period = load_period(&mut connection, 1_000, 2_000).await.unwrap();
-        let (costs, corrupt) = load_costs(&mut connection, 1_000, 2_000).await.unwrap();
+        let period = load_period_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
+        let costs = load_costs_window(&mut connection, 1_000, 2_000)
+            .await
+            .unwrap();
 
         assert_eq!(remaining_cost_rows, 0);
         assert_eq!(period.period.request_count, 0);
-        assert!(costs.cost_totals_complete);
-        assert!(costs.totals.is_empty());
-        assert_eq!(corrupt, 0);
+        assert!(costs.metrics.cost_totals_complete);
+        assert!(costs.metrics.totals.is_empty());
+        assert_eq!(costs.corrupt_cost_aggregate_count, 0);
     }
 
     #[tokio::test]

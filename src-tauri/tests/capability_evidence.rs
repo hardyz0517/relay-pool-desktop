@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde_json::Value;
 
 #[path = "../src/models/operational/mod.rs"]
@@ -11,72 +9,9 @@ mod models {
     }
 }
 
-mod application {
-    pub(crate) mod request_finalization {
-        pub(crate) mod failure {
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            pub(crate) enum CapabilityApplicabilitySet {
-                ConfirmedModelCatalog,
-                UnknownModelCatalog,
-                PositiveCapabilityEvidence,
-                LoadEvidenceGap,
-                RequestPolicyOnly,
-            }
-
-            impl CapabilityApplicabilitySet {
-                pub(crate) fn permits_model_not_found_learning(self) -> bool {
-                    matches!(self, Self::ConfirmedModelCatalog)
-                }
-            }
-
-            #[derive(Debug, Clone, PartialEq, Eq)]
-            pub(crate) enum ProviderErrorSemanticSignal {
-                ConfirmedAuthentication {
-                    station_key_id: String,
-                },
-                ConfirmedInsufficientBalance {
-                    station_id: String,
-                },
-                ConfirmedModelNotFound {
-                    station_key_id: String,
-                    model: String,
-                },
-                RateLimited {
-                    station_id: String,
-                    retry_after_ms: Option<i64>,
-                },
-                BadRequest,
-                ServerError {
-                    station_id: String,
-                    endpoint_revision: i64,
-                },
-                GenericStatus {
-                    status: u16,
-                },
-            }
-        }
-    }
-}
-
-#[path = "../src/services/proxy/adapters/capability.rs"]
-mod capability;
 #[path = "../src/application/operational_facts/capability_projector.rs"]
 mod capability_projector;
-#[path = "../src/services/proxy/adapters/openai.rs"]
-mod openai_adapter;
 
-mod services {
-    pub(crate) mod time {
-        pub(crate) fn now_millis_for_services() -> i64 {
-            1_000
-        }
-    }
-}
-
-use capability::{
-    model_signal_from_http_status, AdapterCapabilityProtocol, AdapterCapabilitySignal,
-    AdapterCapabilitySubject, AdapterCapabilityVerdict, AdapterHttpCapabilityProfile,
-};
 use capability_projector::{
     project_capability, CanonicalCapabilityEvidence, CapabilityDecision, CapabilityEvidenceSource,
     CapabilityFeature, CapabilityProjectionPolicy, CapabilityProtocol, CapabilitySubject,
@@ -239,27 +174,6 @@ fn complete_inventory_missing_model_can_be_negative_but_partial_inventory_cannot
 }
 
 #[test]
-fn rate_limit_overload_and_generic_403_404_do_not_write_model_unsupported() {
-    for status in [429, 503] {
-        let signal = model_signal_from_http_status(
-            AdapterHttpCapabilityProfile::OpenAiKnown,
-            "gpt-4.1",
-            status,
-        );
-        assert_eq!(signal.verdict, AdapterCapabilityVerdict::Neutral);
-    }
-
-    for status in [403, 404] {
-        let signal = model_signal_from_http_status(
-            AdapterHttpCapabilityProfile::GenericOpenAiCompatible,
-            "gpt-4.1",
-            status,
-        );
-        assert_eq!(signal.verdict, AdapterCapabilityVerdict::Uncertain);
-    }
-}
-
-#[test]
 fn same_revision_conflicts_are_resolved_by_stable_precedence_not_input_order() {
     let subject = CapabilitySubject::Model("gpt-4.1".to_string());
     let success = evidence(
@@ -334,29 +248,18 @@ fn strict_policy_turns_unknown_into_hard_admission_without_rewriting_truth() {
 }
 
 #[test]
-fn openai_chat_adapter_returns_explicit_structural_capability_signals() {
-    let signals = openai_adapter::chat_completions_capability_signals();
+fn known_protocol_and_feature_subjects_default_to_allow_when_no_evidence_exists() {
+    let subjects = [
+        CapabilitySubject::Protocol(CapabilityProtocol::ChatCompletions),
+        CapabilitySubject::Protocol(CapabilityProtocol::Embeddings),
+        CapabilitySubject::Feature(CapabilityFeature::Stream),
+        CapabilitySubject::Feature(CapabilityFeature::Reasoning),
+    ];
 
-    assert!(signals.iter().any(|signal| {
-        signal.subject
-            == AdapterCapabilitySubject::Protocol(AdapterCapabilityProtocol::ChatCompletions)
-            && signal.verdict == AdapterCapabilityVerdict::Supported
-    }));
-    assert!(signals.iter().any(|signal| {
-        signal.subject == AdapterCapabilitySubject::Protocol(AdapterCapabilityProtocol::Responses)
-            && signal.verdict == AdapterCapabilityVerdict::Unsupported
-    }));
-}
-
-#[test]
-fn adapter_signal_type_is_provider_neutral() {
-    let signal = AdapterCapabilitySignal::semantic(
-        AdapterCapabilitySubject::Model {
-            model: "gpt-4.1".to_string(),
-        },
-        AdapterCapabilityVerdict::Unsupported,
-        "fixture",
-    );
-
-    assert_eq!(signal.reason, "fixture");
+    for subject in subjects {
+        let projection = project_capability(subject, &[], default_policy(), now());
+        assert_eq!(projection.truth, CapabilityVerdict::Unknown);
+        assert_eq!(projection.decision, CapabilityDecision::Allow);
+        assert!(projection.winner.is_none());
+    }
 }

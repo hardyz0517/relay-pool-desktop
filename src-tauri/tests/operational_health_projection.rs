@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[path = "../src/models/operational/mod.rs"]
 mod operational_model;
 

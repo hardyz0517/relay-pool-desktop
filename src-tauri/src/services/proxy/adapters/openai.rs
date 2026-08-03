@@ -1,12 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::application::request_finalization::failure::{
-    CapabilityApplicabilitySet, ProviderErrorSemanticSignal,
-};
-
-use super::capability::{
-    AdapterCapabilityFeature, AdapterCapabilityProtocol, AdapterCapabilitySignal,
-    AdapterCapabilitySubject, AdapterCapabilityVerdict,
+    CapabilityApplicabilitySet, ProviderErrorSemanticSignal, ProviderProtocolKind,
 };
 
 pub fn generate_response_id(prefix: &str) -> String {
@@ -59,37 +54,12 @@ pub fn wrap_chat_response_as_responses(value: Value, fallback_model: Option<&str
     })
 }
 
-#[allow(dead_code)]
-pub(crate) fn chat_completions_capability_signals() -> Vec<AdapterCapabilitySignal> {
-    vec![
-        AdapterCapabilitySignal::structural(
-            AdapterCapabilitySubject::Protocol(AdapterCapabilityProtocol::ChatCompletions),
-            AdapterCapabilityVerdict::Supported,
-            "chat_completions_wire_protocol",
-        ),
-        AdapterCapabilitySignal::structural(
-            AdapterCapabilitySubject::Protocol(AdapterCapabilityProtocol::Responses),
-            AdapterCapabilityVerdict::Unsupported,
-            "chat_adapter_does_not_execute_responses_protocol",
-        ),
-        AdapterCapabilitySignal::structural(
-            AdapterCapabilitySubject::Feature(AdapterCapabilityFeature::Stream),
-            AdapterCapabilityVerdict::Supported,
-            "chat_streaming_supported_by_wire_protocol",
-        ),
-        AdapterCapabilitySignal::structural(
-            AdapterCapabilitySubject::Feature(AdapterCapabilityFeature::Tools),
-            AdapterCapabilityVerdict::Supported,
-            "chat_tools_are_openai_compatible",
-        ),
-    ]
-}
-
 pub(crate) fn openai_error_semantic_signal(
     status: u16,
     body: Option<&Value>,
     station_key_id: &str,
     station_id: &str,
+    endpoint_revision: i64,
     model: Option<&str>,
     applicability: CapabilityApplicabilitySet,
 ) -> ProviderErrorSemanticSignal {
@@ -122,10 +92,13 @@ pub(crate) fn openai_error_semantic_signal(
             station_id: station_id.to_string(),
             retry_after_ms: None,
         },
+        405 | 501 => ProviderErrorSemanticSignal::ConfirmedCapabilityMismatch {
+            protocol: ProviderProtocolKind::Unknown,
+        },
         400 | 409 | 422 => ProviderErrorSemanticSignal::BadRequest,
         500..=599 => ProviderErrorSemanticSignal::ServerError {
             station_id: station_id.to_string(),
-            endpoint_revision: 0,
+            endpoint_revision,
         },
         _ => ProviderErrorSemanticSignal::GenericStatus { status },
     }

@@ -1,13 +1,13 @@
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::application::request_lifecycle::request::AttemptId;
+#[cfg(test)]
 use crate::application::{
-    request_finalization::failure::CanonicalFailure,
-    request_lifecycle::{delivery::DeliveryTerminal, request::AttemptId},
+    request_finalization::failure::CanonicalFailure, request_lifecycle::delivery::DeliveryTerminal,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct AttemptOutcome {
     pub(crate) attempt_id: AttemptId,
     pub(crate) route: AttemptRouteSnapshot,
@@ -17,6 +17,7 @@ pub(crate) struct AttemptOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct AttemptRouteSnapshot {
     pub(crate) station_id: String,
     pub(crate) station_key_id: String,
@@ -24,6 +25,7 @@ pub(crate) struct AttemptRouteSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum UpstreamProtocolOutcome {
     Succeeded {
         output_committed: bool,
@@ -41,12 +43,15 @@ pub(crate) enum UpstreamProtocolOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct DownstreamDeliveryOutcome {
     pub(crate) terminal: DeliveryTerminal,
     pub(crate) body_bytes: Option<i64>,
 }
 
+#[cfg(test)]
 impl AttemptOutcome {
+    #[cfg(test)]
     pub(crate) fn new(
         attempt_id: AttemptId,
         route: AttemptRouteSnapshot,
@@ -96,6 +101,13 @@ pub(crate) struct AttemptUsageSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.usage-status; owner=application/request_finalization; remove_when=outcome persistence drops stream-specific missing usage states"
+    )
+)]
 pub(crate) enum AttemptUsageStatus {
     Complete,
     MissingUsage,
@@ -123,6 +135,13 @@ pub(crate) struct AttemptCostSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.attempt-cost-status; owner=application/request_finalization; remove_when=durable cost aggregation drops stream/unpriced attempt states"
+    )
+)]
 pub(crate) enum AttemptCostStatus {
     Priced,
     MissingUsage,
@@ -176,6 +195,13 @@ impl AttemptCostSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.outcome-aggregate; owner=application/request_finalization; remove_when=persistence stops reserving canonical outcome aggregate"
+    )
+)]
 pub(crate) struct RequestOutcome {
     pub(crate) request_id: String,
     pub(crate) terminal: RequestOutcomeTerminal,
@@ -185,6 +211,13 @@ pub(crate) struct RequestOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=request-finalization.terminal-outcome; owner=application/request_finalization; remove_when=canonical finalization persistence drops terminal outcome contract"
+    )
+)]
 pub(crate) enum RequestOutcomeTerminal {
     Completed,
     PartialSuccess,
@@ -223,6 +256,7 @@ pub(crate) struct AttemptCostGap {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OutcomeInvariantError {
+    #[cfg(test)]
     CostAttemptMismatch {
         outcome_attempt: AttemptId,
         cost_attempt: AttemptId,

@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeSet,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
@@ -975,7 +975,6 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
         .iter()
         .map(|row| &row.candidate)
         .collect::<Vec<_>>();
-    let proxy_defaults = service.load_proxy_defaults().await.expect("defaults");
     let alias_pairs = service.list_model_alias_pairs().await.expect("alias pairs");
     let health = service
         .station_key_health_by_id("routing-key")
@@ -986,11 +985,6 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
         .await
         .expect("balances");
 
-    assert_eq!(proxy_defaults.collector_proxy_mode, "manual");
-    assert_eq!(
-        proxy_defaults.collector_proxy_url.as_deref(),
-        Some("http://127.0.0.1:7890")
-    );
     assert_eq!(
         alias_pairs,
         vec![("gpt-test".to_string(), "gpt-5".to_string())]
@@ -1463,12 +1457,4 @@ fn temp_db_path(name: &str) -> PathBuf {
     }
     std::fs::create_dir_all(&root).expect("fixture dir");
     root.join("relay-pool-v2.sqlite3")
-}
-
-#[allow(dead_code)]
-fn assert_separate_fixture_files(left: &Path, right: &Path) {
-    assert_ne!(
-        left, right,
-        "V1 and V2 writers must never share one fixture DB"
-    );
 }

@@ -41,13 +41,6 @@ impl SettingsStore {
         settings_from_connection(read.connection(), data_dir, pending_data_dir).await
     }
 
-    pub(crate) async fn local_access_key_secret(
-        &self,
-        read: &mut ReadSession,
-    ) -> Result<Option<CredentialStoredEncryptedSecret>, PersistenceError> {
-        local_access_key_secret_from_connection(read.connection()).await
-    }
-
     pub(crate) async fn local_access_key_secret_for_write(
         &self,
         write: &mut WriteSession,
@@ -117,22 +110,6 @@ impl SettingsStore {
             .execute(write.connection())
             .await?;
         Ok(())
-    }
-
-    pub(crate) async fn update_local_access_key(
-        &self,
-        write: &mut WriteSession,
-        value: &str,
-        now: &str,
-        data_dir: &str,
-        pending_data_dir: Option<String>,
-    ) -> Result<AppSettings, PersistenceError> {
-        let local_key = value.trim();
-        if local_key.is_empty() {
-            return Err(PersistenceError::ConstraintViolation);
-        }
-        upsert_setting(write.connection(), "local_key", local_key, now).await?;
-        settings_from_connection(write.connection(), data_dir, pending_data_dir).await
     }
 
     pub(crate) async fn set_local_proxy_start_on_launch(

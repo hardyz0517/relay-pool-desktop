@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::application::{
     request_finalization::failure::{
         CanonicalFailure, CapabilityEffect, FailureClass, FailureTarget, HealthEffect,

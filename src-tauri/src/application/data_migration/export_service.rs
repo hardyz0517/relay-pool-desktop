@@ -16,20 +16,15 @@ use zeroize::Zeroizing;
 use crate::{
     application::data_maintenance::{DataMaintenanceActivity, DataMaintenanceCoordinator},
     services::{
-        data_store::atomic_file::{
-            ApprovedLeaf, LocalAtomicFileAdapter, PublishEvidence, PublishMode,
-        },
+        data_store::atomic_file::{ApprovedLeaf, LocalAtomicFileAdapter, PublishMode},
         portable_migration::{
             age_envelope::{AgeEnvelopeError, AgeEnvelopeErrorCode, AgeEnvelopeOptions},
-            format::{
-                build_manifest_v1, PortableMigrationManifest, PortableMigrationManifestInput,
-                TransportKeyMaterial,
-            },
+            format::{build_manifest_v1, PortableMigrationManifestInput, TransportKeyMaterial},
             schema_reader::{ordered_import_tables_v1, PortableSchemaReader},
             snapshot::{create_consistent_snapshot, remove_snapshot_file},
             staging::{
                 publish_verified_partial, remove_file_if_exists, self_test_encrypted_package,
-                write_encrypted_partial, PortablePackageSelfTestReport,
+                write_encrypted_partial,
             },
             target_writer::{TrustedTableBatch, TrustedTargetWriter},
             transform::{
@@ -48,6 +43,14 @@ use crate::{
     },
 };
 
+#[cfg(test)]
+use crate::services::{
+    data_store::atomic_file::PublishEvidence,
+    portable_migration::{
+        format::PortableMigrationManifest, staging::PortablePackageSelfTestReport,
+    },
+};
+
 use super::errors::{DataMigrationError, DataMigrationResult};
 
 #[derive(Debug, Clone)]
@@ -63,6 +66,7 @@ pub(crate) struct PortableExportArtifact {
     pub(crate) portable_database_path: PathBuf,
     pub(crate) snapshot_created_at: String,
     pub(crate) row_counts: BTreeMap<String, usize>,
+    #[cfg(test)]
     pub(crate) rekey_report: SecretRekeyReport,
     pub(crate) transport_key: TransportSecretKey,
 }
@@ -94,14 +98,21 @@ impl fmt::Debug for PortablePackageExportRequest {
 
 #[derive(Debug)]
 pub(crate) struct PortablePackageExportArtifact {
+    #[cfg(test)]
     pub(crate) package_path: PathBuf,
     pub(crate) export_id: String,
     pub(crate) package_size_bytes: u64,
+    #[cfg(test)]
     pub(crate) publish_evidence: PublishEvidence,
+    #[cfg(test)]
     pub(crate) manifest: PortableMigrationManifest,
+    #[cfg(test)]
     pub(crate) pre_publish_self_test: PortablePackageSelfTestReport,
+    #[cfg(test)]
     pub(crate) published_self_test: PortablePackageSelfTestReport,
+    #[cfg(test)]
     pub(crate) row_counts: BTreeMap<String, usize>,
+    #[cfg(test)]
     pub(crate) rekey_report: SecretRekeyReport,
 }
 
@@ -171,20 +182,6 @@ impl DataMigrationExportService {
                 Err(DataMigrationError::Snapshot(error))
             }
         }
-    }
-
-    pub(crate) async fn export_portable_package(
-        &self,
-        request: PortablePackageExportRequest,
-        cancellation: Option<&CancellationToken>,
-    ) -> DataMigrationResult<PortablePackageExportArtifact> {
-        self.export_portable_package_with_options(
-            request,
-            cancellation,
-            AgeEnvelopeOptions::CURRENT,
-            None,
-        )
-        .await
     }
 
     pub(crate) async fn export_portable_package_with_export_id(
@@ -365,6 +362,8 @@ impl DataMigrationExportService {
                 age_options,
             )
             .await?;
+            #[cfg(not(test))]
+            let _ = &pre_publish_self_test;
             let mode = if request.overwrite_existing {
                 PublishMode::ReplaceExisting
             } else {
@@ -381,20 +380,29 @@ impl DataMigrationExportService {
                 age_options,
             )
             .await?;
+            #[cfg(not(test))]
+            let _ = &published_self_test;
             let package_size_bytes = fs::metadata(&publish_evidence.target)
                 .map_err(|_| {
                     DataMigrationError::Validation(PortableMigrationValidationError::OpenFailed)
                 })?
                 .len();
             Ok(PortablePackageExportArtifact {
+                #[cfg(test)]
                 package_path: publish_evidence.target.clone(),
                 export_id: export_id.to_string(),
                 package_size_bytes,
+                #[cfg(test)]
                 publish_evidence,
+                #[cfg(test)]
                 manifest,
+                #[cfg(test)]
                 pre_publish_self_test,
+                #[cfg(test)]
                 published_self_test,
+                #[cfg(test)]
                 row_counts: sqlite_artifact.row_counts.clone(),
+                #[cfg(test)]
                 rekey_report: sqlite_artifact.rekey_report.clone(),
             })
         }
@@ -421,6 +429,7 @@ impl DataMigrationExportService {
         let options = TransformOptions { include_history };
         let mut batches = Vec::new();
         let mut row_counts = BTreeMap::new();
+        #[cfg(test)]
         let mut rekey_report = None;
 
         for table_name in ordered_import_tables_v1() {
@@ -434,7 +443,12 @@ impl DataMigrationExportService {
             let rows = if table_name == "secrets" {
                 let (secret_rows, report) =
                     self.rekey_secret_rows(rows, &transport_key, cancellation)?;
-                rekey_report = Some(report);
+                #[cfg(test)]
+                {
+                    rekey_report = Some(report);
+                }
+                #[cfg(not(test))]
+                let _ = report;
                 secret_rows
             } else {
                 rows
@@ -455,6 +469,7 @@ impl DataMigrationExportService {
             portable_database_path: portable_database_path.to_path_buf(),
             snapshot_created_at: String::new(),
             row_counts,
+            #[cfg(test)]
             rekey_report: rekey_report.unwrap_or(SecretRekeyReport {
                 from_key_id: self.source_keys.active_key_id().as_str().to_string(),
                 to_key_id: transport_key.key_id().to_string(),

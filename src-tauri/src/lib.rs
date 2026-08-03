@@ -401,9 +401,7 @@ fn portable_recovery_reason(reason: PortableActivationManualReason) -> RecoveryR
         PortableActivationManualReason::KeyUnavailable => {
             RecoveryReason::PortableMigrationKeyUnavailable
         }
-        PortableActivationManualReason::JournalMalformed
-        | PortableActivationManualReason::UnsupportedJournal
-        | PortableActivationManualReason::PathRejected
+        PortableActivationManualReason::PathRejected
         | PortableActivationManualReason::MissingArtifact
         | PortableActivationManualReason::IdentityMismatch
         | PortableActivationManualReason::ReplacementFailed

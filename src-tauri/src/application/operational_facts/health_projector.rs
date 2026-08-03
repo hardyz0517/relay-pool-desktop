@@ -12,6 +12,7 @@ pub(crate) enum HealthProjectionTarget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum DurableHealthGate {
     Available,
     Degraded,
@@ -23,6 +24,7 @@ pub(crate) enum DurableHealthGate {
     Unknown,
 }
 
+#[cfg(test)]
 impl DurableHealthGate {
     pub(crate) fn is_hard_reject(self) -> bool {
         matches!(
@@ -36,6 +38,7 @@ impl DurableHealthGate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct DurableHealthProjection {
     pub(crate) target: HealthProjectionTarget,
     pub(crate) endpoint_revision: i64,
@@ -45,12 +48,14 @@ pub(crate) struct DurableHealthProjection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum RuntimeSuppressionKind {
     OrdinaryOutlier,
     HalfOpenProbe,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct RuntimeHealthSuppression {
     pub(crate) target: HealthProjectionTarget,
     pub(crate) endpoint_revision: i64,
@@ -60,11 +65,19 @@ pub(crate) struct RuntimeHealthSuppression {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct PoolEjectionGuard {
     pub(crate) ordinary_suppression_relaxed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=route-read-model.health-admission; owner=application/operational_facts; remove_when=read model drops runtime-overlay or unknown health states"
+    )
+)]
 pub(crate) enum HealthAdmission {
     Admit,
     AdmitDegraded,
@@ -83,6 +96,7 @@ pub(crate) struct EffectiveHealthProjection {
     pub(crate) stale_runtime_overlay_ignored: bool,
 }
 
+#[cfg(test)]
 pub(crate) fn project_effective_health(
     durable: DurableHealthProjection,
     runtime: Option<RuntimeHealthSuppression>,

@@ -10,9 +10,6 @@ pub mod monitoring_models;
 pub mod persistence_error;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
 pub mod retention;
-#[path = "../src/persistence/stores/monitoring/status_read_repository.rs"]
-pub mod status_queries;
-
 mod models {
     pub(crate) mod monitoring {
         pub(crate) use crate::monitoring_models::*;
@@ -23,26 +20,17 @@ mod persistence {
     pub mod error {
         pub(crate) use crate::persistence_error::PersistenceError;
     }
-
-    pub(crate) struct ReadSession;
-
-    impl ReadSession {
-        pub(crate) fn connection(&mut self) -> &mut sqlx::SqliteConnection {
-            unimplemented!("path-based repository tests do not construct ReadSession")
-        }
-    }
 }
 
 use app_retention::{RetentionPolicy, RetentionRunLimits};
 use buckets::{
-    hourly_bucket_windows, local_day_bucket_windows, recent_target_result_limit,
-    BucketAvailabilityState, BucketCounts, BucketTimezoneSource,
+    hourly_bucket_windows, local_day_bucket_windows, BucketAvailabilityState, BucketCounts,
+    BucketTimezoneSource,
 };
 use chrono::{TimeZone, Utc};
 use maintenance::{MonitoringMaintenanceConfig, MonitoringMaintenanceState};
 use retention::MonitoringRetentionRepository;
 use sqlx::{Connection, SqliteConnection};
-use status_queries::MonitoringStatusQueryRepository;
 use tokio_util::sync::CancellationToken;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("src/persistence/migrations");
@@ -185,48 +173,9 @@ fn bucket_counts_distinguish_missing_skipped_unavailable_and_degraded_weight() {
 }
 
 #[tokio::test]
-async fn recent_query_is_fixed_to_latest_60_target_results_not_attempts() {
-    let mut connection = ready_connection().await;
-    let statuses = MonitoringStatusQueryRepository;
-
-    for index in 0..65 {
-        seed_target_result(
-            &mut connection,
-            &format!("execution-{index:03}"),
-            &format!("target-{index:03}"),
-            10_000 + i64::from(index),
-            "available",
-            None,
-            Some(10),
-        )
-        .await;
-        seed_attempt(&mut connection, &format!("execution-{index:03}"), index, 0).await;
-        seed_attempt(&mut connection, &format!("execution-{index:03}"), index, 1).await;
-    }
-
-    let recent = statuses
-        .recent_target_results(&mut connection, "monitor-1", None, 500)
-        .await
-        .expect("recent target results");
-
-    assert_eq!(recent.len(), recent_target_result_limit() as usize);
-    assert_eq!(recent[0].id, "target-064");
-    assert_eq!(recent.last().expect("oldest returned").id, "target-005");
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM channel_monitor_attempts")
-            .fetch_one(&mut connection)
-            .await
-            .expect("attempt count"),
-        130,
-        "attempt retries remain traceable but do not add recent target cells"
-    );
-}
-
-#[tokio::test]
 async fn rollup_repair_is_idempotent_merges_dirty_ranges_and_keeps_skipped_out_of_denominator() {
     let mut connection = ready_connection().await;
     let retention = MonitoringRetentionRepository;
-    let statuses = MonitoringStatusQueryRepository;
     seed_target_result(
         &mut connection,
         "execution-a",
@@ -303,30 +252,32 @@ async fn rollup_repair_is_idempotent_merges_dirty_ranges_and_keeps_skipped_out_o
     assert_eq!(first_repair.repaired_ranges, 1);
     assert_eq!(second_repair.repaired_ranges, 0);
 
-    let buckets = statuses
-        .bucket_rollups(
-            &mut connection,
-            "monitor-1",
-            Some("key-1"),
-            "hour",
-            3_600_000,
-            7_200_000,
-        )
-        .await
-        .expect("bucket rollups");
-    assert_eq!(buckets.len(), 1);
-    assert_eq!(buckets[0].total_count, 2);
-    assert_eq!(buckets[0].available_count, 1);
-    assert_eq!(buckets[0].degraded_count, 1);
-    assert_eq!(buckets[0].skipped_count, 1);
-    assert_eq!(buckets[0].failure_counts.get("timeout"), Some(&1));
+    let bucket = sqlx::query_as::<_, (i64, i64, i64, i64, String)>(
+        r#"
+        SELECT total_count, available_count, degraded_count, skipped_count, failure_counts_json
+        FROM channel_monitor_bucket_rollups
+        WHERE monitor_id = 'monitor-1'
+          AND station_key_id = 'key-1'
+          AND bucket_kind = 'hour'
+          AND bucket_start_ms = 3600000
+        "#,
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("hour rollup");
+    assert_eq!(bucket.0, 2);
+    assert_eq!(bucket.1, 1);
+    assert_eq!(bucket.2, 1);
+    assert_eq!(bucket.3, 1);
+    let failure_counts: serde_json::Value =
+        serde_json::from_str(&bucket.4).expect("valid failure counts");
+    assert_eq!(failure_counts["timeout"], 1);
 }
 
 #[tokio::test]
 async fn rollup_repair_rebuilds_complete_buckets_for_narrow_dirty_ranges() {
     let mut connection = ready_connection().await;
     let retention = MonitoringRetentionRepository;
-    let statuses = MonitoringStatusQueryRepository;
     seed_target_result(
         &mut connection,
         "execution-a",
@@ -366,29 +317,31 @@ async fn rollup_repair_rebuilds_complete_buckets_for_narrow_dirty_ranges() {
         .await
         .expect("repair single result");
 
-    let buckets = statuses
-        .bucket_rollups(
-            &mut connection,
-            "monitor-1",
-            Some("key-1"),
-            "hour",
-            3_600_000,
-            7_200_000,
-        )
-        .await
-        .expect("bucket rollups");
-    assert_eq!(buckets.len(), 1);
-    assert_eq!(buckets[0].total_count, 2);
-    assert_eq!(buckets[0].available_count, 1);
-    assert_eq!(buckets[0].unavailable_count, 1);
-    assert_eq!(buckets[0].failure_counts.get("timeout"), Some(&1));
+    let bucket = sqlx::query_as::<_, (i64, i64, i64, String)>(
+        r#"
+        SELECT total_count, available_count, unavailable_count, failure_counts_json
+        FROM channel_monitor_bucket_rollups
+        WHERE monitor_id = 'monitor-1'
+          AND station_key_id = 'key-1'
+          AND bucket_kind = 'hour'
+          AND bucket_start_ms = 3600000
+        "#,
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("hour rollup");
+    assert_eq!(bucket.0, 2);
+    assert_eq!(bucket.1, 1);
+    assert_eq!(bucket.2, 1);
+    let failure_counts: serde_json::Value =
+        serde_json::from_str(&bucket.3).expect("valid failure counts");
+    assert_eq!(failure_counts["timeout"], 1);
 }
 
 #[tokio::test]
-async fn corrupt_failure_counts_mark_dirty_and_do_not_return_damaged_counts() {
+async fn corrupt_failure_counts_are_marked_dirty() {
     let mut connection = ready_connection().await;
     let retention = MonitoringRetentionRepository;
-    let statuses = MonitoringStatusQueryRepository;
     seed_target_result(
         &mut connection,
         "execution-a",
@@ -433,20 +386,30 @@ async fn corrupt_failure_counts_mark_dirty_and_do_not_return_damaged_counts() {
         "repair produced hour and day rollups, and both corrupt summaries are marked dirty"
     );
 
-    let buckets = statuses
-        .bucket_rollups(
-            &mut connection,
-            "monitor-1",
-            Some("key-1"),
-            "hour",
-            3_600_000,
-            7_200_000,
-        )
-        .await
-        .expect("read corrupt bucket");
-    assert!(buckets[0].corrupt_failure_counts);
-    assert!(buckets[0].dirty);
-    assert!(buckets[0].failure_counts.is_empty());
+    let bucket = sqlx::query_as::<_, (String, i64)>(
+        r#"
+        SELECT
+            br.failure_counts_json,
+            EXISTS (
+                SELECT 1
+                FROM channel_monitor_rollup_dirty_ranges dr
+                WHERE dr.monitor_id = br.monitor_id
+                  AND dr.station_key_id = br.station_key_id
+                  AND dr.range_start_ms < br.bucket_end_ms
+                  AND dr.range_end_ms > br.bucket_start_ms
+            ) AS dirty
+        FROM channel_monitor_bucket_rollups br
+        WHERE br.monitor_id = 'monitor-1'
+          AND br.station_key_id = 'key-1'
+          AND br.bucket_kind = 'hour'
+          AND br.bucket_start_ms = 3600000
+        "#,
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("corrupt hour rollup");
+    assert!(serde_json::from_str::<serde_json::Value>(&bucket.0).is_err());
+    assert_ne!(bucket.1, 0);
 }
 
 #[tokio::test]

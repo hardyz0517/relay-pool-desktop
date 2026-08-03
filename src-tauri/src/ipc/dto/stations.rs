@@ -436,7 +436,13 @@ impl From<Station> for StationDto {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const STATION_TYPE: TypeDescriptor = TypeDescriptor {
     name: "StationDto",
     typescript: r#"export type StationTypeInput = "sub2api" | "newapi";
@@ -496,7 +502,13 @@ export type StationDto = {
 };"#,
 };
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub(crate) fn fixture() -> StationDto {
     StationDto {
         id: "station-fixture".into(),

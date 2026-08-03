@@ -1,14 +1,8 @@
-use crate::application::request_finalization::failure::{
-    failure_from_provider_signal, CanonicalFailure, CapabilityApplicabilitySet,
-    ProviderErrorSemanticSignal,
-};
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RouteFailureKind {
     AuthError,
     InsufficientBalance,
     RateLimited,
-    ModelUnavailable,
     CapabilityMismatch,
     BadRequest,
     TemporaryNetwork,
@@ -172,24 +166,12 @@ pub(crate) fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRout
     }
 }
 
-pub(crate) fn classify_provider_semantic_signal(
-    signal: ProviderErrorSemanticSignal,
-    applicability: CapabilityApplicabilitySet,
-) -> CanonicalFailure {
-    failure_from_provider_signal(signal, applicability)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RoutePlanningFailure {
-    ConfigRequired,
-    PolicyRejected { code: &'static str },
-    EconomicsUnavailable,
     HealthUnavailable,
     CapacityExhausted,
     CandidateLimitExceeded { actual: usize, limit: usize },
-    FactsUnavailable,
     ConfigUnstable,
-    LifecycleUnavailable,
     DeadlineExceeded,
     InvariantViolation { code: &'static str },
 }
@@ -202,21 +184,6 @@ impl RoutePlanningFailure {
             planning_failure, FailureClass, FailureTarget, LocalAdapterComponent, RetryDisposition,
         };
         match self {
-            Self::ConfigRequired => planning_failure(
-                FailureClass::ConfigRequired,
-                FailureTarget::Request,
-                RetryDisposition::StopRequest,
-            ),
-            Self::PolicyRejected { .. } => planning_failure(
-                FailureClass::PolicyRejected,
-                FailureTarget::Request,
-                RetryDisposition::StopRequest,
-            ),
-            Self::EconomicsUnavailable => planning_failure(
-                FailureClass::EconomicsUnavailable,
-                FailureTarget::Request,
-                RetryDisposition::TryNextCandidate,
-            ),
             Self::HealthUnavailable => planning_failure(
                 FailureClass::HealthUnavailable,
                 FailureTarget::Request,
@@ -232,21 +199,9 @@ impl RoutePlanningFailure {
                 FailureTarget::Request,
                 RetryDisposition::StopRequest,
             ),
-            Self::FactsUnavailable => planning_failure(
-                FailureClass::FactsUnavailable,
-                FailureTarget::Request,
-                RetryDisposition::TryNextCandidate,
-            ),
             Self::ConfigUnstable => planning_failure(
                 FailureClass::ConfigUnstable,
                 FailureTarget::Request,
-                RetryDisposition::TryNextCandidate,
-            ),
-            Self::LifecycleUnavailable => planning_failure(
-                FailureClass::Lifecycle,
-                FailureTarget::LocalAdapter {
-                    component: LocalAdapterComponent::Lifecycle,
-                },
                 RetryDisposition::TryNextCandidate,
             ),
             Self::DeadlineExceeded => planning_failure(
@@ -266,15 +221,10 @@ impl RoutePlanningFailure {
 
     pub(crate) fn stable_code(&self) -> &'static str {
         match self {
-            Self::ConfigRequired => "routing_configuration_required",
-            Self::PolicyRejected { code } => code,
-            Self::EconomicsUnavailable => "route_economics_unavailable",
             Self::HealthUnavailable => "route_health_unavailable",
             Self::CapacityExhausted => "route_capacity_exhausted",
             Self::CandidateLimitExceeded { .. } => "route_candidate_limit_exceeded",
-            Self::FactsUnavailable => "route_facts_unavailable",
             Self::ConfigUnstable => "route_configuration_changed",
-            Self::LifecycleUnavailable => "route_lifecycle_unavailable",
             Self::DeadlineExceeded => "route_deadline_exceeded",
             Self::InvariantViolation { code } => code,
         }
@@ -343,11 +293,11 @@ mod tests {
     #[test]
     fn adapter_confirmed_model_not_found_can_update_capability_only_when_applicable() {
         use crate::application::request_finalization::failure::{
-            CapabilityApplicabilitySet, CapabilityEffect, FailureClass, HealthEffect,
-            ProviderErrorSemanticSignal,
+            failure_from_provider_signal, CapabilityApplicabilitySet, CapabilityEffect,
+            FailureClass, HealthEffect, ProviderErrorSemanticSignal,
         };
 
-        let confirmed = classify_provider_semantic_signal(
+        let confirmed = failure_from_provider_signal(
             ProviderErrorSemanticSignal::ConfirmedModelNotFound {
                 station_key_id: "key-a".to_string(),
                 model: "gpt-x".to_string(),
@@ -361,7 +311,7 @@ mod tests {
             CapabilityEffect::ConfirmUnsupportedModel { .. }
         ));
 
-        let blocked = classify_provider_semantic_signal(
+        let blocked = failure_from_provider_signal(
             ProviderErrorSemanticSignal::ConfirmedModelNotFound {
                 station_key_id: "key-a".to_string(),
                 model: "gpt-x".to_string(),

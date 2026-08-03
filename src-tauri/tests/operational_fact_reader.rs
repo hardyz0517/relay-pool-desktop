@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 use std::str::FromStr;
 
 use sqlx::{
@@ -127,10 +124,6 @@ mod operational_fact_assembler;
 
 mod application {
     pub(crate) mod operational_facts {
-        pub(crate) mod assembler {
-            pub(crate) use crate::operational_fact_assembler::*;
-        }
-
         pub(crate) use crate::models::operational::OperationalFactReadOptions;
         pub(crate) use crate::operational_fact_assembler::*;
     }

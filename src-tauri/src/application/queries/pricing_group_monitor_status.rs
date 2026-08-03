@@ -9,6 +9,7 @@ use crate::{
         canonicalize_group_refs, group_refs_hash, CanonicalGroupRef, MatchKind,
         PricingGroupMonitorReducerInput, PricingGroupMonitorStatusInput,
         PricingGroupMonitorStatusWorkspace, PricingGroupMonitorSummary, ResolutionState,
+        PRICING_GROUP_MONITORING_SCHEMA_VERSION,
     },
     persistence::{
         runtime::PersistenceHandle,
@@ -36,7 +37,7 @@ impl PricingGroupMonitorStatusQuery {
         &self,
         input: PricingGroupMonitorStatusInput,
     ) -> Result<PricingGroupMonitorStatusWorkspace, ApplicationError> {
-        if input.schema_version != 1
+        if input.schema_version != PRICING_GROUP_MONITORING_SCHEMA_VERSION
             || input.groups.len() > crate::models::pricing_group_monitoring::MAX_PRICING_GROUP_REFS
             || input.group_refs_hash.trim().is_empty()
         {
@@ -59,7 +60,7 @@ impl PricingGroupMonitorStatusQuery {
             .map(|group| summary_for_group(group, &refs, &rows, generated_at_ms))
             .collect::<Vec<_>>();
         Ok(PricingGroupMonitorStatusWorkspace {
-            schema_version: 1,
+            schema_version: PRICING_GROUP_MONITORING_SCHEMA_VERSION,
             generated_at_ms,
             group_refs_hash: input.group_refs_hash,
             requested_group_count: input.groups.len() as u32,

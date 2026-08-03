@@ -346,7 +346,13 @@ fn validate_secret_text(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const STATION_COLLECTOR_OPERATIONS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "StationCollectorOperationsDto",
     typescript: include_str!("station_collector_operations.typescript.txt"),

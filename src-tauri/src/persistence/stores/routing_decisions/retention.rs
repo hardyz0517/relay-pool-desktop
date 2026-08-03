@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::error::PersistenceError;

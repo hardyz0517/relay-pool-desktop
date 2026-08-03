@@ -15,7 +15,6 @@ use crate::{
     models::{
         credentials::{
             PersistStationSessionInput, ResolvedSession, SessionResolveStatus, StationCredentials,
-            StationSessionCredentialKind, UpdateStationSessionInput,
         },
         group_facts::{StationGroupBinding, BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE},
         provider_drafts::{
@@ -643,27 +642,6 @@ impl ProviderDraftService {
         })
     }
 
-    pub(crate) async fn update_session(
-        &self,
-        input: UpdateStationSessionInput,
-        expected_revision: i64,
-    ) -> Result<StationCredentials, ApplicationError> {
-        self.persist_session(
-            PersistStationSessionInput {
-                station_id: input.station_id,
-                access_token: input.access_token,
-                refresh_token: input.refresh_token,
-                cookie: input.cookie,
-                newapi_user_id: input.newapi_user_id,
-                token_expires_at: input.token_expires_at,
-                session_expires_at: None,
-                session_source: "draft_collection".to_string(),
-            },
-            expected_revision,
-        )
-        .await
-    }
-
     pub(crate) async fn persist_session(
         &self,
         input: PersistStationSessionInput,
@@ -706,26 +684,6 @@ impl ProviderDraftService {
             })
             .await?;
         self.credentials_projection(&draft.id).await
-    }
-
-    pub(crate) async fn invalidate_session_credential(
-        &self,
-        draft_id: &str,
-        kind: StationSessionCredentialKind,
-    ) -> Result<(), ApplicationError> {
-        let kind = match kind {
-            StationSessionCredentialKind::AccessToken => "access_token",
-            StationSessionCredentialKind::RefreshToken => "refresh_token",
-            StationSessionCredentialKind::Cookie => "cookie",
-        };
-        let drafts = self.drafts;
-        let draft_id = draft_id.to_string();
-        self.runtime
-            .write(|write| {
-                Box::pin(async move { drafts.delete_secret(write, &draft_id, kind).await })
-            })
-            .await
-            .map_err(Into::into)
     }
 
     pub(crate) async fn list_keys(

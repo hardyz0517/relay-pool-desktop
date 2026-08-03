@@ -473,7 +473,13 @@ fn validate_optional_json(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const COLLECTOR_FACTS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "CollectorFactsDto",
     typescript: include_str!("collector_facts.typescript.txt"),

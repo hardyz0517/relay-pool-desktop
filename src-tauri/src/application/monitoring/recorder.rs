@@ -83,18 +83,6 @@ pub(crate) struct BufferedMonitoringRecorder {
 }
 
 impl BufferedMonitoringRecorder {
-    pub(crate) fn with_existing_manual(
-        idempotency_key: impl Into<String>,
-        receipt: MonitorExecutionReceipt,
-    ) -> Self {
-        let mut existing_manual = std::collections::BTreeMap::new();
-        existing_manual.insert(idempotency_key.into(), receipt);
-        Self {
-            existing_manual,
-            execution: None,
-        }
-    }
-
     pub(crate) fn into_execution(self) -> Option<BufferedExecution> {
         self.execution
     }

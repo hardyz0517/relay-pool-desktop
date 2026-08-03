@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use super::runtime_metrics::RuntimeModelClass;
@@ -156,6 +154,7 @@ impl AffinityRegistry {
         before.saturating_sub(self.entries.len())
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }

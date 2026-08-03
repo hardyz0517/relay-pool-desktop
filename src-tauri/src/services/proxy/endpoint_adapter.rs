@@ -280,23 +280,31 @@ fn parse_json_body(body: &Bytes) -> Result<Value, ProxyFailure> {
 }
 
 fn invalid_body_failure(message: impl Into<String>) -> ProxyFailure {
-    ProxyFailure::new(
+    let mut failure = ProxyFailure::new(
         ProxyFailureCode::RequestBodyInvalid,
         FailureSource::Local,
         RetryClass::Never,
         StatusCode::BAD_REQUEST,
         message,
-    )
+    );
+    if let Some(canonical) = endpoint_adapter_error_semantic(failure.code) {
+        failure.internal_detail = Some(canonical.public.code.as_str().to_string());
+    }
+    failure
 }
 
 fn responses_chat_fallback_failure(message: impl Into<String>) -> ProxyFailure {
-    ProxyFailure::new(
+    let mut failure = ProxyFailure::new(
         ProxyFailureCode::ResponsesChatFallbackIncompatible,
         FailureSource::Routing,
         RetryClass::Never,
         StatusCode::BAD_REQUEST,
         message,
-    )
+    );
+    if let Some(canonical) = endpoint_adapter_error_semantic(failure.code) {
+        failure.internal_detail = Some(canonical.public.code.as_str().to_string());
+    }
+    failure
 }
 
 pub(crate) fn endpoint_adapter_error_semantic(code: ProxyFailureCode) -> Option<CanonicalFailure> {

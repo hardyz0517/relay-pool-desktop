@@ -15,7 +15,6 @@ pub(crate) enum DataCategory {
     CoreData,
     History,
     SessionCredentials,
-    LocalProxyAccessKey,
     DeviceRuntimeState,
     ProviderDrafts,
 }
@@ -92,10 +91,6 @@ pub(crate) enum CatalogError {
     UnexpectedColumn { table: String, column: String },
     #[error("portable migration catalog is missing a sensitive field rule")]
     MissingSensitiveFieldRule { table: String, column: String },
-    #[error("portable migration setting key is not declared")]
-    UnknownSettingKey(String),
-    #[error("portable migration secret selector is not declared")]
-    UnknownSecretSelector { scope: String, kind: String },
 }
 
 pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 43;
@@ -156,10 +151,6 @@ pub(crate) fn secret_policy(scope: &str, kind: &str) -> Option<SecretPolicy> {
     }
 }
 
-pub(crate) fn app_secret_binding_policy(scope: &str, kind: &str) -> Option<SecretPolicy> {
-    secret_policy(scope, kind)
-}
-
 pub(crate) fn validate_schema_snapshot(actual: &[(&str, &[&str])]) -> Result<(), CatalogError> {
     validate_no_duplicate_tables()?;
     let declared_names = TABLES
@@ -204,20 +195,6 @@ pub(crate) fn validate_table_columns(
         });
     }
     Ok(())
-}
-
-pub(crate) fn validate_setting_key(key: &str) -> Result<SettingPolicy, CatalogError> {
-    setting_policy(key).ok_or_else(|| CatalogError::UnknownSettingKey(key.to_string()))
-}
-
-pub(crate) fn validate_secret_selector(
-    scope: &str,
-    kind: &str,
-) -> Result<SecretPolicy, CatalogError> {
-    secret_policy(scope, kind).ok_or_else(|| CatalogError::UnknownSecretSelector {
-        scope: scope.to_string(),
-        kind: kind.to_string(),
-    })
 }
 
 fn validate_no_duplicate_tables() -> Result<(), CatalogError> {
@@ -1913,19 +1890,16 @@ mod tests {
 
     #[test]
     fn setting_and_secret_allowlists_fail_closed() {
+        assert_eq!(setting_policy("local_key"), Some(SettingPolicy::Reset));
+        assert_eq!(setting_policy("future_setting"), None);
         assert_eq!(
-            validate_setting_key("local_key").unwrap(),
-            SettingPolicy::Reset
-        );
-        assert!(validate_setting_key("future_setting").is_err());
-        assert_eq!(
-            validate_secret_selector("station_key", "api_key").unwrap(),
-            SecretPolicy::IncludeAndRekey
+            secret_policy("station_key", "api_key"),
+            Some(SecretPolicy::IncludeAndRekey)
         );
         assert_eq!(
-            validate_secret_selector("application", "local_proxy_access_key").unwrap(),
-            SecretPolicy::ExcludeAndRegenerate
+            secret_policy("application", "local_proxy_access_key"),
+            Some(SecretPolicy::ExcludeAndRegenerate)
         );
-        assert!(validate_secret_selector("station_key", "future_secret").is_err());
+        assert_eq!(secret_policy("station_key", "future_secret"), None);
     }
 }

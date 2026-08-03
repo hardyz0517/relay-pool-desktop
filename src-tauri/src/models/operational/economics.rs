@@ -2,12 +2,16 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use super::provenance::FactProvenance;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EconomicsValidationError {
+    #[cfg(test)]
     InvalidCurrency(String),
+    #[cfg(test)]
     InvalidUnit(String),
+    #[cfg(test)]
     InvalidMoney(f64),
     InvalidMultiplier(f64),
     InvalidConfidence(f64),
@@ -16,8 +20,11 @@ pub enum EconomicsValidationError {
 impl fmt::Display for EconomicsValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(test)]
             Self::InvalidCurrency(value) => write!(formatter, "unsupported currency code: {value}"),
+            #[cfg(test)]
             Self::InvalidUnit(value) => write!(formatter, "unsupported pricing unit: {value}"),
+            #[cfg(test)]
             Self::InvalidMoney(value) => write!(
                 formatter,
                 "money must be finite and non-negative, got {value}"
@@ -41,8 +48,10 @@ impl fmt::Display for EconomicsValidationError {
 impl std::error::Error for EconomicsValidationError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct CurrencyCode(String);
 
+#[cfg(test)]
 impl CurrencyCode {
     pub fn new(value: impl Into<String>) -> Result<Self, EconomicsValidationError> {
         let value = value.into();
@@ -62,12 +71,14 @@ impl CurrencyCode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub enum PricingUnit {
     InputToken,
     OutputToken,
     Request,
 }
 
+#[cfg(test)]
 impl TryFrom<&str> for PricingUnit {
     type Error = EconomicsValidationError;
 
@@ -82,8 +93,10 @@ impl TryFrom<&str> for PricingUnit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct MoneyAmount(f64);
 
+#[cfg(test)]
 impl MoneyAmount {
     pub fn new(value: f64) -> Result<Self, EconomicsValidationError> {
         if !value.is_finite() || value < 0.0 {
@@ -98,11 +111,13 @@ impl MoneyAmount {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct Money {
     amount: MoneyAmount,
     currency: CurrencyCode,
 }
 
+#[cfg(test)]
 impl Money {
     pub fn new(amount: MoneyAmount, currency: CurrencyCode) -> Self {
         Self { amount, currency }
@@ -157,6 +172,7 @@ pub enum BalanceScope {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct BalanceFacts {
     balance: Money,
     low_balance_threshold: Money,
@@ -164,6 +180,7 @@ pub struct BalanceFacts {
     provenance: FactProvenance,
 }
 
+#[cfg(test)]
 impl BalanceFacts {
     pub fn new(
         balance: Money,
@@ -197,6 +214,7 @@ impl BalanceFacts {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
 pub enum RequestCostBasis {
     ExactUsagePrice,
     MultiplierProxy,
@@ -204,6 +222,7 @@ pub enum RequestCostBasis {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct RequestPricingAssessment {
     basis: RequestCostBasis,
     unit: PricingUnit,
@@ -212,6 +231,7 @@ pub struct RequestPricingAssessment {
     provenance: FactProvenance,
 }
 
+#[cfg(test)]
 impl RequestPricingAssessment {
     pub fn new(
         basis: RequestCostBasis,

@@ -47,9 +47,8 @@ use crate::{
         proxy::{ProxyStatus, RequestLog},
         routing::{
             ModelAlias, RouteCandidateExplanation, RouteEndpointKind, RouteSimulationInput,
-            RouteSimulationResult, RoutingGroupFilter, RoutingProxyDefaults,
-            RuntimeRoutingCandidate, RuntimeRoutingSettings, StationKeyHealth,
-            UpsertModelAliasInput,
+            RouteSimulationResult, RoutingGroupFilter, RuntimeRoutingCandidate,
+            RuntimeRoutingSettings, StationKeyHealth, UpsertModelAliasInput,
         },
         settings::AppSettings,
         stations::StationEndpointHealth,
@@ -276,16 +275,6 @@ impl RoutingService {
             }
         }
         Ok(unavailable_operational_detail(station_key_id))
-    }
-
-    pub(crate) async fn load_proxy_defaults(
-        &self,
-    ) -> Result<RoutingProxyDefaults, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .load_proxy_defaults(&mut read)
-            .await
-            .map_err(Into::into)
     }
 
     pub(crate) async fn list_model_alias_pairs(

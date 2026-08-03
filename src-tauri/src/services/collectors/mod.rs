@@ -44,10 +44,7 @@ use crate::{
     },
     models::{
         collector::{CollectorRunResult, StationLoginTestInput, StationLoginTestResult},
-        credentials::{
-            PersistStationSessionInput, ResolvedSession, StationCredentials,
-            StationSessionCredentialKind, UpdateStationSessionInput,
-        },
+        credentials::{PersistStationSessionInput, ResolvedSession, StationCredentials},
         group_facts::StationGroupBinding,
         settings::AppSettings,
         station_keys::StationKey,
@@ -76,21 +73,11 @@ pub(crate) trait CollectorSourcePort: Send + Sync {
         station_id: String,
         now_ms: i64,
     ) -> Result<ResolvedSession, String>;
-    fn update_station_session(
-        &self,
-        input: UpdateStationSessionInput,
-        expected_revision: i64,
-    ) -> Result<StationCredentials, String>;
     fn persist_station_session<'a>(
         &'a self,
         input: PersistStationSessionInput,
         expected_revision: i64,
     ) -> BoxFuture<'a, Result<StationCredentials, String>>;
-    fn invalidate_station_session_credential(
-        &self,
-        station_id: &str,
-        kind: StationSessionCredentialKind,
-    ) -> Result<(), String>;
     fn list_station_group_bindings(
         &self,
         station_id: String,
@@ -169,18 +156,6 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
             .map_err(application_error)
     }
 
-    fn update_station_session(
-        &self,
-        input: UpdateStationSessionInput,
-        expected_revision: i64,
-    ) -> Result<StationCredentials, String> {
-        tauri::async_runtime::block_on(
-            self.credentials
-                .update_station_session_if_revision(input, expected_revision),
-        )
-        .map_err(application_error)
-    }
-
     fn persist_station_session<'a>(
         &'a self,
         input: PersistStationSessionInput,
@@ -194,18 +169,6 @@ impl CollectorSourcePort for V2CollectorSourceAdapter {
                 .map_err(application_error)
         }
         .boxed()
-    }
-
-    fn invalidate_station_session_credential(
-        &self,
-        station_id: &str,
-        kind: StationSessionCredentialKind,
-    ) -> Result<(), String> {
-        tauri::async_runtime::block_on(
-            self.credentials
-                .invalidate_station_session_credential(station_id.to_string(), kind),
-        )
-        .map_err(application_error)
     }
 
     fn list_station_group_bindings(
@@ -1483,12 +1446,6 @@ fn driver_output_to_adapter_output(
     task: CollectorTask,
     output: contract::DriverOutput,
 ) -> AdapterOutput {
-    let model_names = output
-        .facts
-        .models
-        .iter()
-        .map(|model| model.model.clone())
-        .collect::<Vec<_>>();
     let endpoint_results = output
         .evidence
         .iter()
@@ -1544,7 +1501,7 @@ fn driver_output_to_adapter_output(
             "balanceCount": balance_count,
             "groupCount": group_count,
             "rateCount": rate_count,
-            "modelCount": model_names.len(),
+            "modelCount": 0,
         }),
         normalized_json: json!({
             "balanceCount": balance_count,
@@ -1552,7 +1509,7 @@ fn driver_output_to_adapter_output(
             "rateCount": rate_count,
             "groups": groups,
             "rateMultipliers": rate_multipliers,
-            "models": model_names,
+            "models": [],
         }),
         raw_json_redacted: output.diagnostics.raw_json_redacted,
         error_code: None,
@@ -1759,7 +1716,6 @@ mod tests {
         assert!(full.facts.balances.is_empty());
         assert!(full.facts.groups.is_empty());
         assert!(full.facts.rates.is_empty());
-        assert!(full.facts.models.is_empty());
     }
 
     #[test]

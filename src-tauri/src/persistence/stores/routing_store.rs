@@ -7,10 +7,10 @@ use crate::{
         pricing::BalanceSnapshot,
         proxy::UpstreamApiFormat,
         routing::{
-            ModelAlias, RoutingGroupFilter, RoutingPolicy, RoutingProxyDefaults,
-            RuntimeRoutingBalance, RuntimeRoutingCandidate, RuntimeRoutingEconomicSnapshot,
-            RuntimeRoutingSecret, RuntimeRoutingSettings, SchedulerAdvancedSettings,
-            StationKeyCapabilities, StationKeyHealth, UpsertModelAliasInput,
+            ModelAlias, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingBalance,
+            RuntimeRoutingCandidate, RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret,
+            RuntimeRoutingSettings, SchedulerAdvancedSettings, StationKeyCapabilities,
+            StationKeyHealth, UpsertModelAliasInput,
         },
         stations::StationEndpointHealth,
     },
@@ -286,38 +286,6 @@ impl RoutingStore {
             .into_iter()
             .map(row_to_operational_monitoring_target_snapshot)
             .collect())
-    }
-
-    pub(crate) async fn load_proxy_defaults(
-        &self,
-        read: &mut ReadSession,
-    ) -> Result<RoutingProxyDefaults, PersistenceError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT key, value
-            FROM settings
-            WHERE key IN ('collector_proxy_mode', 'collector_proxy_url')
-            "#,
-        )
-        .fetch_all(read.connection())
-        .await?;
-        let mut collector_proxy_mode = "direct".to_string();
-        let mut collector_proxy_url = None;
-        for row in rows {
-            let key: String = row.get("key");
-            let value: String = row.get("value");
-            match key.as_str() {
-                "collector_proxy_mode" => collector_proxy_mode = value,
-                "collector_proxy_url" => {
-                    collector_proxy_url = Some(value).filter(|value| !value.trim().is_empty());
-                }
-                _ => {}
-            }
-        }
-        Ok(RoutingProxyDefaults {
-            collector_proxy_mode,
-            collector_proxy_url,
-        })
     }
 
     pub(crate) async fn list_model_alias_pairs(

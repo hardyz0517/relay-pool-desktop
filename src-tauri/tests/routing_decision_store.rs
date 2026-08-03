@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod persistence {
     pub(crate) mod error {
         #[derive(Debug, thiserror::Error)]
@@ -128,13 +126,11 @@ async fn writer_truncates_candidate_details_but_keeps_summary_and_priority_repre
     let pool = test_pool().await;
     let mut connection = connection(&pool).await;
     let candidates = (0..40).map(candidate).collect::<Vec<_>>();
+    let mut decision = decision("decision-a", 10_000, candidates);
+    decision.trace_status = RoutingTraceStatus::TraceIncomplete;
 
     let outcome = RoutingDecisionWriter
-        .upsert_decision(
-            &mut connection,
-            &decision("decision-a", 10_000, candidates),
-            10_001,
-        )
+        .upsert_decision(&mut connection, &decision, 10_001)
         .await
         .expect("write");
 
@@ -155,6 +151,7 @@ async fn writer_truncates_candidate_details_but_keeps_summary_and_priority_repre
     );
     assert!(page.rows[0].candidate_detail_truncated);
     assert_eq!(page.rows[0].rejection_counts["health_hard_reject"], 12);
+    assert_eq!(page.rows[0].trace_status, "trace_incomplete");
 
     let details = RoutingDecisionQueries
         .list_candidate_details(&mut connection, "decision-a", 64)

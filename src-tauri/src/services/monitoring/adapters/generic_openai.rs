@@ -21,10 +21,6 @@ impl GenericOpenAiAdapter {
 }
 
 impl ProtocolAdapter for GenericOpenAiAdapter {
-    fn protocol_kind(&self) -> ProtocolKind {
-        ProtocolKind::GenericOpenAi
-    }
-
     fn request_descriptor(&self) -> RequestDescriptor {
         RequestDescriptor {
             method: "POST".to_string(),

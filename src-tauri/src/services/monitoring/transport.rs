@@ -6,12 +6,15 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     models::monitoring::FailureKind,
     outbound::{
-        AsyncOutboundClient, AsyncOutboundClientConfig, OutboundFailure, OutboundFailureKind,
-        OutboundHeaderPolicy, OutboundHeaders, OutboundRequest, OutboundRetryPolicy, ProxyPolicy,
-        RequestBudget, SecretHeaderValue, TimeoutPolicy,
+        AsyncOutboundClient, OutboundFailure, OutboundFailureKind, OutboundHeaderPolicy,
+        OutboundHeaders, OutboundRequest, OutboundRetryPolicy, ProxyPolicy, RequestBudget,
+        SecretHeaderValue,
     },
     services::monitoring::adapters::contract::RequestDescriptor,
 };
+
+#[cfg(test)]
+use crate::outbound::{AsyncOutboundClientConfig, TimeoutPolicy};
 
 #[derive(Clone)]
 pub struct MonitoringTransport {
@@ -23,13 +26,18 @@ pub struct MonitoringTransport {
 pub struct MonitoringTransportConfig {
     pub base_url: String,
     pub proxy: ProxyPolicy,
+    #[cfg(test)]
     pub timeouts: TimeoutPolicy,
+    #[cfg(test)]
     pub success_body_max_bytes: usize,
+    #[cfg(test)]
     pub error_body_max_bytes: usize,
+    #[cfg(test)]
     pub redirect_max_hops: usize,
 }
 
 impl MonitoringTransportConfig {
+    #[cfg(test)]
     pub fn loopback_test(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -66,14 +74,19 @@ pub struct MonitoringTransportResponse {
     pub http_status: u16,
     pub content_type: Option<String>,
     pub body: Vec<u8>,
+    #[cfg(test)]
     pub first_headers_latency_ms: u64,
+    #[cfg(test)]
     pub first_content_latency_ms: u64,
     pub total_latency_ms: u64,
+    #[cfg(test)]
     pub response_bytes: usize,
+    #[cfg(test)]
     pub evidence: MonitoringRequestEvidence,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub struct MonitoringRequestEvidence {
     pub method: String,
     pub relative_path: String,
@@ -111,6 +124,7 @@ pub enum MonitoringTransportFailureKind {
 }
 
 impl MonitoringTransport {
+    #[cfg(test)]
     pub fn new(config: MonitoringTransportConfig) -> Self {
         let client = AsyncOutboundClient::new(AsyncOutboundClientConfig {
             timeouts: config.timeouts.clone(),
@@ -128,6 +142,7 @@ impl MonitoringTransport {
         Self { client, config }
     }
 
+    #[cfg(test)]
     pub fn client_metrics(&self) -> crate::outbound::OutboundClientMetrics {
         self.client.metrics()
     }
@@ -150,15 +165,20 @@ impl MonitoringTransport {
             .get(http::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
+        #[cfg(test)]
         let response_bytes = response.body.len();
         Ok(MonitoringTransportResponse {
             http_status: response.status.as_u16(),
             content_type,
             body: response.body.to_vec(),
+            #[cfg(test)]
             first_headers_latency_ms: total_latency_ms,
+            #[cfg(test)]
             first_content_latency_ms: total_latency_ms,
             total_latency_ms,
+            #[cfg(test)]
             response_bytes,
+            #[cfg(test)]
             evidence: MonitoringRequestEvidence {
                 method: request.descriptor.method,
                 relative_path: request.descriptor.path,
@@ -205,10 +225,14 @@ impl MonitoringTransport {
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string),
             body,
+            #[cfg(test)]
             first_headers_latency_ms: total_latency_ms,
+            #[cfg(test)]
             first_content_latency_ms: total_latency_ms,
             total_latency_ms,
+            #[cfg(test)]
             response_bytes: stream_response.body_bytes,
+            #[cfg(test)]
             evidence: MonitoringRequestEvidence {
                 method: request.descriptor.method,
                 relative_path: request.descriptor.path,

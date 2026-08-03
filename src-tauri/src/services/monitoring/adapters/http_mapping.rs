@@ -1,14 +1,4 @@
-use serde_json::Value;
-
-use crate::{
-    models::monitoring::{FailureKind, ProtocolKind},
-    services::monitoring::{
-        adapters::contract::{
-            extract_text_fields, validate_output_text, ParsedProbeResponse, ResponseLimits,
-        },
-        challenge::ChallengeValidator,
-    },
-};
+use crate::models::monitoring::FailureKind;
 
 pub fn classify_http_status(status: u16) -> Option<FailureKind> {
     match status {
@@ -22,6 +12,7 @@ pub fn classify_http_status(status: u16) -> Option<FailureKind> {
     }
 }
 
+#[cfg(test)]
 pub fn parse_json_probe_response(
     protocol_kind: ProtocolKind,
     status: u16,
@@ -95,6 +86,19 @@ pub fn parse_json_probe_response(
         limits,
     )
 }
+
+#[cfg(test)]
+use crate::{
+    models::monitoring::ProtocolKind,
+    services::monitoring::{
+        adapters::contract::{
+            extract_text_fields, validate_output_text, ParsedProbeResponse, ResponseLimits,
+        },
+        challenge::ChallengeValidator,
+    },
+};
+#[cfg(test)]
+use serde_json::Value;
 
 #[cfg(test)]
 mod tests {

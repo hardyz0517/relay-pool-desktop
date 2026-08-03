@@ -27,10 +27,6 @@ impl AnthropicMessagesAdapter {
 }
 
 impl ProtocolAdapter for AnthropicMessagesAdapter {
-    fn protocol_kind(&self) -> ProtocolKind {
-        ProtocolKind::AnthropicMessages
-    }
-
     fn request_descriptor(&self) -> RequestDescriptor {
         RequestDescriptor {
             method: "POST".to_string(),

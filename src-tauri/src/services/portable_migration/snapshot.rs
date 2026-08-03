@@ -1,8 +1,10 @@
 use std::{
-    ffi::OsString,
     fs,
     path::{Path, PathBuf},
 };
+
+#[cfg(test)]
+use std::ffi::OsString;
 
 use chrono::{SecondsFormat, Utc};
 use tokio_util::sync::CancellationToken;
@@ -25,6 +27,7 @@ pub(crate) enum PortableSnapshotError {
     #[error("portable migration snapshot parent is invalid")]
     InvalidParent,
     #[error("portable migration direct file copy is unsafe for live WAL databases")]
+    #[cfg(test)]
     UnsafeDirectCopy,
     #[error("portable migration snapshot I/O failed")]
     Io,
@@ -67,6 +70,7 @@ pub(crate) async fn create_consistent_snapshot(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn reject_direct_sqlite_copy_source(
     source_path: &Path,
 ) -> Result<(), PortableSnapshotError> {
@@ -90,6 +94,7 @@ pub(crate) fn remove_snapshot_file(path: &Path) -> Result<(), PortableSnapshotEr
     Ok(())
 }
 
+#[cfg(test)]
 fn sqlite_sidecar_path(path: &Path, suffix: &str) -> Result<PathBuf, PortableSnapshotError> {
     let file_name = path
         .file_name()

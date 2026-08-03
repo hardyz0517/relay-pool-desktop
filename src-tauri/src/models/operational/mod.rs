@@ -1,42 +1,57 @@
 #![allow(unused_imports)]
-#![allow(dead_code)]
 
 pub mod capability;
 pub mod economics;
 pub mod health;
 pub mod identity;
 pub mod provenance;
+#[cfg(test)]
 pub(crate) mod raw_facts;
 
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
 
+pub use capability::CapabilityVerdict;
+#[cfg(test)]
 pub use capability::{
-    CapabilityDimension, CapabilityEvidence, CapabilityVerdict, RequestModelCapabilityAssessment,
+    CapabilityDimension, CapabilityEvidence, RequestModelCapabilityAssessment,
     StationKeyCapabilityFacts,
 };
+#[cfg(test)]
 pub use economics::{
-    BalanceFacts, BalanceScope, CurrencyCode, EconomicsValidationError, Money, MoneyAmount,
-    PriceConfidence, PricingUnit, RateMultiplier, RequestCostBasis, RequestPricingAssessment,
+    BalanceFacts, CurrencyCode, Money, MoneyAmount, PricingUnit, RequestCostBasis,
+    RequestPricingAssessment,
 };
+pub use economics::{BalanceScope, EconomicsValidationError, PriceConfidence, RateMultiplier};
+#[cfg(not(test))]
+pub use health::HealthState;
+#[cfg(test)]
 pub use health::{
     EndpointHealthFact, EndpointHealthTarget, HealthFact, HealthState, ModelHealthFact,
     ModelHealthTarget, StationAccountHealthFact, StationAccountHealthTarget, StationKeyHealthFact,
     StationKeyHealthTarget,
 };
+#[cfg(test)]
 pub use identity::{
-    EndpointFacts, EndpointId, EndpointRef, EndpointRevision, EvidenceHash, ModelName,
-    OperationalValidationError, OutboundPolicyRef, RecordRevision, SanitizedOrigin,
-    StationAccountRef, StationId, StationKeyId, UnixMillis,
+    EndpointFacts, EvidenceHash, OutboundPolicyRef, SanitizedOrigin, StationAccountRef,
 };
-pub use provenance::{
-    EvidenceConfidence, EvidenceCoverage, EvidenceFreshness, EvidenceSource, FactProvenance,
+pub use identity::{
+    EndpointId, EndpointRef, EndpointRevision, ModelName, OperationalValidationError,
+    RecordRevision, StationId, StationKeyId, UnixMillis,
 };
+pub use provenance::{EvidenceConfidence, EvidenceCoverage};
+#[cfg(test)]
+pub use provenance::{EvidenceFreshness, EvidenceSource, FactProvenance};
+#[cfg(test)]
+pub(crate) use raw_facts::MAX_OPERATIONAL_CANDIDATES;
+#[cfg(test)]
 pub(crate) use raw_facts::{
     OperationalFactReadOptions, RawOperationalCandidateRow, RawOperationalFactRows,
-    RawOperationalModelAliasRow, RawOperationalSettingRow, MAX_OPERATIONAL_CANDIDATES,
+    RawOperationalModelAliasRow, RawOperationalSettingRow,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg(test)]
 pub struct StationKeyOperationalFacts {
     station_key_id: StationKeyId,
     station_id: StationId,
@@ -49,6 +64,7 @@ pub struct StationKeyOperationalFacts {
     endpoint_health: EndpointHealthFact,
 }
 
+#[cfg(test)]
 impl StationKeyOperationalFacts {
     #[allow(clippy::too_many_arguments)]
     pub fn new(

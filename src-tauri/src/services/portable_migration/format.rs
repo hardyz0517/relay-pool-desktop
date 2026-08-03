@@ -173,6 +173,7 @@ impl fmt::Debug for TransportKeyMaterial {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct ParsedPortablePayload {
     pub(crate) manifest: PortableMigrationManifest,
@@ -239,6 +240,7 @@ pub(crate) fn parse_manifest(
     manifest_from_value(value, expected_record_count_keys, limits)
 }
 
+#[cfg(test)]
 pub(crate) fn read_framed_payload<R: Read>(
     mut reader: R,
     expected_record_count_keys: &[&str],

@@ -27,10 +27,6 @@ impl GeminiNativeAdapter {
 }
 
 impl ProtocolAdapter for GeminiNativeAdapter {
-    fn protocol_kind(&self) -> ProtocolKind {
-        ProtocolKind::GeminiNative
-    }
-
     fn request_descriptor(&self) -> RequestDescriptor {
         RequestDescriptor {
             method: "POST".to_string(),

@@ -33,7 +33,9 @@ use crate::{
     },
 };
 
-use super::{crypto, DeviceKeyId, DeviceKeyResolver, SecretKeyMaterial};
+use super::{crypto, DeviceKeyResolver};
+#[cfg(test)]
+use super::{DeviceKeyId, SecretKeyMaterial};
 
 pub(crate) const PRE_BASELINE_SCHEMA_VERSION: i64 = schema_registry::PRE_SECRET_BASELINE_SCHEMA;
 pub(crate) const ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION: i64 =
@@ -53,6 +55,7 @@ pub(crate) struct BaselineConversionReport {
     pub(crate) backup_path: Option<PathBuf>,
 }
 
+#[cfg(test)]
 pub(crate) fn resolver_from_parts(key_id: impl Into<String>, key: [u8; 32]) -> DeviceKeyResolver {
     DeviceKeyResolver::active(
         DeviceKeyId::new(key_id),

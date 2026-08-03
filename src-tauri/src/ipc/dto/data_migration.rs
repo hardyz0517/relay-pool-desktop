@@ -38,11 +38,7 @@ pub struct PortableMigrationCapabilityDto {
 pub enum PortableMigrationBlockedReasonDto {
     SecurityPolicyNotApproved,
     UnsupportedPlatform,
-    SecurityBaselineIncomplete,
-    CredentialStoreKeyMissing,
-    CredentialStoreUnavailable,
     DataStoreNotWritable,
-    MaintenanceInProgress,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -459,7 +455,6 @@ pub enum PortableImportRecoveryStateDto {
 #[serde(rename_all = "snake_case")]
 pub enum PortableImportRecoveryReasonCodeDto {
     ActivationValidationFailed,
-    AtomicReplaceFailed,
     JournalInvalid,
     ArtifactIdentityMismatch,
     RollbackValidationFailed,

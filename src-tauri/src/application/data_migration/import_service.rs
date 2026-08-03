@@ -17,10 +17,7 @@ use crate::{
         },
     },
     background_tasks::{OperationId, OperationRegistry},
-    persistence::{
-        runtime::{ActivationFreezeEvidence, PersistenceRuntime},
-        validate_read_only_sqlite,
-    },
+    persistence::{runtime::PersistenceRuntime, validate_read_only_sqlite},
     services::portable_migration::{
         activation_journal::{
             rollback_path_for_active, write_prepared_journal, PortableActivationArtifact,
@@ -43,6 +40,9 @@ use crate::{
         station_collectors::StationCollectorRunnerState,
     },
 };
+
+#[cfg(test)]
+use crate::persistence::runtime::ActivationFreezeEvidence;
 
 const FAILURE_BACKOFF_THRESHOLD: u8 = 5;
 const FAILURE_BACKOFF: Duration = Duration::from_secs(60);
@@ -69,14 +69,6 @@ impl DataMigrationImportService {
         }
     }
 
-    pub(crate) async fn inspect_portable_package(
-        &self,
-        request: PortableImportInspectionRequest,
-    ) -> Result<ImportInspectionHandle, DataMigrationImportError> {
-        self.inspect_portable_package_with_options(request, AgeEnvelopeOptions::CURRENT, None)
-            .await
-    }
-
     pub(crate) async fn inspect_portable_package_with_inspection_id(
         &self,
         request: PortableImportInspectionRequest,
@@ -90,6 +82,7 @@ impl DataMigrationImportService {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn prepare_portable_import(
         &self,
         request: PortableImportPrepareRequest,
@@ -105,27 +98,6 @@ impl DataMigrationImportService {
             .inspections
             .consume(&request.inspected_import_id, request.now)?;
         build_target_from_inspection(&import_lease, &request).await
-    }
-
-    pub(crate) async fn prepare_portable_import_for_activation(
-        &self,
-        request: PortableImportActivationPrepareRequest,
-        runtime: &PersistenceRuntime,
-        operations: &OperationRegistry,
-        runner: Option<&StationCollectorRunnerState>,
-        proxy: Option<&ProxyRuntimeState>,
-    ) -> Result<PortableImportActivationPrepareResult, DataMigrationImportError> {
-        self.prepare_portable_import_for_activation_with_faults(
-            request,
-            runtime,
-            operations,
-            runner,
-            proxy,
-            &NoPortableActivationFaults,
-            None,
-            None,
-        )
-        .await
     }
 
     pub(crate) async fn prepare_portable_import_for_activation_with_import_id(
@@ -203,6 +175,8 @@ impl DataMigrationImportService {
                 request.freeze_deadline,
             )
             .await?;
+        #[cfg(not(test))]
+        let _ = &freeze;
         let active_after = identity_for_path(&request.import.active_database_path)?;
         let active_stable = identity_for_path(&request.import.active_database_path)?;
         faults.check(PortableActivationStep::AfterFreeze)?;
@@ -247,7 +221,9 @@ impl DataMigrationImportService {
                 Ok(PortableImportActivationPrepareResult {
                     restart_required: true,
                     artifact,
+                    #[cfg(test)]
                     backup_path: backup.backup_path,
+                    #[cfg(test)]
                     freeze,
                 })
             }
@@ -381,7 +357,9 @@ pub(crate) struct PortableImportActivationPrepareRequest {
 pub(crate) struct PortableImportActivationPrepareResult {
     pub(crate) restart_required: bool,
     pub(crate) artifact: PortableImportPrepareArtifact,
+    #[cfg(test)]
     pub(crate) backup_path: PathBuf,
+    #[cfg(test)]
     pub(crate) freeze: ActivationFreezeEvidence,
 }
 
@@ -983,7 +961,7 @@ mod tests {
         let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
 
         let result = service
-            .prepare_portable_import_for_activation(
+            .prepare_portable_import_for_activation_with_import_id(
                 activation_request(
                     &handle,
                     &active,
@@ -992,6 +970,8 @@ mod tests {
                     PortableImportMode::RestoreIntoEmpty,
                     "",
                 ),
+                uuid::Uuid::now_v7().to_string(),
+                None,
                 &runtime,
                 &operations,
                 None,
@@ -1039,7 +1019,7 @@ mod tests {
         let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
 
         let error = service
-            .prepare_portable_import_for_activation(
+            .prepare_portable_import_for_activation_with_import_id(
                 activation_request(
                     &handle,
                     &active,
@@ -1048,6 +1028,8 @@ mod tests {
                     PortableImportMode::RestoreIntoEmpty,
                     "",
                 ),
+                uuid::Uuid::now_v7().to_string(),
+                None,
                 &runtime,
                 &operations,
                 None,

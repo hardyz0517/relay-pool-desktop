@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+#[cfg(test)]
 pub(crate) mod effect_planner;
 pub(crate) mod failure;
 pub(crate) mod outcome;

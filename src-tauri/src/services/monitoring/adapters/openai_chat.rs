@@ -26,10 +26,6 @@ impl OpenAiChatAdapter {
 }
 
 impl ProtocolAdapter for OpenAiChatAdapter {
-    fn protocol_kind(&self) -> ProtocolKind {
-        ProtocolKind::OpenAiChat
-    }
-
     fn request_descriptor(&self) -> RequestDescriptor {
         RequestDescriptor {
             method: "POST".to_string(),

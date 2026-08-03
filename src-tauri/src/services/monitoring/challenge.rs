@@ -55,6 +55,7 @@ impl ProbeChallenge {
 }
 
 impl ChallengeValidator {
+    #[cfg(test)]
     pub fn from_expected_answer_for_tests(expected_answer: &str) -> Self {
         Self {
             expected_answer_hash: hash_normalized(expected_answer),

@@ -22,7 +22,7 @@ pub(crate) enum RecoveryRuntimeMode {
         not(test),
         expect(
             dead_code,
-            reason = "inspection-only authorization is a tested release contract"
+            reason = "contract=data-recovery.authorization-mode; owner=commands/data_recovery; remove_when=release authorization flow drops inspection-only mode"
         )
     )]
     InspectionOnly,
@@ -41,7 +41,7 @@ pub(crate) enum RecoveryAction {
         not(test),
         expect(
             dead_code,
-            reason = "normal-mode authorization is a tested release contract"
+            reason = "contract=data-recovery.authorization-mode; owner=commands/data_recovery; remove_when=release authorization flow drops normal mode"
         )
     )]
     NormalApplication,

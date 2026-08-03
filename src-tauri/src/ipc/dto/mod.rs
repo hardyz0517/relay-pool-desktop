@@ -74,14 +74,26 @@ mod tests {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct TypeDescriptor {
     pub name: &'static str,
     pub typescript: &'static str,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     change_logs::CHANGE_LOGS_TYPE,
     channel_monitor_mutations::CHANNEL_MONITOR_MUTATIONS_TYPE,

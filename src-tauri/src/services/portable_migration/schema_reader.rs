@@ -4,6 +4,7 @@ use std::{
 };
 
 use serde_json::Value;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use sqlx::{Connection, Row, SqliteConnection};
 
@@ -156,6 +157,7 @@ impl PortableMigrationCompatibilityRegistry {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PortableSchemaFingerprint {
     pub(crate) table_count: usize,
@@ -251,6 +253,7 @@ impl PortableSchemaReader {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn trusted_schema_fingerprint_v1() -> PortableSchemaFingerprint {
     let mut hasher = Sha256::new();
     for table in migration_data_catalog() {
@@ -308,6 +311,7 @@ pub(crate) fn ordered_import_tables_v1() -> Vec<&'static str> {
     tables
 }
 
+#[cfg(test)]
 pub(crate) fn occupancy_categories_v1() -> BTreeSet<&'static str> {
     migration_data_catalog()
         .iter()
@@ -316,7 +320,6 @@ pub(crate) fn occupancy_categories_v1() -> BTreeSet<&'static str> {
             super::catalog::DataCategory::CoreData => "core_data",
             super::catalog::DataCategory::History => "history",
             super::catalog::DataCategory::SessionCredentials => "session_credentials",
-            super::catalog::DataCategory::LocalProxyAccessKey => "local_proxy_access_key",
             super::catalog::DataCategory::DeviceRuntimeState => "device_runtime_state",
             super::catalog::DataCategory::ProviderDrafts => "provider_drafts",
         })
@@ -447,6 +450,7 @@ async fn validate_declared_compatibility(
     Ok(())
 }
 
+#[cfg(test)]
 fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);

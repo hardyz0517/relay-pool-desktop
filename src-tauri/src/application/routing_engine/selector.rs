@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use crate::application::{
@@ -58,6 +56,7 @@ pub(crate) struct RoutePlanStratum {
 }
 
 impl RoutePlanStratum {
+    #[cfg(test)]
     pub(crate) fn candidate_ids(&self) -> Vec<&str> {
         self.candidates
             .iter()

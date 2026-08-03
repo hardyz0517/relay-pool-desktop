@@ -44,12 +44,12 @@ pub enum ProxyFailureCode {
     LocalProxyMemoryBusy,
     #[expect(
         dead_code,
-        reason = "reserved by the local proxy request-header failure contract"
+        reason = "contract=local-proxy.request-header-failure; owner=services/proxy; remove_when=proxy header validation drops reserved failure variant"
     )]
     RequestHeaderTimeout,
     #[expect(
         dead_code,
-        reason = "reserved by the local proxy request-header failure contract"
+        reason = "contract=local-proxy.request-header-failure; owner=services/proxy; remove_when=proxy header validation drops reserved failure variant"
     )]
     RequestHeaderTooLarge,
     RequestBodyTimeout,
@@ -72,7 +72,6 @@ pub enum ProxyFailureCode {
     RouteInvariantViolation,
     UpstreamConnectFailed,
     UpstreamFirstByteTimeout,
-    UpstreamHttpError,
     UpstreamAuthenticationFailed,
     UpstreamInsufficientBalance,
     UpstreamRateLimited,
@@ -93,7 +92,7 @@ pub enum ProxyFailureCode {
     ResponsesChatFallbackIncompatible,
     #[expect(
         dead_code,
-        reason = "reserved by the application-update admission contract"
+        reason = "contract=local-proxy.application-update-admission; owner=services/proxy; remove_when=proxy update admission drops reserved failure variant"
     )]
     ApplicationUpdateInProgress,
     InternalProxyError,
@@ -126,7 +125,6 @@ impl ProxyFailureCode {
             Self::RouteInvariantViolation => "route_invariant_violation",
             Self::UpstreamConnectFailed => "upstream_connect_failed",
             Self::UpstreamFirstByteTimeout => "upstream_first_byte_timeout",
-            Self::UpstreamHttpError => "upstream_http_error",
             Self::UpstreamAuthenticationFailed => "upstream_authentication_failed",
             Self::UpstreamInsufficientBalance => "upstream_insufficient_balance",
             Self::UpstreamRateLimited => "upstream_rate_limited",

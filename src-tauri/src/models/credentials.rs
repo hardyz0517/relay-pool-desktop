@@ -1,58 +1,4 @@
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroizing;
-
-pub(crate) struct SecretBytes(Zeroizing<Vec<u8>>);
-
-impl SecretBytes {
-    pub(crate) fn as_bytes(&self) -> &[u8] {
-        self.0.as_slice()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl From<Vec<u8>> for SecretBytes {
-    fn from(value: Vec<u8>) -> Self {
-        Self(Zeroizing::new(value))
-    }
-}
-
-impl From<String> for SecretBytes {
-    fn from(value: String) -> Self {
-        Self::from(value.into_bytes())
-    }
-}
-
-impl fmt::Debug for SecretBytes {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SecretBytes")
-            .field("len", &self.0.len())
-            .finish_non_exhaustive()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SecretRef {
-    pub(crate) id: String,
-    pub(crate) scope: String,
-    pub(crate) owner_id: String,
-    pub(crate) kind: String,
-}
-
-impl SecretRef {
-    pub(crate) fn aad(&self) -> String {
-        secret_aad(&self.scope, &self.owner_id, &self.kind)
-    }
-}
-
-pub(crate) fn secret_aad(scope: &str, owner_id: &str, kind: &str) -> String {
-    format!("{scope}:{owner_id}:{kind}")
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,17 +85,6 @@ pub struct PersistStationSessionInput {
     pub token_expires_at: Option<String>,
     pub session_expires_at: Option<String>,
     pub session_source: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StationSessionCredentialKind {
-    AccessToken,
-    #[allow(
-        dead_code,
-        reason = "supported by the credential clearing port for refreshable sessions"
-    )]
-    RefreshToken,
-    Cookie,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

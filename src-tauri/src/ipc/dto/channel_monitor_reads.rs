@@ -225,7 +225,13 @@ fn validate_workspace_input(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=descriptor is registered in production binding export"
+    )
+)]
 pub const CHANNEL_MONITOR_READS_TYPE: TypeDescriptor = TypeDescriptor {
     name: "ChannelMonitorReadsDto",
     typescript: include_str!("channel_monitor_reads.typescript.txt"),

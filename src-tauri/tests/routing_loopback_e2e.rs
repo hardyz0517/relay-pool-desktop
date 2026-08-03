@@ -83,7 +83,7 @@ async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
     assert_eq!(attempts[0].failure_kind.as_deref(), Some("RateLimit"));
     assert_eq!(
         attempts[0].public_code.as_deref(),
-        Some("upstream_http_error")
+        Some("upstream_rate_limited")
     );
     assert!(!attempts[0].output_committed);
     assert_eq!(attempts[1].ordinal, 1);
