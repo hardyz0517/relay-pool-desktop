@@ -91,6 +91,11 @@ import type {
   PreparePortableImportInput,
   StartPortableExportInput,
 } from "@/lib/types/dataMigration";
+import type {
+  DashboardCumulativeRequestMetricsSnapshot,
+  DashboardLiveRequestMetricsSnapshot,
+  DashboardRequestMetricsInput,
+} from "@/lib/types/dashboardMetrics";
 import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { RuntimeStatus } from "@/lib/types/runtimeStatus";
@@ -205,6 +210,11 @@ export type ProxyDomainClient = {
   prepareLocalProxyForUpdate(): Promise<ProxyStatus>;
   listRequestLogs(): Promise<RequestLog[]>;
   clearRequestLogs(): Promise<void>;
+};
+
+export type DashboardDomainClient = {
+  loadLiveRequestMetrics(input: DashboardRequestMetricsInput): Promise<DashboardLiveRequestMetricsSnapshot>;
+  loadCumulativeRequestMetrics(): Promise<DashboardCumulativeRequestMetricsSnapshot>;
 };
 
 export type RuntimeDomainClient = {
@@ -372,6 +382,7 @@ export type BackendClient = {
   readonly changeEvents: ChangeEventsDomainClient;
   readonly collectorRuns: CollectorRunsDomainClient;
   readonly proxy: ProxyDomainClient;
+  readonly dashboard: DashboardDomainClient;
   readonly localRouting: LocalRoutingDomainClient;
   readonly dataRecovery: DataRecoveryDomainClient;
   readonly dataMigration: DataMigrationDomainClient;

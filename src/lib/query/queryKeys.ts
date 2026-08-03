@@ -1,7 +1,18 @@
+import type { DashboardRequestMetricsInput } from "@/lib/types/dashboardMetrics";
+
 export const queryKeys = {
   settings: ["settings"] as const,
   proxyStatus: ["proxyStatus"] as const,
   requestLogs: ["requestLogs"] as const,
+  dashboardLiveRequestMetrics: (input: DashboardRequestMetricsInput) =>
+    [
+      "dashboardRequestMetrics",
+      "live",
+      1,
+      input.localDayStartMs,
+      input.localDayEndMs,
+    ] as const,
+  dashboardCumulativeRequestMetrics: ["dashboardRequestMetrics", "cumulative", 1] as const,
   stations: ["stations"] as const,
   stationAssets: ["stationAssets"] as const,
   stationAssetsForStations: (stationIds: readonly string[]) =>

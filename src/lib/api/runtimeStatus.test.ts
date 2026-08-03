@@ -22,6 +22,7 @@ describe("runtime status backend cutover", () => {
       collectorRuns: {} as BackendClient["collectorRuns"],
       collectors: {} as BackendClient["collectors"],
       proxy: {} as BackendClient["proxy"],
+      dashboard: {} as BackendClient["dashboard"],
       runtime,
       localRouting: {} as BackendClient["localRouting"],
       dataRecovery: {} as BackendClient["dataRecovery"],

@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -33,13 +33,14 @@ import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { getLocalAccessKey, importRelayPoolToCCSwitch } from "@/lib/api/settings";
-import type { RequestLog } from "@/lib/types/proxy";
 import type { StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   currentStationBalanceSnapshotsQueryOptions,
   changeEventsQueryOptions,
+  dashboardCumulativeRequestMetricsQueryOptions,
+  dashboardLiveRequestMetricsQueryOptions,
   keyPoolQueryOptions,
   proxyStatusQueryOptions,
   requestLogsQueryOptions,
@@ -49,13 +50,15 @@ import {
 import { queryKeys } from "@/lib/query/queryKeys";
 import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/lib/changeEvents/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
-import { formatRecentRequestCost, formatRequestCost, requestBaseCostValue } from "@/features/dashboard/requestCostFormat";
+import { formatRecentRequestCost } from "@/features/dashboard/requestCostFormat";
 import { useUpdater } from "@/lib/updater/UpdaterProvider";
 import {
-  summarizeDashboardRequestCosts,
-  type DashboardCostTotal,
-  type DashboardRequestCostSummary,
-} from "@/features/dashboard/requestCostSummary";
+  amountMicroToMajorUnits,
+  getLocalDayMetricsInput,
+  hasCostQualityIssue,
+  msUntilNextLocalDay,
+} from "@/features/dashboard/dashboardRequestMetricsViewModel";
+import type { DashboardCostMetrics, DashboardCostTotal, DashboardPeriodMetrics } from "@/lib/types/dashboardMetrics";
 
 const healthTone = {
   healthy: "healthy",
@@ -64,8 +67,6 @@ const healthTone = {
   disabled: "disabled",
   unchecked: "info",
 } as const;
-
-const RECENT_PERFORMANCE_WINDOW_MINUTES = 5;
 
 const dashboardMetricToneClassName: Record<MetricTone, string> = {
   neutral: "text-foreground",
@@ -81,13 +82,39 @@ const dashboardMetricIconClassName: Record<MetricTone, string> = {
   danger: "bg-danger-surface",
 };
 
+type DashboardMetricsQueryState = {
+  value: string;
+  detail: string;
+  tone: MetricTone;
+};
+
+type DashboardMetricsQueryLike = {
+  data: unknown;
+  error: unknown;
+  isError: boolean;
+  isFetching: boolean;
+  isLoading: boolean;
+};
+
 export function DashboardPage() {
   const toast = useToast();
   const { state: updaterState, showUpdateDialog } = useUpdater();
   const queryClient = useQueryClient();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
+  const [localDayMetricsInput, setLocalDayMetricsInput] = useState(() => getLocalDayMetricsInput());
+  const proxyStatus = proxyStatusQuery.data ?? null;
+  const proxyRunning = proxyStatus?.running ?? false;
+  const liveRequestMetricsQuery = useActivityQuery(
+    dashboardLiveRequestMetricsQueryOptions(
+      localDayMetricsInput,
+      proxyRunning ? 2_000 : false,
+    ),
+  );
+  const cumulativeRequestMetricsQuery = useActivityQuery(
+    dashboardCumulativeRequestMetricsQueryOptions(proxyRunning ? 30_000 : false),
+  );
   const requestLogsQuery = useActivityQuery(
-    requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),
+    requestLogsQueryOptions(proxyRunning ? 2_000 : false),
   );
   const keyPoolQuery = useActivityQuery(keyPoolQueryOptions());
   const stationsQuery = useActivityQuery(stationsQueryOptions());
@@ -100,8 +127,14 @@ export function DashboardPage() {
   const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
 
-  const proxyStatus = proxyStatusQuery.data ?? null;
   const requestLogs = requestLogsQuery.data ?? [];
+  const liveRequestMetrics = liveRequestMetricsQuery.data ?? null;
+  const cumulativeRequestMetrics = cumulativeRequestMetricsQuery.data ?? null;
+  const recentPerformance = liveRequestMetrics?.recent ?? null;
+  const todayMetrics = liveRequestMetrics?.today ?? null;
+  const lifetimeMetrics = cumulativeRequestMetrics?.lifetime ?? null;
+  const todayCosts = liveRequestMetrics?.todayCosts ?? null;
+  const lifetimeCosts = cumulativeRequestMetrics?.lifetimeCosts ?? null;
   const keyPoolItems = keyPoolQuery.data ?? [];
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
@@ -116,6 +149,13 @@ export function DashboardPage() {
     settingsQuery.data,
     changeEventsQuery.data,
   ].every((value) => value !== undefined);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setLocalDayMetricsInput(getLocalDayMetricsInput());
+    }, msUntilNextLocalDay());
+    return () => window.clearTimeout(timeout);
+  }, [localDayMetricsInput.localDayStartMs]);
   async function copyText(value: string, label = "内容") {
     if (isMaskedDisplayValue(value)) {
       toast.error("复制失败", `${label}是脱敏展示值，不能复制。`);
@@ -179,16 +219,9 @@ export function DashboardPage() {
     }
   }
 
-  const todayLogs = useMemo(() => {
-    const today = new Date().toDateString();
-    return requestLogs.filter((log) => {
-      const date = parseLogDate(log.startedAt);
-      return !Number.isNaN(date.getTime()) && date.toDateString() === today;
-    });
-  }, [requestLogs]);
-
-  const todayRequests = todayLogs.length;
-  const proxyRunning = proxyStatus?.running ?? false;
+  const liveMetricsState = dashboardMetricsQueryState(liveRequestMetricsQuery);
+  const cumulativeMetricsState = dashboardMetricsQueryState(cumulativeRequestMetricsQuery);
+  const todayRequests = todayMetrics?.requestCount ?? null;
   const proxyBaseUrl = proxyStatus
     ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1`
     : `http://127.0.0.1:${settings?.localProxyPort ?? 8787}/v1`;
@@ -198,19 +231,14 @@ export function DashboardPage() {
     () => new Map(keyPoolItems.map((key) => [key.id, key.name])),
     [keyPoolItems],
   );
-  const proxyRequestCount = Math.max(
-    requestLogs.length,
-    proxyStatus?.requestCount ?? 0,
-  );
-  const todayTokens = todayLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
-  const todayPromptTokens = todayLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
-  const todayCompletionTokens = todayLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
-  const totalTokens = requestLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
-  const totalPromptTokens = requestLogs.reduce((sum, log) => sum + (log.promptTokens ?? 0), 0);
-  const totalCompletionTokens = requestLogs.reduce((sum, log) => sum + (log.completionTokens ?? 0), 0);
-  const requestCostSummary = useMemo(() => summarizeDashboardRequestCosts(requestLogs), [requestLogs]);
-  const averageResponseMs = averageDurationMs(todayLogs);
-  const recentPerformance = getRecentPerformanceMetrics(requestLogs);
+  const proxyRequestCount = Math.max(lifetimeMetrics?.requestCount ?? 0, proxyStatus?.requestCount ?? 0);
+  const todayTokens = todayMetrics?.totalTokens ?? null;
+  const todayPromptTokens = todayMetrics?.promptTokens ?? null;
+  const todayCompletionTokens = todayMetrics?.completionTokens ?? null;
+  const totalTokens = lifetimeMetrics?.totalTokens ?? null;
+  const totalPromptTokens = lifetimeMetrics?.promptTokens ?? null;
+  const totalCompletionTokens = lifetimeMetrics?.completionTokens ?? null;
+  const averageTotalDurationMs = todayMetrics?.avgTotalDurationMs ?? null;
   const activeRequests = proxyStatus?.activeRequests ?? 0;
   const balanceSummary = useMemo(
     () => summarizeDashboardBalances(balanceSnapshots, stations),
@@ -360,64 +388,76 @@ export function DashboardPage() {
             },
             {
               label: "今日请求",
-              value: formatCompactNumber(todayRequests),
-              detail: `总计：${formatCompactNumber(proxyRequestCount)}`,
+              value: todayRequests === null ? liveMetricsState.value : formatCompactNumber(todayRequests),
+              detail: `总计：${cumulativeRequestMetrics ? formatCompactNumber(proxyRequestCount) : cumulativeMetricsState.value}`,
               icon: Activity,
-              tone: todayRequests > 0 ? "good" : "neutral",
+              tone: todayRequests !== null && todayRequests > 0 ? "good" : liveMetricsState.tone,
               valueClassName: "text-foreground",
               accent: "green",
             },
             {
               label: "今日消耗",
-              value: <DashboardCostTotals totals={requestCostSummary.todayTotalsByCurrency} />,
-              detail: <DashboardCostMetricDetail summary={requestCostSummary} />,
+              value: todayCosts ? <DashboardCostTotals totals={todayCosts.totals} /> : liveMetricsState.value,
+              detail: (
+                <DashboardCostMetricDetail
+                  current={todayCosts}
+                  currentState={liveMetricsState}
+                  cumulative={lifetimeCosts}
+                  cumulativeState={cumulativeMetricsState}
+                />
+              ),
               icon: BadgeDollarSign,
+              tone: todayCosts ? "neutral" : liveMetricsState.tone,
               accent: "purple",
             },
             {
               label: "今日 Token",
-              value: formatCompactNumber(todayTokens),
-              detail: `输入 ${formatCompactNumber(todayPromptTokens)} / 输出 ${formatCompactNumber(todayCompletionTokens)}`,
+              value: todayTokens === null ? liveMetricsState.value : formatCompactNumber(todayTokens),
+              detail: todayMetrics
+                ? `输入 ${formatCompactNumber(todayPromptTokens ?? 0)} / 输出 ${formatCompactNumber(todayCompletionTokens ?? 0)}`
+                : liveMetricsState.detail,
               icon: BarChart3,
-              tone: todayTokens > 0 ? "good" : "neutral",
+              tone: todayTokens !== null && todayTokens > 0 ? "good" : liveMetricsState.tone,
               valueClassName: "text-foreground",
               accent: "amber",
             },
             {
               label: "累计 Token",
-              value: formatCompactNumber(totalTokens),
-              detail: `输入 ${formatCompactNumber(totalPromptTokens)} / 输出 ${formatCompactNumber(totalCompletionTokens)}`,
+              value: totalTokens === null ? cumulativeMetricsState.value : formatCompactNumber(totalTokens),
+              detail: lifetimeMetrics
+                ? `输入 ${formatCompactNumber(totalPromptTokens ?? 0)} / 输出 ${formatCompactNumber(totalCompletionTokens ?? 0)}`
+                : cumulativeMetricsState.detail,
               icon: Server,
-              tone: totalTokens > 0 ? "good" : "neutral",
+              tone: totalTokens !== null && totalTokens > 0 ? "good" : cumulativeMetricsState.tone,
               valueClassName: "text-foreground",
               accent: "indigo",
             },
             {
-              label: "平均响应",
-              value: formatDuration(averageResponseMs),
-              detail: averageResponseMs === null ? "暂无今日样本" : "今日平均",
+              label: "平均总耗时",
+              value: todayMetrics ? formatDuration(averageTotalDurationMs) : liveMetricsState.value,
+              detail: todayMetrics ? formatAverageDurationDetail(todayMetrics) : liveMetricsState.detail,
               icon: Clock3,
-              tone: averageResponseMs !== null && averageResponseMs > 15000 ? "warning" : "neutral",
+              tone: averageTotalDurationMs !== null && averageTotalDurationMs > 15000 ? "warning" : liveMetricsState.tone,
               valueClassName: "text-foreground",
               accent: "rose",
             },
             {
               label: "性能概览",
-              value: (
+              value: recentPerformance ? (
                 <>
                   <span className="text-foreground">{formatCompactNumber(recentPerformance.rpm)}</span>
                   <span className="ml-1 text-sm font-medium text-muted-foreground">RPM</span>
                 </>
-              ),
-              detail: (
+              ) : liveMetricsState.value,
+              detail: recentPerformance ? (
                 <>
                   <span className="font-semibold text-foreground">{formatCompactNumber(recentPerformance.tpm)}</span>
                   <span className="ml-1 text-muted-foreground">TPM</span>
                   <span className="text-muted-foreground">· {activeRequests} 活跃</span>
                 </>
-              ),
+              ) : liveMetricsState.detail,
               icon: Gauge,
-              tone: recentPerformance.rpm > 0 || activeRequests > 0 ? "good" : "neutral",
+              tone: recentPerformance && (recentPerformance.rpm > 0 || activeRequests > 0) ? "good" : liveMetricsState.tone,
               valueClassName: "inline-flex items-baseline text-foreground",
               accent: "violet",
             },
@@ -636,10 +676,6 @@ export function DashboardPage() {
                     <span className="text-success-foreground">
                       {formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
                     </span>
-                    <span className="mx-1">/</span>
-                    <span>
-                      {formatRecentRequestCost(requestBaseCostValue(request), request.costCurrency, request.costStatus)}
-                    </span>
                   </div>
                   <div className="mt-0.5 whitespace-nowrap text-xs text-muted-foreground">
                     {formatTokenCount(request.totalTokens)} tokens
@@ -733,32 +769,6 @@ function formatDateTime(value: string) {
   return `${year}/${month}/${day} ${time}`;
 }
 
-function averageDurationMs(logs: RequestLog[]) {
-  const durations = logs
-    .map((log) => log.durationMs)
-    .filter((duration): duration is number => typeof duration === "number" && Number.isFinite(duration));
-
-  if (durations.length === 0) {
-    return null;
-  }
-
-  return durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
-}
-
-function getRecentPerformanceMetrics(logs: RequestLog[]) {
-  const now = new Date();
-  const windowStart = now.getTime() - RECENT_PERFORMANCE_WINDOW_MINUTES * 60_000;
-  const recentLogs = logs.filter((log) => {
-    const startedAt = parseLogDate(log.startedAt).getTime();
-    return Number.isFinite(startedAt) && startedAt >= windowStart && startedAt <= now.getTime();
-  });
-  const recentTokens = recentLogs.reduce((sum, log) => sum + (log.totalTokens ?? 0), 0);
-  return {
-    rpm: recentLogs.length / RECENT_PERFORMANCE_WINDOW_MINUTES,
-    tpm: recentTokens / RECENT_PERFORMANCE_WINDOW_MINUTES,
-  };
-}
-
 function formatBalance(value: number, currency?: string) {
   const symbol = currencySymbol(currency);
   return `${symbol}${value.toFixed(2)}`;
@@ -771,7 +781,7 @@ function formatUsdAmount(value: number) {
 function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCostTotal[]; compact?: boolean }) {
   const displayTotals = totals.length > 0
     ? totals
-    : [{ currency: "USD", totalCost: 0, baseTotalCost: 0, requestCount: 0 }];
+    : [{ currency: "USD", amountMicro: 0, requestCount: 0 }];
 
   return (
     <>
@@ -782,13 +792,7 @@ function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCos
           <span key={total.currency}>
             {index > 0 ? <span className="text-muted-foreground/70"> · </span> : null}
             <span className={compact ? "text-platform-image-foreground" : undefined} title="实际花费">
-              {prefix}{total.totalCost.toFixed(4)}
-            </span>
-            <span
-              className={compact ? "font-normal text-muted-foreground/70" : "text-sm font-normal text-muted-foreground/70"}
-              title="1倍率 Token 花费"
-            >
-              {` / ${prefix}${total.baseTotalCost.toFixed(4)}`}
+              {prefix}{amountMicroToMajorUnits(total).toFixed(4)}
             </span>
           </span>
         );
@@ -797,21 +801,75 @@ function DashboardCostTotals({ totals, compact = false }: { totals: DashboardCos
   );
 }
 
-function DashboardCostMetricDetail({ summary }: { summary: DashboardRequestCostSummary }) {
+function DashboardCostMetricDetail({
+  current,
+  currentState,
+  cumulative,
+  cumulativeState,
+}: {
+  current: DashboardCostMetrics | null;
+  currentState: DashboardMetricsQueryState;
+  cumulative: DashboardCostMetrics | null;
+  cumulativeState: DashboardMetricsQueryState;
+}) {
   const diagnostics: string[] = [];
-  if (summary.unpricedCount > 0) {
-    diagnostics.push(`${summary.unpricedCount} 未定价`);
+  if (current && hasCostQualityIssue(current)) {
+    diagnostics.push("今日成本不完整");
   }
-  if (summary.legacyEstimateCount > 0) {
-    diagnostics.push(`${summary.legacyEstimateCount} 旧估算`);
+  if (cumulative && hasCostQualityIssue(cumulative)) {
+    diagnostics.push("累计成本不完整");
   }
   return (
     <>
       <span>总计: </span>
-      <DashboardCostTotals totals={summary.allTotalsByCurrency} compact />
+      {cumulative ? (
+        <DashboardCostTotals totals={cumulative.totals} compact />
+      ) : (
+        <span>{cumulativeState.value}</span>
+      )}
+      {!current ? <span> · 今日 {currentState.detail}</span> : null}
       {diagnostics.map((diagnostic) => <span key={diagnostic}> · {diagnostic}</span>)}
     </>
   );
+}
+
+function dashboardMetricsQueryState(query: DashboardMetricsQueryLike): DashboardMetricsQueryState {
+  if (query.data) {
+    return {
+      value: query.isFetching ? "刷新中" : "已读取",
+      detail: query.isFetching ? "后台刷新中" : "snapshot ready",
+      tone: "neutral",
+    };
+  }
+  if (query.isError) {
+    return {
+      value: "读取失败",
+      detail: readError(query.error),
+      tone: "warning",
+    };
+  }
+  if (query.isLoading || query.isFetching) {
+    return {
+      value: "读取中",
+      detail: "等待后端指标快照",
+      tone: "neutral",
+    };
+  }
+  return {
+    value: "未读取",
+    detail: "页面激活后读取",
+    tone: "neutral",
+  };
+}
+
+function formatAverageDurationDetail(metrics: DashboardPeriodMetrics) {
+  if (metrics.durationSampleCount === 0) {
+    return "暂无今日样本";
+  }
+  const firstToken = metrics.avgFirstTokenMs === null
+    ? "TTFT 无样本"
+    : `TTFT ${formatDuration(metrics.avgFirstTokenMs)}`;
+  return `${firstToken} · ${formatCompactNumber(metrics.durationSampleCount)} 样本`;
 }
 
 function formatTokenCount(value: number | null | undefined) {
