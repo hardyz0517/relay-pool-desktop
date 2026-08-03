@@ -486,7 +486,7 @@ impl CollectorService {
                             &CollectorSnapshotWrite {
                                 id: snapshot_id.clone(),
                                 run_id: run_id.clone(),
-                                station_id: request.station_id,
+                                station_id: request.station_id.clone(),
                                 endpoint_revision: request.endpoint_revision,
                                 source: "webview-capture".to_string(),
                                 status: request.status.clone(),
@@ -497,6 +497,16 @@ impl CollectorService {
                                 error_message: request.error_message.clone(),
                                 created_at: now.clone(),
                             },
+                        )
+                        .await?;
+                    collectors
+                        .update_station_collection_status(
+                            write,
+                            &request.station_id,
+                            request.endpoint_revision,
+                            &run_status,
+                            &now,
+                            true,
                         )
                         .await?;
                     collectors
@@ -832,6 +842,18 @@ impl CollectorService {
                             },
                         )
                         .await?;
+                    if request.parent_run_id.is_none() {
+                        collectors
+                            .update_station_collection_status(
+                                write,
+                                &request.station_id,
+                                request.endpoint_revision,
+                                &request.status,
+                                &now,
+                                matches!(request.task_type.as_str(), "groups" | "models" | "full"),
+                            )
+                            .await?;
+                    }
                     let stored = collectors
                         .finish_run(
                             write,
@@ -1387,6 +1409,15 @@ mod tests {
             .expect("idempotent replay");
 
         assert_eq!(first.snapshot.id, replay.snapshot.id);
+        let collected_station = stations
+            .station_for_capture(&station.id)
+            .await
+            .expect("collected station");
+        assert_eq!(collected_station.status, "healthy");
+        assert_eq!(
+            collected_station.last_checked_at.as_deref(),
+            Some("1700000000000")
+        );
         let mut read = runtime.begin_read().await.expect("read session");
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM collector_snapshots WHERE source = 'webview-capture'",
@@ -1660,6 +1691,96 @@ mod tests {
             vec![station.id]
         );
         runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn child_run_does_not_override_top_level_station_collection_status() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("station-status.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(CreateStationInput {
+                name: "Collection Status".to_string(),
+                station_type: "sub2api".to_string(),
+                website_url: "https://status.example.test".to_string(),
+                api_base_url: "https://status.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+        let parent = collectors
+            .apply_result(collector_apply_request(
+                "parent-status-run",
+                &station,
+                None,
+                "full",
+                "partial",
+            ))
+            .await
+            .expect("parent apply");
+        collectors
+            .apply_result(collector_apply_request(
+                "child-status-run",
+                &station,
+                Some(parent.run_id),
+                "groups",
+                "failed",
+            ))
+            .await
+            .expect("child apply");
+
+        let collected_station = stations
+            .station_for_capture(&station.id)
+            .await
+            .expect("collected station");
+        assert_eq!(collected_station.status, "warning");
+        assert_eq!(
+            collected_station.last_pricing_fetched_at.as_deref(),
+            Some("1700000000000")
+        );
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    fn collector_apply_request(
+        run_key: &str,
+        station: &Station,
+        parent_run_id: Option<String>,
+        task_type: &str,
+        status: &str,
+    ) -> CollectorApplyRequest {
+        CollectorApplyRequest {
+            run_key: run_key.to_string(),
+            station_id: station.id.clone(),
+            endpoint_revision: station.endpoint_revision,
+            parent_run_id,
+            adapter: "sub2api".to_string(),
+            task_type: task_type.to_string(),
+            status: status.to_string(),
+            facts: CanonicalCollectorFacts::default(),
+            summary_json: json!({ "status": status }),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: (status == "failed").then(|| "fixture_failure".to_string()),
+            error_message: (status == "failed").then(|| "fixture failed".to_string()),
+            endpoint_count: 1,
+            success_count: i64::from(status != "failed"),
+            failure_count: i64::from(status == "failed"),
+            manual_action_required: status == "manual_required",
+            next_due_at: None,
+        }
     }
 
     #[tokio::test]

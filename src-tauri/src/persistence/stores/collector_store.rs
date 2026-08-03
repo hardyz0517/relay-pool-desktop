@@ -460,6 +460,49 @@ impl CollectorStore {
         Ok(())
     }
 
+    pub(crate) async fn update_station_collection_status(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        endpoint_revision: i64,
+        collector_status: &str,
+        collected_at: &str,
+        pricing_collected: bool,
+    ) -> Result<(), PersistenceError> {
+        let station_status = match collector_status {
+            "success" => "healthy",
+            "partial" | "manual_required" | "needs_confirmation" => "warning",
+            "failed" => "error",
+            _ => {
+                return Err(PersistenceError::InvariantViolation(
+                    "collector terminal status cannot update station state".to_string(),
+                ));
+            }
+        };
+        let affected = sqlx::query(
+            r#"
+            UPDATE stations
+            SET status = CASE WHEN enabled = 0 THEN 'disabled' ELSE ?1 END,
+                last_checked_at = ?2,
+                last_pricing_fetched_at = CASE WHEN ?3 = 1 THEN ?2 ELSE last_pricing_fetched_at END,
+                updated_at = ?2
+            WHERE id = ?4 AND endpoint_revision = ?5
+            "#,
+        )
+        .bind(station_status)
+        .bind(collected_at)
+        .bind(i64::from(pricing_collected))
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        if affected != 1 {
+            return Err(PersistenceError::StaleRevision);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn upsert_station_group_binding(
         &self,
         session: &mut WriteSession,
