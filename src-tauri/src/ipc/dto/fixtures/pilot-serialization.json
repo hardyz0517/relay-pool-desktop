@@ -3013,6 +3013,23 @@
       }
     },
     {
+      "command": "load_pricing_group_monitor_status",
+      "input": {
+        "groupRefsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "groups": [],
+        "schemaVersion": 1
+      },
+      "output": {
+        "generatedAtMs": 1700000000000,
+        "groupRefsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "items": [],
+        "omittedGroupCount": 0,
+        "requestedGroupCount": 0,
+        "returnedGroupCount": 0,
+        "schemaVersion": 1
+      }
+    },
+    {
       "command": "upsert_model_base_price",
       "input": {
         "builtIn": false,

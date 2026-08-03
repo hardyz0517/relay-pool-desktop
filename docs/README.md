@@ -10,6 +10,11 @@
 - [`SCHEMA_UPGRADE_AUTHORING.md`](SCHEMA_UPGRADE_AUTHORING.md)：schema `15` 之后的数据升级 authoring contract。
 - [`../AGENTS.md`](../AGENTS.md)：仓库级开发、验证与交付规则。
 
+价格 / 倍率页与渠道状态页的只读联动已进入当前实现基线：
+
+- [`proposals/PRICING_MONITORING_INTEGRATION_SPEC.md`](proposals/PRICING_MONITORING_INTEGRATION_SPEC.md)：行为契约与跨层边界。
+- [`superpowers/plans/2026-08-03-pricing-monitoring-integration.md`](superpowers/plans/2026-08-03-pricing-monitoring-integration.md)：实施步骤、验证命令与回滚边界。
+
 发生冲突时，优先级依次为：`AGENTS.md`、当前代码与自动化约束、上述当前规范、带日期的设计记录、历史阶段计划。
 
 ## 提案与待排期规格

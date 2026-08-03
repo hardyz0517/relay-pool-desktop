@@ -7,6 +7,13 @@ import type { GroupRateRecord, StationGroupBinding } from "../../lib/types/group
 import type { PricingRule } from "../../lib/types/economics";
 import type { StationKey } from "../../lib/types/stationKeys";
 import type { Station } from "../../lib/types/stations";
+import type {
+  PricingGroupMonitorDisplayState,
+  PricingGroupMonitorStatusWorkspace,
+  PricingGroupMonitorSummary,
+} from "@/lib/types/pricingMonitoring";
+import type { PricingGroupRefInput } from "@/lib/projections/pricingGroupRefs";
+import { canonicalizePricingGroupRefs } from "@/lib/projections/pricingGroupRefs";
 
 export type PricingGroupType = StationGroupCategory;
 
@@ -14,6 +21,18 @@ export type PricingComparisonFilters = {
   groupType?: PricingGroupType | "all";
   query?: string;
   stationId?: string | "all";
+  keyPresence?: "all" | "with_key" | "with_credentialed_key";
+  monitorPresence?: "all" | "monitored" | "unmonitored";
+  monitorOutcome?:
+    | "all"
+    | "success"
+    | "degraded"
+    | "failure"
+    | "skipped"
+    | "running"
+    | "untested"
+    | "unavailable_data"
+    | "unresolved";
 };
 
 export type PricingComparisonInput = {
@@ -24,6 +43,8 @@ export type PricingComparisonInput = {
   pricingRules: PricingRule[];
   developerModeEnabled?: boolean;
   filters?: PricingComparisonFilters;
+  monitorWorkspace?: PricingGroupMonitorStatusWorkspace | null;
+  monitorDataState?: "loading" | "ready" | "error";
 };
 
 export type PricingComparisonRow = {
@@ -43,6 +64,11 @@ export type PricingComparisonRow = {
   source: string;
   checkedAt: string | null;
   isCheapest: boolean;
+  monitorSummary: PricingGroupMonitorSummary | null;
+  monitorDisplayState: PricingGroupMonitorDisplayState;
+  monitorRef: PricingGroupRefInput;
+  hasBoundKey: boolean;
+  hasCredentialedKey: boolean;
 };
 
 export type PricingGroupSection = {
@@ -104,6 +130,10 @@ export function buildPricingComparisonViewModel(
   input: PricingComparisonInput,
 ): PricingComparisonViewModel {
   const filters = normalizeFilters(input.filters);
+  const monitorByRef = new Map(
+    (input.monitorWorkspace?.items ?? []).map((item) => [monitorRefKey(item), item]),
+  );
+  const stationKeysById = new Map((input.stationKeys ?? []).map((key) => [key.id, key]));
   const pricingCandidates = buildPricingGroupCandidates({
     stations: input.stations,
     stationKeys: input.stationKeys,
@@ -112,7 +142,14 @@ export function buildPricingComparisonViewModel(
     pricingRules: input.pricingRules,
   });
   const rows = pricingCandidates
-    .map(createRowFromCandidate)
+    .map((candidate) =>
+      createRowFromCandidate(
+        candidate,
+        monitorByRef,
+        stationKeysById,
+        input.monitorDataState ?? "ready",
+      ),
+    )
     .filter((row): row is PricingComparisonRow => row !== null);
 
   if (rows.length === 0) {
@@ -166,10 +203,39 @@ function normalizeFilters(filters: PricingComparisonFilters | undefined): Requir
     groupType: filters?.groupType ?? "all",
     query: filters?.query ?? "",
     stationId: filters?.stationId ?? "all",
+    keyPresence: filters?.keyPresence ?? "all",
+    monitorPresence: filters?.monitorPresence ?? "all",
+    monitorOutcome: filters?.monitorOutcome ?? "all",
   };
 }
 
-function createRowFromCandidate(candidate: PricingGroupCandidate): PricingComparisonRow | null {
+export function buildPricingMonitorRefs(input: Omit<PricingComparisonInput, "filters" | "monitorWorkspace" | "monitorDataState">): PricingGroupRefInput[] {
+  const candidates = buildPricingGroupCandidates({
+    stations: input.stations,
+    stationKeys: input.stationKeys,
+    groupBindings: input.groupBindings,
+    groupRates: input.groupRates,
+    pricingRules: input.pricingRules,
+  });
+  const refs = candidates.map((candidate) => ({
+    stationId: candidate.station.id,
+    groupBindingId: candidate.groupBindingId,
+    groupIdHash: candidate.groupIdHash,
+    groupKeyHash: candidate.groupKeyHash,
+  }));
+  try {
+    return canonicalizePricingGroupRefs(refs);
+  } catch {
+    return [];
+  }
+}
+
+function createRowFromCandidate(
+  candidate: PricingGroupCandidate,
+  monitorByRef: Map<string, PricingGroupMonitorSummary>,
+  stationKeysById: Map<string, StationKey>,
+  monitorDataState: "loading" | "ready" | "error",
+): PricingComparisonRow | null {
   const groupType = groupTypeFromCandidate(candidate);
   if (!groupType) {
     return null;
@@ -177,6 +243,24 @@ function createRowFromCandidate(candidate: PricingGroupCandidate): PricingCompar
   const creditPerCny = safeCreditPerCny(candidate.station.creditPerCny);
   const effectiveMultiplier =
     candidate.groupMultiplier === null ? null : candidate.groupMultiplier / creditPerCny;
+
+  const monitorRef = {
+    stationId: candidate.station.id,
+    groupBindingId: candidate.groupBindingId,
+    groupIdHash: candidate.groupIdHash,
+    groupKeyHash: candidate.groupKeyHash,
+  };
+  const monitorSummary = monitorByRef.get(monitorRefKey(monitorRef)) ?? null;
+  const fallbackKey = candidate.stationKeyId ? stationKeysById.get(candidate.stationKeyId) : null;
+  const hasBoundKey = monitorSummary?.hasBoundKey ?? Boolean(fallbackKey);
+  const hasCredentialedKey =
+    (monitorSummary?.credentialedKeyCount ?? 0) > 0 || Boolean(fallbackKey?.apiKeyPresent);
+  const monitorDisplayState = monitorSummary?.displayState
+    ?? (monitorDataState === "loading" || monitorDataState === "error"
+      ? "unavailable_data"
+      : candidate.groupKeyHash.trim()
+        ? "unresolved"
+        : "unresolved");
 
   return {
     id: [groupType, candidate.identityKey].join(":"),
@@ -195,6 +279,11 @@ function createRowFromCandidate(candidate: PricingGroupCandidate): PricingCompar
     source: candidate.source,
     checkedAt: candidate.checkedAt,
     isCheapest: false,
+    monitorSummary,
+    monitorDisplayState,
+    monitorRef,
+    hasBoundKey,
+    hasCredentialedKey,
   };
 }
 
@@ -233,11 +322,72 @@ function rowMatchesFilters(
   if (filters.stationId !== "all" && row.stationId !== filters.stationId) {
     return false;
   }
+  if (filters.keyPresence === "with_key" && !row.hasBoundKey) {
+    return false;
+  }
+  if (
+    filters.keyPresence === "with_credentialed_key" &&
+    !row.hasCredentialedKey
+  ) {
+    return false;
+  }
+  if (filters.monitorPresence !== "all") {
+    if (!row.monitorSummary) {
+      return false;
+    }
+    const monitored = row.monitorSummary.enabledMonitorDefinitionCount > 0;
+    if (filters.monitorPresence === "monitored" && !monitored) {
+      return false;
+    }
+    if (filters.monitorPresence === "unmonitored" && monitored) {
+      return false;
+    }
+  }
+  if (filters.monitorOutcome !== "all" && !matchesMonitorOutcome(row, filters.monitorOutcome)) {
+    return false;
+  }
   const query = normalizeText(filters.query);
   if (query && !rowMatchesQuery(row, query, sectionTitle)) {
     return false;
   }
   return true;
+}
+
+function matchesMonitorOutcome(
+  row: PricingComparisonRow,
+  outcome: Exclude<Required<PricingComparisonFilters>["monitorOutcome"], "all">,
+) {
+  switch (outcome) {
+    case "success":
+      return row.monitorDisplayState === "available";
+    case "degraded":
+      return row.monitorDisplayState === "degraded";
+    case "failure":
+      return row.monitorDisplayState === "unavailable";
+    case "skipped":
+      return row.monitorDisplayState === "skipped";
+    case "running":
+      return row.monitorDisplayState === "running";
+    case "untested":
+      return row.monitorDisplayState === "untested";
+    case "unavailable_data":
+      return row.monitorDisplayState === "unavailable_data";
+    case "unresolved":
+      return row.monitorDisplayState === "unresolved";
+  }
+}
+
+function monitorRefKey(value: Pick<PricingGroupRefInput, "stationId" | "groupBindingId" | "groupIdHash" | "groupKeyHash">) {
+  return [
+    value.stationId.trim(),
+    value.groupBindingId?.trim() ?? "",
+    value.groupIdHash?.trim() ?? "",
+    value.groupKeyHash.trim(),
+  ].join("|");
+}
+
+export function pricingMonitorRefFromRow(row: PricingComparisonRow): PricingGroupRefInput {
+  return row.monitorRef;
 }
 
 function rowMatchesQuery(row: PricingComparisonRow, query: string, sectionTitle: string) {

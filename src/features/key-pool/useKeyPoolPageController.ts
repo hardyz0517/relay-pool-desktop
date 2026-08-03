@@ -16,6 +16,7 @@ import { inferGroupCategoryFromEvidence } from "@/lib/groupCategories";
 import { buildStationGroupOptionsFromCurrentFactsForSelect, findMatchingGroupOption } from "@/lib/groupOptionViewModels";
 import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
 import { channelMonitoringQueryOptions, keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
@@ -359,10 +360,7 @@ export function useKeyPoolPageController({
           createStationKeyMonitorInput(item, preferredTemplate, capabilities, groupCategory),
         );
       }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus }),
-      ]);
+      await invalidatePricingMonitoringQueries(queryClient);
       toast.success(nextEnabled ? "监控已开启" : "监控已停用");
     } catch (requestError) {
       toast.error("更新监控开关失败", readError(requestError));

@@ -31,7 +31,11 @@ import type {
 } from "@/lib/types/channelMonitors";
 import type { DashboardRequestMetricsInput } from "@/lib/types/dashboardMetrics";
 import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
-import { loadPricingComparisonWorkspace } from "@/lib/queries/pricingQueries";
+import {
+  loadPricingComparisonWorkspace,
+  loadPricingGroupMonitorStatus,
+} from "@/lib/queries/pricingQueries";
+import type { PricingGroupMonitorStatusInput } from "@/lib/types/pricingMonitoring";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { withQueryTimeout } from "@/lib/query/withQueryTimeout";
 
@@ -224,6 +228,22 @@ export const pricingComparisonQueryOptions = (refetchInterval: number | false = 
     queryFn: loadPricingComparisonWorkspace,
     staleTime: 0,
     refetchInterval,
+  });
+
+export const pricingGroupMonitorStatusQueryOptions = (
+  input: PricingGroupMonitorStatusInput,
+  enabled: boolean,
+) =>
+  queryOptions({
+    queryKey: queryKeys.pricingGroupMonitorStatus(input),
+    enabled,
+    queryFn: () => loadPricingGroupMonitorStatus(input),
+    // A failed optional projection must not turn into a permanent request loop.
+    // The next explicit refresh/focus can retry it after the underlying runtime
+    // or schema issue has been repaired.
+    retry: false,
+    staleTime: 5_000,
+    refetchInterval: (query) => (query.state.status === "error" ? false : 5_000),
   });
 
 export const channelMonitoringQueryOptions = (refetchInterval: number | false = false) =>

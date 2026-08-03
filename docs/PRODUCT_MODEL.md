@@ -150,6 +150,15 @@ It does not own:
 
 Legacy `channel_monitor_runs` may remain read-only for one release observation cycle. New monitor facts are written only through `MonitorExecution -> MonitorTargetResult -> ProbeAttempt`.
 
+### Pricing / Channel Status Projection
+
+The Pricing / Multiplier page may display a backend-owned `PricingGroupMonitorSummary` read projection. It is joined by canonical station/group references and a versioned `groupRefsHash`; it does not read raw monitor runs, execution history, buckets, response bodies, or routing health rows.
+
+- A group with multiple Keys uses the deterministic Key order `priority -> created_at -> id`.
+- Multiple enabled Monitors for the representative Key use `created_at -> id`.
+- `running` overlays the display state while preserving the latest terminal Target Result.
+- The projection is ephemeral: it is not persisted as a second `group_status` fact and must not alter price ordering or cheapest calculations.
+
 ## Group Binding
 
 `Group Binding` is the durable relationship between a Station, its available groups, and the Station Keys that route through those groups.

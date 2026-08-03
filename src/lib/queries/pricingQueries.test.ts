@@ -15,11 +15,21 @@ describe("pricing workspace backend cutover", () => {
       pricingRules: [],
       developerModeEnabled: false,
     })),
+    loadPricingGroupMonitorStatus: vi.fn(async () => ({
+      schemaVersion: 1 as const,
+      generatedAtMs: 0,
+      groupRefsHash: "",
+      requestedGroupCount: 0,
+      returnedGroupCount: 0,
+      omittedGroupCount: 0,
+      items: [],
+    })),
   };
 
   beforeEach(() => {
     setActiveBackendClient(testBackendClient({ pricing: pricing as BackendClient["pricing"] }));
     pricing.loadPricingComparisonWorkspace.mockClear();
+    pricing.loadPricingGroupMonitorStatus.mockClear();
   });
 
   afterEach(() => {

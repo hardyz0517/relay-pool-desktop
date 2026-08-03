@@ -4,12 +4,12 @@ export type RoutingDeepLink =
   | {
       kind: "station";
       stationId: string;
-      source?: "collector" | "station_endpoint_health" | "change_center";
+      source?: "collector" | "station_endpoint_health" | "change_center" | "pricing";
     }
   | {
       kind: "station-key";
       stationKeyId: string;
-      source?: "key_pool" | "monitoring" | "collector" | "station_endpoint_health" | "change_center";
+      source?: "key_pool" | "monitoring" | "collector" | "station_endpoint_health" | "change_center" | "pricing";
     }
   | {
       kind: "request";

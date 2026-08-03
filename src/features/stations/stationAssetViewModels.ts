@@ -23,7 +23,6 @@ export type RateChip = {
 
 export type StationIssueTagKind =
   | "disabled"
-  | "missing_api_key"
   | "no_enabled_key"
   | "key_warning"
   | "login_required"
@@ -53,11 +52,14 @@ export type StationGroupIssueReason = {
 
 export type StationIssueFilterValue = "all" | StationIssueTagKind;
 
+export function hasPositiveBalance(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 type StationIssueTagDefinition = Omit<StationIssueTag, "kind" | "title">;
 
 const STATION_ISSUE_TAG_DEFINITIONS: Record<StationIssueTagKind, StationIssueTagDefinition> = {
   disabled: { label: "已禁用", tone: "disabled" },
-  missing_api_key: { label: "缺 API Key", tone: "error" },
   no_enabled_key: { label: "无可用 Key", tone: "warning" },
   key_warning: { label: "Key 异常", tone: "warning" },
   login_required: { label: "需登录", tone: "warning" },
@@ -77,7 +79,6 @@ export const STATION_ISSUE_FILTER_OPTIONS: Array<{ value: StationIssueFilterValu
   { value: "balance_missing", label: STATION_ISSUE_TAG_DEFINITIONS.balance_missing.label },
   { value: "login_required", label: STATION_ISSUE_TAG_DEFINITIONS.login_required.label },
   { value: "collection_failed", label: STATION_ISSUE_TAG_DEFINITIONS.collection_failed.label },
-  { value: "missing_api_key", label: STATION_ISSUE_TAG_DEFINITIONS.missing_api_key.label },
   { value: "no_enabled_key", label: STATION_ISSUE_TAG_DEFINITIONS.no_enabled_key.label },
   { value: "key_warning", label: STATION_ISSUE_TAG_DEFINITIONS.key_warning.label },
   { value: "group_issue", label: STATION_ISSUE_TAG_DEFINITIONS.group_issue.label },
@@ -214,9 +215,7 @@ export function stationIssueTags(row: StationAssetRow): StationIssueTag[] {
     tags.push(createStationIssueTag("disabled"));
   }
 
-  if (!row.station.apiKeyPresent && row.station.keyCount === 0) {
-    tags.push(createStationIssueTag("missing_api_key"));
-  } else if (row.station.keyCount > 0 && row.enabledKeyCount === 0) {
+  if (row.station.keyCount > 0 && row.enabledKeyCount === 0) {
     tags.push(createStationIssueTag("no_enabled_key"));
   }
 

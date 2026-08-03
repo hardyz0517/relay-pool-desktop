@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Coins, Image, RefreshCw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
@@ -19,19 +19,42 @@ import { Sub2ApiPlatformIcon } from "@/components/group/Sub2ApiPlatformIcon";
 import { groupVisualMetaFor } from "@/lib/groupVisualMeta";
 import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
-import { pricingComparisonQueryOptions } from "@/lib/query/resourceQueries";
+import {
+  pricingComparisonQueryOptions,
+  pricingGroupMonitorStatusQueryOptions,
+} from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { cn } from "@/lib/utils";
 import {
   buildPricingComparisonViewModel,
+  buildPricingMonitorRefs,
   type PricingComparisonRow,
   type PricingComparisonViewModel,
   type PricingGroupSection,
   type PricingGroupType,
 } from "./pricingComparisonViewModel";
+import {
+  hashCanonicalPricingGroupRefs,
+  type PricingGroupRefInput,
+} from "@/lib/projections/pricingGroupRefs";
+import type { PricingGroupMonitorStatusInput } from "@/lib/types/pricingMonitoring";
+import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
+import { buildPricingMonitoringDeepLink } from "./pricingMonitoringDeepLink";
 
 type GroupTypeFilter = PricingGroupType | "all";
 type EmptyReason = PricingComparisonViewModel["emptyReason"];
+type KeyPresenceFilter = "all" | "with_key" | "with_credentialed_key";
+type MonitorPresenceFilter = "all" | "monitored" | "unmonitored";
+type MonitorOutcomeFilter =
+  | "all"
+  | "success"
+  | "degraded"
+  | "failure"
+  | "skipped"
+  | "running"
+  | "untested"
+  | "unavailable_data"
+  | "unresolved";
 
 const groupTypeFilterOptions: Array<{ value: GroupTypeFilter; label: string }> = [
   { value: "all", label: "全部" },
@@ -54,9 +77,10 @@ function visibleGroupTypeFilterOptions(developerModeEnabled: boolean): Array<{ v
 
 type PricingPageProps = {
   onOpenModelBasePrices: () => void;
+  onOpenRoutingDeepLink?: (link: RoutingDeepLink) => void;
 };
 
-export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
+export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: PricingPageProps) {
   const toast = useToast();
   const pricingQuery = useActivityQuery(
     pricingComparisonQueryOptions(),
@@ -73,10 +97,71 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
   const [groupTypeFilter, setGroupTypeFilter] = useState<GroupTypeFilter>("all");
   const [query, setQuery] = useState("");
   const [selectedStationId, setSelectedStationId] = useState<string>("all");
+  const [keyPresenceFilter, setKeyPresenceFilter] = useState<KeyPresenceFilter>("all");
+  const [monitorPresenceFilter, setMonitorPresenceFilter] = useState<MonitorPresenceFilter>("all");
+  const [monitorOutcomeFilter, setMonitorOutcomeFilter] = useState<MonitorOutcomeFilter>("all");
+  const [monitorInput, setMonitorInput] = useState<PricingGroupMonitorStatusInput | null>(null);
+
+  const monitorRefs = useMemo<PricingGroupRefInput[]>(
+    () =>
+      buildPricingMonitorRefs({
+        stations,
+        stationKeys,
+        groupBindings,
+        groupRates,
+        pricingRules,
+        developerModeEnabled,
+      }),
+    [developerModeEnabled, groupBindings, groupRates, pricingRules, stationKeys, stations],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (monitorRefs.length === 0) {
+      setMonitorInput(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void hashCanonicalPricingGroupRefs(monitorRefs)
+      .then((groupRefsHash) => {
+        if (!cancelled) {
+          setMonitorInput({
+            schemaVersion: 1,
+            groupRefsHash,
+            groups: monitorRefs,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMonitorInput(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [monitorRefs]);
+
+  const monitorQuery = useActivityQuery(
+    pricingGroupMonitorStatusQueryOptions(
+      monitorInput ?? {
+        schemaVersion: 1,
+        groupRefsHash: "",
+        groups: [],
+      },
+      monitorInput !== null,
+    ),
+  );
 
   async function refresh(showSuccess = false) {
     try {
       await pricingQuery.refetch({ throwOnError: true });
+      if (monitorInput !== null) {
+        // Monitoring is an optional read projection. A stale/unavailable
+        // summary must not make the price refresh look like a failure.
+        await monitorQuery.refetch({ throwOnError: false });
+      }
       if (showSuccess) {
         toast.success("价格倍率已刷新");
       }
@@ -99,7 +184,13 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
           groupType: groupTypeFilter,
           query,
           stationId: selectedStationId,
+          keyPresence: keyPresenceFilter,
+          monitorPresence: monitorPresenceFilter,
+          monitorOutcome: monitorOutcomeFilter,
         },
+        monitorWorkspace: monitorQuery.data ?? null,
+        monitorDataState:
+          monitorQuery.isError ? "error" : monitorQuery.isPending ? "loading" : "ready",
       }),
     [
       groupBindings,
@@ -109,6 +200,12 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
       pricingRules,
       query,
       selectedStationId,
+      keyPresenceFilter,
+      monitorPresenceFilter,
+      monitorOutcomeFilter,
+      monitorQuery.data,
+      monitorQuery.isError,
+      monitorQuery.isPending,
       stationKeys,
       stations,
     ],
@@ -201,6 +298,45 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
               ]}
               onChange={setSelectedStationId}
             />
+            <SelectControl
+              ariaLabel="Key 筛选"
+              className="w-[150px]"
+              value={keyPresenceFilter}
+              options={[
+                { value: "all", label: "全部 Key" },
+                { value: "with_key", label: "仅有 Key" },
+                { value: "with_credentialed_key", label: "仅有凭据 Key" },
+              ]}
+              onChange={setKeyPresenceFilter}
+            />
+            <SelectControl
+              ariaLabel="监控存在性筛选"
+              className="w-[150px]"
+              value={monitorPresenceFilter}
+              options={[
+                { value: "all", label: "全部监控" },
+                { value: "monitored", label: "仅有监控" },
+                { value: "unmonitored", label: "无监控" },
+              ]}
+              onChange={setMonitorPresenceFilter}
+            />
+            <SelectControl
+              ariaLabel="监控结果筛选"
+              className="w-[150px]"
+              value={monitorOutcomeFilter}
+              options={[
+                { value: "all", label: "全部结果" },
+                { value: "success", label: "仅成功" },
+                { value: "degraded", label: "仅降级" },
+                { value: "failure", label: "仅失败" },
+                { value: "skipped", label: "仅跳过" },
+                { value: "running", label: "运行中" },
+                { value: "untested", label: "未测试" },
+                { value: "unavailable_data", label: "摘要暂不可用" },
+                { value: "unresolved", label: "无法解析" },
+              ]}
+              onChange={setMonitorOutcomeFilter}
+            />
           </div>
         </Toolbar>
 
@@ -223,6 +359,7 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
                 key={section.groupType}
                 section={section}
                 onOpenStation={handleOpenStation}
+                onOpenRoutingDeepLink={onOpenRoutingDeepLink}
               />
             ))}
           </div>
@@ -235,9 +372,11 @@ export function PricingPage({ onOpenModelBasePrices }: PricingPageProps) {
 function GroupPricingSection({
   section,
   onOpenStation,
+  onOpenRoutingDeepLink,
 }: {
   section: PricingGroupSection;
   onOpenStation: (stationId: string, stationName: string) => void;
+  onOpenRoutingDeepLink?: (link: RoutingDeepLink) => void;
 }) {
   return (
     <section className="grid gap-3 px-4 py-4">
@@ -253,7 +392,11 @@ function GroupPricingSection({
         <div className="text-xs text-muted-foreground">{section.rows.length} 个分组</div>
       </div>
 
-      <PricingRowsTable rows={section.rows} onOpenStation={onOpenStation} />
+      <PricingRowsTable
+        rows={section.rows}
+        onOpenStation={onOpenStation}
+        onOpenRoutingDeepLink={onOpenRoutingDeepLink}
+      />
     </section>
   );
 }
@@ -261,9 +404,11 @@ function GroupPricingSection({
 function PricingRowsTable({
   rows,
   onOpenStation,
+  onOpenRoutingDeepLink,
 }: {
   rows: PricingComparisonRow[];
   onOpenStation: (stationId: string, stationName: string) => void;
+  onOpenRoutingDeepLink?: (link: RoutingDeepLink) => void;
 }) {
   return (
     <div className={tableScrollClassName}>
@@ -272,12 +417,14 @@ function PricingRowsTable({
           <col className="w-[28%]" />
           <col className="w-[38%]" />
           <col className="w-[16%]" />
+          <col className="w-[16%]" />
           <col className="w-[18%]" />
         </colgroup>
         <thead>
           <tr className="border-b border-border">
             <th className={tableHeaderClassName}>中转站</th>
             <th className={tableHeaderClassName}>分组</th>
+            <th className={tableHeaderClassName}>状态</th>
             <th className={tableHeaderClassName}>倍率</th>
             <th className={updatedAtHeaderClassName}>最后变更时间</th>
           </tr>
@@ -302,6 +449,9 @@ function PricingRowsTable({
                   <div className="mt-0.5 text-xs font-medium text-success-foreground">当前最低</div>
                 )}
               </td>
+              <td className={tableCellClassName}>
+                <PricingMonitorStatus row={row} onOpenRoutingDeepLink={onOpenRoutingDeepLink} />
+              </td>
               <td className={`${tableCellClassName} tabular-nums font-semibold text-foreground`}>
                 {formatNullableMultiplier(row.effectiveMultiplier)}
               </td>
@@ -313,6 +463,49 @@ function PricingRowsTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function PricingMonitorStatus({
+  row,
+  onOpenRoutingDeepLink,
+}: {
+  row: PricingComparisonRow;
+  onOpenRoutingDeepLink?: (link: RoutingDeepLink) => void;
+}) {
+  const meta: Record<PricingComparisonRow["monitorDisplayState"], { label: string; className: string }> = {
+    unresolved: { label: "无法解析", className: "border-warning-border bg-warning-surface text-warning-foreground" },
+    no_key: { label: "无 Key", className: "border-border bg-muted text-muted-foreground" },
+    unmonitored: { label: "无监控", className: "border-border bg-muted text-muted-foreground" },
+    running: { label: "运行中", className: "border-info-border bg-info-surface text-info-foreground" },
+    untested: { label: "未测试", className: "border-border bg-muted text-muted-foreground" },
+    available: { label: "成功", className: "border-success-border bg-success-surface text-success-foreground" },
+    degraded: { label: "降级", className: "border-warning-border bg-warning-surface text-warning-foreground" },
+    unavailable: { label: "失败", className: "border-danger-border bg-danger-surface text-danger-foreground" },
+    skipped: { label: "跳过", className: "border-border bg-muted text-muted-foreground" },
+    unavailable_data: { label: "暂不可用", className: "border-warning-border bg-warning-surface text-warning-foreground" },
+  };
+  const value = meta[row.monitorDisplayState];
+  const deepLink = buildPricingMonitoringDeepLink(row);
+  const content = (
+    <span
+      className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${value.className}`}
+      title={row.monitorSummary?.latestTerminalReason ?? undefined}
+    >
+      {value.label}
+    </span>
+  );
+  return onOpenRoutingDeepLink && deepLink ? (
+    <button
+      type="button"
+      className="rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+      aria-label={`查看 ${row.stationName} 的监控定位`}
+      onClick={() => onOpenRoutingDeepLink(deepLink)}
+    >
+      {content}
+    </button>
+  ) : (
+    content
   );
 }
 

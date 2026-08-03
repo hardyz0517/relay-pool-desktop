@@ -122,6 +122,10 @@ import type {
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
 import type { AppUpdateCheckResult, DownloadProgress } from "@/lib/types/updater";
+import type {
+  PricingGroupMonitorStatusInput,
+  PricingGroupMonitorStatusWorkspace,
+} from "@/lib/types/pricingMonitoring";
 
 export type BackendMode = "desktop" | "demo";
 
@@ -287,6 +291,9 @@ export type PricingComparisonWorkspace = {
 
 export type PricingDomainClient = {
   loadPricingComparisonWorkspace(): Promise<PricingComparisonWorkspace>;
+  loadPricingGroupMonitorStatus(
+    input: PricingGroupMonitorStatusInput,
+  ): Promise<PricingGroupMonitorStatusWorkspace>;
 };
 
 export type RoutingDomainClient = {

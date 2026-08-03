@@ -1,6 +1,6 @@
 # 价格分组与状态监控联动规范
 
-状态：Draft v2，评审修订后待确认  
+状态：Implemented v2，已按实施计划完成并通过自动化验收；保留本文作为行为契约
 日期：2026-08-03  
 适用范围：价格 / 倍率页面、渠道状态页面、Station Key 分组绑定与监控状态读模型  
 提案类型：跨域只读投影与价格页筛选升级  
@@ -94,6 +94,7 @@
 ```text
 stationId
 groupBindingId: string | null
+groupIdHash: string | null
 groupKeyHash: string
 ```
 
@@ -101,10 +102,11 @@ groupKeyHash: string
 
 ```text
 station:{stationId}:binding:{groupBindingId}
+station:{stationId}:group-id:{groupIdHash}
 station:{stationId}:group-key:{groupKeyHash}
 ```
 
-引用先按规范化键排序、去重，再参与 React Query key 和 `groupRefsHash` 计算。`groupBindingId` 非空时不得同时使用 group-key 作为主合并键。
+引用先按规范化键排序、去重，再参与 React Query key 和 `groupRefsHash` 计算。`groupBindingId` 非空时不得同时使用 group-id 或 group-key 作为主合并键；没有 binding id 时优先使用非空 `groupIdHash`，否则使用 `groupKeyHash`。
 
 现有价格页的 `identityKey` 可以继续用于 UI 行 key，但跨域匹配不得只依赖显示名称或 UI 行 key。
 
@@ -120,12 +122,24 @@ station:{stationId}:group-key:{groupKeyHash}
 匹配结果必须记录：
 
 ```text
-matchKind: exact_binding | parent_binding | group_id_hash | unresolved
+matchKind: exact_binding | parent_binding | group_id_hash | group_key_hash | unresolved
 ```
 
-`unresolved` 不得被当成“有 Key”或“有监控”，也不得因为同名而自动合并。若同一站点存在多个候选分组使用相同 hash，必须返回 `unresolved`，不能择一匹配。
+`group_key_hash` 只表示使用同站点唯一 `groupKeyHash` fallback；它不等价于 `group_id_hash`。`unresolved` 不得被当成“有 Key”或“有监控”，也不得因为同名而自动合并。若同一站点存在多个候选分组使用相同 hash，必须返回 `unresolved`，不能择一匹配。
 
-### 6.3 数据异常处理
+### 6.3 引用规范化与哈希
+
+规范化引用键必须使用以下字符串之一：
+
+```text
+station:{stationId}:binding:{groupBindingId}
+station:{stationId}:group-id:{groupIdHash}
+station:{stationId}:group-key:{groupKeyHash}
+```
+
+将规范化键按 UTF-8 字节序升序排序，以单个换行符连接，再计算 SHA-256 小写十六进制字符串作为 `groupRefsHash`。TypeScript 和 Rust 必须共享 contract fixture，禁止各自使用不同的 JSON 序列化或排序实现。
+
+### 6.4 数据异常处理
 
 - 价格行缺少稳定分组身份：仍可显示价格，但联动摘要返回 `unresolved`。
 - Key 绑定不存在：不计入该分组的绑定 Key 数量。
@@ -144,6 +158,8 @@ matchKind: exact_binding | parent_binding | group_id_hash | unresolved
 4. Monitor 状态读模型能够识别该目标 Key。
 
 停用 Monitor Definition 不算“有启用监控”。
+
+station-wide Monitor 必须沿用现有 Channel Status 读模型的目标展开语义：摘要只能使用该 Monitor 对该具体 Key 产生的 Target Result，不得把一个没有 `station_key_id` 的站点级结果擅自复制给所有 Key。
 
 ### 7.2 稳定排序
 
@@ -176,8 +192,9 @@ monitor.id
 ```text
 stationId: string
 groupBindingId: string | null
+groupIdHash: string | null
 groupKeyHash: string
-matchKind: exact_binding | parent_binding | group_id_hash | unresolved
+matchKind: exact_binding | parent_binding | group_id_hash | group_key_hash | unresolved
 resolutionState: resolved | unresolved
 hasBoundKey: boolean
 boundKeyCount: number
@@ -188,7 +205,10 @@ monitoredKeyCount: number
 testedKeyCount: number
 representativeKeyId: string | null
 representativeMonitorId: string | null
+latestTargetResultId: string | null
 latestOutcome: available | degraded | unavailable | skipped | missing
+latestFailureKind: string | null
+latestTerminalReason: string | null
 running: boolean
 checkedAtMs: number | null
 latencyMs: number | null
@@ -258,9 +278,12 @@ load_pricing_group_monitor_status
 
 ```ts
 type PricingGroupMonitorStatusInput = {
+  schemaVersion: 1;
+  groupRefsHash: string;
   groups: Array<{
     stationId: string;
     groupBindingId: string | null;
+    groupIdHash: string | null;
     groupKeyHash: string;
   }>;
 };
@@ -272,16 +295,25 @@ type PricingGroupMonitorStatusInput = {
 type PricingGroupMonitorStatusWorkspace = {
   schemaVersion: 1;
   generatedAtMs: number;
+  groupRefsHash: string;
+  requestedGroupCount: number;
+  returnedGroupCount: number;
+  omittedGroupCount: number;
   items: PricingGroupMonitorSummary[];
 };
 ```
 
-输入最多允许 500 个分组引用。重复引用必须在 DTO 校验阶段去重或拒绝，不能让同一分组返回多份摘要。
+输入最多允许 500 个规范化分组引用。重复引用必须在 DTO 校验阶段去重或拒绝，不能让同一分组返回多份摘要。`groupRefsHash` 必须由规范化、排序后的引用计算，输出必须原样回显。
+
+后端不得静默丢弃超限引用：要么完整返回，要么返回明确的 invalid-input 错误。`omittedGroupCount` 只允许在未来引入 cursor 后使用，当前版本必须为 `0`。
 
 ### 9.2 事务与查询
 
-- 每次接口调用使用一个 `ReadSession`，分组、Key、Monitor 和 latest result 在同一读事务快照中读取。
+- 每次接口调用使用一个 `ReadSession`，分组、Key、Monitor 和 latest result 在该摘要快照中读取。它不宣称与前一个价格工作区请求属于同一数据库快照。
+- 前端只合并 `groupRefsHash` 相同且引用完全匹配的摘要；价格工作区引用变化时，旧摘要必须丢弃并重新请求。
 - 查询必须批量完成，不允许按 group、Key 或 Monitor 循环发 SQL。
+- Repository 不得复用当前 `workspace_recent_results` 的逐 row 查询路径；必须新增批量 latest-result / running-state 查询。
+- 500 个引用不得直接展开为超过 SQLite 变量预算的绑定参数；可以使用单 JSON 参数、SQLite `json_each` 或受控批次（每批最多 100 个引用），但必须保证完整覆盖。
 - 不读取 recent、hourly、daily buckets，不读取完整 execution history。
 - latest result 使用 `finished_at_ms DESC, id DESC` 的确定性排序。
 - running execution 只返回是否存在，不返回完整运行对象。
@@ -298,7 +330,7 @@ src-tauri/src/models/shared_capabilities.rs
 src-tauri/src/ipc/dto/pricing_reads.rs
 ```
 
-Repository 负责 SQL 行映射；Application Query 负责分组候选、代表选择和状态 reducer；DTO 负责输入校验和序列化。React 不承担这些领域判断。
+Repository 负责 SQL 行映射和批量读取；Application Query 负责分组候选、代表选择和状态 reducer；DTO 负责输入校验、哈希校验和序列化。React 不承担这些领域判断。
 
 ## 10. 前端集成
 
@@ -310,7 +342,7 @@ Repository 负责 SQL 行映射；Application Query 负责分组候选、代表�
 pricing workspace
     -> stable group refs
     -> pricing group monitor status workspace
-    -> merge by stationId + groupBindingId/groupKeyHash
+    -> merge by canonical group ref key and matching groupRefsHash
     -> view model filters and table
 ```
 
@@ -319,7 +351,7 @@ pricing workspace
 - 仅在价格页可见时启用；
 - 建议 `staleTime = 5s`、`refetchInterval = 5s`；
 - 监控创建、更新、启停、手动执行完成或取消后主动失效；
-- 摘要查询失败时，价格仍正常展示，状态列显示“暂不可用”，不得把请求错误伪装成“失败”。
+- 摘要查询失败时，价格仍正常展示，状态列显示“暂不可用”，不得把请求错误伪装成“失败”；此状态不参与“仅成功 / 仅失败”筛选。
 
 ### 10.2 View Model
 
@@ -355,7 +387,7 @@ monitorDisplayState: unresolved | no_key | unmonitored | running | untested | av
 7. 第一候选未检测、第二候选成功时仍返回未检测；
 8. 同 Key 多 Monitor 按创建顺序选择；
 9. station-wide Monitor 展开到分组 Key；
-10. 停用 Monitor 不计入 `enabledMonitorCount`；
+10. 停用 Monitor 不计入 `enabledMonitorDefinitionCount`；
 11. running 与 latest outcome 同时存在；
 12. 没有 Key、没有 Monitor、未检测三者不混淆；
 13. 所有筛选组合使用 AND；
@@ -368,7 +400,9 @@ monitorDisplayState: unresolved | no_key | unmonitored | running | untested | av
 - 验证 latest result 的时间和 id tie-break；
 - 验证运行中的 execution 不会覆盖 latest terminal result；
 - 验证 500 个输入引用的边界和重复引用处理；
+- 验证规范化引用 hash、价格工作区变化后的旧摘要丢弃和完整批处理覆盖；
 - 验证删除、解绑和旧绑定数据不会产生悬空 summary；
+- 验证 `unresolved`、无 Key、无凭据 Key、禁用 Key 和 station-wide Monitor 计数；
 - 验证返回 DTO 不含 API Key、Cookie、token 或原始响应正文。
 
 ### 11.3 TypeScript / UI 测试
@@ -395,10 +429,10 @@ monitorDisplayState: unresolved | no_key | unmonitored | running | untested | av
 ## 12. 性能与容量约束
 
 - 价格页首期最多处理现有价格工作区允许的 500 个分组引用。
-- 后端一次批量读取，不允许每个分组一次查询。
+- 后端一次批量读取，不允许每个分组一次查询；超过 SQLite 变量预算时必须内部批处理并合并，不能减少返回项。
 - 摘要 DTO 不返回完整 monitor、attempt 或 bucket 历史。
-- 需要更大容量时，下一阶段增加 cursor，而不是提高单次 DTO 上限并继续返回全部明细。
-- 应使用查询计划或生成数据验证索引，不能只凭代码阅读判断性能足够。
+- 当前版本超过 500 个分组必须明确报错；下一阶段增加 cursor，而不是静默截断或无限提高单次 DTO 上限。
+- 必须使用 `EXPLAIN QUERY PLAN` 和生成数据验证索引，不能只凭代码阅读判断性能足够。
 - 前端状态筛选必须是 O(rows)，不得在每个筛选条件中重复构造索引。
 
 ## 13. 可靠性与可维护性约束
@@ -433,12 +467,12 @@ monitorDisplayState: unresolved | no_key | unmonitored | running | untested | av
 
 ### Phase 0：契约冻结
 
-- 确认“第一把 Key”的产品排序规则；
-- 冻结分组身份匹配顺序；
+- 固化“第一把 Key”排序规则的 contract fixture 和纯函数测试；
+- 冻结分组身份匹配顺序、`hasBoundKey` 语义和 station-wide 计数语义；
 - 添加纯函数测试和 fixture；
 - 不修改 UI。
 
-退出条件：所有边界行为都有明确输入、输出和测试。
+退出条件：本规范中的排序和字段语义已经冻结，所有边界行为都有明确输入、输出和测试。
 
 ### Phase 1：后端摘要读模型
 
@@ -476,7 +510,8 @@ monitorDisplayState: unresolved | no_key | unmonitored | running | untested | av
 - 有启用监控未运行显示“未检测”；
 - 运行中显示“检测中”；
 - 多 Key 同分组严格使用代表策略；
-- 支持仅有 Key、仅有监控、仅成功、降级、失败、未检测等筛选；
+- 无法解析的分组显示“无法关联”，不得显示为“无 Key”；
+- 支持仅有 Key、仅有凭据 Key、仅有监控、仅成功、降级、失败、未检测等筛选；
 - 价格排序和最低倍率计算不被监控状态改变。
 
 ### 15.2 数据一致性
@@ -486,11 +521,15 @@ monitorDisplayState: unresolved | no_key | unmonitored | running | untested | av
 - 不存在重复的分组健康持久化字段；
 - 分组名称变化不会导致错误合并；
 - Monitor 停用后不会继续显示为启用监控。
+- `groupRefsHash` 不一致时旧摘要不会合并到新价格行；
+- 超过 500 个分组不会静默截断；
+- station-wide Monitor 的 Definition 数量、覆盖 Key 数量和已测试 Key 数量语义一致。
 
 ### 15.3 工程质量
 
 - 关键规则具有 Rust / TypeScript 单元测试；
 - 关键 SQL 具有集成测试和分页边界测试；
+- 关键 SQL 具有 `EXPLAIN QUERY PLAN` 和变量预算测试；
 - IPC 类型由生成流程维护，无手写漂移；
 - `pnpm build`、相关 Vitest、`cargo check` 和相关 Cargo 测试通过；
 - 无 N+1 查询、无秘密泄露、无新增第二套健康状态机；

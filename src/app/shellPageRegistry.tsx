@@ -59,7 +59,12 @@ export const ShellPageContent = memo(function ShellPageContent({
     case "changes":
       return <ChangeCenterPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
     case "pricing":
-      return <PricingPage onOpenModelBasePrices={actions.openModelBasePrices} />;
+      return (
+        <PricingPage
+          onOpenModelBasePrices={actions.openModelBasePrices}
+          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
+        />
+      );
     case "routing":
       return (
         <RoutingPage

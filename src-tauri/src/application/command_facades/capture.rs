@@ -383,7 +383,10 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) fn web_authorization_cookie_url(&self, station_id: &str) -> Result<String, String> {
+    pub(crate) async fn web_authorization_cookie_url(
+        &self,
+        station_id: &str,
+    ) -> Result<String, String> {
         self.sessions.web_authorization_cookie_url(station_id)
     }
 

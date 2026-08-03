@@ -152,6 +152,7 @@ export class DemoBackend implements BackendClient {
   };
   readonly pricing: BackendClient["pricing"] = {
     loadPricingComparisonWorkspace: () => this.rejectUnsupported("pricing"),
+    loadPricingGroupMonitorStatus: () => this.rejectUnsupported("pricing.monitor_status"),
   };
   readonly routing: BackendClient["routing"] = {
     getStationKeyCapabilities: (_stationKeyId: string) => this.rejectUnsupported("routing"),

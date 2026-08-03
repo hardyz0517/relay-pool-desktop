@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "9bdb0c6d8177b8e25957e75c2b2ebad2eb58c4bd50980a5ae7a31a26886f63c3",
+  "contract_hash": "0fa1f04d463c41f9a91634bc158da6abbf3f3be5bbca4edab3f407bc20ddd030",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -1182,6 +1182,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "load_pricing_group_monitor_status",
+      "transport": "ordinary",
+      "input_schema_hash": "631b4ec11e1727972f30b8f60c07dec7ffad97d06dad69692807171b62696804",
+      "output_schema_hash": "e0e9afe9b02db00e2f5d964547cb2c25b8b54364f491d0872793a42e85943798",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "load_routing_runtime_overlay",
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
@@ -1812,6 +1823,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "d6bf39e12480e8be6b2e9fcb7d075c3604aced183131df31d70cfb00a9c95756"
+    "serialization_fixture_hash": "22f0d40dbc6b605ae356a9006a64ef61b6b00a95fcc60640d101e9e4d940ceea"
   }
 }

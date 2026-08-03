@@ -152,7 +152,12 @@ export function SelectControl<T extends string>({
     const desiredMenuHeight = estimateMenuHeight(options, MAX_MENU_HEIGHT);
     const openAbove = spaceBelow < desiredMenuHeight && spaceAbove > spaceBelow;
     const maxHeight = Math.min(MAX_MENU_HEIGHT, openAbove ? spaceAbove : spaceBelow);
-    const menuWidth = Math.max(rect.width, menuMinWidth);
+    // A caller may request a wider menu for rich option labels, but it must remain inside
+    // the viewport so the portal does not create an unreachable horizontal overflow.
+    const menuWidth = Math.min(
+      Math.max(rect.width, menuMinWidth),
+      Math.max(0, window.innerWidth - viewportPadding * 2),
+    );
     const preferredLeft = menuAlign === "end" ? rect.right - menuWidth : rect.left;
 
     setPosition({

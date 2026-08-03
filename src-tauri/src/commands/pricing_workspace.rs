@@ -23,3 +23,23 @@ pub async fn load_pricing_comparison_workspace(
     })
     .await
 }
+
+#[tauri::command]
+pub async fn load_pricing_group_monitor_status(
+    facade: State<'_, PricingCommandFacade>,
+    input: Value,
+) -> Result<
+    crate::ipc::dto::pricing_reads::PricingGroupMonitorStatusWorkspaceDto,
+    error::CommandError,
+> {
+    correlation::in_command_scope("load_pricing_group_monitor_status", async {
+        let input =
+            crate::ipc::dto::pricing_reads::PricingGroupMonitorStatusInputDto::parse(input)?
+                .into_domain();
+        facade
+            .load_pricing_group_monitor_status(input)
+            .await
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}

@@ -10,7 +10,7 @@ import {
   updateChannelMonitor,
 } from "@/lib/api/channelMonitors";
 import { readError } from "@/lib/errors";
-import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
 import { channelMonitoringQueryOptions, monitoringCapabilitiesQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type {
@@ -96,7 +96,7 @@ export function ChannelMonitoringTab({
   async function refresh(showSuccess = false) {
     setError(null);
     try {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitoring });
+      await invalidatePricingMonitoringQueries(queryClient);
       if (showSuccess) {
         toast.success("渠道监控已刷新");
       }

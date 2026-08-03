@@ -10,6 +10,9 @@ use crate::{
             BalanceSnapshot, ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext,
             UpsertBalanceSnapshotInput, UpsertModelBasePriceInput, UpsertPricingRuleInput,
         },
+        pricing_group_monitoring::{
+            PricingGroupMonitorStatusInput, PricingGroupMonitorStatusWorkspace,
+        },
         shared_capabilities::PricingComparisonWorkspace,
     },
 };
@@ -18,16 +21,23 @@ use crate::{
 pub(crate) struct PricingCommandFacade {
     pricing: Arc<PricingService>,
     pricing_comparison: Arc<PricingComparisonQuery>,
+    pricing_group_monitor_status: Arc<
+        crate::application::queries::pricing_group_monitor_status::PricingGroupMonitorStatusQuery,
+    >,
 }
 
 impl PricingCommandFacade {
     pub(crate) fn new(
         pricing: Arc<PricingService>,
         pricing_comparison: Arc<PricingComparisonQuery>,
+        pricing_group_monitor_status: Arc<
+            crate::application::queries::pricing_group_monitor_status::PricingGroupMonitorStatusQuery,
+        >,
     ) -> Self {
         Self {
             pricing,
             pricing_comparison,
+            pricing_group_monitor_status,
         }
     }
 
@@ -106,5 +116,12 @@ impl PricingCommandFacade {
         limit: PageLimit,
     ) -> Result<PricingComparisonWorkspace, ApplicationError> {
         self.pricing_comparison.load(limit).await
+    }
+
+    pub(crate) async fn load_pricing_group_monitor_status(
+        &self,
+        input: PricingGroupMonitorStatusInput,
+    ) -> Result<PricingGroupMonitorStatusWorkspace, ApplicationError> {
+        self.pricing_group_monitor_status.load(input).await
     }
 }

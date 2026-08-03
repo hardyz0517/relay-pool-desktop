@@ -386,7 +386,8 @@
       "source_path": "src-tauri/src/application/command_facades/pricing.rs",
       "dependencies": [
         "PricingService",
-        "PricingComparisonQuery"
+        "PricingComparisonQuery",
+        "PricingGroupMonitorStatusQuery"
       ],
       "commands": [
         {
@@ -443,6 +444,11 @@
           "command": "load_pricing_comparison_workspace",
           "use_case": "load_pricing_comparison_workspace",
           "dependencies": ["PricingComparisonQuery"]
+        },
+        {
+          "command": "load_pricing_group_monitor_status",
+          "use_case": "load_pricing_group_monitor_status",
+          "dependencies": ["PricingGroupMonitorStatusQuery"]
         }
       ],
       "non_goals": [
@@ -767,7 +773,7 @@
       "commands": [
         {
           "command": "start_capture_session",
-          "use_case": "prepare_capture_session_start",
+          "use_case": "start_capture_session",
           "dependencies": ["StationService", "CredentialService"]
         },
         {

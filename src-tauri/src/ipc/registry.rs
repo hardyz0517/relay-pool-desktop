@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "9bdb0c6d8177b8e25957e75c2b2ebad2eb58c4bd50980a5ae7a31a26886f63c3";
+    "0fa1f04d463c41f9a91634bc158da6abbf3f3be5bbca4edab3f407bc20ddd030";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -135,6 +135,7 @@ macro_rules! ipc_command_registry {
             list_channel_monitor_attempts => $crate::commands::channel_status::list_channel_monitor_attempts,
             list_monitoring_capabilities => $crate::commands::channel_status::list_monitoring_capabilities,
             load_pricing_comparison_workspace => $crate::commands::pricing_workspace::load_pricing_comparison_workspace,
+            load_pricing_group_monitor_status => $crate::commands::pricing_workspace::load_pricing_group_monitor_status,
             create_channel_monitor => $crate::commands::channel_monitoring::create_channel_monitor,
             update_channel_monitor => $crate::commands::channel_monitoring::update_channel_monitor,
             delete_channel_monitor => $crate::commands::channel_monitoring::delete_channel_monitor,
@@ -757,6 +758,10 @@ fn command_contract(name: &str) -> CommandContract {
         "load_pricing_comparison_workspace" => {
             migrated_read("EmptyInputDto", "PricingComparisonWorkspaceDto")
         }
+        "load_pricing_group_monitor_status" => migrated_read(
+            "PricingGroupMonitorStatusInputDto",
+            "PricingGroupMonitorStatusWorkspaceDto",
+        ),
         "upsert_model_base_price" => migrated_mutation(
             "UpsertModelBasePriceInputDto",
             "ModelBasePriceDto",
@@ -1511,6 +1516,10 @@ export function loadPricingComparisonWorkspace(input: EmptyInputDto = {}): Promi
   return invokeCommand<PricingComparisonWorkspaceDto>("load_pricing_comparison_workspace", { input });
 }
 
+export function loadPricingGroupMonitorStatus(input: PricingGroupMonitorStatusInputDto): Promise<PricingGroupMonitorStatusWorkspaceDto> {
+  return invokeCommand<PricingGroupMonitorStatusWorkspaceDto>("load_pricing_group_monitor_status", { input });
+}
+
 export function upsertModelBasePrice(input: UpsertModelBasePriceInputDto): Promise<ModelBasePriceDto> {
   return invokeCommand<ModelBasePriceDto>("upsert_model_base_price", { input });
 }
@@ -2121,6 +2130,11 @@ mod tests {
                 "load_pricing_comparison_workspace",
                 "EmptyInputDto",
                 "PricingComparisonWorkspaceDto",
+            ),
+            (
+                "load_pricing_group_monitor_status",
+                "PricingGroupMonitorStatusInputDto",
+                "PricingGroupMonitorStatusWorkspaceDto",
             ),
         ] {
             let contract = command_contract(name);

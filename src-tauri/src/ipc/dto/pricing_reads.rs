@@ -5,6 +5,10 @@ use serde_json::Value;
 use crate::models::pricing::PricingStatus;
 use crate::models::{
     pricing::{ModelBasePrice, PricingRule, RequestKind, ResolvedPricingContext},
+    pricing_group_monitoring::{
+        canonicalize_group_refs, group_refs_hash, CanonicalGroupRef,
+        PricingGroupMonitorStatusInput, PricingGroupMonitorStatusWorkspace,
+    },
     shared_capabilities::PricingComparisonWorkspace,
 };
 
@@ -22,6 +26,90 @@ const MAX_MODEL_BYTES: usize = 512;
 pub type PricingRuleDto = PricingRule;
 pub type ModelBasePriceDto = ModelBasePrice;
 pub type ResolvedPricingContextDto = ResolvedPricingContext;
+pub type PricingGroupMonitorStatusWorkspaceDto = PricingGroupMonitorStatusWorkspace;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PricingGroupMonitorStatusInputDto {
+    pub schema_version: u32,
+    pub group_refs_hash: String,
+    pub groups: Vec<PricingGroupRefDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PricingGroupRefDto {
+    pub station_id: String,
+    pub group_binding_id: Option<String>,
+    pub group_id_hash: Option<String>,
+    pub group_key_hash: String,
+}
+
+impl PricingGroupMonitorStatusInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The pricing group monitoring payload is invalid.",
+            )
+        })?;
+        input.validate()?;
+        Ok(input)
+    }
+
+    pub fn into_domain(self) -> PricingGroupMonitorStatusInput {
+        PricingGroupMonitorStatusInput {
+            schema_version: self.schema_version,
+            group_refs_hash: self.group_refs_hash,
+            groups: self
+                .groups
+                .into_iter()
+                .map(|group| CanonicalGroupRef {
+                    station_id: group.station_id,
+                    group_binding_id: group.group_binding_id,
+                    group_id_hash: group.group_id_hash,
+                    group_key_hash: group.group_key_hash,
+                })
+                .collect(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), crate::commands::error::CommandError> {
+        let groups = self
+            .groups
+            .iter()
+            .map(|group| CanonicalGroupRef {
+                station_id: group.station_id.clone(),
+                group_binding_id: group.group_binding_id.clone(),
+                group_id_hash: group.group_id_hash.clone(),
+                group_key_hash: group.group_key_hash.clone(),
+            })
+            .collect::<Vec<_>>();
+        canonicalize_group_refs(&groups).map_err(|_| {
+            invalid_input(
+                "groups",
+                "invalid_refs",
+                "The group references are invalid, unresolved, duplicated, or too large.",
+            )
+        })?;
+        let expected_hash = group_refs_hash(&groups).map_err(|_| {
+            invalid_input(
+                "groupRefsHash",
+                "invalid_hash",
+                "The group reference hash is invalid.",
+            )
+        })?;
+        if self.schema_version != 1 || self.group_refs_hash != expected_hash {
+            return Err(invalid_input(
+                "groupRefsHash",
+                "hash_mismatch",
+                "The group reference hash does not match the normalized references.",
+            ));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -132,6 +220,19 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
             "output":context
         }),
         serde_json::json!({"command":"load_pricing_comparison_workspace","input":{},"output":workspace}),
+        serde_json::json!({
+            "command":"load_pricing_group_monitor_status",
+            "input":{"schemaVersion":1,"groupRefsHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","groups":[]},
+            "output":{
+                "schemaVersion":1,
+                "generatedAtMs":1700000000000i64,
+                "groupRefsHash":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "requestedGroupCount":0,
+                "returnedGroupCount":0,
+                "omittedGroupCount":0,
+                "items":[]
+            }
+        }),
     ]
 }
 
@@ -221,6 +322,14 @@ mod tests {
     use super::*;
     use crate::commands::error::CommandErrorCode;
 
+    fn monitor_input(group: Value) -> Value {
+        serde_json::json!({
+            "schemaVersion": 1,
+            "groupRefsHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "groups": group
+        })
+    }
+
     fn valid_input() -> Value {
         serde_json::json!({
             "stationKeyId":"key-1",
@@ -256,5 +365,56 @@ mod tests {
             let error = PricingContextInputDto::parse(value).expect_err("invalid model");
             assert_eq!(error.code, CommandErrorCode::InvalidInput);
         }
+    }
+
+    #[test]
+    fn pricing_monitor_status_rejects_unknown_fields_duplicates_and_hash_mismatch() {
+        let valid = monitor_input(serde_json::json!([]));
+        PricingGroupMonitorStatusInputDto::parse(valid).expect("empty monitor input");
+
+        let mut unknown = monitor_input(serde_json::json!([]));
+        unknown["unexpected"] = serde_json::json!(true);
+        let error = PricingGroupMonitorStatusInputDto::parse(unknown)
+            .expect_err("unknown monitor field must be rejected");
+        assert_eq!(error.code, CommandErrorCode::InvalidInput);
+
+        let duplicate = monitor_input(serde_json::json!([
+            {
+                "stationId": "station-1",
+                "groupBindingId": "binding-1",
+                "groupIdHash": null,
+                "groupKeyHash": "ignored"
+            },
+            {
+                "stationId": "station-1",
+                "groupBindingId": "binding-1",
+                "groupIdHash": null,
+                "groupKeyHash": "ignored"
+            }
+        ]));
+        let error = PricingGroupMonitorStatusInputDto::parse(duplicate)
+            .expect_err("duplicate monitor refs must be rejected");
+        assert_eq!(error.code, CommandErrorCode::InvalidInput);
+
+        let mut mismatch = monitor_input(serde_json::json!([]));
+        mismatch["groupRefsHash"] = serde_json::json!("not-a-sha256");
+        let error = PricingGroupMonitorStatusInputDto::parse(mismatch)
+            .expect_err("hash mismatch must be rejected");
+        assert_eq!(error.code, CommandErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn pricing_monitor_status_serialization_contains_summary_only_fields() {
+        let fixture = serialization_fixtures()
+            .into_iter()
+            .find(|value| value["command"] == "load_pricing_group_monitor_status")
+            .expect("monitor serialization fixture");
+        let encoded = serde_json::to_string(&fixture).expect("serialize fixture");
+        for secret in ["apiKey", "cookie", "authorization", "token", "responseBody"] {
+            assert!(!encoded
+                .to_ascii_lowercase()
+                .contains(&secret.to_ascii_lowercase()));
+        }
+        assert_eq!(fixture["output"]["omittedGroupCount"], 0);
     }
 }

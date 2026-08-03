@@ -1,4 +1,5 @@
 import type { DashboardRequestMetricsInput } from "@/lib/types/dashboardMetrics";
+import type { PricingGroupMonitorStatusInput } from "@/lib/types/pricingMonitoring";
 
 export const queryKeys = {
   settings: ["settings"] as const,
@@ -28,6 +29,9 @@ export const queryKeys = {
   localRoutingWorkspace: ["localRoutingWorkspace"] as const,
   channelMonitoring: ["channelMonitoring"] as const,
   pricing: ["pricing"] as const,
+  pricingGroupMonitorStatus: (input: PricingGroupMonitorStatusInput) =>
+    ["pricingGroupMonitorStatus", input.schemaVersion, input.groupRefsHash, input.groups] as const,
+  pricingGroupMonitorStatusPrefix: ["pricingGroupMonitorStatus"] as const,
   channelStatus: ["channelStatus"] as const,
   channelMonitorExecutions: ["channelMonitorExecutions"] as const,
   channelMonitorExecution: (executionId: string) => ["channelMonitorExecution", executionId] as const,

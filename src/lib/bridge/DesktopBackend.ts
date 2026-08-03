@@ -85,6 +85,7 @@ import {
   loadDashboardLiveRequestMetrics as loadDashboardLiveRequestMetricsBinding,
   loadChannelStatusWorkspace as loadChannelStatusWorkspaceBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
+  loadPricingGroupMonitorStatus as loadPricingGroupMonitorStatusBinding,
   loadRoutingRuntimeOverlay as loadRoutingRuntimeOverlayBinding,
   loadRoutingWorkspaceSnapshot as loadRoutingWorkspaceSnapshotBinding,
   listModelAliases as listModelAliasesBinding,
@@ -412,6 +413,12 @@ export class DesktopBackend implements BackendClient {
   readonly pricing = {
     loadPricingComparisonWorkspace: () =>
       loadPricingComparisonWorkspaceBinding() as ReturnType<BackendClient["pricing"]["loadPricingComparisonWorkspace"]>,
+    loadPricingGroupMonitorStatus: (
+      input: Parameters<BackendClient["pricing"]["loadPricingGroupMonitorStatus"]>[0],
+    ) =>
+      loadPricingGroupMonitorStatusBinding(input) as ReturnType<
+        BackendClient["pricing"]["loadPricingGroupMonitorStatus"]
+      >,
   };
   readonly routing = {
     getStationKeyCapabilities: (stationKeyId: string) => getStationKeyCapabilitiesBinding({ stationKeyId }),

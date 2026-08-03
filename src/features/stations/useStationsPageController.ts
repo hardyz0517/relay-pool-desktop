@@ -39,6 +39,7 @@ import { isStationType, type Station } from "@/lib/types/stations";
 import {
   buildStationAssetRows,
   filterStationAssetRowsByIssue,
+  hasPositiveBalance,
   stationIssueTags,
   type StationIssueFilterValue,
 } from "./stationAssetViewModels";
@@ -208,7 +209,7 @@ export function useStationsPageController({
     [issueFilter, stationAssetRows],
   );
   const collectedBalanceCount = useMemo(
-    () => filteredStationAssetRows.filter((row) => row.latestBalance?.value != null || row.station.balanceCny != null).length,
+    () => filteredStationAssetRows.filter((row) => hasPositiveBalance(row.currentBalance.value)).length,
     [filteredStationAssetRows],
   );
   const filteredStationIds = useMemo(

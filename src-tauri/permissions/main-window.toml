@@ -120,6 +120,7 @@ commands.allow = [
   "delete_pricing_rule",
   "resolve_station_key_pricing_context",
   "load_pricing_comparison_workspace",
+  "load_pricing_group_monitor_status",
   "list_balance_snapshots",
   "list_current_station_balance_snapshots",
   "list_balance_snapshots_for_station",

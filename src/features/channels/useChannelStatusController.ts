@@ -9,6 +9,7 @@ import {
   channelStatusQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type {
   ChannelMonitorExecutionListInput,
@@ -117,7 +118,7 @@ export function useChannelStatusController() {
 
 async function invalidateMonitoringQueries(queryClient: ReturnType<typeof useQueryClient>) {
   await Promise.all([
-    queryClient.invalidateQueries({ queryKey: queryKeys.channelStatus }),
+    invalidatePricingMonitoringQueries(queryClient),
     queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitorExecutions }),
   ]);
 }

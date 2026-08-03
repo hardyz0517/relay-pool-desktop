@@ -64,7 +64,7 @@ describe("StationKeyRowsEditor", () => {
     await act(async () => trigger.click());
 
     const listbox = document.querySelector<HTMLElement>('[role="listbox"]')!;
-    expect(listbox.style.width).toBe("320px");
+    expect(listbox.style.width).toBe("420px");
     expect(listbox.textContent).toContain("0.05x 倍率");
 
     await act(async () => root.unmount());

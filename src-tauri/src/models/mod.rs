@@ -10,6 +10,7 @@ pub(crate) mod health;
 pub mod monitoring;
 pub mod operational;
 pub mod pricing;
+pub mod pricing_group_monitoring;
 pub mod provider_drafts;
 pub mod proxy;
 pub mod remote_keys;

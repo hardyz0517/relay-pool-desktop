@@ -12,6 +12,45 @@ afterEach(() => {
 });
 
 describe("SelectControl positioning", () => {
+  it("keeps a wide menu inside a narrow viewport", async () => {
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(360);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <SelectControl
+          ariaLabel="选择分组"
+          menuMinWidth={420}
+          value="group"
+          options={[{ value: "group", label: "长分组名称" }]}
+          onChange={vi.fn()}
+        />,
+      );
+    });
+
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="选择分组"]')!;
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      bottom: 100,
+      height: 32,
+      left: 20,
+      right: 152,
+      top: 68,
+      width: 132,
+      x: 20,
+      y: 68,
+      toJSON: () => ({}),
+    });
+
+    await act(async () => trigger.click());
+
+    const menu = document.querySelector<HTMLElement>('[role="listbox"]')!;
+    expect(menu.style.width).toBe("340px");
+
+    await act(async () => root.unmount());
+  });
+
   it("opens above when the menu does not fit below the trigger", async () => {
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(640);
     const host = document.createElement("div");

@@ -169,7 +169,9 @@ export function StationKeyRowsEditor({
                   className={selectClassName}
                   disabled={disabled}
                   menuClassName="text-xs"
-                  menuMinWidth={320}
+                  // The option includes both a group badge and a multiplier badge. Keep enough
+                  // horizontal space for the common long group names before truncating.
+                  menuMinWidth={420}
                   options={selectOptions}
                   value={resolveSelectedGroupValue(row, normalizedGroupOptions)}
                   onChange={(value) => selectGroup(row, value)}

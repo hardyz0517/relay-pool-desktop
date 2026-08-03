@@ -41,3 +41,53 @@ export type PricingComparisonWorkspaceDto = {
   pricingRules: PricingRuleDto[];
   developerModeEnabled: boolean;
 };
+
+export type PricingGroupRefDto = {
+  stationId: string;
+  groupBindingId: string | null;
+  groupIdHash: string | null;
+  groupKeyHash: string;
+};
+
+export type PricingGroupMonitorStatusInputDto = {
+  schemaVersion: 1;
+  groupRefsHash: string;
+  groups: PricingGroupRefDto[];
+};
+
+export type PricingGroupMonitorStatusWorkspaceDto = {
+  schemaVersion: 1;
+  generatedAtMs: number;
+  groupRefsHash: string;
+  requestedGroupCount: number;
+  returnedGroupCount: number;
+  omittedGroupCount: number;
+  items: PricingGroupMonitorSummaryDto[];
+};
+
+export type PricingGroupMonitorSummaryDto = {
+  stationId: string;
+  groupBindingId: string | null;
+  groupIdHash: string | null;
+  groupKeyHash: string;
+  matchKind: "exact_binding" | "parent_binding" | "group_id_hash" | "group_key_hash" | "unresolved";
+  resolutionState: "resolved" | "unresolved";
+  hasBoundKey: boolean;
+  boundKeyCount: number;
+  enabledKeyCount: number;
+  credentialedKeyCount: number;
+  enabledMonitorDefinitionCount: number;
+  monitoredKeyCount: number;
+  testedKeyCount: number;
+  representativeKeyId: string | null;
+  representativeMonitorId: string | null;
+  latestTargetResultId: string | null;
+  latestOutcome: "available" | "degraded" | "unavailable" | "skipped" | "missing";
+  latestFailureKind: string | null;
+  latestTerminalReason: string | null;
+  running: boolean;
+  checkedAtMs: number | null;
+  latencyMs: number | null;
+  generatedAtMs: number;
+  displayState: "unresolved" | "no_key" | "unmonitored" | "running" | "untested" | "available" | "degraded" | "unavailable" | "skipped" | "unavailable_data";
+};

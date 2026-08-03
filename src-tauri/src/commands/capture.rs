@@ -160,6 +160,7 @@ pub async fn finish_web_authorization_session(
         let input = CaptureStationIdInputDto::parse(input)?;
         let cookie_url = facade
             .web_authorization_cookie_url(&input.station_id)
+            .await
             .map_err(CaptureCommandError::Message)
             .map_err(capture_command_error)?;
         let cookie_header = read_capture_window_cookies(app, &input.station_id, &cookie_url)
@@ -182,6 +183,7 @@ pub async fn finish_provider_draft_authorization_session(
         let input = ProviderDraftIdInputDto::parse(input)?;
         let cookie_url = facade
             .web_authorization_cookie_url(&input.draft_id)
+            .await
             .map_err(CaptureCommandError::Message)
             .map_err(capture_command_error)?;
         let cookie_header = read_capture_window_cookies(app, &input.draft_id, &cookie_url)

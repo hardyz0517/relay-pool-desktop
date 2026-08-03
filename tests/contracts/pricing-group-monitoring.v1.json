@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "maxGroupRefs": 500,
+  "canonicalRefFormat": [
+    "station:{stationId}:binding:{groupBindingId}",
+    "station:{stationId}:group-id:{groupIdHash}",
+    "station:{stationId}:group-key:{groupKeyHash}"
+  ],
+  "cases": [
+    {
+      "name": "binding wins over fallback identities",
+      "input": [
+        {
+          "stationId": "station-1",
+          "groupBindingId": "binding-1",
+          "groupIdHash": "group-id-1",
+          "groupKeyHash": "group-key-1"
+        }
+      ],
+      "expectedRefs": [
+        "station:station-1:binding:binding-1"
+      ]
+    },
+    {
+      "name": "group id is used without binding",
+      "input": [
+        {
+          "stationId": "station-1",
+          "groupBindingId": null,
+          "groupIdHash": "group-id-1",
+          "groupKeyHash": "group-key-1"
+        }
+      ],
+      "expectedRefs": [
+        "station:station-1:group-id:group-id-1"
+      ]
+    },
+    {
+      "name": "group key is the final fallback",
+      "input": [
+        {
+          "stationId": "station-1",
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupKeyHash": "group-key-1"
+        }
+      ],
+      "expectedRefs": [
+        "station:station-1:group-key:group-key-1"
+      ]
+    },
+    {
+      "name": "names are not identities",
+      "input": [
+        {
+          "stationId": "station-1",
+          "groupBindingId": null,
+          "groupIdHash": "same-id-a",
+          "groupKeyHash": "key-a",
+          "groupName": "same name"
+        },
+        {
+          "stationId": "station-1",
+          "groupBindingId": null,
+          "groupIdHash": "same-id-b",
+          "groupKeyHash": "key-b",
+          "groupName": "same name"
+        }
+      ],
+      "expectedRefs": [
+        "station:station-1:group-id:same-id-a",
+        "station:station-1:group-id:same-id-b"
+      ]
+    },
+    {
+      "name": "sort and dedupe are byte stable",
+      "input": [
+        {
+          "stationId": "station-2",
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupKeyHash": "z"
+        },
+        {
+          "stationId": "station-1",
+          "groupBindingId": "binding-2",
+          "groupIdHash": null,
+          "groupKeyHash": "ignored"
+        },
+        {
+          "stationId": "station-1",
+          "groupBindingId": "binding-1",
+          "groupIdHash": null,
+          "groupKeyHash": "ignored"
+        }
+      ],
+      "expectedRefs": [
+        "station:station-1:binding:binding-1",
+        "station:station-1:binding:binding-2",
+        "station:station-2:group-key:z"
+      ]
+    },
+    {
+      "name": "unresolved identity is explicit",
+      "input": [
+        {
+          "stationId": "station-1",
+          "groupBindingId": null,
+          "groupIdHash": null,
+          "groupKeyHash": ""
+        }
+      ],
+      "expectedRefs": [],
+      "resolutionState": "unresolved"
+    }
+  ],
+  "boundaryCases": {
+    "emptyInput": [],
+    "duplicateInput": [
+      {
+        "stationId": "station-1",
+        "groupBindingId": "binding-1",
+        "groupIdHash": null,
+        "groupKeyHash": "ignored"
+      },
+      {
+        "stationId": "station-1",
+        "groupBindingId": "binding-1",
+        "groupIdHash": null,
+        "groupKeyHash": "ignored"
+      }
+    ],
+    "overLimitCount": 501
+  }
+}

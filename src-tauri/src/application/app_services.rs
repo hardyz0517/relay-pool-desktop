@@ -13,6 +13,7 @@ use super::{
     queries::{
         channel_status::ChannelStatusQuery, dashboard_metrics::DashboardMetricsQuery,
         pricing_comparison::PricingComparisonQuery,
+        pricing_group_monitor_status::PricingGroupMonitorStatusQuery,
     },
     request_finalization::RequestFinalizationService,
     request_logs::RequestLogService,
@@ -37,6 +38,7 @@ pub(crate) struct AppServices {
     pub(crate) provider_drafts: Arc<ProviderDraftService>,
     pub(crate) channel_status: Arc<ChannelStatusQuery>,
     pub(crate) pricing_comparison: Arc<PricingComparisonQuery>,
+    pub(crate) pricing_group_monitor_status: Arc<PricingGroupMonitorStatusQuery>,
     pub(crate) dashboard_metrics: Arc<DashboardMetricsQuery>,
     pub(crate) settings: Arc<SettingsService>,
 }
@@ -112,6 +114,7 @@ impl AppServices {
             provider_drafts,
             Arc::new(ChannelStatusQuery::new(runtime.clone(), clock.clone())),
             Arc::new(PricingComparisonQuery::new(runtime.clone())),
+            Arc::new(PricingGroupMonitorStatusQuery::new(runtime.clone())),
             Arc::new(DashboardMetricsQuery::new(runtime.clone(), clock.clone())),
             settings,
         )
@@ -132,6 +135,7 @@ impl AppServices {
         provider_drafts: Arc<ProviderDraftService>,
         channel_status: Arc<ChannelStatusQuery>,
         pricing_comparison: Arc<PricingComparisonQuery>,
+        pricing_group_monitor_status: Arc<PricingGroupMonitorStatusQuery>,
         dashboard_metrics: Arc<DashboardMetricsQuery>,
         settings: Arc<SettingsService>,
     ) -> Self {
@@ -149,6 +153,7 @@ impl AppServices {
             provider_drafts,
             channel_status,
             pricing_comparison,
+            pricing_group_monitor_status,
             dashboard_metrics,
             settings,
         }

@@ -341,6 +341,7 @@ pub(crate) fn compose_pricing_command_facade(services: &AppServices) -> PricingC
     PricingCommandFacade::new(
         Arc::clone(&services.pricing),
         Arc::clone(&services.pricing_comparison),
+        Arc::clone(&services.pricing_group_monitor_status),
     )
 }
 
