@@ -19,7 +19,8 @@ async function importRequestCostFormat() {
   return import(`file://${outputPath.replaceAll("\\", "/")}`);
 }
 
-const { formatRequestCost, formatRecentRequestCost, requestBaseCostValue } = await importRequestCostFormat();
+const requestCostFormat = await importRequestCostFormat();
+const { formatRequestCost, formatRecentRequestCost } = requestCostFormat;
 
 assert.equal(
   formatRequestCost(0.00001725, "USD", "base_price_only"),
@@ -50,22 +51,7 @@ assert.equal(
 assert.equal(formatRecentRequestCost(1.25, "USD", "priced"), "$1.2500");
 assert.equal(formatRecentRequestCost(null, "USD", "usage_only"), "未定价");
 
-assert.equal(
-  requestBaseCostValue({
-    estimatedTotalCost: 0.00001725,
-    baseTotalCost: null,
-    costStatus: "base_price_only",
-  }),
-  0.00001725,
-  "base-price-only logs should fall back to actual cost when older base snapshots are missing",
-);
-
-assert.equal(
-  requestBaseCostValue({
-    estimatedTotalCost: 0.00001725,
-    baseTotalCost: null,
-    costStatus: "priced",
-  }),
-  null,
-  "priced logs without base snapshots should not treat actual charged cost as 1x base cost",
+assert.ok(
+  !("requestBaseCostValue" in requestCostFormat),
+  "dashboard request cost formatting should no longer export the legacy base-cost helper",
 );

@@ -681,7 +681,10 @@ mod tests {
         assert_eq!(model_setting_count, 0);
         pool.close().await;
 
-        assert_eq!(database_schema_version(&path).await, 21);
+        assert_eq!(
+            database_schema_version(&path).await,
+            current_schema_version()
+        );
     }
 
     async fn initialize_database_through(path: &Path, target_version: i64) {

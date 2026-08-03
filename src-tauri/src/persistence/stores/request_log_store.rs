@@ -3,6 +3,9 @@ use sqlx::{Row, SqliteConnection};
 use crate::{models::proxy::RequestLog, persistence::read_session::ReadSession};
 
 use super::super::{error::PersistenceError, write_session::WriteSession};
+use super::dashboard_metrics_rollup::{
+    clear_dashboard_metric_rollups, record_request_finish_rollup, record_request_start_rollup,
+};
 use super::request_log_write::{AttemptTerminalWrite, RequestStartWrite, RequestTerminalWrite};
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -81,6 +84,7 @@ impl RequestLogStore {
         sqlx::query("DELETE FROM request_logs")
             .execute(write.connection())
             .await?;
+        clear_dashboard_metric_rollups(write.connection()).await?;
         Ok(())
     }
 
@@ -92,13 +96,14 @@ impl RequestLogStore {
     ) -> Result<RequestStartPersistenceResult, PersistenceError> {
         let inserted = sqlx::query(
             "INSERT OR IGNORE INTO request_logs (
-                id, request_id, started_at, method, path, model, stream, status,
-                lifecycle_status, endpoint, fallback_count, created_at
-             ) VALUES (?, ?, ?, ?, ?, NULL, 0, 'in_progress', 'admitted', ?, 0, ?)",
+                id, request_id, started_at, received_at_ms, method, path, model, stream, status,
+                lifecycle_status, usage_status, endpoint, fallback_count, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, NULL, 0, 'in_progress', 'admitted', 'in_progress', ?, 0, ?)",
         )
         .bind(&record.request_id)
         .bind(&record.request_id)
         .bind(record.received_at_ms.to_string())
+        .bind(record.received_at_ms)
         .bind(&record.method)
         .bind(&record.local_path)
         .bind(&record.endpoint)
@@ -120,6 +125,9 @@ impl RequestLogStore {
                     "duplicate request start does not match canonical record".to_string(),
                 ));
             }
+        }
+        if inserted > 0 {
+            record_request_start_rollup(session.connection(), record).await?;
         }
         Ok(RequestStartPersistenceResult {
             inserted: inserted > 0,
@@ -188,6 +196,9 @@ impl RequestLogStore {
         record: &RequestTerminalWrite,
     ) -> Result<RequestTerminalPersistenceResult, PersistenceError> {
         let finalized = update_request_terminal(session.connection(), record).await?;
+        if finalized {
+            record_request_finish_rollup(session.connection(), record).await?;
+        }
         Ok(RequestTerminalPersistenceResult { finalized })
     }
 }
@@ -213,6 +224,7 @@ async fn update_request_terminal(
             cache_creation_tokens = ?, cache_read_tokens = ?, reasoning_effort = ?,
             first_token_ms = ?, finished_at = ?, duration_ms = ?, status = ?,
             lifecycle_status = ?, terminal_kind = ?, terminal_code = ?, terminal_detail = ?,
+            usage_status = ?,
             protocol_completed = ?, delivery_terminal = ?, selected_attempt_ordinal = ?,
             attempt_count = ?, fallback_count = ?, terminal_at_ms = ?
          WHERE request_id = ? AND terminal_at_ms IS NULL",
@@ -245,6 +257,7 @@ async fn update_request_terminal(
     .bind(&record.terminal_kind)
     .bind(record.terminal_code.as_deref())
     .bind(record.terminal_detail.as_deref())
+    .bind(&record.usage_status)
     .bind(protocol_completed)
     .bind(&record.delivery_terminal)
     .bind(selected_attempt_ordinal)
@@ -520,6 +533,7 @@ mod v2_tests {
             received_at_ms: 1000,
             status: "success".to_string(),
             lifecycle_status: "completed".to_string(),
+            usage_status: "complete".to_string(),
             terminal_kind: "completed".to_string(),
             terminal_code: Some("request_completed".to_string()),
             terminal_detail: None,

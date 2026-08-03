@@ -3198,6 +3198,128 @@
       }
     },
     {
+      "command": "load_dashboard_live_request_metrics",
+      "input": {
+        "localDayEndMs": 1700086400000,
+        "localDayStartMs": 1700000000000
+      },
+      "output": {
+        "capturedAtMs": 0,
+        "dataQuality": {
+          "corruptCostAggregateCount": 0,
+          "invalidDurationCount": 0,
+          "unknownLifecycleCount": 0
+        },
+        "recent": {
+          "period": {
+            "avgFirstTokenMs": null,
+            "avgTotalDurationMs": null,
+            "completionTokens": 0,
+            "durationSampleCount": 0,
+            "failedCount": 0,
+            "firstTokenSampleCount": 0,
+            "firstTokenTotalMs": 0,
+            "inProgressCount": 0,
+            "interruptedCount": 0,
+            "knownUsageRequestCount": 0,
+            "missingUsageRequestCount": 0,
+            "notApplicableUsageRequestCount": 0,
+            "promptTokens": 0,
+            "requestCount": 0,
+            "streamUsageMissingRequestCount": 0,
+            "successCount": 0,
+            "terminalCount": 0,
+            "totalDurationMs": 0,
+            "totalTokens": 0,
+            "unknownUsageRequestCount": 0
+          },
+          "rpm": 0.0,
+          "tpm": 0.0,
+          "windowMinutes": 0
+        },
+        "schemaVersion": 0,
+        "today": {
+          "avgFirstTokenMs": null,
+          "avgTotalDurationMs": null,
+          "completionTokens": 0,
+          "durationSampleCount": 0,
+          "failedCount": 0,
+          "firstTokenSampleCount": 0,
+          "firstTokenTotalMs": 0,
+          "inProgressCount": 0,
+          "interruptedCount": 0,
+          "knownUsageRequestCount": 0,
+          "missingUsageRequestCount": 0,
+          "notApplicableUsageRequestCount": 0,
+          "promptTokens": 0,
+          "requestCount": 0,
+          "streamUsageMissingRequestCount": 0,
+          "successCount": 0,
+          "terminalCount": 0,
+          "totalDurationMs": 0,
+          "totalTokens": 0,
+          "unknownUsageRequestCount": 0
+        },
+        "todayCosts": {
+          "completeMixedCurrencyCount": 0,
+          "completeSingleCurrencyCount": 0,
+          "costTotalsComplete": false,
+          "incompleteCount": 0,
+          "legacyOrMissingAggregateCount": 0,
+          "noAttemptsCount": 0,
+          "notApplicableCount": 0,
+          "totals": []
+        }
+      }
+    },
+    {
+      "command": "load_dashboard_cumulative_request_metrics",
+      "input": {},
+      "output": {
+        "capturedAtMs": 0,
+        "dataQuality": {
+          "corruptCostAggregateCount": 0,
+          "futureTimestampCount": 0,
+          "invalidDurationCount": 0,
+          "invalidTimestampCount": 0,
+          "unknownLifecycleCount": 0
+        },
+        "lifetime": {
+          "avgFirstTokenMs": null,
+          "avgTotalDurationMs": null,
+          "completionTokens": 0,
+          "durationSampleCount": 0,
+          "failedCount": 0,
+          "firstTokenSampleCount": 0,
+          "firstTokenTotalMs": 0,
+          "inProgressCount": 0,
+          "interruptedCount": 0,
+          "knownUsageRequestCount": 0,
+          "missingUsageRequestCount": 0,
+          "notApplicableUsageRequestCount": 0,
+          "promptTokens": 0,
+          "requestCount": 0,
+          "streamUsageMissingRequestCount": 0,
+          "successCount": 0,
+          "terminalCount": 0,
+          "totalDurationMs": 0,
+          "totalTokens": 0,
+          "unknownUsageRequestCount": 0
+        },
+        "lifetimeCosts": {
+          "completeMixedCurrencyCount": 0,
+          "completeSingleCurrencyCount": 0,
+          "costTotalsComplete": false,
+          "incompleteCount": 0,
+          "legacyOrMissingAggregateCount": 0,
+          "noAttemptsCount": 0,
+          "notApplicableCount": 0,
+          "totals": []
+        },
+        "schemaVersion": 0
+      }
+    },
+    {
       "command": "create_or_resume_provider_draft",
       "input": {
         "baseStationId": null,

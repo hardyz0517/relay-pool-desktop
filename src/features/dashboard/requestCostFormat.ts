@@ -34,20 +34,6 @@ function formatCurrencyCost(
   return `${symbol}${formattedValue}`;
 }
 
-export function requestBaseCostValue(request: {
-  estimatedTotalCost: number | null;
-  baseTotalCost: number | null;
-  costStatus: string | null;
-}) {
-  if (request.baseTotalCost != null) {
-    return request.baseTotalCost;
-  }
-  if (request.costStatus === "base_price_only") {
-    return request.estimatedTotalCost;
-  }
-  return null;
-}
-
 function formatCostValue(value: number) {
   if (!Number.isFinite(value)) {
     return "0.0000";

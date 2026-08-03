@@ -174,6 +174,7 @@ async fn interrupt_request_log(
             END,
             status = 'interrupted',
             lifecycle_status = 'interrupted',
+            usage_status = 'missing_usage',
             error_message = COALESCE(error_message, 'request lifecycle interrupted during previous process'),
             terminal_kind = 'interrupted',
             terminal_code = 'startup_interrupted',

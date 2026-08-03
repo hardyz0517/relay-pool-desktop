@@ -13,7 +13,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "e29e86973ac943795ea1994ea0a4a51d0a3e9d329b5d15e28e92ad0590727850";
+    "9bdb0c6d8177b8e25957e75c2b2ebad2eb58c4bd50980a5ae7a31a26886f63c3";
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
@@ -97,6 +97,8 @@ macro_rules! ipc_command_registry {
             restart_local_proxy => $crate::commands::local_proxy::restart_local_proxy,
             list_request_logs => $crate::commands::request_logs::list_request_logs,
             clear_request_logs => $crate::commands::request_logs::clear_request_logs,
+            load_dashboard_live_request_metrics => $crate::commands::dashboard::load_dashboard_live_request_metrics,
+            load_dashboard_cumulative_request_metrics => $crate::commands::dashboard::load_dashboard_cumulative_request_metrics,
             list_station_keys => $crate::commands::key_pool::list_station_keys,
             create_station_key => $crate::commands::key_pool::create_station_key,
             update_station_key => $crate::commands::key_pool::update_station_key,
@@ -461,6 +463,14 @@ fn command_contract(name: &str) -> CommandContract {
         ),
         "list_request_logs" => migrated_read("EmptyInputDto", "Vec<RequestLogDto>"),
         "clear_request_logs" => migrated_mutation("EmptyInputDto", "unit", "idempotent", false),
+        "load_dashboard_live_request_metrics" => migrated_read(
+            "DashboardRequestMetricsInputDto",
+            "DashboardLiveRequestMetricsSnapshotDto",
+        ),
+        "load_dashboard_cumulative_request_metrics" => migrated_read(
+            "EmptyInputDto",
+            "DashboardCumulativeRequestMetricsSnapshotDto",
+        ),
         "list_change_events" => migrated_read("EmptyInputDto", "Vec<ChangeEventDto>"),
         "clear_change_events" => migrated_mutation("EmptyInputDto", "unit", "idempotent", false),
         "list_change_events_for_station" => {
@@ -1049,6 +1059,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::pricing_reads::serialization_fixtures());
     commands.extend(super::dto::pricing_mutations::serialization_fixtures());
     commands.extend(super::dto::proxy_workspace_reads::serialization_fixtures());
+    commands.extend(super::dto::dashboard_reads::serialization_fixtures());
     commands.extend(super::dto::provider_drafts::serialization_fixtures());
     let value = serde_json::json!({"schemaVersion": 1, "commands": commands});
     format!(
@@ -1182,6 +1193,14 @@ export function listRequestLogs(input: EmptyInputDto = {}): Promise<RequestLogDt
 
 export function clearRequestLogs(input: EmptyInputDto = {}): Promise<void> {
   return invokeCommand<void>("clear_request_logs", { input });
+}
+
+export function loadDashboardLiveRequestMetrics(input: DashboardRequestMetricsInputDto): Promise<DashboardLiveRequestMetricsSnapshotDto> {
+  return invokeCommand<DashboardLiveRequestMetricsSnapshotDto>("load_dashboard_live_request_metrics", { input });
+}
+
+export function loadDashboardCumulativeRequestMetrics(input: EmptyInputDto = {}): Promise<DashboardCumulativeRequestMetricsSnapshotDto> {
+  return invokeCommand<DashboardCumulativeRequestMetricsSnapshotDto>("load_dashboard_cumulative_request_metrics", { input });
 }
 
 export function listChangeEvents(input: EmptyInputDto = {}): Promise<ChangeEventDto[]> {

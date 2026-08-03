@@ -8,6 +8,10 @@ import {
 } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listCurrentStationBalanceSnapshots, listModelBasePrices } from "@/lib/api/economics";
+import {
+  loadDashboardCumulativeRequestMetrics,
+  loadDashboardLiveRequestMetrics,
+} from "@/lib/api/dashboardMetrics";
 import { getProxyStatus, listRequestLogs } from "@/lib/api/proxy";
 import { getSettings } from "@/lib/api/settings";
 import { listKeyPoolItems } from "@/lib/api/stationKeys";
@@ -25,6 +29,7 @@ import type {
   ChannelMonitorExecutionListInput,
   ChannelStatusWorkspaceInput,
 } from "@/lib/types/channelMonitors";
+import type { DashboardRequestMetricsInput } from "@/lib/types/dashboardMetrics";
 import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
 import { loadPricingComparisonWorkspace } from "@/lib/queries/pricingQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
@@ -50,6 +55,27 @@ export const requestLogsQueryOptions = (refetchInterval: number | false = false)
     queryKey: queryKeys.requestLogs,
     queryFn: listRequestLogs,
     staleTime: 2_000,
+    refetchInterval,
+  });
+
+export const dashboardLiveRequestMetricsQueryOptions = (
+  input: DashboardRequestMetricsInput,
+  refetchInterval: number | false = false,
+) =>
+  queryOptions({
+    queryKey: queryKeys.dashboardLiveRequestMetrics(input),
+    queryFn: () => loadDashboardLiveRequestMetrics(input),
+    staleTime: 1_000,
+    refetchInterval,
+  });
+
+export const dashboardCumulativeRequestMetricsQueryOptions = (
+  refetchInterval: number | false = false,
+) =>
+  queryOptions({
+    queryKey: queryKeys.dashboardCumulativeRequestMetrics,
+    queryFn: loadDashboardCumulativeRequestMetrics,
+    staleTime: 5_000,
     refetchInterval,
   });
 

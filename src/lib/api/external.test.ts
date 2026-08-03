@@ -19,6 +19,7 @@ describe("external URL backend cutover", () => {
       collectorRuns: {} as never,
       collectors: {} as never,
       proxy: {} as never,
+      dashboard: {} as never,
       runtime: {} as never,
       localRouting: {} as never,
       dataRecovery: {} as never,

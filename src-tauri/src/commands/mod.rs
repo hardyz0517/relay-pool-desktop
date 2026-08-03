@@ -7,6 +7,7 @@ pub(crate) mod channel_monitoring;
 pub(crate) mod channel_status;
 pub(crate) mod collector_metadata;
 pub(crate) mod credentials;
+pub(crate) mod dashboard;
 pub(crate) mod data_directory;
 pub(crate) mod data_migration;
 pub(crate) mod data_recovery;

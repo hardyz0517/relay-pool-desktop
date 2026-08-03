@@ -3,6 +3,7 @@ pub(crate) mod channel_monitor_mutations;
 pub(crate) mod channel_monitor_operations;
 pub(crate) mod channel_monitor_reads;
 pub(crate) mod collector_facts;
+pub(crate) mod dashboard_reads;
 pub(crate) mod data_migration;
 pub(crate) mod operations;
 pub(crate) mod pricing_mutations;
@@ -87,6 +88,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     channel_monitor_operations::CHANNEL_MONITOR_OPERATIONS_TYPE,
     channel_monitor_reads::CHANNEL_MONITOR_READS_TYPE,
     collector_facts::COLLECTOR_FACTS_TYPE,
+    dashboard_reads::DASHBOARD_READS_TYPE,
     data_migration::DATA_MIGRATION_TYPE,
     operations::OPERATIONS_TYPE,
     pricing_reads::PRICING_READS_TYPE,

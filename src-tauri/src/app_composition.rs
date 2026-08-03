@@ -8,10 +8,11 @@ use crate::{
         command_facades::{
             CaptureCommandFacade, ChangeEventsCommandFacade, ChannelMonitoringCommandFacade,
             ChannelStatusCommandFacade, CollectorMetadataCommandFacade, CredentialsCommandFacade,
-            DataDirectoryCommandFacade, KeyPoolCommandFacade, LocalProxyCommandFacade,
-            PricingCommandFacade, ProviderDraftCommandFacade, RemoteKeysCommandFacade,
-            RequestLogsCommandFacade, RoutingCommandFacade, SettingsStationsCommandFacade,
-            StationCollectionCommandFacade, StationKeyConnectivityCommandFacade,
+            DashboardMetricsCommandFacade, DataDirectoryCommandFacade, KeyPoolCommandFacade,
+            LocalProxyCommandFacade, PricingCommandFacade, ProviderDraftCommandFacade,
+            RemoteKeysCommandFacade, RequestLogsCommandFacade, RoutingCommandFacade,
+            SettingsStationsCommandFacade, StationCollectionCommandFacade,
+            StationKeyConnectivityCommandFacade,
         },
         data_directory::DataDirectoryPort,
     },
@@ -161,6 +162,12 @@ pub(crate) fn compose_request_logs_command_facade(
     services: &AppServices,
 ) -> RequestLogsCommandFacade {
     RequestLogsCommandFacade::new(Arc::clone(&services.request_logs))
+}
+
+pub(crate) fn compose_dashboard_metrics_command_facade(
+    services: &AppServices,
+) -> DashboardMetricsCommandFacade {
+    DashboardMetricsCommandFacade::new(Arc::clone(&services.dashboard_metrics))
 }
 
 pub(crate) fn compose_channel_monitoring_command_facade(

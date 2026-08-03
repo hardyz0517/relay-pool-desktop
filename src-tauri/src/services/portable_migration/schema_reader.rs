@@ -82,6 +82,21 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_stations_order",
 ];
 
+const IGNORED_DERIVED_TABLES_V1: &[&str] = &[
+    "dashboard_request_metric_rollups",
+    "dashboard_request_cost_rollups",
+    "dashboard_request_cost_totals_rollups",
+];
+
+const IGNORED_DERIVED_INDEXES_V1: &[&str] = &[
+    "idx_request_logs_received_at",
+    "idx_request_logs_dashboard_metrics_range",
+    "idx_request_logs_terminal_received_at",
+    "idx_dashboard_request_metric_rollups_range",
+    "idx_dashboard_request_cost_rollups_range",
+    "idx_dashboard_request_cost_totals_rollups_range",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PortableReaderKind {
     V1EncryptedSecrets,
@@ -336,6 +351,9 @@ async fn validate_schema_objects(
         let ddl: Option<String> = row.get("sql");
         match object_type.as_str() {
             "table" => {
+                if IGNORED_DERIVED_TABLES_V1.contains(&name.as_str()) {
+                    continue;
+                }
                 if !trusted_tables.contains(name.as_str()) {
                     return Err(PortableMigrationValidationError::UnsupportedSchemaObject);
                 }
@@ -347,6 +365,9 @@ async fn validate_schema_objects(
                 }
             }
             "index" => {
+                if IGNORED_DERIVED_INDEXES_V1.contains(&name.as_str()) {
+                    continue;
+                }
                 if !trusted_indexes.contains(name.as_str())
                     || !trusted_tables.contains(table_name.as_str())
                 {

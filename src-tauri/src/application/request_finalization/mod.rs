@@ -362,12 +362,18 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
         ),
     };
     let annotations = record.annotations;
+    let usage_status = request_usage_status(
+        &record.context.endpoint,
+        annotations.stream,
+        annotations.total_tokens,
+    );
 
     RequestTerminalWrite {
         request_id: record.context.request_id,
         received_at_ms: record.context.received_at_ms,
         status: status.to_string(),
         lifecycle_status: lifecycle_status.to_string(),
+        usage_status: usage_status.to_string(),
         terminal_kind: terminal_kind.to_string(),
         terminal_code,
         terminal_detail,
@@ -400,6 +406,21 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
             reasoning_effort: annotations.reasoning_effort,
             first_token_ms: annotations.first_token_ms,
         },
+    }
+}
+
+fn request_usage_status(endpoint: &str, stream: bool, total_tokens: Option<i64>) -> &'static str {
+    let endpoint = endpoint.to_ascii_lowercase();
+    if endpoint.contains("models") || endpoint.contains("usage") || endpoint.contains("embeddings")
+    {
+        return "not_applicable";
+    }
+    if total_tokens.is_some() {
+        "complete"
+    } else if stream {
+        "stream_usage_missing"
+    } else {
+        "missing_usage"
     }
 }
 

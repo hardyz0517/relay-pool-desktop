@@ -96,6 +96,10 @@ export class DemoBackend implements BackendClient {
     listRequestLogs: () => this.rejectUnsupported("proxy"),
     clearRequestLogs: () => this.rejectUnsupported("proxy"),
   };
+  readonly dashboard: BackendClient["dashboard"] = {
+    loadLiveRequestMetrics: () => this.rejectUnsupported("dashboard.request_metrics"),
+    loadCumulativeRequestMetrics: () => this.rejectUnsupported("dashboard.request_metrics"),
+  };
   readonly runtime: BackendClient["runtime"] = {
     getRuntimeStatus: () => this.rejectUnsupported("runtime_status"),
   };

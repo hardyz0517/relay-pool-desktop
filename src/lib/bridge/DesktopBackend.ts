@@ -81,6 +81,8 @@ import {
   listChangeEventsForStation as listChangeEventsForStationBinding,
   listCollectorRuns as listCollectorRunsBinding,
   loadLocalRoutingWorkspace as loadLocalRoutingWorkspaceBinding,
+  loadDashboardCumulativeRequestMetrics as loadDashboardCumulativeRequestMetricsBinding,
+  loadDashboardLiveRequestMetrics as loadDashboardLiveRequestMetricsBinding,
   loadChannelStatusWorkspace as loadChannelStatusWorkspaceBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
   loadRoutingRuntimeOverlay as loadRoutingRuntimeOverlayBinding,
@@ -270,6 +272,11 @@ export class DesktopBackend implements BackendClient {
     prepareLocalProxyForUpdate: () => prepareLocalProxyForUpdateBinding(),
     listRequestLogs: () => listRequestLogsBinding(),
     clearRequestLogs: () => clearRequestLogsBinding(),
+  };
+  readonly dashboard = {
+    loadLiveRequestMetrics: (input: Parameters<BackendClient["dashboard"]["loadLiveRequestMetrics"]>[0]) =>
+      loadDashboardLiveRequestMetricsBinding(input),
+    loadCumulativeRequestMetrics: () => loadDashboardCumulativeRequestMetricsBinding(),
   };
   readonly runtime = {
     getRuntimeStatus: () => getRuntimeStatusBinding(),

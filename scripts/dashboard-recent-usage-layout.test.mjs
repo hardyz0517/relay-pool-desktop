@@ -13,7 +13,7 @@ function assert(condition, message) {
 }
 
 assert(
-  /<section className="grid gap-3">\s*<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*最近使用\s*<\/h2>/.test(dashboardSource),
+  /<section className="grid gap-3">\s*<h2 className="truncate text-\[13px\] font-semibold text-foreground">\s*最近使用\s*<\/h2>/.test(dashboardSource),
   "dashboard recent activity section should be renamed to 最近使用",
 );
 
@@ -41,18 +41,17 @@ assert(
 
 assert(
   dashboardSource.includes("FlaskConical") &&
-    dashboardSource.includes("formatRequestCost") &&
+    dashboardSource.includes("formatRecentRequestCost") &&
     dashboardSource.includes("formatTokenCount"),
   "dashboard request log rows should use the compact model/time + cost/token presentation",
 );
 
 assert(
   requestCostFormatSource.includes('return "未定价";') &&
-    requestCostFormatSource.includes("request.baseTotalCost") &&
-    dashboardSource.includes("requestBaseCostValue(request)") &&
     requestCostFormatSource.includes('costStatus === "usage_only"') &&
-    dashboardSource.includes("request.costStatus"),
-  "dashboard request cost display should show usage-only rows as unpriced instead of $0.0000",
+    dashboardSource.includes("formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)") &&
+    !dashboardSource.includes("requestBaseCostValue(request)"),
+  "dashboard request cost display should show usage-only rows as unpriced without a second base-cost column",
 );
 
 assert(

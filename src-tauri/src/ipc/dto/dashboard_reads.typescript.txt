@@ -1,0 +1,79 @@
+export type DashboardRequestMetricsInputDto = {
+  localDayStartMs: number;
+  localDayEndMs: number;
+};
+
+export type DashboardPeriodMetricsDto = {
+  requestCount: number;
+  terminalCount: number;
+  successCount: number;
+  failedCount: number;
+  interruptedCount: number;
+  inProgressCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  knownUsageRequestCount: number;
+  missingUsageRequestCount: number;
+  streamUsageMissingRequestCount: number;
+  notApplicableUsageRequestCount: number;
+  unknownUsageRequestCount: number;
+  totalDurationMs: number;
+  durationSampleCount: number;
+  firstTokenTotalMs: number;
+  firstTokenSampleCount: number;
+  avgTotalDurationMs: number | null;
+  avgFirstTokenMs: number | null;
+};
+
+export type DashboardRecentMetricsDto = {
+  period: DashboardPeriodMetricsDto;
+  windowMinutes: number;
+  rpm: number;
+  tpm: number;
+};
+
+export type DashboardCostTotalDto = {
+  currency: string;
+  amountMicro: number;
+  requestCount: number;
+};
+
+export type DashboardCostMetricsDto = {
+  totals: DashboardCostTotalDto[];
+  costTotalsComplete: boolean;
+  completeSingleCurrencyCount: number;
+  completeMixedCurrencyCount: number;
+  incompleteCount: number;
+  notApplicableCount: number;
+  noAttemptsCount: number;
+  legacyOrMissingAggregateCount: number;
+};
+
+export type DashboardLiveMetricsDataQualityDto = {
+  invalidDurationCount: number;
+  unknownLifecycleCount: number;
+  corruptCostAggregateCount: number;
+};
+
+export type DashboardMetricsDataQualityDto = DashboardLiveMetricsDataQualityDto & {
+  invalidTimestampCount: number;
+  futureTimestampCount: number;
+};
+
+export type DashboardLiveRequestMetricsSnapshotDto = {
+  schemaVersion: number;
+  capturedAtMs: number;
+  recent: DashboardRecentMetricsDto;
+  today: DashboardPeriodMetricsDto;
+  todayCosts: DashboardCostMetricsDto;
+  dataQuality: DashboardLiveMetricsDataQualityDto;
+};
+
+export type DashboardCumulativeRequestMetricsSnapshotDto = {
+  schemaVersion: number;
+  capturedAtMs: number;
+  lifetime: DashboardPeriodMetricsDto;
+  lifetimeCosts: DashboardCostMetricsDto;
+  dataQuality: DashboardMetricsDataQualityDto;
+};

@@ -31,10 +31,10 @@ assert(
 );
 
 assert(
-    /label:\s*"站点今日请求"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"green"/.test(dashboardSource) &&
-    /label:\s*"站点今日消费"[\s\S]*?valueClassName:\s*"[^"]*text-purple-700[^"]*"[\s\S]*?accent:\s*"purple"/.test(dashboardSource) &&
-    /label:\s*"站点今日 Token"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"amber"/.test(dashboardSource) &&
-    /label:\s*"站点累计 Token"[\s\S]*?valueClassName:\s*"text-slate-900"[\s\S]*?accent:\s*"indigo"/.test(dashboardSource),
+    /label:\s*"站点今日请求"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"green"/.test(dashboardSource) &&
+    /label:\s*"站点今日消费"[\s\S]*?valueClassName:\s*"[^"]*text-platform-image-foreground[^"]*"[\s\S]*?accent:\s*"purple"/.test(dashboardSource) &&
+    /label:\s*"站点今日 Token"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"amber"/.test(dashboardSource) &&
+    /label:\s*"站点累计 Token"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"indigo"/.test(dashboardSource),
   "dashboard station usage metric cards should align their primary value colors with the matching local routing metric cards",
 );
 
@@ -75,7 +75,7 @@ assert(
   metricPanelSource.includes("min-h-[96px]") &&
     metricPanelSource.includes("h-9 w-9") &&
     metricPanelSource.includes("text-[22px]") &&
-    metricPanelSource.includes("shadow-[0_2px_8px_rgba(15,23,42,0.08)]"),
+    metricPanelSource.includes("shadow-surface"),
   "metric panel cards should keep the wide statistic-card style from the reference",
 );
 

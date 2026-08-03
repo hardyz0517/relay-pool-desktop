@@ -10,7 +10,10 @@ use super::{
     monitoring::MonitoringService,
     pricing::{BuiltinModelBasePriceCatalog, PricingService},
     provider_drafts::ProviderDraftService,
-    queries::{channel_status::ChannelStatusQuery, pricing_comparison::PricingComparisonQuery},
+    queries::{
+        channel_status::ChannelStatusQuery, dashboard_metrics::DashboardMetricsQuery,
+        pricing_comparison::PricingComparisonQuery,
+    },
     request_finalization::RequestFinalizationService,
     request_logs::RequestLogService,
     routing::RoutingService,
@@ -34,6 +37,7 @@ pub(crate) struct AppServices {
     pub(crate) provider_drafts: Arc<ProviderDraftService>,
     pub(crate) channel_status: Arc<ChannelStatusQuery>,
     pub(crate) pricing_comparison: Arc<PricingComparisonQuery>,
+    pub(crate) dashboard_metrics: Arc<DashboardMetricsQuery>,
     pub(crate) settings: Arc<SettingsService>,
 }
 
@@ -108,6 +112,7 @@ impl AppServices {
             provider_drafts,
             Arc::new(ChannelStatusQuery::new(runtime.clone(), clock.clone())),
             Arc::new(PricingComparisonQuery::new(runtime.clone())),
+            Arc::new(DashboardMetricsQuery::new(runtime.clone(), clock.clone())),
             settings,
         )
     }
@@ -127,6 +132,7 @@ impl AppServices {
         provider_drafts: Arc<ProviderDraftService>,
         channel_status: Arc<ChannelStatusQuery>,
         pricing_comparison: Arc<PricingComparisonQuery>,
+        dashboard_metrics: Arc<DashboardMetricsQuery>,
         settings: Arc<SettingsService>,
     ) -> Self {
         Self {
@@ -143,6 +149,7 @@ impl AppServices {
             provider_drafts,
             channel_status,
             pricing_comparison,
+            dashboard_metrics,
             settings,
         }
     }
