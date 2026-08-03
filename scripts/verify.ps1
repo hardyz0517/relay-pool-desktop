@@ -50,13 +50,30 @@ function Invoke-ArchitectureGates {
     Invoke-Checked "Dependency lifecycle" node @("scripts/architecture/check-dependency-lifecycle.mjs")
 }
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha256.ComputeHash($stream)
+            return [System.BitConverter]::ToString($hash).Replace("-", "").ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Write-Provenance {
     $artifactRoot = Join-Path $repoRoot "output/architecture-scale/qualification/release"
     New-Item -ItemType Directory -Force $artifactRoot | Out-Null
     $bundles = Get-ChildItem -Path (Join-Path $repoRoot "src-tauri/target") -File -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -match "[\\/]release[\\/]bundle[\\/]" } |
         ForEach-Object {
-            [ordered]@{ path = $_.FullName.Substring($repoRoot.Length + 1).Replace("\", "/"); sha256 = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant(); bytes = $_.Length }
+            [ordered]@{ path = $_.FullName.Substring($repoRoot.Length + 1).Replace("\", "/"); sha256 = Get-Sha256Hex -Path $_.FullName; bytes = $_.Length }
         }
     $dirty = -not [string]::IsNullOrWhiteSpace((& git -C $repoRoot status --porcelain))
     [ordered]@{
