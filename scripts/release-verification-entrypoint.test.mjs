@@ -116,6 +116,10 @@ assert.ok(
   ),
   "CI must retain the shared full verification gate before releases can qualify a commit",
 );
+assert.ok(
+  ciWorkflow.jobs.verify.steps.some((step) => String(step.run ?? "").includes("git fetch --tags --force")),
+  "CI must fetch release tags before the historical V1 baseline contract runs",
+);
 assert.equal(prebundleIndex, -1, "release workflow must not rerun the heavyweight prebundle gate");
 assert.ok(preflightIndex >= 0, "release workflow must run release preflight before packaging");
 assert.ok(actionIndex > preflightIndex, "signed packaging must run only after release preflight");
