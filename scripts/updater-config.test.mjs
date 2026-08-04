@@ -10,6 +10,7 @@ const cargoToml = await read("src-tauri/Cargo.toml");
 const tauriLib = await read("src-tauri/src/lib.rs");
 const capabilitySource = await read("src-tauri/capabilities/default.json");
 const workflow = parseYaml(await read(".github/workflows/release.yml"));
+const ciWorkflow = parseYaml(await read(".github/workflows/ci.yml"));
 const verifier = await read("scripts/verify.ps1");
 const contractRunner = await read("scripts/run-contract-tests.mjs");
 const capability = capabilitySource ? JSON.parse(capabilitySource) : { permissions: [] };
@@ -46,8 +47,23 @@ assert.equal(releaseJob["runs-on"], "windows-latest", "release workflow must bui
 assert.equal(tauriAction.with.releaseDraft, true, "release must start as a Draft");
 assert.ok(tauriAction.env.TAURI_SIGNING_PRIVATE_KEY, "release workflow must use updater signing key");
 assert.equal(tauriAction.with.args, "--target x86_64-pc-windows-msvc", "release must target Windows x86_64");
-assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("pnpm verify:release:prebundle")), "release workflow must use the shared prebundle verification gate");
+assert.ok(
+  releaseSteps.some((step) =>
+    String(step.run ?? "").includes("node scripts/verify-release-preflight.mjs --require-ci"),
+  ),
+  "release workflow must verify tag metadata and a successful CI qualification before publishing",
+);
+assert.ok(
+  !releaseSteps.some((step) => String(step.run ?? "").includes("pnpm verify:release:prebundle")),
+  "release workflow must not rerun the heavyweight prebundle qualification gate",
+);
 assert.ok(releaseSteps.some((step) => String(step.run ?? "").includes("pnpm verify:release:postbundle")), "release workflow must use the shared postbundle verification gate");
+assert.ok(
+  ciWorkflow.jobs.verify.steps.some((step) =>
+    String(step.run ?? "").includes("./scripts/verify.ps1 -Profile full"),
+  ),
+  "CI workflow must own the heavyweight release qualification gate",
+);
 assert.match(
   contractRunner,
   /"scripts\/updater-current-version-fallback\.test\.mjs"/,

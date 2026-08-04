@@ -19,8 +19,10 @@ assert.match(
 );
 
 assert.ok(
-  workflow.jobs.release.steps.some((step) => String(step.run ?? "").includes("pnpm verify:release:prebundle")),
-  "release builds must run the shared release verification gate",
+  workflow.jobs.release.steps.some((step) =>
+    String(step.run ?? "").includes("node scripts/verify-release-preflight.mjs --require-ci"),
+  ),
+  "release builds must verify successful CI qualification before publishing",
 );
 
 assert.match(
