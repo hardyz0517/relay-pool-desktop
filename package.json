@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:contracts": "node scripts/run-contract-tests.mjs",
     "verify:release-version": "node scripts/verify-release-version.mjs",
+    "verify:release-preflight": "node scripts/verify-release-preflight.mjs",
     "verify:persistence-artifacts": "node scripts/verify-persistence-v2-artifacts.mjs --tracked",
     "verify:release-bundle": "node scripts/verify-persistence-v2-artifacts.mjs --artifact src-tauri/target/x86_64-pc-windows-msvc/release/bundle",
     "audit:dead-code": "node scripts/dead-code-inventory.mjs",
