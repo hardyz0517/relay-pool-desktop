@@ -92,9 +92,22 @@ impl RoutingObservationStore {
     }
 }
 
-fn validate_observation(value: &RoutingObservationAppend, now_ms: i64) -> Result<(), PersistenceError> {
-    let values = [&value.id, &value.producer_id, &value.payload_hash, &value.scope, &value.source, &value.traffic_equivalence, &value.outcome_kind];
-    if values.iter().any(|text| text.is_empty() || text.len() > 192 || text.chars().any(char::is_control))
+fn validate_observation(
+    value: &RoutingObservationAppend,
+    now_ms: i64,
+) -> Result<(), PersistenceError> {
+    let values = [
+        &value.id,
+        &value.producer_id,
+        &value.payload_hash,
+        &value.scope,
+        &value.source,
+        &value.traffic_equivalence,
+        &value.outcome_kind,
+    ];
+    if values
+        .iter()
+        .any(|text| text.is_empty() || text.len() > 192 || text.chars().any(char::is_control))
         || value.payload_hash.len() < 16
         || value.event_at_ms < 0
         || value.ingested_at_ms < 0

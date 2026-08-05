@@ -137,28 +137,6 @@ impl HealthObservationStore {
         .await?;
         Ok(())
     }
-
-    pub(crate) async fn update_station_key_status(
-        &self,
-        connection: &mut SqliteConnection,
-        station_key_id: &str,
-        status: &str,
-        now_ms: i64,
-    ) -> Result<(), PersistenceError> {
-        sqlx::query(
-            r#"
-            UPDATE station_keys
-            SET status = ?1, last_checked_at = ?2, updated_at = ?2
-            WHERE id = ?3
-            "#,
-        )
-        .bind(status)
-        .bind(now_ms.to_string())
-        .bind(station_key_id)
-        .execute(connection)
-        .await?;
-        Ok(())
-    }
 }
 
 fn row_to_health_snapshot(row: sqlx::sqlite::SqliteRow) -> StationKeyHealthSnapshot {

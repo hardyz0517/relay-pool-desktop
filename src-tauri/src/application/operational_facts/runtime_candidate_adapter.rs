@@ -576,6 +576,11 @@ fn capability_projection(subject: CapabilitySubject, supported: bool) -> Capabil
         winner: None,
         overridden: Vec::new(),
         conflict_reason: None,
+        projector_version: crate::application::operational_facts::capability_projector::CAPABILITY_PROJECTOR_VERSION,
+        reason_code: if supported { "capability_supported" } else { "capability_unsupported" },
+        source_refs: Vec::new(),
+        observed_at: None,
+        confidence: None,
     }
 }
 

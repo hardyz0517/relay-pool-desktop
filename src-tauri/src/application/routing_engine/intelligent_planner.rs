@@ -2,7 +2,7 @@ use crate::models::routing_policy::RoutingPolicyConfigV1;
 
 use super::{
     dispatch::{weighted_rendezvous, DispatchCandidate, DispatchDecision},
-    exploration::derive_seed,
+    exploration::{choose_lane, derive_seed, ExplorationBudgetRegistry, ExplorationLane},
     fixed_point::{BasisPoints, FactorContribution, UtilityScore},
     planning_snapshot::{CandidateSnapshot, PlanningSnapshot},
     tiers::{classify_tier, AvailabilityTier},
@@ -36,6 +36,15 @@ pub(crate) fn plan_snapshot(
     root_seed: &[u8],
     round: u64,
 ) -> Result<RoutePlan, PlannerError> {
+    plan_snapshot_with_budget(snapshot, root_seed, round, None)
+}
+
+pub(crate) fn plan_snapshot_with_budget(
+    snapshot: &PlanningSnapshot,
+    root_seed: &[u8],
+    round: u64,
+    exploration_budget: Option<&ExplorationBudgetRegistry>,
+) -> Result<RoutePlan, PlannerError> {
     snapshot.validate().map_err(PlannerError::InvalidSnapshot)?;
     if snapshot.runtime.in_flight >= snapshot.runtime.max_concurrency {
         return Err(PlannerError::RuntimeAtCapacity);
@@ -60,9 +69,32 @@ pub(crate) fn plan_snapshot(
         .map(|candidate| candidate.tier)
         .min()
         .expect("not empty");
+    let seed = derive_seed(root_seed, snapshot.profile.seed_domain, round);
+    let unknown_exists = snapshot
+        .candidates
+        .iter()
+        .any(|candidate| candidate.cost_basis_points.is_none());
+    let lane = exploration_budget
+        .map(|budget| {
+            choose_lane(
+                &seed,
+                snapshot.profile.exploration_share_basis_points,
+                unknown_exists,
+                budget,
+            )
+        })
+        .unwrap_or(ExplorationLane::Exploit);
     let dispatch_candidates = planned
         .iter()
         .filter(|candidate| candidate.tier == best_tier)
+        .filter(|candidate| {
+            lane != ExplorationLane::Explore
+                || snapshot
+                    .candidates
+                    .iter()
+                    .find(|raw| raw.station_key_id == candidate.station_key_id)
+                    .is_some_and(|raw| raw.cost_basis_points.is_none())
+        })
         .map(|candidate| DispatchCandidate {
             id: candidate.station_key_id.clone(),
             utility: candidate.utility.value(),
@@ -70,13 +102,13 @@ pub(crate) fn plan_snapshot(
             failure_domains: Vec::new(),
         })
         .collect::<Vec<_>>();
-    let seed = derive_seed(root_seed, snapshot.profile.seed_domain, round);
-    let dispatch = weighted_rendezvous(
+    let mut dispatch = weighted_rendezvous(
         &dispatch_candidates,
         &seed,
         snapshot.profile.exploit_band_basis_points,
     )
     .ok_or(PlannerError::NoEligibleCandidate)?;
+    dispatch.explored = lane == ExplorationLane::Explore;
     Ok(RoutePlan {
         snapshot_id: snapshot.snapshot_id.clone(),
         selected_station_key_id: dispatch.selected_id.clone(),
@@ -101,7 +133,7 @@ fn planned_candidate(
     let scores = [
         candidate.reliability_basis_points,
         candidate.responsiveness_basis_points,
-        candidate.cost_basis_points.unwrap_or(0),
+        candidate.cost_basis_points.unwrap_or(5_000),
         candidate.preference_basis_points,
     ];
     let weights = [

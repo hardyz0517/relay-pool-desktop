@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use crate::{
-    application::{credentials::CredentialService, error::ApplicationError},
+    application::{
+        credentials::CredentialService,
+        error::ApplicationError,
+        queries::{key_detail::KeyDetailQuery, key_pool::KeyPoolQuery},
+    },
     models::{
         group_facts::UpdateStationKeyGroupBindingInput,
         remote_keys::{RemoteKeyCapability, RemoteStationKey},
@@ -14,11 +18,21 @@ use crate::{
 #[derive(Clone)]
 pub(crate) struct KeyPoolCommandFacade {
     credentials: Arc<CredentialService>,
+    key_pool: Arc<KeyPoolQuery>,
+    key_detail: Arc<KeyDetailQuery>,
 }
 
 impl KeyPoolCommandFacade {
-    pub(crate) fn new(credentials: Arc<CredentialService>) -> Self {
-        Self { credentials }
+    pub(crate) fn new(
+        credentials: Arc<CredentialService>,
+        key_pool: Arc<KeyPoolQuery>,
+        key_detail: Arc<KeyDetailQuery>,
+    ) -> Self {
+        Self {
+            credentials,
+            key_pool,
+            key_detail,
+        }
     }
 
     pub(crate) async fn list_station_keys(
@@ -110,7 +124,19 @@ impl KeyPoolCommandFacade {
     }
 
     pub(crate) async fn list_key_pool_items(&self) -> Result<Vec<KeyPoolItem>, ApplicationError> {
-        self.credentials.list_key_pool_items().await
+        let read_model = self
+            .key_pool
+            .load(crate::application::pagination::PageLimit::new(500).expect("bounded limit"))
+            .await?;
+        Ok(read_model.data.rows)
+    }
+
+    pub(crate) async fn get_key_pool_detail(
+        &self,
+        station_key_id: String,
+    ) -> Result<crate::models::routing_read_models::KeyDetailReadModel, ApplicationError> {
+        let read_model = self.key_detail.load(&station_key_id).await?;
+        Ok(read_model.data)
     }
 
     pub(crate) async fn reorder_key_pool(

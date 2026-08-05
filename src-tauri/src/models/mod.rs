@@ -17,6 +17,7 @@ pub mod remote_keys;
 pub mod routing;
 pub(crate) mod routing_observation;
 pub(crate) mod routing_policy;
+pub(crate) mod routing_read_models;
 pub mod secrets;
 pub mod settings;
 pub mod shared_capabilities;

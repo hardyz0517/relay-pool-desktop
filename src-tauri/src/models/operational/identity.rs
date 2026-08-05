@@ -1,7 +1,6 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +21,6 @@ pub enum OperationalValidationError {
         field: &'static str,
         value: f64,
     },
-    #[cfg(test)]
     InvalidEndpointOrigin {
         reason: &'static str,
     },
@@ -48,7 +46,6 @@ impl fmt::Display for OperationalValidationError {
                     "{field} confidence must be finite between 0 and 1, got {value}"
                 )
             }
-            #[cfg(test)]
             Self::InvalidEndpointOrigin { reason } => write!(formatter, "{reason}"),
         }
     }
@@ -70,7 +67,6 @@ macro_rules! id_type {
                 Ok(Self(value))
             }
 
-            #[cfg(test)]
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -82,9 +78,7 @@ id_type!(StationId, "station_id");
 id_type!(StationKeyId, "station_key_id");
 id_type!(EndpointId, "endpoint_id");
 id_type!(ModelName, "model");
-#[cfg(test)]
 id_type!(OutboundPolicyRef, "outbound_policy_ref");
-#[cfg(test)]
 id_type!(EvidenceHash, "evidence_hash");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -101,7 +95,6 @@ impl RecordRevision {
         Ok(Self(value))
     }
 
-    #[cfg(test)]
     pub fn get(self) -> i64 {
         self.0
     }
@@ -121,7 +114,6 @@ impl EndpointRevision {
         Ok(Self(value))
     }
 
-    #[cfg(test)]
     pub fn get(self) -> i64 {
         self.0
     }
@@ -147,12 +139,10 @@ impl UnixMillis {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg(test)]
 pub struct StationAccountRef {
     station_id: StationId,
 }
 
-#[cfg(test)]
 impl StationAccountRef {
     pub fn new(station_id: StationId) -> Self {
         Self { station_id }
@@ -179,27 +169,22 @@ impl EndpointRef {
         }
     }
 
-    #[cfg(test)]
     pub fn station_id(&self) -> &StationId {
         &self.station_id
     }
 
-    #[cfg(test)]
     pub fn endpoint_id(&self) -> &EndpointId {
         &self.endpoint_id
     }
 
-    #[cfg(test)]
     pub fn revision(&self) -> EndpointRevision {
         self.revision
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg(test)]
 pub struct SanitizedOrigin(String);
 
-#[cfg(test)]
 impl SanitizedOrigin {
     pub fn from_endpoint_url(value: &str) -> Result<Self, OperationalValidationError> {
         let url =
@@ -240,14 +225,12 @@ impl SanitizedOrigin {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg(test)]
 pub struct EndpointFacts {
     endpoint_ref: EndpointRef,
     sanitized_origin: SanitizedOrigin,
     outbound_policy_ref: OutboundPolicyRef,
 }
 
-#[cfg(test)]
 impl EndpointFacts {
     pub fn new(
         endpoint_ref: EndpointRef,

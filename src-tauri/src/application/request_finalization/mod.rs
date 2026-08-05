@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 #[cfg(test)]
 pub(crate) mod effect_planner;
@@ -21,10 +24,15 @@ use crate::{
     application::{
         clock::{Clock, SystemClock},
         health_transitions::HealthTransitionService,
+        observation_ingestion::ObservationIngestion,
     },
     models::health::{
         HealthObservation, HealthObservationOutcome, HealthObservationSource, HealthWritebackMode,
         TrafficEquivalence,
+    },
+    models::routing_observation::{
+        ObservationOrder, ObservationOutcome, ObservationScope, ObservationSource,
+        RoutingObservation,
     },
     persistence::{
         error::PersistenceError,
@@ -52,6 +60,8 @@ pub(crate) struct RequestFinalizationService {
     runtime: PersistenceHandle,
     clock: Arc<dyn Clock>,
     health: HealthTransitionService,
+    observations: ObservationIngestion,
+    observation_sequence: Arc<AtomicU64>,
 }
 
 impl RequestFinalizationService {
@@ -60,6 +70,8 @@ impl RequestFinalizationService {
             runtime,
             clock: Arc::new(SystemClock),
             health: HealthTransitionService::new(),
+            observations: ObservationIngestion::new(),
+            observation_sequence: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -118,6 +130,8 @@ impl RequestLifecycleStore for RequestFinalizationService {
     ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
         let runtime = self.runtime.clone();
         let health = self.health;
+        let observations = self.observations;
+        let observation_sequence = Arc::clone(&self.observation_sequence);
         let write = map_attempt_terminal(record);
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
@@ -133,6 +147,15 @@ impl RequestLifecycleStore for RequestFinalizationService {
                         .await
                         .map_err(map_persistence_error)?
                         .health_applied;
+                }
+                if let Some(observation) = routing_observation(
+                    &write,
+                    observation_sequence.fetch_add(1, Ordering::Relaxed),
+                ) {
+                    observations
+                        .append(&mut session, observation)
+                        .await
+                        .map_err(map_persistence_error)?;
                 }
             }
             session.commit().await.map_err(map_persistence_error)?;
@@ -230,6 +253,43 @@ fn attempt_health_observation(record: &AttemptTerminalWrite) -> Option<HealthObs
         error_summary: record.sanitized_detail.clone(),
         writeback_mode: HealthWritebackMode::Authoritative,
         traffic_equivalence: TrafficEquivalence::RealUserTraffic,
+    })
+}
+
+fn routing_observation(
+    record: &AttemptTerminalWrite,
+    producer_sequence: u64,
+) -> Option<RoutingObservation> {
+    let outcome = match record.health_update {
+        AttemptHealthUpdate::Success => ObservationOutcome::Success,
+        AttemptHealthUpdate::ObserveFailure => ObservationOutcome::EndpointFailure,
+        AttemptHealthUpdate::Cooldown { .. } => ObservationOutcome::RateLimited,
+        AttemptHealthUpdate::HardFail => ObservationOutcome::EndpointFailure,
+        AttemptHealthUpdate::Neutral => return None,
+    };
+    let event_at_ms = record.terminal_at_ms.max(0);
+    Some(RoutingObservation {
+        id: format!(
+            "routing-observation-{}-{}",
+            record.request_id, record.ordinal
+        ),
+        order: ObservationOrder {
+            producer_id: "request_finalization".to_string(),
+            producer_sequence,
+            event_at_ms,
+            ingested_at_ms: event_at_ms,
+        },
+        scope: ObservationScope {
+            station_id: Some(record.station_id.clone()),
+            station_key_id: Some(record.station_key_id.clone()),
+            model: None,
+            endpoint_revision: Some(record.endpoint_revision),
+        },
+        source: ObservationSource::RealRequest,
+        traffic_equivalence: crate::models::routing_observation::TrafficEquivalence::ExactRequest,
+        outcome,
+        latency_ms: u32::try_from(record.terminal_at_ms.saturating_sub(record.started_at_ms)).ok(),
+        evidence_mass_basis_points: 10_000,
     })
 }
 

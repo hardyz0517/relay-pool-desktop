@@ -188,6 +188,7 @@ impl ProxyRuntimeState {
         });
 
         let local_access_key = config.local_access_key.clone();
+        let runtime_max_concurrency = config.limits.max_in_flight_requests as u32;
 
         let active_requests = Arc::new(AtomicU32::new(0));
         let request_count = Arc::new(AtomicU64::new(0));
@@ -246,6 +247,11 @@ impl ProxyRuntimeState {
                 let mut inner = self.v2.lock().await;
                 inner.server = Some(server);
                 inner.lifecycle_worker = Some(lifecycle_worker);
+                inner.routing_runtime =
+                    Some(Arc::new(super::routing_runtime::RoutingRuntimeState::new(
+                        runtime_max_concurrency,
+                        runtime_max_concurrency / 20,
+                    )));
                 self.publish_status(started.clone());
                 Ok(started)
             }
@@ -267,6 +273,7 @@ impl ProxyRuntimeState {
         let _operation = self.lifecycle_operation.lock().await;
         let server = {
             let mut inner = self.v2.lock().await;
+            inner.routing_runtime.take();
             let Some(server) = inner.server.take() else {
                 let stopped = default_status(default_port);
                 self.publish_status(stopped.clone());
@@ -310,6 +317,7 @@ impl ProxyRuntimeState {
         let _operation = self.lifecycle_operation.lock().await;
         let server = {
             let mut inner = self.v2.lock().await;
+            inner.routing_runtime.take();
             let Some(server) = inner.server.take() else {
                 let stopped = default_status(0);
                 self.publish_status(stopped.clone());
@@ -378,6 +386,7 @@ impl ProxyRuntimeState {
 struct V2RuntimeInner {
     server: Option<RunningServer>,
     lifecycle_worker: Option<LifecycleWriterWorker>,
+    routing_runtime: Option<Arc<super::routing_runtime::RoutingRuntimeState>>,
 }
 
 struct V2ProxyExecutor {

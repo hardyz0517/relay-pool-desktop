@@ -47,7 +47,8 @@ pub(crate) fn responsiveness_score(latency_ms: Option<u32>, cap_ms: u32) -> Basi
 }
 
 pub(crate) fn cost_score(cost_basis_points: Option<u16>) -> BasisPoints {
-    BasisPoints::new(cost_basis_points.unwrap_or(0)).unwrap_or(BasisPoints::ZERO)
+    // Unknown pricing is neutral evidence, never a zero-cost advantage.
+    BasisPoints::new(cost_basis_points.unwrap_or(5_000)).unwrap_or(BasisPoints::ZERO)
 }
 
 #[cfg(test)]
@@ -63,5 +64,11 @@ mod tests {
     fn latency_is_bounded() {
         assert_eq!(responsiveness_score(Some(0), 100).get(), 10_000);
         assert_eq!(responsiveness_score(Some(100), 100).get(), 0);
+    }
+
+    #[test]
+    fn unknown_cost_is_neutral_not_free() {
+        assert_eq!(cost_score(None).get(), 5_000);
+        assert_eq!(cost_score(Some(0)).get(), 0);
     }
 }

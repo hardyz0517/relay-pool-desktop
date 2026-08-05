@@ -22,6 +22,11 @@ pub(crate) struct RouteRejection {
     pub(crate) gate: HardGate,
 }
 
+pub(crate) const REASON_CREDENTIAL_MISSING: &str = "credential_missing";
+pub(crate) const REASON_CAPABILITY_REJECTED: &str = "capability_rejected";
+pub(crate) const REASON_GROUP_MISMATCH: &str = "group_mismatch";
+pub(crate) const REASON_HEALTH_HARD_REJECT: &str = "health_hard_reject";
+
 pub(crate) fn evaluate_candidate(
     candidate: &RouteCandidateProjection,
     progress: &RouteProgressView,

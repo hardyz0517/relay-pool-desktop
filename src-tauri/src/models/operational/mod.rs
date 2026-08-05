@@ -28,7 +28,6 @@ pub use health::{
     ModelHealthTarget, StationAccountHealthFact, StationAccountHealthTarget, StationKeyHealthFact,
     StationKeyHealthTarget,
 };
-#[cfg(test)]
 pub use identity::{
     EndpointFacts, EvidenceHash, OutboundPolicyRef, SanitizedOrigin, StationAccountRef,
 };

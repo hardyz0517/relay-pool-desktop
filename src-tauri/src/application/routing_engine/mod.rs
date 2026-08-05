@@ -1,6 +1,7 @@
 pub(crate) mod affinity;
 pub(crate) mod algorithm_profile;
 pub(crate) mod capacity;
+pub(crate) mod coordinator;
 pub(crate) mod controller;
 pub(crate) mod dispatch;
 pub(crate) mod eligibility;

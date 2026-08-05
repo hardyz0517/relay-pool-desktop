@@ -28,6 +28,7 @@ for (const owner of manifest.required_target_owners) {
 }
 
 checkPlannerContractBoundary();
+checkObservationAndHealthOwnership();
 
 console.log("intelligent routing architecture manifest gate passed");
 
@@ -64,6 +65,17 @@ function checkPlannerContractBoundary() {
     assert.match(source, /\bplanner_legacy::/u, `${consumer} must explicitly import the legacy planner during qualification`);
     assert.doesNotMatch(source, /\bplanner::/u, `${consumer} must not import an ambiguous planner module`);
   }
+}
+
+function checkObservationAndHealthOwnership() {
+  const ingestion = readSource("src-tauri/src/application/observation_ingestion.rs");
+  const transitions = readSource("src-tauri/src/application/health_transitions.rs");
+  const healthStore = readSource("src-tauri/src/persistence/stores/health_observation_store.rs");
+  assert.match(ingestion, /RoutingObservationStore/u, "canonical observation ingestion must own the observation store");
+  assert.match(ingestion, /producer_sequence/u, "observation ordering must be explicit");
+  assert.match(ingestion, /Sha256/u, "observation idempotency must use a payload hash");
+  assert.doesNotMatch(transitions, /update_station_key_status/u, "health transitions must not write legacy status");
+  assert.doesNotMatch(healthStore, /update_station_key_status/u, "health store must not expose a legacy status writer");
 }
 
 function runFixtures() {

@@ -84,6 +84,14 @@ impl FactVersionVector {
     pub(crate) fn max_settings_revision(&self) -> i64 {
         self.max_settings_revision
     }
+
+    pub(crate) fn max_station_revision(&self) -> i64 {
+        self.max_station_revision
+    }
+
+    pub(crate) fn max_alias_revision(&self) -> i64 {
+        self.max_alias_revision
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +111,10 @@ impl CredentialAvailabilityFact {
     pub(crate) fn available(&self) -> bool {
         self.available
     }
+
+    pub(crate) fn record_revision(&self) -> RecordRevision {
+        self.record_revision
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +128,10 @@ pub(crate) struct OperationalCandidateFact {
 impl OperationalCandidateFact {
     pub(crate) fn station_key_id(&self) -> &StationKeyId {
         &self.station_key_id
+    }
+
+    pub(crate) fn station_id(&self) -> &StationId {
+        &self.station_id
     }
 
     pub(crate) fn endpoint(&self) -> &EndpointFacts {

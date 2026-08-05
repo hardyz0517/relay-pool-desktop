@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{
     application::{clock::Clock, error::ApplicationError},
     models::dashboard_metrics::{
-        DashboardCumulativeRequestMetricsSnapshot, DashboardLiveRequestMetricsSnapshot,
-        DashboardRecentMetrics, DashboardRequestMetricsInput, DASHBOARD_METRICS_SCHEMA_VERSION,
+        DASHBOARD_METRICS_SCHEMA_VERSION, DashboardCumulativeRequestMetricsSnapshot,
+        DashboardLiveRequestMetricsSnapshot, DashboardRecentMetrics, DashboardRequestMetricsInput,
     },
     persistence::{
         runtime::PersistenceHandle,
@@ -165,10 +165,11 @@ mod tests {
 
     #[test]
     fn clock_input_is_millisecond_based() {
-        assert!(Utc
-            .timestamp_millis_opt(1_700_000_000_000)
-            .single()
-            .is_some());
+        assert!(
+            Utc.timestamp_millis_opt(1_700_000_000_000)
+                .single()
+                .is_some()
+        );
     }
 
     #[test]

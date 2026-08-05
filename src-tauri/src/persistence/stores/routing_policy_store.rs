@@ -1,6 +1,7 @@
 use serde_json::Value;
 use sqlx::{Connection, Row, SqliteConnection};
 
+use crate::models::routing_policy::RoutingPolicyConfigV1;
 use crate::persistence::{
     error::PersistenceError, stores::domain_revision_store::DomainRevisionStore,
 };
@@ -58,6 +59,28 @@ impl RoutingPolicyStore {
                 .is_some()
         {
             return Err(PersistenceError::RevisionConflict("routing_policy".into()));
+        }
+        if let Some(expected_revision) = expected_revision {
+            if let Some(existing) = sqlx::query(
+                "SELECT config_json, policy_version, system_version, status FROM routing_policy WHERE singleton_key = 1 AND config_revision = ?1",
+            )
+            .bind(i64::try_from(expected_revision).map_err(|_| PersistenceError::InvariantViolation("routing policy expected revision exceeds SQLite range".into()))?)
+            .fetch_optional(&mut *transaction)
+            .await?
+            {
+                let existing_config: Value = serde_json::from_str(existing.get::<String, _>("config_json").as_str())
+                    .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
+                if existing_config == *config
+                    && existing.get::<String, _>("policy_version") == policy_version
+                    && existing.get::<String, _>("system_version") == system_version
+                    && existing.get::<String, _>("status") == status
+                {
+                    transaction.rollback().await?;
+                    return self.load(connection).await?.ok_or_else(|| {
+                        PersistenceError::InvariantViolation("routing policy disappeared during no-op CAS".into())
+                    });
+                }
+            }
         }
         let advanced = revisions
             .advance(
@@ -160,5 +183,10 @@ fn validate_policy_input(
     {
         return Err(PersistenceError::ConstraintViolation);
     }
+    let typed = serde_json::from_value::<RoutingPolicyConfigV1>(config.clone())
+        .map_err(|_| PersistenceError::ConstraintViolation)?;
+    typed
+        .validate()
+        .map_err(|_| PersistenceError::ConstraintViolation)?;
     Ok(())
 }
