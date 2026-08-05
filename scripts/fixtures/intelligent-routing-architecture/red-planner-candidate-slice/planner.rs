@@ -1,0 +1,1 @@
+fn plan(candidates: &[RouteCandidateProjection]) {}

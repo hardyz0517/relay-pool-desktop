@@ -10,6 +10,11 @@
 - [`SCHEMA_UPGRADE_AUTHORING.md`](SCHEMA_UPGRADE_AUTHORING.md)：schema `15` 之后的数据升级 authoring contract。
 - [`../AGENTS.md`](../AGENTS.md)：仓库级开发、验证与交付规则。
 
+智能路由升级已进入批准设计与实施阶段：
+
+- [`proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md)：目标架构与验收合同。
+- [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：唯一当前实施计划。
+
 价格 / 倍率页与渠道状态页的只读联动已进入当前实现基线：
 
 - [`proposals/PRICING_MONITORING_INTEGRATION_SPEC.md`](proposals/PRICING_MONITORING_INTEGRATION_SPEC.md)：行为契约与跨层边界。

@@ -1,0 +1,1 @@
+requireRegistration(old_symbol);

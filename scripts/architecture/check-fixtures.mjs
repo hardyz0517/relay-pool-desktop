@@ -30,5 +30,6 @@ runMain(() => {
   run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-test-only-scheduler"], false);
   run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-hierarchical-weights"], false);
   run("../routing-operational-architecture.test.mjs", ["--root", "scripts/fixtures/routing-operational-architecture/red-unregistered-boundary-symbol"], false);
+  run("../intelligent-routing-architecture.test.mjs", ["--fixtures"], true);
   console.log("Architecture bypass fixtures passed");
 });

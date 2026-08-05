@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "status": "implementation_in_progress",
+  "approved_spec": "docs/proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md",
+  "implementation_plan": "docs/superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md",
+  "temporary_allowed_exceptions": [
+    {
+      "id": "intelligent_routing_qualification",
+      "owner_tasks": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "delete_by_task": 17,
+      "production_reachable": false,
+      "reason": "new routing components are test-qualified before the one-revision cutover"
+    }
+  ],
+  "forbidden_production_dependencies": {
+    "planner": ["sqlx", "reqwest", "tauri", "ipc::dto", "SecretManager", "request log", "monitoring DTO"],
+    "frontend": ["authoritative pricing matcher", "authoritative group matcher", "authoritative capability reducer", "authoritative health reducer", "authoritative score reducer"],
+    "application_queries": ["begin_write", "page query facade"],
+    "planning_snapshot": ["plaintext credential", "ciphertext credential", "timestamp revision", "fallback revision"]
+  },
+  "required_target_owners": [
+    "PlanningSnapshotBuilder",
+    "RoutingPolicyConfigV1",
+    "RoutingObservation",
+    "DispatchAlgorithmProfile",
+    "RouteCoordinator",
+    "RoutingWorkspaceReadModel",
+    "DomainRevisionNotice"
+  ],
+  "legacy_delete_by_task": {
+    "RuntimeRoutingCandidate": 17,
+    "runtime_candidate_adapter": 17,
+    "SchedulerAdvancedSettings": 18,
+    "LocalRoutingWorkspace": 17,
+    "frontend_pricing_group_hash": 17,
+    "derived_asset_status_writeback": 18
+  }
+}
