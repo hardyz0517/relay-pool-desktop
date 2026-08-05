@@ -1,5 +1,6 @@
 use crate::{
     application::health_transitions::{writeback_decision, HealthTransitionService},
+    application::observation_ingestion::ObservationIngestion,
     models::{
         health::{
             HealthObservation, HealthObservationOutcome, HealthObservationSource,
@@ -8,6 +9,10 @@ use crate::{
         monitoring::{
             ClientProfileId, FailureKind, HealthWritebackMode, ProbeOutcome, SemanticConfidence,
             TriggerKind,
+        },
+        routing_observation::{
+            ObservationOrder, ObservationOutcome, ObservationScope, ObservationSource,
+            RoutingObservation, TrafficEquivalence as RoutingTrafficEquivalence,
         },
     },
     persistence::{
@@ -30,6 +35,7 @@ use super::{
 pub(crate) struct MonitoringExecutionCommitter {
     executions: MonitoringExecutionRepository,
     health: HealthTransitionService,
+    observations: ObservationIngestion,
     retention: MonitoringRetentionRepository,
 }
 
@@ -38,6 +44,7 @@ impl MonitoringExecutionCommitter {
         Self {
             executions: MonitoringExecutionRepository,
             health: HealthTransitionService::new(),
+            observations: ObservationIngestion::new(),
             retention: MonitoringRetentionRepository,
         }
     }
@@ -84,14 +91,22 @@ impl MonitoringExecutionCommitter {
                 .await?;
         }
 
-        for target in &execution.targets {
+        for (target_index, target) in execution.targets.iter().enumerate() {
             let target_row = target_row(execution, target)?;
             self.executions
                 .finalize_target(write.connection(), &target_row)
                 .await?;
 
             let observation = health_observation(execution, target, &target_row);
-            self.health.record_observation(write, observation).await?;
+            self.health
+                .record_observation(write, observation.clone())
+                .await?;
+            self.observations
+                .append(
+                    write,
+                    routing_observation_from_health(&observation, target_index as u64 + 1),
+                )
+                .await?;
             self.retention
                 .mark_dirty_range(
                     write.connection(),
@@ -118,6 +133,45 @@ impl MonitoringExecutionCommitter {
                 next_due_at_ms(execution),
             )
             .await
+    }
+}
+
+fn routing_observation_from_health(
+    observation: &HealthObservation,
+    producer_sequence: u64,
+) -> RoutingObservation {
+    let outcome = match observation.outcome {
+        HealthObservationOutcome::Success => ObservationOutcome::Success,
+        HealthObservationOutcome::Cooldown => ObservationOutcome::RateLimited,
+        HealthObservationOutcome::HardFail => ObservationOutcome::CredentialFailure,
+        HealthObservationOutcome::ObserveFailure => ObservationOutcome::EndpointFailure,
+        HealthObservationOutcome::Skipped => ObservationOutcome::Cancelled,
+        HealthObservationOutcome::Neutral => ObservationOutcome::Unknown,
+    };
+    RoutingObservation {
+        id: format!("routing-monitor-observation-{}", observation.id),
+        order: ObservationOrder {
+            producer_id: "monitoring_execution".to_string(),
+            producer_sequence,
+            event_at_ms: observation.observed_at_ms.max(0),
+            ingested_at_ms: observation.observed_at_ms.max(0),
+        },
+        scope: ObservationScope {
+            station_id: None,
+            station_key_id: Some(observation.station_key_id.clone()),
+            model: None,
+            endpoint_revision: Some(observation.endpoint_revision),
+        },
+        source: ObservationSource::ActiveProbe,
+        traffic_equivalence: match observation.traffic_equivalence {
+            TrafficEquivalence::SyntheticCliCompat => RoutingTrafficEquivalence::EndpointOnly,
+            _ => RoutingTrafficEquivalence::SameModelShape,
+        },
+        outcome,
+        latency_ms: observation
+            .latency_ms
+            .and_then(|value| u32::try_from(value).ok()),
+        evidence_mass_basis_points: 5_000,
     }
 }
 
