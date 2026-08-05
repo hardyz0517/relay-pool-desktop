@@ -41,6 +41,9 @@ impl From<crate::persistence::error::PersistenceError> for ApplicationError {
             PersistenceError::InvariantViolation(_) => Self::Internal,
             PersistenceError::NotFound => Self::NotFound,
             PersistenceError::ConstraintViolation => Self::ConstraintViolation,
+            PersistenceError::RevisionUnavailable(_) | PersistenceError::RevisionConflict(_) => {
+                Self::StaleRevision
+            }
             PersistenceError::StaleRevision => Self::StaleRevision,
             PersistenceError::CommitOutcomeUnknown => Self::CommitOutcomeUnknown,
             PersistenceError::BackupVerificationFailed => Self::IntegrityFailed,

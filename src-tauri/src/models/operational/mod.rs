@@ -1,11 +1,8 @@
-#![allow(unused_imports)]
-
 pub mod capability;
 pub mod economics;
 pub mod health;
 pub mod identity;
 pub mod provenance;
-#[cfg(test)]
 pub(crate) mod raw_facts;
 
 #[cfg(test)]
@@ -42,9 +39,7 @@ pub use identity::{
 pub use provenance::{EvidenceConfidence, EvidenceCoverage};
 #[cfg(test)]
 pub use provenance::{EvidenceFreshness, EvidenceSource, FactProvenance};
-#[cfg(test)]
 pub(crate) use raw_facts::MAX_OPERATIONAL_CANDIDATES;
-#[cfg(test)]
 pub(crate) use raw_facts::{
     OperationalFactReadOptions, RawOperationalCandidateRow, RawOperationalFactRows,
     RawOperationalModelAliasRow, RawOperationalSettingRow,

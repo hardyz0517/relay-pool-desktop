@@ -3,11 +3,11 @@ pub(crate) mod collector_store;
 pub(crate) mod credential_store;
 pub(crate) mod dashboard_metrics_read;
 pub(crate) mod dashboard_metrics_rollup;
+pub(crate) mod domain_revision_store;
 pub(crate) mod health_observation_store;
 pub(crate) mod legacy_monitor_run_store;
 pub(crate) mod monitoring;
 pub(crate) mod monitoring_store;
-#[cfg(test)]
 pub(crate) mod operational_facts;
 pub(crate) mod pricing_store;
 pub(crate) mod provider_draft_store;
@@ -16,8 +16,10 @@ pub(crate) mod request_lifecycle_reconciliation;
 pub(crate) mod request_log_store;
 pub(crate) mod request_log_write;
 pub(crate) mod request_outcome_store;
-#[cfg(test)]
 pub(crate) mod routing_decisions;
+pub(crate) mod routing_observation_store;
+pub(crate) mod routing_policy_store;
+pub(crate) mod routing_quality_store;
 pub(crate) mod routing_store;
 pub(crate) mod settings_store;
 pub(crate) mod station_catalog;
