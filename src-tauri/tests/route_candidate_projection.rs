@@ -163,6 +163,11 @@ fn capability(subject: CapabilitySubject, decision: CapabilityDecision) -> Capab
         winner: None,
         overridden: Vec::new(),
         conflict_reason: None,
+        projector_version: "capability_evidence_v1",
+        reason_code: "capability_supported",
+        source_refs: Vec::new(),
+        observed_at: None,
+        confidence: None,
     }
 }
 

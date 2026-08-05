@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "projectorVersions": {
+    "group": "group_identity_v1",
+    "multiplier": "rate_precedence_v1",
+    "pricing": "pricing_match_v1",
+    "balance": "balance_scope_v1",
+    "capability": "capability_evidence_v1",
+    "assetStatus": "asset_status_rollup_v1"
+  },
+  "unknownStates": ["unknown", "stale", "ambiguous", "invalid", "unsupported", "missing"],
+  "assetStatusIsUiOnly": true
+}

@@ -84,8 +84,8 @@ mod application {
         pub(crate) mod eligibility {
             pub(crate) use crate::eligibility::*;
         }
-        pub(crate) mod planner {
-            pub(crate) use crate::planner::*;
+        pub(crate) mod planner_legacy {
+            pub(crate) use crate::planner_legacy::*;
         }
         pub(crate) mod request {
             pub(crate) use crate::request::*;
@@ -102,8 +102,8 @@ mod capacity;
 mod controller;
 #[path = "../src/application/routing_engine/eligibility.rs"]
 mod eligibility;
-#[path = "../src/application/routing_engine/planner.rs"]
-mod planner;
+#[path = "../src/application/routing_engine/planner_legacy.rs"]
+mod planner_legacy;
 #[path = "../src/application/routing_engine/request.rs"]
 mod request;
 #[path = "../src/application/routing_engine/selector.rs"]

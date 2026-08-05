@@ -7,7 +7,7 @@ use crate::application::routing_engine::{
         PlanningRoundCapacityState, ProviderAccountConstraint, RetryBudgetMiss,
         RetryBudgetRegistry, RetryPermit, RetryPermitDecision,
     },
-    planner::{ordered_plan_candidates, plan_candidate_count, plan_route, PlanningInput},
+    planner_legacy::{ordered_plan_candidates, plan_candidate_count, plan_route, PlanningInput},
     request::{PlanningRoundContext, RouteProgress, RouteRequestFacts},
     selector::{RoutePlanCandidate, RoutePlannerError},
 };

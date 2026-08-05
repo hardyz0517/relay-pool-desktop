@@ -1,11 +1,11 @@
 use crate::models::operational::{BalanceScope, HealthState};
-#[cfg(test)]
-use crate::models::operational::{Money, PriceConfidence, RecordRevision, UnixMillis};
+use crate::models::operational::{PriceConfidence, RecordRevision, UnixMillis};
 
 use super::group_projector::ProjectionTrace;
 
+pub(crate) const BALANCE_PROJECTOR_VERSION: &str = "balance_scope_v1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(test)]
 pub(crate) enum BalanceEvidenceStatus {
     Available,
     Unknown,
@@ -14,25 +14,31 @@ pub(crate) enum BalanceEvidenceStatus {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg(test)]
+pub(crate) struct BalanceAmount {
+    pub(crate) amount: f64,
+    pub(crate) currency: String,
+}
+
+impl BalanceAmount {
+    pub(crate) fn new(amount: f64, currency: impl Into<String>) -> Option<Self> {
+        let currency = currency.into();
+        (amount.is_finite() && amount >= 0.0 && !currency.trim().is_empty())
+            .then_some(Self { amount, currency })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BalanceObservation {
     pub(crate) scope: BalanceScope,
     pub(crate) status: BalanceEvidenceStatus,
-    pub(crate) balance: Option<Money>,
-    pub(crate) low_balance_threshold: Option<Money>,
+    pub(crate) balance: Option<BalanceAmount>,
+    pub(crate) low_balance_threshold: Option<BalanceAmount>,
     pub(crate) authoritative: bool,
     pub(crate) fresh: bool,
     pub(crate) revision: RecordRevision,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=route-read-model.balance-status; owner=application/operational_facts; remove_when=runtime candidate adapter no longer reserves non-emitted balance states"
-    )
-)]
 pub(crate) enum BalanceProjectionStatus {
     Healthy,
     DepletedEmergency,
@@ -52,7 +58,6 @@ pub(crate) struct BalanceProjection {
     pub(crate) trace: ProjectionTrace,
 }
 
-#[cfg(test)]
 pub(crate) fn project_balance(
     key_scope: Option<BalanceObservation>,
     station_scope: Option<BalanceObservation>,
@@ -100,7 +105,6 @@ pub(crate) fn project_balance(
     )
 }
 
-#[cfg(test)]
 fn is_depleted(observation: &BalanceObservation) -> bool {
     let Some(balance) = &observation.balance else {
         return false;
@@ -108,23 +112,9 @@ fn is_depleted(observation: &BalanceObservation) -> bool {
     let Some(threshold) = &observation.low_balance_threshold else {
         return false;
     };
-    balance.currency() == threshold.currency()
-        && balance.balance_amount_for_comparison() <= threshold.balance_amount_for_comparison()
+    balance.currency.eq_ignore_ascii_case(&threshold.currency) && balance.amount <= threshold.amount
 }
 
-#[cfg(test)]
-trait MoneyCompare {
-    fn balance_amount_for_comparison(&self) -> f64;
-}
-
-#[cfg(test)]
-impl MoneyCompare for Money {
-    fn balance_amount_for_comparison(&self) -> f64 {
-        self.amount().get()
-    }
-}
-
-#[cfg(test)]
 fn balance_projection(
     resolved_at: UnixMillis,
     status: BalanceProjectionStatus,
@@ -140,8 +130,13 @@ fn balance_projection(
         } else {
             HealthState::Unknown
         },
-        trace: ProjectionTrace::new(
+        trace: ProjectionTrace::for_projector(
+            BALANCE_PROJECTOR_VERSION,
             vec!["balance_projector"],
+            selected_scope
+                .map(|scope| format!("balance_scope:{scope:?}"))
+                .into_iter()
+                .collect(),
             PriceConfidence::new(if revision_refs.is_empty() { 0.0 } else { 1.0 })
                 .expect("valid confidence"),
             resolved_at,
@@ -151,7 +146,6 @@ fn balance_projection(
     }
 }
 
-#[cfg(test)]
 fn balance_reason(status: BalanceProjectionStatus) -> &'static str {
     match status {
         BalanceProjectionStatus::Healthy => "balance_healthy",

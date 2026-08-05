@@ -69,8 +69,8 @@ use persistence::stores::pricing_store::{
     SelectedModelBasePriceRow, SelectedPricingRuleRow, StationKeyPricingResolutionRow,
 };
 use pricing_projector::{
-    pricing_context_from_resolution, request_cost_comparison_context, PricingRouteKind,
-    RoutingCostBasis,
+    pricing_context_from_resolution, reduce_pricing, request_cost_comparison_context,
+    PricingRouteKind, PricingVerdict, RoutingCostBasis,
 };
 
 fn base_price() -> SelectedModelBasePriceRow {
@@ -316,4 +316,20 @@ fn missing_rate_and_missing_context_are_data_states_not_zero_cost() {
     let basis = request_cost_comparison_context(PricingRouteKind::Inference, None);
     assert_eq!(basis.basis, RoutingCostBasis::Unpriced);
     assert_eq!(basis.reason, Some("pricing_context_missing"));
+}
+
+#[test]
+fn canonical_pricing_reducer_emits_typed_verdict_and_provenance() {
+    let context = pricing_context_from_resolution("key-1", "gpt-5-mini", Some(&resolution()));
+    let projection = reduce_pricing(PricingRouteKind::Inference, Some(&context));
+    assert_eq!(projection.verdict, PricingVerdict::Exact);
+    assert_eq!(projection.projector_version, "pricing_match_v1");
+    assert_eq!(projection.reason_code, "pricing_exact");
+    assert!(!projection.source_refs.is_empty());
+    assert!(projection.observed_at.is_some());
+    assert!(projection.confidence.is_some());
+
+    let missing = reduce_pricing(PricingRouteKind::Inference, None);
+    assert_eq!(missing.verdict, PricingVerdict::Invalid);
+    assert_eq!(missing.reason_code, "pricing_missing");
 }

@@ -75,6 +75,7 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_request_attempts_station_key_terminal",
     "idx_request_logs_created",
     "idx_routing_attempt_costs_request",
+    "idx_routing_observations_scope_order",
     "idx_routing_request_cost_aggregates_updated",
     "idx_station_key_health_observations_key_observed",
     "idx_station_keys_order",
@@ -506,8 +507,8 @@ mod tests {
         let fingerprint = trusted_schema_fingerprint_v1();
 
         assert_eq!(fingerprint.sha256, fixture);
-        assert_eq!(fingerprint.table_count, 43);
-        assert_eq!(fingerprint.index_count, 51);
+        assert_eq!(fingerprint.table_count, 50);
+        assert_eq!(fingerprint.index_count, 52);
     }
 
     #[tokio::test]

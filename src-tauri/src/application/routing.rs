@@ -1,7 +1,7 @@
 use crate::{
     application::routing_engine::{
         model_alias::mapped_model,
-        planner::{ordered_plan_candidates, plan_route, PlanningInput},
+        planner_legacy::{ordered_plan_candidates, plan_route, PlanningInput},
         request::{
             CanonicalRouteRequest, PlanningRoundContext, RouteKind, RouteProgress,
             RouteRequestClassifier,

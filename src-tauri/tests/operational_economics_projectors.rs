@@ -15,7 +15,8 @@ mod group_projector;
 mod multiplier_projector;
 
 use balance_projector::{
-    project_balance, BalanceEvidenceStatus, BalanceObservation, BalanceProjectionStatus,
+    project_balance, BalanceAmount, BalanceEvidenceStatus, BalanceObservation,
+    BalanceProjectionStatus,
 };
 use group_projector::{
     project_group, GroupIdentity, GroupProjectionInput, GroupStatus, ProjectionTrace,
@@ -25,8 +26,7 @@ use multiplier_projector::{
     MultiplierResolutionStatus,
 };
 use operational_model::{
-    BalanceScope, CurrencyCode, Money, MoneyAmount, PriceConfidence, RateMultiplier,
-    RecordRevision, UnixMillis,
+    BalanceScope, PriceConfidence, RateMultiplier, RecordRevision, UnixMillis,
 };
 
 fn revision(value: i64) -> RecordRevision {
@@ -61,13 +61,6 @@ fn multiplier(kind: MultiplierEvidenceKind, value: f64, fresh: bool) -> Multipli
     }
 }
 
-fn money(value: f64) -> Money {
-    Money::new(
-        MoneyAmount::new(value).expect("money"),
-        CurrencyCode::new("USD").expect("currency"),
-    )
-}
-
 fn balance(
     scope: BalanceScope,
     status: BalanceEvidenceStatus,
@@ -79,8 +72,9 @@ fn balance(
     BalanceObservation {
         scope,
         status,
-        balance: value.map(money),
-        low_balance_threshold: threshold.map(money),
+        balance: value.map(|value| BalanceAmount::new(value, "USD").expect("money")),
+        low_balance_threshold: threshold
+            .map(|value| BalanceAmount::new(value, "USD").expect("money")),
         authoritative: true,
         fresh,
         revision: revision(revision_value),

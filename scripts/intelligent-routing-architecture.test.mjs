@@ -27,7 +27,44 @@ for (const owner of manifest.required_target_owners) {
   assert.notEqual(owner.length, 0);
 }
 
+checkPlannerContractBoundary();
+
 console.log("intelligent routing architecture manifest gate passed");
+
+function checkPlannerContractBoundary() {
+  const legacyPlanner = "src-tauri/src/application/routing_engine/planner_legacy.rs";
+  const removedPlanner = "src-tauri/src/application/routing_engine/planner.rs";
+  const snapshotPlanner = "src-tauri/src/application/routing_engine/intelligent_planner.rs";
+  const engineModule = "src-tauri/src/application/routing_engine/mod.rs";
+  const compileGate = "src-tauri/src/application/routing_engine/planner_contract_gate.rs";
+  const productionConsumers = [
+    "src-tauri/src/application/routing_engine/controller.rs",
+    "src-tauri/src/application/routing.rs",
+  ];
+
+  assert.ok(existsSync(path.join(root, ...legacyPlanner.split("/"))), `${legacyPlanner} must own the legacy route contract`);
+  assert.ok(!existsSync(path.join(root, ...removedPlanner.split("/"))), `${removedPlanner} must not remain after the legacy rename`);
+
+  const legacySource = readSource(legacyPlanner);
+  const snapshotSource = readSource(snapshotPlanner);
+  const moduleSource = readSource(engineModule);
+  const compileGateSource = readSource(compileGate);
+
+  assert.match(moduleSource, /\bmod\s+planner_legacy\s*;/u, "routing engine must expose the legacy planner under an explicit legacy name");
+  assert.doesNotMatch(moduleSource, /\bmod\s+planner\s*;/u, "routing engine must not expose an ambiguous planner module");
+  assert.match(legacySource, /\bfn\s+plan_route\s*\(/u, "only the legacy planner may retain the plan_route entrypoint");
+  assert.doesNotMatch(snapshotSource, /\bplan_route\b/u, "the snapshot planner must not import or export the legacy plan_route contract");
+  assert.doesNotMatch(legacySource, /\b(?:intelligent_planner|planning_snapshot)\b/u, "the legacy planner must not import the snapshot planner contract");
+  assert.match(compileGateSource, /type\s+LegacyPlanRouteContract\b/u, "a Rust compile gate must pin the legacy contract");
+  assert.match(compileGateSource, /type\s+IntelligentPlanSnapshotContract\b/u, "a Rust compile gate must pin the snapshot contract");
+  assert.match(compileGateSource, /planner_legacy::plan_route/u, "the compile gate must type-check the legacy entrypoint");
+  assert.match(compileGateSource, /intelligent_planner::plan_snapshot/u, "the compile gate must type-check the snapshot entrypoint");
+  for (const consumer of productionConsumers) {
+    const source = readSource(consumer);
+    assert.match(source, /\bplanner_legacy::/u, `${consumer} must explicitly import the legacy planner during qualification`);
+    assert.doesNotMatch(source, /\bplanner::/u, `${consumer} must not import an ambiguous planner module`);
+  }
+}
 
 function runFixtures() {
   const fixtureRoot = path.join(root, "scripts", "fixtures", "intelligent-routing-architecture");
@@ -61,6 +98,10 @@ function readJson(relativePath) {
   const file = path.join(root, ...relativePath.split("/"));
   assert.ok(existsSync(file), `${relativePath} must exist`);
   return JSON.parse(readFileSync(file, "utf8"));
+}
+
+function readSource(relativePath) {
+  return readFileSync(path.join(root, ...relativePath.split("/")), "utf8");
 }
 
 function filesUnder(directory) {

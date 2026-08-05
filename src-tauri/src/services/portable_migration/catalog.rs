@@ -93,7 +93,7 @@ pub(crate) enum CatalogError {
     MissingSensitiveFieldRule { table: String, column: String },
 }
 
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 43;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 50;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -1055,6 +1055,59 @@ const APP_SECRET_BINDINGS_COLUMNS: &[&str] = &[
     "created_at",
     "updated_at",
 ];
+const DOMAIN_REVISIONS_COLUMNS: &[&str] = &["scope", "revision", "updated_at_ms", "provenance"];
+const ROUTING_POLICY_COLUMNS: &[&str] = &[
+    "singleton_key",
+    "config_json",
+    "config_revision",
+    "policy_version",
+    "system_version",
+    "status",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const ROUTING_POLICY_HISTORY_COLUMNS: &[&str] = &[
+    "config_revision",
+    "config_json",
+    "policy_version",
+    "system_version",
+    "status",
+    "created_at_ms",
+];
+const ROUTING_OBSERVATIONS_COLUMNS: &[&str] = &[
+    "id",
+    "producer_id",
+    "producer_sequence",
+    "payload_hash",
+    "event_at_ms",
+    "ingested_at_ms",
+    "scope",
+    "source",
+    "traffic_equivalence",
+    "outcome_kind",
+    "latency_ms",
+    "mass_basis_points",
+    "evidence_json",
+    "created_at_ms",
+];
+const ROUTING_PROJECTOR_CHECKPOINTS_COLUMNS: &[&str] = &[
+    "projector",
+    "projector_version",
+    "scope",
+    "checkpoint_sequence",
+    "status",
+    "error_code",
+    "updated_at_ms",
+];
+const ROUTING_QUALITY_SUMMARIES_COLUMNS: &[&str] =
+    &["scope", "quality_revision", "summary_json", "updated_at_ms"];
+const ROUTING_HEALTH_AXES_COLUMNS: &[&str] = &[
+    "scope",
+    "axis",
+    "health_revision",
+    "value_basis_points",
+    "updated_at_ms",
+];
 
 const SETTINGS_RULES: &[FieldRule] = &[];
 const SECRETS_RULES: &[FieldRule] = &[
@@ -1420,6 +1473,18 @@ const PROVIDER_DRAFT_PREVIEW_RULES: &[FieldRule] = &[FieldRule {
 const APP_SECRET_BINDING_RULES: &[FieldRule] = &[FieldRule {
     name: "secret_id",
     transform: FieldTransform::SecretReference,
+}];
+const ROUTING_POLICY_RULES: &[FieldRule] = &[FieldRule {
+    name: "config_json",
+    transform: FieldTransform::BoundedJson,
+}];
+const ROUTING_OBSERVATION_RULES: &[FieldRule] = &[FieldRule {
+    name: "evidence_json",
+    transform: FieldTransform::BoundedJson,
+}];
+const ROUTING_QUALITY_RULES: &[FieldRule] = &[FieldRule {
+    name: "summary_json",
+    transform: FieldTransform::BoundedJson,
 }];
 
 // Existing channel monitor tables are declared here only to classify the current
@@ -1811,6 +1876,69 @@ const TABLES: &[TableCatalog] = &[
         true,
         APP_SECRET_BINDINGS_COLUMNS,
         APP_SECRET_BINDING_RULES,
+    ),
+    table(
+        "domain_revisions",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::Internal,
+        false,
+        DOMAIN_REVISIONS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_policy",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        true,
+        ROUTING_POLICY_COLUMNS,
+        ROUTING_POLICY_RULES,
+    ),
+    table(
+        "routing_policy_history",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_POLICY_HISTORY_COLUMNS,
+        ROUTING_POLICY_RULES,
+    ),
+    table(
+        "routing_observations",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_OBSERVATIONS_COLUMNS,
+        ROUTING_OBSERVATION_RULES,
+    ),
+    table(
+        "routing_projector_checkpoints",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_PROJECTOR_CHECKPOINTS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_quality_summaries",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_QUALITY_SUMMARIES_COLUMNS,
+        ROUTING_QUALITY_RULES,
+    ),
+    table(
+        "routing_health_axes",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_HEALTH_AXES_COLUMNS,
+        &[],
     ),
 ];
 

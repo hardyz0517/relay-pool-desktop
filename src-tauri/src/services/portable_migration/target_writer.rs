@@ -99,9 +99,56 @@ impl TrustedTargetWriter {
             }
         }
 
+        rebuild_domain_revision_baseline(&mut transaction).await?;
+
         transaction.commit().await?;
         validate_connection(connection).await
     }
+}
+
+async fn rebuild_domain_revision_baseline(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+) -> PortableValidationResult<()> {
+    sqlx::query("DELETE FROM domain_revisions")
+        .execute(&mut **transaction)
+        .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'station:' || id, MAX(endpoint_revision, 1), 0,
+                CASE WHEN endpoint_revision > 0 THEN 'legacy_endpoint_revision' ELSE 'baseline_snapshot' END
+         FROM stations",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'station_key:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot'
+         FROM station_keys",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'setting:' || key, ROW_NUMBER() OVER (ORDER BY key), 0, 'baseline_snapshot'
+         FROM settings",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'model_alias:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot'
+         FROM model_aliases",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'routing_policy', COALESCE(MAX(config_revision), 1), 0, 'baseline_snapshot'
+         FROM routing_policy",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn validate_rebuilt_target_database(

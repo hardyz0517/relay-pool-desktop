@@ -6,6 +6,8 @@ use crate::{
     services::pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
 };
 
+pub(crate) const PRICING_PROJECTOR_VERSION: &str = "pricing_match_v1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PricingRouteKind {
     Inference,
@@ -18,6 +20,73 @@ pub(crate) enum RoutingCostBasis {
     MultiplierProxy,
     Unpriced,
     NotApplicable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PricingVerdict {
+    Exact,
+    MultiplierProxy,
+    Unpriced,
+    NotApplicable,
+    Ambiguous,
+    Stale,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PricingProjection {
+    pub(crate) verdict: PricingVerdict,
+    pub(crate) basis: RoutingCostBasis,
+    pub(crate) comparison_value: Option<f64>,
+    pub(crate) reason_code: &'static str,
+    pub(crate) source_refs: Vec<String>,
+    pub(crate) observed_at: Option<String>,
+    pub(crate) confidence: Option<f64>,
+    pub(crate) projector_version: &'static str,
+}
+
+pub(crate) fn reduce_pricing(
+    route_kind: PricingRouteKind,
+    pricing: Option<&ResolvedPricingContext>,
+) -> PricingProjection {
+    if route_kind == PricingRouteKind::ModelCatalog {
+        return PricingProjection {
+            verdict: PricingVerdict::NotApplicable,
+            basis: RoutingCostBasis::NotApplicable,
+            comparison_value: None,
+            reason_code: "model_catalog_has_no_request_cost",
+            source_refs: Vec::new(),
+            observed_at: None,
+            confidence: None,
+            projector_version: PRICING_PROJECTOR_VERSION,
+        };
+    }
+    let context = request_cost_comparison_context(route_kind, pricing);
+    let (verdict, reason_code) = match context.basis {
+        RoutingCostBasis::ExactPrice => (PricingVerdict::Exact, "pricing_exact"),
+        RoutingCostBasis::MultiplierProxy => {
+            (PricingVerdict::MultiplierProxy, "pricing_multiplier_proxy")
+        }
+        RoutingCostBasis::NotApplicable => {
+            (PricingVerdict::NotApplicable, "pricing_not_applicable")
+        }
+        RoutingCostBasis::Unpriced => match context.reason {
+            Some("pricing_context_missing") => (PricingVerdict::Invalid, "pricing_missing"),
+            Some("missing_rate") => (PricingVerdict::Ambiguous, "pricing_missing_rate"),
+            Some("pricing_not_available") => (PricingVerdict::Stale, "pricing_stale"),
+            _ => (PricingVerdict::Unpriced, "pricing_unpriced"),
+        },
+    };
+    PricingProjection {
+        verdict,
+        basis: context.basis,
+        comparison_value: context.comparison_value,
+        reason_code,
+        source_refs: context.source_chain,
+        observed_at: context.observed_at,
+        confidence: context.confidence,
+        projector_version: PRICING_PROJECTOR_VERSION,
+    }
 }
 
 impl RoutingCostBasis {

@@ -1,7 +1,9 @@
 use serde_json::Value;
-use sqlx::{Row, SqliteConnection};
+use sqlx::{Connection, Row, SqliteConnection};
 
-use crate::persistence::error::PersistenceError;
+use crate::persistence::{
+    error::PersistenceError, stores::domain_revision_store::DomainRevisionStore,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StoredRoutingPolicy {
@@ -43,11 +45,32 @@ impl RoutingPolicyStore {
         validate_policy_input(config, policy_version, system_version, status, now_ms)?;
         let config_json = serde_json::to_string(config)
             .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
-        let next_revision = expected_revision.unwrap_or(0).checked_add(1).ok_or_else(|| {
-            PersistenceError::InvariantViolation("routing policy revision overflow".into())
-        })?;
-        let next_revision = i64::try_from(next_revision).map_err(|_| {
-            PersistenceError::InvariantViolation("routing policy revision exceeds SQLite range".into())
+        let mut transaction = connection.begin().await?;
+        let revisions = DomainRevisionStore;
+        let baseline = revisions.load(&mut *transaction, "routing_policy").await?;
+        if expected_revision.is_some_and(|expected| expected != baseline.revision) {
+            return Err(PersistenceError::RevisionConflict("routing_policy".into()));
+        }
+        if expected_revision.is_none()
+            && sqlx::query("SELECT 1 FROM routing_policy WHERE singleton_key = 1")
+                .fetch_optional(&mut *transaction)
+                .await?
+                .is_some()
+        {
+            return Err(PersistenceError::RevisionConflict("routing_policy".into()));
+        }
+        let advanced = revisions
+            .advance(
+                &mut *transaction,
+                "routing_policy",
+                baseline.revision,
+                now_ms,
+            )
+            .await?;
+        let next_revision = i64::try_from(advanced.revision).map_err(|_| {
+            PersistenceError::InvariantViolation(
+                "routing policy revision exceeds SQLite range".into(),
+            )
         })?;
 
         let changed = match expected_revision {
@@ -61,18 +84,19 @@ impl RoutingPolicyStore {
             .bind(status)
             .bind(now_ms)
             .bind(i64::try_from(expected_revision).map_err(|_| PersistenceError::InvariantViolation("routing policy expected revision exceeds SQLite range".into()))?)
-            .execute(&mut *connection)
+            .execute(&mut *transaction)
             .await?
             .rows_affected(),
             None => sqlx::query(
-                "INSERT INTO routing_policy (singleton_key, config_json, config_revision, policy_version, system_version, status, created_at_ms, updated_at_ms) VALUES (1, ?1, 1, ?2, ?3, ?4, ?5, ?5) ON CONFLICT(singleton_key) DO NOTHING",
+                "INSERT INTO routing_policy (singleton_key, config_json, config_revision, policy_version, system_version, status, created_at_ms, updated_at_ms) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?6) ON CONFLICT(singleton_key) DO NOTHING",
             )
             .bind(&config_json)
+            .bind(next_revision)
             .bind(policy_version)
             .bind(system_version)
             .bind(status)
             .bind(now_ms)
-            .execute(&mut *connection)
+            .execute(&mut *transaction)
             .await?
             .rows_affected(),
         };
@@ -88,18 +112,21 @@ impl RoutingPolicyStore {
         .bind(system_version)
         .bind(status)
         .bind(now_ms)
-        .execute(&mut *connection)
+        .execute(&mut *transaction)
         .await?;
-        self.load(connection)
-            .await?
-            .ok_or_else(|| PersistenceError::InvariantViolation("routing policy disappeared after CAS".into()))
+        transaction.commit().await?;
+        self.load(connection).await?.ok_or_else(|| {
+            PersistenceError::InvariantViolation("routing policy disappeared after CAS".into())
+        })
     }
 }
 
 fn policy_from_row(row: sqlx::sqlite::SqliteRow) -> Result<StoredRoutingPolicy, PersistenceError> {
     let revision = row.get::<i64, _>("config_revision");
     if revision <= 0 {
-        return Err(PersistenceError::InvariantViolation("routing policy revision is invalid".into()));
+        return Err(PersistenceError::InvariantViolation(
+            "routing policy revision is invalid".into(),
+        ));
     }
     let config_json: String = row.get("config_json");
     Ok(StoredRoutingPolicy {
@@ -125,7 +152,10 @@ fn validate_policy_input(
         || policy_version.len() > 96
         || system_version.is_empty()
         || system_version.len() > 96
-        || !matches!(status, "routing_configuration_required" | "active" | "invalid")
+        || !matches!(
+            status,
+            "routing_configuration_required" | "active" | "invalid"
+        )
         || now_ms < 0
     {
         return Err(PersistenceError::ConstraintViolation);

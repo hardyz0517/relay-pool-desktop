@@ -134,8 +134,8 @@ mod application {
 
 #[path = "../src/application/routing_engine/eligibility.rs"]
 mod eligibility;
-#[path = "../src/application/routing_engine/planner.rs"]
-mod planner;
+#[path = "../src/application/routing_engine/planner_legacy.rs"]
+mod planner_legacy;
 #[path = "../src/application/routing_engine/selector.rs"]
 mod selector;
 
@@ -154,7 +154,7 @@ use application::{
         OrderingProfile, PlanningRoundContext, RouteProgressView, RouteRequestFacts,
     },
 };
-use planner::{ordered_plan_candidates, plan_candidate_count, plan_route, PlanningInput};
+use planner_legacy::{ordered_plan_candidates, plan_candidate_count, plan_route, PlanningInput};
 use selector::{AvailabilityTier, RoutePlannerError};
 
 fn context(profile: OrderingProfile) -> PlanningRoundContext {

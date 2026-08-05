@@ -2,6 +2,8 @@ use crate::models::operational::{RateMultiplier, RecordRevision, UnixMillis};
 
 use super::group_projector::ProjectionTrace;
 
+pub(crate) const MULTIPLIER_PROJECTOR_VERSION: &str = "rate_precedence_v1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     not(test),
@@ -109,8 +111,10 @@ pub(crate) fn project_multiplier(input: MultiplierProjectionInput) -> Multiplier
         multiplier: Some(evidence.multiplier),
         status: MultiplierResolutionStatus::Resolved,
         selected_kind: Some(evidence.kind),
-        trace: ProjectionTrace::new(
+        trace: ProjectionTrace::for_projector(
+            MULTIPLIER_PROJECTOR_VERSION,
             vec!["multiplier_projector", "evidence"],
+            vec![format!("multiplier:{:?}", evidence.kind)],
             crate::models::operational::PriceConfidence::new(1.0).expect("valid confidence"),
             input.resolved_at,
             "multiplier_resolved",
@@ -128,8 +132,10 @@ fn unresolved(
         multiplier: None,
         status,
         selected_kind: None,
-        trace: ProjectionTrace::new(
+        trace: ProjectionTrace::for_projector(
+            MULTIPLIER_PROJECTOR_VERSION,
             vec!["multiplier_projector"],
+            Vec::new(),
             crate::models::operational::PriceConfidence::new(0.0).expect("valid confidence"),
             resolved_at,
             reason,
