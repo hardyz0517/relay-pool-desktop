@@ -91,7 +91,7 @@ impl MonitoringExecutionCommitter {
                 .await?;
         }
 
-        for (target_index, target) in execution.targets.iter().enumerate() {
+        for target in &execution.targets {
             let target_row = target_row(execution, target)?;
             self.executions
                 .finalize_target(write.connection(), &target_row)
@@ -104,7 +104,10 @@ impl MonitoringExecutionCommitter {
             self.observations
                 .append(
                     write,
-                    routing_observation_from_health(&observation, target_index as u64 + 1),
+                    routing_observation_from_health(
+                        &observation,
+                        monitor_sequence(&execution.execution_id, &target_row.id),
+                    ),
                 )
                 .await?;
             self.retention
@@ -134,6 +137,17 @@ impl MonitoringExecutionCommitter {
             )
             .await
     }
+}
+
+fn monitor_sequence(execution_id: &str, target_id: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"relay-pool:monitor-observation-sequence:v1:");
+    hasher.update(execution_id.as_bytes());
+    hasher.update(b":");
+    hasher.update(target_id.as_bytes());
+    let digest = hasher.finalize();
+    u64::from_be_bytes(digest[..8].try_into().expect("hash width")).max(1)
 }
 
 fn routing_observation_from_health(
