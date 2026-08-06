@@ -16,7 +16,7 @@ use crate::{
         ids::IdGenerator,
         operational_facts::{
             pricing_projector::RoutingCostBasis,
-            runtime_candidate_adapter::{
+            candidate_projection::{
                 route_projection_from_runtime_candidate_with_pricing, validated_route_settings,
             },
         },
@@ -205,12 +205,12 @@ async fn settings_update_preserves_typed_defaults_and_validates_bounds() {
     let settings = service
         .update(UpdateSettingsInput {
             local_proxy_port: 8788,
-            default_routing_strategy: "priority_fallback".to_string(),
+            routing_policy_name: "priority_fallback".to_string(),
             collector_proxy_mode: "direct".to_string(),
             collector_proxy_url: None,
             max_rate_multiplier: Some(Some(3.5)),
-            default_routing_group_filter: None,
-            scheduler_advanced_settings: None,
+            routing_group_scope: None,
+            scheduler_config: None,
             low_balance_threshold_cny: 8.0,
             collector_interval_minutes: 15,
             balance_interval_minutes: 5,
@@ -226,7 +226,9 @@ async fn settings_update_preserves_typed_defaults_and_validates_bounds() {
         .expect("update settings");
 
     assert_eq!(settings.local_proxy_port, 8788);
-    assert_eq!(settings.max_rate_multiplier, Some(3.5));
+    // Deprecated routing settings are ignored after the policy aggregate cutover.
+    assert_eq!(settings.max_rate_multiplier, None);
+    assert!(!settings.allow_depleted_fallback);
     assert_eq!(settings.tray_behavior, "disabled");
     assert_eq!(settings.collector_max_concurrency, 2);
 
@@ -816,7 +818,7 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     .expect("capabilities");
     sqlx::query(
         r#"
-        INSERT INTO station_key_health (
+        INSERT INTO routing_health_snapshot (
             station_key_id, endpoint_revision, last_success_at, last_failure_at,
             consecutive_failures, success_count, failure_count, avg_latency_ms,
             last_error_summary, cooldown_until, updated_at
@@ -961,8 +963,8 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
         validated_route_settings(&RuntimeRoutingSettings {
             policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(2.0),
-            routing_group_filter: RoutingGroupFilter::AllGroups,
-            scheduler_advanced_settings: Default::default(),
+            routing_group_scope: RoutingGroupFilter::AllGroups,
+            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
         }),
         123457,
@@ -1108,12 +1110,12 @@ fn remote_key_row(
 fn settings_input() -> UpdateSettingsInput {
     UpdateSettingsInput {
         local_proxy_port: 8787,
-        default_routing_strategy: "cost_stable_first".to_string(),
+        routing_policy_name: "cost_stable_first".to_string(),
         collector_proxy_mode: "direct".to_string(),
         collector_proxy_url: None,
         max_rate_multiplier: None,
-        default_routing_group_filter: None,
-        scheduler_advanced_settings: None,
+        routing_group_scope: None,
+        scheduler_config: None,
         low_balance_threshold_cny: 15.0,
         collector_interval_minutes: 30,
         balance_interval_minutes: 5,
@@ -1292,13 +1294,13 @@ impl V2Fixture {
             .await
             .expect("station key");
         sqlx::query(
-            "INSERT INTO station_endpoint_health (station_id, endpoint_revision) VALUES (?1, 1)",
+            "INSERT INTO endpoint_health_snapshot (station_id, endpoint_revision) VALUES (?1, 1)",
         )
         .bind(station_id)
         .execute(&mut connection)
         .await
         .expect("endpoint health");
-        sqlx::query("INSERT INTO station_key_health (station_key_id, endpoint_revision) VALUES ('key-1', 1)")
+        sqlx::query("INSERT INTO routing_health_snapshot (station_key_id, endpoint_revision) VALUES ('key-1', 1)")
             .execute(&mut connection)
             .await
             .expect("key health");
@@ -1330,11 +1332,11 @@ impl V2Fixture {
     }
 
     async fn endpoint_health_rows(&self) -> i64 {
-        self.count("station_endpoint_health").await
+        self.count("endpoint_health_snapshot").await
     }
 
     async fn station_key_health_rows(&self) -> i64 {
-        self.count("station_key_health").await
+        self.count("routing_health_snapshot").await
     }
 
     async fn secret_rows(&self) -> i64 {

@@ -22,6 +22,7 @@ impl BasisPoints {
         let value = u32::from(self.0).checked_mul(u32::from(other.0))? / 10_000;
         Self::new(u16::try_from(value).ok()?)
     }
+    #[cfg(test)]
     pub(crate) fn weighted_average(values: impl IntoIterator<Item = (Self, Self)>) -> Option<Self> {
         let mut sum = 0_u64;
         let mut weights = 0_u64;
@@ -50,11 +51,13 @@ impl UtilityScore {
         self.0
     }
 }
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FactorScore {
     pub(crate) value: BasisPoints,
     pub(crate) confidence: BasisPoints,
 }
+#[cfg(test)]
 impl FactorScore {
     pub(crate) fn effective(self) -> BasisPoints {
         self.value

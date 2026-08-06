@@ -1,3 +1,4 @@
+#[cfg(test)]
 use super::fixed_point::BasisPoints;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DispatchAlgorithmProfile {
@@ -43,9 +44,11 @@ impl DispatchAlgorithmProfile {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(crate) fn canonical_version(&self) -> String {
         format!("routing-profile-v{}", self.version)
     }
+    #[cfg(test)]
     pub(crate) fn basis_points(value: u16) -> Option<BasisPoints> {
         BasisPoints::new(value)
     }

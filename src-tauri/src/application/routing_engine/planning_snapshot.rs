@@ -8,6 +8,9 @@ pub(crate) struct CandidateSnapshot {
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
     pub(crate) credential_available: bool,
+    pub(crate) hard_eligible: bool,
+    pub(crate) backup_only: bool,
+    pub(crate) depleted: bool,
     pub(crate) capability_basis_points: u16,
     pub(crate) reliability_basis_points: u16,
     pub(crate) responsiveness_basis_points: u16,
@@ -23,6 +26,11 @@ pub(crate) struct RuntimeOverlaySnapshot {
     pub(crate) candidate_set_revision: u64,
     pub(crate) in_flight: u32,
     pub(crate) max_concurrency: u32,
+    /// A request-scoped, validated affinity result captured by the runtime
+    /// owner. Keeping only the opaque candidate id here lets the planner
+    /// apply affinity as an explicit preference correction without exposing
+    /// lookup keys or secrets to durable facts.
+    pub(crate) affinity_station_key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

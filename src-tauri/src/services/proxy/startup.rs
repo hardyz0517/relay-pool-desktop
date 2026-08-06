@@ -5,7 +5,7 @@ use crate::{
     models::proxy::ProxyStatus,
     services::proxy::{
         lifecycle::ports::RequestLifecycleStore,
-        routing_repository::{RoutingRepository, V2RoutingRepository},
+        routing_repository::{RoutingExecutionRepository, RoutingRepository},
     },
 };
 
@@ -45,7 +45,7 @@ pub(crate) fn config_from_v2_services(
     port: u16,
 ) -> ProxyStartConfig {
     let routing_repository: Arc<dyn RoutingRepository> =
-        Arc::new(V2RoutingRepository::new(services.routing.as_ref().clone()));
+    Arc::new(RoutingExecutionRepository::new(services.routing.as_ref().clone()));
     let lifecycle_store: Arc<dyn RequestLifecycleStore> = services.request_finalization.clone();
     ProxyStartConfig::new_v2(
         routing_repository,
@@ -94,12 +94,12 @@ mod tests {
             .settings
             .update(UpdateSettingsInput {
                 local_proxy_port: port,
-                default_routing_strategy: settings.default_routing_strategy,
+                routing_policy_name: settings.routing_policy_name,
                 collector_proxy_mode: settings.collector_proxy_mode,
                 collector_proxy_url: settings.collector_proxy_url,
                 max_rate_multiplier: Some(settings.max_rate_multiplier),
-                default_routing_group_filter: Some(settings.default_routing_group_filter),
-                scheduler_advanced_settings: Some(settings.scheduler_advanced_settings),
+                routing_group_scope: Some(settings.routing_group_scope),
+                scheduler_config: Some(settings.scheduler_config),
                 low_balance_threshold_cny: settings.low_balance_threshold_cny,
                 collector_interval_minutes: settings.collector_interval_minutes,
                 balance_interval_minutes: settings.balance_interval_minutes,

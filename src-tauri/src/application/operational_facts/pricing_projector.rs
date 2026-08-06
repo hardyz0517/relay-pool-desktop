@@ -6,6 +6,7 @@ use crate::{
     services::pricing::{pricing_context_from_pricing_parts, RequestPricingParts},
 };
 
+#[cfg(test)]
 pub(crate) const PRICING_PROJECTOR_VERSION: &str = "pricing_match_v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +24,7 @@ pub(crate) enum RoutingCostBasis {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum PricingVerdict {
     Exact,
     MultiplierProxy,
@@ -34,6 +36,7 @@ pub(crate) enum PricingVerdict {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(test)]
 pub(crate) struct PricingProjection {
     pub(crate) verdict: PricingVerdict,
     pub(crate) basis: RoutingCostBasis,
@@ -45,6 +48,7 @@ pub(crate) struct PricingProjection {
     pub(crate) projector_version: &'static str,
 }
 
+#[cfg(test)]
 pub(crate) fn reduce_pricing(
     route_kind: PricingRouteKind,
     pricing: Option<&ResolvedPricingContext>,

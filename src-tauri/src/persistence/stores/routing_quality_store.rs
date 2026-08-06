@@ -1,12 +1,55 @@
 use serde_json::Value;
-use sqlx::SqliteConnection;
+use sqlx::{Row, SqliteConnection};
+use std::collections::BTreeMap;
 
 use crate::persistence::error::PersistenceError;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct RoutingQualityStore;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutingCheckpointCursor {
+    pub(crate) sequence: u64,
+    pub(crate) item_id: Option<String>,
+}
+
 impl RoutingQualityStore {
+    pub async fn load_health_axes(
+        &self,
+        connection: &mut SqliteConnection,
+        scopes: &[String],
+    ) -> Result<BTreeMap<String, BTreeMap<String, u16>>, PersistenceError> {
+        if scopes.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let mut result = BTreeMap::new();
+        for scope in scopes.iter().take(1024) {
+            if scope.is_empty() {
+                return Err(PersistenceError::ConstraintViolation);
+            }
+            let rows = sqlx::query(
+                "SELECT axis, value_basis_points FROM routing_health_axes WHERE scope = ?1",
+            )
+            .bind(scope)
+            .fetch_all(&mut *connection)
+            .await?;
+            let axes = rows
+                .into_iter()
+                .map(|row| {
+                    let value = row.get::<i64, _>("value_basis_points");
+                    if !(0..=10_000).contains(&value) {
+                        return Err(PersistenceError::InvariantViolation(
+                            "routing health axis is outside basis-point range".into(),
+                        ));
+                    }
+                    Ok((row.get::<String, _>("axis"), value as u16))
+                })
+                .collect::<Result<BTreeMap<_, _>, PersistenceError>>()?;
+            result.insert(scope.clone(), axes);
+        }
+        Ok(result)
+    }
+
     pub(crate) async fn save_summary(
         &self,
         connection: &mut SqliteConnection,
@@ -99,31 +142,35 @@ impl RoutingQualityStore {
         Ok(())
     }
 
-    pub(crate) async fn load_checkpoint(
+    pub(crate) async fn load_checkpoint_cursor(
         &self,
         connection: &mut SqliteConnection,
         projector: &str,
         projector_version: &str,
         scope: &str,
-    ) -> Result<Option<u64>, PersistenceError> {
+    ) -> Result<Option<RoutingCheckpointCursor>, PersistenceError> {
         validate_scope(scope, 1, 0)?;
-        let value = sqlx::query_scalar::<_, i64>(
-            "SELECT checkpoint_sequence FROM routing_projector_checkpoints WHERE projector = ?1 AND projector_version = ?2 AND scope = ?3",
+        let row = sqlx::query(
+            "SELECT checkpoint_sequence, error_code FROM routing_projector_checkpoints WHERE projector = ?1 AND projector_version = ?2 AND scope = ?3",
         )
         .bind(projector)
         .bind(projector_version)
         .bind(scope)
         .fetch_optional(&mut *connection)
         .await?;
-        value
-            .map(|value| {
-                u64::try_from(value).map_err(|_| {
+        row.map(|row| {
+            let sequence =
+                u64::try_from(row.get::<i64, _>("checkpoint_sequence")).map_err(|_| {
                     PersistenceError::InvariantViolation(
                         "stored projector checkpoint is negative".into(),
                     )
-                })
+                })?;
+            Ok(RoutingCheckpointCursor {
+                sequence,
+                item_id: row.get("error_code"),
             })
-            .transpose()
+        })
+        .transpose()
     }
 }
 

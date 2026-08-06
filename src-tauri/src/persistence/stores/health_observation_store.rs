@@ -83,7 +83,7 @@ impl HealthObservationStore {
             SELECT station_key_id, endpoint_revision, last_success_at, last_failure_at,
                    consecutive_failures, success_count, failure_count, total_duration_ms,
                    avg_latency_ms, last_error_summary, cooldown_until, updated_at
-            FROM station_key_health
+            FROM routing_health_snapshot
             WHERE station_key_id = ?1
             "#,
         )
@@ -102,7 +102,7 @@ impl HealthObservationStore {
     ) -> Result<(), PersistenceError> {
         sqlx::query(
             r#"
-            INSERT INTO station_key_health (
+            INSERT INTO routing_health_snapshot (
                 station_key_id, endpoint_revision, last_success_at, last_failure_at,
                 consecutive_failures, success_count, failure_count, total_duration_ms,
                 avg_latency_ms, last_error_summary, cooldown_until, updated_at

@@ -4,7 +4,7 @@ use crate::{
     TrayBehavior, TrayBehaviorState,
     application::{
         error::ApplicationError,
-        queries::{station_assets::StationAssetsQuery, station_detail::StationDetailQuery},
+        queries::station_assets::StationAssetsQuery,
         settings::SettingsService,
         stations::StationService,
     },
@@ -20,7 +20,6 @@ pub(crate) struct SettingsStationsCommandFacade {
     settings: Arc<SettingsService>,
     tray_behavior: Arc<TrayBehaviorState>,
     station_assets: Arc<StationAssetsQuery>,
-    station_detail: Arc<StationDetailQuery>,
 }
 
 impl SettingsStationsCommandFacade {
@@ -28,7 +27,6 @@ impl SettingsStationsCommandFacade {
         stations: Arc<StationService>,
         settings: Arc<SettingsService>,
         station_assets: Arc<StationAssetsQuery>,
-        station_detail: Arc<StationDetailQuery>,
         tray_behavior: Arc<TrayBehaviorState>,
     ) -> Self {
         Self {
@@ -36,7 +34,6 @@ impl SettingsStationsCommandFacade {
             settings,
             tray_behavior,
             station_assets,
-            station_detail,
         }
     }
 
@@ -58,13 +55,6 @@ impl SettingsStationsCommandFacade {
         input: CreateStationInput,
     ) -> Result<Station, ApplicationError> {
         self.stations.create(input).await
-    }
-
-    pub(crate) async fn load_station_detail(
-        &self,
-        station_id: String,
-    ) -> Result<crate::models::routing_read_models::StationDetailReadModel, ApplicationError> {
-        Ok(self.station_detail.load(&station_id).await?.data)
     }
 
     pub(crate) async fn update_station(

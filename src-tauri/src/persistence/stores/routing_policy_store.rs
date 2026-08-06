@@ -2,9 +2,8 @@ use serde_json::Value;
 use sqlx::{Connection, Row, SqliteConnection};
 
 use crate::models::routing_policy::RoutingPolicyConfigV1;
-use crate::persistence::{
-    error::PersistenceError, stores::domain_revision_store::DomainRevisionStore,
-};
+use crate::persistence::error::PersistenceError;
+use crate::persistence::stores::domain_revision_store::DomainRevisionStore;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StoredRoutingPolicy {

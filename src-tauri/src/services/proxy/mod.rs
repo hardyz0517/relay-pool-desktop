@@ -17,7 +17,7 @@ pub mod request;
 pub mod response_body;
 pub mod responses_chat_fallback;
 pub mod responses_chat_stream;
-pub(crate) use crate::application::routing_engine::{routing_failure, routing_types};
+pub(crate) use crate::application::routing_engine::routing_failure;
 pub mod routing_repository;
 pub(crate) mod routing_runtime;
 pub mod runtime;

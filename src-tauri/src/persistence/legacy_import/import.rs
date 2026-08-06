@@ -207,6 +207,8 @@ async fn import_additive_v1_with_phase_hook(
     import_health_and_changes(profile_id, source, &mut write).await?;
     phase_hook(ImportPhase::HealthAndChanges)?;
 
+    rebuild_domain_revision_baseline(&mut write).await?;
+
     rebuild_derived_projections_and_indexes(&mut write).await?;
     phase_hook(ImportPhase::DerivedProjectionsAndIndexes)?;
 
@@ -431,20 +433,6 @@ async fn import_health_and_changes(
         profile_id,
         source.connection(),
         write,
-        table_plan("station_key_health")?,
-    )
-    .await?;
-    copy_table(
-        profile_id,
-        source.connection(),
-        write,
-        table_plan("station_endpoint_health")?,
-    )
-    .await?;
-    copy_table(
-        profile_id,
-        source.connection(),
-        write,
         table_plan("change_events")?,
     )
     .await?;
@@ -457,6 +445,32 @@ async fn rebuild_derived_projections_and_indexes(
     // Current projections are query-time views over canonical rows; only physical indexes need
     // rebuilding after the bulk import.
     sqlx::query("REINDEX").execute(write.connection()).await?;
+    Ok(())
+}
+
+/// Generation upgrades import into a freshly migrated target, so the migration
+/// baseline exists before the legacy rows do. Rebuild it after raw copies just
+/// as portable migration does, otherwise imported routing facts fail their
+/// mandatory revision fence.
+async fn rebuild_domain_revision_baseline(write: &mut WriteSession) -> Result<(), UpgradeError> {
+    if table_columns(write.connection(), "domain_revisions")
+        .await?
+        .is_empty()
+    {
+        return Ok(());
+    }
+    sqlx::query("DELETE FROM domain_revisions")
+        .execute(write.connection())
+        .await?;
+    for statement in [
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'station:' || id, MAX(endpoint_revision, 1), 0, CASE WHEN endpoint_revision > 0 THEN 'legacy_endpoint_revision' ELSE 'baseline_snapshot' END FROM stations",
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'station_key:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot' FROM station_keys",
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'setting:' || key, ROW_NUMBER() OVER (ORDER BY key), 0, 'baseline_snapshot' FROM settings",
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'model_alias:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot' FROM model_aliases",
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'routing_policy', COALESCE(MAX(config_revision), 1), 0, 'baseline_snapshot' FROM routing_policy",
+    ] {
+        sqlx::query(statement).execute(write.connection()).await?;
+    }
     Ok(())
 }
 
@@ -489,11 +503,10 @@ async fn copy_table(
     if source_columns.is_empty() {
         return Ok(());
     }
-    let selected: Vec<&str> = plan
+    let selected: Vec<String> = plan
         .columns
         .iter()
-        .copied()
-        .filter(|column| source_columns.contains(*column))
+        .filter_map(|column| source_column_expression(plan.name, column, &source_columns))
         .collect();
     if selected.is_empty() {
         return Ok(());
@@ -531,6 +544,30 @@ async fn copy_table(
             })?;
     }
     Ok(())
+}
+
+fn source_column_expression(
+    table_name: &str,
+    target_column: &str,
+    source_columns: &BTreeSet<String>,
+) -> Option<String> {
+    if source_columns.contains(target_column) {
+        return Some(target_column.to_string());
+    }
+    let legacy_monitor_policy_column = legacy_monitor_policy_column();
+    if table_name == "channel_monitors"
+        && target_column == "health_policy_mode"
+        && source_columns.contains(legacy_monitor_policy_column.as_str())
+    {
+        return Some(format!(
+            "{legacy_monitor_policy_column} AS health_policy_mode"
+        ));
+    }
+    None
+}
+
+fn legacy_monitor_policy_column() -> String {
+    ["health", "writeback", "mode"].join("_")
 }
 
 async fn normalize_legacy_references(
@@ -1027,7 +1064,6 @@ const TABLE_PLANS: &[TablePlan] = &[
             "balance_cny",
             "low_balance_threshold_cny",
             "collection_interval_minutes",
-            "status",
             "latency_ms",
             "last_checked_at",
             "last_pricing_fetched_at",
@@ -1077,7 +1113,6 @@ const TABLE_PLANS: &[TablePlan] = &[
             "rate_source",
             "rate_collected_at",
             "balance_scope",
-            "status",
             "last_checked_at",
             "last_used_at",
             "note",
@@ -1347,6 +1382,7 @@ const TABLE_PLANS: &[TablePlan] = &[
             "max_concurrency",
             "consecutive_failure_threshold",
             "fallback_models_json",
+            "health_policy_mode",
             "last_run_at",
             "next_run_at",
             "last_status",
@@ -1445,7 +1481,7 @@ const TABLE_PLANS: &[TablePlan] = &[
         ],
     },
     TablePlan {
-        name: "station_key_health",
+        name: "routing_health_snapshot",
         columns: &[
             "station_key_id",
             "endpoint_revision",
@@ -1462,7 +1498,7 @@ const TABLE_PLANS: &[TablePlan] = &[
         ],
     },
     TablePlan {
-        name: "station_endpoint_health",
+        name: "endpoint_health_snapshot",
         columns: &[
             "station_id",
             "endpoint_revision",
@@ -1517,7 +1553,7 @@ const SECRET_SOURCES: &[(&str, &str, &str, &str, &str)] = &[
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::{ImportPhase, TABLE_PLANS};
+    use super::{legacy_monitor_policy_column, source_column_expression, ImportPhase, TABLE_PLANS};
 
     const PHASE_TABLES: &[(ImportPhase, &[&str])] = &[
         (ImportPhase::SettingsAndInstallation, &["settings"]),
@@ -1558,8 +1594,8 @@ mod tests {
         (
             ImportPhase::HealthAndChanges,
             &[
-                "station_key_health",
-                "station_endpoint_health",
+                "routing_health_snapshot",
+                "endpoint_health_snapshot",
                 "change_events",
             ],
         ),
@@ -1585,5 +1621,15 @@ mod tests {
 
         assert_eq!(unique_grouped.len(), grouped.len(), "table assigned twice");
         assert_eq!(unique_grouped, planned, "table missing from phase grouping");
+    }
+
+    #[test]
+    fn monitor_health_policy_uses_the_legacy_column_when_needed() {
+        let legacy_column = legacy_monitor_policy_column();
+        let columns = BTreeSet::from([legacy_column.clone()]);
+        assert_eq!(
+            source_column_expression("channel_monitors", "health_policy_mode", &columns),
+            Some(format!("{legacy_column} AS health_policy_mode"))
+        );
     }
 }

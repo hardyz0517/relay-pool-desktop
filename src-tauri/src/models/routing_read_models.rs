@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 use super::{
-    shared_capabilities::PricingComparisonWorkspace, station_keys::KeyPoolItem, stations::Station,
+    station_keys::KeyPoolItem, stations::Station,
 };
 
 pub(crate) const ASSET_READ_MODEL_SCHEMA_VERSION: u16 = 1;
@@ -59,32 +59,6 @@ pub(crate) struct StationAssetsReadModel {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct StationDetailReadModel {
-    pub(crate) station: Station,
-    pub(crate) keys: Vec<KeyPoolItem>,
-    pub(crate) group_identity_hashes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct KeyPoolReadModel {
     pub(crate) rows: Vec<KeyPoolItem>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct KeyDetailReadModel {
-    pub(crate) item: KeyPoolItem,
-    pub(crate) group_identity_hash: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct PricingComparisonReadModel {
-    pub(crate) schema_version: u16,
-    pub(crate) generated_at_ms: i64,
-    pub(crate) domain_revision: i64,
-    pub(crate) workspace: PricingComparisonWorkspace,
-    /// Identity hash is emitted by the server and is the only cross-page join key.
-    pub(crate) group_identity_hashes: Vec<String>,
 }

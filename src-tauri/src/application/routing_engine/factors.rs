@@ -51,6 +51,22 @@ pub(crate) fn cost_score(cost_basis_points: Option<u16>) -> BasisPoints {
     BasisPoints::new(cost_basis_points.unwrap_or(5_000)).unwrap_or(BasisPoints::ZERO)
 }
 
+/// Converts a non-negative, like-for-like request price into the bounded
+/// efficiency score consumed by the planner. The one-unit reference point is
+/// frozen here rather than normalising against the current candidate set, so
+/// adding or removing another key cannot change an existing key's score.
+pub(crate) fn cost_efficiency_from_comparable_value(value: f64) -> Option<u16> {
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    let micros = (value * 1_000_000.0).round();
+    if micros > u64::MAX as f64 {
+        return None;
+    }
+    let denominator = 1_000_000_u64.checked_add(micros as u64)?;
+    Some(((10_000_u64 * 1_000_000_u64) / denominator) as u16)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +86,13 @@ mod tests {
     fn unknown_cost_is_neutral_not_free() {
         assert_eq!(cost_score(None).get(), 5_000);
         assert_eq!(cost_score(Some(0)).get(), 0);
+    }
+
+    #[test]
+    fn lower_comparable_cost_has_a_higher_fixed_score() {
+        let cheap = cost_efficiency_from_comparable_value(0.1).unwrap();
+        let expensive = cost_efficiency_from_comparable_value(10.0).unwrap();
+        assert!(cheap > expensive);
+        assert_eq!(cost_efficiency_from_comparable_value(0.0), Some(10_000));
     }
 }

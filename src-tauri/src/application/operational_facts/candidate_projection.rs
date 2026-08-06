@@ -29,7 +29,7 @@ use crate::{
         },
         routing_engine::{
             capacity::ProviderAccountConstraint,
-            controller::CandidateAdmissionProfile,
+            admission::CandidateAdmissionProfile,
             request::{
                 CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind,
                 RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
@@ -44,7 +44,7 @@ use crate::{
         },
         pricing::ResolvedPricingContext,
         routing::{
-            RoutingGroupFilter, RoutingPolicy, RuntimeRoutingCandidate, RuntimeRoutingSettings,
+            RoutingGroupFilter, RoutingPolicy, CanonicalRoutingCandidate, RuntimeRoutingSettings,
         },
     },
 };
@@ -74,8 +74,8 @@ pub(crate) fn validated_route_settings(
     ValidatedLocalRouteSettings {
         ordering_profile: ordering_profile(&settings.policy),
         max_rate_multiplier: settings.max_rate_multiplier,
-        group_filter_mode: group_filter_mode(&settings.routing_group_filter),
-        required_group_stable_key: required_group_stable_key(&settings.routing_group_filter),
+        group_filter_mode: group_filter_mode(&settings.routing_group_scope),
+        required_group_stable_key: required_group_stable_key(&settings.routing_group_scope),
         preferred_models: Vec::new(),
         required_tags: Vec::new(),
         allow_depleted_fallback: settings.allow_depleted_fallback,
@@ -113,8 +113,9 @@ pub(crate) fn required_group_stable_key(filter: &RoutingGroupFilter) -> Option<S
     }
 }
 
+#[cfg(test)]
 pub(crate) fn admission_profile_from_runtime_candidate(
-    candidate: &RuntimeRoutingCandidate,
+    candidate: &CanonicalRoutingCandidate,
 ) -> CandidateAdmissionProfile {
     CandidateAdmissionProfile {
         endpoint_revision: candidate.station_endpoint_revision,
@@ -130,21 +131,19 @@ pub(crate) fn admission_profile_from_runtime_candidate(
 }
 
 #[cfg(test)]
-pub(crate) fn route_projection_from_runtime_candidate(
+pub fn route_projection_from_runtime_candidate(
     request: &RouteRequestFacts,
-    candidate: RuntimeRoutingCandidate,
+    candidate: CanonicalRoutingCandidate,
 ) -> Result<RouteCandidateProjection, String> {
     route_projection_from_runtime_candidate_with_pricing(request, candidate, None)
 }
 
 pub(crate) fn route_projection_from_runtime_candidate_with_pricing(
     request: &RouteRequestFacts,
-    candidate: RuntimeRoutingCandidate,
+    candidate: CanonicalRoutingCandidate,
     request_pricing: Option<&ResolvedPricingContext>,
 ) -> Result<RouteCandidateProjection, String> {
-    let now = UnixMillis::new(request.admitted_at_ms())
-        .or_else(|_| UnixMillis::new(0))
-        .map_err(|error| error.to_string())?;
+    let now = UnixMillis::new(request.admitted_at_ms()).map_err(|error| error.to_string())?;
     let identity = CandidateIdentityProjection {
         station_key_id: candidate.station_key_id.clone(),
         station_id: candidate.station_id.clone(),
@@ -217,7 +216,7 @@ fn group_projection(
             .expect("valid confidence"),
             now,
             "runtime_candidate_group",
-            revision_refs(economics, now),
+            revision_refs(economics),
         ),
     })
 }
@@ -292,7 +291,7 @@ fn multiplier_evidence(
     kind: MultiplierEvidenceKind,
     value: Option<f64>,
     economics: &crate::models::routing::RuntimeRoutingEconomicSnapshot,
-    now: UnixMillis,
+    _now: UnixMillis,
 ) -> Option<MultiplierEvidence> {
     let multiplier = crate::models::operational::RateMultiplier::new(value?).ok()?;
     Some(MultiplierEvidence {
@@ -300,10 +299,7 @@ fn multiplier_evidence(
         multiplier,
         authoritative: true,
         fresh: true,
-        revision: revision_refs(economics, now)
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| RecordRevision::new(1).expect("valid revision")),
+        revision: revision_refs(economics).into_iter().next()?,
     })
 }
 
@@ -435,34 +431,11 @@ fn multiplier_source_label(kind: MultiplierEvidenceKind) -> &'static str {
 }
 
 fn revision_refs(
-    economics: &crate::models::routing::RuntimeRoutingEconomicSnapshot,
-    now: UnixMillis,
+    _economics: &crate::models::routing::RuntimeRoutingEconomicSnapshot,
 ) -> Vec<RecordRevision> {
-    let revision = economics
-        .key_updated_at
-        .as_deref()
-        .and_then(parse_revision_like)
-        .or_else(|| {
-            economics
-                .rate_collected_at
-                .as_deref()
-                .and_then(parse_revision_like)
-        })
-        .unwrap_or_else(|| now.get().max(1));
-    RecordRevision::new(revision).into_iter().collect()
-}
-
-fn parse_revision_like(value: &str) -> Option<i64> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Ok(value) = trimmed.parse::<i64>() {
-        return (value > 0).then_some(value);
-    }
-    chrono::DateTime::parse_from_rfc3339(trimmed)
-        .ok()
-        .map(|value| value.timestamp_millis().max(1))
+    // Runtime economic rows do not carry a domain revision. Timestamps are
+    // freshness evidence only and must never become a revision substitute.
+    Vec::new()
 }
 
 fn balance_projection(
@@ -494,7 +467,7 @@ fn balance_projection(
 
 fn capability_projection_set(
     request: &RouteRequestFacts,
-    candidate: &RuntimeRoutingCandidate,
+    candidate: &CanonicalRoutingCandidate,
 ) -> Result<CapabilityProjectionSet, String> {
     Ok(CapabilityProjectionSet {
         protocol: capability_projection(
@@ -531,7 +504,7 @@ fn protocol_subject(request: &RouteRequestFacts) -> CapabilitySubject {
     }
 }
 
-fn protocol_supported(request: &RouteRequestFacts, candidate: &RuntimeRoutingCandidate) -> bool {
+fn protocol_supported(request: &RouteRequestFacts, candidate: &CanonicalRoutingCandidate) -> bool {
     if matches!(request.route_kind(), RouteKind::ModelCatalog) {
         return true;
     }
@@ -540,7 +513,7 @@ fn protocol_supported(request: &RouteRequestFacts, candidate: &RuntimeRoutingCan
         || candidate.capabilities.supports_embeddings
 }
 
-fn model_supported(model: Option<&str>, candidate: &RuntimeRoutingCandidate) -> bool {
+fn model_supported(model: Option<&str>, candidate: &CanonicalRoutingCandidate) -> bool {
     let Some(model) = model else {
         return true;
     };
@@ -573,20 +546,20 @@ fn capability_projection(subject: CapabilitySubject, supported: bool) -> Capabil
         } else {
             CapabilityDecision::Reject
         },
-        winner: None,
-        overridden: Vec::new(),
-        conflict_reason: None,
+        #[cfg(test)] winner: None,
+        #[cfg(test)] overridden: Vec::new(),
+        #[cfg(test)] conflict_reason: None,
         projector_version: crate::application::operational_facts::capability_projector::CAPABILITY_PROJECTOR_VERSION,
         reason_code: if supported { "capability_supported" } else { "capability_unsupported" },
-        source_refs: Vec::new(),
-        observed_at: None,
-        confidence: None,
+        #[cfg(test)] source_refs: Vec::new(),
+        #[cfg(test)] observed_at: None,
+        #[cfg(test)] confidence: None,
     }
 }
 
 fn health_projection_set(
     request: &RouteRequestFacts,
-    candidate: &RuntimeRoutingCandidate,
+    candidate: &CanonicalRoutingCandidate,
     now: UnixMillis,
 ) -> Result<HealthProjectionSet, String> {
     let station_id =
@@ -661,7 +634,7 @@ fn effective_health(
     }
 }
 
-fn capacity_projection(candidate: &RuntimeRoutingCandidate) -> CapacityProjection {
+fn capacity_projection(candidate: &CanonicalRoutingCandidate) -> CapacityProjection {
     let (scope, limit) = if uses_station_account_capacity(&candidate.station_type) {
         (
             CapacityScope::StationAccount,
@@ -694,7 +667,7 @@ fn uses_station_account_capacity(station_type: &str) -> bool {
     )
 }
 
-fn station_account_max_concurrency(candidate: &RuntimeRoutingCandidate) -> u32 {
+fn station_account_max_concurrency(candidate: &CanonicalRoutingCandidate) -> u32 {
     match candidate.station_type.trim().to_ascii_lowercase().as_str() {
         "newapi" => 0,
         "sub2api" => candidate
@@ -706,7 +679,8 @@ fn station_account_max_concurrency(candidate: &RuntimeRoutingCandidate) -> u32 {
     }
 }
 
-fn station_key_max_concurrency(candidate: &RuntimeRoutingCandidate) -> u32 {
+#[cfg(test)]
+fn station_key_max_concurrency(candidate: &CanonicalRoutingCandidate) -> u32 {
     if uses_station_account_capacity(&candidate.station_type) {
         0
     } else {
@@ -759,13 +733,13 @@ mod tests {
     }
 
     #[test]
-    fn runtime_candidate_projection_carries_group_multiplier_and_proxy_pricing() {
+    fn runtime_candidate_projection_does_not_use_timestamp_as_multiplier_revision() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
             policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(1.0),
-            routing_group_filter: RoutingGroupFilter::GroupBindingId("binding-gpt".to_string()),
-            scheduler_advanced_settings: Default::default(),
+            routing_group_scope: RoutingGroupFilter::GroupBindingId("binding-gpt".to_string()),
+            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
@@ -792,37 +766,31 @@ mod tests {
         assert_eq!(group.stable_key, "binding:binding-gpt");
         assert_eq!(group.display_name, "GPT Group");
         assert!(projection.policy.group_matches);
-        assert_eq!(projection.multiplier.multiplier, Some(0.7));
+        // RuntimeRoutingEconomicSnapshot carries freshness timestamps but no
+        // domain revision. Without a real revision, multiplier evidence is
+        // intentionally unavailable and must not enter routing economics.
+        assert_eq!(projection.multiplier.multiplier, None);
+        assert_eq!(projection.multiplier.selected_source, None);
         assert_eq!(
-            projection.multiplier.selected_source,
-            Some("manual_override")
+            projection.multiplier.status,
+            MultiplierResolutionStatus::Missing
         );
         assert!(!projection.multiplier.ceiling_rejected);
-        assert_eq!(projection.pricing.basis, RoutingCostBasis::MultiplierProxy);
-        assert_eq!(projection.pricing.comparison_value, Some(0.7));
-        assert_eq!(projection.pricing.unit.as_deref(), Some("rate_multiplier"));
-        assert_eq!(
-            projection.pricing.source_chain,
-            vec![
-                "runtime_candidate_economic_snapshot".to_string(),
-                "manual_override".to_string(),
-                "rate_source:manual".to_string(),
-            ]
-        );
-        assert_eq!(
-            projection.pricing.observed_at.as_deref(),
-            Some("2026-07-31T01:00:00Z")
-        );
+        assert_eq!(projection.pricing.basis, RoutingCostBasis::Unpriced);
+        assert_eq!(projection.pricing.comparison_value, None);
+        assert_eq!(projection.pricing.unit, None);
+        assert!(projection.pricing.source_chain.is_empty());
+        assert_eq!(projection.pricing.observed_at, None);
     }
 
     #[test]
-    fn runtime_candidate_projection_rejects_multiplier_over_ceiling() {
+    fn runtime_candidate_projection_does_not_apply_ceiling_without_multiplier_revision() {
         let now_ms = 1_800_000_000_000;
         let settings = RuntimeRoutingSettings {
             policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(1.0),
-            routing_group_filter: RoutingGroupFilter::AllGroups,
-            scheduler_advanced_settings: Default::default(),
+            routing_group_scope: RoutingGroupFilter::AllGroups,
+            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
@@ -838,9 +806,15 @@ mod tests {
         let projection =
             route_projection_from_runtime_candidate(&request, candidate).expect("projection");
 
-        assert_eq!(projection.multiplier.multiplier, Some(1.25));
-        assert!(projection.multiplier.ceiling_rejected);
-        assert!(projection
+        // A timestamp-only economic row cannot establish authoritative
+        // multiplier evidence, so the configured ceiling is not evaluated.
+        assert_eq!(
+            projection.multiplier.status,
+            MultiplierResolutionStatus::Missing
+        );
+        assert_eq!(projection.multiplier.multiplier, None);
+        assert!(!projection.multiplier.ceiling_rejected);
+        assert!(!projection
             .hard_rejection_codes
             .contains(&"multiplier_ceiling"));
     }
@@ -851,8 +825,8 @@ mod tests {
         let settings = RuntimeRoutingSettings {
             policy: RoutingPolicy::PriorityFallback,
             max_rate_multiplier: None,
-            routing_group_filter: RoutingGroupFilter::AllGroups,
-            scheduler_advanced_settings: Default::default(),
+            routing_group_scope: RoutingGroupFilter::AllGroups,
+            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
@@ -888,8 +862,8 @@ mod tests {
         let settings = RuntimeRoutingSettings {
             policy: RoutingPolicy::CostStableFirst,
             max_rate_multiplier: Some(2.0),
-            routing_group_filter: RoutingGroupFilter::AllGroups,
-            scheduler_advanced_settings: Default::default(),
+            routing_group_scope: RoutingGroupFilter::AllGroups,
+            scheduler_config: Default::default(),
             allow_depleted_fallback: false,
         };
         let request = RouteRequestClassifier::classify(
@@ -961,8 +935,8 @@ mod tests {
 
     fn runtime_candidate(
         economic_snapshot: RuntimeRoutingEconomicSnapshot,
-    ) -> RuntimeRoutingCandidate {
-        RuntimeRoutingCandidate {
+    ) -> CanonicalRoutingCandidate {
+        CanonicalRoutingCandidate {
             station_key_id: "key-1".to_string(),
             station_id: "station-1".to_string(),
             station_type: "newapi".to_string(),

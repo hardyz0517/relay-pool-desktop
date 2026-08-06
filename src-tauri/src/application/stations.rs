@@ -31,6 +31,7 @@ impl StationService {
         }
     }
 
+    #[cfg(test)]
     pub(crate) async fn list(&self) -> Result<Vec<Station>, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
         self.store.list(&mut read).await.map_err(Into::into)

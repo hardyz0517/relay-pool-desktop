@@ -763,7 +763,7 @@ mod tests {
                     .await?;
                     sqlx::query(
                         r#"
-                        INSERT INTO station_endpoint_health (
+                        INSERT INTO endpoint_health_snapshot (
                             station_id, endpoint_revision, status, latency_ms,
                             checked_at, error_summary, updated_at
                         ) VALUES (

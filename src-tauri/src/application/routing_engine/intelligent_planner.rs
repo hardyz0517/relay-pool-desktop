@@ -3,6 +3,7 @@ use crate::models::routing_policy::RoutingPolicyConfigV1;
 use super::{
     dispatch::{weighted_rendezvous, DispatchCandidate, DispatchDecision},
     exploration::{choose_lane, derive_seed, ExplorationBudgetRegistry, ExplorationLane},
+    factors::cost_score,
     fixed_point::{BasisPoints, FactorContribution, UtilityScore},
     planning_snapshot::{CandidateSnapshot, PlanningSnapshot},
     tiers::{classify_tier, AvailabilityTier},
@@ -31,6 +32,7 @@ pub(crate) enum PlannerError {
     RuntimeAtCapacity,
 }
 
+#[cfg(test)]
 pub(crate) fn plan_snapshot(
     snapshot: &PlanningSnapshot,
     root_seed: &[u8],
@@ -52,7 +54,13 @@ pub(crate) fn plan_snapshot_with_budget(
     let mut planned = snapshot
         .candidates
         .iter()
-        .filter_map(|candidate| planned_candidate(candidate, &snapshot.policy))
+        .filter_map(|candidate| {
+            planned_candidate(
+                candidate,
+                &snapshot.policy,
+                snapshot.runtime.affinity_station_key_id.as_deref(),
+            )
+        })
         .collect::<Vec<_>>();
     if planned.is_empty() {
         return Err(PlannerError::NoEligibleCandidate);
@@ -70,10 +78,18 @@ pub(crate) fn plan_snapshot_with_budget(
         .min()
         .expect("not empty");
     let seed = derive_seed(root_seed, snapshot.profile.seed_domain, round);
-    let unknown_exists = snapshot
-        .candidates
-        .iter()
-        .any(|candidate| candidate.cost_basis_points.is_none());
+    // Exploration is constrained to the best eligible tier. Only advertise
+    // the lane when that tier actually has an unknown-cost candidate; using a
+    // lower-priority unknown here can reserve budget and then produce an empty
+    // dispatch set even though the request has eligible candidates.
+    let unknown_exists = planned.iter().any(|candidate| {
+        candidate.tier == best_tier
+            && snapshot
+                .candidates
+                .iter()
+                .find(|raw| raw.station_key_id == candidate.station_key_id)
+                .is_some_and(|raw| raw.cost_basis_points.is_none())
+    });
     let lane = exploration_budget
         .map(|budget| {
             choose_lane(
@@ -102,11 +118,33 @@ pub(crate) fn plan_snapshot_with_budget(
             failure_domains: Vec::new(),
         })
         .collect::<Vec<_>>();
-    let mut dispatch = weighted_rendezvous(
-        &dispatch_candidates,
-        &seed,
-        snapshot.profile.exploit_band_basis_points,
-    )
+    let affinity_dispatch = snapshot
+        .policy
+        .affinity_enabled
+        .then(|| snapshot.runtime.affinity_station_key_id.as_deref())
+        .flatten()
+        .and_then(|affinity_id| {
+            dispatch_candidates
+                .iter()
+                .find(|candidate| candidate.id == affinity_id)
+                .cloned()
+        });
+    let mut dispatch = if let Some(affinity_candidate) = affinity_dispatch {
+        // A validated live affinity is a deterministic preference correction,
+        // not a probabilistic hint. It still stays inside the hard-eligible
+        // best tier and therefore cannot bypass safety gates.
+        weighted_rendezvous(
+            std::slice::from_ref(&affinity_candidate),
+            &seed,
+            snapshot.profile.exploit_band_basis_points,
+        )
+    } else {
+        weighted_rendezvous(
+            &dispatch_candidates,
+            &seed,
+            snapshot.profile.exploit_band_basis_points,
+        )
+    }
     .ok_or(PlannerError::NoEligibleCandidate)?;
     dispatch.explored = lane == ExplorationLane::Explore;
     Ok(RoutePlan {
@@ -120,21 +158,37 @@ pub(crate) fn plan_snapshot_with_budget(
 fn planned_candidate(
     candidate: &CandidateSnapshot,
     policy: &RoutingPolicyConfigV1,
+    affinity_station_key_id: Option<&str>,
 ) -> Option<PlannedCandidate> {
+    if !candidate.hard_eligible {
+        return None;
+    }
     let tier = classify_tier(
         candidate.credential_available,
         candidate.reliability_basis_points >= 1_000,
-        candidate.cost_basis_points == Some(0),
+        candidate.depleted,
         policy.allow_depleted_fallback,
     )?;
+    let tier = if candidate.backup_only {
+        AvailabilityTier::Backup
+    } else {
+        tier
+    };
     if candidate.capability_basis_points == 0 {
         return None;
     }
+    let preference = if policy.affinity_enabled
+        && affinity_station_key_id == Some(candidate.station_key_id.as_str())
+    {
+        10_000
+    } else {
+        candidate.preference_basis_points
+    };
     let scores = [
         candidate.reliability_basis_points,
         candidate.responsiveness_basis_points,
-        candidate.cost_basis_points.unwrap_or(5_000),
-        candidate.preference_basis_points,
+        cost_score(candidate.cost_basis_points).get(),
+        preference,
     ];
     let weights = [
         policy.reliability_weight,
@@ -180,6 +234,9 @@ mod tests {
                 station_id: "station-a".into(),
                 endpoint_revision: 1,
                 credential_available: true,
+                hard_eligible: true,
+                backup_only: false,
+                depleted: false,
                 capability_basis_points: 10_000,
                 reliability_basis_points: 8_000,
                 responsiveness_basis_points: 8_000,
@@ -193,11 +250,132 @@ mod tests {
                 candidate_set_revision: 1,
                 in_flight: 0,
                 max_concurrency: 1,
+                affinity_station_key_id: None,
             },
         };
         assert_eq!(
             plan_snapshot(&snapshot, b"seed", 1),
             plan_snapshot(&snapshot, b"seed", 1)
         );
+    }
+
+    #[test]
+    fn affinity_is_an_explicit_preference_correction() {
+        let mut policy = RoutingPolicyConfigV1::default();
+        policy.reliability_weight = 0;
+        policy.responsiveness_weight = 0;
+        policy.cost_weight = 0;
+        policy.preference_weight = 10_000;
+        policy.affinity_enabled = true;
+        let mut snapshot = PlanningSnapshot {
+            snapshot_id: "affinity".into(),
+            durable_revision: 1,
+            policy,
+            profile: DispatchAlgorithmProfile::default(),
+            candidates: vec![
+                CandidateSnapshot {
+                    station_key_id: "ordinary".into(),
+                    station_id: "station-a".into(),
+                    endpoint_revision: 1,
+                    credential_available: true,
+                    hard_eligible: true,
+                    backup_only: false,
+                    depleted: false,
+                    capability_basis_points: 10_000,
+                    reliability_basis_points: 5_000,
+                    responsiveness_basis_points: 5_000,
+                    cost_basis_points: None,
+                    preference_basis_points: 9_000,
+                    failure_domains: vec![],
+                },
+                CandidateSnapshot {
+                    station_key_id: "sticky".into(),
+                    station_id: "station-b".into(),
+                    endpoint_revision: 1,
+                    credential_available: true,
+                    hard_eligible: true,
+                    backup_only: false,
+                    depleted: false,
+                    capability_basis_points: 10_000,
+                    reliability_basis_points: 5_000,
+                    responsiveness_basis_points: 5_000,
+                    cost_basis_points: None,
+                    preference_basis_points: 1_000,
+                    failure_domains: vec![],
+                },
+            ],
+            runtime: RuntimeOverlaySnapshot {
+                runtime_instance_id: "runtime".into(),
+                runtime_revision: 1,
+                candidate_set_revision: 1,
+                in_flight: 0,
+                max_concurrency: 1,
+                affinity_station_key_id: Some("sticky".into()),
+            },
+        };
+        let plan = plan_snapshot(&snapshot, b"seed", 1).unwrap();
+        assert_eq!(plan.candidates[0].station_key_id, "sticky");
+
+        snapshot.runtime.affinity_station_key_id = None;
+        let without_affinity = plan_snapshot(&snapshot, b"seed", 1).unwrap();
+        assert_eq!(without_affinity.candidates[0].station_key_id, "ordinary");
+    }
+
+    #[test]
+    fn exploration_does_not_empty_the_best_tier_for_lower_tier_unknown_cost() {
+        let profile = DispatchAlgorithmProfile::default();
+        let budget = ExplorationBudgetRegistry::new(1);
+        let snapshot = PlanningSnapshot {
+            snapshot_id: "mixed-cost-tiers".into(),
+            durable_revision: 1,
+            policy: RoutingPolicyConfigV1::default(),
+            profile,
+            candidates: vec![
+                CandidateSnapshot {
+                    station_key_id: "primary-known".into(),
+                    station_id: "station-primary".into(),
+                    endpoint_revision: 1,
+                    credential_available: true,
+                    hard_eligible: true,
+                    backup_only: false,
+                    depleted: false,
+                    capability_basis_points: 10_000,
+                    reliability_basis_points: 9_000,
+                    responsiveness_basis_points: 9_000,
+                    cost_basis_points: Some(8_000),
+                    preference_basis_points: 5_000,
+                    failure_domains: vec![],
+                },
+                CandidateSnapshot {
+                    station_key_id: "backup-unknown".into(),
+                    station_id: "station-backup".into(),
+                    endpoint_revision: 1,
+                    credential_available: true,
+                    hard_eligible: true,
+                    backup_only: true,
+                    depleted: false,
+                    capability_basis_points: 10_000,
+                    reliability_basis_points: 9_000,
+                    responsiveness_basis_points: 9_000,
+                    cost_basis_points: None,
+                    preference_basis_points: 5_000,
+                    failure_domains: vec![],
+                },
+            ],
+            runtime: RuntimeOverlaySnapshot {
+                runtime_instance_id: "runtime".into(),
+                runtime_revision: 1,
+                candidate_set_revision: 1,
+                in_flight: 0,
+                max_concurrency: 4,
+                affinity_station_key_id: None,
+            },
+        };
+
+        let plan = plan_snapshot_with_budget(&snapshot, b"seed", 1, Some(&budget))
+            .expect("known primary candidate must remain dispatchable");
+        assert_eq!(plan.selected_station_key_id, "primary-known");
+        assert!(!plan.dispatch.explored);
+        assert_eq!(budget.remaining(), 1, "no exploration token was reserved");
     }
 }

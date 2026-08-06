@@ -988,6 +988,19 @@ pub fn run() {
                             .map_err(|error| {
                                 format!("failed to start monitoring maintenance: {error}")
                             })?;
+                        let routing_projection_task =
+                            background_tasks::routing_projection_runner::register_routing_projection_task(
+                                &supervisor_handle,
+                                runtime.handle(),
+                            )
+                            .map_err(|error| {
+                                format!("failed to register routing projection runner: {error}")
+                            })?;
+                        supervisor_handle
+                            .start(&routing_projection_task)
+                            .map_err(|error| {
+                                format!("failed to start routing projection runner: {error}")
+                            })?;
                         let monitoring_runner_state =
                             services::monitoring::runner::MonitoringRunnerState::start(
                                 supervisor_handle.clone(),

@@ -124,7 +124,6 @@ pub(crate) fn compose_settings_stations_command_facade(
         Arc::clone(&services.stations),
         Arc::clone(&services.settings),
         Arc::clone(&services.station_assets),
-        Arc::clone(&services.station_detail),
         tray_behavior,
     )
 }
@@ -133,7 +132,6 @@ pub(crate) fn compose_key_pool_command_facade(services: &AppServices) -> KeyPool
     KeyPoolCommandFacade::new(
         Arc::clone(&services.credentials),
         Arc::clone(&services.key_pool),
-        Arc::clone(&services.key_detail),
     )
 }
 
@@ -159,7 +157,6 @@ pub(crate) fn compose_routing_command_facade(
 ) -> RoutingCommandFacade {
     RoutingCommandFacade::new(
         Arc::clone(&services.routing),
-        Arc::clone(&services.request_logs),
         outbound,
     )
 }
@@ -395,7 +392,6 @@ pub(crate) fn compose_local_proxy_command_facade(
         Arc::clone(&services.settings),
         Arc::clone(&services.routing),
         Arc::clone(&services.credentials),
-        Arc::clone(&services.request_logs),
         Arc::clone(&services.request_finalization),
         proxy,
     )

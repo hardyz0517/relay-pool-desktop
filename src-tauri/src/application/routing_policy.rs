@@ -4,6 +4,7 @@
 //! configuration. Legacy strategy names are handled by the migration boundary
 //! in `legacy_mapping`; they are never parsed by the runtime compiler.
 
+#[cfg(test)]
 use serde_json::Value;
 use thiserror::Error;
 
@@ -46,6 +47,7 @@ pub(crate) struct RoutingPolicyAggregate {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub(crate) enum RoutingPolicyCompileError {
     #[error("routing policy JSON must be an object")]
+    #[cfg(test)]
     NotAnObject,
     #[error("routing policy JSON is invalid: {0}")]
     InvalidConfig(String),
@@ -153,6 +155,7 @@ pub(crate) fn compile_config(
 
 /// Parse only the canonical V1 object. Legacy strategy names are handled by
 /// the migration boundary and are not accepted here.
+#[cfg(test)]
 pub(crate) fn compile_json(
     config: &Value,
     source_revision: u64,
@@ -268,6 +271,7 @@ pub(crate) fn legacy_policy_mapping(policy: LegacyRoutingPolicy) -> LegacyPolicy
     }
 }
 
+#[cfg(test)]
 pub(crate) fn legacy_policy_mappings() -> [LegacyPolicyMapping; 6] {
     [
         LegacyRoutingPolicy::AutomaticBalanced,

@@ -23,6 +23,8 @@ pub(crate) struct ExecutionTargetRef {
     pub(crate) enabled: bool,
     pub(crate) api_key_secret_ref: Option<SecretRef>,
     pub(crate) inline_api_key_present: bool,
+    pub(crate) station_account_max_concurrency: u32,
+    pub(crate) station_key_max_concurrency: u32,
 }
 
 #[derive(Debug)]

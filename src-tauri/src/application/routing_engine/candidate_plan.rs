@@ -1,63 +1,71 @@
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 use crate::application::{
     operational_facts::{
-        balance_projector::BalanceProjectionStatus, candidate_projector::RouteCandidateProjection,
         pricing_projector::RoutingCostBasis,
     },
-    routing_engine::{
-        eligibility::RouteRejection,
-        request::{OrderingProfile, PlanningRoundContext},
-    },
 };
+#[cfg(test)]
+use crate::application::operational_facts::{
+        balance_projector::BalanceProjectionStatus, candidate_projector::RouteCandidateProjection,
+};
+#[cfg(test)]
+use crate::application::routing_engine::request::{OrderingProfile, PlanningRoundContext};
+#[cfg(test)]
+use crate::application::routing_engine::eligibility::RouteRejection;
 
-pub(crate) const HIERARCHICAL_ROUTE_PLANNER_VERSION: &str = "hierarchical_route_planner_v1";
-pub(crate) const MAX_ROUTE_PLAN_CANDIDATES: usize = 1024;
+#[cfg(test)]
+pub const HIERARCHICAL_ROUTE_PLANNER_VERSION: &str = "hierarchical_route_planner_v1";
+#[cfg(test)]
+pub const MAX_ROUTE_PLAN_CANDIDATES: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum AvailabilityTier {
+pub enum AvailabilityTier {
     Primary,
     ConfiguredBackup,
     DepletedEmergency,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DecisionEvidence {
-    pub(crate) code: &'static str,
-    pub(crate) detail: String,
+pub struct DecisionEvidence {
+    pub code: &'static str,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RoutePlanCandidate {
-    pub(crate) station_key_id: String,
-    pub(crate) station_id: String,
-    pub(crate) endpoint_revision: i64,
-    pub(crate) priority: i64,
-    pub(crate) tier: AvailabilityTier,
-    pub(crate) pricing: RoutePlanPricingSnapshot,
-    pub(crate) evidence: Vec<DecisionEvidence>,
+pub struct RoutePlanCandidate {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub endpoint_revision: i64,
+    pub priority: i64,
+    pub tier: AvailabilityTier,
+    pub pricing: RoutePlanPricingSnapshot,
+    pub evidence: Vec<DecisionEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RoutePlanPricingSnapshot {
-    pub(crate) basis: RoutingCostBasis,
-    pub(crate) currency: Option<String>,
-    pub(crate) unit: Option<String>,
-    pub(crate) estimated_input_price: Option<f64>,
-    pub(crate) estimated_output_price: Option<f64>,
-    pub(crate) estimated_fixed_price: Option<f64>,
-    pub(crate) status_label: String,
+pub struct RoutePlanPricingSnapshot {
+    pub basis: RoutingCostBasis,
+    pub currency: Option<String>,
+    pub unit: Option<String>,
+    pub estimated_input_price: Option<f64>,
+    pub estimated_output_price: Option<f64>,
+    pub estimated_fixed_price: Option<f64>,
+    pub status_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RoutePlanStratum {
-    pub(crate) tier: AvailabilityTier,
-    pub(crate) candidates: Vec<RoutePlanCandidate>,
+#[cfg(test)]
+pub struct RoutePlanStratum {
+    pub tier: AvailabilityTier,
+    pub candidates: Vec<RoutePlanCandidate>,
 }
 
+#[cfg(test)]
 impl RoutePlanStratum {
     #[cfg(test)]
-    pub(crate) fn candidate_ids(&self) -> Vec<&str> {
+    pub fn candidate_ids(&self) -> Vec<&str> {
         self.candidates
             .iter()
             .map(|candidate| candidate.station_key_id.as_str())
@@ -66,23 +74,26 @@ impl RoutePlanStratum {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RoutePlan {
-    pub(crate) planner_version: &'static str,
-    pub(crate) ordering_profile: OrderingProfile,
-    pub(crate) snapshot_id: String,
-    pub(crate) runtime_overlay_revision: u64,
-    pub(crate) projector_versions: Vec<&'static str>,
-    pub(crate) strata: Vec<RoutePlanStratum>,
-    pub(crate) rejections: Vec<RouteRejection>,
-    pub(crate) selected_station_key_id: Option<String>,
+#[cfg(test)]
+pub struct RoutePlan {
+    pub planner_version: &'static str,
+    pub ordering_profile: OrderingProfile,
+    pub snapshot_id: String,
+    pub runtime_overlay_revision: u64,
+    pub projector_versions: Vec<&'static str>,
+    pub strata: Vec<RoutePlanStratum>,
+    pub rejections: Vec<RouteRejection>,
+    pub selected_station_key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RoutePlannerError {
+#[cfg(test)]
+pub enum RoutePlannerError {
     CandidateLimitExceeded { actual: usize, limit: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg(test)]
 enum CostBasisClass {
     PreferredExact,
     OtherExact,
@@ -91,12 +102,14 @@ enum CostBasisClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg(test)]
 struct ExactCostFamily {
     currency: String,
     unit: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg(test)]
 struct CandidateOrderKey {
     tier: AvailabilityTier,
     first: i64,
@@ -106,7 +119,9 @@ struct CandidateOrderKey {
     station_key_id: String,
 }
 
-pub(crate) fn build_route_plan(
+#[cfg(test)]
+#[cfg(test)]
+pub fn build_route_plan(
     context: &PlanningRoundContext,
     eligible: Vec<&RouteCandidateProjection>,
     rejections: Vec<RouteRejection>,
@@ -161,6 +176,7 @@ pub(crate) fn build_route_plan(
     }
 }
 
+#[cfg(test)]
 fn order_key(
     profile: OrderingProfile,
     candidate: &RouteCandidateProjection,
@@ -176,6 +192,7 @@ fn order_key(
     }
 }
 
+#[cfg(test)]
 fn priority_first_key(
     candidate: &RouteCandidateProjection,
     tier: AvailabilityTier,
@@ -191,6 +208,7 @@ fn priority_first_key(
     }
 }
 
+#[cfg(test)]
 fn cost_first_key(
     candidate: &RouteCandidateProjection,
     tier: AvailabilityTier,
@@ -207,6 +225,7 @@ fn cost_first_key(
     }
 }
 
+#[cfg(test)]
 fn affinity_rank(
     candidate: &RouteCandidateProjection,
     affinity_station_key_id: Option<&str>,
@@ -220,6 +239,7 @@ fn affinity_rank(
     }
 }
 
+#[cfg(test)]
 fn preferred_rank(candidate: &RouteCandidateProjection) -> i64 {
     if candidate.policy.preferred_model_match {
         0
@@ -228,6 +248,7 @@ fn preferred_rank(candidate: &RouteCandidateProjection) -> i64 {
     }
 }
 
+#[cfg(test)]
 fn cost_basis_class_and_band(
     candidate: &RouteCandidateProjection,
     preferred_exact_family: Option<&ExactCostFamily>,
@@ -246,6 +267,7 @@ fn cost_basis_class_and_band(
     (CostBasisClass::Unpriced, None)
 }
 
+#[cfg(test)]
 fn preferred_exact_family(candidates: &[&RouteCandidateProjection]) -> Option<ExactCostFamily> {
     let mut counts = BTreeMap::<ExactCostFamily, usize>::new();
     for candidate in candidates {
@@ -263,6 +285,7 @@ fn preferred_exact_family(candidates: &[&RouteCandidateProjection]) -> Option<Ex
         .map(|(family, _)| family)
 }
 
+#[cfg(test)]
 fn exact_cost_family(candidate: &RouteCandidateProjection) -> Option<ExactCostFamily> {
     if candidate.pricing.basis != RoutingCostBasis::ExactPrice {
         return None;
@@ -274,15 +297,19 @@ fn exact_cost_family(candidate: &RouteCandidateProjection) -> Option<ExactCostFa
     })
 }
 
+#[cfg(test)]
 fn soft_cost_band(candidate: &RouteCandidateProjection) -> Option<i64> {
     let value = finite_positive(candidate.pricing.comparison_value)?;
-    Some((value * 20.0).floor() as i64)
+    let scaled = value * 20.0;
+    scaled.is_finite().then_some(scaled.floor() as i64)
 }
 
+#[cfg(test)]
 fn finite_positive(value: Option<f64>) -> Option<f64> {
     value.filter(|value| value.is_finite() && *value >= 0.0)
 }
 
+#[cfg(test)]
 fn availability_tier(candidate: &RouteCandidateProjection) -> AvailabilityTier {
     if candidate.balance.status == BalanceProjectionStatus::DepletedEmergency {
         AvailabilityTier::DepletedEmergency
@@ -293,6 +320,7 @@ fn availability_tier(candidate: &RouteCandidateProjection) -> AvailabilityTier {
     }
 }
 
+#[cfg(test)]
 fn plan_candidate(
     candidate: &RouteCandidateProjection,
     tier: AvailabilityTier,
@@ -317,6 +345,7 @@ fn plan_candidate(
     }
 }
 
+#[cfg(test)]
 fn bounded_evidence(
     candidate: &RouteCandidateProjection,
     context: &PlanningRoundContext,
@@ -347,6 +376,7 @@ fn bounded_evidence(
     .collect()
 }
 
+#[cfg(test)]
 fn projector_versions(candidates: &[&RouteCandidateProjection]) -> Vec<&'static str> {
     let mut versions = candidates
         .iter()

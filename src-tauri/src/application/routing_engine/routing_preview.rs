@@ -12,34 +12,34 @@ use crate::{
 };
 
 use super::{
-    routing_health::error_summary_indicates_offline,
-    routing_types::{
+        routing_health::{error_summary_indicates_offline, RouteHealthState},
+    routing_economics::{
         DecisionFact, DecisionFactKind, DecisionFactSeverity, LocalRoutingCandidateRow,
         LocalRoutingPreviewKind, LocalRoutingSettingsView, LocalRoutingSummary,
-        LocalRoutingWorkspace, RouteCandidateEconomics, RouteDecisionEvent, RouteDecisionStatus,
-        RouteDecisionSummary, RouteHealthState,
+        RoutingPreviewWorkspace, RouteCandidateEconomics, RouteDecisionEvent, RouteDecisionStatus,
+        RouteDecisionSummary,
     },
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct LocalRoutingReadCandidate {
-    pub(crate) station_key_id: String,
-    pub(crate) station_id: String,
-    pub(crate) station_name: String,
-    pub(crate) key_name: String,
-    pub(crate) schedulable: bool,
-    pub(crate) capabilities: StationKeyCapabilities,
-    pub(crate) health: Option<StationKeyHealth>,
-    pub(crate) economics: Option<RouteCandidateEconomics>,
-    pub(crate) projection: Option<RouteCandidateProjection>,
+pub struct LocalRoutingReadCandidate {
+    pub station_key_id: String,
+    pub station_id: String,
+    pub station_name: String,
+    pub key_name: String,
+    pub schedulable: bool,
+    pub capabilities: StationKeyCapabilities,
+    pub health: Option<StationKeyHealth>,
+    pub economics: Option<RouteCandidateEconomics>,
+    pub projection: Option<RouteCandidateProjection>,
 }
 
-pub(crate) fn build_local_routing_workspace(
+pub fn build_local_routing_workspace(
     settings: AppSettings,
     candidates: Vec<LocalRoutingReadCandidate>,
     request_logs: Vec<RequestLog>,
     proxy_status: ProxyStatus,
-) -> LocalRoutingWorkspace {
+) -> RoutingPreviewWorkspace {
     let latest_log = request_logs.first();
     let now_ms = current_time_millis();
     let rows = candidates
@@ -49,7 +49,7 @@ pub(crate) fn build_local_routing_workspace(
             candidate_row(
                 index,
                 candidate,
-                &settings.default_routing_group_filter,
+                &settings.routing_group_scope,
                 now_ms,
             )
         })
@@ -57,16 +57,16 @@ pub(crate) fn build_local_routing_workspace(
 
     let latest_decision = latest_log.map(|log| latest_decision(log, &rows));
 
-    LocalRoutingWorkspace {
+    RoutingPreviewWorkspace {
         proxy_status,
         settings: LocalRoutingSettingsView {
             enabled: true,
             bind_addr: "127.0.0.1".to_string(),
             port: settings.local_proxy_port,
             endpoint: RouteEndpointKind::ChatCompletions,
-            policy: settings.default_routing_strategy,
+            policy: settings.routing_policy_name,
             max_rate_multiplier: settings.max_rate_multiplier,
-            routing_group_filter: settings.default_routing_group_filter.clone(),
+            routing_group_filter: settings.routing_group_scope.clone(),
             fallback_enabled: settings.allow_depleted_fallback,
             preview_kind: LocalRoutingPreviewKind::BaselineEligibility,
         },
@@ -441,13 +441,13 @@ fn endpoint_from_path(path: &str) -> RouteEndpointKind {
 mod tests {
     use super::*;
     use crate::{
-        application::operational_facts::runtime_candidate_adapter::{
+        application::operational_facts::candidate_projection::{
             route_projection_from_runtime_candidate, route_request_facts_for_read_model,
         },
         models::{
             proxy::UpstreamApiFormat,
             routing::{
-                PricingGroupType, RoutingPolicy, RuntimeRoutingCandidate, RuntimeRoutingSettings,
+                PricingGroupType, RoutingPolicy, CanonicalRoutingCandidate, RuntimeRoutingSettings,
             },
         },
     };
@@ -545,8 +545,8 @@ mod tests {
             &RuntimeRoutingSettings {
                 policy: RoutingPolicy::PriorityFallback,
                 max_rate_multiplier: Some(1.0),
-                routing_group_filter: RoutingGroupFilter::AllGroups,
-                scheduler_advanced_settings: Default::default(),
+                routing_group_scope: RoutingGroupFilter::AllGroups,
+                scheduler_config: Default::default(),
                 allow_depleted_fallback: false,
             },
             60_000,
@@ -597,8 +597,8 @@ mod tests {
         candidate
     }
 
-    fn runtime_candidate(id: &str) -> RuntimeRoutingCandidate {
-        RuntimeRoutingCandidate {
+    fn runtime_candidate(id: &str) -> CanonicalRoutingCandidate {
+        CanonicalRoutingCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
             station_type: "newapi".to_string(),

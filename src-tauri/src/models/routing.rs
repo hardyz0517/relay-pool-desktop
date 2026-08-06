@@ -45,8 +45,8 @@ pub enum RoutingGroupFilter {
 pub struct RuntimeRoutingSettings {
     pub policy: RoutingPolicy,
     pub max_rate_multiplier: Option<f64>,
-    pub routing_group_filter: RoutingGroupFilter,
-    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
+    pub routing_group_scope: RoutingGroupFilter,
+    pub scheduler_config: DispatchAlgorithmSettings,
     pub allow_depleted_fallback: bool,
 }
 
@@ -55,8 +55,8 @@ impl Default for RuntimeRoutingSettings {
         Self {
             policy: RoutingPolicy::PriorityFallback,
             max_rate_multiplier: None,
-            routing_group_filter: RoutingGroupFilter::default(),
-            scheduler_advanced_settings: SchedulerAdvancedSettings::default(),
+            routing_group_scope: RoutingGroupFilter::default(),
+            scheduler_config: DispatchAlgorithmSettings::default(),
             allow_depleted_fallback: false,
         }
     }
@@ -143,13 +143,13 @@ impl<'de> Deserialize<'de> for RoutingGroupFilter {
 #[cfg(test)]
 pub struct AutomaticSchedulerSettings {
     pub max_rate_multiplier: Option<f64>,
-    pub default_routing_group_filter: RoutingGroupFilter,
-    pub advanced: SchedulerAdvancedSettings,
+    pub routing_group_scope: RoutingGroupFilter,
+    pub advanced: DispatchAlgorithmSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct SchedulerAdvancedSettings {
+pub struct DispatchAlgorithmSettings {
     pub top_k: u16,
     pub multiplier: f64,
     pub priority: f64,
@@ -173,7 +173,7 @@ pub struct SchedulerAdvancedSettings {
     pub fallback_wait_timeout_seconds: u64,
 }
 
-impl Default for SchedulerAdvancedSettings {
+impl Default for DispatchAlgorithmSettings {
     fn default() -> Self {
         Self {
             top_k: 7,
@@ -220,7 +220,7 @@ impl AutomaticSchedulerSettings {
     }
 }
 
-impl SchedulerAdvancedSettings {
+impl DispatchAlgorithmSettings {
     pub fn validate(&self) -> Result<(), SchedulerConfigError> {
         if self.top_k == 0 {
             return Err(SchedulerConfigError::InvalidAdvancedSetting("top_k"));
@@ -422,7 +422,7 @@ pub struct RuntimeRoutingEconomicSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeRoutingCandidate {
+pub struct CanonicalRoutingCandidate {
     pub station_key_id: String,
     pub station_id: String,
     pub station_type: String,
@@ -456,7 +456,7 @@ pub struct RouteSimulationInput {
     pub uses_tools: bool,
     pub uses_vision: bool,
     pub uses_reasoning: bool,
-    pub policy: Option<RoutingPolicy>,
+    pub policy: Option<crate::models::routing_policy::RoutingPolicyConfigV1>,
     #[serde(default)]
     pub max_rate_multiplier: Option<f64>,
     #[serde(default)]
@@ -549,8 +549,8 @@ mod automatic_scheduler_contract_tests {
     fn routeable_settings_allow_unlimited_multiplier_ceiling() {
         let settings = AutomaticSchedulerSettings {
             max_rate_multiplier: None,
-            default_routing_group_filter: RoutingGroupFilter::AllGroups,
-            advanced: SchedulerAdvancedSettings::default(),
+            routing_group_scope: RoutingGroupFilter::AllGroups,
+            advanced: DispatchAlgorithmSettings::default(),
         };
 
         settings

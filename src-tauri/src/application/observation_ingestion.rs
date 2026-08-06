@@ -38,12 +38,9 @@ impl ObservationIngestion {
             .validate()
             .map_err(|_| PersistenceError::ConstraintViolation)?;
         let append = to_append(&observation)?;
+        let received_at_ms = chrono::Utc::now().timestamp_millis().max(0);
         self.store
-            .append(
-                write.connection(),
-                &append,
-                observation.order.ingested_at_ms,
-            )
+            .append(write.connection(), &append, received_at_ms)
             .await
     }
 }

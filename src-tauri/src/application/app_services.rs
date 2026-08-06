@@ -12,10 +12,10 @@ use super::{
     provider_drafts::ProviderDraftService,
     queries::{
         channel_status::ChannelStatusQuery, dashboard_metrics::DashboardMetricsQuery,
-        key_detail::KeyDetailQuery, key_pool::KeyPoolQuery,
+        key_pool::KeyPoolQuery,
         pricing_comparison::PricingComparisonQuery,
         pricing_group_monitor_status::PricingGroupMonitorStatusQuery,
-        station_assets::StationAssetsQuery, station_detail::StationDetailQuery,
+        station_assets::StationAssetsQuery,
     },
     request_finalization::RequestFinalizationService,
     request_logs::RequestLogService,
@@ -42,9 +42,7 @@ pub(crate) struct AppServices {
     pub(crate) pricing_comparison: Arc<PricingComparisonQuery>,
     pub(crate) pricing_group_monitor_status: Arc<PricingGroupMonitorStatusQuery>,
     pub(crate) station_assets: Arc<StationAssetsQuery>,
-    pub(crate) station_detail: Arc<StationDetailQuery>,
     pub(crate) key_pool: Arc<KeyPoolQuery>,
-    pub(crate) key_detail: Arc<KeyDetailQuery>,
     pub(crate) dashboard_metrics: Arc<DashboardMetricsQuery>,
     pub(crate) settings: Arc<SettingsService>,
 }
@@ -122,9 +120,7 @@ impl AppServices {
             Arc::new(PricingComparisonQuery::new(runtime.clone())),
             Arc::new(PricingGroupMonitorStatusQuery::new(runtime.clone())),
             Arc::new(StationAssetsQuery::new(runtime.clone())),
-            Arc::new(StationDetailQuery::new(runtime.clone())),
             Arc::new(KeyPoolQuery::new(runtime.clone())),
-            Arc::new(KeyDetailQuery::new(runtime.clone())),
             Arc::new(DashboardMetricsQuery::new(runtime.clone(), clock.clone())),
             settings,
         )
@@ -147,9 +143,7 @@ impl AppServices {
         pricing_comparison: Arc<PricingComparisonQuery>,
         pricing_group_monitor_status: Arc<PricingGroupMonitorStatusQuery>,
         station_assets: Arc<StationAssetsQuery>,
-        station_detail: Arc<StationDetailQuery>,
         key_pool: Arc<KeyPoolQuery>,
-        key_detail: Arc<KeyDetailQuery>,
         dashboard_metrics: Arc<DashboardMetricsQuery>,
         settings: Arc<SettingsService>,
     ) -> Self {
@@ -169,9 +163,7 @@ impl AppServices {
             pricing_comparison,
             pricing_group_monitor_status,
             station_assets,
-            station_detail,
             key_pool,
-            key_detail,
             dashboard_metrics,
             settings,
         }

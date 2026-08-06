@@ -141,6 +141,16 @@ impl StationCatalogStore {
         .execute(write.connection())
         .await?;
 
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
+        )
+        .bind(format!("station:{}", station.id))
+        .bind(station.now.parse::<i64>().map_err(|_| {
+            PersistenceError::InvariantViolation("station timestamp is not numeric".into())
+        })?)
+        .execute(write.connection())
+        .await?;
+
         station_by_id(write.connection(), &station.id).await
     }
 
@@ -316,13 +326,13 @@ async fn clear_station_endpoint_health_state(
     connection: &mut SqliteConnection,
     station_id: &str,
 ) -> Result<(), PersistenceError> {
-    sqlx::query("DELETE FROM station_endpoint_health WHERE station_id = ?1")
+    sqlx::query("DELETE FROM endpoint_health_snapshot WHERE station_id = ?1")
         .bind(station_id)
         .execute(&mut *connection)
         .await?;
     sqlx::query(
         r#"
-        DELETE FROM station_key_health
+        DELETE FROM routing_health_snapshot
         WHERE station_key_id IN (SELECT id FROM station_keys WHERE station_id = ?1)
         "#,
     )

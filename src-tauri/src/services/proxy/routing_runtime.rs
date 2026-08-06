@@ -3,13 +3,15 @@ use std::sync::{
     Arc,
 };
 
+use rand::{rngs::OsRng, RngCore};
+
 use crate::application::routing_engine::{
-    capacity::{
-        CapacityLease, CompositeCapacityRegistry, CompositeCapacityRequest, RetryBudgetRegistry,
-    },
+    capacity::{CompositeCapacityRegistry, RetryBudgetRegistry},
     exploration::ExplorationBudgetRegistry,
     planning_snapshot::RuntimeOverlaySnapshot,
 };
+#[cfg(test)]
+use crate::application::routing_engine::capacity::{CapacityLease, CompositeCapacityRequest};
 
 /// Runtime-owned mutable state for one proxy process instance. Durable facts
 /// and policy never live here; they are captured into a PlanningSnapshot.
@@ -19,6 +21,7 @@ pub(crate) struct RoutingRuntimeState {
     runtime_revision: AtomicU64,
     candidate_set_revision: AtomicU64,
     max_concurrency: u32,
+    root_seed: [u8; 32],
     in_flight: AtomicU64,
     capacity: Arc<CompositeCapacityRegistry>,
     retry_budget: RetryBudgetRegistry,
@@ -27,11 +30,14 @@ pub(crate) struct RoutingRuntimeState {
 
 impl RoutingRuntimeState {
     pub(crate) fn new(max_concurrency: u32, exploration_budget: u32) -> Self {
+        let mut root_seed = [0_u8; 32];
+        OsRng.fill_bytes(&mut root_seed);
         Self {
             instance_id: format!("proxy-runtime:{}", uuid::Uuid::now_v7()),
             runtime_revision: AtomicU64::new(1),
             candidate_set_revision: AtomicU64::new(1),
             max_concurrency,
+            root_seed,
             in_flight: AtomicU64::new(0),
             capacity: Arc::new(CompositeCapacityRegistry::default()),
             retry_budget: RetryBudgetRegistry::new(max_concurrency.max(1)),
@@ -39,14 +45,9 @@ impl RoutingRuntimeState {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn instance_id(&self) -> &str {
         &self.instance_id
-    }
-
-    pub(crate) fn bump_candidate_set_revision(&self) -> u64 {
-        self.candidate_set_revision
-            .fetch_add(1, Ordering::AcqRel)
-            .saturating_add(1)
     }
 
     pub(crate) fn snapshot(&self) -> RuntimeOverlaySnapshot {
@@ -59,9 +60,27 @@ impl RoutingRuntimeState {
                 .load(Ordering::Acquire)
                 .min(u64::from(u32::MAX)) as u32,
             max_concurrency: self.max_concurrency,
+            affinity_station_key_id: None,
         }
     }
 
+    pub(crate) fn root_seed(&self) -> [u8; 32] {
+        self.root_seed
+    }
+
+    pub(crate) fn retry_budget(&self) -> RetryBudgetRegistry {
+        self.retry_budget.clone()
+    }
+
+    pub(crate) fn exploration_budget(&self) -> ExplorationBudgetRegistry {
+        self.exploration_budget.clone()
+    }
+
+    pub fn capacity_registry(&self) -> Arc<CompositeCapacityRegistry> {
+        Arc::clone(&self.capacity)
+    }
+
+    #[cfg(test)]
     pub(crate) fn acquire(
         &self,
         request: CompositeCapacityRequest,
@@ -77,20 +96,16 @@ impl RoutingRuntimeState {
         })
     }
 
-    pub(crate) fn retry_budget(&self) -> &RetryBudgetRegistry {
-        &self.retry_budget
-    }
-    pub(crate) fn exploration_budget(&self) -> &ExplorationBudgetRegistry {
-        &self.exploration_budget
-    }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct RoutingLease<'a> {
     runtime: &'a RoutingRuntimeState,
     lease: Option<CapacityLease>,
 }
 
+#[cfg(test)]
 impl RoutingLease<'_> {
     pub(crate) fn release(&mut self) {
         if let Some(mut lease) = self.lease.take() {
@@ -100,6 +115,7 @@ impl RoutingLease<'_> {
     }
 }
 
+#[cfg(test)]
 impl Drop for RoutingLease<'_> {
     fn drop(&mut self) {
         self.release();

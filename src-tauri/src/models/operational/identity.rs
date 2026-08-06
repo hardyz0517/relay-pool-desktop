@@ -76,9 +76,44 @@ macro_rules! id_type {
 
 id_type!(StationId, "station_id");
 id_type!(StationKeyId, "station_key_id");
-id_type!(EndpointId, "endpoint_id");
-id_type!(ModelName, "model");
-id_type!(OutboundPolicyRef, "outbound_policy_ref");
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct EndpointId(String);
+impl EndpointId {
+    pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(OperationalValidationError::EmptyId { field: "endpoint_id" });
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ModelName(String);
+impl ModelName {
+    pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(OperationalValidationError::EmptyId { field: "model" });
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct OutboundPolicyRef(String);
+impl OutboundPolicyRef {
+    pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(OperationalValidationError::EmptyId { field: "outbound_policy_ref" });
+        }
+        Ok(Self(value))
+    }
+}
+
+#[cfg(test)]
 id_type!(EvidenceHash, "evidence_hash");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -95,6 +130,7 @@ impl RecordRevision {
         Ok(Self(value))
     }
 
+    #[cfg(test)]
     pub fn get(self) -> i64 {
         self.0
     }
@@ -138,11 +174,13 @@ impl UnixMillis {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StationAccountRef {
     station_id: StationId,
 }
 
+#[cfg(test)]
 impl StationAccountRef {
     pub fn new(station_id: StationId) -> Self {
         Self { station_id }
@@ -169,10 +207,12 @@ impl EndpointRef {
         }
     }
 
+    #[cfg(test)]
     pub fn station_id(&self) -> &StationId {
         &self.station_id
     }
 
+    #[cfg(test)]
     pub fn endpoint_id(&self) -> &EndpointId {
         &self.endpoint_id
     }
@@ -219,6 +259,7 @@ impl SanitizedOrigin {
         Ok(Self(origin))
     }
 
+    #[cfg(test)]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -248,10 +289,12 @@ impl EndpointFacts {
         &self.endpoint_ref
     }
 
+    #[cfg(test)]
     pub fn sanitized_origin(&self) -> &SanitizedOrigin {
         &self.sanitized_origin
     }
 
+    #[cfg(test)]
     pub fn outbound_policy_ref(&self) -> &OutboundPolicyRef {
         &self.outbound_policy_ref
     }

@@ -5,6 +5,7 @@ pub(crate) enum AvailabilityTier {
     Emergency,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TieredCandidate {
     pub(crate) station_key_id: String,

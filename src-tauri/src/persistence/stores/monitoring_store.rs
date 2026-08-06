@@ -199,7 +199,7 @@ impl MonitoringStore {
                 protocol_kind, client_profile_id, client_profile_version, primary_model,
                 fallback_models_v2_json, retry_max_attempts_per_model,
                 retry_initial_backoff_ms, retry_max_backoff_ms, risk_daily_probe_budget,
-                health_writeback_mode, health_failure_threshold, health_recovery_threshold,
+                health_policy_mode, health_failure_threshold, health_recovery_threshold,
                 attempt_timeout_ms, execution_timeout_ms, schedule_revision, next_due_at_ms,
                 last_run_at, next_run_at, last_status, last_error_message,
                 note, created_at, updated_at
@@ -232,7 +232,7 @@ impl MonitoringStore {
         .bind(row.input.retry_initial_backoff_ms)
         .bind(row.input.retry_max_backoff_ms)
         .bind(row.input.risk_daily_probe_budget)
-        .bind(&row.input.health_writeback_mode)
+        .bind(&row.input.health_policy_mode)
         .bind(row.input.health_failure_threshold)
         .bind(row.input.health_recovery_threshold)
         .bind(row.input.attempt_timeout_ms)
@@ -284,7 +284,7 @@ impl MonitoringStore {
                 retry_initial_backoff_ms = ?19,
                 retry_max_backoff_ms = ?20,
                 risk_daily_probe_budget = ?21,
-                health_writeback_mode = ?22,
+                health_policy_mode = ?22,
                 health_failure_threshold = ?23,
                 health_recovery_threshold = ?24,
                 attempt_timeout_ms = ?25,
@@ -318,7 +318,7 @@ impl MonitoringStore {
         .bind(patch.input.retry_initial_backoff_ms)
         .bind(patch.input.retry_max_backoff_ms)
         .bind(patch.input.risk_daily_probe_budget)
-        .bind(&patch.input.health_writeback_mode)
+        .bind(&patch.input.health_policy_mode)
         .bind(patch.input.health_failure_threshold)
         .bind(patch.input.health_recovery_threshold)
         .bind(patch.input.attempt_timeout_ms)
@@ -366,7 +366,7 @@ async fn list_monitors(
                protocol_kind, client_profile_id, client_profile_version, primary_model,
                fallback_models_v2_json, retry_max_attempts_per_model,
                retry_initial_backoff_ms, retry_max_backoff_ms, risk_daily_probe_budget,
-               health_writeback_mode, health_failure_threshold, health_recovery_threshold,
+               health_policy_mode, health_failure_threshold, health_recovery_threshold,
                attempt_timeout_ms, execution_timeout_ms, schedule_revision,
                note, created_at, updated_at
         FROM channel_monitors INDEXED BY idx_channel_monitors_list
@@ -409,7 +409,7 @@ async fn monitor_by_id(
                protocol_kind, client_profile_id, client_profile_version, primary_model,
                fallback_models_v2_json, retry_max_attempts_per_model,
                retry_initial_backoff_ms, retry_max_backoff_ms, risk_daily_probe_budget,
-               health_writeback_mode, health_failure_threshold, health_recovery_threshold,
+               health_policy_mode, health_failure_threshold, health_recovery_threshold,
                attempt_timeout_ms, execution_timeout_ms, schedule_revision,
                note, created_at, updated_at
         FROM channel_monitors WHERE id = ?1
@@ -593,7 +593,7 @@ fn row_to_monitor(row: sqlx::sqlite::SqliteRow) -> Result<ChannelMonitor, Persis
         retry_initial_backoff_ms: row.get("retry_initial_backoff_ms"),
         retry_max_backoff_ms: row.get("retry_max_backoff_ms"),
         risk_daily_probe_budget: row.get("risk_daily_probe_budget"),
-        health_writeback_mode: row.get("health_writeback_mode"),
+        health_policy_mode: row.get("health_policy_mode"),
         health_failure_threshold: row.get("health_failure_threshold"),
         health_recovery_threshold: row.get("health_recovery_threshold"),
         attempt_timeout_ms: row.get("attempt_timeout_ms"),
@@ -754,7 +754,7 @@ mod tests {
                                     retry_initial_backoff_ms: update.retry_initial_backoff_ms,
                                     retry_max_backoff_ms: update.retry_max_backoff_ms,
                                     risk_daily_probe_budget: update.risk_daily_probe_budget,
-                                    health_writeback_mode: update.health_writeback_mode,
+                                    health_policy_mode: update.health_policy_mode,
                                     health_failure_threshold: update.health_failure_threshold,
                                     health_recovery_threshold: update.health_recovery_threshold,
                                     attempt_timeout_ms: update.attempt_timeout_ms,
@@ -810,7 +810,7 @@ mod tests {
             retry_initial_backoff_ms: 300,
             retry_max_backoff_ms: 1_200,
             risk_daily_probe_budget: 80,
-            health_writeback_mode: "observe_only".into(),
+            health_policy_mode: "observe_only".into(),
             health_failure_threshold: 3,
             health_recovery_threshold: 2,
             attempt_timeout_ms: 8_000,

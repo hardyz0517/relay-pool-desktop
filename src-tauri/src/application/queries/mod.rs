@@ -1,6 +1,5 @@
 pub(crate) mod channel_status;
 pub(crate) mod dashboard_metrics;
-pub(crate) mod key_detail;
 pub(crate) mod key_pool;
 pub(crate) mod operational_detail;
 pub(crate) mod pricing_comparison;
@@ -10,4 +9,3 @@ pub(crate) mod request_decision_trace;
 pub(crate) mod routing_runtime;
 pub(crate) mod routing_workspace;
 pub(crate) mod station_assets;
-pub(crate) mod station_detail;

@@ -79,6 +79,25 @@ CREATE TABLE IF NOT EXISTS routing_policy_history (
     created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)
 );
 
+-- Every installed database has an explicit canonical policy.  The default is
+-- the V1 representation of AutomaticBalanced; ambiguous legacy strategies are
+-- marked configuration-required by the migration bridge instead of being
+-- interpreted by the proxy.
+INSERT INTO routing_policy (
+    singleton_key, config_json, config_revision, policy_version,
+    system_version, status, created_at_ms, updated_at_ms
+)
+SELECT
+    1,
+    '{"version":1,"reliability_weight":4000,"responsiveness_weight":2500,"cost_weight":2000,"preference_weight":1500,"max_candidates":64,"exploration_share_basis_points":500,"allow_depleted_fallback":false,"affinity_enabled":false,"affinity_ttl_seconds":300}',
+    1,
+    'routing_policy_v1',
+    'intelligent-routing-engine',
+    'active',
+    0,
+    0
+WHERE NOT EXISTS (SELECT 1 FROM routing_policy WHERE singleton_key = 1);
+
 CREATE TABLE IF NOT EXISTS routing_observations (
     id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 160),
     producer_id TEXT NOT NULL CHECK (length(producer_id) BETWEEN 1 AND 96),

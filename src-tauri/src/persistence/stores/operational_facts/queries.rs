@@ -64,10 +64,37 @@ impl OperationalFactStore {
                     WHEN TRIM(k.api_key) != '' OR k.api_key_secret_id IS NOT NULL THEN 1
                     ELSE 0
                 END AS credential_available,
+                k.priority AS priority,
+                COALESCE(c.only_use_as_backup, 0) AS backup_only,
+                COALESCE(c.supports_chat_completions, 1) AS supports_chat_completions,
+                COALESCE(c.supports_responses, 1) AS supports_responses,
+                COALESCE(c.supports_stream, 1) AS supports_stream,
+                COALESCE(c.supports_tools, 0) AS supports_tools,
+                COALESCE(c.supports_vision, 0) AS supports_vision,
+                COALESCE(c.supports_reasoning, 0) AS supports_reasoning,
+                COALESCE(c.model_allowlist_json, '[]') AS model_allowlist_json,
+                COALESCE(c.model_blocklist_json, '[]') AS model_blocklist_json,
+                COALESCE(c.preferred_models_json, '[]') AS preferred_models_json,
+                COALESCE(c.routing_tags_json, '[]') AS routing_tags_json,
+                COALESCE(h.success_count, 0) AS success_count,
+                COALESCE(h.failure_count, 0) AS failure_count,
+                COALESCE(h.consecutive_failures, 0) AS consecutive_failures,
+                h.avg_latency_ms AS avg_latency_ms,
+                b.status AS balance_status,
                 key_revision.revision AS key_record_revision,
                 station_revision.revision AS station_record_revision
             FROM station_keys k
             JOIN stations s ON s.id = k.station_id
+            LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
+            LEFT JOIN routing_health_snapshot h
+                ON h.station_key_id = k.id AND h.endpoint_revision = s.endpoint_revision
+            LEFT JOIN balance_snapshots b ON b.id = (
+                SELECT latest.id
+                FROM balance_snapshots latest
+                WHERE latest.station_key_id = k.id
+                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
+                LIMIT 1
+            )
             LEFT JOIN domain_revisions key_revision
                 ON key_revision.scope = 'station_key:' || k.id
             LEFT JOIN domain_revisions station_revision
@@ -86,18 +113,13 @@ impl OperationalFactStore {
 
         let settings_rows = sqlx::query(
             r#"
-            SELECT settings.key, settings.value, revision.revision AS record_revision
-            FROM settings
-            LEFT JOIN domain_revisions revision
-                ON revision.scope = 'setting:' || settings.key
-            WHERE key IN (
-                'default_routing_strategy',
-                'max_rate_multiplier',
-                'default_routing_group_filter',
-                'scheduler_advanced_settings_json',
-                'allow_depleted_fallback'
-            )
-            ORDER BY key ASC
+            SELECT 'routing_policy' AS key,
+                   config_json AS value,
+                   revisions.revision AS record_revision
+            FROM routing_policy
+            LEFT JOIN domain_revisions revisions
+                ON revisions.scope = 'routing_policy'
+            WHERE singleton_key = 1
             "#,
         )
         .fetch_all(read.connection())
@@ -139,83 +161,6 @@ impl OperationalFactStore {
         };
         query_count += 1;
 
-        sqlx::query(
-            r#"
-            SELECT station_key_id, supports_tools, supports_vision, supports_reasoning, updated_at
-            FROM station_key_capabilities
-            WHERE station_key_id IN (
-                SELECT k.id
-                FROM station_keys k
-                JOIN stations s ON s.id = k.station_id
-                WHERE k.enabled = 1 AND s.enabled = 1
-            )
-            "#,
-        )
-        .fetch_all(read.connection())
-        .await?;
-        query_count += 1;
-
-        sqlx::query(
-            r#"
-            SELECT station_key_id, endpoint_revision, consecutive_failures, success_count, failure_count, updated_at
-            FROM station_key_health
-            WHERE station_key_id IN (
-                SELECT k.id
-                FROM station_keys k
-                JOIN stations s ON s.id = k.station_id
-                WHERE k.enabled = 1 AND s.enabled = 1
-            )
-            "#,
-        )
-        .fetch_all(read.connection())
-        .await?;
-        query_count += 1;
-
-        sqlx::query(
-            r#"
-            SELECT station_id, endpoint_revision
-            FROM station_endpoint_health
-            WHERE station_id IN (
-                SELECT s.id
-                FROM stations s
-                WHERE s.enabled = 1
-            )
-            "#,
-        )
-        .fetch_all(read.connection())
-        .await?;
-        query_count += 1;
-
-        sqlx::query(
-            r#"
-            SELECT station_id, station_key_id, scope, value, currency, low_balance_threshold, status, updated_at
-            FROM balance_snapshots
-            WHERE id IN (
-                SELECT MAX(id)
-                FROM balance_snapshots
-                GROUP BY station_id, COALESCE(station_key_id, ''), scope
-            )
-            "#,
-        )
-        .fetch_all(read.connection())
-        .await?;
-        query_count += 1;
-
-        sqlx::query(
-            r#"
-            SELECT id, station_id, station_key_id, model, input_price, output_price,
-                   fixed_price, rate_multiplier, currency, unit, confidence, updated_at
-            FROM pricing_rules
-            WHERE enabled = 1
-              AND (?1 IS NULL OR model = ?1)
-            ORDER BY station_id ASC, model ASC, updated_at DESC, id ASC
-            "#,
-        )
-        .bind(options.requested_model())
-        .fetch_all(read.connection())
-        .await?;
-        query_count += 1;
-
         let candidates = candidate_rows
             .into_iter()
             .map(|row| {
@@ -225,6 +170,23 @@ impl OperationalFactStore {
                     endpoint_revision: row.get("endpoint_revision"),
                     api_base_url: row.get("api_base_url"),
                     credential_available: row.get::<i64, _>("credential_available") != 0,
+                    priority: row.get("priority"),
+                    backup_only: row.get::<i64, _>("backup_only") != 0,
+                    supports_chat_completions: row.get::<i64, _>("supports_chat_completions") != 0,
+                    supports_responses: row.get::<i64, _>("supports_responses") != 0,
+                    supports_stream: row.get::<i64, _>("supports_stream") != 0,
+                    supports_tools: row.get::<i64, _>("supports_tools") != 0,
+                    supports_vision: row.get::<i64, _>("supports_vision") != 0,
+                    supports_reasoning: row.get::<i64, _>("supports_reasoning") != 0,
+                    model_allowlist_json: row.get("model_allowlist_json"),
+                    model_blocklist_json: row.get("model_blocklist_json"),
+                    preferred_models_json: row.get("preferred_models_json"),
+                    routing_tags_json: row.get("routing_tags_json"),
+                    success_count: row.get("success_count"),
+                    failure_count: row.get("failure_count"),
+                    consecutive_failures: row.get("consecutive_failures"),
+                    avg_latency_ms: row.get("avg_latency_ms"),
+                    balance_status: row.get("balance_status"),
                     key_record_revision: required_revision(
                         row.get("key_record_revision"),
                         format!("station_key:{}", row.get::<String, _>("station_key_id")),

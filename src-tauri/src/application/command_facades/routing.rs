@@ -5,17 +5,12 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     application::{
         error::ApplicationError,
-        pagination::PageLimit,
         queries::{
             operational_detail::StationKeyOperationalDetail,
-            request_decision_trace::{
-                decision_trace_from_legacy_log, recent_route_decisions_from_logs,
-                RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
-            },
+            request_decision_trace::{RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace},
             routing_runtime::RoutingRuntimeOverlay,
             routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
         },
-        request_logs::RequestLogService,
         routing::RoutingService,
     },
     models::{
@@ -48,25 +43,36 @@ impl From<ApplicationError> for EndpointPingCommandError {
 #[derive(Clone)]
 pub(crate) struct RoutingCommandFacade {
     routing: Arc<RoutingService>,
-    request_logs: Arc<RequestLogService>,
     outbound: AsyncOutboundClient,
 }
 
 impl RoutingCommandFacade {
     pub(crate) fn new(
         routing: Arc<RoutingService>,
-        request_logs: Arc<RequestLogService>,
         outbound: AsyncOutboundClient,
     ) -> Self {
         Self {
             routing,
-            request_logs,
             outbound,
         }
     }
 
     pub(crate) async fn list_model_aliases(&self) -> Result<Vec<ModelAlias>, ApplicationError> {
         self.routing.list_model_aliases().await
+    }
+
+    pub(crate) async fn load_routing_policy(
+        &self,
+    ) -> Result<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy, ApplicationError> {
+        self.routing.load_routing_policy().await
+    }
+
+    pub(crate) async fn save_routing_policy(
+        &self,
+        config: crate::models::routing_policy::RoutingPolicyConfigV1,
+        expected_revision: Option<u64>,
+    ) -> Result<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy, ApplicationError> {
+        self.routing.save_routing_policy(config, expected_revision).await
     }
 
     pub(crate) async fn upsert_model_alias(
@@ -109,11 +115,7 @@ impl RoutingCommandFacade {
         &self,
         input: RecentRouteDecisionsInput,
     ) -> Result<RecentRouteDecisionsPage, ApplicationError> {
-        let logs = self
-            .request_logs
-            .list_recent(PageLimit::new(500).expect("bounded routing decision page source limit"))
-            .await?;
-        Ok(recent_route_decisions_from_logs(logs, input))
+        self.routing.list_recent_route_decisions(input).await
     }
 
     pub(crate) async fn get_station_key_operational_detail(
@@ -129,12 +131,7 @@ impl RoutingCommandFacade {
         &self,
         request_log_id: String,
     ) -> Result<RequestDecisionTrace, ApplicationError> {
-        let logs = self
-            .request_logs
-            .list_recent(PageLimit::new(500).expect("bounded routing decision trace source limit"))
-            .await?;
-        let log = logs.into_iter().find(|log| log.id == request_log_id);
-        Ok(decision_trace_from_legacy_log(log))
+        self.routing.get_request_decision_trace(request_log_id).await
     }
 
     pub(crate) async fn simulate_route(

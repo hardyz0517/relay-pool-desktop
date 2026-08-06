@@ -1,12 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    application::operational_facts::candidate_projector::RouteCandidateProjection,
-    models::routing::{RouteEndpointKind, RoutingGroupFilter, RoutingPolicy},
+    application::{
+        operational_facts::pricing_projector::{
+            request_cost_comparison_context, PricingRouteKind,
+        },
+        routing_engine::request::RouteRequestFacts,
+    },
+    models::{
+        pricing::ResolvedPricingContext,
+        routing::{CanonicalRoutingCandidate, RoutingGroupFilter},
+        routing_policy::RoutingPolicyConfigV1,
+    },
 };
 
 pub(crate) const ROUTING_WORKSPACE_READ_MODEL_VERSION: &str = "routing_workspace_read_model_v1";
-pub(crate) const ROUTING_PREVIEW_POLICY_VERSION: &str = "hierarchical_v1_preview";
+pub(crate) const ROUTING_PREVIEW_POLICY_VERSION: &str = "intelligent_planner_v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,7 +35,7 @@ pub(crate) struct RoutingWorkspaceSnapshotInput {
 pub(crate) struct RoutingWorkspaceSnapshot {
     pub(crate) read_model_version: &'static str,
     pub(crate) generated_at_ms: i64,
-    pub(crate) production_policy: RoutingPolicy,
+    pub(crate) policy_config: RoutingPolicyConfigV1,
     pub(crate) preview_policy_version: &'static str,
     pub(crate) max_rate_multiplier: Option<f64>,
     pub(crate) routing_group_filter: RoutingGroupFilter,
@@ -154,52 +163,12 @@ pub(crate) struct RoutingCandidateSourceRefs {
     pub(crate) projector_version: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RoutingWorkspaceProjectionCandidate {
-    pub(crate) station_name: String,
-    pub(crate) key_name: String,
-    pub(crate) projection: RouteCandidateProjection,
-}
-
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "preview simulation DTO is exercised by Task 9 integration tests before UI cutover"
-    )
-)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RoutePreviewSimulationInput {
-    pub(crate) endpoint: RouteEndpointKind,
-    pub(crate) model: Option<String>,
-    pub(crate) stream: bool,
-}
-
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "preview simulation DTO is exercised by Task 9 integration tests before UI cutover"
-    )
-)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RoutePreviewSimulation {
-    pub(crate) preview_policy_version: &'static str,
-    pub(crate) production_policy: RoutingPolicy,
-    pub(crate) capacity_mode: RoutingCapacityReadMode,
-    pub(crate) selected_station_key_id: Option<String>,
-    pub(crate) selected_station_id: Option<String>,
-    pub(crate) candidate_count: usize,
-    pub(crate) rejection_count: usize,
-    pub(crate) selected_capacity_acquired: bool,
-    pub(crate) message: String,
-}
-
-pub(crate) fn workspace_snapshot_from_projection_candidates(
-    settings: &crate::models::routing::RuntimeRoutingSettings,
-    candidates: Vec<RoutingWorkspaceProjectionCandidate>,
+pub(crate) fn workspace_snapshot_from_canonical_candidates(
+    policy_config: RoutingPolicyConfigV1,
+    max_rate_multiplier: Option<f64>,
+    routing_group_filter: RoutingGroupFilter,
+    candidates: Vec<(CanonicalRoutingCandidate, Option<ResolvedPricingContext>)>,
+    request: &RouteRequestFacts,
     input: RoutingWorkspaceSnapshotInput,
     generated_at_ms: i64,
 ) -> RoutingWorkspaceSnapshot {
@@ -215,16 +184,16 @@ pub(crate) fn workspace_snapshot_from_projection_candidates(
         .into_iter()
         .skip(start)
         .take(limit)
-        .map(candidate_from_projection)
+        .map(|(candidate, pricing)| candidate_from_canonical(candidate, pricing, request, generated_at_ms))
         .collect::<Vec<_>>();
     let next = start + rows.len();
     RoutingWorkspaceSnapshot {
         read_model_version: ROUTING_WORKSPACE_READ_MODEL_VERSION,
         generated_at_ms,
-        production_policy: settings.policy.clone(),
+        policy_config,
         preview_policy_version: ROUTING_PREVIEW_POLICY_VERSION,
-        max_rate_multiplier: settings.max_rate_multiplier,
-        routing_group_filter: settings.routing_group_filter.clone(),
+        max_rate_multiplier,
+        routing_group_filter,
         capacity_mode: RoutingCapacityReadMode::SnapshotOnly,
         page: RoutingReadPage {
             limit,
@@ -236,147 +205,127 @@ pub(crate) fn workspace_snapshot_from_projection_candidates(
     }
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "pure projection preview seam is retained until the production planner cutover"
-    )
-)]
-pub(crate) fn simulate_preview_from_candidate_projections(
-    input: RoutePreviewSimulationInput,
-    production_policy: RoutingPolicy,
-    candidates: &[RouteCandidateProjection],
-) -> RoutePreviewSimulation {
-    let selected = candidates
-        .iter()
-        .find(|candidate| candidate.hard_rejection_codes.is_empty());
-    let rejection_count = candidates
-        .iter()
-        .filter(|candidate| !candidate.hard_rejection_codes.is_empty())
-        .count();
-    RoutePreviewSimulation {
-        preview_policy_version: ROUTING_PREVIEW_POLICY_VERSION,
-        production_policy,
-        capacity_mode: RoutingCapacityReadMode::SnapshotOnly,
-        selected_station_key_id: selected
-            .map(|candidate| candidate.identity.station_key_id.clone()),
-        selected_station_id: selected.map(|candidate| candidate.identity.station_id.clone()),
-        candidate_count: candidates.len(),
-        rejection_count,
-        selected_capacity_acquired: false,
-        message: selected
-            .map(|candidate| {
-                format!(
-                    "Preview selected {} for {:?}. Capacity is snapshot-only.",
-                    candidate.identity.station_key_id, input.endpoint
-                )
-            })
-            .unwrap_or_else(|| {
-                format!(
-                    "Preview found no eligible route for {:?}. Capacity is snapshot-only.",
-                    input.endpoint
-                )
-            }),
-    }
-}
-
-fn candidate_from_projection(
-    row: RoutingWorkspaceProjectionCandidate,
+fn candidate_from_canonical(
+    candidate: CanonicalRoutingCandidate,
+    pricing: Option<ResolvedPricingContext>,
+    request: &RouteRequestFacts,
+    generated_at_ms: i64,
 ) -> RoutingWorkspaceCandidate {
-    let projection = row.projection;
-    let max_concurrency = projection
-        .capacity
-        .scopes
-        .iter()
-        .find_map(|scope| scope.limit.map(i64::from))
-        .unwrap_or(0);
-    let in_flight = projection
-        .capacity
-        .scopes
-        .iter()
-        .map(|scope| i64::from(scope.in_flight))
-        .max();
+    let group = candidate.economic_snapshot.as_ref().and_then(|economics| {
+        let stable_key = economics
+            .group_binding_id
+            .as_deref()
+            .map(|value| format!("binding:{value}"))
+            .or_else(|| economics.group_id_hash.as_deref().map(|value| format!("group-id:{value}")))
+            .or_else(|| economics.group_key_hash.as_deref().map(|value| format!("key-hash:{value}")))?;
+        Some(RoutingCandidateGroupSnapshot {
+            stable_key,
+            display_name: economics.group_name.clone().unwrap_or_else(|| "Unnamed group".to_string()),
+            available: !matches!(economics.group_status.as_deref(), Some("disabled" | "missing")),
+            reason: economics.group_status.clone().unwrap_or_else(|| "available".to_string()),
+        })
+    });
+    let multiplier = candidate.economic_snapshot.as_ref().and_then(|economics| economics.rate_multiplier);
+    let ceiling_rejected = request
+        .max_rate_multiplier()
+        .zip(multiplier)
+        .is_some_and(|(ceiling, value)| value > ceiling);
+    let pricing_context = request_cost_comparison_context(PricingRouteKind::Inference, pricing.as_ref());
+    let capability = &candidate.capabilities;
+    let model_allowed = request.requested_model().is_none_or(|model| {
+        !capability.model_blocklist.iter().any(|blocked| blocked.eq_ignore_ascii_case(model))
+            && (capability.model_allowlist.is_empty()
+                || capability.model_allowlist.iter().any(|allowed| allowed.eq_ignore_ascii_case(model)))
+    });
+    let protocol_allowed = capability.supports_chat_completions || capability.supports_responses;
+    let group_matches = request.required_group_stable_key().is_none_or(|required| {
+        group.as_ref().is_some_and(|candidate_group| candidate_group.stable_key == required)
+    });
+    let mut hard_rejection_codes = Vec::new();
+    if !candidate.schedulable { hard_rejection_codes.push("candidate_unschedulable".to_string()); }
+    if candidate.api_key.is_none() && candidate.api_key_secret.is_none() { hard_rejection_codes.push("credential_missing".to_string()); }
+    if !group_matches { hard_rejection_codes.push("group_mismatch".to_string()); }
+    if ceiling_rejected { hard_rejection_codes.push("multiplier_ceiling".to_string()); }
+    if !protocol_allowed || !model_allowed { hard_rejection_codes.push("capability_rejected".to_string()); }
+    if request.stream() && !capability.supports_stream { hard_rejection_codes.push("capability_rejected".to_string()); }
+    if request.uses_tools() && !capability.supports_tools { hard_rejection_codes.push("capability_rejected".to_string()); }
+    if request.uses_vision() && !capability.supports_vision { hard_rejection_codes.push("capability_rejected".to_string()); }
+    if request.uses_reasoning() && !capability.supports_reasoning { hard_rejection_codes.push("capability_rejected".to_string()); }
+    if !request.allow_depleted_fallback() && candidate.balance_snapshot.as_ref().is_some_and(|balance| matches!(balance.status.as_str(), "depleted" | "exhausted" | "empty")) {
+        hard_rejection_codes.push("balance_depleted".to_string());
+    }
+    let health_state = candidate.health.as_ref().map(|health| {
+        if health.cooldown_until.is_some() { "cooldown" }
+        else if health.consecutive_failures > 0 { "degraded" }
+        else { "ready" }
+    }).unwrap_or("unknown").to_string();
+    let capacity_limit = candidate.max_concurrency.max(0);
+    let in_flight = candidate.load_factor.map(|value| value.max(0));
     RoutingWorkspaceCandidate {
-        station_key_id: projection.identity.station_key_id.clone(),
-        station_id: projection.identity.station_id.clone(),
-        station_name: row.station_name,
-        key_name: row.key_name,
-        endpoint_revision: projection.identity.endpoint_revision,
-        priority: projection.priority,
-        schedulable: projection.hard_rejection_codes.is_empty(),
-        health_state: format!("{:?}", projection.health.station_key).to_lowercase(),
-        group: projection.group.as_ref().map(|group| RoutingCandidateGroupSnapshot {
-            stable_key: group.stable_key.clone(),
-            display_name: group.display_name.clone(),
-            available: group.available,
-            reason: group.reason.to_string(),
-        }),
+        station_key_id: candidate.station_key_id.clone(),
+        station_id: candidate.station_id.clone(),
+        station_name: candidate.station_name,
+        key_name: candidate.key_name,
+        endpoint_revision: candidate.station_endpoint_revision,
+        priority: candidate.routing_order.unwrap_or(candidate.priority),
+        schedulable: hard_rejection_codes.is_empty(),
+        health_state,
+        group,
         multiplier: RoutingCandidateMultiplierSnapshot {
-            status: format!("{:?}", projection.multiplier.status).to_lowercase(),
-            multiplier: projection.multiplier.multiplier,
-            selected_source: projection.multiplier.selected_source.map(ToString::to_string),
-            ceiling_rejected: projection.multiplier.ceiling_rejected,
-            reason: projection.multiplier.reason.to_string(),
+            status: multiplier.map(|_| "resolved".to_string()).unwrap_or_else(|| "missing".to_string()),
+            multiplier,
+            selected_source: candidate.economic_snapshot.as_ref().and_then(|economics| economics.rate_source.clone()),
+            ceiling_rejected,
+            reason: if ceiling_rejected { "above_policy_ceiling".to_string() } else { "canonical_economic_snapshot".to_string() },
         },
         capability_summary: RoutingCapabilitySummary {
-            chat_completions: projection.capability.protocol
-                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
-            responses: projection.capability.protocol
-                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
-            embeddings: false,
-            stream: projection.capability.stream
-                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
-            tools: projection.capability.tools
-                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
-            vision: projection.capability.vision
-                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
-            reasoning: projection.capability.reasoning
-                == crate::application::operational_facts::capability_projector::CapabilityDecision::Allow,
+            chat_completions: capability.supports_chat_completions,
+            responses: capability.supports_responses,
+            embeddings: capability.supports_embeddings,
+            stream: capability.supports_stream,
+            tools: capability.supports_tools,
+            vision: capability.supports_vision,
+            reasoning: capability.supports_reasoning,
         },
         capability_verdicts: RoutingCapabilityVerdictSnapshot {
-            protocol: format!("{:?}", projection.capability.protocol).to_lowercase(),
-            model: format!("{:?}", projection.capability.model).to_lowercase(),
-            stream: format!("{:?}", projection.capability.stream).to_lowercase(),
-            tools: format!("{:?}", projection.capability.tools).to_lowercase(),
-            vision: format!("{:?}", projection.capability.vision).to_lowercase(),
-            reasoning: format!("{:?}", projection.capability.reasoning).to_lowercase(),
-            rejection_subjects: projection.capability.rejection_subjects.clone(),
+            protocol: if protocol_allowed { "allow" } else { "deny" }.to_string(),
+            model: if model_allowed { "allow" } else { "deny" }.to_string(),
+            stream: if capability.supports_stream { "allow" } else { "deny" }.to_string(),
+            tools: if capability.supports_tools { "allow" } else { "deny" }.to_string(),
+            vision: if capability.supports_vision { "allow" } else { "deny" }.to_string(),
+            reasoning: if capability.supports_reasoning { "allow" } else { "deny" }.to_string(),
+            rejection_subjects: hard_rejection_codes.iter().filter(|code| code.as_str() == "capability_rejected").cloned().collect(),
         },
-        price_basis: projection.pricing.basis.as_str().to_string(),
+        price_basis: pricing_context.basis.as_str().to_string(),
         pricing: RoutingCandidatePricingSnapshot {
-            basis: projection.pricing.basis.as_str().to_string(),
-            comparison_value: projection.pricing.comparison_value,
-            reason: projection.pricing.reason.map(ToString::to_string),
-            currency: projection.pricing.currency.clone(),
-            unit: projection.pricing.unit.clone(),
-            estimated_input_price: projection.pricing.estimated_input_price,
-            estimated_output_price: projection.pricing.estimated_output_price,
-            estimated_fixed_price: projection.pricing.estimated_fixed_price,
-            status_label: projection.pricing.status_label.clone(),
-            source_chain: projection.pricing.source_chain.clone(),
-            observed_at: projection.pricing.observed_at.clone(),
-            confidence: projection.pricing.confidence,
+            basis: pricing_context.basis.as_str().to_string(),
+            comparison_value: pricing_context.comparison_value,
+            reason: pricing_context.reason.map(ToString::to_string),
+            currency: pricing_context.currency,
+            unit: pricing_context.unit,
+            estimated_input_price: pricing_context.estimated_input_price,
+            estimated_output_price: pricing_context.estimated_output_price,
+            estimated_fixed_price: pricing_context.estimated_fixed_price,
+            status_label: pricing_context.status_label,
+            source_chain: pricing_context.source_chain,
+            observed_at: pricing_context.observed_at,
+            confidence: pricing_context.confidence,
         },
-        balance_status: Some(format!("{:?}", projection.balance.status).to_lowercase()),
+        balance_status: candidate.balance_snapshot.as_ref().map(|balance| balance.status.clone()),
         capacity: RoutingCandidateCapacitySnapshot {
             mode: RoutingCapacityReadMode::SnapshotOnly,
-            max_concurrency,
-            in_flight,
+            max_concurrency: capacity_limit,
+            in_flight: in_flight,
             acquired: false,
         },
         source_refs: RoutingCandidateSourceRefs {
-            station_key_id: projection.identity.station_key_id.clone(),
-            station_id: projection.identity.station_id.clone(),
-            endpoint_revision: projection.identity.endpoint_revision,
-            snapshot_id: projection.provenance.snapshot_id.clone(),
-            fact_version_vector: projection.provenance.fact_version_vector.clone(),
-            projector_version: projection.provenance.projector_version.to_string(),
+            station_key_id: candidate.station_key_id,
+            station_id: candidate.station_id,
+            endpoint_revision: candidate.station_endpoint_revision,
+            snapshot_id: format!("workspace-{generated_at_ms}"),
+            fact_version_vector: format!("endpoint:{};capabilities:{};health:{};balance:{}", candidate.station_endpoint_revision, candidate.capabilities.updated_at, candidate.health.as_ref().map(|health| health.updated_at.as_str()).unwrap_or("missing"), candidate.balance_snapshot.as_ref().and_then(|balance| balance.collected_at.as_deref()).unwrap_or("missing")),
+            projector_version: "routing_workspace_canonical_v1".to_string(),
         },
-        hard_rejection_codes: projection
-            .hard_rejection_codes
-            .iter()
-            .map(|code| (*code).to_string())
-            .collect(),
+        hard_rejection_codes,
     }
 }

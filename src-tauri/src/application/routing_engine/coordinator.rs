@@ -194,6 +194,9 @@ mod tests {
                 station_id: "st".into(),
                 endpoint_revision: 1,
                 credential_available: true,
+                hard_eligible: true,
+                backup_only: false,
+                depleted: false,
                 capability_basis_points: 10_000,
                 reliability_basis_points: 8_000,
                 responsiveness_basis_points: 8_000,
@@ -207,6 +210,7 @@ mod tests {
                 candidate_set_revision: 1,
                 in_flight: 0,
                 max_concurrency: 1,
+                affinity_station_key_id: None,
             },
         }
     }

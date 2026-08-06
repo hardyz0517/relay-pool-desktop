@@ -31,6 +31,7 @@ use super::{
     request::{ByteStream, CanonicalProxyRequest},
     responses_chat_stream::chat_sse_to_responses_stream,
     routing_repository::{OperationalRouteSnapshot, RoutingExecutionSettings, RoutingRepository},
+    routing_runtime::RoutingRuntimeState,
     upstream::{UpstreamAttempt, UpstreamClientPool},
 };
 
@@ -45,10 +46,10 @@ use crate::{
         routing_engine::{
             affinity::{AffinityKind, AffinityLookup, AffinityRegistry},
             capacity::CompositeCapacityRegistry,
-            controller::{
-                ActualAttemptTerminal, ControllerDecision, ControllerEvidence, ControllerFailure,
-                ControllerFailureKind, ControllerPlanningInput, FallbackPolicy,
-                RouteAdmissionController, RouteControllerSettings, SelectedRoute,
+            admission::{
+                ActualAttemptTerminal, AdmissionDecision, AdmissionEvidence, AdmissionFailure,
+                AdmissionFailureKind, AdmissionPlanningInput, FallbackPolicy,
+                RouteAdmissionCoordinator, AdmissionSettings, SelectedRoute,
             },
             model_alias,
             request::{
@@ -56,7 +57,7 @@ use crate::{
                 RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
             },
             routing_failure::RoutePlanningFailure,
-            selector::RoutePlanCandidate,
+            candidate_plan::RoutePlanCandidate,
         },
     },
     models::{
@@ -73,9 +74,10 @@ pub(crate) struct ExecutionEngine {
     credentials: Arc<dyn ExecutionCredentialResolver>,
     attempts: Arc<dyn AttemptExecutor>,
     retry_policy: RetryPolicy,
-    capacity: CompositeCapacityRegistry,
+    capacity: Arc<CompositeCapacityRegistry>,
     affinity: Arc<Mutex<AffinityRegistry>>,
     lifecycle_writer: Option<LifecycleWriter>,
+    routing_runtime: Arc<RoutingRuntimeState>,
 }
 
 pub(crate) trait AttemptExecutor: Send + Sync {
@@ -116,7 +118,7 @@ pub(crate) struct ExecutionLifecycleEvidence {
     pub selected_attempt: Option<AttemptContext>,
     pub selected_attempt_cost: Option<super::attempt::SelectedAttemptCostSnapshot>,
     pub attempt_count: u16,
-    pub fallback_count: u16,
+    pub(crate) fallback_count: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -171,9 +173,10 @@ impl ExecutionEngine {
             credentials,
             attempts,
             retry_policy: RetryPolicy::default(),
-            capacity: CompositeCapacityRegistry::default(),
+            capacity: Arc::new(CompositeCapacityRegistry::default()),
             affinity: Arc::new(Mutex::new(AffinityRegistry::default())),
             lifecycle_writer: None,
+            routing_runtime: Arc::new(RoutingRuntimeState::new(64, 1)),
         }
     }
 
@@ -183,15 +186,17 @@ impl ExecutionEngine {
         attempts: Arc<dyn AttemptExecutor>,
         limits: &ProxyServerLimits,
         lifecycle_writer: LifecycleWriter,
+        routing_runtime: Arc<RoutingRuntimeState>,
     ) -> Self {
         Self {
             repository,
             credentials,
             attempts,
             retry_policy: RetryPolicy::from_limits(limits),
-            capacity: CompositeCapacityRegistry::default(),
+            capacity: routing_runtime.capacity_registry(),
             affinity: Arc::new(Mutex::new(AffinityRegistry::default())),
             lifecycle_writer: Some(lifecycle_writer),
+            routing_runtime,
         }
     }
 
@@ -234,20 +239,44 @@ impl ExecutionEngine {
             mapped_model.as_deref(),
             request_started_at_ms,
         );
-        let snapshot = self
+        // The canonical planner is fed by the same request-scoped runtime
+        // overlay as capacity/admission. A missing policy is a configuration
+        // error in production; only unit fixtures without a lifecycle writer
+        // may exercise the execution shell without a planner snapshot.
+        let mut runtime_overlay = self.routing_runtime.snapshot();
+        runtime_overlay.affinity_station_key_id = affinity_station_key_id.clone();
+        let planning_result = self
             .repository
-            .load_operational_route_snapshot(route_facts.clone())
+            .load_planning_snapshot(route_facts.clone(), runtime_overlay)
             .await
             .map_err(|error| {
-                internal_failure(format!("load operational route snapshot failed: {error}"))
-            })?;
-
+                internal_failure(format!("load intelligent planning snapshot failed: {error}"))
+            });
+        let planning_snapshot = match planning_result {
+            Ok(snapshot) => snapshot,
+            Err(_error) if self.lifecycle_writer.is_none() => None,
+            Err(error) => return Err(error),
+        };
+        let snapshot = match planning_snapshot.clone() {
+            Some(planning_snapshot) => self
+                .repository
+                .load_operational_route_snapshot(route_facts.clone(), planning_snapshot)
+                .await
+                .map_err(|error| {
+                    internal_failure(format!("load execution route index failed: {error}"))
+                })?,
+            None if self.lifecycle_writer.is_none() => {
+                return Err(routing_configuration_required_failure());
+            }
+            None => return Err(routing_configuration_required_failure()),
+        };
         if matches!(request.endpoint, RouteEndpointKind::Models) {
             return self
                 .execute_models(
                     request,
                     route_facts,
                     snapshot,
+                    planning_snapshot.clone(),
                     mapped_model,
                     request_started_at_ms,
                     precommit_started,
@@ -258,23 +287,34 @@ impl ExecutionEngine {
         let idempotent = request.idempotency_key.is_some();
         let mut last_failure = None;
         let mut attempted_count = 0_i64;
-        let mut controller = RouteAdmissionController::new(
+        let mut controller = RouteAdmissionCoordinator::new_with_retry_budget(
             route_facts,
-            RouteControllerSettings {
+            AdmissionSettings {
                 deadline_ms: precommit_deadline_ms(
                     request_started_at_ms,
                     self.retry_policy.precommit_budget,
                 ),
-                initial_snapshot_id: snapshot.snapshot_id.clone(),
-                initial_runtime_overlay_revision: snapshot.runtime_overlay_revision,
-                initial_durable_generation: snapshot.durable_generation,
+                initial_snapshot_id: planning_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.snapshot_id.clone())
+                    .unwrap_or_else(|| snapshot.snapshot_id.clone()),
+                initial_runtime_overlay_revision: planning_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.runtime.runtime_revision)
+                    .unwrap_or(snapshot.runtime_overlay_revision),
+                initial_durable_generation: planning_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.durable_revision)
+                    .unwrap_or(snapshot.durable_generation),
                 fallback_policy: FallbackPolicy {
                     has_stable_idempotency_key: idempotent,
                     non_idempotent: !idempotent,
                 },
             },
-            0,
+            self.routing_runtime.retry_budget(),
         );
+        let root_seed = self.routing_runtime.root_seed();
+        let exploration_budget = self.routing_runtime.exploration_budget();
 
         for attempt_index in 0..self.retry_policy.max_candidate_attempts {
             if self
@@ -284,15 +324,39 @@ impl ExecutionEngine {
             {
                 return Err(precommit_timeout_failure());
             }
-            let decision = match controller.next(ControllerPlanningInput {
-                candidates: &snapshot.candidates,
+            let admission_input = AdmissionPlanningInput {
+                execution_candidates: &snapshot.candidates,
+                planning_snapshot: planning_snapshot.as_ref(),
+                root_seed: &root_seed,
+                exploration_budget: Some(&exploration_budget),
+                #[cfg(test)]
                 affinity_station_key_id: affinity_station_key_id.as_deref(),
                 profiles: &snapshot.profiles,
                 capacity: &self.capacity,
                 current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
-            }) {
+                #[cfg(test)]
+                candidates: &snapshot.legacy_candidates,
+            };
+            let decision = match if planning_snapshot.is_some() {
+                controller.next(admission_input)
+            } else {
+                #[cfg(test)]
+                {
+                    controller.next_legacy(admission_input)
+                }
+                #[cfg(not(test))]
+                {
+                    Err(AdmissionFailure {
+                        kind: AdmissionFailureKind::ConfigUnstable,
+                        evidence: vec![AdmissionEvidence {
+                            code: "planning_snapshot_required",
+                            detail: "production planner snapshot missing".to_string(),
+                        }],
+                    })
+                }
+            } {
                 Ok(decision) => decision,
                 Err(failure) if last_failure.is_some() && catalog_planning_exhausted(&failure) => {
                     break;
@@ -498,6 +562,7 @@ impl ExecutionEngine {
         request: CanonicalProxyRequest,
         route_facts: RouteRequestFacts,
         snapshot: OperationalRouteSnapshot,
+        planning_snapshot: Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
         mapped_model: Option<String>,
         request_started_at_ms: i64,
         precommit_started: Instant,
@@ -508,23 +573,34 @@ impl ExecutionEngine {
         let mut failed_count = 0_i64;
         let mut last_failure = None;
         let mut headers = HeaderMap::new();
-        let mut controller = RouteAdmissionController::new(
+        let mut controller = RouteAdmissionCoordinator::new_with_retry_budget(
             route_facts,
-            RouteControllerSettings {
+            AdmissionSettings {
                 deadline_ms: precommit_deadline_ms(
                     request_started_at_ms,
                     self.retry_policy.precommit_budget,
                 ),
-                initial_snapshot_id: snapshot.snapshot_id.clone(),
-                initial_runtime_overlay_revision: snapshot.runtime_overlay_revision,
-                initial_durable_generation: snapshot.durable_generation,
+                initial_snapshot_id: planning_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.snapshot_id.clone())
+                    .unwrap_or_else(|| snapshot.snapshot_id.clone()),
+                initial_runtime_overlay_revision: planning_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.runtime.runtime_revision)
+                    .unwrap_or(snapshot.runtime_overlay_revision),
+                initial_durable_generation: planning_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.durable_revision)
+                    .unwrap_or(snapshot.durable_generation),
                 fallback_policy: FallbackPolicy {
                     has_stable_idempotency_key: true,
                     non_idempotent: false,
                 },
             },
-            0,
+            self.routing_runtime.retry_budget(),
         );
+        let root_seed = self.routing_runtime.root_seed();
+        let exploration_budget = self.routing_runtime.exploration_budget();
 
         for attempt_index in 0..self.retry_policy.max_candidate_attempts {
             if self
@@ -534,15 +610,39 @@ impl ExecutionEngine {
             {
                 return Err(precommit_timeout_failure());
             }
-            let decision = match controller.next(ControllerPlanningInput {
-                candidates: &snapshot.candidates,
+            let admission_input = AdmissionPlanningInput {
+                execution_candidates: &snapshot.candidates,
+                planning_snapshot: planning_snapshot.as_ref(),
+                root_seed: &root_seed,
+                exploration_budget: Some(&exploration_budget),
+                #[cfg(test)]
                 affinity_station_key_id: None,
                 profiles: &snapshot.profiles,
                 capacity: &self.capacity,
                 current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
-            }) {
+                #[cfg(test)]
+                candidates: &snapshot.legacy_candidates,
+            };
+            let decision = match if planning_snapshot.is_some() {
+                controller.next(admission_input)
+            } else {
+                #[cfg(test)]
+                {
+                    controller.next_legacy(admission_input)
+                }
+                #[cfg(not(test))]
+                {
+                    Err(AdmissionFailure {
+                        kind: AdmissionFailureKind::ConfigUnstable,
+                        evidence: vec![AdmissionEvidence {
+                            code: "planning_snapshot_required",
+                            detail: "production planner snapshot missing".to_string(),
+                        }],
+                    })
+                }
+            } {
                 Ok(decision) => decision,
                 Err(failure) if attempted_count > 0 && catalog_planning_exhausted(&failure) => {
                     break;
@@ -1325,6 +1425,16 @@ fn internal_failure(message: impl Into<String>) -> ProxyFailure {
     )
 }
 
+fn routing_configuration_required_failure() -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::RouteConfigRequired,
+        FailureSource::Routing,
+        RetryClass::Never,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "routing configuration is required",
+    )
+}
+
 fn duration_millis_i64(duration: Duration) -> i64 {
     duration.as_millis().min(i64::MAX as u128) as i64
 }
@@ -1370,8 +1480,8 @@ fn route_request_facts(
         ValidatedLocalRouteSettings {
             ordering_profile: ordering_profile(&settings.policy),
             max_rate_multiplier: settings.max_rate_multiplier,
-            group_filter_mode: group_filter_mode(&settings.routing_group_filter),
-            required_group_stable_key: required_group_stable_key(&settings.routing_group_filter),
+            group_filter_mode: group_filter_mode(&settings.routing_group_scope),
+            required_group_stable_key: required_group_stable_key(&settings.routing_group_scope),
             preferred_models: Vec::new(),
             required_tags: Vec::new(),
             allow_depleted_fallback: settings.allow_depleted_fallback,
@@ -1386,7 +1496,7 @@ fn affinity_lookups(
     settings: &RoutingExecutionSettings,
     model: Option<&str>,
 ) -> Vec<AffinityLookup> {
-    let routing_group_scope = routing_group_scope_label(&settings.routing_group_filter);
+    let routing_group_scope = routing_group_scope_label(&settings.routing_group_scope);
     let mut lookups = Vec::with_capacity(2);
     if let Some(previous_response_id) = nonempty(request.previous_response_id.as_deref()) {
         lookups.push(AffinityLookup::new(
@@ -1511,26 +1621,26 @@ fn execution_target_failure(
 }
 
 fn selected_route_or_failure(
-    decision: ControllerDecision,
-) -> Result<SelectedRoute, ControllerFailure> {
+    decision: AdmissionDecision,
+) -> Result<SelectedRoute, AdmissionFailure> {
     match decision {
-        ControllerDecision::Selected(selected) => {
+        AdmissionDecision::Selected(selected) => {
             let _selection_evidence_count = selected.evidence.len();
             Ok(selected)
         }
-        ControllerDecision::Wait { constraint, permit } => {
+        AdmissionDecision::Wait { constraint, permit } => {
             drop(permit);
-            Err(ControllerFailure {
-                kind: ControllerFailureKind::CapacityExhausted,
-                evidence: vec![ControllerEvidence {
+            Err(AdmissionFailure {
+                kind: AdmissionFailureKind::CapacityExhausted,
+                evidence: vec![AdmissionEvidence {
                     code: "capacity_wait_required",
                     detail: format!("{constraint:?}"),
                 }],
             })
         }
-        ControllerDecision::Replan { reason } => Err(ControllerFailure {
-            kind: ControllerFailureKind::TemporaryHealth,
-            evidence: vec![ControllerEvidence {
+        AdmissionDecision::Replan { reason } => Err(AdmissionFailure {
+            kind: AdmissionFailureKind::TemporaryHealth,
+            evidence: vec![AdmissionEvidence {
                 code: "replan_required",
                 detail: format!("{reason:?}"),
             }],
@@ -1538,7 +1648,7 @@ fn selected_route_or_failure(
     }
 }
 
-fn controller_failure(failure: ControllerFailure, policy: &RoutingPolicy) -> ProxyFailure {
+fn controller_failure(failure: AdmissionFailure, policy: &RoutingPolicy) -> ProxyFailure {
     if let Some(planning_failure) = route_planning_failure(&failure) {
         let stable_code = planning_failure.stable_code();
         let mut proxy_failure =
@@ -1549,42 +1659,37 @@ fn controller_failure(failure: ControllerFailure, policy: &RoutingPolicy) -> Pro
     }
 
     let (code, status, message) = match failure.kind {
-        ControllerFailureKind::NoEligible => (
+        AdmissionFailureKind::NoEligible => (
             ProxyFailureCode::RouteNoCandidate,
             StatusCode::SERVICE_UNAVAILABLE,
             "no eligible route candidate",
         ),
-        ControllerFailureKind::TemporaryHealth => (
+        AdmissionFailureKind::TemporaryHealth => (
             ProxyFailureCode::RouteHealthUnavailable,
             StatusCode::SERVICE_UNAVAILABLE,
             "route health unavailable",
         ),
-        ControllerFailureKind::CapacityExhausted => (
+        AdmissionFailureKind::CapacityExhausted => (
             ProxyFailureCode::RouteCapacityExhausted,
             StatusCode::SERVICE_UNAVAILABLE,
             "route capacity exhausted",
         ),
-        ControllerFailureKind::Deadline => (
+        AdmissionFailureKind::Deadline => (
             ProxyFailureCode::RouteDeadlineExceeded,
             StatusCode::GATEWAY_TIMEOUT,
             "route deadline exceeded",
         ),
-        ControllerFailureKind::ConfigUnstable => (
+        AdmissionFailureKind::ConfigUnstable => (
             ProxyFailureCode::RouteConfigUnstable,
             StatusCode::SERVICE_UNAVAILABLE,
             "route configuration changed during planning",
         ),
-        ControllerFailureKind::CandidateLimit => (
-            ProxyFailureCode::RouteCandidateLimitExceeded,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "route candidate limit exceeded",
-        ),
-        ControllerFailureKind::AttemptLimit => (
+        AdmissionFailureKind::AttemptLimit => (
             ProxyFailureCode::RouteNoCandidate,
             StatusCode::BAD_GATEWAY,
             "all route candidates failed",
         ),
-        ControllerFailureKind::CommitUncertain => (
+        AdmissionFailureKind::CommitUncertain => (
             ProxyFailureCode::RouteInvariantViolation,
             StatusCode::BAD_GATEWAY,
             "route commit certainty prevents retry",
@@ -1601,22 +1706,16 @@ fn controller_failure(failure: ControllerFailure, policy: &RoutingPolicy) -> Pro
     proxy_failure
 }
 
-fn route_planning_failure(failure: &ControllerFailure) -> Option<RoutePlanningFailure> {
+fn route_planning_failure(failure: &AdmissionFailure) -> Option<RoutePlanningFailure> {
     match failure.kind {
-        ControllerFailureKind::TemporaryHealth => Some(RoutePlanningFailure::HealthUnavailable),
-        ControllerFailureKind::CapacityExhausted => Some(RoutePlanningFailure::CapacityExhausted),
-        ControllerFailureKind::Deadline => Some(RoutePlanningFailure::DeadlineExceeded),
-        ControllerFailureKind::ConfigUnstable => Some(RoutePlanningFailure::ConfigUnstable),
-        ControllerFailureKind::CandidateLimit => {
-            Some(RoutePlanningFailure::CandidateLimitExceeded {
-                actual: 0,
-                limit: 0,
-            })
-        }
-        ControllerFailureKind::CommitUncertain => Some(RoutePlanningFailure::InvariantViolation {
+        AdmissionFailureKind::TemporaryHealth => Some(RoutePlanningFailure::HealthUnavailable),
+        AdmissionFailureKind::CapacityExhausted => Some(RoutePlanningFailure::CapacityExhausted),
+        AdmissionFailureKind::Deadline => Some(RoutePlanningFailure::DeadlineExceeded),
+        AdmissionFailureKind::ConfigUnstable => Some(RoutePlanningFailure::ConfigUnstable),
+        AdmissionFailureKind::CommitUncertain => Some(RoutePlanningFailure::InvariantViolation {
             code: "route_commit_uncertain",
         }),
-        ControllerFailureKind::NoEligible | ControllerFailureKind::AttemptLimit => None,
+        AdmissionFailureKind::NoEligible | AdmissionFailureKind::AttemptLimit => None,
     }
 }
 
@@ -1639,10 +1738,10 @@ fn pricing_basis_label(
     }
 }
 
-fn catalog_planning_exhausted(failure: &ControllerFailure) -> bool {
+fn catalog_planning_exhausted(failure: &AdmissionFailure) -> bool {
     matches!(
         failure.kind,
-        ControllerFailureKind::NoEligible | ControllerFailureKind::AttemptLimit
+        AdmissionFailureKind::NoEligible | AdmissionFailureKind::AttemptLimit
     )
 }
 
@@ -1888,10 +1987,11 @@ mod tests {
             },
             operational_facts::target_resolver::{ExecutionTargetHandle, ExecutionTargetRef},
             routing_engine::request::RouteRequestFacts,
+            routing_engine::{algorithm_profile::DispatchAlgorithmProfile, planning_snapshot::{CandidateSnapshot, PlanningSnapshot, RuntimeOverlaySnapshot}},
         },
         models::{
             proxy::UpstreamApiFormat,
-            routing::{RouteEndpointKind, RuntimeRoutingCandidate, StationKeyCapabilities},
+            routing::{RouteEndpointKind, CanonicalRoutingCandidate, StationKeyCapabilities},
         },
         services::proxy::{
             error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
@@ -2219,19 +2319,58 @@ mod tests {
     }
 
     struct FakeRepository {
-        candidates: Vec<RuntimeRoutingCandidate>,
+        candidates: Vec<CanonicalRoutingCandidate>,
     }
 
     impl FakeRepository {
-        fn with_candidates(candidates: Vec<RuntimeRoutingCandidate>) -> Self {
+        fn with_candidates(candidates: Vec<CanonicalRoutingCandidate>) -> Self {
             Self { candidates }
         }
     }
 
     impl RoutingRepository for FakeRepository {
+        fn load_planning_snapshot(
+            &self,
+            _request: RouteRequestFacts,
+            runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
+        ) -> BoxFuture<'static, Result<Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>, String>> {
+            let candidates = self.candidates.iter().enumerate().map(|(index, candidate)| CandidateSnapshot {
+                station_key_id: candidate.station_key_id.clone(),
+                station_id: candidate.station_id.clone(),
+                endpoint_revision: candidate.station_endpoint_revision,
+                credential_available: candidate.api_key.is_some() || candidate.api_key_secret.is_some(),
+                hard_eligible: candidate.schedulable,
+                backup_only: candidate.capabilities.only_use_as_backup,
+                depleted: false,
+                capability_basis_points: 10_000,
+                reliability_basis_points: 8_000,
+                responsiveness_basis_points: 8_000,
+                cost_basis_points: Some(5_000),
+                preference_basis_points: 10_000_u16.saturating_sub((index as u16).saturating_mul(100)),
+                failure_domains: vec![format!("station:{}", candidate.station_id)],
+            }).collect();
+            Box::pin(async move { Ok(Some(PlanningSnapshot {
+                snapshot_id: "test-planning-snapshot".to_string(),
+                durable_revision: 1,
+                policy: {
+                    let mut policy = crate::models::routing_policy::RoutingPolicyConfigV1::default();
+                    policy.affinity_enabled = true;
+                    policy
+                },
+                profile: {
+                    let mut profile = DispatchAlgorithmProfile::default();
+                    profile.exploit_band_basis_points = 0;
+                    profile
+                },
+                candidates,
+                runtime,
+            })) })
+        }
+
         fn load_operational_route_snapshot(
             &self,
             request: RouteRequestFacts,
+            planning_snapshot: PlanningSnapshot,
         ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
             let candidates = self.candidates.clone();
             Box::pin(async move {
@@ -2247,12 +2386,29 @@ mod tests {
                     projections.push(route_projection_from_runtime(&request, candidate)?);
                 }
                 Ok(OperationalRouteSnapshot {
-                    candidates: projections,
+                    candidates: planning_snapshot.candidates.iter().map(|candidate| crate::application::routing_engine::candidate_plan::RoutePlanCandidate {
+                        station_key_id: candidate.station_key_id.clone(),
+                        station_id: candidate.station_id.clone(),
+                        endpoint_revision: candidate.endpoint_revision,
+                        priority: 0,
+                        tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
+                        pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot {
+                            basis: crate::application::operational_facts::pricing_projector::RoutingCostBasis::Unpriced,
+                            currency: None,
+                            unit: None,
+                            estimated_input_price: None,
+                            estimated_output_price: None,
+                            estimated_fixed_price: None,
+                            status_label: "test".to_string(),
+                        },
+                        evidence: vec![],
+                    }).collect(),
                     targets,
                     profiles,
                     snapshot_id: "test-operational-snapshot".to_string(),
                     runtime_overlay_revision: 1,
                     durable_generation: 1,
+                    legacy_candidates: projections,
                 })
             })
         }
@@ -2500,7 +2656,7 @@ mod tests {
         )
     }
 
-    fn target_ref(candidate: &RuntimeRoutingCandidate) -> ExecutionTargetRef {
+    fn target_ref(candidate: &CanonicalRoutingCandidate) -> ExecutionTargetRef {
         ExecutionTargetRef {
             station_key_id: candidate.station_key_id.clone(),
             station_id: candidate.station_id.clone(),
@@ -2517,11 +2673,13 @@ mod tests {
                 kind: "api_key".to_string(),
             }),
             inline_api_key_present: false,
+            station_account_max_concurrency: 0,
+            station_key_max_concurrency: 0,
         }
     }
 
-    fn rich_candidate(id: &str) -> RuntimeRoutingCandidate {
-        RuntimeRoutingCandidate {
+    fn rich_candidate(id: &str) -> CanonicalRoutingCandidate {
+        CanonicalRoutingCandidate {
             station_key_id: id.to_string(),
             station_id: format!("station-{id}"),
             station_type: "newapi".to_string(),

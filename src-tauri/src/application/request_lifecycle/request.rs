@@ -83,7 +83,7 @@ pub(crate) struct RequestTerminalSnapshot {
     )
 )]
 pub(crate) struct RequestStartRecord {
-    pub context: RequestContextSnapshot,
+    pub(crate) context: RequestContextSnapshot,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -113,12 +113,12 @@ pub(crate) struct RequestLogAnnotations {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FinalRequestRecord {
-    pub context: RequestContextSnapshot,
+    pub(crate) context: RequestContextSnapshot,
     pub terminal: RequestTerminalSnapshot,
     pub selected_attempt_id: Option<AttemptId>,
     pub attempt_count: u16,
     pub fallback_count: u16,
-    pub annotations: RequestLogAnnotations,
+    pub(crate) annotations: RequestLogAnnotations,
 }
 
 impl FinalRequestRecord {

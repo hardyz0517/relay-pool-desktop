@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::routing_observation::{ObservationOutcome, RoutingObservation};
 
-pub(crate) const QUALITY_PROJECTOR_VERSION: &str = "routing_quality_v1";
+pub(crate) const QUALITY_PROJECTOR_VERSION: &str = "routing_quality_v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct QualitySummary {
@@ -38,10 +38,26 @@ impl Default for BetaPrior {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn rebuild_quality_summary(
     scope: &str,
     observations: &[RoutingObservation],
     prior: BetaPrior,
+) -> QualitySummary {
+    let checkpoint_sequence = observations
+        .iter()
+        .filter(|observation| observation_scope(observation) == scope)
+        .map(|observation| observation.order.producer_sequence)
+        .max()
+        .unwrap_or(0);
+    rebuild_quality_summary_with_checkpoint(scope, observations, prior, checkpoint_sequence)
+}
+
+pub(crate) fn rebuild_quality_summary_with_checkpoint(
+    scope: &str,
+    observations: &[RoutingObservation],
+    prior: BetaPrior,
+    checkpoint_sequence: u64,
 ) -> QualitySummary {
     let mut ordered = observations
         .iter()
@@ -114,11 +130,7 @@ pub(crate) fn rebuild_quality_summary(
         latency_coverage_basis_points: coverage,
         p95_latency_ms,
         last_event_at_ms,
-        checkpoint_sequence: ordered
-            .iter()
-            .map(|observation| observation.order.producer_sequence)
-            .max()
-            .unwrap_or(0),
+        checkpoint_sequence,
     }
 }
 
@@ -215,5 +227,20 @@ mod tests {
         assert_eq!(left, right);
         assert_eq!(left.observation_count, 2);
         assert_eq!(left.p95_latency_ms, Some(100));
+    }
+
+    #[test]
+    fn persisted_revision_is_supplied_by_the_ingestion_cursor() {
+        let summary = rebuild_quality_summary_with_checkpoint(
+            "station_key:key-1",
+            &[
+                observation("first", 9_000, 10, ObservationOutcome::Success),
+                observation("second", 1, 20, ObservationOutcome::Timeout),
+            ],
+            BetaPrior::default(),
+            42,
+        );
+
+        assert_eq!(summary.checkpoint_sequence, 42);
     }
 }

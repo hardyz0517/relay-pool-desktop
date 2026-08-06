@@ -378,6 +378,7 @@ fn capability_projection(input: CapabilityProjectionSet) -> CandidateCapabilityP
             .filter_map(|(subject, decision)| match decision {
                 CapabilityDecision::Allow => None,
                 CapabilityDecision::Reject => Some(subject.to_string()),
+                #[cfg(test)]
                 CapabilityDecision::RequireStrictConfirmation => {
                     Some(format!("{subject}:strict_unknown"))
                 }

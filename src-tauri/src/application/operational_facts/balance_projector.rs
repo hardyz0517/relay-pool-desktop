@@ -3,8 +3,10 @@ use crate::models::operational::{PriceConfidence, RecordRevision, UnixMillis};
 
 use super::group_projector::ProjectionTrace;
 
+#[cfg(test)]
 pub(crate) const BALANCE_PROJECTOR_VERSION: &str = "balance_scope_v1";
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BalanceEvidenceStatus {
     Available,
@@ -13,12 +15,14 @@ pub(crate) enum BalanceEvidenceStatus {
     NotApplicable,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BalanceAmount {
     pub(crate) amount: f64,
     pub(crate) currency: String,
 }
 
+#[cfg(test)]
 impl BalanceAmount {
     pub(crate) fn new(amount: f64, currency: impl Into<String>) -> Option<Self> {
         let currency = currency.into();
@@ -27,6 +31,7 @@ impl BalanceAmount {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BalanceObservation {
     pub(crate) scope: BalanceScope,
@@ -42,10 +47,15 @@ pub(crate) struct BalanceObservation {
 pub(crate) enum BalanceProjectionStatus {
     Healthy,
     DepletedEmergency,
+    #[cfg(test)]
     Unknown,
+    #[cfg(test)]
     NotSupported,
+    #[cfg(test)]
     NotApplicable,
+    #[cfg(test)]
     Stale,
+    #[cfg(test)]
     Untrusted,
     Missing,
 }
@@ -58,6 +68,7 @@ pub(crate) struct BalanceProjection {
     pub(crate) trace: ProjectionTrace,
 }
 
+#[cfg(test)]
 pub(crate) fn project_balance(
     key_scope: Option<BalanceObservation>,
     station_scope: Option<BalanceObservation>,
@@ -105,6 +116,7 @@ pub(crate) fn project_balance(
     )
 }
 
+#[cfg(test)]
 fn is_depleted(observation: &BalanceObservation) -> bool {
     let Some(balance) = &observation.balance else {
         return false;
@@ -115,6 +127,7 @@ fn is_depleted(observation: &BalanceObservation) -> bool {
     balance.currency.eq_ignore_ascii_case(&threshold.currency) && balance.amount <= threshold.amount
 }
 
+#[cfg(test)]
 fn balance_projection(
     resolved_at: UnixMillis,
     status: BalanceProjectionStatus,
@@ -146,6 +159,7 @@ fn balance_projection(
     }
 }
 
+#[cfg(test)]
 fn balance_reason(status: BalanceProjectionStatus) -> &'static str {
     match status {
         BalanceProjectionStatus::Healthy => "balance_healthy",

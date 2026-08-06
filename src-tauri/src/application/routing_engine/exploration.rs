@@ -6,12 +6,14 @@ use std::sync::{
 #[derive(Debug, Clone)]
 pub(crate) struct ExplorationBudgetRegistry {
     remaining: Arc<AtomicU32>,
+    #[cfg(test)]
     capacity: u32,
 }
 impl ExplorationBudgetRegistry {
     pub(crate) fn new(capacity: u32) -> Self {
         Self {
             remaining: Arc::new(AtomicU32::new(capacity)),
+            #[cfg(test)]
             capacity,
         }
     }
@@ -22,6 +24,7 @@ impl ExplorationBudgetRegistry {
             })
             .is_ok()
     }
+    #[cfg(test)]
     pub(crate) fn release(&self) {
         self.remaining
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
@@ -29,6 +32,7 @@ impl ExplorationBudgetRegistry {
             })
             .ok();
     }
+    #[cfg(test)]
     pub(crate) fn remaining(&self) -> u32 {
         self.remaining.load(Ordering::Acquire)
     }
@@ -71,6 +75,7 @@ pub(crate) fn choose_lane(
 /// Exhaustive bounded simulation uses this closed form as the starvation
 /// contract: every block of `ceil(10000/share)` eligible rounds has at least
 /// one exploration opportunity, subject to the finite budget.
+#[cfg(test)]
 pub(crate) fn starvation_bound(share_basis_points: u16) -> Option<u64> {
     if share_basis_points == 0 {
         None

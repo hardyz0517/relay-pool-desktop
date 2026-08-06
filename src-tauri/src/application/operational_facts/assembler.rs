@@ -15,6 +15,7 @@ static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum OperationalFactAssemblyError {
     CandidateLimitExceeded { actual: usize, limit: usize },
+    InvalidJson { field: &'static str },
     InvalidFact(OperationalValidationError),
 }
 
@@ -26,6 +27,9 @@ impl fmt::Display for OperationalFactAssemblyError {
                     formatter,
                     "operational candidate count {actual} exceeds limit {limit}"
                 )
+            }
+            Self::InvalidJson { field } => {
+                write!(formatter, "operational fact JSON is invalid for {field}")
             }
             Self::InvalidFact(error) => write!(formatter, "{error}"),
         }
@@ -112,6 +116,7 @@ impl CredentialAvailabilityFact {
         self.available
     }
 
+    #[cfg(test)]
     pub(crate) fn record_revision(&self) -> RecordRevision {
         self.record_revision
     }
@@ -123,6 +128,23 @@ pub(crate) struct OperationalCandidateFact {
     station_id: StationId,
     endpoint: EndpointFacts,
     credential: CredentialAvailabilityFact,
+    priority: i64,
+    backup_only: bool,
+    supports_chat_completions: bool,
+    supports_responses: bool,
+    supports_stream: bool,
+    supports_tools: bool,
+    supports_vision: bool,
+    supports_reasoning: bool,
+    model_allowlist: Vec<String>,
+    model_blocklist: Vec<String>,
+    preferred_models: Vec<String>,
+    routing_tags: Vec<String>,
+    success_count: i64,
+    failure_count: i64,
+    consecutive_failures: i64,
+    avg_latency_ms: Option<i64>,
+    balance_status: Option<String>,
 }
 
 impl OperationalCandidateFact {
@@ -141,6 +163,23 @@ impl OperationalCandidateFact {
     pub(crate) fn credential(&self) -> &CredentialAvailabilityFact {
         &self.credential
     }
+
+    pub(crate) fn priority(&self) -> i64 { self.priority }
+    pub(crate) fn backup_only(&self) -> bool { self.backup_only }
+    pub(crate) fn supports_chat_completions(&self) -> bool { self.supports_chat_completions }
+    pub(crate) fn supports_responses(&self) -> bool { self.supports_responses }
+    pub(crate) fn supports_stream(&self) -> bool { self.supports_stream }
+    pub(crate) fn supports_tools(&self) -> bool { self.supports_tools }
+    pub(crate) fn supports_vision(&self) -> bool { self.supports_vision }
+    pub(crate) fn supports_reasoning(&self) -> bool { self.supports_reasoning }
+    pub(crate) fn model_allowlist(&self) -> &[String] { &self.model_allowlist }
+    pub(crate) fn model_blocklist(&self) -> &[String] { &self.model_blocklist }
+    pub(crate) fn preferred_models(&self) -> &[String] { &self.preferred_models }
+    pub(crate) fn routing_tags(&self) -> &[String] { &self.routing_tags }
+    pub(crate) fn success_count(&self) -> i64 { self.success_count }
+    pub(crate) fn failure_count(&self) -> i64 { self.failure_count }
+    pub(crate) fn avg_latency_ms(&self) -> Option<i64> { self.avg_latency_ms }
+    pub(crate) fn balance_status(&self) -> Option<&str> { self.balance_status.as_deref() }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,10 +190,12 @@ pub(crate) struct SettingFact {
 }
 
 impl SettingFact {
+    #[cfg(test)]
     pub(crate) fn key(&self) -> &str {
         &self.key
     }
 
+    #[cfg(test)]
     pub(crate) fn value(&self) -> &str {
         &self.value
     }
@@ -168,10 +209,12 @@ pub(crate) struct ModelAliasFact {
 }
 
 impl ModelAliasFact {
+    #[cfg(test)]
     pub(crate) fn client_model(&self) -> &str {
         &self.client_model
     }
 
+    #[cfg(test)]
     pub(crate) fn upstream_model(&self) -> &str {
         &self.upstream_model
     }
@@ -201,18 +244,22 @@ impl OperationalFactBundle {
         &self.candidates
     }
 
+    #[cfg(test)]
     pub(crate) fn settings_by_key(&self) -> &BTreeMap<String, SettingFact> {
         &self.settings_by_key
     }
 
+    #[cfg(test)]
     pub(crate) fn model_aliases(&self) -> &[ModelAliasFact] {
         &self.model_aliases
     }
 
+    #[cfg(test)]
     pub(crate) fn query_count(&self) -> usize {
         self.query_count
     }
 
+    #[cfg(test)]
     pub(crate) fn loaded_full_model_catalog(&self) -> bool {
         self.loaded_full_model_catalog
     }
@@ -229,8 +276,8 @@ pub(crate) fn assemble_operational_fact_bundle(
         });
     }
 
-    let mut max_station_revision = 1;
-    let mut max_key_revision = 1;
+    let mut max_station_revision = 0;
+    let mut max_key_revision = 0;
     let candidates = raw
         .candidates
         .into_iter()
@@ -258,11 +305,37 @@ pub(crate) fn assemble_operational_fact_bundle(
                     row.credential_available,
                     key_record_revision,
                 ),
+                priority: row.priority,
+                backup_only: row.backup_only,
+                supports_chat_completions: row.supports_chat_completions,
+                supports_responses: row.supports_responses,
+                supports_stream: row.supports_stream,
+                supports_tools: row.supports_tools,
+                supports_vision: row.supports_vision,
+                supports_reasoning: row.supports_reasoning,
+                model_allowlist: parse_json_string_list(
+                    &row.model_allowlist_json,
+                    "model_allowlist_json",
+                )?,
+                model_blocklist: parse_json_string_list(
+                    &row.model_blocklist_json,
+                    "model_blocklist_json",
+                )?,
+                preferred_models: parse_json_string_list(
+                    &row.preferred_models_json,
+                    "preferred_models_json",
+                )?,
+                routing_tags: parse_json_string_list(&row.routing_tags_json, "routing_tags_json")?,
+                success_count: row.success_count.max(0),
+                failure_count: row.failure_count.max(0),
+                consecutive_failures: row.consecutive_failures.max(0),
+                avg_latency_ms: row.avg_latency_ms.filter(|value| *value >= 0),
+                balance_status: row.balance_status,
             })
         })
         .collect::<Result<Vec<_>, OperationalFactAssemblyError>>()?;
 
-    let mut max_settings_revision = 1;
+    let mut max_settings_revision = 0;
     let settings_by_key = raw
         .settings
         .into_iter()
@@ -280,7 +353,7 @@ pub(crate) fn assemble_operational_fact_bundle(
         })
         .collect::<Result<BTreeMap<_, _>, OperationalFactAssemblyError>>()?;
 
-    let mut max_alias_revision = 1;
+    let mut max_alias_revision = 0;
     let model_aliases = raw
         .model_aliases
         .into_iter()
@@ -309,4 +382,12 @@ pub(crate) fn assemble_operational_fact_bundle(
         query_count: raw.query_count,
         loaded_full_model_catalog: raw.loaded_full_model_catalog,
     })
+}
+
+fn parse_json_string_list(
+    value: &str,
+    field: &'static str,
+) -> Result<Vec<String>, OperationalFactAssemblyError> {
+    serde_json::from_str::<Vec<String>>(value)
+        .map_err(|_| OperationalFactAssemblyError::InvalidJson { field })
 }

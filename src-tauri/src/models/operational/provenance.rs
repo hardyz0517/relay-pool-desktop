@@ -1,8 +1,10 @@
+#[cfg(test)]
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use super::identity::{EvidenceHash, OperationalValidationError, RecordRevision, UnixMillis};
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceCoverage {
     Complete,
@@ -19,9 +21,11 @@ pub enum EvidenceFreshness {
     Unknown,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct EvidenceConfidence(f64);
 
+#[cfg(test)]
 impl EvidenceConfidence {
     #[cfg(test)]
     pub fn new(value: f64) -> Result<Self, OperationalValidationError> {

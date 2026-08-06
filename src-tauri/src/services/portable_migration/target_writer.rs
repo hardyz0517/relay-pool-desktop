@@ -93,6 +93,8 @@ impl TrustedTargetWriter {
                 validate_row(table_name, row)?;
                 if table_name == "settings" {
                     upsert_setting(&mut transaction, row).await?;
+                } else if table_name == "routing_policy" {
+                    upsert_routing_policy(&mut transaction, row).await?;
                 } else {
                     insert_row(&mut transaction, table_name, row).await?;
                 }
@@ -288,6 +290,34 @@ async fn insert_row(
         }
     }
     builder.push(")");
+    builder.build().execute(&mut **transaction).await?;
+    Ok(())
+}
+
+async fn upsert_routing_policy(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    row: &PortableRow,
+) -> PortableValidationResult<()> {
+    let columns = [
+        "singleton_key",
+        "config_json",
+        "config_revision",
+        "policy_version",
+        "system_version",
+        "status",
+        "created_at_ms",
+        "updated_at_ms",
+    ];
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "INSERT INTO routing_policy (singleton_key, config_json, config_revision, policy_version, system_version, status, created_at_ms, updated_at_ms) VALUES (",
+    );
+    {
+        let mut separated = builder.separated(", ");
+        for column in columns {
+            separated.push_bind(sqlite_text(row.get(column)));
+        }
+    }
+    builder.push(") ON CONFLICT(singleton_key) DO UPDATE SET config_json = excluded.config_json, config_revision = excluded.config_revision, policy_version = excluded.policy_version, system_version = excluded.system_version, status = excluded.status, created_at_ms = excluded.created_at_ms, updated_at_ms = excluded.updated_at_ms");
     builder.build().execute(&mut **transaction).await?;
     Ok(())
 }

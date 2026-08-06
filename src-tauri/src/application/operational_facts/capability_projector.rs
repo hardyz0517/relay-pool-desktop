@@ -1,16 +1,19 @@
+#[cfg(test)]
 use std::cmp::Reverse;
 
 use crate::models::operational::{
-    CapabilityVerdict, EndpointRevision, EvidenceConfidence, EvidenceCoverage, UnixMillis,
+    CapabilityVerdict,
 };
+#[cfg(test)]
+use crate::models::operational::{EndpointRevision, EvidenceConfidence, EvidenceCoverage, UnixMillis};
 
 pub(crate) const CAPABILITY_PROJECTOR_VERSION: &str = "capability_evidence_v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CapabilityProtocol {
     ChatCompletions,
-    Responses,
-    Embeddings,
+    #[cfg(test)] Responses,
+    #[cfg(test)] Embeddings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,6 +32,7 @@ pub(crate) enum CapabilitySubject {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg(test)]
 pub(crate) enum CapabilityEvidenceSource {
     AdapterStructure,
     UserBlock,
@@ -39,6 +43,7 @@ pub(crate) enum CapabilityEvidenceSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(test)]
 pub(crate) struct CanonicalCapabilityEvidence {
     pub(crate) id: String,
     pub(crate) subject: CapabilitySubject,
@@ -51,6 +56,7 @@ pub(crate) struct CanonicalCapabilityEvidence {
     pub(crate) expires_at: Option<UnixMillis>,
 }
 
+#[cfg(test)]
 impl CanonicalCapabilityEvidence {
     pub(crate) fn is_expired(&self, now: UnixMillis) -> bool {
         self.expires_at
@@ -63,10 +69,12 @@ impl CanonicalCapabilityEvidence {
 pub(crate) enum CapabilityDecision {
     Allow,
     Reject,
+    #[cfg(test)]
     RequireStrictConfirmation,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(test)]
 pub(crate) struct CapabilityProjectionPolicy {
     pub(crate) strict_unknown: bool,
 }
@@ -76,16 +84,23 @@ pub(crate) struct CapabilityProjection {
     pub(crate) subject: CapabilitySubject,
     pub(crate) truth: CapabilityVerdict,
     pub(crate) decision: CapabilityDecision,
+    #[cfg(test)]
     pub(crate) winner: Option<CanonicalCapabilityEvidence>,
+    #[cfg(test)]
     pub(crate) overridden: Vec<CanonicalCapabilityEvidence>,
+    #[cfg(test)]
     pub(crate) conflict_reason: Option<&'static str>,
     pub(crate) projector_version: &'static str,
     pub(crate) reason_code: &'static str,
+    #[cfg(test)]
     pub(crate) source_refs: Vec<String>,
+    #[cfg(test)]
     pub(crate) observed_at: Option<UnixMillis>,
+    #[cfg(test)]
     pub(crate) confidence: Option<EvidenceConfidence>,
 }
 
+#[cfg(test)]
 pub(crate) fn project_capability(
     subject: CapabilitySubject,
     evidence: &[CanonicalCapabilityEvidence],
@@ -136,17 +151,18 @@ pub(crate) fn project_capability(
         subject,
         truth,
         decision,
-        observed_at: winner.as_ref().map(|item| item.observed_at),
-        confidence: winner.as_ref().map(|item| item.confidence),
+        #[cfg(test)] observed_at: winner.as_ref().map(|item| item.observed_at),
+        #[cfg(test)] confidence: winner.as_ref().map(|item| item.confidence),
         winner,
         overridden,
         conflict_reason,
         projector_version: CAPABILITY_PROJECTOR_VERSION,
         reason_code,
-        source_refs: relevant.iter().map(|item| item.id.clone()).collect(),
+        #[cfg(test)] source_refs: relevant.iter().map(|item| item.id.clone()).collect(),
     }
 }
 
+#[cfg(test)]
 fn normalize_evidence_for_reduction(
     evidence: &CanonicalCapabilityEvidence,
 ) -> Option<CanonicalCapabilityEvidence> {
@@ -166,6 +182,7 @@ fn normalize_evidence_for_reduction(
     }
 }
 
+#[cfg(test)]
 fn precedence(evidence: &CanonicalCapabilityEvidence) -> u8 {
     match (evidence.source, evidence.verdict) {
         (CapabilityEvidenceSource::AdapterStructure, CapabilityVerdict::Unsupported) => 0,
@@ -180,6 +197,7 @@ fn precedence(evidence: &CanonicalCapabilityEvidence) -> u8 {
     }
 }
 
+#[cfg(test)]
 fn conflict_reason(
     winner: Option<&CanonicalCapabilityEvidence>,
     overridden: &[CanonicalCapabilityEvidence],
