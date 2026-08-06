@@ -20,6 +20,8 @@
 ## 提案与待排期规格
 
 - [`proposals/`](proposals/)：尚未成为当前实现基线的 Draft、RFC 和待排期规格。
+- [`proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md)：已完成设计评审的智能路由、共享后端事实、评分、置信度、监控反馈与解释合同。
+- [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：上述智能路由规范的详细实施任务、原子 cutover、删除合同与验证命令。
 - [`proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md`](proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md)：跨设备加密迁移 Draft。
 - [`proposals/STATUS_MONITORING_REFACTOR_SPEC.md`](proposals/STATUS_MONITORING_REFACTOR_SPEC.md)：状态监控 V2 架构和实现参考。
 

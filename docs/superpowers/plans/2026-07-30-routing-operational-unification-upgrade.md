@@ -1,5 +1,7 @@
 # Relay Pool 路由与运行事实一体化升级实施计划
 
+替代说明（2026-08-05）：本计划的已完成实现证据继续有效；未来智能评分、Policy、Observation/Quality、共享 read model 和旧实现删除工作改由 [`../../proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](../../proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md) 与 [`2026-08-05-intelligent-routing-engine-upgrade.md`](2026-08-05-intelligent-routing-engine-upgrade.md) 执行。旧 Task / gate 不得要求被新计划删除的 selector、workspace、adapter、settings 或 compatibility marker 继续存在。
+
 状态：Development implementation complete；截至 2026-08-01，自动化实现、全量 Rust 测试、前端构建、开发期本地自检、单轮 deterministic soak 和 Task 28 反回流检查已在 `codex/routing-operational-upgrade` 工作区通过。授权真实客户端/provider/CCSwitch/sleep-resume 观察仍需用户环境与显式授权，记录为未运行的外部信心观察；它们不作为 debug legacy runtime、request-coupled finalization 或 release gate 保留理由。
 日期：2026-07-30
 目标规范：`docs/superpowers/specs/2026-07-30-routing-operational-unification-upgrade-spec.md`
