@@ -25,6 +25,11 @@ assert.match(
   /\bbottom-0\b/,
   "PageForm footer should anchor to the bottom of its own scroll container",
 );
+assert.match(
+  footerClassName,
+  /\bself-start\b/,
+  "PageForm footer should keep its intrinsic height while the content row absorbs unused viewport space",
+);
 assert.doesNotMatch(
   footerClassName,
   /\bbottom-\[calc\(var\(--shell-page-gap\)\*-1\)\]/,

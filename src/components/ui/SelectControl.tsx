@@ -19,6 +19,7 @@ export type SelectOption<T extends string = string> = {
   label: ReactNode;
   triggerLabel?: ReactNode;
   description?: ReactNode;
+  descriptionPlacement?: "below" | "end";
   leadingIcon?: ReactNode;
   sectionLabel?: ReactNode;
   disabled?: boolean;
@@ -326,10 +327,22 @@ export function SelectControl<T extends string>({
                     {option.leadingIcon ? (
                       <span className="shrink-0 text-muted-foreground">{option.leadingIcon}</span>
                     ) : null}
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate">{option.label}</span>
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1",
+                        option.descriptionPlacement === "end" && "flex items-center justify-between gap-3",
+                      )}
+                    >
+                      <span className="min-w-0 truncate">{option.label}</span>
                       {option.description ? (
-                        <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
+                        <span
+                          className={cn(
+                            "truncate text-xs font-normal text-muted-foreground",
+                            option.descriptionPlacement === "end"
+                              ? "shrink-0"
+                              : "mt-0.5 block",
+                          )}
+                        >
                           {option.description}
                         </span>
                       ) : null}

@@ -138,6 +138,7 @@ for (const property of ["animation", "transition", "transform"]) {
   assertNoDeclaration(overlayRule, property);
 }
 
+assertDeclaration(contentRule, "height", "100%");
 assertDeclaration(contentRule, "min-height", "100%");
 
 assert.equal(

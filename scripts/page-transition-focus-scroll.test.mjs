@@ -103,6 +103,8 @@ assertDeclaration(layerRule, "min-width", "0");
 assertDeclaration(layerRule, "overflow-y", "auto");
 assertDeclaration(layerRule, "scrollbar-width", "none");
 assertNoDeclaration(layerRule, "padding");
+assertDeclaration(contentRule, "height", "100%");
+assertDeclaration(contentRule, "min-height", "100%");
 assertDeclaration(contentRule, "padding", "var(--shell-page-gap)");
 assertDeclaration(scrollbarRule, "display", "none");
 
