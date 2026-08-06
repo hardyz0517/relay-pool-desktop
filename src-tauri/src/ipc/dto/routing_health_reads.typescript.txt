@@ -59,7 +59,7 @@ export type RouteSimulationInputDto = {
   usesTools: boolean;
   usesVision: boolean;
   usesReasoning: boolean;
-  policy: RoutingPolicyDto | null;
+  policy: RoutingPolicyConfigV1Dto | null;
   maxRateMultiplier: number | null;
   routingGroupFilter: RoutingGroupFilterDto | null;
   sessionHash: string | null;
@@ -290,7 +290,7 @@ export type RoutingReadPageDto = {
 export type RoutingWorkspaceSnapshotDto = {
   readModelVersion: string;
   generatedAtMs: number;
-  productionPolicy: RoutingPolicyDto;
+  policyConfig: RoutingPolicyConfigV1Dto;
   previewPolicyVersion: string;
   maxRateMultiplier: number | null;
   routingGroupFilter: RoutingGroupFilterDto;

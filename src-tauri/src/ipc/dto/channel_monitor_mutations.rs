@@ -152,7 +152,7 @@ pub struct CreateChannelMonitorInputDto {
     pub retry_initial_backoff_ms: i64,
     pub retry_max_backoff_ms: i64,
     pub risk_daily_probe_budget: i64,
-    pub health_writeback_mode: MonitorHealthWritebackModeInputDto,
+    pub health_policy_mode: MonitorHealthWritebackModeInputDto,
     pub health_failure_threshold: i64,
     pub health_recovery_threshold: i64,
     pub attempt_timeout_ms: i64,
@@ -189,7 +189,7 @@ impl CreateChannelMonitorInputDto {
             retry_initial_backoff_ms: self.retry_initial_backoff_ms,
             retry_max_backoff_ms: self.retry_max_backoff_ms,
             risk_daily_probe_budget: self.risk_daily_probe_budget,
-            health_writeback_mode: self.health_writeback_mode.as_str().to_owned(),
+            health_policy_mode: self.health_policy_mode.as_str().to_owned(),
             health_failure_threshold: self.health_failure_threshold,
             health_recovery_threshold: self.health_recovery_threshold,
             attempt_timeout_ms: self.attempt_timeout_ms,
@@ -219,7 +219,7 @@ impl CreateChannelMonitorInputDto {
             self.retry_initial_backoff_ms,
             self.retry_max_backoff_ms,
             self.risk_daily_probe_budget,
-            self.health_writeback_mode,
+            self.health_policy_mode,
             self.health_failure_threshold,
             self.health_recovery_threshold,
             self.attempt_timeout_ms,
@@ -253,7 +253,7 @@ pub struct UpdateChannelMonitorInputDto {
     pub retry_initial_backoff_ms: i64,
     pub retry_max_backoff_ms: i64,
     pub risk_daily_probe_budget: i64,
-    pub health_writeback_mode: MonitorHealthWritebackModeInputDto,
+    pub health_policy_mode: MonitorHealthWritebackModeInputDto,
     pub health_failure_threshold: i64,
     pub health_recovery_threshold: i64,
     pub attempt_timeout_ms: i64,
@@ -292,7 +292,7 @@ impl UpdateChannelMonitorInputDto {
             retry_initial_backoff_ms: self.retry_initial_backoff_ms,
             retry_max_backoff_ms: self.retry_max_backoff_ms,
             risk_daily_probe_budget: self.risk_daily_probe_budget,
-            health_writeback_mode: self.health_writeback_mode.as_str().to_owned(),
+            health_policy_mode: self.health_policy_mode.as_str().to_owned(),
             health_failure_threshold: self.health_failure_threshold,
             health_recovery_threshold: self.health_recovery_threshold,
             attempt_timeout_ms: self.attempt_timeout_ms,
@@ -322,7 +322,7 @@ impl UpdateChannelMonitorInputDto {
             self.retry_initial_backoff_ms,
             self.retry_max_backoff_ms,
             self.risk_daily_probe_budget,
-            self.health_writeback_mode,
+            self.health_policy_mode,
             self.health_failure_threshold,
             self.health_recovery_threshold,
             self.attempt_timeout_ms,
@@ -442,7 +442,7 @@ fn validate_monitor_fields(
     retry_initial_backoff_ms: i64,
     retry_max_backoff_ms: i64,
     risk_daily_probe_budget: i64,
-    health_writeback_mode: MonitorHealthWritebackModeInputDto,
+    health_policy_mode: MonitorHealthWritebackModeInputDto,
     health_failure_threshold: i64,
     health_recovery_threshold: i64,
     attempt_timeout_ms: i64,
@@ -473,14 +473,14 @@ fn validate_monitor_fields(
         ));
     }
     if matches!(
-        health_writeback_mode,
+        health_policy_mode,
         MonitorHealthWritebackModeInputDto::Authoritative
     ) && !matches!(
         client_profile_id,
         MonitorClientProfileIdInputDto::StandardApi
     ) {
         return Err(invalid_input(
-            "healthWritebackMode",
+            "healthPolicyMode",
             "untrusted_profile",
             "Authoritative health writeback requires the standard API profile.",
         ));
@@ -753,7 +753,7 @@ fn fixture_monitor_input() -> Value {
         "protocolKind":"open_ai_chat","clientProfileId":"standard_api","clientProfileVersion":1,
         "primaryModel":"fixture-model","retryMaxAttemptsPerModel":1,
         "retryInitialBackoffMs":200,"retryMaxBackoffMs":2000,"riskDailyProbeBudget":200,
-        "healthWritebackMode":"observe_only","healthFailureThreshold":2,"healthRecoveryThreshold":2,
+        "healthPolicyMode":"observe_only","healthFailureThreshold":2,"healthRecoveryThreshold":2,
         "attemptTimeoutMs":10000,"executionTimeoutMs":30000,"intervalSeconds":60,"jitterSeconds":5,
         "timeoutSeconds":30,"maxConcurrency":1,"consecutiveFailureThreshold":2,
         "fallbackModels":["fixture-fallback"],"note":null
@@ -783,7 +783,7 @@ fn fixture_monitor() -> ChannelMonitor {
         retry_initial_backoff_ms: 200,
         retry_max_backoff_ms: 2_000,
         risk_daily_probe_budget: 200,
-        health_writeback_mode: "observe_only".into(),
+        health_policy_mode: "observe_only".into(),
         health_failure_threshold: 2,
         health_recovery_threshold: 2,
         attempt_timeout_ms: 10_000,
@@ -839,7 +839,7 @@ mod tests {
         incompatible_profile["clientProfileId"] = serde_json::json!("claude_code_compat");
         let mut untrusted_writeback = base.clone();
         untrusted_writeback["clientProfileId"] = serde_json::json!("codex_cli_compat");
-        untrusted_writeback["healthWritebackMode"] = serde_json::json!("authoritative");
+        untrusted_writeback["healthPolicyMode"] = serde_json::json!("authoritative");
         let mut invalid_timeout = base.clone();
         invalid_timeout["executionTimeoutMs"] = serde_json::json!(10_000);
         let mut unknown = base;

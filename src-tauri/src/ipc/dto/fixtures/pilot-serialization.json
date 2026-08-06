@@ -1845,8 +1845,8 @@
             "fixture-model"
           ],
           "healthFailureThreshold": 2,
+          "healthPolicyMode": "observe_only",
           "healthRecoveryThreshold": 2,
-          "healthWritebackMode": "observe_only",
           "id": "monitor-1",
           "intervalSeconds": 60,
           "jitterSeconds": 5,
@@ -1973,8 +1973,8 @@
           "fixture-fallback"
         ],
         "healthFailureThreshold": 2,
+        "healthPolicyMode": "observe_only",
         "healthRecoveryThreshold": 2,
-        "healthWritebackMode": "observe_only",
         "intervalSeconds": 60,
         "jitterSeconds": 5,
         "maxConcurrency": 1,
@@ -2004,8 +2004,8 @@
           "fixture-fallback"
         ],
         "healthFailureThreshold": 2,
+        "healthPolicyMode": "observe_only",
         "healthRecoveryThreshold": 2,
-        "healthWritebackMode": "observe_only",
         "id": "monitor-1",
         "intervalSeconds": 60,
         "jitterSeconds": 5,
@@ -2040,8 +2040,8 @@
           "fixture-fallback"
         ],
         "healthFailureThreshold": 2,
+        "healthPolicyMode": "observe_only",
         "healthRecoveryThreshold": 2,
-        "healthWritebackMode": "observe_only",
         "id": "monitor-1",
         "intervalSeconds": 60,
         "jitterSeconds": 5,
@@ -2072,8 +2072,8 @@
           "fixture-fallback"
         ],
         "healthFailureThreshold": 2,
+        "healthPolicyMode": "observe_only",
         "healthRecoveryThreshold": 2,
-        "healthWritebackMode": "observe_only",
         "id": "monitor-1",
         "intervalSeconds": 60,
         "jitterSeconds": 5,
@@ -2673,8 +2673,19 @@
           "nextCursor": null,
           "returned": 1
         },
-        "previewPolicyVersion": "hierarchical_v1_preview",
-        "productionPolicy": "cost_stable_first",
+        "policyConfig": {
+          "affinityEnabled": false,
+          "affinityTtlSeconds": 300,
+          "allowDepletedFallback": false,
+          "costWeight": 2000,
+          "explorationShareBasisPoints": 500,
+          "maxCandidates": 64,
+          "preferenceWeight": 1500,
+          "reliabilityWeight": 4000,
+          "responsivenessWeight": 2500,
+          "version": 1
+        },
+        "previewPolicyVersion": "intelligent_planner_v1",
         "readModelStatus": "available",
         "readModelVersion": "routing_workspace_read_model_v1",
         "routingGroupFilter": {
@@ -2725,7 +2736,18 @@
         "endpoint": "chat_completions",
         "maxRateMultiplier": 2.0,
         "model": "fixture-model",
-        "policy": "cost_stable_first",
+        "policy": {
+          "affinityEnabled": false,
+          "affinityTtlSeconds": 300,
+          "allowDepletedFallback": false,
+          "costWeight": 2000,
+          "explorationShareBasisPoints": 500,
+          "maxCandidates": 64,
+          "preferenceWeight": 1500,
+          "reliabilityWeight": 4000,
+          "responsivenessWeight": 2500,
+          "version": 1
+        },
         "previousResponseId": null,
         "routingGroupFilter": {
           "group_type": "gpt"
@@ -2744,7 +2766,7 @@
         "message": "Route simulation completed.",
         "plannerErrorCode": null,
         "policy": "cost_stable_first",
-        "previewPolicyVersion": "hierarchical_v1_preview",
+        "previewPolicyVersion": "intelligent_planner_v1",
         "routingGroupFilter": {
           "group_type": "gpt"
         },
@@ -2765,48 +2787,6 @@
         "ok": true,
         "stationId": "station-1",
         "status": "success"
-      }
-    },
-    {
-      "command": "reorder_local_routing_keys",
-      "input": {
-        "stationKeyIds": [
-          "key-1",
-          "key-2"
-        ]
-      },
-      "output": {
-        "candidates": [],
-        "latestDecision": null,
-        "proxyStatus": {
-          "activeRequests": 1,
-          "bindAddr": "127.0.0.1",
-          "lastError": null,
-          "lifecycle": "running",
-          "port": 8787,
-          "requestCount": 2,
-          "running": true,
-          "startedAt": "1700000000000"
-        },
-        "recentEvents": [],
-        "settings": {
-          "bindAddr": "127.0.0.1",
-          "enabled": true,
-          "endpoint": "chat_completions",
-          "fallbackEnabled": true,
-          "maxRateMultiplier": 2.0,
-          "policy": "automatic_balanced",
-          "port": 8787,
-          "previewKind": "baseline_eligibility",
-          "routingGroupFilter": "all_groups"
-        },
-        "summary": {
-          "candidateCount": 0,
-          "cooldownCandidateCount": 0,
-          "lastDecisionAt": null,
-          "previewEligibleCandidateCount": 0,
-          "previewExcludedCandidateCount": 0
-        }
       }
     },
     {
@@ -3161,43 +3141,6 @@
         "requestCount": 2,
         "running": true,
         "startedAt": "1700000000000"
-      }
-    },
-    {
-      "command": "load_local_routing_workspace",
-      "input": {},
-      "output": {
-        "candidates": [],
-        "latestDecision": null,
-        "proxyStatus": {
-          "activeRequests": 1,
-          "bindAddr": "127.0.0.1",
-          "lastError": null,
-          "lifecycle": "running",
-          "port": 8787,
-          "requestCount": 2,
-          "running": true,
-          "startedAt": "1700000000000"
-        },
-        "recentEvents": [],
-        "settings": {
-          "bindAddr": "127.0.0.1",
-          "enabled": true,
-          "endpoint": "chat_completions",
-          "fallbackEnabled": true,
-          "maxRateMultiplier": 2.0,
-          "policy": "automatic_balanced",
-          "port": 8787,
-          "previewKind": "baseline_eligibility",
-          "routingGroupFilter": "all_groups"
-        },
-        "summary": {
-          "candidateCount": 0,
-          "cooldownCandidateCount": 0,
-          "lastDecisionAt": null,
-          "previewEligibleCandidateCount": 0,
-          "previewExcludedCandidateCount": 0
-        }
       }
     },
     {

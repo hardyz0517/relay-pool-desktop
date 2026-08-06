@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
+    routing::{RoutingGroupFilter, DispatchAlgorithmSettings},
     settings::{AppSettings, UpdateSettingsInput},
     AppStatus,
 };
@@ -147,7 +147,7 @@ impl CollectorProxyModeDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SchedulerAdvancedSettingsInputDto {
+pub struct DispatchAlgorithmSettingsInputDto {
     pub top_k: u16,
     pub multiplier: f64,
     pub priority: f64,
@@ -171,8 +171,8 @@ pub struct SchedulerAdvancedSettingsInputDto {
     pub fallback_wait_timeout_seconds: u64,
 }
 
-impl From<SchedulerAdvancedSettingsInputDto> for SchedulerAdvancedSettings {
-    fn from(value: SchedulerAdvancedSettingsInputDto) -> Self {
+impl From<DispatchAlgorithmSettingsInputDto> for DispatchAlgorithmSettings {
+    fn from(value: DispatchAlgorithmSettingsInputDto) -> Self {
         Self {
             top_k: value.top_k,
             multiplier: value.multiplier,
@@ -203,13 +203,16 @@ impl From<SchedulerAdvancedSettingsInputDto> for SchedulerAdvancedSettings {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateSettingsInputDto {
     pub local_proxy_port: u16,
-    pub default_routing_strategy: RoutingStrategyDto,
+    #[serde(rename = "defaultRoutingStrategy")]
+    pub routing_policy_name: RoutingStrategyDto,
     pub collector_proxy_mode: CollectorProxyModeDto,
     pub collector_proxy_url: Option<String>,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     pub max_rate_multiplier: Option<f64>,
-    pub default_routing_group_filter: Option<RoutingGroupFilter>,
-    pub scheduler_advanced_settings: Option<SchedulerAdvancedSettingsInputDto>,
+    #[serde(rename = "defaultRoutingGroupFilter")]
+    pub routing_group_scope: Option<RoutingGroupFilter>,
+    #[serde(rename = "schedulerAdvancedSettings")]
+    pub scheduler_config: Option<DispatchAlgorithmSettingsInputDto>,
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
@@ -235,12 +238,12 @@ impl UpdateSettingsInputDto {
         self.validate()?;
         Ok(UpdateSettingsInput {
             local_proxy_port: self.local_proxy_port,
-            default_routing_strategy: self.default_routing_strategy.into_string(),
+            routing_policy_name: self.routing_policy_name.into_string(),
             collector_proxy_mode: self.collector_proxy_mode.into_string(),
             collector_proxy_url: normalize_optional(self.collector_proxy_url),
             max_rate_multiplier: Some(self.max_rate_multiplier),
-            default_routing_group_filter: self.default_routing_group_filter,
-            scheduler_advanced_settings: self.scheduler_advanced_settings.map(Into::into),
+            routing_group_scope: self.routing_group_scope,
+            scheduler_config: self.scheduler_config.map(Into::into),
             low_balance_threshold_cny: self.low_balance_threshold_cny,
             collector_interval_minutes: self.collector_interval_minutes,
             balance_interval_minutes: self.balance_interval_minutes,
@@ -326,8 +329,8 @@ impl UpdateSettingsInputDto {
                 "The concurrency is out of range.",
             ));
         }
-        if let Some(settings) = &self.scheduler_advanced_settings {
-            let settings: SchedulerAdvancedSettings = settings.clone().into();
+        if let Some(settings) = &self.scheduler_config {
+            let settings: DispatchAlgorithmSettings = settings.clone().into();
             settings.validate().map_err(|_| {
                 invalid_input(
                     "schedulerAdvancedSettings",
@@ -393,12 +396,15 @@ pub struct SettingsDto {
     pub local_proxy_port: u16,
     pub local_proxy_start_on_launch: bool,
     pub local_key_masked: String,
-    pub default_routing_strategy: String,
+    #[serde(rename = "defaultRoutingStrategy")]
+    pub routing_policy_name: String,
     pub collector_proxy_mode: String,
     pub collector_proxy_url: Option<String>,
     pub max_rate_multiplier: Option<f64>,
-    pub default_routing_group_filter: RoutingGroupFilter,
-    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
+    #[serde(rename = "defaultRoutingGroupFilter")]
+    pub routing_group_scope: RoutingGroupFilter,
+    #[serde(rename = "schedulerAdvancedSettings")]
+    pub scheduler_config: DispatchAlgorithmSettings,
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
@@ -420,12 +426,12 @@ impl From<AppSettings> for SettingsDto {
             local_proxy_port: value.local_proxy_port,
             local_proxy_start_on_launch: value.local_proxy_start_on_launch,
             local_key_masked: value.local_key_masked,
-            default_routing_strategy: value.default_routing_strategy,
+            routing_policy_name: value.routing_policy_name,
             collector_proxy_mode: value.collector_proxy_mode,
             collector_proxy_url: value.collector_proxy_url,
             max_rate_multiplier: value.max_rate_multiplier,
-            default_routing_group_filter: value.default_routing_group_filter,
-            scheduler_advanced_settings: value.scheduler_advanced_settings,
+            routing_group_scope: value.routing_group_scope,
+            scheduler_config: value.scheduler_config,
             low_balance_threshold_cny: value.low_balance_threshold_cny,
             collector_interval_minutes: value.collector_interval_minutes,
             balance_interval_minutes: value.balance_interval_minutes,
@@ -466,7 +472,7 @@ export type RoutingGroupFilter =
   | { group_id_hash: string }
   | { group_type: "gpt" | "claude" | "gemini" | "grok" | "image_generation" };
 
-export type SchedulerAdvancedSettingsDto = {
+export type DispatchAlgorithmSettingsDto = {
   topK: number;
   multiplier: number;
   priority: number;
@@ -507,7 +513,7 @@ export type UpdateSettingsInputDto = {
   collectorProxyUrl: string | null;
   maxRateMultiplier: number | null;
   defaultRoutingGroupFilter?: RoutingGroupFilter;
-  schedulerAdvancedSettings?: SchedulerAdvancedSettingsDto | null;
+  schedulerAdvancedSettings?: DispatchAlgorithmSettingsDto | null;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
@@ -537,7 +543,7 @@ export type SettingsDto = {
   collectorProxyUrl: string | null;
   maxRateMultiplier: number | null;
   defaultRoutingGroupFilter: RoutingGroupFilter;
-  schedulerAdvancedSettings: SchedulerAdvancedSettingsDto;
+  schedulerAdvancedSettings: DispatchAlgorithmSettingsDto;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
@@ -616,7 +622,7 @@ mod input_contract_tests {
         let input = UpdateSettingsInputDto::parse(valid_input()).expect("valid transport input");
         let domain = input.into_domain().expect("valid domain input");
         assert_eq!(domain.local_proxy_port, 8787);
-        assert_eq!(domain.default_routing_strategy, "automatic_balanced");
+        assert_eq!(domain.routing_policy_name, "automatic_balanced");
         assert_eq!(domain.max_rate_multiplier, Some(None));
 
         let mut missing = valid_input();

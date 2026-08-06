@@ -5,6 +5,7 @@ use crate::{
     application::command_facades::RoutingCommandFacade,
     commands::error,
     ipc::dto::{
+        routing_mutations::{RoutingPolicySnapshotDto, UpdateRoutingPolicyInputDto},
         routing_health_reads::{
             RecentRouteDecisionsInputDto, RecentRouteDecisionsPageDto, RequestDecisionTraceDto,
             RequestDecisionTraceInputDto, RouteSimulationInputDto, RouteSimulationResultDto,
@@ -28,6 +29,57 @@ pub async fn list_station_key_health(
             .list_station_key_health()
             .await
             .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn load_routing_policy(
+    facade: State<'_, RoutingCommandFacade>,
+    input: Value,
+) -> Result<RoutingPolicySnapshotDto, error::CommandError> {
+    correlation::in_command_scope("load_routing_policy", async {
+        crate::ipc::dto::EmptyInputDto::parse(input)?;
+        let stored = facade
+            .load_routing_policy()
+            .await
+            .map_err(super::public_command_application_error)?;
+        let config: crate::models::routing_policy::RoutingPolicyConfigV1 = serde_json::from_value(stored.config)
+            .map_err(|_| error::CommandError::internal(None))?;
+        Ok(RoutingPolicySnapshotDto {
+            config: config.into(),
+            revision: stored.revision,
+            policy_version: stored.policy_version,
+            system_version: stored.system_version,
+            status: stored.status,
+            updated_at_ms: stored.updated_at_ms,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn update_routing_policy(
+    facade: State<'_, RoutingCommandFacade>,
+    input: Value,
+) -> Result<RoutingPolicySnapshotDto, error::CommandError> {
+    correlation::in_command_scope("update_routing_policy", async {
+        let input = UpdateRoutingPolicyInputDto::parse(input)?;
+        let config = input.config.into_domain()?;
+        let stored = facade
+            .save_routing_policy(config, input.expected_revision)
+            .await
+            .map_err(super::public_command_application_error)?;
+        let config: crate::models::routing_policy::RoutingPolicyConfigV1 = serde_json::from_value(stored.config)
+            .map_err(|_| error::CommandError::internal(None))?;
+        Ok(RoutingPolicySnapshotDto {
+            config: config.into(),
+            revision: stored.revision,
+            policy_version: stored.policy_version,
+            system_version: stored.system_version,
+            status: stored.status,
+            updated_at_ms: stored.updated_at_ms,
+        })
     })
     .await
 }
@@ -143,7 +195,7 @@ pub async fn simulate_route(
     input: Value,
 ) -> Result<RouteSimulationResultDto, error::CommandError> {
     correlation::in_command_scope("simulate_route", async {
-        let input = RouteSimulationInputDto::parse(input)?.into_domain();
+        let input = RouteSimulationInputDto::parse(input)?.into_domain()?;
         facade
             .simulate_route(input)
             .await

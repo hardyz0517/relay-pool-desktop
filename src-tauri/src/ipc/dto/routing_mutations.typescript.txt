@@ -9,7 +9,6 @@ export type EndpointPingResultDto = {
   errorSummary: string | null;
 };
 
-export type ReorderLocalRoutingKeysInputDto = { stationKeyIds: string[] };
 
 export type UpdateStationKeyCapabilitiesInputDto = {
   stationKeyId: string;
@@ -36,3 +35,30 @@ export type UpsertModelAliasInputDto = {
 };
 
 export type DeleteModelAliasInputDto = { id: string };
+
+export type RoutingPolicyConfigV1Dto = {
+  version: number;
+  reliabilityWeight: number;
+  responsivenessWeight: number;
+  costWeight: number;
+  preferenceWeight: number;
+  maxCandidates: number;
+  explorationShareBasisPoints: number;
+  allowDepletedFallback: boolean;
+  affinityEnabled: boolean;
+  affinityTtlSeconds: number;
+};
+
+export type UpdateRoutingPolicyInputDto = {
+  config: RoutingPolicyConfigV1Dto;
+  expectedRevision: number | null;
+};
+
+export type RoutingPolicySnapshotDto = {
+  config: RoutingPolicyConfigV1Dto;
+  revision: number;
+  policyVersion: string;
+  systemVersion: string;
+  status: string;
+  updatedAtMs: number;
+};

@@ -10,16 +10,16 @@ use crate::application::queries::{
     routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
 };
 #[cfg(test)]
-use crate::models::routing::PricingGroupType;
+use crate::models::routing::{PricingGroupType, RoutingPolicy};
 use crate::models::{
     routing::{
         ModelAlias, RouteEndpointKind, RouteSimulationInput, RouteSimulationResult,
-        RoutingGroupFilter, RoutingPolicy, StationKeyCapabilities, StationKeyHealth,
+        RoutingGroupFilter, StationKeyCapabilities, StationKeyHealth,
     },
     stations::StationEndpointHealth,
 };
 
-use super::{invalid_input, TypeDescriptor};
+use super::{invalid_input, routing_mutations::RoutingPolicyConfigV1Dto, TypeDescriptor};
 
 const MAX_TEXT_BYTES: usize = 512;
 const MAX_GROUP_ID_BYTES: usize = 256;
@@ -232,7 +232,7 @@ pub struct RouteSimulationInputDto {
     pub uses_tools: bool,
     pub uses_vision: bool,
     pub uses_reasoning: bool,
-    pub policy: Option<RoutingPolicy>,
+    pub policy: Option<RoutingPolicyConfigV1Dto>,
     #[serde(default)]
     pub max_rate_multiplier: Option<f64>,
     #[serde(default)]
@@ -256,20 +256,23 @@ impl RouteSimulationInputDto {
         Ok(input)
     }
 
-    pub fn into_domain(self) -> RouteSimulationInput {
-        RouteSimulationInput {
+    pub fn into_domain(self) -> Result<RouteSimulationInput, crate::commands::error::CommandError> {
+        Ok(RouteSimulationInput {
             endpoint: self.endpoint,
             model: self.model,
             stream: self.stream,
             uses_tools: self.uses_tools,
             uses_vision: self.uses_vision,
             uses_reasoning: self.uses_reasoning,
-            policy: self.policy,
+            policy: self
+                .policy
+                .map(RoutingPolicyConfigV1Dto::into_domain)
+                .transpose()?,
             max_rate_multiplier: self.max_rate_multiplier,
             routing_group_filter: self.routing_group_filter,
             session_hash: self.session_hash,
             previous_response_id: self.previous_response_id,
-        }
+        })
     }
 
     fn validate(&self) -> Result<(), crate::commands::error::CommandError> {
@@ -430,8 +433,19 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
             "output":{
                 "readModelVersion":"routing_workspace_read_model_v1",
                 "generatedAtMs":1700000000000_i64,
-                "productionPolicy":"cost_stable_first",
-                "previewPolicyVersion":"hierarchical_v1_preview",
+                "policyConfig":{
+                    "version":1,
+                    "reliabilityWeight":4000,
+                    "responsivenessWeight":2500,
+                    "costWeight":2000,
+                    "preferenceWeight":1500,
+                    "maxCandidates":64,
+                    "explorationShareBasisPoints":500,
+                    "allowDepletedFallback":false,
+                    "affinityEnabled":false,
+                    "affinityTtlSeconds":300
+                },
+                "previewPolicyVersion":"intelligent_planner_v1",
                 "maxRateMultiplier":2.0,
                 "routingGroupFilter":{"group_type":"gpt"},
                 "capacityMode":"snapshot_only",
@@ -529,7 +543,18 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
                 "usesTools":false,
                 "usesVision":false,
                 "usesReasoning":false,
-                "policy":"cost_stable_first",
+                "policy":{
+                    "version":1,
+                    "reliabilityWeight":4000,
+                    "responsivenessWeight":2500,
+                    "costWeight":2000,
+                    "preferenceWeight":1500,
+                    "maxCandidates":64,
+                    "explorationShareBasisPoints":500,
+                    "allowDepletedFallback":false,
+                    "affinityEnabled":false,
+                    "affinityTtlSeconds":300
+                },
                 "maxRateMultiplier":2.0,
                 "routingGroupFilter":{"group_type":"gpt"},
                 "sessionHash":"session-1",
@@ -605,7 +630,7 @@ fn fixture_endpoint_health() -> StationEndpointHealth {
 #[cfg(test)]
 fn fixture_simulation_result() -> RouteSimulationResult {
     RouteSimulationResult {
-        preview_policy_version: "hierarchical_v1_preview".into(),
+        preview_policy_version: "intelligent_planner_v1".into(),
         capacity_mode: "snapshot_only".into(),
         selected_capacity_acquired: false,
         selected_station_key_id: Some("key-1".into()),
@@ -633,7 +658,18 @@ mod tests {
             "usesTools":false,
             "usesVision":false,
             "usesReasoning":false,
-            "policy":"cost_stable_first",
+            "policy":{
+                "version":1,
+                "reliabilityWeight":4000,
+                "responsivenessWeight":2500,
+                "costWeight":2000,
+                "preferenceWeight":1500,
+                "maxCandidates":64,
+                "explorationShareBasisPoints":500,
+                "allowDepletedFallback":false,
+                "affinityEnabled":false,
+                "affinityTtlSeconds":300
+            },
             "maxRateMultiplier":2.0,
             "routingGroupFilter":{"group_type":"gpt"},
             "sessionHash":"session-1",

@@ -6,8 +6,7 @@ use crate::{
     application::command_facades::LocalProxyCommandFacade,
     commands::error,
     ipc::dto::{
-        proxy_workspace_reads::{LocalRoutingWorkspaceDto, ProxyStatusDto},
-        routing_mutations::ReorderLocalRoutingKeysInputDto,
+        proxy_workspace_reads::ProxyStatusDto,
         EmptyInputDto,
     },
     observability::correlation,
@@ -23,36 +22,6 @@ pub async fn get_proxy_status(
         EmptyInputDto::parse(input)?;
         facade
             .get_proxy_status()
-            .await
-            .map_err(super::public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn load_local_routing_workspace(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
-    correlation::in_command_scope("load_local_routing_workspace", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .load_local_routing_workspace()
-            .await
-            .map_err(super::public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn reorder_local_routing_keys(
-    facade: State<'_, LocalProxyCommandFacade>,
-    input: Value,
-) -> Result<LocalRoutingWorkspaceDto, error::CommandError> {
-    correlation::in_command_scope("reorder_local_routing_keys", async {
-        let input = ReorderLocalRoutingKeysInputDto::parse(input)?;
-        facade
-            .reorder_local_routing_keys(input.station_key_ids)
             .await
             .map_err(super::public_command_application_error)
     })
