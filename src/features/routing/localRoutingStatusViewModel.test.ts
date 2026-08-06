@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { LocalRoutingCandidateRow } from "@/lib/types/localRouting";
+import type { RoutingCandidateView } from "@/lib/types/routingWorkspace";
 import {
   buildCandidateDisplayFacts,
   buildCandidateHealthDisplay,
 } from "./localRoutingStatusViewModel";
 
-function candidate(overrides: Partial<LocalRoutingCandidateRow> = {}): LocalRoutingCandidateRow {
+function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandidateView {
   return {
     stationKeyId: "key-1",
     stationId: "station-1",

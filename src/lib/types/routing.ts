@@ -23,19 +23,25 @@ import type {
   RoutingWorkspaceCandidateDto,
   RoutingWorkspaceSnapshotDto,
   RoutingWorkspaceSnapshotInputDto,
-  SchedulerAdvancedSettingsDto,
+  DispatchAlgorithmSettingsDto,
   StationKeyCapabilitiesDto,
   StationKeyHealthDto,
   StationKeyOperationalDetailDto,
   UpdateStationKeyCapabilitiesInputDto,
   UpsertModelAliasInputDto,
+  RoutingPolicyConfigV1Dto,
+  RoutingPolicySnapshotDto,
+  UpdateRoutingPolicyInputDto,
 } from "@/lib/bridge/generated";
 
 export type RoutingPolicy = RoutingPolicyDto;
+export type RoutingPolicyConfigV1 = RoutingPolicyConfigV1Dto;
+export type RoutingPolicySnapshot = RoutingPolicySnapshotDto;
+export type UpdateRoutingPolicyInput = UpdateRoutingPolicyInputDto;
 export type RouteEndpointKind = RouteEndpointKindDto;
 export type PricingGroupType = PricingGroupTypeDto;
 export type RoutingGroupFilter = RoutingGroupFilterDto;
-export type SchedulerAdvancedSettings = SchedulerAdvancedSettingsDto;
+export type DispatchAlgorithmSettings = DispatchAlgorithmSettingsDto;
 
 export type StationKeyCapabilities = StationKeyCapabilitiesDto;
 export type UpdateStationKeyCapabilitiesInput = UpdateStationKeyCapabilitiesInputDto;

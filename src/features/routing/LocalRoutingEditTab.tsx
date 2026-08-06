@@ -17,10 +17,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useQueryClient } from "@tanstack/react-query";
 import { EmptyState, StatusBadge, useToast } from "@/components/ui";
-import { reorderLocalRoutingKeys } from "@/lib/api/localRouting";
+import { reorderKeyPool } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { synchronizeRoutingQueriesAfterMutation } from "@/lib/query/routingQuerySynchronization";
-import type { LocalRoutingCandidateRow as LocalRoutingCandidate, LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import type { RoutingCandidateView as LocalRoutingCandidate, RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import { cn } from "@/lib/utils";
 import {
   LocalRoutingCandidateHeader,
@@ -29,7 +29,7 @@ import {
 import { LocalRoutingSettingsEditor } from "./LocalRoutingSettingsEditor";
 
 type LocalRoutingEditTabProps = {
-  workspace: LocalRoutingWorkspace | null;
+  workspace: RoutingWorkspaceView | null;
   loading: boolean;
 };
 
@@ -109,9 +109,8 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
     setSyncState("saving");
     setSyncError(null);
 
-    let nextWorkspace: LocalRoutingWorkspace;
     try {
-      nextWorkspace = await reorderLocalRoutingKeys({ stationKeyIds: nextStationKeyIds });
+      await reorderKeyPool(nextStationKeyIds);
     } catch (requestError) {
       if (operationId !== saveOperationRef.current || workspaceVersionAtStart !== workspaceVersionRef.current) {
         return;
@@ -128,17 +127,11 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
       operationId === saveOperationRef.current &&
       workspaceVersionAtStart === workspaceVersionRef.current;
     if (operationIsCurrent) {
-      setCandidates(
-        nextWorkspace.candidates.length === nextCandidates.length
-          ? nextWorkspace.candidates
-          : nextCandidates,
-      );
+      setCandidates(nextCandidates);
       setSyncState("synced");
     }
 
-    const synchronization = await synchronizeRoutingQueriesAfterMutation(queryClient, {
-      localWorkspace: nextWorkspace,
-    });
+    const synchronization = await synchronizeRoutingQueriesAfterMutation(queryClient);
     if (!synchronization.refreshed && operationIsCurrent) {
       toast.error("候选顺序已保存，但状态刷新失败", readError(synchronization.errors[0]));
     }

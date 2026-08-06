@@ -24,7 +24,6 @@ describe("runtime status backend cutover", () => {
       proxy: {} as BackendClient["proxy"],
       dashboard: {} as BackendClient["dashboard"],
       runtime,
-      localRouting: {} as BackendClient["localRouting"],
       dataRecovery: {} as BackendClient["dataRecovery"],
       dataMigration: {} as BackendClient["dataMigration"],
       economics: {} as BackendClient["economics"],

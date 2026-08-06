@@ -7,7 +7,7 @@ import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupF
 import { getStationKeyCapabilities } from "@/lib/api/routing";
 import { saveStationKeyWithDefaults } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
-import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
+import { deriveStationGroupDisplayFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { keyPoolQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -752,7 +752,7 @@ async function loadCurrentStationGroupOptions(stationId: string) {
     listGroupRateRecords(stationId),
   ]);
   return buildStationGroupOptionsFromCurrentFactsForSelect(
-    buildCurrentStationGroupFacts({ bindings, rates }),
+    deriveStationGroupDisplayFacts({ bindings, rates }),
   );
 }
 

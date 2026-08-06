@@ -96,7 +96,6 @@ import type {
   DashboardLiveRequestMetricsSnapshot,
   DashboardRequestMetricsInput,
 } from "@/lib/types/dashboardMetrics";
-import type { LocalRoutingWorkspace, ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 import type { ProxyStatus, RequestLog } from "@/lib/types/proxy";
 import type { RuntimeStatus } from "@/lib/types/runtimeStatus";
 import type {
@@ -225,11 +224,6 @@ export type RuntimeDomainClient = {
   getRuntimeStatus(): Promise<RuntimeStatus>;
 };
 
-export type LocalRoutingDomainClient = {
-  loadLocalRoutingWorkspace(): Promise<LocalRoutingWorkspace>;
-  reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInput): Promise<LocalRoutingWorkspace>;
-};
-
 export type DataRecoveryDomainClient = {
   getDataStoreStartupState(): Promise<DataStoreStartupView>;
   refreshDataStoreCandidates(): Promise<DataStoreStartupView>;
@@ -303,6 +297,8 @@ export type RoutingDomainClient = {
   upsertModelAlias(input: UpsertModelAliasInput): Promise<ModelAlias>;
   deleteModelAlias(id: string): Promise<void>;
   listStationKeyHealth(): Promise<StationKeyHealth[]>;
+  loadRoutingPolicy(): Promise<import("./generated").RoutingPolicySnapshotDto>;
+  updateRoutingPolicy(input: import("./generated").UpdateRoutingPolicyInputDto): Promise<import("./generated").RoutingPolicySnapshotDto>;
   loadRoutingWorkspaceSnapshot(input?: RoutingWorkspaceSnapshotInput): Promise<RoutingWorkspaceSnapshot>;
   loadRoutingRuntimeOverlay(): Promise<RoutingRuntimeOverlay>;
   listRecentRouteDecisions(input?: RecentRouteDecisionsInput): Promise<RecentRouteDecisionsPage>;
@@ -390,7 +386,6 @@ export type BackendClient = {
   readonly collectorRuns: CollectorRunsDomainClient;
   readonly proxy: ProxyDomainClient;
   readonly dashboard: DashboardDomainClient;
-  readonly localRouting: LocalRoutingDomainClient;
   readonly dataRecovery: DataRecoveryDomainClient;
   readonly dataMigration: DataMigrationDomainClient;
   readonly economics: EconomicsDomainClient;

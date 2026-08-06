@@ -1,4 +1,4 @@
-import type { RoutingGroupFilter, SchedulerAdvancedSettings } from "@/lib/types/routing";
+import type { RoutingGroupFilter, DispatchAlgorithmSettings } from "@/lib/types/routing";
 
 export type RoutingStrategy =
   | "automatic_balanced"
@@ -38,9 +38,9 @@ export const SCHEDULER_ADVANCED_FIELD_KINDS = {
   stickyWaitTimeoutSeconds: "positiveInteger",
   fallbackMaxWaiting: "positiveInteger",
   fallbackWaitTimeoutSeconds: "positiveInteger",
-} as const satisfies Record<keyof SchedulerAdvancedSettings, SchedulerAdvancedFieldKind>;
+} as const satisfies Record<keyof DispatchAlgorithmSettings, SchedulerAdvancedFieldKind>;
 
-export const DEFAULT_SCHEDULER_ADVANCED_SETTINGS: SchedulerAdvancedSettings = {
+export const DEFAULT_SCHEDULER_ADVANCED_SETTINGS: DispatchAlgorithmSettings = {
   topK: 7,
   multiplier: 1.0,
   priority: 1.0,
@@ -73,7 +73,7 @@ export type AppSettings = {
   collectorProxyUrl: string | null;
   maxRateMultiplier: number | null;
   defaultRoutingGroupFilter: RoutingGroupFilter;
-  schedulerAdvancedSettings: SchedulerAdvancedSettings;
+  schedulerAdvancedSettings: DispatchAlgorithmSettings;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
@@ -126,7 +126,7 @@ export type UpdateSettingsInput = {
   collectorProxyUrl: string | null;
   maxRateMultiplier: number | null;
   defaultRoutingGroupFilter: RoutingGroupFilter;
-  schedulerAdvancedSettings: SchedulerAdvancedSettings;
+  schedulerAdvancedSettings: DispatchAlgorithmSettings;
   lowBalanceThresholdCny: number;
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;

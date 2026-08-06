@@ -3,7 +3,7 @@ import { GripVertical } from "lucide-react";
 import type { ReactNode } from "react";
 import { StatusBadge } from "@/components/ui";
 import { toTimestampMillis } from "@/lib/time";
-import type { LocalRoutingCandidateRow as LocalRoutingCandidate } from "@/lib/types/localRouting";
+import type { RoutingCandidateView as LocalRoutingCandidate } from "@/lib/types/routingWorkspace";
 import type { RouteEndpointKind } from "@/lib/types/routing";
 import { cn } from "@/lib/utils";
 import {

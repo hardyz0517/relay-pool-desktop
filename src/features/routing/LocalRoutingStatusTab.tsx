@@ -1,6 +1,6 @@
 import { Clock3, Filter, Gauge, Power, PowerOff, Server, UsersRound } from "lucide-react";
 import { Button, EmptyState, MetricPanel, SectionCard, StatusBadge } from "@/components/ui";
-import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
+import type { RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import type { RouteEndpointKind, RoutingGroupFilter } from "@/lib/types/routing";
 import {
   buildLatestDecisionDisplay,
@@ -12,7 +12,7 @@ import {
 } from "./LocalRoutingStatusCandidateRow";
 
 type LocalRoutingStatusTabProps = {
-  workspace: LocalRoutingWorkspace | null;
+  workspace: RoutingWorkspaceView | null;
   maxRateMultiplier?: number | null;
   loading: boolean;
   nowMs: number;

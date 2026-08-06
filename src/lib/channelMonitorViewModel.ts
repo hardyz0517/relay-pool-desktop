@@ -36,7 +36,7 @@ export type ChannelMonitorDraft = {
   retryInitialBackoffMs: string;
   retryMaxBackoffMs: string;
   riskDailyProbeBudget: string;
-  healthWritebackMode: ChannelMonitorHealthWritebackMode;
+  healthPolicyMode: ChannelMonitorHealthWritebackMode;
   healthFailureThreshold: string;
   healthRecoveryThreshold: string;
   note: string;
@@ -174,7 +174,7 @@ export function createStationKeyMonitorInput(
     retryInitialBackoffMs: 200,
     retryMaxBackoffMs: 2_000,
     riskDailyProbeBudget: 200,
-    healthWritebackMode: "observe_only",
+    healthPolicyMode: "observe_only",
     healthFailureThreshold: 2,
     healthRecoveryThreshold: 2,
     attemptTimeoutMs: DEFAULT_MONITOR_ATTEMPT_TIMEOUT_MS,
@@ -209,7 +209,7 @@ export function updateStationKeyMonitorEnabledInput(
     retryInitialBackoffMs: monitor.retryInitialBackoffMs,
     retryMaxBackoffMs: monitor.retryMaxBackoffMs,
     riskDailyProbeBudget: monitor.riskDailyProbeBudget,
-    healthWritebackMode: monitor.healthWritebackMode,
+    healthPolicyMode: monitor.healthPolicyMode,
     healthFailureThreshold: monitor.healthFailureThreshold,
     healthRecoveryThreshold: monitor.healthRecoveryThreshold,
     attemptTimeoutMs: monitor.attemptTimeoutMs,
@@ -255,7 +255,7 @@ export function createEmptyMonitorDraft(
     retryInitialBackoffMs: "200",
     retryMaxBackoffMs: "2000",
     riskDailyProbeBudget: "200",
-    healthWritebackMode: "observe_only",
+    healthPolicyMode: "observe_only",
     healthFailureThreshold: "2",
     healthRecoveryThreshold: "2",
     note: "",
@@ -283,7 +283,7 @@ export function monitorToDraft(monitor: ChannelMonitor): ChannelMonitorDraft {
     retryInitialBackoffMs: String(monitor.retryInitialBackoffMs),
     retryMaxBackoffMs: String(monitor.retryMaxBackoffMs),
     riskDailyProbeBudget: String(monitor.riskDailyProbeBudget),
-    healthWritebackMode: monitor.healthWritebackMode,
+    healthPolicyMode: monitor.healthPolicyMode,
     healthFailureThreshold: String(monitor.healthFailureThreshold),
     healthRecoveryThreshold: String(monitor.healthRecoveryThreshold),
     note: monitor.note ?? "",
@@ -306,7 +306,7 @@ export function monitorToCreateInput(monitor: ChannelMonitor, name = `${monitor.
     retryInitialBackoffMs: monitor.retryInitialBackoffMs,
     retryMaxBackoffMs: monitor.retryMaxBackoffMs,
     riskDailyProbeBudget: monitor.riskDailyProbeBudget,
-    healthWritebackMode: monitor.healthWritebackMode,
+    healthPolicyMode: monitor.healthPolicyMode,
     healthFailureThreshold: monitor.healthFailureThreshold,
     healthRecoveryThreshold: monitor.healthRecoveryThreshold,
     attemptTimeoutMs: monitor.attemptTimeoutMs,
@@ -342,7 +342,7 @@ export function draftToMonitorInput(draft: ChannelMonitorDraft): CreateChannelMo
     retryInitialBackoffMs: toInteger(draft.retryInitialBackoffMs),
     retryMaxBackoffMs: toInteger(draft.retryMaxBackoffMs),
     riskDailyProbeBudget: toInteger(draft.riskDailyProbeBudget),
-    healthWritebackMode: draft.healthWritebackMode,
+    healthPolicyMode: draft.healthPolicyMode,
     healthFailureThreshold: toInteger(draft.healthFailureThreshold),
     healthRecoveryThreshold: toInteger(draft.healthRecoveryThreshold),
     attemptTimeoutMs: toInteger(draft.attemptTimeoutMs),
@@ -445,7 +445,7 @@ export function validateMonitorDraft(
   if (!isInRange(retryInitialBackoffMs, 0, 60_000) || !isInRange(retryMaxBackoffMs, 0, 60_000) || (retryMaxBackoffMs ?? 0) < (retryInitialBackoffMs ?? 0)) return "重试退避范围无效";
   if (!isInRange(riskDailyProbeBudget, 1, 10_000)) return "每日探测预算需在 1 到 10000 之间";
   if (!isInRange(healthFailureThreshold, 1, 20) || !isInRange(healthRecoveryThreshold, 1, 20)) return "健康阈值需在 1 到 20 之间";
-  if (draft.healthWritebackMode === "authoritative" && draft.clientProfileId !== "standard_api") return "权威健康写回只能使用标准 API Profile";
+  if (draft.healthPolicyMode === "authoritative" && draft.clientProfileId !== "standard_api") return "权威健康写回只能使用标准 API Profile";
   return null;
 }
 

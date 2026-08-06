@@ -42,7 +42,7 @@ export function canonicalPricingGroupRefKey(input: PricingGroupRefInput): string
   throw new PricingGroupRefError("unresolved-group", "group reference cannot be resolved");
 }
 
-export function canonicalizePricingGroupRefs(
+export function normalizePricingGroupDisplayRefs(
   inputs: readonly PricingGroupRefInput[],
 ): CanonicalPricingGroupRef[] {
   if (inputs.length > MAX_PRICING_GROUP_REFS) {
@@ -71,10 +71,10 @@ export function canonicalizePricingGroupRefs(
 export function canonicalPricingGroupKeys(
   inputs: readonly PricingGroupRefInput[],
 ): string[] {
-  return canonicalizePricingGroupRefs(inputs).map((ref) => ref.canonicalKey);
+  return normalizePricingGroupDisplayRefs(inputs).map((ref) => ref.canonicalKey);
 }
 
-export async function hashCanonicalPricingGroupRefs(
+export async function hashPricingGroupDisplayRefs(
   inputs: readonly PricingGroupRefInput[],
 ): Promise<string> {
   const keys = canonicalPricingGroupKeys(inputs);

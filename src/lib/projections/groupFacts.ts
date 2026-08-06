@@ -31,7 +31,7 @@ export type StationGroupCurrentFact = {
   sourceRate: GroupRateRecord | null;
 };
 
-export function buildCurrentStationGroupFacts(input: {
+export function deriveStationGroupDisplayFacts(input: {
   bindings: StationGroupBinding[];
   rates: GroupRateRecord[];
 }): StationGroupCurrentFact[] {

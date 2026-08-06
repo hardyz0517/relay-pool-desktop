@@ -40,7 +40,6 @@ describe("data recovery backend cutover", () => {
       proxy: {} as BackendClient["proxy"],
       dashboard: {} as BackendClient["dashboard"],
       runtime: {} as BackendClient["runtime"],
-      localRouting: {} as BackendClient["localRouting"],
       dataRecovery,
       dataMigration: {} as BackendClient["dataMigration"],
       economics: {} as BackendClient["economics"],

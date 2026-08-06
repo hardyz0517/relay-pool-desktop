@@ -21,7 +21,6 @@ describe("external URL backend cutover", () => {
       proxy: {} as never,
       dashboard: {} as never,
       runtime: {} as never,
-      localRouting: {} as never,
       dataRecovery: {} as never,
       dataMigration: {} as never,
       economics: {} as never,

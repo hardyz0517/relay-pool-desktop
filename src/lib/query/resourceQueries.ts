@@ -30,7 +30,6 @@ import type {
   ChannelStatusWorkspaceInput,
 } from "@/lib/types/channelMonitors";
 import type { DashboardRequestMetricsInput } from "@/lib/types/dashboardMetrics";
-import { loadLocalRoutingWorkspace } from "@/lib/queries/localRoutingQueries";
 import {
   loadPricingComparisonWorkspace,
   loadPricingGroupMonitorStatus,
@@ -168,13 +167,6 @@ export const changeEventsQueryOptions = (refetchInterval: number | false = false
     queryFn: listChangeEvents,
     staleTime: 2_000,
     refetchInterval,
-  });
-
-export const localRoutingWorkspaceQueryOptions = () =>
-  queryOptions({
-    queryKey: queryKeys.localRoutingWorkspace,
-    queryFn: loadLocalRoutingWorkspace,
-    staleTime: 2_000,
   });
 
 export const channelStatusQueryOptions = (

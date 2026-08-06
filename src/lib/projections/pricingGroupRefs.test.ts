@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canonicalPricingGroupKeys,
-  canonicalizePricingGroupRefs,
-  hashCanonicalPricingGroupRefs,
+  normalizePricingGroupDisplayRefs,
+  hashPricingGroupDisplayRefs,
   PricingGroupRefError,
 } from "./pricingGroupRefs";
 
@@ -52,14 +52,14 @@ describe("pricing group refs", () => {
   });
 
   it("matches the deterministic empty-input SHA-256", async () => {
-    await expect(hashCanonicalPricingGroupRefs([])).resolves.toBe(
+    await expect(hashPricingGroupDisplayRefs([])).resolves.toBe(
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     );
   });
 
   it("hashes correctly when Web Crypto is unavailable in the WebView", async () => {
     vi.stubGlobal("crypto", undefined);
-    await expect(hashCanonicalPricingGroupRefs([ref()])).resolves.toBe(
+    await expect(hashPricingGroupDisplayRefs([ref()])).resolves.toBe(
       "5af1e07213f2259d1386c4bcee7e31027f72fe30532095ff56a7a3a54f28afb5",
     );
   });
@@ -78,7 +78,7 @@ describe("pricing group refs", () => {
   });
 
   it("returns a stable canonical projection", () => {
-    expect(canonicalizePricingGroupRefs([ref()])).toEqual([
+    expect(normalizePricingGroupDisplayRefs([ref()])).toEqual([
       { ...ref(), canonicalKey: "station:station-1:binding:binding-1" },
     ]);
   });

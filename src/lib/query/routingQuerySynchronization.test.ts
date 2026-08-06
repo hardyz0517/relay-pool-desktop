@@ -5,20 +5,15 @@ import {
 } from "./routingQuerySynchronization";
 
 describe("routing query synchronization", () => {
-  it("publishes a returned workspace and refreshes every routing read model", async () => {
-    const workspace = { candidates: [{ stationKeyId: "key-2" }, { stationKeyId: "key-1" }] };
-    const setQueryData = vi.fn();
+  it("refreshes the canonical routing read model after a mutation", async () => {
     const invalidateQueries = vi.fn().mockResolvedValue(undefined);
 
     const result = await synchronizeRoutingQueriesAfterMutation(
-      { setQueryData, invalidateQueries } as never,
-      { localWorkspace: workspace as never },
+      { setQueryData: vi.fn(), invalidateQueries } as never,
     );
 
-    expect(setQueryData).toHaveBeenCalledWith(["localRoutingWorkspace"], workspace);
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["localRoutingWorkspace"] });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["routing"] });
-    expect(invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ refreshed: true, errors: [] });
   });
 
@@ -29,7 +24,6 @@ describe("routing query synchronization", () => {
     await refreshRoutingQueries({ setQueryData, invalidateQueries } as never);
 
     expect(setQueryData).not.toHaveBeenCalled();
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["localRoutingWorkspace"] });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["routing"] });
   });
 
@@ -46,6 +40,6 @@ describe("routing query synchronization", () => {
     } as never);
 
     expect(result).toEqual({ refreshed: false, errors: [refreshError] });
-    expect(invalidateQueries).toHaveBeenCalledTimes(2);
+    expect(invalidateQueries).toHaveBeenCalledTimes(1);
   });
 });
