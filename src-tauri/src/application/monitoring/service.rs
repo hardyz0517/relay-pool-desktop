@@ -267,7 +267,8 @@ impl MonitoringService {
                 .iter()
                 .map(|target| target.endpoint_revision)
                 .min()
-                .unwrap_or(1),
+                .filter(|revision| *revision > 0)
+                .ok_or(ApplicationError::ConstraintViolation)?,
             target_count: plan.target_plans.len() as i64,
             created_at_ms: planned_at_ms,
         };

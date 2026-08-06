@@ -91,8 +91,8 @@ pub struct OperationSnapshotDto {
     pub kind: String,
     pub owner_feature: String,
     pub state: OperationStateDto,
-    pub progress: Vec<OperationProgressDto>,
-    pub terminal: Option<OperationTerminalDto>,
+    pub(crate) progress: Vec<OperationProgressDto>,
+    pub(crate) terminal: Option<OperationTerminalDto>,
 }
 
 impl From<OperationSnapshot> for OperationSnapshotDto {

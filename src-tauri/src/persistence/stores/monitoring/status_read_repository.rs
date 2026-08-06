@@ -198,7 +198,7 @@ impl MonitoringStatusQueryRepository {
                 OR (m.target_type = 'station' AND sk.station_id = m.station_id)
               )
             LEFT JOIN station_group_bindings gb ON gb.id = sk.group_binding_id
-            LEFT JOIN station_endpoint_health eh
+            LEFT JOIN endpoint_health_snapshot eh
               ON eh.station_id = s.id
              AND eh.endpoint_revision = s.endpoint_revision
             WHERE 1 = 1

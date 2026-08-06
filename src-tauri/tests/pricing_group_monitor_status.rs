@@ -532,7 +532,7 @@ async fn insert_result(
         .execute(&mut *connection)
         .await
         .expect("execution result");
-    sqlx::query("INSERT INTO channel_monitor_target_results (id, execution_id, monitor_id, station_id, station_key_id, terminal_outcome, requested_model, attempt_count, resolved_adapter_kind, client_profile_id, client_profile_version, traffic_equivalence, health_writeback_mode, health_writeback_decision, semantic_confidence, started_at_ms, finished_at_ms, created_at_ms) VALUES (?1, ?2, ?3, 'station-1', ?4, ?5, 'fixture-model', 1, 'generic_open_ai', 'standard_api', 1, 'standard_api', 'observe_only', 'observe_only', 'protocol_validated', ?6, ?7, ?7)")
+    sqlx::query("INSERT INTO channel_monitor_target_results (id, execution_id, monitor_id, station_id, station_key_id, terminal_outcome, requested_model, attempt_count, resolved_adapter_kind, client_profile_id, client_profile_version, traffic_equivalence, semantic_confidence, started_at_ms, finished_at_ms, created_at_ms) VALUES (?1, ?2, ?3, 'station-1', ?4, ?5, 'fixture-model', 1, 'generic_open_ai', 'standard_api', 1, 'standard_api', 'protocol_validated', ?6, ?7, ?7)")
         .bind(result_id)
         .bind(&execution_id)
         .bind(monitor_id)

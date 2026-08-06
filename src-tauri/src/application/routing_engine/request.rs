@@ -85,6 +85,7 @@ impl RouteRequestFacts {
         self.uses_reasoning
     }
 
+    #[cfg(test)]
     pub(crate) fn ordering_profile(&self) -> OrderingProfile {
         self.ordering_profile
     }
@@ -215,6 +216,7 @@ impl RouteProgressView {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(test)]
 pub(crate) struct PlanningRoundContext {
     pub(crate) request: RouteRequestFacts,
     pub(crate) progress: RouteProgressView,

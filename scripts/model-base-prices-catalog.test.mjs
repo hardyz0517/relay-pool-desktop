@@ -9,13 +9,13 @@ const rustCatalogFile = await readFile("src-tauri/src/services/pricing_catalog.r
 const rustStoreFile = await readFile("src-tauri/src/persistence/stores/pricing_store.rs", "utf8");
 const rustCatalogSource = extractBetween(
   rustCatalogFile,
-  "pub(crate) const BUILTIN_MODEL_BASE_PRICE_CHECKED_AT",
-  "pub(crate) struct StaticBuiltinModelBasePriceCatalog",
+  "pub const BUILTIN_MODEL_BASE_PRICE_CHECKED_AT",
+  "pub struct StaticBuiltinModelBasePriceCatalog",
 );
 const rustSeedSource = extractBetween(
   rustStoreFile,
-  "pub(crate) async fn reset_model_base_prices_to_builtins",
-  "pub(crate) async fn ensure_builtin_model_base_prices",
+  "pub async fn reset_model_base_prices_to_builtins",
+  "pub async fn ensure_builtin_model_base_prices",
 );
 
 const rustRows = parseRustRows(rustCatalogSource);

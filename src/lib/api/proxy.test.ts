@@ -34,7 +34,6 @@ describe("request log backend cutover", () => {
       proxy: proxy as never,
       dashboard: {} as never,
       runtime: {} as never,
-      localRouting: {} as never,
       dataRecovery: {} as never,
       dataMigration: {} as never,
       economics: {} as never,

@@ -137,7 +137,7 @@ describe("channel monitor V2 view model", () => {
       retryInitialBackoffMs: 500,
       retryMaxBackoffMs: 4_000,
       riskDailyProbeBudget: 80,
-      healthWritebackMode: "observe_only",
+      healthPolicyMode: "observe_only",
       healthFailureThreshold: 4,
       healthRecoveryThreshold: 3,
       note: "existing note",
@@ -159,7 +159,7 @@ describe("channel monitor V2 view model", () => {
       retryInitialBackoffMs: "500",
       retryMaxBackoffMs: "4000",
       riskDailyProbeBudget: "80",
-      healthWritebackMode: "observe_only",
+      healthPolicyMode: "observe_only",
       healthFailureThreshold: "4",
       healthRecoveryThreshold: "3",
       note: "existing note",
@@ -172,7 +172,7 @@ describe("channel monitor V2 view model", () => {
       protocolKind: "anthropic_messages",
       clientProfileId: "claude_code_compat",
       clientProfileVersion: "2",
-      healthWritebackMode: "authoritative",
+      healthPolicyMode: "authoritative",
     }, { templates, keys: [], capabilities })).toBe("权威健康写回只能使用标准 API Profile");
   });
 
@@ -197,7 +197,7 @@ describe("channel monitor V2 view model", () => {
       retryInitialBackoffMs: 200,
       retryMaxBackoffMs: 2_000,
       riskDailyProbeBudget: 200,
-      healthWritebackMode: "observe_only",
+      healthPolicyMode: "observe_only",
       healthFailureThreshold: 2,
       healthRecoveryThreshold: 2,
       attemptTimeoutMs: 45_000,

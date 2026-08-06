@@ -492,7 +492,6 @@ async fn monitoring_definition_config_loads_v2_fields_without_legacy_fallback_pr
             retry_initial_backoff_ms = 300,
             retry_max_backoff_ms = 900,
             risk_daily_probe_budget = 77,
-            health_writeback_mode = 'authoritative',
             health_failure_threshold = 4,
             health_recovery_threshold = 5,
             attempt_timeout_ms = 7000,
@@ -520,7 +519,6 @@ async fn monitoring_definition_config_loads_v2_fields_without_legacy_fallback_pr
     assert_eq!(config.retry_initial_backoff_ms, 300);
     assert_eq!(config.retry_max_backoff_ms, 900);
     assert_eq!(config.risk_daily_probe_budget, 77);
-    assert_eq!(config.health_writeback_mode, "authoritative");
     assert_eq!(config.health_failure_threshold, 4);
     assert_eq!(config.health_recovery_threshold, 5);
     assert_eq!(config.attempt_timeout_ms, 7000);
@@ -726,8 +724,6 @@ fn target(
         client_profile_version: 1,
         request_profile_hash: Some("hash".to_string()),
         traffic_equivalence: "standard_api".to_string(),
-        health_writeback_mode: "observe_only".to_string(),
-        health_writeback_decision: "observe_only".to_string(),
         latency_ms: Some(10),
         semantic_confidence: "protocol_validated".to_string(),
         started_at_ms: 10,

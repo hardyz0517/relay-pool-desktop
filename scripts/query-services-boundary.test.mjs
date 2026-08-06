@@ -13,7 +13,6 @@ assert.deepEqual(
   [
     "changeQueries.ts",
     "channelQueries.ts",
-    "localRoutingQueries.ts",
     "logQueries.ts",
     "pricingQueries.ts",
     "routingQueries.ts",

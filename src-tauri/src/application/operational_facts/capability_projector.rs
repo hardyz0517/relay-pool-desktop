@@ -2,21 +2,18 @@
 use std::cmp::Reverse;
 
 use crate::models::operational::{
-    CapabilityVerdict, EndpointRevision, EvidenceConfidence, EvidenceCoverage, UnixMillis,
+    CapabilityVerdict,
 };
+#[cfg(test)]
+use crate::models::operational::{EndpointRevision, EvidenceConfidence, EvidenceCoverage, UnixMillis};
+
+pub(crate) const CAPABILITY_PROJECTOR_VERSION: &str = "capability_evidence_v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=route-read-model.capability-protocol; owner=application/operational_facts; remove_when=runtime adapter no longer reserves non-chat protocol variants"
-    )
-)]
 pub(crate) enum CapabilityProtocol {
     ChatCompletions,
-    Responses,
-    Embeddings,
+    #[cfg(test)] Responses,
+    #[cfg(test)] Embeddings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,13 +32,7 @@ pub(crate) enum CapabilitySubject {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=canonical-capability-reducer; owner=application/operational_facts; remove_when=production projection no longer keeps reducer evidence taxonomy"
-    )
-)]
+#[cfg(test)]
 pub(crate) enum CapabilityEvidenceSource {
     AdapterStructure,
     UserBlock,
@@ -52,6 +43,7 @@ pub(crate) enum CapabilityEvidenceSource {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(test)]
 pub(crate) struct CanonicalCapabilityEvidence {
     pub(crate) id: String,
     pub(crate) subject: CapabilitySubject,
@@ -64,8 +56,8 @@ pub(crate) struct CanonicalCapabilityEvidence {
     pub(crate) expires_at: Option<UnixMillis>,
 }
 
+#[cfg(test)]
 impl CanonicalCapabilityEvidence {
-    #[cfg(test)]
     pub(crate) fn is_expired(&self, now: UnixMillis) -> bool {
         self.expires_at
             .map(|expires_at| expires_at.get() <= now.get())
@@ -74,16 +66,10 @@ impl CanonicalCapabilityEvidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "contract=canonical-capability-policy; owner=application/operational_facts; remove_when=runtime adapter no longer reserves strict unknown decisions"
-    )
-)]
 pub(crate) enum CapabilityDecision {
     Allow,
     Reject,
+    #[cfg(test)]
     RequireStrictConfirmation,
 }
 
@@ -98,9 +84,20 @@ pub(crate) struct CapabilityProjection {
     pub(crate) subject: CapabilitySubject,
     pub(crate) truth: CapabilityVerdict,
     pub(crate) decision: CapabilityDecision,
+    #[cfg(test)]
     pub(crate) winner: Option<CanonicalCapabilityEvidence>,
+    #[cfg(test)]
     pub(crate) overridden: Vec<CanonicalCapabilityEvidence>,
+    #[cfg(test)]
     pub(crate) conflict_reason: Option<&'static str>,
+    pub(crate) projector_version: &'static str,
+    pub(crate) reason_code: &'static str,
+    #[cfg(test)]
+    pub(crate) source_refs: Vec<String>,
+    #[cfg(test)]
+    pub(crate) observed_at: Option<UnixMillis>,
+    #[cfg(test)]
+    pub(crate) confidence: Option<EvidenceConfidence>,
 }
 
 #[cfg(test)]
@@ -120,8 +117,8 @@ pub(crate) fn project_capability(
     relevant.sort_by_key(|item| {
         (
             precedence(item),
-            Reverse(item.endpoint_revision.get()),
-            Reverse(item.observed_at.get()),
+            Reverse(item.endpoint_revision),
+            Reverse(item.observed_at),
             item.source,
             item.id.clone(),
         )
@@ -142,14 +139,26 @@ pub(crate) fn project_capability(
         CapabilityVerdict::Unknown => CapabilityDecision::Allow,
     };
     let conflict_reason = conflict_reason(winner.as_ref(), &overridden);
+    let reason_code = match (truth, conflict_reason) {
+        (CapabilityVerdict::Supported, _) => "capability_supported",
+        (CapabilityVerdict::Unsupported, Some(reason)) => reason,
+        (CapabilityVerdict::Unsupported, None) => "capability_unsupported",
+        (CapabilityVerdict::Unknown, _) if policy.strict_unknown => "capability_unknown_strict",
+        (CapabilityVerdict::Unknown, _) => "capability_unknown",
+    };
 
     CapabilityProjection {
         subject,
         truth,
         decision,
+        #[cfg(test)] observed_at: winner.as_ref().map(|item| item.observed_at),
+        #[cfg(test)] confidence: winner.as_ref().map(|item| item.confidence),
         winner,
         overridden,
         conflict_reason,
+        projector_version: CAPABILITY_PROJECTOR_VERSION,
+        reason_code,
+        #[cfg(test)] source_refs: relevant.iter().map(|item| item.id.clone()).collect(),
     }
 }
 

@@ -4,7 +4,7 @@ import {
   type StationBalanceCurrentFact,
 } from "@/lib/projections/balanceFacts";
 import {
-  buildCurrentStationGroupFacts,
+  deriveStationGroupDisplayFacts,
   isDisplayableStationGroupCurrentFact,
 } from "@/lib/projections/groupFacts";
 import type { ChangeEvent } from "@/lib/types/changeEvents";
@@ -172,7 +172,7 @@ export function rateChipsFromCurrentFacts(
   bindings: StationGroupBinding[],
   rates: GroupRateRecord[],
 ): RateChip[] {
-  return buildCurrentStationGroupFacts({ bindings, rates })
+  return deriveStationGroupDisplayFacts({ bindings, rates })
     .filter(isDisplayableStationGroupCurrentFact)
     .slice(0, 3)
     .map((fact) => ({

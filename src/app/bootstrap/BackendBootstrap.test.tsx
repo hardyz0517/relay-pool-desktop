@@ -123,7 +123,6 @@ function testBackendClient(
     proxy: {} as BackendClient["proxy"],
     dashboard: {} as BackendClient["dashboard"],
     runtime: {} as BackendClient["runtime"],
-    localRouting: {} as BackendClient["localRouting"],
     dataRecovery: {} as BackendClient["dataRecovery"],
     dataMigration: {} as BackendClient["dataMigration"],
     economics: {} as BackendClient["economics"],

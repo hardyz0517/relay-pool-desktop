@@ -1,11 +1,8 @@
-#![allow(unused_imports)]
-
 pub mod capability;
 pub mod economics;
 pub mod health;
 pub mod identity;
 pub mod provenance;
-#[cfg(test)]
 pub(crate) mod raw_facts;
 
 #[cfg(test)]
@@ -22,7 +19,9 @@ pub use economics::{
     BalanceFacts, CurrencyCode, Money, MoneyAmount, PricingUnit, RequestCostBasis,
     RequestPricingAssessment,
 };
-pub use economics::{BalanceScope, EconomicsValidationError, PriceConfidence, RateMultiplier};
+pub use economics::{BalanceScope, PriceConfidence, RateMultiplier};
+#[cfg(test)]
+pub(crate) use economics::EconomicsValidationError;
 #[cfg(not(test))]
 pub use health::HealthState;
 #[cfg(test)]
@@ -31,20 +30,20 @@ pub use health::{
     ModelHealthTarget, StationAccountHealthFact, StationAccountHealthTarget, StationKeyHealthFact,
     StationKeyHealthTarget,
 };
+pub use identity::SanitizedOrigin;
+pub use identity::{EndpointFacts, OutboundPolicyRef};
 #[cfg(test)]
+pub use identity::{EvidenceHash, StationAccountRef};
 pub use identity::{
-    EndpointFacts, EvidenceHash, OutboundPolicyRef, SanitizedOrigin, StationAccountRef,
+    EndpointId, EndpointRef, EndpointRevision, ModelName,
+    RecordRevision, StationId, StationKeyId,
 };
-pub use identity::{
-    EndpointId, EndpointRef, EndpointRevision, ModelName, OperationalValidationError,
-    RecordRevision, StationId, StationKeyId, UnixMillis,
-};
+pub use identity::{OperationalValidationError, UnixMillis};
+#[cfg(test)]
 pub use provenance::{EvidenceConfidence, EvidenceCoverage};
 #[cfg(test)]
 pub use provenance::{EvidenceFreshness, EvidenceSource, FactProvenance};
-#[cfg(test)]
 pub(crate) use raw_facts::MAX_OPERATIONAL_CANDIDATES;
-#[cfg(test)]
 pub(crate) use raw_facts::{
     OperationalFactReadOptions, RawOperationalCandidateRow, RawOperationalFactRows,
     RawOperationalModelAliasRow, RawOperationalSettingRow,

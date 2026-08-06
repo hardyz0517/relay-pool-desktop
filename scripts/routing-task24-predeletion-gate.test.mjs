@@ -36,7 +36,8 @@ assertExcludes(soakRunner, "candidateRevision", "routing operational soak runner
 
 assertIncludes(predeletionGate, "routing_production_composition", "Task 24 pre-deletion gate");
 assertIncludes(predeletionGate, "routing_stream_finalization_faults", "Task 24 pre-deletion gate");
-assertIncludes(predeletionGate, "scripts/local-routing-redaction.test.mjs", "Task 24 pre-deletion gate");
+assertIncludes(predeletionGate, "routing_security_boundaries", "Task 24 pre-deletion gate");
+assertIncludes(predeletionGate, "scripts/local-proxy-auth-contract.test.mjs", "Task 24 pre-deletion gate");
 assertIncludes(predeletionGate, "scripts/run-routing-operational-soak.ps1", "Task 24 pre-deletion gate");
 assertIncludes(predeletionGate, "deletionApproved", "Task 24 pre-deletion gate");
 assertIncludes(predeletionGate, "reset/reimport/reconfigure", "Task 24 pre-deletion gate");

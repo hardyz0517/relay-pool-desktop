@@ -116,7 +116,7 @@ export function ChannelMonitorForm({
   );
   const selectedProfile = capabilities?.profiles.find((profile) => profile.id === draft.clientProfileId);
   const validationError = validateMonitorDraft(draft, { templates, keys, capabilities });
-  const highRisk = draft.healthWritebackMode === "authoritative" || Number(draft.intervalSeconds) < 60;
+  const highRisk = draft.healthPolicyMode === "authoritative" || Number(draft.intervalSeconds) < 60;
   const canSubmit = !validationError && !saving && (!highRisk || riskAcknowledged);
   const isStationTarget = draft.targetType === "station";
   const theoreticalAttempts = (1 + draft.fallbackModels.filter((model) => model.trim()).length)
@@ -262,7 +262,7 @@ export function ChannelMonitorForm({
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-3">
               <Field label="健康写回">
-                <SelectControl ariaLabel="健康写回" className={inputClassName} value={draft.healthWritebackMode} options={healthWritebackOptions} onChange={(healthWritebackMode) => updateDraft({ healthWritebackMode })} />
+                <SelectControl ariaLabel="健康写回" className={inputClassName} value={draft.healthPolicyMode} options={healthWritebackOptions} onChange={(healthPolicyMode) => updateDraft({ healthPolicyMode })} />
               </Field>
               <Field label="连续失败阈值"><NumberInput value={draft.healthFailureThreshold} onChange={(healthFailureThreshold) => updateDraft({ healthFailureThreshold })} /></Field>
               <Field label="连续恢复阈值"><NumberInput value={draft.healthRecoveryThreshold} onChange={(healthRecoveryThreshold) => updateDraft({ healthRecoveryThreshold })} /></Field>

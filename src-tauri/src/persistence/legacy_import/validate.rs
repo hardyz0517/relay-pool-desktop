@@ -72,7 +72,7 @@ const VALIDATED_TABLES: &[&str] = &[
     "channel_monitor_runs",
     "request_logs",
     "request_attempts",
-    "station_key_health",
-    "station_endpoint_health",
+    "routing_health_snapshot",
+    "endpoint_health_snapshot",
     "change_events",
 ];

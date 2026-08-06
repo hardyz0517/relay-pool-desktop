@@ -83,7 +83,7 @@ impl HealthObservationStore {
             SELECT station_key_id, endpoint_revision, last_success_at, last_failure_at,
                    consecutive_failures, success_count, failure_count, total_duration_ms,
                    avg_latency_ms, last_error_summary, cooldown_until, updated_at
-            FROM station_key_health
+            FROM routing_health_snapshot
             WHERE station_key_id = ?1
             "#,
         )
@@ -102,7 +102,7 @@ impl HealthObservationStore {
     ) -> Result<(), PersistenceError> {
         sqlx::query(
             r#"
-            INSERT INTO station_key_health (
+            INSERT INTO routing_health_snapshot (
                 station_key_id, endpoint_revision, last_success_at, last_failure_at,
                 consecutive_failures, success_count, failure_count, total_duration_ms,
                 avg_latency_ms, last_error_summary, cooldown_until, updated_at
@@ -133,28 +133,6 @@ impl HealthObservationStore {
         .bind(&snapshot.last_error_summary)
         .bind(&snapshot.cooldown_until)
         .bind(&snapshot.updated_at)
-        .execute(connection)
-        .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn update_station_key_status(
-        &self,
-        connection: &mut SqliteConnection,
-        station_key_id: &str,
-        status: &str,
-        now_ms: i64,
-    ) -> Result<(), PersistenceError> {
-        sqlx::query(
-            r#"
-            UPDATE station_keys
-            SET status = ?1, last_checked_at = ?2, updated_at = ?2
-            WHERE id = ?3
-            "#,
-        )
-        .bind(status)
-        .bind(now_ms.to_string())
-        .bind(station_key_id)
         .execute(connection)
         .await?;
         Ok(())

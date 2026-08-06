@@ -89,7 +89,7 @@ assert.equal(formatStationBalance(rows[1]), "CNY 6.00", "station asset balance s
 
 const assetSource = await readFile("src/features/stations/stationAssetViewModels.ts", "utf8");
 assert.ok(
-  assetSource.includes("buildCurrentStationGroupFacts") &&
+  assetSource.includes("deriveStationGroupDisplayFacts") &&
     assetSource.includes("isDisplayableStationGroupCurrentFact") &&
     assetSource.includes("buildCurrentStationBalanceFacts"),
   "station asset rows should consume shared group and balance projections",

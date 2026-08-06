@@ -31,7 +31,7 @@ async function importGroupFactsModule() {
 }
 
 const {
-  buildCurrentStationGroupFacts,
+  deriveStationGroupDisplayFacts,
   buildStationGroupOptionsFromCurrentFacts,
   isDisplayableStationGroupCurrentFact,
   latestGroupRatesByBindingOrHash,
@@ -124,7 +124,7 @@ const latestRates = latestGroupRatesByBindingOrHash(rates);
 assert.equal(latestRates.get("binding:binding-current")?.id, "rate-current-newer");
 assert.equal(latestRates.get("group-key:local-current")?.id, "rate-current-shadow");
 
-const facts = buildCurrentStationGroupFacts({ bindings, rates });
+const facts = deriveStationGroupDisplayFacts({ bindings, rates });
 
 assert.deepEqual(
   facts.map((fact) => ({
@@ -207,7 +207,7 @@ assert.deepEqual(
   "group options should include only available current facts and keep duplicate display names distinct",
 );
 
-const displayFacts = buildCurrentStationGroupFacts({
+const displayFacts = deriveStationGroupDisplayFacts({
   bindings: [
     binding({ id: "display", groupName: "display", bindingStatus: "available", rateSource: "sub2api_groups_rates" }),
     binding({ id: "missing", groupName: "missing", bindingStatus: "missing", rateSource: "sub2api_groups_rates" }),

@@ -77,7 +77,7 @@ impl V2ProxyTestFixture {
         let routing_repository: Arc<
             dyn crate::services::proxy::routing_repository::RoutingRepository,
         > = Arc::new(
-            crate::services::proxy::routing_repository::V2RoutingRepository::new(
+            crate::services::proxy::routing_repository::RoutingExecutionRepository::new(
                 self.services.routing.as_ref().clone(),
             ),
         );

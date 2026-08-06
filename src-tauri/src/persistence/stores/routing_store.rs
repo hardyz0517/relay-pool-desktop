@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use sqlx::{QueryBuilder, Row, Sqlite};
 
@@ -8,10 +8,11 @@ use crate::{
         proxy::UpstreamApiFormat,
         routing::{
             ModelAlias, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingBalance,
-            RuntimeRoutingCandidate, RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret,
-            RuntimeRoutingSettings, SchedulerAdvancedSettings, StationKeyCapabilities,
+            CanonicalRoutingCandidate, RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret,
+            RuntimeRoutingSettings, DispatchAlgorithmSettings, StationKeyCapabilities,
             StationKeyHealth, UpsertModelAliasInput,
         },
+        routing_policy::RoutingPolicyConfigV1,
         stations::StationEndpointHealth,
     },
     persistence::{
@@ -45,6 +46,8 @@ pub(crate) struct OperationalExecutionTargetRefRow {
     pub(crate) api_key_secret_owner_id: Option<String>,
     pub(crate) api_key_secret_kind: Option<String>,
     pub(crate) inline_api_key_present: bool,
+    pub(crate) station_account_max_concurrency: u32,
+    pub(crate) station_key_max_concurrency: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,63 +73,30 @@ impl RoutingStore {
         &self,
         read: &mut ReadSession,
     ) -> Result<RuntimeRoutingSettings, PersistenceError> {
-        let rows = sqlx::query(
-            r#"
-            SELECT key, value
-            FROM settings
-            WHERE key IN (
-                'default_routing_strategy',
-                'max_rate_multiplier',
-                'default_routing_group_filter',
-                'scheduler_advanced_settings_json',
-                'allow_depleted_fallback'
-            )
-            "#,
+        let config_json = sqlx::query_scalar::<_, String>(
+            "SELECT config_json FROM routing_policy WHERE singleton_key = 1",
         )
-        .fetch_all(read.connection())
-        .await?;
-        let mut values = std::collections::HashMap::new();
-        for row in rows {
-            values.insert(row.get::<String, _>("key"), row.get::<String, _>("value"));
-        }
-        let policy = parse_routing_policy(required_setting(&values, "default_routing_strategy")?)?;
-        let max_rate_multiplier = parse_optional_multiplier(
-            values
-                .get("max_rate_multiplier")
-                .map(String::as_str)
-                .unwrap_or_default(),
-        )?;
-        let routing_group_filter = parse_routing_group_filter(
-            values
-                .get("default_routing_group_filter")
-                .map(String::as_str)
-                .unwrap_or("all_groups"),
-        )?;
-        let scheduler_advanced_settings = parse_scheduler_settings(
-            values
-                .get("scheduler_advanced_settings_json")
-                .map(String::as_str)
-                .unwrap_or_default(),
-        )?;
-        let allow_depleted_fallback = parse_bool_setting(
-            values
-                .get("allow_depleted_fallback")
-                .map(String::as_str)
-                .unwrap_or("false"),
-        )?;
+        .fetch_optional(read.connection())
+        .await?
+        .ok_or(PersistenceError::NotFound)?;
+        let config = serde_json::from_str::<RoutingPolicyConfigV1>(&config_json)
+            .map_err(|_| PersistenceError::InvariantViolation("invalid routing policy".into()))?;
+        config
+            .validate()
+            .map_err(|_| PersistenceError::InvariantViolation("invalid routing policy".into()))?;
         Ok(RuntimeRoutingSettings {
-            policy,
-            max_rate_multiplier,
-            routing_group_filter,
-            scheduler_advanced_settings,
-            allow_depleted_fallback,
+            policy: RoutingPolicy::AutomaticBalanced,
+            max_rate_multiplier: None,
+            routing_group_scope: RoutingGroupFilter::AllGroups,
+            scheduler_config: DispatchAlgorithmSettings::default(),
+            allow_depleted_fallback: config.allow_depleted_fallback,
         })
     }
 
     pub(crate) async fn load_runtime_candidates(
         &self,
         read: &mut ReadSession,
-    ) -> Result<Vec<RuntimeRoutingCandidate>, PersistenceError> {
+    ) -> Result<Vec<CanonicalRoutingCandidate>, PersistenceError> {
         let rows = sqlx::query(
             r#"
             SELECT
@@ -231,6 +201,22 @@ impl RoutingStore {
                 s.upstream_api_format,
                 s.collector_proxy_mode,
                 s.collector_proxy_url,
+                CASE
+                    WHEN LOWER(s.station_type) = 'sub2api' THEN COALESCE((
+                        SELECT b.account_concurrency_limit
+                        FROM balance_snapshots b
+                        WHERE b.station_id = s.id
+                          AND b.station_key_id IS NULL
+                          AND b.account_concurrency_limit > 0
+                        ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                        LIMIT 1
+                    ), 0)
+                    ELSE 0
+                END AS station_account_max_concurrency,
+                CASE
+                    WHEN LOWER(s.station_type) IN ('sub2api', 'newapi') THEN 0
+                    ELSE MAX(k.max_concurrency, 0)
+                END AS station_key_max_concurrency,
                 k.enabled AS key_enabled,
                 s.enabled AS station_enabled,
                 k.api_key_secret_id,
@@ -360,7 +346,17 @@ impl RoutingStore {
         .bind(now)
         .execute(write.connection())
         .await?;
-        model_alias_by_pair(write, client_model, upstream_model).await
+        let alias = model_alias_by_pair(write, client_model, upstream_model).await?;
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
+        )
+        .bind(format!("model_alias:{}", alias.id))
+        .bind(now.parse::<i64>().map_err(|_| {
+            PersistenceError::InvariantViolation("model alias timestamp is not numeric".into())
+        })?)
+        .execute(write.connection())
+        .await?;
+        Ok(alias)
     }
 
     pub(crate) async fn delete_model_alias(
@@ -372,57 +368,6 @@ impl RoutingStore {
             .bind(id)
             .execute(write.connection())
             .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn reorder_local_routing_keys(
-        &self,
-        write: &mut WriteSession,
-        station_key_ids: &[String],
-        now: &str,
-    ) -> Result<(), PersistenceError> {
-        if station_key_ids.is_empty() {
-            return Err(PersistenceError::ConstraintViolation);
-        }
-        let mut requested = HashSet::with_capacity(station_key_ids.len());
-        if station_key_ids.iter().any(|id| !requested.insert(id)) {
-            return Err(PersistenceError::ConstraintViolation);
-        }
-        for id in station_key_ids {
-            let exists = sqlx::query_scalar::<_, i64>(
-                "SELECT EXISTS(SELECT 1 FROM station_keys WHERE id = ?1)",
-            )
-            .bind(id)
-            .fetch_one(write.connection())
-            .await?;
-            if exists == 0 {
-                return Err(PersistenceError::NotFound);
-            }
-        }
-        let all_ids = sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT id FROM station_keys
-            ORDER BY COALESCE(routing_order, priority) ASC,
-                     priority ASC, created_at ASC, id ASC
-            "#,
-        )
-        .fetch_all(write.connection())
-        .await?;
-        let ordered_ids = station_key_ids
-            .iter()
-            .cloned()
-            .chain(all_ids.into_iter().filter(|id| !requested.contains(id)))
-            .collect::<Vec<_>>();
-        for (index, id) in ordered_ids.iter().enumerate() {
-            sqlx::query(
-                "UPDATE station_keys SET routing_order = ?1, updated_at = ?2 WHERE id = ?3",
-            )
-            .bind(index as i64)
-            .bind(now)
-            .bind(id)
-            .execute(write.connection())
-            .await?;
-        }
         Ok(())
     }
 
@@ -461,7 +406,7 @@ impl RoutingStore {
             SELECT h.station_key_id, h.last_success_at, h.last_failure_at, h.consecutive_failures,
                    h.success_count, h.failure_count, h.avg_latency_ms, h.last_error_summary,
                    h.cooldown_until, h.updated_at
-            FROM station_key_health h
+            FROM routing_health_snapshot h
             JOIN station_keys k ON k.id = h.station_key_id
             JOIN stations s ON s.id = k.station_id
             WHERE h.endpoint_revision = s.endpoint_revision
@@ -491,7 +436,7 @@ impl RoutingStore {
             SELECT h.station_key_id, h.last_success_at, h.last_failure_at, h.consecutive_failures,
                    h.success_count, h.failure_count, h.avg_latency_ms, h.last_error_summary,
                    h.cooldown_until, h.updated_at
-            FROM station_key_health h
+            FROM routing_health_snapshot h
             JOIN station_keys k ON k.id = h.station_key_id
             JOIN stations s ON s.id = k.station_id
             WHERE h.station_key_id = ?1
@@ -514,7 +459,7 @@ impl RoutingStore {
             r#"
             SELECT h.station_id, h.endpoint_revision, h.status, h.latency_ms,
                    h.checked_at, h.error_summary, h.updated_at
-            FROM station_endpoint_health h
+            FROM endpoint_health_snapshot h
             JOIN stations s ON s.id = h.station_id
             WHERE h.endpoint_revision = s.endpoint_revision
             ORDER BY h.updated_at DESC, h.station_id ASC
@@ -566,7 +511,7 @@ impl RoutingStore {
         assert_station_endpoint_revision(write, station_id, expected_endpoint_revision).await?;
         sqlx::query(
             r#"
-            INSERT INTO station_endpoint_health (
+            INSERT INTO endpoint_health_snapshot (
                 station_id, endpoint_revision, status, latency_ms, checked_at,
                 error_summary, updated_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -685,7 +630,7 @@ async fn load_runtime_health(
         SELECT h.station_key_id, h.last_success_at, h.last_failure_at,
                h.consecutive_failures, h.success_count, h.failure_count,
                h.avg_latency_ms, h.last_error_summary, h.cooldown_until, h.updated_at
-        FROM station_key_health h
+        FROM routing_health_snapshot h
         JOIN station_keys k ON k.id = h.station_key_id
         JOIN stations s
           ON s.id = k.station_id
@@ -874,7 +819,7 @@ async fn station_endpoint_health_by_id(
         r#"
         SELECT station_id, endpoint_revision, status, latency_ms, checked_at,
                error_summary, updated_at
-        FROM station_endpoint_health
+        FROM endpoint_health_snapshot
         WHERE station_id = ?1 AND endpoint_revision = ?2
         "#,
     )
@@ -898,81 +843,13 @@ fn row_to_station_endpoint_health(row: sqlx::sqlite::SqliteRow) -> StationEndpoi
     }
 }
 
-fn required_setting<'a>(
-    values: &'a std::collections::HashMap<String, String>,
-    key: &str,
-) -> Result<&'a str, PersistenceError> {
-    values
-        .get(key)
-        .map(String::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| PersistenceError::InvariantViolation(format!("missing setting: {key}")))
-}
-
-fn parse_routing_policy(value: &str) -> Result<RoutingPolicy, PersistenceError> {
-    match value.trim() {
-        "automatic_balanced" | "automatic" => Ok(RoutingPolicy::AutomaticBalanced),
-        "priority_fallback" => Ok(RoutingPolicy::PriorityFallback),
-        "stable_first" | "stable" => Ok(RoutingPolicy::StableFirst),
-        "backup_only" => Ok(RoutingPolicy::BackupOnly),
-        "cheap_first" => Ok(RoutingPolicy::CheapFirst),
-        "cost_stable_first" => Ok(RoutingPolicy::CostStableFirst),
-        _ => Err(PersistenceError::InvariantViolation(
-            "invalid default routing strategy".to_string(),
-        )),
-    }
-}
-
-fn parse_optional_multiplier(value: &str) -> Result<Option<f64>, PersistenceError> {
-    if value.trim().is_empty() {
-        return Ok(None);
-    }
-    let value = value
-        .parse::<f64>()
-        .map_err(|_| PersistenceError::InvariantViolation("invalid max rate multiplier".into()))?;
-    if !value.is_finite() || value < 0.0 {
-        return Err(PersistenceError::InvariantViolation(
-            "invalid max rate multiplier".into(),
-        ));
-    }
-    Ok(Some(value))
-}
-
-fn parse_routing_group_filter(value: &str) -> Result<RoutingGroupFilter, PersistenceError> {
-    serde_json::from_str::<RoutingGroupFilter>(value)
-        .or_else(|_| {
-            serde_json::from_value::<RoutingGroupFilter>(serde_json::Value::String(
-                value.to_string(),
-            ))
-        })
-        .map_err(|_| PersistenceError::InvariantViolation("invalid routing group filter".into()))
-}
-
-fn parse_scheduler_settings(value: &str) -> Result<SchedulerAdvancedSettings, PersistenceError> {
-    if value.trim().is_empty() {
-        return Ok(SchedulerAdvancedSettings::default());
-    }
-    let settings = serde_json::from_str::<SchedulerAdvancedSettings>(value)
-        .map_err(|_| PersistenceError::InvariantViolation("invalid scheduler settings".into()))?;
-    settings
-        .validate()
-        .map_err(|_| PersistenceError::InvariantViolation("invalid scheduler settings".into()))?;
-    Ok(settings)
-}
-
-fn parse_bool_setting(value: &str) -> Result<bool, PersistenceError> {
-    value
-        .parse::<bool>()
-        .map_err(|_| PersistenceError::InvariantViolation("invalid boolean setting".into()))
-}
-
 fn bool_to_i64(value: bool) -> i64 {
     i64::from(value)
 }
 
-fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> RuntimeRoutingCandidate {
+fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> CanonicalRoutingCandidate {
     let station_key_id: String = row.get(runtime_candidate_column::STATION_KEY_ID);
-    RuntimeRoutingCandidate {
+    CanonicalRoutingCandidate {
         station_key_id: station_key_id.clone(),
         station_id: row.get(runtime_candidate_column::STATION_ID),
         station_type: row.get(runtime_candidate_column::STATION_TYPE),
@@ -1058,6 +935,12 @@ fn row_to_operational_execution_target_ref(
         api_key_secret_owner_id: row.get("api_key_secret_owner_id"),
         api_key_secret_kind: row.get("api_key_secret_kind"),
         inline_api_key_present: i64_to_bool(row.get("inline_api_key_present")),
+        station_account_max_concurrency: row
+            .get::<i64, _>("station_account_max_concurrency")
+            .max(0) as u32,
+        station_key_max_concurrency: row
+            .get::<i64, _>("station_key_max_concurrency")
+            .max(0) as u32,
     }
 }
 

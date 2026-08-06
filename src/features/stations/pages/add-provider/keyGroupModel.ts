@@ -1,6 +1,6 @@
 import { inferGroupCategoryFromEvidence, normalizeGroupCategory } from "@/lib/groupCategories";
 import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
-import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
+import { deriveStationGroupDisplayFacts } from "@/lib/projections/groupFacts";
 import {
   isCollectedStationGroupBinding,
   type GroupRateRecord,
@@ -233,7 +233,7 @@ export function groupBindingsToCurrentOptions(
   creditPerCny = 1,
 ) {
   return buildStationGroupOptionsFromCurrentFactsForSelect(
-    buildCurrentStationGroupFacts({ bindings, rates }),
+    deriveStationGroupDisplayFacts({ bindings, rates }),
     creditPerCny,
   );
 }

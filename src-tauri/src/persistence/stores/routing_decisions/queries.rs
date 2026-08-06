@@ -16,6 +16,7 @@ pub(crate) struct RoutingDecisionSummaryRow {
     pub(crate) decided_at_ms: i64,
     pub(crate) ordering_profile: String,
     pub(crate) selected_station_key_id: Option<String>,
+    pub selected_station_id: Option<String>,
     pub(crate) candidate_count: u32,
     pub(crate) candidate_detail_count: u32,
     pub(crate) candidate_detail_truncated: bool,
@@ -45,6 +46,27 @@ pub(crate) struct RouteCandidateDecisionRow {
 pub(crate) struct RoutingDecisionQueries;
 
 impl RoutingDecisionQueries {
+    pub async fn get_decision(
+        &self,
+        connection: &mut SqliteConnection,
+        decision_id: &str,
+    ) -> Result<Option<RoutingDecisionSummaryRow>, PersistenceError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, request_id, decided_at_ms, ordering_profile,
+                   selected_station_key_id, selected_station_id, candidate_count,
+                   candidate_detail_count, candidate_detail_truncated,
+                   rejection_counts_json, trace_status
+            FROM route_decisions
+            WHERE id = ?1
+            "#,
+        )
+        .bind(decision_id)
+        .fetch_optional(connection)
+        .await?;
+        row.map(summary_from_row).transpose()
+    }
+
     pub(crate) async fn list_decisions(
         &self,
         connection: &mut SqliteConnection,
@@ -57,7 +79,8 @@ impl RoutingDecisionQueries {
             sqlx::query(
                 r#"
                 SELECT id, request_id, decided_at_ms, ordering_profile,
-                       selected_station_key_id, candidate_count, candidate_detail_count,
+                       selected_station_key_id, selected_station_id,
+                       candidate_count, candidate_detail_count,
                        candidate_detail_truncated, rejection_counts_json, trace_status
                 FROM route_decisions
                 WHERE decided_at_ms < ?1 OR (decided_at_ms = ?1 AND id < ?2)
@@ -74,7 +97,8 @@ impl RoutingDecisionQueries {
             sqlx::query(
                 r#"
                 SELECT id, request_id, decided_at_ms, ordering_profile,
-                       selected_station_key_id, candidate_count, candidate_detail_count,
+                       selected_station_key_id, selected_station_id,
+                       candidate_count, candidate_detail_count,
                        candidate_detail_truncated, rejection_counts_json, trace_status
                 FROM route_decisions
                 ORDER BY decided_at_ms DESC, id DESC
@@ -141,6 +165,7 @@ fn summary_from_row(
         decided_at_ms: row.get("decided_at_ms"),
         ordering_profile: row.get("ordering_profile"),
         selected_station_key_id: row.get("selected_station_key_id"),
+        selected_station_id: row.get("selected_station_id"),
         candidate_count: row.get::<i64, _>("candidate_count") as u32,
         candidate_detail_count: row.get::<i64, _>("candidate_detail_count") as u32,
         candidate_detail_truncated: row.get::<i64, _>("candidate_detail_truncated") != 0,

@@ -1,7 +1,6 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +21,6 @@ pub enum OperationalValidationError {
         field: &'static str,
         value: f64,
     },
-    #[cfg(test)]
     InvalidEndpointOrigin {
         reason: &'static str,
     },
@@ -48,7 +46,6 @@ impl fmt::Display for OperationalValidationError {
                     "{field} confidence must be finite between 0 and 1, got {value}"
                 )
             }
-            #[cfg(test)]
             Self::InvalidEndpointOrigin { reason } => write!(formatter, "{reason}"),
         }
     }
@@ -70,7 +67,6 @@ macro_rules! id_type {
                 Ok(Self(value))
             }
 
-            #[cfg(test)]
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -80,10 +76,43 @@ macro_rules! id_type {
 
 id_type!(StationId, "station_id");
 id_type!(StationKeyId, "station_key_id");
-id_type!(EndpointId, "endpoint_id");
-id_type!(ModelName, "model");
-#[cfg(test)]
-id_type!(OutboundPolicyRef, "outbound_policy_ref");
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct EndpointId(String);
+impl EndpointId {
+    pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(OperationalValidationError::EmptyId { field: "endpoint_id" });
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ModelName(String);
+impl ModelName {
+    pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(OperationalValidationError::EmptyId { field: "model" });
+        }
+        Ok(Self(value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct OutboundPolicyRef(String);
+impl OutboundPolicyRef {
+    pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(OperationalValidationError::EmptyId { field: "outbound_policy_ref" });
+        }
+        Ok(Self(value))
+    }
+}
+
 #[cfg(test)]
 id_type!(EvidenceHash, "evidence_hash");
 
@@ -121,7 +150,6 @@ impl EndpointRevision {
         Ok(Self(value))
     }
 
-    #[cfg(test)]
     pub fn get(self) -> i64 {
         self.0
     }
@@ -146,8 +174,8 @@ impl UnixMillis {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StationAccountRef {
     station_id: StationId,
 }
@@ -189,17 +217,14 @@ impl EndpointRef {
         &self.endpoint_id
     }
 
-    #[cfg(test)]
     pub fn revision(&self) -> EndpointRevision {
         self.revision
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg(test)]
 pub struct SanitizedOrigin(String);
 
-#[cfg(test)]
 impl SanitizedOrigin {
     pub fn from_endpoint_url(value: &str) -> Result<Self, OperationalValidationError> {
         let url =
@@ -234,20 +259,19 @@ impl SanitizedOrigin {
         Ok(Self(origin))
     }
 
+    #[cfg(test)]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg(test)]
 pub struct EndpointFacts {
     endpoint_ref: EndpointRef,
     sanitized_origin: SanitizedOrigin,
     outbound_policy_ref: OutboundPolicyRef,
 }
 
-#[cfg(test)]
 impl EndpointFacts {
     pub fn new(
         endpoint_ref: EndpointRef,
@@ -265,10 +289,12 @@ impl EndpointFacts {
         &self.endpoint_ref
     }
 
+    #[cfg(test)]
     pub fn sanitized_origin(&self) -> &SanitizedOrigin {
         &self.sanitized_origin
     }
 
+    #[cfg(test)]
     pub fn outbound_policy_ref(&self) -> &OutboundPolicyRef {
         &self.outbound_policy_ref
     }

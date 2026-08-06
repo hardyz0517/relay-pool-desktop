@@ -155,11 +155,11 @@ pub struct ProxyFailure {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ProxyFailureContext {
-    pub candidate_id: Option<String>,
-    pub candidate_station_id: Option<String>,
-    pub candidate_upstream_base_url: Option<String>,
-    pub attempt_count: Option<i64>,
-    pub route_policy: Option<String>,
+    pub(crate) candidate_id: Option<String>,
+    pub(crate) candidate_station_id: Option<String>,
+    pub(crate) candidate_upstream_base_url: Option<String>,
+    pub(crate) attempt_count: Option<i64>,
+    pub(crate) route_policy: Option<String>,
 }
 
 impl ProxyFailure {

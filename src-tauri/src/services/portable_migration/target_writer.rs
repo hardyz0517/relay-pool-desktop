@@ -93,15 +93,64 @@ impl TrustedTargetWriter {
                 validate_row(table_name, row)?;
                 if table_name == "settings" {
                     upsert_setting(&mut transaction, row).await?;
+                } else if table_name == "routing_policy" {
+                    upsert_routing_policy(&mut transaction, row).await?;
                 } else {
                     insert_row(&mut transaction, table_name, row).await?;
                 }
             }
         }
 
+        rebuild_domain_revision_baseline(&mut transaction).await?;
+
         transaction.commit().await?;
         validate_connection(connection).await
     }
+}
+
+async fn rebuild_domain_revision_baseline(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+) -> PortableValidationResult<()> {
+    sqlx::query("DELETE FROM domain_revisions")
+        .execute(&mut **transaction)
+        .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'station:' || id, MAX(endpoint_revision, 1), 0,
+                CASE WHEN endpoint_revision > 0 THEN 'legacy_endpoint_revision' ELSE 'baseline_snapshot' END
+         FROM stations",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'station_key:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot'
+         FROM station_keys",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'setting:' || key, ROW_NUMBER() OVER (ORDER BY key), 0, 'baseline_snapshot'
+         FROM settings",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'model_alias:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot'
+         FROM model_aliases",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'routing_policy', COALESCE(MAX(config_revision), 1), 0, 'baseline_snapshot'
+         FROM routing_policy",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
 }
 
 pub(crate) async fn validate_rebuilt_target_database(
@@ -241,6 +290,34 @@ async fn insert_row(
         }
     }
     builder.push(")");
+    builder.build().execute(&mut **transaction).await?;
+    Ok(())
+}
+
+async fn upsert_routing_policy(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    row: &PortableRow,
+) -> PortableValidationResult<()> {
+    let columns = [
+        "singleton_key",
+        "config_json",
+        "config_revision",
+        "policy_version",
+        "system_version",
+        "status",
+        "created_at_ms",
+        "updated_at_ms",
+    ];
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "INSERT INTO routing_policy (singleton_key, config_json, config_revision, policy_version, system_version, status, created_at_ms, updated_at_ms) VALUES (",
+    );
+    {
+        let mut separated = builder.separated(", ");
+        for column in columns {
+            separated.push_bind(sqlite_text(row.get(column)));
+        }
+    }
+    builder.push(") ON CONFLICT(singleton_key) DO UPDATE SET config_json = excluded.config_json, config_revision = excluded.config_revision, policy_version = excluded.policy_version, system_version = excluded.system_version, status = excluded.status, created_at_ms = excluded.created_at_ms, updated_at_ms = excluded.updated_at_ms");
     builder.build().execute(&mut **transaction).await?;
     Ok(())
 }

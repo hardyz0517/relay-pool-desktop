@@ -1,7 +1,7 @@
 // RPD_ROUTING_BOUNDARY:display-only-routing-truth-compat
 // UI-only compatibility projection for pricing/group pages. Production routing
 // truth is owned by backend operational read models and routing projectors.
-import { buildCurrentStationGroupFacts, type StationGroupCurrentFact } from "@/lib/projections/groupFacts";
+import { deriveStationGroupDisplayFacts, type StationGroupCurrentFact } from "@/lib/projections/groupFacts";
 import type { PricingRule } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
 import type { StationKey } from "@/lib/types/stationKeys";
@@ -25,7 +25,7 @@ export type PricingGroupCandidate = {
   currentFact: StationGroupCurrentFact;
 };
 
-export function buildPricingGroupCandidates(input: {
+export function derivePricingGroupDisplayCandidates(input: {
   stations: Station[];
   stationKeys?: StationKey[];
   groupBindings: StationGroupBinding[];
@@ -36,7 +36,7 @@ export function buildPricingGroupCandidates(input: {
   const stationKeyNameById = new Map((input.stationKeys ?? []).map((key) => [key.id, key.name]));
   const pricingRules = input.pricingRules.filter((rule) => rule.enabled);
 
-  return buildCurrentStationGroupFacts({
+  return deriveStationGroupDisplayFacts({
     bindings: input.groupBindings,
     rates: input.groupRates,
   })

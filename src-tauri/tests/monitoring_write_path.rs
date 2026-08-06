@@ -10,8 +10,14 @@ pub mod model_monitoring;
 pub mod monitoring_executions;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
 pub mod monitoring_retention;
+#[path = "../src/persistence/stores/routing_observation_store.rs"]
+pub mod routing_observation_store;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;
+#[path = "../src/models/routing_observation.rs"]
+pub mod routing_observation;
+#[path = "../src/application/observation_ingestion.rs"]
+pub mod observation_ingestion;
 
 mod models {
     pub(crate) mod health {
@@ -20,6 +26,10 @@ mod models {
 
     pub(crate) mod monitoring {
         pub(crate) use crate::model_monitoring::*;
+    }
+
+    pub(crate) mod routing_observation {
+        pub(crate) use crate::routing_observation::*;
     }
 }
 
@@ -57,10 +67,18 @@ mod persistence {
                 pub(crate) use crate::monitoring_retention::*;
             }
         }
+
+        pub(crate) mod routing_observation_store {
+            pub(crate) use crate::routing_observation_store::*;
+        }
     }
 }
 
 mod application {
+    pub(crate) mod observation_ingestion {
+        pub(crate) use crate::observation_ingestion::*;
+    }
+
     pub(crate) mod health_transitions {
         pub(crate) use crate::health_transitions::*;
     }
@@ -191,7 +209,7 @@ async fn orchestrator_buffer_commits_v2_facts_without_legacy_run_writes_and_repl
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
-            "SELECT success_count FROM station_key_health WHERE station_key_id = 'key-1'"
+            "SELECT success_count FROM routing_health_snapshot WHERE station_key_id = 'key-1'"
         )
         .fetch_one(&mut connection)
         .await

@@ -249,16 +249,31 @@ impl RoutingLoopbackHarness {
     }
 
     pub async fn set_routing_strategy(&self, strategy: &str) {
-        let strategy = strategy.to_string();
+        let strategy = match strategy {
+            "automatic_balanced" | "automatic" => {
+                crate::models::routing::RoutingPolicy::AutomaticBalanced
+            }
+            "priority_fallback" => crate::models::routing::RoutingPolicy::PriorityFallback,
+            "stable_first" | "stable" => crate::models::routing::RoutingPolicy::StableFirst,
+            "backup_only" => crate::models::routing::RoutingPolicy::BackupOnly,
+            "cheap_first" => crate::models::routing::RoutingPolicy::CheapFirst,
+            "cost_stable_first" => crate::models::routing::RoutingPolicy::CostStableFirst,
+            other => panic!("unknown routing strategy {other}"),
+        };
         self.runtime
             .handle()
             .write(|write| {
                 Box::pin(async move {
+                    let config = crate::application::routing_policy::legacy_policy_mapping(strategy).preset;
+                    let config_json = serde_json::to_string(&config).expect("policy json");
                     sqlx::query(
-                        "UPDATE settings SET value = ?1, updated_at = strftime('%s', 'now')
-                         WHERE key = 'default_routing_strategy'",
+                        "UPDATE routing_policy
+                         SET config_json = ?1,
+                             config_revision = config_revision + 1,
+                             updated_at_ms = strftime('%s', 'now') * 1000
+                         WHERE singleton_key = 1",
                     )
-                    .bind(strategy)
+                    .bind(config_json)
                     .execute(write.connection())
                     .await?;
                     Ok(())
@@ -511,7 +526,7 @@ impl RoutingLoopbackHarness {
         let routing_repository: Arc<
             dyn crate::services::proxy::routing_repository::RoutingRepository,
         > = Arc::new(
-            crate::services::proxy::routing_repository::V2RoutingRepository::new(
+            crate::services::proxy::routing_repository::RoutingExecutionRepository::new(
                 self.services.routing.as_ref().clone(),
             ),
         );
@@ -533,12 +548,12 @@ impl RoutingLoopbackHarness {
             .settings
             .update(UpdateSettingsInput {
                 local_proxy_port: port,
-                default_routing_strategy: settings.default_routing_strategy,
+                routing_policy_name: settings.routing_policy_name,
                 collector_proxy_mode: settings.collector_proxy_mode,
                 collector_proxy_url: settings.collector_proxy_url,
                 max_rate_multiplier: Some(settings.max_rate_multiplier),
-                default_routing_group_filter: Some(settings.default_routing_group_filter),
-                scheduler_advanced_settings: Some(settings.scheduler_advanced_settings),
+                routing_group_scope: Some(settings.routing_group_scope),
+                scheduler_config: Some(settings.scheduler_config),
                 low_balance_threshold_cny: settings.low_balance_threshold_cny,
                 collector_interval_minutes: settings.collector_interval_minutes,
                 balance_interval_minutes: settings.balance_interval_minutes,

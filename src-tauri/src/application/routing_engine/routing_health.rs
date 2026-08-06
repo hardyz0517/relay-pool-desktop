@@ -3,9 +3,19 @@ use super::{
     routing_failure::{
         ClassifiedRouteFailure, RouteFailureAction, RouteFailureKind, RouteFailureScope,
     },
-    routing_types::RouteHealthState,
 };
 use crate::models::routing::StationKeyHealth;
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RouteHealthState {
+    Ready,
+    Degraded,
+    Cooldown,
+    Offline,
+    Unknown,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg(test)]

@@ -1,12 +1,17 @@
 use std::sync::Arc;
 
 use crate::{
-    application::{error::ApplicationError, settings::SettingsService, stations::StationService},
+    TrayBehavior, TrayBehaviorState,
+    application::{
+        error::ApplicationError,
+        queries::station_assets::StationAssetsQuery,
+        settings::SettingsService,
+        stations::StationService,
+    },
     models::{
         settings::{AppSettings, UpdateSettingsInput},
         stations::{CreateStationInput, Station, UpdateStationInput},
     },
-    TrayBehavior, TrayBehaviorState,
 };
 
 #[derive(Clone)]
@@ -14,23 +19,35 @@ pub(crate) struct SettingsStationsCommandFacade {
     stations: Arc<StationService>,
     settings: Arc<SettingsService>,
     tray_behavior: Arc<TrayBehaviorState>,
+    station_assets: Arc<StationAssetsQuery>,
 }
 
 impl SettingsStationsCommandFacade {
     pub(crate) fn new(
         stations: Arc<StationService>,
         settings: Arc<SettingsService>,
+        station_assets: Arc<StationAssetsQuery>,
         tray_behavior: Arc<TrayBehaviorState>,
     ) -> Self {
         Self {
             stations,
             settings,
             tray_behavior,
+            station_assets,
         }
     }
 
     pub(crate) async fn list_stations(&self) -> Result<Vec<Station>, ApplicationError> {
-        self.stations.list().await
+        let read_model = self
+            .station_assets
+            .load(crate::application::pagination::PageLimit::new(500).expect("bounded limit"))
+            .await?;
+        Ok(read_model
+            .data
+            .rows
+            .into_iter()
+            .map(|row| row.station)
+            .collect())
     }
 
     pub(crate) async fn create_station(

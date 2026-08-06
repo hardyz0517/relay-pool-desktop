@@ -1,5 +1,5 @@
 import {
-  buildPricingGroupCandidates,
+  derivePricingGroupDisplayCandidates,
   type PricingGroupCandidate,
 } from "../../lib/projections/pricingFacts";
 import { groupCategoryDefinitions, type StationGroupCategory } from "../../lib/groupCategories";
@@ -13,7 +13,7 @@ import type {
   PricingGroupMonitorSummary,
 } from "@/lib/types/pricingMonitoring";
 import type { PricingGroupRefInput } from "@/lib/projections/pricingGroupRefs";
-import { canonicalizePricingGroupRefs } from "@/lib/projections/pricingGroupRefs";
+import { normalizePricingGroupDisplayRefs } from "@/lib/projections/pricingGroupRefs";
 
 export type PricingGroupType = StationGroupCategory;
 
@@ -133,7 +133,7 @@ export function buildPricingComparisonViewModel(
     (input.monitorWorkspace?.items ?? []).map((item) => [monitorRefKey(item), item]),
   );
   const stationKeysById = new Map((input.stationKeys ?? []).map((key) => [key.id, key]));
-  const pricingCandidates = buildPricingGroupCandidates({
+  const pricingCandidates = derivePricingGroupDisplayCandidates({
     stations: input.stations,
     stationKeys: input.stationKeys,
     groupBindings: input.groupBindings,
@@ -207,7 +207,7 @@ function normalizeFilters(filters: PricingComparisonFilters | undefined): Requir
 }
 
 export function buildPricingMonitorRefs(input: Omit<PricingComparisonInput, "filters" | "monitorWorkspace" | "monitorDataState">): PricingGroupRefInput[] {
-  const candidates = buildPricingGroupCandidates({
+  const candidates = derivePricingGroupDisplayCandidates({
     stations: input.stations,
     stationKeys: input.stationKeys,
     groupBindings: input.groupBindings,
@@ -221,7 +221,7 @@ export function buildPricingMonitorRefs(input: Omit<PricingComparisonInput, "fil
     groupKeyHash: candidate.groupKeyHash,
   }));
   try {
-    return canonicalizePricingGroupRefs(refs).map((group) => ({
+    return normalizePricingGroupDisplayRefs(refs).map((group) => ({
       stationId: group.stationId,
       groupBindingId: group.groupBindingId,
       groupIdHash: group.groupIdHash,

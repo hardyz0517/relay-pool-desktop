@@ -14,7 +14,7 @@ import {
 import { readError } from "@/lib/errors";
 import { inferGroupCategoryFromEvidence } from "@/lib/groupCategories";
 import { buildStationGroupOptionsFromCurrentFactsForSelect, findMatchingGroupOption } from "@/lib/groupOptionViewModels";
-import { buildCurrentStationGroupFacts } from "@/lib/projections/groupFacts";
+import { deriveStationGroupDisplayFacts } from "@/lib/projections/groupFacts";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
 import { channelMonitoringQueryOptions, keyPoolQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
@@ -603,6 +603,6 @@ async function loadCurrentStationGroupOptions(stationId: string) {
     listGroupRateRecords(stationId),
   ]);
   return buildStationGroupOptionsFromCurrentFactsForSelect(
-    buildCurrentStationGroupFacts({ bindings, rates }),
+    deriveStationGroupDisplayFacts({ bindings, rates }),
   );
 }

@@ -69,7 +69,6 @@ import {
   listGroupRateRecords,
   loadChannelStatusWorkspace,
   loadPricingComparisonWorkspace,
-  loadLocalRoutingWorkspace,
   loadRoutingRuntimeOverlay,
   loadRoutingWorkspaceSnapshot,
   listRemoteStationKeys,
@@ -90,7 +89,6 @@ import {
   pingStationEndpoint,
   prepareLocalProxyForUpdate,
   reorderKeyPool,
-  reorderLocalRoutingKeys,
   reorderStationKeys,
   reorderStations,
   resetModelBasePricesToBuiltins,
@@ -463,7 +461,7 @@ describe("generated settings/stations transport envelopes", () => {
       retryInitialBackoffMs: 200,
       retryMaxBackoffMs: 2_000,
       riskDailyProbeBudget: 200,
-      healthWritebackMode: "observe_only" as const,
+      healthPolicyMode: "observe_only" as const,
       healthFailureThreshold: 2,
       healthRecoveryThreshold: 2,
       attemptTimeoutMs: 10_000,
@@ -576,7 +574,18 @@ describe("generated settings/stations transport envelopes", () => {
       usesTools: false,
       usesVision: false,
       usesReasoning: false,
-      policy: "cost_stable_first",
+      policy: {
+        version: 1,
+        reliabilityWeight: 4000,
+        responsivenessWeight: 2500,
+        costWeight: 2000,
+        preferenceWeight: 1500,
+        maxCandidates: 64,
+        explorationShareBasisPoints: 500,
+        allowDepletedFallback: false,
+        affinityEnabled: false,
+        affinityTtlSeconds: 300,
+      },
       maxRateMultiplier: 2,
       routingGroupFilter: { group_type: "gpt" },
       sessionHash: "session-1",
@@ -604,7 +613,18 @@ describe("generated settings/stations transport envelopes", () => {
             usesTools: false,
             usesVision: false,
             usesReasoning: false,
-            policy: "cost_stable_first",
+            policy: {
+              version: 1,
+              reliabilityWeight: 4000,
+              responsivenessWeight: 2500,
+              costWeight: 2000,
+              preferenceWeight: 1500,
+              maxCandidates: 64,
+              explorationShareBasisPoints: 500,
+              allowDepletedFallback: false,
+              affinityEnabled: false,
+              affinityTtlSeconds: 300,
+            },
             maxRateMultiplier: 2,
             routingGroupFilter: { group_type: "gpt" },
             sessionHash: "session-1",
@@ -732,22 +752,11 @@ describe("generated settings/stations transport envelopes", () => {
     ]);
   });
 
-  it("sends proxy workspace reads through generated envelopes", async () => {
+  it("sends proxy status through generated envelopes", async () => {
     await getProxyStatus();
-    await loadLocalRoutingWorkspace();
 
     expect(transport.invoke.mock.calls).toEqual([
       ["get_proxy_status", { input: {} }],
-      ["load_local_routing_workspace", { input: {} }],
-    ]);
-  });
-
-  it("sends local routing reorder through a generated envelope", async () => {
-    const input = { stationKeyIds: ["key-1", "key-2"] };
-    await reorderLocalRoutingKeys(input);
-
-    expect(transport.invoke.mock.calls).toEqual([
-      ["reorder_local_routing_keys", { input }],
     ]);
   });
 

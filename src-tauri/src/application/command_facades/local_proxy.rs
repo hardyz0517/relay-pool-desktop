@@ -4,14 +4,13 @@ use crate::{
     application::{
         credentials::CredentialService, error::ApplicationError,
         request_finalization::RequestFinalizationService,
-        request_lifecycle::ports::LifecycleWriteError, request_logs::RequestLogService,
+        request_lifecycle::ports::LifecycleWriteError,
         routing::RoutingService, settings::SettingsService,
     },
     models::proxy::ProxyStatus,
     services::proxy::{
         lifecycle::ports::RequestLifecycleStore,
-        routing_repository::{RoutingRepository, V2RoutingRepository},
-        routing_types::LocalRoutingWorkspace,
+        routing_repository::{RoutingExecutionRepository, RoutingRepository},
         runtime::{ProxyRuntimeState, ProxyStartConfig},
     },
 };
@@ -44,7 +43,6 @@ pub(crate) struct LocalProxyCommandFacade {
     settings: Arc<SettingsService>,
     routing: Arc<RoutingService>,
     credentials: Arc<CredentialService>,
-    request_logs: Arc<RequestLogService>,
     request_finalization: Arc<RequestFinalizationService>,
     proxy: Arc<ProxyRuntimeState>,
 }
@@ -54,7 +52,6 @@ impl LocalProxyCommandFacade {
         settings: Arc<SettingsService>,
         routing: Arc<RoutingService>,
         credentials: Arc<CredentialService>,
-        request_logs: Arc<RequestLogService>,
         request_finalization: Arc<RequestFinalizationService>,
         proxy: Arc<ProxyRuntimeState>,
     ) -> Self {
@@ -62,7 +59,6 @@ impl LocalProxyCommandFacade {
             settings,
             routing,
             credentials,
-            request_logs,
             request_finalization,
             proxy,
         }
@@ -71,22 +67,6 @@ impl LocalProxyCommandFacade {
     pub(crate) async fn get_proxy_status(&self) -> Result<ProxyStatus, ApplicationError> {
         let settings = self.settings.load().await?;
         Ok(self.proxy.status(settings.local_proxy_port))
-    }
-
-    pub(crate) async fn load_local_routing_workspace(
-        &self,
-    ) -> Result<LocalRoutingWorkspace, ApplicationError> {
-        self.load_workspace().await
-    }
-
-    pub(crate) async fn reorder_local_routing_keys(
-        &self,
-        station_key_ids: Vec<String>,
-    ) -> Result<LocalRoutingWorkspace, ApplicationError> {
-        self.routing
-            .reorder_local_routing_keys(station_key_ids)
-            .await?;
-        self.load_workspace().await
     }
 
     pub(crate) async fn start_local_proxy(&self) -> Result<ProxyStatus, LocalProxyCommandError> {
@@ -137,20 +117,6 @@ impl LocalProxyCommandFacade {
         })
     }
 
-    async fn load_workspace(&self) -> Result<LocalRoutingWorkspace, ApplicationError> {
-        let settings = self.settings.load().await?;
-        let request_logs = self
-            .request_logs
-            .list_recent(
-                crate::application::pagination::PageLimit::new(500).expect("bounded limit"),
-            )
-            .await?;
-        let proxy_status = self.proxy.status(settings.local_proxy_port);
-        self.routing
-            .load_local_routing_workspace(settings, request_logs, proxy_status)
-            .await
-    }
-
     async fn proxy_start_config(
         &self,
     ) -> Result<
@@ -168,7 +134,7 @@ impl LocalProxyCommandFacade {
             .await
             .map_err(local_proxy_startup_reconciliation_error)?;
         let routing_repository: Arc<dyn RoutingRepository> =
-            Arc::new(V2RoutingRepository::new(self.routing.as_ref().clone()));
+            Arc::new(RoutingExecutionRepository::new(self.routing.as_ref().clone()));
         let lifecycle_store: Arc<dyn RequestLifecycleStore> = self.request_finalization.clone();
         let config = ProxyStartConfig::new_v2(
             routing_repository,

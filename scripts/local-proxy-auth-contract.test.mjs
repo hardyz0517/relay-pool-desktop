@@ -44,14 +44,14 @@ assert.match(ingress, /local_auth::authorize_headers\(&headers, &state\.local_ac
 assert.match(ingress, /ProxyFailureCode::LocalAuthInvalid/);
 assert.match(ingress, /local_auth::allowed_origin\(origin\)/);
 assert.doesNotMatch(ingress, /access-control-allow-origin:\s*\*/i);
-assert.match(runtime, /V2ProxyExecutor/);
+assert.match(runtime, /ProxyExecutor/);
 assert.match(runtime, /RequestLifecycleStore/);
 assert.doesNotMatch(runtime, /RequestFinalizationService/);
 assert.doesNotMatch(runtime, /ProxyFinalizationMode|LegacyRequestCoupled|with_legacy_request_coupled_finalization/);
 assert.match(runtime, /LifecycleWriter::start/);
 assert.doesNotMatch(runtime, /ProxyRuntimeMode/);
 assert.doesNotMatch(runtime, /fn forward_(chat|responses|embeddings)_request/);
-assert.match(settingsService, /pub\(crate\) async fn ensure_local_access_key/);
+assert.match(settingsService, /pub(?:\(crate\))? async fn ensure_local_access_key/);
 assert.match(settingsService, /OsRng\.fill_bytes/);
 assert.match(settingsService, /ensure_local_access_key_replaces_placeholder_once_under_concurrency/);
 assert.match(proxyStartup, /services[\s\S]*\.settings[\s\S]*\.ensure_local_access_key\(\)/);

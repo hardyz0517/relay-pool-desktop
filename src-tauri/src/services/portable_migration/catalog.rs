@@ -93,7 +93,7 @@ pub(crate) enum CatalogError {
     MissingSensitiveFieldRule { table: String, column: String },
 }
 
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 43;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 50;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -114,12 +114,8 @@ pub(crate) fn field_rule(table: &str, column: &str) -> Option<FieldTransform> {
 pub(crate) fn setting_policy(key: &str) -> Option<SettingPolicy> {
     match key {
         "local_proxy_port"
-        | "default_routing_strategy"
         | "collector_proxy_mode"
         | "collector_proxy_url"
-        | "max_rate_multiplier"
-        | "default_routing_group_filter"
-        | "scheduler_advanced_settings_json"
         | "low_balance_threshold_cny"
         | "collector_interval_minutes"
         | "balance_interval_minutes"
@@ -127,9 +123,13 @@ pub(crate) fn setting_policy(key: &str) -> Option<SettingPolicy> {
         | "pricing_refresh_interval_minutes"
         | "collector_timeout_seconds"
         | "collector_max_concurrency"
-        | "allow_depleted_fallback"
         | "developer_mode_enabled"
         | "tray_behavior" => Some(SettingPolicy::Include),
+        "default_routing_strategy"
+        | "default_routing_group_filter"
+        | "max_rate_multiplier"
+        | "dispatch_algorithm_profile_json"
+        | "allow_depleted_fallback" => Some(SettingPolicy::Reset),
         "common_login_profiles_json" => Some(SettingPolicy::IncludeWithTransform),
         "local_key" | "local_proxy_start_on_launch" => Some(SettingPolicy::Reset),
         _ => None,
@@ -351,29 +351,6 @@ const STATION_KEYS_COLUMNS: &[&str] = &[
     "updated_at",
     "routing_order",
 ];
-const STATION_ENDPOINT_HEALTH_COLUMNS: &[&str] = &[
-    "station_id",
-    "endpoint_revision",
-    "status",
-    "latency_ms",
-    "checked_at",
-    "error_summary",
-    "updated_at",
-];
-const STATION_KEY_HEALTH_COLUMNS: &[&str] = &[
-    "station_key_id",
-    "endpoint_revision",
-    "last_success_at",
-    "last_failure_at",
-    "consecutive_failures",
-    "success_count",
-    "failure_count",
-    "total_duration_ms",
-    "avg_latency_ms",
-    "last_error_summary",
-    "cooldown_until",
-    "updated_at",
-];
 const STATION_CREDENTIALS_COLUMNS: &[&str] = &[
     "station_id",
     "login_password",
@@ -432,6 +409,45 @@ const STATION_KEY_CAPABILITIES_COLUMNS: &[&str] = &[
     "only_use_as_backup",
     "routing_tags_json",
     "updated_at",
+];
+
+const STATION_ENDPOINT_HEALTH_COLUMNS: &[&str] = &[
+    "station_id",
+    "endpoint_revision",
+    "status",
+    "latency_ms",
+    "checked_at",
+    "error_summary",
+    "updated_at",
+];
+
+const STATION_KEY_HEALTH_COLUMNS: &[&str] = &[
+    "station_key_id",
+    "endpoint_revision",
+    "last_success_at",
+    "last_failure_at",
+    "consecutive_failures",
+    "success_count",
+    "failure_count",
+    "total_duration_ms",
+    "avg_latency_ms",
+    "last_error_summary",
+    "cooldown_until",
+    "updated_at",
+];
+
+const STATION_ENDPOINT_HEALTH_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "error_summary",
+        transform: FieldTransform::RedactText,
+    },
+];
+
+const STATION_KEY_HEALTH_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "last_error_summary",
+        transform: FieldTransform::RedactText,
+    },
 ];
 const MODEL_ALIASES_COLUMNS: &[&str] = &[
     "id",
@@ -854,7 +870,7 @@ const CHANNEL_MONITORS_COLUMNS: &[&str] = &[
     "retry_initial_backoff_ms",
     "retry_max_backoff_ms",
     "risk_daily_probe_budget",
-    "health_writeback_mode",
+    "health_policy_mode",
     "health_failure_threshold",
     "health_recovery_threshold",
     "attempt_timeout_ms",
@@ -962,9 +978,6 @@ const CHANNEL_MONITOR_TARGET_RESULTS_COLUMNS: &[&str] = &[
     "client_profile_version",
     "request_profile_hash",
     "traffic_equivalence",
-    "health_writeback_mode",
-    "health_writeback_decision",
-    "health_writeback_reason",
     "latency_ms",
     "ttfb_ms",
     "first_content_ms",
@@ -1055,6 +1068,59 @@ const APP_SECRET_BINDINGS_COLUMNS: &[&str] = &[
     "created_at",
     "updated_at",
 ];
+const DOMAIN_REVISIONS_COLUMNS: &[&str] = &["scope", "revision", "updated_at_ms", "provenance"];
+const ROUTING_POLICY_COLUMNS: &[&str] = &[
+    "singleton_key",
+    "config_json",
+    "config_revision",
+    "policy_version",
+    "system_version",
+    "status",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const ROUTING_POLICY_HISTORY_COLUMNS: &[&str] = &[
+    "config_revision",
+    "config_json",
+    "policy_version",
+    "system_version",
+    "status",
+    "created_at_ms",
+];
+const ROUTING_OBSERVATIONS_COLUMNS: &[&str] = &[
+    "id",
+    "producer_id",
+    "producer_sequence",
+    "payload_hash",
+    "event_at_ms",
+    "ingested_at_ms",
+    "scope",
+    "source",
+    "traffic_equivalence",
+    "outcome_kind",
+    "latency_ms",
+    "mass_basis_points",
+    "evidence_json",
+    "created_at_ms",
+];
+const ROUTING_PROJECTOR_CHECKPOINTS_COLUMNS: &[&str] = &[
+    "projector",
+    "projector_version",
+    "scope",
+    "checkpoint_sequence",
+    "status",
+    "error_code",
+    "updated_at_ms",
+];
+const ROUTING_QUALITY_SUMMARIES_COLUMNS: &[&str] =
+    &["scope", "quality_revision", "summary_json", "updated_at_ms"];
+const ROUTING_HEALTH_AXES_COLUMNS: &[&str] = &[
+    "scope",
+    "axis",
+    "health_revision",
+    "value_basis_points",
+    "updated_at_ms",
+];
 
 const SETTINGS_RULES: &[FieldRule] = &[];
 const SECRETS_RULES: &[FieldRule] = &[
@@ -1088,18 +1154,9 @@ const STATIONS_RULES: &[FieldRule] = &[
         name: "api_key_secret_id",
         transform: FieldTransform::SecretReference,
     },
-    FieldRule {
-        name: "status",
-        transform: FieldTransform::ResetText("unchecked"),
-    },
-    FieldRule {
-        name: "latency_ms",
-        transform: FieldTransform::ResetNull,
-    },
-    FieldRule {
-        name: "last_checked_at",
-        transform: FieldTransform::ResetNull,
-    },
+    FieldRule { name: "status", transform: FieldTransform::ResetText("unchecked") },
+    FieldRule { name: "latency_ms", transform: FieldTransform::ResetNull },
+    FieldRule { name: "last_checked_at", transform: FieldTransform::ResetNull },
 ];
 const STATION_KEYS_RULES: &[FieldRule] = &[
     FieldRule {
@@ -1110,28 +1167,8 @@ const STATION_KEYS_RULES: &[FieldRule] = &[
         name: "api_key_secret_id",
         transform: FieldTransform::SecretReference,
     },
-    FieldRule {
-        name: "status",
-        transform: FieldTransform::ResetText("unchecked"),
-    },
-    FieldRule {
-        name: "last_checked_at",
-        transform: FieldTransform::ResetNull,
-    },
-];
-const HEALTH_RULES: &[FieldRule] = &[
-    FieldRule {
-        name: "status",
-        transform: FieldTransform::ResetText("unchecked"),
-    },
-    FieldRule {
-        name: "error_summary",
-        transform: FieldTransform::ResetNull,
-    },
-    FieldRule {
-        name: "last_error_summary",
-        transform: FieldTransform::ResetNull,
-    },
+    FieldRule { name: "status", transform: FieldTransform::ResetText("unchecked") },
+    FieldRule { name: "last_checked_at", transform: FieldTransform::ResetNull },
 ];
 const STATION_CREDENTIALS_RULES: &[FieldRule] = &[
     FieldRule {
@@ -1392,14 +1429,7 @@ const CHANNEL_ATTEMPT_RULES: &[FieldRule] = &[
     },
 ];
 const CHANNEL_TARGET_RESULT_RULES: &[FieldRule] = &[
-    FieldRule {
-        name: "terminal_reason",
-        transform: FieldTransform::RedactText,
-    },
-    FieldRule {
-        name: "health_writeback_reason",
-        transform: FieldTransform::RedactText,
-    },
+    FieldRule { name: "terminal_reason", transform: FieldTransform::RedactText },
 ];
 const CHANNEL_BUCKET_ROLLUP_RULES: &[FieldRule] = &[FieldRule {
     name: "failure_counts_json",
@@ -1420,6 +1450,18 @@ const PROVIDER_DRAFT_PREVIEW_RULES: &[FieldRule] = &[FieldRule {
 const APP_SECRET_BINDING_RULES: &[FieldRule] = &[FieldRule {
     name: "secret_id",
     transform: FieldTransform::SecretReference,
+}];
+const ROUTING_POLICY_RULES: &[FieldRule] = &[FieldRule {
+    name: "config_json",
+    transform: FieldTransform::BoundedJson,
+}];
+const ROUTING_OBSERVATION_RULES: &[FieldRule] = &[FieldRule {
+    name: "evidence_json",
+    transform: FieldTransform::BoundedJson,
+}];
+const ROUTING_QUALITY_RULES: &[FieldRule] = &[FieldRule {
+    name: "summary_json",
+    transform: FieldTransform::BoundedJson,
 }];
 
 // Existing channel monitor tables are declared here only to classify the current
@@ -1478,24 +1520,6 @@ const TABLES: &[TableCatalog] = &[
         true,
         STATION_KEYS_COLUMNS,
         STATION_KEYS_RULES,
-    ),
-    table(
-        "station_endpoint_health",
-        TablePolicy::Reset,
-        DataCategory::DeviceRuntimeState,
-        DependencyStage::StationChildren,
-        false,
-        STATION_ENDPOINT_HEALTH_COLUMNS,
-        HEALTH_RULES,
-    ),
-    table(
-        "station_key_health",
-        TablePolicy::Reset,
-        DataCategory::DeviceRuntimeState,
-        DependencyStage::StationChildren,
-        false,
-        STATION_KEY_HEALTH_COLUMNS,
-        HEALTH_RULES,
     ),
     table(
         "station_credentials",
@@ -1767,6 +1791,26 @@ const TABLES: &[TableCatalog] = &[
         STATION_KEY_HEALTH_OBSERVATIONS_COLUMNS,
         STATION_KEY_HEALTH_OBSERVATION_RULES,
     ),
+    // Retained solely so databases created before the routing cutover remain
+    // readable. These tables are never imported and are not routing inputs.
+    table(
+        "endpoint_health_snapshot",
+        TablePolicy::Exclude,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::Excluded,
+        false,
+        STATION_ENDPOINT_HEALTH_COLUMNS,
+        STATION_ENDPOINT_HEALTH_RULES,
+    ),
+    table(
+        "routing_health_snapshot",
+        TablePolicy::Exclude,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::Excluded,
+        false,
+        STATION_KEY_HEALTH_COLUMNS,
+        STATION_KEY_HEALTH_RULES,
+    ),
     table(
         "channel_monitor_rollup_dirty_ranges",
         TablePolicy::Reset,
@@ -1811,6 +1855,69 @@ const TABLES: &[TableCatalog] = &[
         true,
         APP_SECRET_BINDINGS_COLUMNS,
         APP_SECRET_BINDING_RULES,
+    ),
+    table(
+        "domain_revisions",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::Internal,
+        false,
+        DOMAIN_REVISIONS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_policy",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        false,
+        ROUTING_POLICY_COLUMNS,
+        ROUTING_POLICY_RULES,
+    ),
+    table(
+        "routing_policy_history",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_POLICY_HISTORY_COLUMNS,
+        ROUTING_POLICY_RULES,
+    ),
+    table(
+        "routing_observations",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_OBSERVATIONS_COLUMNS,
+        ROUTING_OBSERVATION_RULES,
+    ),
+    table(
+        "routing_projector_checkpoints",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_PROJECTOR_CHECKPOINTS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_quality_summaries",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_QUALITY_SUMMARIES_COLUMNS,
+        ROUTING_QUALITY_RULES,
+    ),
+    table(
+        "routing_health_axes",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_HEALTH_AXES_COLUMNS,
+        &[],
     ),
 ];
 

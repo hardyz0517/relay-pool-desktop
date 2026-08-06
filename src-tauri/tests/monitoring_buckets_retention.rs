@@ -609,16 +609,14 @@ async fn seed_target_result(
             terminal_outcome, terminal_failure_kind, requested_model, effective_model,
             used_fallback, attempt_count, decisive_attempt_id, protocol_kind,
             resolved_adapter_kind, client_profile_id, client_profile_version,
-            request_profile_hash, traffic_equivalence, health_writeback_mode,
-            health_writeback_decision, latency_ms, semantic_confidence,
+            request_profile_hash, traffic_equivalence, latency_ms, semantic_confidence,
             started_at_ms, finished_at_ms, created_at_ms
         ) VALUES (
             ?1, ?2, 'monitor-1', 'station-1', 'key-1', 1,
             ?3, ?4, 'gpt-primary', 'gpt-primary',
             0, 1, NULL, 'generic_open_ai',
             'generic_open_ai', 'standard_api', 1,
-            'hash', 'standard_api', 'observe_only',
-            'observe_only', ?5, 'protocol_validated',
+            'hash', 'standard_api', ?5, 'protocol_validated',
             ?6, ?7, ?7
         )
         "#,

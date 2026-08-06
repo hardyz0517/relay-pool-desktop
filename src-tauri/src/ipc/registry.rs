@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "8c308ad6c007f080c245a924658a8ece57316b70e36cd660dfbab11cc44aff0b";
+    "9028e00c3ad16dc24568955472606c51ed035e5037ca5216fd2e295d535bd86e";
 
 #[cfg_attr(
     not(test),
@@ -117,8 +117,6 @@ macro_rules! ipc_command_registry {
             choose_data_dir => $crate::commands::data_directory::choose_data_dir,
             reset_data_dir => $crate::commands::data_directory::reset_data_dir,
             get_proxy_status => $crate::commands::local_proxy::get_proxy_status,
-            load_local_routing_workspace => $crate::commands::local_proxy::load_local_routing_workspace,
-            reorder_local_routing_keys => $crate::commands::local_proxy::reorder_local_routing_keys,
             start_local_proxy => $crate::commands::local_proxy::start_local_proxy,
             stop_local_proxy => $crate::commands::local_proxy::stop_local_proxy,
             cleanup_before_update => $crate::commands::local_proxy::cleanup_before_update,
@@ -151,6 +149,8 @@ macro_rules! ipc_command_registry {
             upsert_model_alias => $crate::commands::model_aliases::upsert_model_alias,
             delete_model_alias => $crate::commands::model_aliases::delete_model_alias,
             list_station_key_health => $crate::commands::routing_health::list_station_key_health,
+            load_routing_policy => $crate::commands::routing_health::load_routing_policy,
+            update_routing_policy => $crate::commands::routing_health::update_routing_policy,
             list_station_endpoint_health => $crate::commands::routing_health::list_station_endpoint_health,
             load_routing_workspace_snapshot => $crate::commands::routing_health::load_routing_workspace_snapshot,
             load_routing_runtime_overlay => $crate::commands::routing_health::load_routing_runtime_overlay,
@@ -813,15 +813,6 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_mutation("PricingRuleIdInputDto", "unit", "idempotent", false)
         }
         "get_proxy_status" => migrated_read("EmptyInputDto", "ProxyStatusDto"),
-        "load_local_routing_workspace" => {
-            migrated_read("EmptyInputDto", "LocalRoutingWorkspaceDto")
-        }
-        "reorder_local_routing_keys" => migrated_mutation(
-            "ReorderLocalRoutingKeysInputDto",
-            "LocalRoutingWorkspaceDto",
-            "idempotent",
-            false,
-        ),
         "start_local_proxy" => {
             migrated_mutation("EmptyInputDto", "ProxyStatusDto", "idempotent", false)
         }
@@ -1017,12 +1008,12 @@ fn pilot_serialization_fixture() -> String {
         local_proxy_port: 8787,
         local_proxy_start_on_launch: false,
         local_key_masked: "sk-fixture-...redacted".into(),
-        default_routing_strategy: "automatic_balanced".into(),
+        routing_policy_name: "automatic_balanced".into(),
         collector_proxy_mode: "direct".into(),
         collector_proxy_url: None,
         max_rate_multiplier: None,
-        default_routing_group_filter: Default::default(),
-        scheduler_advanced_settings: Default::default(),
+        routing_group_scope: Default::default(),
+        scheduler_config: Default::default(),
         low_balance_threshold_cny: 15.0,
         collector_interval_minutes: 30,
         balance_interval_minutes: 5,
@@ -1473,6 +1464,14 @@ export function listStationKeyHealth(input: EmptyInputDto = {}): Promise<Station
   return invokeCommand<StationKeyHealthDto[]>("list_station_key_health", { input });
 }
 
+export function loadRoutingPolicy(input: EmptyInputDto = {}): Promise<RoutingPolicySnapshotDto> {
+  return invokeCommand<RoutingPolicySnapshotDto>("load_routing_policy", { input });
+}
+
+export function updateRoutingPolicy(input: UpdateRoutingPolicyInputDto): Promise<RoutingPolicySnapshotDto> {
+  return invokeCommand<RoutingPolicySnapshotDto>("update_routing_policy", { input });
+}
+
 export function listStationEndpointHealth(input: EmptyInputDto = {}): Promise<StationEndpointHealthDto[]> {
   return invokeCommand<StationEndpointHealthDto[]>("list_station_endpoint_health", { input });
 }
@@ -1567,14 +1566,6 @@ export function deletePricingRule(input: PricingRuleIdInputDto): Promise<void> {
 
 export function getProxyStatus(input: EmptyInputDto = {}): Promise<ProxyStatusDto> {
   return invokeCommand<ProxyStatusDto>("get_proxy_status", { input });
-}
-
-export function loadLocalRoutingWorkspace(input: EmptyInputDto = {}): Promise<LocalRoutingWorkspaceDto> {
-  return invokeCommand<LocalRoutingWorkspaceDto>("load_local_routing_workspace", { input });
-}
-
-export function reorderLocalRoutingKeys(input: ReorderLocalRoutingKeysInputDto): Promise<LocalRoutingWorkspaceDto> {
-  return invokeCommand<LocalRoutingWorkspaceDto>("reorder_local_routing_keys", { input });
 }
 
 export function pingStationEndpoint(input: StationIdInputDto): Promise<EndpointPingResultDto> {
@@ -2214,10 +2205,7 @@ mod tests {
 
     #[test]
     fn proxy_workspace_reads_have_closed_schemas_and_read_semantics() {
-        for (name, output) in [
-            ("get_proxy_status", "ProxyStatusDto"),
-            ("load_local_routing_workspace", "LocalRoutingWorkspaceDto"),
-        ] {
+        for (name, output) in [("get_proxy_status", "ProxyStatusDto")] {
             let contract = command_contract(name);
             assert_eq!(contract.input, "EmptyInputDto", "{name}");
             assert_eq!(contract.output, output, "{name}");
@@ -2229,17 +2217,6 @@ mod tests {
             assert!(!contract.transport_retry, "{name}");
             assert!(!contract.result_unknown, "{name}");
         }
-    }
-
-    #[test]
-    fn local_routing_reorder_has_a_closed_schema_and_idempotent_semantics() {
-        let contract = command_contract("reorder_local_routing_keys");
-        assert_eq!(contract.input, "ReorderLocalRoutingKeysInputDto");
-        assert_eq!(contract.output, "LocalRoutingWorkspaceDto");
-        assert_eq!(contract.mutation_kind, "idempotent");
-        assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
-        assert!(!contract.transport_retry);
-        assert!(!contract.result_unknown);
     }
 
     #[test]

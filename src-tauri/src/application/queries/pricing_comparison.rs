@@ -1,6 +1,8 @@
 use crate::{
     application::{error::ApplicationError, pagination::PageLimit},
-    models::shared_capabilities::PricingComparisonWorkspace,
+    models::{
+        shared_capabilities::PricingComparisonWorkspace,
+    },
     persistence::{
         runtime::PersistenceHandle,
         stores::pricing_store::{PricingComparisonRows, PricingStore},
@@ -32,6 +34,7 @@ impl PricingComparisonQuery {
             .await?;
         Ok(workspace_from_rows(rows))
     }
+
 }
 
 fn workspace_from_rows(rows: PricingComparisonRows) -> PricingComparisonWorkspace {

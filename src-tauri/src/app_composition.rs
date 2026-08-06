@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use crate::{
+    TrayBehaviorState,
     application::{
         app_services::AppServices,
         command_facades::{
@@ -25,15 +26,14 @@ use crate::{
     runtime_composition::{RuntimeCompositionError, WorkRuntimeBundle},
     services::{
         collectors::{
-            drivers::{static_provider_entries, REQUIRED_PROVIDER_KINDS},
+            drivers::{REQUIRED_PROVIDER_KINDS, static_provider_entries},
             orchestration::{ProviderRegistry, ProviderRegistryError},
         },
         monitoring::runner::MonitoringRunner,
         pricing_catalog::StaticBuiltinModelBasePriceCatalog,
         proxy::runtime::ProxyRuntimeState,
-        secrets::{vault::DataKeyVault, DeviceKeyResolver},
+        secrets::{DeviceKeyResolver, vault::DataKeyVault},
     },
-    TrayBehaviorState,
 };
 
 pub(crate) type ManagedWorkRuntime =
@@ -123,12 +123,16 @@ pub(crate) fn compose_settings_stations_command_facade(
     SettingsStationsCommandFacade::new(
         Arc::clone(&services.stations),
         Arc::clone(&services.settings),
+        Arc::clone(&services.station_assets),
         tray_behavior,
     )
 }
 
 pub(crate) fn compose_key_pool_command_facade(services: &AppServices) -> KeyPoolCommandFacade {
-    KeyPoolCommandFacade::new(Arc::clone(&services.credentials))
+    KeyPoolCommandFacade::new(
+        Arc::clone(&services.credentials),
+        Arc::clone(&services.key_pool),
+    )
 }
 
 pub(crate) fn compose_remote_keys_command_facade(
@@ -153,7 +157,6 @@ pub(crate) fn compose_routing_command_facade(
 ) -> RoutingCommandFacade {
     RoutingCommandFacade::new(
         Arc::clone(&services.routing),
-        Arc::clone(&services.request_logs),
         outbound,
     )
 }
@@ -210,7 +213,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        app_composition::{compose_provider_registry, compose_work_runtime, WorkRuntimeConfig},
+        app_composition::{WorkRuntimeConfig, compose_provider_registry, compose_work_runtime},
         background_tasks::{BlockingExecutorConfig, OperationRegistryConfig, TaskId},
         outbound::{AsyncOutboundClientConfig, OutboundHeaderPolicy, TimeoutPolicy},
         runtime_composition::RuntimeCompositionError,
@@ -389,7 +392,6 @@ pub(crate) fn compose_local_proxy_command_facade(
         Arc::clone(&services.settings),
         Arc::clone(&services.routing),
         Arc::clone(&services.credentials),
-        Arc::clone(&services.request_logs),
         Arc::clone(&services.request_finalization),
         proxy,
     )

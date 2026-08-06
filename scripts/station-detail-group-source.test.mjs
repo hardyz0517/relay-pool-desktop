@@ -157,7 +157,7 @@ assert.match(claudeRow.lastChecked, /07\/07/, "station detail should use the lat
 
 const detailSource = await readFile("src/features/stations/stationDetailViewModels.ts", "utf8");
 assert.ok(
-  detailSource.includes("buildCurrentStationGroupFacts") &&
+  detailSource.includes("deriveStationGroupDisplayFacts") &&
     detailSource.includes("isDisplayableStationGroupCurrentFact"),
   "station detail group rows should consume shared current group projection facts",
 );

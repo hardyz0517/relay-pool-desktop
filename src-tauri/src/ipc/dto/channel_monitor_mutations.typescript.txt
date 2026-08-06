@@ -10,7 +10,7 @@ export type CreateChannelMonitorInputDto = {
   protocolKind: MonitorProtocolKindInputDto; clientProfileId: MonitorClientProfileIdInputDto;
   clientProfileVersion: number; primaryModel: string;
   retryMaxAttemptsPerModel: number; retryInitialBackoffMs: number; retryMaxBackoffMs: number;
-  riskDailyProbeBudget: number; healthWritebackMode: MonitorHealthWritebackModeInputDto;
+  riskDailyProbeBudget: number; healthPolicyMode: MonitorHealthWritebackModeInputDto;
   healthFailureThreshold: number; healthRecoveryThreshold: number;
   attemptTimeoutMs: number; executionTimeoutMs: number;
   jitterSeconds: number; timeoutSeconds: number; maxConcurrency: number;

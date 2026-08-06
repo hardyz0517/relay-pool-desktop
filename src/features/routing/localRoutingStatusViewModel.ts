@@ -1,4 +1,4 @@
-import type { LocalRoutingCandidateRow, RouteDecisionSummary } from "../../lib/types/localRouting";
+import type { RoutingCandidateView, RoutingLatestDecisionView } from "../../lib/types/routingWorkspace";
 
 export type CooldownDisplay = {
   active: boolean;
@@ -27,7 +27,7 @@ export type CandidateHealthDisplay = {
 };
 
 const candidateHealthDisplays: Record<
-  LocalRoutingCandidateRow["healthState"],
+  RoutingCandidateView["healthState"],
   CandidateHealthDisplay
 > = {
   ready: { label: "就绪", tone: "healthy" },
@@ -63,13 +63,13 @@ const balanceStatusLabels: Record<string, string> = {
 };
 
 export function buildCandidateHealthDisplay(
-  healthState: LocalRoutingCandidateRow["healthState"],
+  healthState: RoutingCandidateView["healthState"],
 ): CandidateHealthDisplay {
   return candidateHealthDisplays[healthState];
 }
 
 export function buildCooldownDisplay(
-  healthState: LocalRoutingCandidateRow["healthState"],
+  healthState: RoutingCandidateView["healthState"],
   cooldownUntilMs: number | null,
   nowMs: number,
 ): CooldownDisplay {
@@ -94,7 +94,7 @@ export function buildCooldownDisplay(
 
 export function buildLatestDecisionDisplay(
   proxyRunning: boolean,
-  latestDecision: RouteDecisionSummary | null,
+  latestDecision: RoutingLatestDecisionView | null,
 ): LatestDecisionDisplay {
   if (!latestDecision) {
     return { title: "尚无路由记录", badge: null, tone: "neutral", decidedAt: null };
@@ -109,13 +109,13 @@ export function buildLatestDecisionDisplay(
     };
   }
 
-  const badgeByStatus: Record<RouteDecisionSummary["status"], LatestDecisionDisplay["badge"]> = {
+  const badgeByStatus: Record<RoutingLatestDecisionView["status"], LatestDecisionDisplay["badge"]> = {
     selected: "已选中",
     fallback: "已回退",
     failed: "失败",
     unavailable: "不可用",
   };
-  const toneByStatus: Record<RouteDecisionSummary["status"], LatestDecisionDisplay["tone"]> = {
+  const toneByStatus: Record<RoutingLatestDecisionView["status"], LatestDecisionDisplay["tone"]> = {
     selected: "healthy",
     fallback: "warning",
     failed: "error",
@@ -134,7 +134,7 @@ export function formatPreviewRejectReason(code: string) {
   return previewRejectReasonLabels[code] ?? "当前请求条件不满足";
 }
 
-export function buildCandidateDisplayFacts(candidate: LocalRoutingCandidateRow): CandidateDisplayFacts {
+export function buildCandidateDisplayFacts(candidate: RoutingCandidateView): CandidateDisplayFacts {
   const rejectReason = candidate.previewRejectReasons[0] ?? null;
   const pricingFacts = candidate.facts.filter((fact) => fact.kind === "pricing");
   const multiplierFact =

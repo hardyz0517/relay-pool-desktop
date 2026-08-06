@@ -188,6 +188,15 @@ impl ProxyRuntimeState {
         });
 
         let local_access_key = config.local_access_key.clone();
+        let runtime_max_concurrency = config.limits.max_in_flight_requests as u32;
+        // Compose the proxy-instance routing owner before the execution
+        // engine. Every request and every planner snapshot must observe this
+        // exact runtime identity; creating it after the engine leaves a
+        // production chain with an unowned mutable overlay.
+        let routing_runtime = Arc::new(super::routing_runtime::RoutingRuntimeState::new(
+            runtime_max_concurrency,
+            runtime_max_concurrency / 20,
+        ));
 
         let active_requests = Arc::new(AtomicU32::new(0));
         let request_count = Arc::new(AtomicU64::new(0));
@@ -207,12 +216,13 @@ impl ProxyRuntimeState {
                     self.publish_status(failed);
                     message
                 })?;
-        let executor = Arc::new(V2ProxyExecutor::new(
+        let executor = Arc::new(ProxyExecutor::new(
             repository,
             credential_resolver,
             upstream_pool,
             config.limits.clone(),
             lifecycle_writer.clone(),
+            Arc::clone(&routing_runtime),
         ));
         let ingress_state = Arc::new(IngressState::with_active_requests(
             local_access_key,
@@ -246,6 +256,7 @@ impl ProxyRuntimeState {
                 let mut inner = self.v2.lock().await;
                 inner.server = Some(server);
                 inner.lifecycle_worker = Some(lifecycle_worker);
+                inner.routing_runtime = Some(routing_runtime);
                 self.publish_status(started.clone());
                 Ok(started)
             }
@@ -267,6 +278,7 @@ impl ProxyRuntimeState {
         let _operation = self.lifecycle_operation.lock().await;
         let server = {
             let mut inner = self.v2.lock().await;
+            inner.routing_runtime.take();
             let Some(server) = inner.server.take() else {
                 let stopped = default_status(default_port);
                 self.publish_status(stopped.clone());
@@ -310,6 +322,7 @@ impl ProxyRuntimeState {
         let _operation = self.lifecycle_operation.lock().await;
         let server = {
             let mut inner = self.v2.lock().await;
+            inner.routing_runtime.take();
             let Some(server) = inner.server.take() else {
                 let stopped = default_status(0);
                 self.publish_status(stopped.clone());
@@ -378,21 +391,23 @@ impl ProxyRuntimeState {
 struct V2RuntimeInner {
     server: Option<RunningServer>,
     lifecycle_worker: Option<LifecycleWriterWorker>,
+    routing_runtime: Option<Arc<super::routing_runtime::RoutingRuntimeState>>,
 }
 
-struct V2ProxyExecutor {
+struct ProxyExecutor {
     engine: ExecutionEngine,
     stream_idle_timeout: std::time::Duration,
     lifecycle_writer: LifecycleWriter,
 }
 
-impl V2ProxyExecutor {
+impl ProxyExecutor {
     fn new(
         repository: Arc<dyn RoutingRepository>,
         credential_resolver: Arc<dyn ExecutionCredentialResolver>,
         upstream_pool: UpstreamClientPool,
         limits: ProxyServerLimits,
         lifecycle_writer: LifecycleWriter,
+        routing_runtime: Arc<super::routing_runtime::RoutingRuntimeState>,
     ) -> Self {
         let attempts = Arc::new(UpstreamAttemptExecutor::new(upstream_pool));
         let stream_idle_timeout = limits.stream_idle_timeout;
@@ -403,6 +418,7 @@ impl V2ProxyExecutor {
                 attempts,
                 &limits,
                 lifecycle_writer.clone(),
+                routing_runtime,
             ),
             stream_idle_timeout,
             lifecycle_writer,
@@ -410,7 +426,7 @@ impl V2ProxyExecutor {
     }
 }
 
-impl IngressExecutor for V2ProxyExecutor {
+impl IngressExecutor for ProxyExecutor {
     fn execute(
         &self,
         mut request: super::request::CanonicalProxyRequest,
@@ -799,9 +815,25 @@ mod tests {
     }
 
     impl RoutingRepository for CorrelationCapturingRepository {
+        fn load_planning_snapshot(
+            &self,
+            _request: crate::application::routing_engine::request::RouteRequestFacts,
+            runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
+        ) -> BoxFuture<'static, Result<Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>, String>> {
+            Box::pin(async move { Ok(Some(crate::application::routing_engine::planning_snapshot::PlanningSnapshot {
+                snapshot_id: "correlation-test-planning-snapshot".to_string(),
+                durable_revision: 1,
+                policy: crate::models::routing_policy::RoutingPolicyConfigV1::default(),
+                profile: crate::application::routing_engine::algorithm_profile::DispatchAlgorithmProfile::default(),
+                candidates: Vec::new(),
+                runtime,
+            })) })
+        }
+
         fn load_operational_route_snapshot(
             &self,
             _request: crate::application::routing_engine::request::RouteRequestFacts,
+            _planning_snapshot: crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
         ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
             let captured = Arc::clone(&self.captured);
             Box::pin(async move {
@@ -814,6 +846,7 @@ mod tests {
                     snapshot_id: "correlation-test-empty-snapshot".to_string(),
                     runtime_overlay_revision: 1,
                     durable_generation: 1,
+                    legacy_candidates: Vec::new(),
                 })
             })
         }
@@ -847,12 +880,13 @@ mod tests {
             }),
         )
         .expect("lifecycle writer");
-        let executor = V2ProxyExecutor::new(
+        let executor = ProxyExecutor::new(
             repository,
             Arc::new(TestCredentialResolver),
             upstream_pool,
             limits,
             writer.clone(),
+            Arc::new(crate::services::proxy::routing_runtime::RoutingRuntimeState::new(64, 1)),
         );
         let request_id = "req_0198108c8411_00003039_0000000000000001".to_string();
         let expected = correlation::CorrelationId::for_proxy_request(&request_id);
@@ -1284,9 +1318,16 @@ mod tests {
         let captured = upstream.captured_requests();
         assert_eq!(captured[0].path_and_query, "/v1/chat/completions");
         assert_eq!(captured[1].path_and_query, "/v1/chat/completions");
+        let authorization_headers = captured
+            .iter()
+            .filter_map(|request| request.header("authorization"))
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
-            captured[1].header("authorization"),
-            Some("Bearer sk-v2-second")
+            authorization_headers,
+            std::collections::BTreeSet::from([
+                "Bearer sk-v2-first",
+                "Bearer sk-v2-second",
+            ])
         );
         let upstream_body: serde_json::Value =
             serde_json::from_slice(&captured[1].body).expect("upstream body");
@@ -1297,7 +1338,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v2_maps_persisted_stable_first_to_priority_first_ordering() {
+    async fn v2_uses_canonical_policy_for_ordering() {
         let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
             br#"{"id":"chatcmpl-stable","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}]}"#.to_vec(),
         )]);
@@ -1316,12 +1357,7 @@ mod tests {
             .write(|write| {
                 Box::pin(async move {
                     sqlx::query(
-                        "UPDATE settings SET value = 'stable_first' WHERE key = 'default_routing_strategy'",
-                    )
-                    .execute(write.connection())
-                    .await?;
-                    sqlx::query(
-                        "INSERT INTO station_key_health (
+                        "INSERT INTO routing_health_snapshot (
                             station_key_id, consecutive_failures, success_count, failure_count,
                             total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
                          ) VALUES (?1, 2, 1, 2, 16000, 8000, '1000', 1)",
@@ -1330,7 +1366,7 @@ mod tests {
                     .execute(write.connection())
                     .await?;
                     sqlx::query(
-                        "INSERT INTO station_key_health (
+                        "INSERT INTO routing_health_snapshot (
                             station_key_id, consecutive_failures, success_count, failure_count,
                             total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
                          ) VALUES (?1, 0, 100, 0, 8000, 80, '1000', 1)",
@@ -1366,11 +1402,11 @@ mod tests {
         upstream.wait_for_requests(1);
         assert_eq!(
             upstream.captured_requests()[0].header("authorization"),
-            Some("Bearer sk-v2-flaky")
+            Some("Bearer sk-v2-stable")
         );
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].route_policy.as_deref(), Some("stable_first"));
+        assert_eq!(logs[0].route_policy.as_deref(), Some("automatic_balanced"));
     }
 
     #[tokio::test]
@@ -1379,12 +1415,42 @@ mod tests {
             br#"{"id":"resp-fallback","output_text":"ok"}"#.to_vec(),
         )]);
         let fixture = V2ProxyTestFixture::new().await;
-        fixture
+        let offline = fixture
             .seed_candidate_named("http://127.0.0.1:9", "offline", 0, "auto")
             .await;
-        fixture
+        let ready = fixture
             .seed_candidate_named(upstream.base_url.as_str(), "ready", 1, "auto")
             .await;
+        let offline_id = offline.station_key_id.clone();
+        let ready_id = ready.station_key_id.clone();
+        fixture
+            .runtime()
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT INTO routing_health_snapshot (
+                            station_key_id, consecutive_failures, success_count, failure_count,
+                            total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
+                         ) VALUES (?1, 0, 100, 0, 1000, 10, '1000', 1)",
+                    )
+                    .bind(offline_id)
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        "INSERT INTO routing_health_snapshot (
+                            station_key_id, consecutive_failures, success_count, failure_count,
+                            total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
+                         ) VALUES (?1, 5, 0, 10, 1_000_000, 10000, '1000', 1)",
+                    )
+                    .bind(ready_id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("routing health");
         let runtime = ProxyRuntimeState::for_tests();
         let started = runtime.start(fixture.config(0)).await.expect("start v2");
 

@@ -91,14 +91,6 @@ impl HealthTransitionService {
         self.store
             .upsert_station_key_health(write.connection(), &next)
             .await?;
-        self.store
-            .update_station_key_status(
-                write.connection(),
-                &observation.station_key_id,
-                station_status(&next),
-                observation.observed_at_ms,
-            )
-            .await?;
 
         Ok(HealthTransitionAck {
             observation_inserted: true,
@@ -235,14 +227,6 @@ fn threshold_cooldown_until(consecutive_failures: i64, now_ms: i64) -> Option<St
         _ => 15 * 60 * 1000,
     };
     Some(now_ms.saturating_add(duration_ms).to_string())
-}
-
-fn station_status(snapshot: &StationKeyHealthSnapshot) -> &'static str {
-    if snapshot.cooldown_until.is_some() || snapshot.consecutive_failures >= 3 {
-        "error"
-    } else {
-        "healthy"
-    }
 }
 
 fn trim_error_summary(value: &str) -> String {

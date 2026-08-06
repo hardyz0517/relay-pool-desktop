@@ -305,7 +305,7 @@ fn fixture_monitor() -> ChannelMonitor {
         retry_initial_backoff_ms: 200,
         retry_max_backoff_ms: 2_000,
         risk_daily_probe_budget: 200,
-        health_writeback_mode: "observe_only".into(),
+        health_policy_mode: "observe_only".into(),
         health_failure_threshold: 2,
         health_recovery_threshold: 2,
         attempt_timeout_ms: 10_000,

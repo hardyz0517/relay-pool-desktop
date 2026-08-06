@@ -57,7 +57,7 @@ for (const [name, source] of [
 
 assert.ok(
   supportSource.includes("compose_app_services") &&
-    supportSource.includes("V2RoutingRepository::new") &&
+    supportSource.includes("RoutingExecutionRepository::new") &&
     supportSource.includes("start_proxy_with_production_startup"),
   "loopback harness must compose real application services, V2 routing repository and a production startup path",
 );

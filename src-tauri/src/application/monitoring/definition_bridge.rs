@@ -21,7 +21,7 @@ pub(crate) fn planning_snapshot_from_config(
         ProtocolKind::from_str(&row.protocol_kind).ok_or(ApplicationError::ConstraintViolation)?;
     let client_profile_id = ClientProfileId::from_str(&row.client_profile_id)
         .ok_or(ApplicationError::ConstraintViolation)?;
-    let health_writeback_mode = HealthWritebackMode::from_str(&row.health_writeback_mode)
+    let health_policy_mode = HealthWritebackMode::from_str(&row.health_policy_mode)
         .ok_or(ApplicationError::ConstraintViolation)?;
     let fallback_models = serde_json::from_str::<Vec<String>>(&row.fallback_models_json)
         .map_err(|_| ApplicationError::ConstraintViolation)?;
@@ -78,7 +78,7 @@ pub(crate) fn planning_snapshot_from_config(
         )
         .map_err(|_| ApplicationError::ConstraintViolation)?,
         health_policy: HealthPolicy::new(
-            health_writeback_mode,
+            health_policy_mode,
             u8::try_from(row.health_failure_threshold)
                 .map_err(|_| ApplicationError::ConstraintViolation)?,
             u8::try_from(row.health_recovery_threshold)

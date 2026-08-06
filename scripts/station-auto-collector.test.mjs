@@ -40,7 +40,7 @@ assert.ok(
 );
 
 assert.ok(
-  stationCatalogSource.includes("pub(crate) async fn due_collectors") &&
+  stationCatalogSource.includes("pub async fn due_collectors") &&
     stationCatalogSource.includes("collection_interval_minutes") &&
     stationCatalogSource.includes("* 60000) <= ?1"),
   "station collector due query should use each station's collection interval",

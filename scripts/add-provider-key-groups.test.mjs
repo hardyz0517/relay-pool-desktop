@@ -1,4 +1,4 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const addProviderPageSource = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
@@ -340,7 +340,7 @@ assert.ok(
 );
 
 assert.ok(
-  stationDetailViewModelSource.includes("buildCurrentStationGroupFacts") &&
+  stationDetailViewModelSource.includes("deriveStationGroupDisplayFacts") &&
     stationDetailViewModelSource.includes("isDisplayableStationGroupCurrentFact") &&
     !stationDetailViewModelSource.includes("dedupeStationGroupBindings") &&
     !stationDetailViewModelSource.includes("preferStationGroupBinding"),

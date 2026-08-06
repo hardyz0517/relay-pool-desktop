@@ -68,7 +68,6 @@ async function assertStaticContract() {
     "keyPool",
     "balanceSnapshots",
     "changeEvents",
-    "localRoutingWorkspace",
     "pricing",
     "channelStatus",
   ]) {

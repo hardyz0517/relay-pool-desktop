@@ -84,7 +84,7 @@ function filesUnder(relativeDir, extensions = [".rs", ".ts", ".tsx", ".mjs"]) {
 
 function stripTestModules(source) {
   return source.replaceAll(
-    /#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub\(crate\)|mod|use|const|fn|struct|enum|impl)\b|$)/g,
+    /#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub(?:\(crate\))?|mod|use|const|fn|struct|enum|impl)\b|$)/g,
     "",
   );
 }
@@ -109,9 +109,14 @@ function checkMonitoringDoesNotOwnRoutingCandidate() {
     ...filesUnder("src-tauri/src/application/monitoring", [".rs"]),
   ]) {
     const source = stripTestModules(readFileSync(file, "utf8"));
-    if (/\bRuntimeRoutingCandidate\b|models::routing::RuntimeRoutingCandidate|routing::RuntimeRoutingCandidate/u.test(source)) {
+    const leakedRoutingCandidate = source.match(
+      /\b(CanonicalRoutingCandidate|RuntimeRoutingCandidate)\b|models::routing::(CanonicalRoutingCandidate|RuntimeRoutingCandidate)|routing::(CanonicalRoutingCandidate|RuntimeRoutingCandidate)/u,
+    );
+    if (leakedRoutingCandidate) {
+      const candidateName =
+        leakedRoutingCandidate[1] ?? leakedRoutingCandidate[2] ?? leakedRoutingCandidate[3];
       requireRegistration(
-        "monitoring imports RuntimeRoutingCandidate",
+        `monitoring imports ${candidateName}`,
         file,
         "monitoring must not depend on routing candidate DTO",
       );
@@ -138,9 +143,9 @@ function checkRoutingKernelIsPure() {
 function checkFrontendTruthIsRegistered() {
   const truthPatterns = [
     /\bfunction\s+firstMatchingPricingRule\b/u,
-    /\bfunction\s+buildPricingGroupCandidates\b/u,
-    /\bfunction\s+buildCurrentStationGroupFacts\b/u,
-    /\bexport\s+function\s+buildCurrentStationGroupFacts\b/u,
+    /\bfunction\s+derivePricingGroupDisplayCandidates\b/u,
+    /\bfunction\s+deriveStationGroupDisplayFacts\b/u,
+    /\bexport\s+function\s+deriveStationGroupDisplayFacts\b/u,
     /\bauthoritative(?:Pricing|Capability|Group)Matcher\b/u,
   ];
   for (const file of filesUnder("src", [".ts", ".tsx"])) {
@@ -180,7 +185,7 @@ function checkCredentialBearingTypes() {
 function checkTestOnlyProductionApis() {
   for (const file of filesUnder("src-tauri/src/application/routing_engine", [".rs"])) {
     const source = readFileSync(file, "utf8");
-    const testOnlyFacade = /#\[cfg\(test\)\]\s*(?:pub\(crate\)\s+)?fn\s+(?:report_result|bind_session|try_acquire)\b/u.test(source);
+    const testOnlyFacade = /#\[cfg\(test\)\]\s*(?:pub(?:\(crate\))?\s+)?fn\s+(?:report_result|bind_session|try_acquire)\b/u.test(source);
     if (testOnlyFacade) {
       requireRegistration(
         "scheduler report_result/bind_session #[cfg(test)] production-equivalent facade",
@@ -203,7 +208,7 @@ function checkHierarchicalV1DoesNotReadLegacyWeights() {
       continue;
     }
     const source = stripTestModules(readFileSync(file, "utf8"));
-    if (/hierarchical_v1/u.test(source) && /\b(?:weight|weights|score|SchedulerAdvancedSettings)\b/u.test(source)) {
+    if (/hierarchical_v1/u.test(source) && /\b(?:weight|weights|score|DispatchAlgorithmSettings)\b/u.test(source)) {
       failures.push(`${relative(file)}: hierarchical_v1 must not read legacy weights or score path`);
     }
   }

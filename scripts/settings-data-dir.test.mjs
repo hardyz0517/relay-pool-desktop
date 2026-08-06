@@ -84,7 +84,7 @@ assert.ok(
 );
 
 assert.ok(
-  dataDirectoryServiceSource.includes("pub(crate) trait DataDirectoryPort") &&
+  dataDirectoryServiceSource.includes("pub trait DataDirectoryPort") &&
     dataDirectoryServiceSource.includes("set_data_directory_projection") &&
     dataDirectoryPortSource.includes("write_relocation_intent") &&
     settingsStoreSource.includes("data_dir_change_requires_restart"),

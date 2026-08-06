@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::routing::{RoutingGroupFilter, SchedulerAdvancedSettings};
+use super::routing::{RoutingGroupFilter, DispatchAlgorithmSettings};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -8,12 +8,16 @@ pub struct AppSettings {
     pub local_proxy_port: u16,
     pub local_proxy_start_on_launch: bool,
     pub local_key_masked: String,
-    pub default_routing_strategy: String,
+    /// Compatibility projection of the canonical routing policy for older UI clients.
+    #[serde(rename = "defaultRoutingStrategy")]
+    pub routing_policy_name: String,
     pub collector_proxy_mode: String,
     pub collector_proxy_url: Option<String>,
     pub max_rate_multiplier: Option<f64>,
-    pub default_routing_group_filter: RoutingGroupFilter,
-    pub scheduler_advanced_settings: SchedulerAdvancedSettings,
+    #[serde(rename = "defaultRoutingGroupFilter")]
+    pub routing_group_scope: RoutingGroupFilter,
+    #[serde(rename = "schedulerAdvancedSettings")]
+    pub scheduler_config: DispatchAlgorithmSettings,
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
@@ -33,12 +37,15 @@ pub struct AppSettings {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSettingsInput {
     pub local_proxy_port: u16,
-    pub default_routing_strategy: String,
+    #[serde(rename = "defaultRoutingStrategy")]
+    pub routing_policy_name: String,
     pub collector_proxy_mode: String,
     pub collector_proxy_url: Option<String>,
     pub max_rate_multiplier: Option<Option<f64>>,
-    pub default_routing_group_filter: Option<RoutingGroupFilter>,
-    pub scheduler_advanced_settings: Option<SchedulerAdvancedSettings>,
+    #[serde(rename = "defaultRoutingGroupFilter")]
+    pub routing_group_scope: Option<RoutingGroupFilter>,
+    #[serde(rename = "schedulerAdvancedSettings")]
+    pub scheduler_config: Option<DispatchAlgorithmSettings>,
     pub low_balance_threshold_cny: f64,
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
@@ -74,7 +81,7 @@ mod tests {
         }))
         .expect("old clients may omit scheduler fields");
 
-        assert!(input.default_routing_group_filter.is_none());
-        assert!(input.scheduler_advanced_settings.is_none());
+        assert!(input.routing_group_scope.is_none());
+        assert!(input.scheduler_config.is_none());
     }
 }

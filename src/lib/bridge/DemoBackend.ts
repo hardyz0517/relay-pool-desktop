@@ -1,7 +1,6 @@
 import { IPC_BINDING_HASH, IPC_CONTRACT_VERSION } from "./contract";
 import { DemoBackendUnsupportedError, type BackendClient } from "./BackendClient";
 import type { RuntimeContractInfo } from "./contract";
-import type { ReorderLocalRoutingKeysInput } from "@/lib/types/localRouting";
 
 const DEMO_SEED = "relay-pool-demo-v1";
 const DEMO_CLOCK_ISO = "2026-07-22T00:00:00.000Z";
@@ -103,10 +102,6 @@ export class DemoBackend implements BackendClient {
   readonly runtime: BackendClient["runtime"] = {
     getRuntimeStatus: () => this.rejectUnsupported("runtime_status"),
   };
-  readonly localRouting: BackendClient["localRouting"] = {
-    loadLocalRoutingWorkspace: () => this.rejectUnsupported("local_routing"),
-    reorderLocalRoutingKeys: (_input: ReorderLocalRoutingKeysInput) => this.rejectUnsupported("local_routing"),
-  };
   readonly dataRecovery: BackendClient["dataRecovery"] = {
     getDataStoreStartupState: () => this.rejectUnsupported("data_recovery"),
     refreshDataStoreCandidates: () => this.rejectUnsupported("data_recovery"),
@@ -161,6 +156,8 @@ export class DemoBackend implements BackendClient {
     upsertModelAlias: () => this.rejectUnsupported("routing"),
     deleteModelAlias: (_id: string) => this.rejectUnsupported("routing"),
     listStationKeyHealth: () => this.rejectUnsupported("routing"),
+    loadRoutingPolicy: () => this.rejectUnsupported("routing.policy"),
+    updateRoutingPolicy: () => this.rejectUnsupported("routing.policy"),
     loadRoutingWorkspaceSnapshot: () => this.rejectUnsupported("routing.workspace_snapshot"),
     loadRoutingRuntimeOverlay: () => this.rejectUnsupported("routing.runtime_overlay"),
     listRecentRouteDecisions: () => this.rejectUnsupported("routing.route_decisions"),

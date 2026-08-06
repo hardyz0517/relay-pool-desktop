@@ -1,11 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { LocalRoutingWorkspace } from "@/lib/types/localRouting";
 import { routingQueryKeys } from "@/lib/queries/routingQueries";
-import { queryKeys } from "./queryKeys";
-
-type RoutingMutationResult = {
-  localWorkspace?: LocalRoutingWorkspace;
-};
 
 export type RoutingQuerySynchronizationResult = {
   refreshed: boolean;
@@ -19,7 +13,6 @@ export async function refreshRoutingQueries(
   queryClient: QueryClient,
 ): Promise<RoutingQuerySynchronizationResult> {
   const refreshes = await Promise.allSettled([
-    queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace }),
     queryClient.invalidateQueries({ queryKey: routingQueryKeys.all }),
   ]);
   const errors = refreshes.flatMap((refresh) =>
@@ -35,11 +28,7 @@ export async function refreshRoutingQueries(
  */
 export function synchronizeRoutingQueriesAfterMutation(
   queryClient: QueryClient,
-  result: RoutingMutationResult,
+  _result?: unknown,
 ) {
-  if (result.localWorkspace) {
-    queryClient.setQueryData(queryKeys.localRoutingWorkspace, result.localWorkspace);
-  }
-
   return refreshRoutingQueries(queryClient);
 }

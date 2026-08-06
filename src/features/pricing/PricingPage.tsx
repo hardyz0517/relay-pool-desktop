@@ -33,7 +33,7 @@ import {
   type PricingGroupType,
 } from "./pricingComparisonViewModel";
 import {
-  hashCanonicalPricingGroupRefs,
+  hashPricingGroupDisplayRefs,
   type PricingGroupRefInput,
 } from "@/lib/projections/pricingGroupRefs";
 import type { PricingGroupMonitorStatusInput } from "@/lib/types/pricingMonitoring";
@@ -122,7 +122,7 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
         cancelled = true;
       };
     }
-    void hashCanonicalPricingGroupRefs(monitorRefs)
+    void hashPricingGroupDisplayRefs(monitorRefs)
       .then((groupRefsHash) => {
         if (!cancelled) {
           setMonitorInput({

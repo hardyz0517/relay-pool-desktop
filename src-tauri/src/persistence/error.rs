@@ -52,6 +52,10 @@ pub(crate) enum PersistenceError {
     InvariantViolation(String),
     #[error("record not found")]
     NotFound,
+    #[error("domain revision is unavailable for scope {0}")]
+    RevisionUnavailable(String),
+    #[error("domain revision compare-and-swap conflict for scope {0}")]
+    RevisionConflict(String),
     #[error("constraint violation")]
     ConstraintViolation,
     #[error("stale endpoint revision")]

@@ -1,9 +1,7 @@
 # Relay Pool 路由与运行事实一体化升级 Spec
 
-替代说明（2026-08-05）：本文已经交付的 Persistence、Request Lifecycle、capacity lease、late target、decision store 和 loopback 边界继续作为当前实现基线；其中关于 `PriorityFirst / CostFirst`、不采用 exploration/bandit、旧 health 写回、旧 Routing Workspace 和 routing settings 的目标语义，已被 [`../../proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](../../proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md) 及其 [`../plans/2026-08-05-intelligent-routing-engine-upgrade.md`](../plans/2026-08-05-intelligent-routing-engine-upgrade.md) 取代。本文不得作为阻止新 cutover、保留旧 gate 正向要求或恢复兼容层的依据。
-
 Date: 2026-07-30
-Status: Implemented historical baseline；routing algorithm/config/read-model semantics partially superseded on 2026-08-05
+Status: Superseded on 2026-08-05 by `docs/proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`; retained as historical architecture record
 Scope: 本地路由、运行事实、状态监控、采集、价格、请求生命周期、请求日志、聚合 read model 与相关桌面 UI
 
 ## 1. 执行摘要

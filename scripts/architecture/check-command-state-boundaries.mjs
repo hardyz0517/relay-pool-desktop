@@ -78,7 +78,7 @@ runMain(() => {
     assert(!/^\s*pub(\([^)]*\))?\s+/m.test(structBody), `${facade.state_type} must not expose public fields`);
 
     const exposedMethods = new Set(
-      [...facadeSource.matchAll(/pub\(crate\)\s+async\s+fn\s+([a-z][a-z0-9_]*)\s*\(/g)].map((match) => match[1]),
+      [...facadeSource.matchAll(/pub(?:\(crate\))?\s+async\s+fn\s+([a-z][a-z0-9_]*)\s*\(/g)].map((match) => match[1]),
     );
     const supportMethods = facade.support_methods ?? [];
     assert(

@@ -2,7 +2,7 @@ import { BALANCE_CURRENCY } from "@/lib/balanceCurrency";
 import { effectiveRateMultiplierForCredit, formatTrimmedDecimal } from "@/lib/formatters";
 import { currentStationBalanceFor } from "@/lib/projections/balanceFacts";
 import {
-  buildCurrentStationGroupFacts,
+  deriveStationGroupDisplayFacts,
   isDisplayableStationGroupCurrentFact,
   type StationGroupCurrentFact,
 } from "@/lib/projections/groupFacts";
@@ -248,7 +248,7 @@ export function buildGroupRows(
   rates: GroupRateRecord[],
   creditPerCny = 1,
 ): StationDetailGroupRow[] {
-  return buildCurrentStationGroupFacts({ bindings, rates })
+  return deriveStationGroupDisplayFacts({ bindings, rates })
     .filter(isDisplayableStationGroupCurrentFact)
     .map((fact) => groupRowFromCurrentFact(fact, creditPerCny));
 }

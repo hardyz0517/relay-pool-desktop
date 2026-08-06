@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::models::{proxy::UpstreamApiFormat, routing::RuntimeRoutingCandidate};
+use crate::models::proxy::UpstreamApiFormat;
 
 pub(crate) const ROUTING_RUNTIME_OVERLAY_VERSION: &str = "routing_runtime_overlay_v1";
 
@@ -16,6 +16,19 @@ pub(crate) struct RoutingRuntimeOverlay {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RoutingRuntimeCandidateOverlay {
+    pub(crate) station_key_id: String,
+    pub(crate) station_id: String,
+    pub(crate) endpoint_revision: i64,
+    pub(crate) in_flight: Option<i64>,
+    pub(crate) health_state: String,
+    pub(crate) cooldown_until: Option<String>,
+}
+
+/// Narrow runtime facts consumed by the overlay read model. This boundary
+/// prevents the UI/read path from depending on the legacy executable
+/// the legacy executable candidate compatibility DTO.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoutingRuntimeCandidateFact {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
@@ -47,7 +60,7 @@ pub(crate) struct RoutingMonitoringTargetFacts {
 }
 
 pub(crate) fn runtime_overlay_from_candidates(
-    candidates: Vec<RuntimeRoutingCandidate>,
+    candidates: Vec<RoutingRuntimeCandidateFact>,
     sampled_at_ms: i64,
     revision: u64,
     limit: usize,
@@ -61,31 +74,13 @@ pub(crate) fn runtime_overlay_from_candidates(
             .into_iter()
             .take(limit)
             .map(|candidate| {
-                let cooldown_until = candidate
-                    .health
-                    .as_ref()
-                    .and_then(|health| health.cooldown_until.clone());
-                let health_state = candidate
-                    .health
-                    .as_ref()
-                    .map(|health| {
-                        if health.cooldown_until.is_some() {
-                            "cooldown"
-                        } else if health.consecutive_failures > 0 {
-                            "degraded"
-                        } else {
-                            "ready"
-                        }
-                    })
-                    .unwrap_or("unknown")
-                    .to_string();
                 RoutingRuntimeCandidateOverlay {
                     station_key_id: candidate.station_key_id,
                     station_id: candidate.station_id,
-                    endpoint_revision: candidate.station_endpoint_revision,
-                    in_flight: candidate.load_factor,
-                    health_state,
-                    cooldown_until,
+                    endpoint_revision: candidate.endpoint_revision,
+                    in_flight: candidate.in_flight,
+                    health_state: candidate.health_state,
+                    cooldown_until: candidate.cooldown_until,
                 }
             })
             .collect(),

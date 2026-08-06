@@ -47,11 +47,11 @@ for (const required of [
 
 assert.match(
   requestSource,
-  /pub\(crate\) fn classify\([\s\S]*?request: CanonicalRouteRequest[\s\S]*?settings: ValidatedLocalRouteSettings/,
+  /pub(?:\(crate\))? fn classify\([\s\S]*?request: CanonicalRouteRequest[\s\S]*?settings: ValidatedLocalRouteSettings/,
   "RouteRequestClassifier should combine canonical request and validated local settings",
 );
 const classifyBody = requestSource.match(
-  /pub\(crate\) fn classify\([\s\S]*?\) -> RouteRequestFacts \{([\s\S]*?)\n    \}/,
+  /pub(?:\(crate\))? fn classify\([\s\S]*?\) -> RouteRequestFacts \{([\s\S]*?)\n    \}/,
 )?.[1];
 assert.ok(classifyBody, "missing RouteRequestClassifier::classify body");
 assert.ok(

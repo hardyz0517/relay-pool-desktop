@@ -6,7 +6,6 @@ pub(crate) struct OperationalFactReadOptions {
 }
 
 impl OperationalFactReadOptions {
-    #[cfg(test)]
     pub(crate) fn for_request_model(model: impl Into<String>) -> Self {
         Self {
             candidate_limit: MAX_OPERATIONAL_CANDIDATES,
@@ -15,7 +14,6 @@ impl OperationalFactReadOptions {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn for_model_catalog() -> Self {
         Self {
             candidate_limit: MAX_OPERATIONAL_CANDIDATES,
@@ -43,7 +41,6 @@ impl OperationalFactReadOptions {
     }
 }
 
-#[cfg(test)]
 pub(crate) const MAX_OPERATIONAL_CANDIDATES: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +52,23 @@ pub(crate) struct RawOperationalCandidateRow {
     pub(crate) credential_available: bool,
     pub(crate) key_record_revision: i64,
     pub(crate) station_record_revision: i64,
+    pub(crate) priority: i64,
+    pub(crate) backup_only: bool,
+    pub(crate) supports_chat_completions: bool,
+    pub(crate) supports_responses: bool,
+    pub(crate) supports_stream: bool,
+    pub(crate) supports_tools: bool,
+    pub(crate) supports_vision: bool,
+    pub(crate) supports_reasoning: bool,
+    pub(crate) model_allowlist_json: String,
+    pub(crate) model_blocklist_json: String,
+    pub(crate) preferred_models_json: String,
+    pub(crate) routing_tags_json: String,
+    pub(crate) success_count: i64,
+    pub(crate) failure_count: i64,
+    pub(crate) consecutive_failures: i64,
+    pub(crate) avg_latency_ms: Option<i64>,
+    pub(crate) balance_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

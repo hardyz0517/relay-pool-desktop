@@ -26,7 +26,6 @@ export const queryKeys = {
   modelBasePrices: ["modelBasePrices"] as const,
   balanceSnapshots: ["balanceSnapshots"] as const,
   changeEvents: ["changeEvents"] as const,
-  localRoutingWorkspace: ["localRoutingWorkspace"] as const,
   channelMonitoring: ["channelMonitoring"] as const,
   pricing: ["pricing"] as const,
   pricingGroupMonitorStatus: (input: PricingGroupMonitorStatusInput) =>

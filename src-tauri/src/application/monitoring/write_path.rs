@@ -1,5 +1,6 @@
 use crate::{
-    application::health_transitions::{writeback_decision, HealthTransitionService},
+    application::health_transitions::HealthTransitionService,
+    application::observation_ingestion::ObservationIngestion,
     models::{
         health::{
             HealthObservation, HealthObservationOutcome, HealthObservationSource,
@@ -8,6 +9,10 @@ use crate::{
         monitoring::{
             ClientProfileId, FailureKind, HealthWritebackMode, ProbeOutcome, SemanticConfidence,
             TriggerKind,
+        },
+        routing_observation::{
+            ObservationOrder, ObservationOutcome, ObservationScope, ObservationSource,
+            RoutingObservation, TrafficEquivalence as RoutingTrafficEquivalence,
         },
     },
     persistence::{
@@ -30,6 +35,7 @@ use super::{
 pub(crate) struct MonitoringExecutionCommitter {
     executions: MonitoringExecutionRepository,
     health: HealthTransitionService,
+    observations: ObservationIngestion,
     retention: MonitoringRetentionRepository,
 }
 
@@ -38,6 +44,7 @@ impl MonitoringExecutionCommitter {
         Self {
             executions: MonitoringExecutionRepository,
             health: HealthTransitionService::new(),
+            observations: ObservationIngestion::new(),
             retention: MonitoringRetentionRepository,
         }
     }
@@ -71,7 +78,7 @@ impl MonitoringExecutionCommitter {
                     started_at_ms: Some(execution.started_at_ms),
                     config_revision: execution.plan.revision.0 as i64,
                     config_snapshot_hash: execution.plan.config_snapshot_hash.clone(),
-                    endpoint_revision: execution_endpoint_revision(&execution.plan),
+                    endpoint_revision: execution_endpoint_revision(&execution.plan)?,
                     target_count: i64::from(summary.target_count),
                     created_at_ms: execution.started_at_ms,
                 },
@@ -91,7 +98,19 @@ impl MonitoringExecutionCommitter {
                 .await?;
 
             let observation = health_observation(execution, target, &target_row);
-            self.health.record_observation(write, observation).await?;
+            self.health
+                .record_observation(write, observation.clone())
+                .await?;
+            self.observations
+                .append(
+                    write,
+                    routing_observation_from_health(
+                        &observation,
+                        monitor_sequence(&execution.execution_id, &target_row.id),
+                        monitor_producer_id(&execution.execution_id),
+                    ),
+                )
+                .await?;
             self.retention
                 .mark_dirty_range(
                     write.connection(),
@@ -118,6 +137,63 @@ impl MonitoringExecutionCommitter {
                 next_due_at_ms(execution),
             )
             .await
+    }
+}
+
+fn monitor_sequence(execution_id: &str, target_id: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"relay-pool:monitor-observation-sequence:v1:");
+    hasher.update(execution_id.as_bytes());
+    hasher.update(b":");
+    hasher.update(target_id.as_bytes());
+    let digest = hasher.finalize();
+    // SQLite INTEGER is a signed 64-bit value; keep the deterministic hash
+    // sequence in the non-negative range used by the persistence contract.
+    (u64::from_be_bytes(digest[..8].try_into().expect("hash width")) & (i64::MAX as u64)).max(1)
+}
+
+fn monitor_producer_id(execution_id: &str) -> String {
+    format!("monitoring_execution:{execution_id}")
+}
+
+fn routing_observation_from_health(
+    observation: &HealthObservation,
+    producer_sequence: u64,
+    producer_id: String,
+) -> RoutingObservation {
+    let outcome = match observation.outcome {
+        HealthObservationOutcome::Success => ObservationOutcome::Success,
+        HealthObservationOutcome::Cooldown => ObservationOutcome::RateLimited,
+        HealthObservationOutcome::HardFail => ObservationOutcome::CredentialFailure,
+        HealthObservationOutcome::ObserveFailure => ObservationOutcome::EndpointFailure,
+        HealthObservationOutcome::Skipped => ObservationOutcome::Cancelled,
+        HealthObservationOutcome::Neutral => ObservationOutcome::Unknown,
+    };
+    RoutingObservation {
+        id: format!("routing-monitor-observation-{}", observation.id),
+        order: ObservationOrder {
+            producer_id,
+            producer_sequence,
+            event_at_ms: observation.observed_at_ms.max(0),
+            ingested_at_ms: observation.observed_at_ms.max(0),
+        },
+        scope: ObservationScope {
+            station_id: None,
+            station_key_id: Some(observation.station_key_id.clone()),
+            model: None,
+            endpoint_revision: Some(observation.endpoint_revision),
+        },
+        source: ObservationSource::ActiveProbe,
+        traffic_equivalence: match observation.traffic_equivalence {
+            TrafficEquivalence::SyntheticCliCompat => RoutingTrafficEquivalence::EndpointOnly,
+            _ => RoutingTrafficEquivalence::SameModelShape,
+        },
+        outcome,
+        latency_ms: observation
+            .latency_ms
+            .and_then(|value| u32::try_from(value).ok()),
+        evidence_mass_basis_points: 5_000,
     }
 }
 
@@ -370,12 +446,13 @@ fn target_finished_at(execution: &BufferedExecution, target: &RecordedTargetResu
         .max()
 }
 
-fn execution_endpoint_revision(plan: &ProbePlan) -> i64 {
+fn execution_endpoint_revision(plan: &ProbePlan) -> Result<i64, PersistenceError> {
     plan.target_plans
         .iter()
         .map(|target| target.endpoint_revision)
         .min()
-        .unwrap_or(1)
+        .filter(|revision| *revision > 0)
+        .ok_or(PersistenceError::ConstraintViolation)
 }
 
 fn next_due_at_ms(execution: &BufferedExecution) -> Option<i64> {
@@ -386,5 +463,17 @@ fn next_due_at_ms(execution: &BufferedExecution) -> Option<i64> {
                 .saturating_add((execution.plan.schedule_policy.interval_seconds * 1000) as i64),
         ),
         TriggerKind::Manual | TriggerKind::LegacyImport => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::monitor_sequence;
+
+    #[test]
+    fn monitor_sequence_fits_sqlite_integer_for_high_hash_values() {
+        let sequence = monitor_sequence("manual-execution", "target:manual-execution:key-1");
+        assert!(sequence > 0);
+        assert!(sequence <= i64::MAX as u64);
     }
 }

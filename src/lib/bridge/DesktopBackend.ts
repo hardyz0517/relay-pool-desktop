@@ -80,13 +80,13 @@ import {
   listChangeEvents as listChangeEventsBinding,
   listChangeEventsForStation as listChangeEventsForStationBinding,
   listCollectorRuns as listCollectorRunsBinding,
-  loadLocalRoutingWorkspace as loadLocalRoutingWorkspaceBinding,
   loadDashboardCumulativeRequestMetrics as loadDashboardCumulativeRequestMetricsBinding,
   loadDashboardLiveRequestMetrics as loadDashboardLiveRequestMetricsBinding,
   loadChannelStatusWorkspace as loadChannelStatusWorkspaceBinding,
   loadPricingComparisonWorkspace as loadPricingComparisonWorkspaceBinding,
   loadPricingGroupMonitorStatus as loadPricingGroupMonitorStatusBinding,
   loadRoutingRuntimeOverlay as loadRoutingRuntimeOverlayBinding,
+  loadRoutingPolicy as loadRoutingPolicyBinding,
   loadRoutingWorkspaceSnapshot as loadRoutingWorkspaceSnapshotBinding,
   listModelAliases as listModelAliasesBinding,
   listMonitoringCapabilities as listMonitoringCapabilitiesBinding,
@@ -114,7 +114,6 @@ import {
   listRequestLogs as listRequestLogsBinding,
   reorderKeyPool as reorderKeyPoolBinding,
   reorderStationKeys as reorderStationKeysBinding,
-  reorderLocalRoutingKeys as reorderLocalRoutingKeysBinding,
   reorderStations as reorderStationsBinding,
   prepareLocalProxyForUpdate as prepareLocalProxyForUpdateBinding,
   patchProviderDraft as patchProviderDraftBinding,
@@ -128,6 +127,7 @@ import {
   scanRemoteStationKeys as scanRemoteStationKeysBinding,
   scanProviderDraftRemoteKeys as scanProviderDraftRemoteKeysBinding,
   simulateRoute as simulateRouteBinding,
+  updateRoutingPolicy as updateRoutingPolicyBinding,
   unbindRemoteStationKey as unbindRemoteStationKeyBinding,
   updateLocalAccessKey as updateLocalAccessKeyBinding,
   upsertBalanceSnapshot as upsertBalanceSnapshotBinding,
@@ -282,11 +282,6 @@ export class DesktopBackend implements BackendClient {
   readonly runtime = {
     getRuntimeStatus: () => getRuntimeStatusBinding(),
   };
-  readonly localRouting = {
-    loadLocalRoutingWorkspace: () => loadLocalRoutingWorkspaceBinding(),
-    reorderLocalRoutingKeys: (input: Parameters<BackendClient["localRouting"]["reorderLocalRoutingKeys"]>[0]) =>
-      reorderLocalRoutingKeysBinding(input),
-  };
   readonly dataRecovery = {
     getDataStoreStartupState: () => getDataStoreStartupStateBinding().then(normalizeDataStoreStartupView),
     refreshDataStoreCandidates: () => refreshDataStoreCandidatesBinding().then(normalizeDataStoreStartupView),
@@ -429,6 +424,9 @@ export class DesktopBackend implements BackendClient {
       upsertModelAliasBinding(input),
     deleteModelAlias: (id: string) => deleteModelAliasBinding({ id }),
     listStationKeyHealth: () => listStationKeyHealthBinding(),
+    loadRoutingPolicy: () => loadRoutingPolicyBinding(),
+    updateRoutingPolicy: (input: Parameters<BackendClient["routing"]["updateRoutingPolicy"]>[0]) =>
+      updateRoutingPolicyBinding(input),
     loadRoutingWorkspaceSnapshot: (input = {}) => loadRoutingWorkspaceSnapshotBinding(input),
     loadRoutingRuntimeOverlay: () => loadRoutingRuntimeOverlayBinding(),
     listRecentRouteDecisions: (input = {}) => listRecentRouteDecisionsBinding(input),

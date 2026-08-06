@@ -4,16 +4,12 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
-import { queryKeys } from "@/lib/query/queryKeys";
-import type {
-  LocalRoutingCandidateRow,
-  LocalRoutingWorkspace,
-} from "@/lib/types/localRouting";
+import type { RoutingCandidateView, RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 
 const mocks = vi.hoisted(() => ({
   dragEnd: null as ((event: unknown) => Promise<void>) | null,
-  reorderLocalRoutingKeys: vi.fn(),
+  reorderKeyPool: vi.fn(),
 }));
 
 vi.mock("@dnd-kit/core", () => ({
@@ -46,8 +42,8 @@ vi.mock("@dnd-kit/utilities", () => ({
   CSS: { Transform: { toString: vi.fn(() => undefined) } },
 }));
 
-vi.mock("@/lib/api/localRouting", () => ({
-  reorderLocalRoutingKeys: mocks.reorderLocalRoutingKeys,
+vi.mock("@/lib/api/stationKeys", () => ({
+  reorderKeyPool: mocks.reorderKeyPool,
 }));
 
 vi.mock("./LocalRoutingSettingsEditor", () => ({
@@ -60,7 +56,7 @@ vi.mock("./LocalRoutingCandidateRow", () => ({
     candidate,
     order,
   }: {
-    candidate: LocalRoutingCandidateRow;
+    candidate: RoutingCandidateView;
     order: number;
   }) => <div data-candidate-id={candidate.stationKeyId}>{order}</div>,
 }));
@@ -70,15 +66,14 @@ vi.mock("./LocalRoutingCandidateRow", () => ({
 afterEach(() => {
   document.body.innerHTML = "";
   mocks.dragEnd = null;
-  mocks.reorderLocalRoutingKeys.mockReset();
+  mocks.reorderKeyPool.mockReset();
   vi.restoreAllMocks();
 });
 
 describe("LocalRoutingEditTab", () => {
   it("publishes a saved reorder and invalidates both routing read models", async () => {
     const initial = workspace([candidate("key-1"), candidate("key-2")]);
-    const reordered = workspace([candidate("key-2"), candidate("key-1")]);
-    mocks.reorderLocalRoutingKeys.mockResolvedValue(reordered);
+    mocks.reorderKeyPool.mockResolvedValue([]);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -108,11 +103,7 @@ describe("LocalRoutingEditTab", () => {
       await mocks.dragEnd?.({ active: { id: "key-2" }, over: { id: "key-1" } });
     });
 
-    expect(mocks.reorderLocalRoutingKeys).toHaveBeenCalledWith({
-      stationKeyIds: ["key-2", "key-1"],
-    });
-    expect(queryClient.getQueryData(queryKeys.localRoutingWorkspace)).toEqual(reordered);
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["localRoutingWorkspace"] });
+    expect(mocks.reorderKeyPool).toHaveBeenCalledWith(["key-2", "key-1"]);
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["routing"] });
 
     await act(async () => root.unmount());
@@ -120,7 +111,7 @@ describe("LocalRoutingEditTab", () => {
   });
 });
 
-function candidate(stationKeyId: string): LocalRoutingCandidateRow {
+function candidate(stationKeyId: string): RoutingCandidateView {
   return {
     stationKeyId,
     stationId: "station-1",
@@ -142,7 +133,7 @@ function candidate(stationKeyId: string): LocalRoutingCandidateRow {
   };
 }
 
-function workspace(candidates: LocalRoutingCandidateRow[]): LocalRoutingWorkspace {
+function workspace(candidates: RoutingCandidateView[]): RoutingWorkspaceView {
   return {
     proxyStatus: {
       running: false,
@@ -159,7 +150,18 @@ function workspace(candidates: LocalRoutingCandidateRow[]): LocalRoutingWorkspac
       bindAddr: "127.0.0.1",
       port: 1431,
       endpoint: "chat_completions",
-      policy: "priority_fallback",
+      policy: {
+        version: 1,
+        reliabilityWeight: 4000,
+        responsivenessWeight: 2500,
+        costWeight: 2000,
+        preferenceWeight: 1500,
+        maxCandidates: 64,
+        explorationShareBasisPoints: 500,
+        allowDepletedFallback: false,
+        affinityEnabled: false,
+        affinityTtlSeconds: 300,
+      },
       maxRateMultiplier: null,
       routingGroupFilter: "all_groups",
       fallbackEnabled: true,
@@ -174,6 +176,5 @@ function workspace(candidates: LocalRoutingCandidateRow[]): LocalRoutingWorkspac
     },
     candidates,
     latestDecision: null,
-    recentEvents: [],
   };
 }

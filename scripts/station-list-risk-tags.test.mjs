@@ -41,7 +41,7 @@ async function importStationAssetViewModels() {
   await writeFile(
     groupPath,
     [
-      "export function buildCurrentStationGroupFacts() { return []; }",
+      "export function deriveStationGroupDisplayFacts() { return []; }",
       "export function isDisplayableStationGroupCurrentFact() { return true; }",
     ].join("\n"),
     "utf8",

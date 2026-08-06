@@ -701,6 +701,15 @@ impl CredentialStore {
         .bind(&row.now)
         .execute(write.connection())
         .await?;
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
+        )
+        .bind(format!("station_key:{}", row.id))
+        .bind(row.now.parse::<i64>().map_err(|_| {
+            PersistenceError::InvariantViolation("station key timestamp is not numeric".into())
+        })?)
+        .execute(write.connection())
+        .await?;
         station_key_by_id(write.connection(), &row.id).await
     }
 
@@ -1915,10 +1924,10 @@ where
         JOIN stations s ON s.id = k.station_id
         LEFT JOIN secrets sec ON sec.id = k.api_key_secret_id
         LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
-        LEFT JOIN station_key_health h
+        LEFT JOIN routing_health_snapshot h
                ON h.station_key_id = k.id
               AND h.endpoint_revision = s.endpoint_revision
-        LEFT JOIN station_endpoint_health eh
+        LEFT JOIN endpoint_health_snapshot eh
                ON eh.station_id = s.id
               AND eh.endpoint_revision = s.endpoint_revision
         ORDER BY COALESCE(k.routing_order, k.priority) ASC,

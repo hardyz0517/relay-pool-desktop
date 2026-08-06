@@ -1,6 +1,6 @@
 # ADR 0001: Hierarchical Routing Kernel
 
-Status: Accepted for Task 0
+Status: Superseded by `docs/proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md` on 2026-08-05; retained as historical ADR
 Date: 2026-07-30
 
 ## Context

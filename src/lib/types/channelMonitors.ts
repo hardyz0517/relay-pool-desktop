@@ -49,7 +49,7 @@ export type ChannelMonitor = {
   retryInitialBackoffMs: number;
   retryMaxBackoffMs: number;
   riskDailyProbeBudget: number;
-  healthWritebackMode: ChannelMonitorHealthWritebackMode;
+  healthPolicyMode: ChannelMonitorHealthWritebackMode;
   healthFailureThreshold: number;
   healthRecoveryThreshold: number;
   attemptTimeoutMs: number;
@@ -81,7 +81,7 @@ export type CreateChannelMonitorInput = {
   retryInitialBackoffMs: number;
   retryMaxBackoffMs: number;
   riskDailyProbeBudget: number;
-  healthWritebackMode: ChannelMonitorHealthWritebackMode;
+  healthPolicyMode: ChannelMonitorHealthWritebackMode;
   healthFailureThreshold: number;
   healthRecoveryThreshold: number;
   attemptTimeoutMs: number;
@@ -384,7 +384,7 @@ export type ChannelMonitorTargetResultRecord = {
   clientProfileVersion: number;
   requestProfileHash: string | null;
   trafficEquivalence: string;
-  healthWritebackMode: string;
+  healthPolicyMode: string;
   healthWritebackDecision: string;
   healthWritebackReason: string | null;
   latencyMs: number | null;

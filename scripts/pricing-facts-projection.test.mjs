@@ -34,9 +34,9 @@ async function importPricingProjection() {
   return import(`file://${pricingFactsPath.replaceAll("\\", "/")}`);
 }
 
-const { buildPricingGroupCandidates } = await importPricingProjection();
+const { derivePricingGroupDisplayCandidates } = await importPricingProjection();
 
-const candidates = buildPricingGroupCandidates({
+const candidates = derivePricingGroupDisplayCandidates({
   stations: [station("station-a", "Station A", 10)],
   stationKeys: [stationKey("station-a", "key-a", "Key A")],
   groupBindings: [
@@ -155,7 +155,7 @@ assert.deepEqual(
 
 const projectionSource = await readFile("src/lib/projections/pricingFacts.ts", "utf8");
 assert.ok(
-  projectionSource.includes("buildCurrentStationGroupFacts"),
+  projectionSource.includes("deriveStationGroupDisplayFacts"),
   "pricing projection should consume the shared current group projection",
 );
 assert.ok(

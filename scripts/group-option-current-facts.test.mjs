@@ -45,10 +45,10 @@ async function importModules() {
 }
 
 const { groupFacts, groupOptions } = await importModules();
-const { buildCurrentStationGroupFacts } = groupFacts;
+const { deriveStationGroupDisplayFacts } = groupFacts;
 const { buildStationGroupOptionsFromCurrentFactsForSelect } = groupOptions;
 
-const currentFacts = buildCurrentStationGroupFacts({
+const currentFacts = deriveStationGroupDisplayFacts({
   bindings: [
     binding({ id: "binding-current", groupName: "current", groupIdHash: "remote-current", effectiveRateMultiplier: 0.8 }),
     binding({ id: "binding-missing", groupName: "missing", bindingStatus: "missing", groupIdHash: "remote-missing", effectiveRateMultiplier: 0.1 }),

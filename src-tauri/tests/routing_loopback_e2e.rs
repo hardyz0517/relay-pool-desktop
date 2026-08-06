@@ -16,7 +16,13 @@ async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
     let primary_candidate = harness
         .seed_candidate(&primary.base_url, "primary", 0)
         .await;
-    let backup_candidate = harness.seed_candidate(&backup.base_url, "backup", 1).await;
+    // The canonical planner treats key priority as a bounded preference
+    // factor, not the legacy absolute selector order. Keep the fallback
+    // fixture outside the primary utility band so it deterministically
+    // exercises a failed primary followed by a retry.
+    let backup_candidate = harness
+        .seed_candidate(&backup.base_url, "backup", 10_000)
+        .await;
     harness
         .seed_balance(&primary_candidate.station_id, 100.0)
         .await;

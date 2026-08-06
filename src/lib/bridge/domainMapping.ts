@@ -13,7 +13,7 @@ import {
   type AppSettings,
   type UpdateSettingsInput,
 } from "@/lib/types/settings";
-import type { SchedulerAdvancedSettings } from "@/lib/types/routing";
+import type { DispatchAlgorithmSettings } from "@/lib/types/routing";
 import type {
   EndpointPingResult,
   Station,
@@ -42,7 +42,7 @@ export function normalizeSettings(settings: SettingsDto | AppSettings): AppSetti
         : null,
     maxRateMultiplier: normalizeNullableNumber(maybeSettings.maxRateMultiplier),
     defaultRoutingGroupFilter: maybeSettings.defaultRoutingGroupFilter ?? "all_groups",
-    schedulerAdvancedSettings: normalizeSchedulerAdvancedSettings(
+    schedulerAdvancedSettings: normalizeDispatchAlgorithmSettings(
       maybeSettings.schedulerAdvancedSettings,
     ),
     balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
@@ -182,14 +182,14 @@ export function normalizeDataStoreCandidate(value: unknown): DataStoreCandidate 
   return value as DataStoreCandidate;
 }
 
-function normalizeSchedulerAdvancedSettings(value: unknown): SchedulerAdvancedSettings {
+function normalizeDispatchAlgorithmSettings(value: unknown): DispatchAlgorithmSettings {
   const source = isRecord(value) ? value : {};
   const normalized: Record<string, number | boolean> = {
     ...DEFAULT_SCHEDULER_ADVANCED_SETTINGS,
   };
 
   for (const [key, kind] of Object.entries(SCHEDULER_ADVANCED_FIELD_KINDS)) {
-    const fallback = DEFAULT_SCHEDULER_ADVANCED_SETTINGS[key as keyof SchedulerAdvancedSettings];
+    const fallback = DEFAULT_SCHEDULER_ADVANCED_SETTINGS[key as keyof DispatchAlgorithmSettings];
     if (kind === "boolean") {
       normalized[key] = normalizeBooleanWithFallback(source[key], Boolean(fallback));
       continue;
@@ -212,7 +212,7 @@ function normalizeSchedulerAdvancedSettings(value: unknown): SchedulerAdvancedSe
     }
   }
 
-  return normalized as SchedulerAdvancedSettings;
+  return normalized as DispatchAlgorithmSettings;
 }
 
 function normalizeSchedulerNumber(

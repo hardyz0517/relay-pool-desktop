@@ -5,9 +5,9 @@ import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, SegmentedControl, useToast } from "@/components/ui";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { readError } from "@/lib/errors";
+import { proxyStatusQueryOptions } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
-import { localRoutingWorkspaceQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   listRecentRouteDecisionsQuery,
@@ -22,6 +22,8 @@ import { LocalRoutingStatusTab } from "./LocalRoutingStatusTab";
 import { RoutingStatusDiagnosticsPanel } from "./RoutingStatusDiagnosticsPanel";
 import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { useCooldownClock } from "./useCooldownClock";
+import { toRoutingWorkspaceView } from "@/lib/types/routingWorkspace";
+import type { RouteEndpointKind } from "@/lib/types/routing";
 
 type LocalRoutingTab = "status" | "edit";
 
@@ -37,7 +39,7 @@ export function RoutingPage({
   const queryEnabled = usePageQueryEnabled();
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [proxyActionPending, setProxyActionPending] = useState(false);
-  const workspaceQuery = useActivityQuery(localRoutingWorkspaceQueryOptions());
+  const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions());
   const routingSnapshotQuery = useActivityQuery({
     queryKey: routingQueryKeys.workspaceSnapshot({ limit: 50 }),
     queryFn: () => loadRoutingWorkspaceSnapshotQuery({ limit: 50 }),
@@ -54,9 +56,38 @@ export function RoutingPage({
     queryFn: () => listRecentRouteDecisionsQuery({ limit: 8 }),
     staleTime: 5_000,
   });
-  const workspace = workspaceQuery.data ?? null;
-  const loading = workspaceQuery.isPending && workspaceQuery.data === undefined;
-  const error = workspaceQuery.error ? readError(workspaceQuery.error) : null;
+  const latestDecision = routeDecisionsQuery.data?.decisions[0] ?? null;
+  const workspace = useMemo(() => {
+    if (!routingSnapshotQuery.data || !proxyStatusQuery.data) return null;
+    const cooldownByKey = new Map(
+      (routingRuntimeQuery.data?.candidates ?? []).map((candidate) => [candidate.stationKeyId, candidate.cooldownUntil]),
+    );
+    const decision = latestDecision
+      ? {
+          id: latestDecision.requestLogId,
+          decidedAt: latestDecision.finishedAt ?? latestDecision.createdAt,
+          endpoint: latestDecision.endpoint as RouteEndpointKind,
+          model: latestDecision.model,
+          selectedStationKeyId: latestDecision.stationKeyId,
+          selectedStationId: latestDecision.stationId,
+          selectedStationName: null,
+          policy: latestDecision.routePolicy ?? "intelligent_planner_v1",
+          status: (
+            latestDecision.status === "fallback"
+              ? "fallback"
+              : latestDecision.status === "failed"
+                ? "failed"
+                : latestDecision.stationKeyId
+                  ? "selected"
+                  : "unavailable") as "selected" | "fallback" | "failed" | "unavailable",
+          reason: latestDecision.routeReason ?? "",
+          fallbackCount: latestDecision.fallbackCount,
+        }
+      : null;
+    return toRoutingWorkspaceView(routingSnapshotQuery.data, proxyStatusQuery.data, cooldownByKey, decision);
+  }, [latestDecision, proxyStatusQuery.data, routingRuntimeQuery.data, routingSnapshotQuery.data]);
+  const loading = routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined;
+  const error = routingSnapshotQuery.error ? readError(routingSnapshotQuery.error) : null;
   const cooldownDeadlines = useMemo(
     () =>
       (workspace?.candidates ?? []).flatMap((candidate) => {
@@ -68,7 +99,7 @@ export function RoutingPage({
   );
 
   const handleCooldownExpired = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace });
+    void refreshRoutingQueries(queryClient);
   }, [queryClient]);
 
   const nowMs = useCooldownClock({
@@ -90,7 +121,7 @@ export function RoutingPage({
         queryClient.setQueryData(queryKeys.proxyStatus, nextStatus);
         toast.success("本地路由已启动", `监听 ${nextStatus.bindAddr}:${nextStatus.port}`);
       }
-      await queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace });
+      await refreshRoutingQueries(queryClient);
     } catch (actionError) {
       toast.error(
         workspace.proxyStatus.running ? "停止本地路由失败" : "启动本地路由失败",

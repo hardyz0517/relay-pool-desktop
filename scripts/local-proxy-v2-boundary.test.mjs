@@ -19,7 +19,7 @@ const productionStartupShutdownTest = await readFile(
 assert.doesNotMatch(server, /std::net::TcpListener|thread::spawn|httparse|ureq/);
 assert.doesNotMatch(execution, /TcpStream|httparse|ureq/);
 assert.doesNotMatch(endpointAdapter, /record_station_key|insert_request_log|finalize_request_log/);
-assert.match(runtime, /V2ProxyExecutor/);
+assert.match(runtime, /ProxyExecutor/);
 assert.match(runtime, /LifecycleWriter::start/);
 assert.doesNotMatch(runtime, /RequestFinalizationService/);
 assert.match(startup, /services\.request_finalization\.clone\(\)/);

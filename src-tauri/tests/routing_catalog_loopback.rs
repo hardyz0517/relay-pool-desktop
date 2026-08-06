@@ -69,11 +69,17 @@ async fn models_catalog_aggregates_partial_loopback_success_and_persists_outcome
 
     let attempts = harness.attempt_terminal_summaries(&log.id).await;
     assert_eq!(attempts.len(), 2);
-    assert_eq!(attempts[0].station_key_id, failing_candidate.station_key_id);
-    assert_eq!(attempts[0].terminal_kind, "failed");
-    assert_eq!(attempts[0].failure_kind.as_deref(), Some("HttpStatus"));
-    assert_eq!(attempts[1].station_key_id, working_candidate.station_key_id);
-    assert_eq!(attempts[1].terminal_kind, "succeeded");
+    let failing_attempt = attempts
+        .iter()
+        .find(|attempt| attempt.station_key_id == failing_candidate.station_key_id)
+        .expect("failing candidate attempt");
+    assert_eq!(failing_attempt.terminal_kind, "failed");
+    assert_eq!(failing_attempt.failure_kind.as_deref(), Some("HttpStatus"));
+    let working_attempt = attempts
+        .iter()
+        .find(|attempt| attempt.station_key_id == working_candidate.station_key_id)
+        .expect("working candidate attempt");
+    assert_eq!(working_attempt.terminal_kind, "succeeded");
     assert_eq!(harness.attempt_cost_count(&log.id).await, 2);
     assert_eq!(
         harness

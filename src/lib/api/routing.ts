@@ -31,6 +31,14 @@ export function listStationKeyHealth() {
   return getActiveBackendClient().routing.listStationKeyHealth();
 }
 
+export function loadRoutingPolicy() {
+  return getActiveBackendClient().routing.loadRoutingPolicy();
+}
+
+export function updateRoutingPolicy(input: import("@/lib/types/routing").UpdateRoutingPolicyInput) {
+  return getActiveBackendClient().routing.updateRoutingPolicy(input);
+}
+
 export function loadRoutingWorkspaceSnapshot(input: RoutingWorkspaceSnapshotInput = {}) {
   return getActiveBackendClient().routing.loadRoutingWorkspaceSnapshot(input);
 }

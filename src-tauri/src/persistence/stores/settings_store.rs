@@ -3,9 +3,10 @@ use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 use crate::{
     models::{
         proxy::{normalize_proxy_mode, normalize_proxy_url},
-        routing::{RoutingGroupFilter, SchedulerAdvancedSettings},
+        routing::{RoutingGroupFilter, DispatchAlgorithmSettings},
         secrets::mask_secret,
         settings::{AppSettings, UpdateSettingsInput},
+        routing_policy::RoutingPolicyConfigV1,
     },
     persistence::{
         error::PersistenceError,
@@ -135,6 +136,15 @@ impl SettingsStore {
         pending_data_dir: Option<String>,
     ) -> Result<AppSettings, PersistenceError> {
         validate_settings(&update.input)?;
+        // These legacy routing fields remain in the settings IPC shape for old clients;
+        // canonical routing policy updates use the dedicated policy aggregate.
+        let _legacy_routing_fields = (
+            &update.input.routing_policy_name,
+            &update.input.max_rate_multiplier,
+            &update.input.routing_group_scope,
+            &update.input.scheduler_config,
+            update.input.allow_depleted_fallback,
+        );
         let current =
             settings_from_connection(write.connection(), data_dir, pending_data_dir.clone())
                 .await?;
@@ -144,26 +154,6 @@ impl SettingsStore {
             false,
         )?;
         let collector_proxy_url = normalize_proxy_url(update.input.collector_proxy_url.clone());
-        let max_rate_multiplier = update
-            .input
-            .max_rate_multiplier
-            .unwrap_or(current.max_rate_multiplier);
-        if let Some(value) = max_rate_multiplier {
-            if !value.is_finite() || value < 0.0 {
-                return Err(PersistenceError::ConstraintViolation);
-            }
-        }
-        let default_routing_group_filter = update
-            .input
-            .default_routing_group_filter
-            .unwrap_or(current.default_routing_group_filter);
-        let scheduler_advanced_settings = update
-            .input
-            .scheduler_advanced_settings
-            .unwrap_or(current.scheduler_advanced_settings);
-        scheduler_advanced_settings
-            .validate()
-            .map_err(|_| PersistenceError::ConstraintViolation)?;
         let tray_behavior = validate_tray_behavior_setting(
             update
                 .input
@@ -172,34 +162,15 @@ impl SettingsStore {
                 .unwrap_or(&current.tray_behavior),
         )?;
 
-        let default_routing_group_filter =
-            serialize_routing_group_filter_setting(&default_routing_group_filter)?;
-        let scheduler_advanced_settings = serde_json::to_string(&scheduler_advanced_settings)
-            .map_err(|_| setting_serialization_failed())?;
         let values = [
             (
                 "local_proxy_port",
                 update.input.local_proxy_port.to_string(),
             ),
-            (
-                "default_routing_strategy",
-                update.input.default_routing_strategy,
-            ),
             ("collector_proxy_mode", collector_proxy_mode),
             (
                 "collector_proxy_url",
                 collector_proxy_url.unwrap_or_default(),
-            ),
-            (
-                "max_rate_multiplier",
-                max_rate_multiplier
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
-            ),
-            ("default_routing_group_filter", default_routing_group_filter),
-            (
-                "scheduler_advanced_settings_json",
-                scheduler_advanced_settings,
             ),
             (
                 "low_balance_threshold_cny",
@@ -228,10 +199,6 @@ impl SettingsStore {
             (
                 "collector_max_concurrency",
                 update.input.collector_max_concurrency.to_string(),
-            ),
-            (
-                "allow_depleted_fallback",
-                update.input.allow_depleted_fallback.to_string(),
             ),
             (
                 "developer_mode_enabled",
@@ -278,6 +245,8 @@ async fn settings_from_connection(
         .map(|pending| pending != data_dir)
         .unwrap_or(false);
 
+    let canonical_policy = canonical_policy_projection(&mut *connection).await?;
+
     Ok(AppSettings {
         local_proxy_port: parse_setting(&mut *connection, "local_proxy_port").await?,
         local_proxy_start_on_launch: parse_setting_or_default(
@@ -287,8 +256,9 @@ async fn settings_from_connection(
         )
         .await?,
         local_key_masked,
-        default_routing_strategy: read_setting(&mut *connection, "default_routing_strategy")
-            .await?,
+        // The UI field is a compatibility projection. Runtime routing reads
+        // the versioned routing_policy aggregate directly.
+        routing_policy_name: "automatic_balanced".to_string(),
         collector_proxy_mode: normalize_proxy_mode(
             &read_setting_or_default(&mut *connection, "collector_proxy_mode", "direct").await?,
             false,
@@ -296,21 +266,9 @@ async fn settings_from_connection(
         collector_proxy_url: normalize_proxy_url(Some(
             read_setting_or_default(&mut *connection, "collector_proxy_url", "").await?,
         )),
-        max_rate_multiplier: parse_optional_f64_setting(
-            &read_setting_or_default(&mut *connection, "max_rate_multiplier", "").await?,
-        )?,
-        default_routing_group_filter: parse_routing_group_filter_setting(
-            &read_setting_or_default(
-                &mut *connection,
-                "default_routing_group_filter",
-                "all_groups",
-            )
-            .await?,
-        )?,
-        scheduler_advanced_settings: parse_scheduler_advanced_settings(
-            &read_setting_or_default(&mut *connection, "scheduler_advanced_settings_json", "")
-                .await?,
-        )?,
+        max_rate_multiplier: None,
+        routing_group_scope: RoutingGroupFilter::AllGroups,
+        scheduler_config: DispatchAlgorithmSettings::default(),
         low_balance_threshold_cny: parse_setting(&mut *connection, "low_balance_threshold_cny")
             .await?,
         collector_interval_minutes: parse_setting(&mut *connection, "collector_interval_minutes")
@@ -345,12 +303,7 @@ async fn settings_from_connection(
             "3",
         )
         .await?,
-        allow_depleted_fallback: parse_setting_or_default(
-            &mut *connection,
-            "allow_depleted_fallback",
-            "false",
-        )
-        .await?,
+        allow_depleted_fallback: canonical_policy.allow_depleted_fallback,
         developer_mode_enabled: parse_setting_or_default(
             &mut *connection,
             "developer_mode_enabled",
@@ -495,53 +448,32 @@ where
     Ok(())
 }
 
-fn parse_optional_f64_setting(value: &str) -> Result<Option<f64>, PersistenceError> {
-    if value.trim().is_empty() {
-        return Ok(None);
-    }
-    let parsed = value
-        .parse::<f64>()
+#[derive(Debug, Clone, Copy)]
+struct CanonicalPolicyProjection {
+    allow_depleted_fallback: bool,
+}
+
+async fn canonical_policy_projection(
+    connection: &mut SqliteConnection,
+) -> Result<CanonicalPolicyProjection, PersistenceError> {
+    let config_json = sqlx::query_scalar::<_, String>(
+        "SELECT config_json FROM routing_policy WHERE singleton_key = 1",
+    )
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some(config_json) = config_json else {
+        return Ok(CanonicalPolicyProjection {
+            allow_depleted_fallback: false,
+        });
+    };
+    let config = serde_json::from_str::<RoutingPolicyConfigV1>(&config_json)
         .map_err(|_| invalid_persisted_setting())?;
-    if !parsed.is_finite() {
-        return Err(invalid_persisted_setting());
-    }
-    Ok(Some(parsed))
-}
-
-fn serialize_routing_group_filter_setting(
-    filter: &RoutingGroupFilter,
-) -> Result<String, PersistenceError> {
-    match serde_json::to_value(filter).map_err(|_| setting_serialization_failed())? {
-        serde_json::Value::String(value) => Ok(value),
-        value => serde_json::to_string(&value).map_err(|_| setting_serialization_failed()),
-    }
-}
-
-fn parse_routing_group_filter_setting(value: &str) -> Result<RoutingGroupFilter, PersistenceError> {
-    if value.trim().is_empty() {
-        return Ok(RoutingGroupFilter::AllGroups);
-    }
-    serde_json::from_str::<RoutingGroupFilter>(value)
-        .or_else(|_| {
-            serde_json::from_value::<RoutingGroupFilter>(serde_json::Value::String(
-                value.to_string(),
-            ))
-        })
-        .map_err(|_| invalid_persisted_setting())
-}
-
-fn parse_scheduler_advanced_settings(
-    value: &str,
-) -> Result<SchedulerAdvancedSettings, PersistenceError> {
-    if value.trim().is_empty() {
-        return Ok(SchedulerAdvancedSettings::default());
-    }
-    let settings: SchedulerAdvancedSettings =
-        serde_json::from_str(value).map_err(|_| invalid_persisted_setting())?;
-    settings
+    config
         .validate()
         .map_err(|_| invalid_persisted_setting())?;
-    Ok(settings)
+    Ok(CanonicalPolicyProjection {
+        allow_depleted_fallback: config.allow_depleted_fallback,
+    })
 }
 
 fn validate_settings(input: &UpdateSettingsInput) -> Result<(), PersistenceError> {
@@ -583,10 +515,6 @@ fn invalid_persisted_setting() -> PersistenceError {
     PersistenceError::InvariantViolation("invalid persisted setting".to_string())
 }
 
-fn setting_serialization_failed() -> PersistenceError {
-    PersistenceError::InvariantViolation("setting serialization failed".to_string())
-}
-
 #[cfg_attr(
     test,
     allow(
@@ -600,12 +528,8 @@ fn is_supported_setting_key(key: &str) -> bool {
         "local_proxy_port"
             | "local_proxy_start_on_launch"
             | "local_key"
-            | "default_routing_strategy"
             | "collector_proxy_mode"
             | "collector_proxy_url"
-            | "max_rate_multiplier"
-            | "default_routing_group_filter"
-            | "scheduler_advanced_settings_json"
             | "low_balance_threshold_cny"
             | "collector_interval_minutes"
             | "balance_interval_minutes"
@@ -613,7 +537,6 @@ fn is_supported_setting_key(key: &str) -> bool {
             | "pricing_refresh_interval_minutes"
             | "collector_timeout_seconds"
             | "collector_max_concurrency"
-            | "allow_depleted_fallback"
             | "developer_mode_enabled"
             | "tray_behavior"
     )

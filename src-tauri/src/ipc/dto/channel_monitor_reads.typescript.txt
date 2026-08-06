@@ -43,7 +43,7 @@ export type ChannelMonitorTargetResultRecordDto = {
   usedFallback: boolean; attemptCount: number; decisiveAttemptId: string | null;
   protocolKind: string | null; resolvedAdapterKind: string; resolvedDialect: string | null;
   clientProfileId: string; clientProfileVersion: number; requestProfileHash: string | null;
-  trafficEquivalence: string; healthWritebackMode: string; healthWritebackDecision: string;
+  trafficEquivalence: string; healthPolicyMode: string; healthWritebackDecision: string;
   healthWritebackReason: string | null; latencyMs: number | null; semanticConfidence: string;
   startedAtMs: number; finishedAtMs: number | null;
 };
@@ -83,7 +83,7 @@ export type ChannelMonitorDto = {
   stationKeyId: string | null; templateId: string; enabled: boolean; intervalSeconds: number;
   protocolKind: MonitorProtocolKindInputDto; clientProfileId: MonitorClientProfileIdInputDto; clientProfileVersion: number; primaryModel: string;
   retryMaxAttemptsPerModel: number; retryInitialBackoffMs: number; retryMaxBackoffMs: number;
-  riskDailyProbeBudget: number; healthWritebackMode: MonitorHealthWritebackModeInputDto; healthFailureThreshold: number;
+  riskDailyProbeBudget: number; healthPolicyMode: MonitorHealthWritebackModeInputDto; healthFailureThreshold: number;
   healthRecoveryThreshold: number; attemptTimeoutMs: number; executionTimeoutMs: number;
   scheduleRevision: number;
   jitterSeconds: number; timeoutSeconds: number; maxConcurrency: number;

@@ -294,9 +294,17 @@ async fn create_schema(pool: &SqlitePool) {
         );
         CREATE TABLE station_key_capabilities (
             station_key_id TEXT PRIMARY KEY,
+            supports_chat_completions INTEGER NOT NULL DEFAULT 1,
+            supports_responses INTEGER NOT NULL DEFAULT 1,
+            supports_stream INTEGER NOT NULL DEFAULT 1,
             supports_tools INTEGER NOT NULL,
             supports_vision INTEGER NOT NULL,
             supports_reasoning INTEGER NOT NULL,
+            model_allowlist_json TEXT NOT NULL DEFAULT '[]',
+            model_blocklist_json TEXT NOT NULL DEFAULT '[]',
+            preferred_models_json TEXT NOT NULL DEFAULT '[]',
+            only_use_as_backup INTEGER NOT NULL DEFAULT 0,
+            routing_tags_json TEXT NOT NULL DEFAULT '[]',
             updated_at TEXT NOT NULL
         );
         CREATE TABLE station_key_health (
@@ -311,6 +319,24 @@ async fn create_schema(pool: &SqlitePool) {
             station_id TEXT PRIMARY KEY,
             endpoint_revision INTEGER NOT NULL
         );
+        CREATE TABLE routing_health_snapshot (
+            station_key_id TEXT PRIMARY KEY,
+            endpoint_revision INTEGER NOT NULL,
+            consecutive_failures INTEGER NOT NULL,
+            success_count INTEGER NOT NULL,
+            failure_count INTEGER NOT NULL,
+            avg_latency_ms INTEGER,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE endpoint_health_snapshot (
+            station_id TEXT PRIMARY KEY,
+            endpoint_revision INTEGER NOT NULL
+        );
+        CREATE TABLE routing_policy (
+            singleton_key INTEGER PRIMARY KEY CHECK (singleton_key = 1),
+            config_json TEXT NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
         CREATE TABLE balance_snapshots (
             id TEXT PRIMARY KEY,
             station_id TEXT NOT NULL,
@@ -320,6 +346,7 @@ async fn create_schema(pool: &SqlitePool) {
             currency TEXT NOT NULL,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         );
         CREATE TABLE pricing_rules (
@@ -337,6 +364,12 @@ async fn create_schema(pool: &SqlitePool) {
             enabled INTEGER NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE domain_revisions (
+            scope TEXT PRIMARY KEY,
+            revision INTEGER NOT NULL CHECK (revision > 0),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0),
+            provenance TEXT NOT NULL
+        );
         "#,
     )
     .await
@@ -346,7 +379,7 @@ async fn create_schema(pool: &SqlitePool) {
         "default_routing_strategy",
         "max_rate_multiplier",
         "default_routing_group_filter",
-        "scheduler_advanced_settings_json",
+        "dispatch_algorithm_profile_json",
         "allow_depleted_fallback",
     ] {
         sqlx::query("INSERT INTO settings (key, value, updated_at) VALUES (?1, 'fixture', '1')")
@@ -354,7 +387,28 @@ async fn create_schema(pool: &SqlitePool) {
             .execute(pool)
             .await
             .expect("insert setting");
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+             VALUES ('setting:' || ?1, 1, 0, 'baseline_snapshot')",
+        )
+        .bind(key)
+        .execute(pool)
+        .await
+        .expect("insert setting revision");
     }
+    sqlx::query(
+        "INSERT INTO routing_policy (singleton_key, config_json, updated_at_ms) VALUES (1, ?1, 0)",
+    )
+    .bind(r#"{"version":1,"reliability_weight":4000,"responsiveness_weight":2500,"cost_weight":2000,"preference_weight":1500,"max_candidates":64,"exploration_share_basis_points":500,"allow_depleted_fallback":false,"affinity_enabled":false,"affinity_ttl_seconds":300}"#)
+    .execute(pool)
+    .await
+    .expect("insert routing policy");
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES ('routing_policy', 1, 0, 'baseline_snapshot')",
+    )
+    .execute(pool)
+    .await
+    .expect("insert routing policy revision");
 }
 
 async fn insert_candidate(pool: &SqlitePool, index: usize) {
@@ -370,6 +424,14 @@ async fn insert_candidate(pool: &SqlitePool, index: usize) {
     .await
     .expect("insert station");
     sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES ('station:' || ?1, 1, 0, 'baseline_snapshot')",
+    )
+    .bind(&station_id)
+    .execute(pool)
+    .await
+    .expect("insert station revision");
+    sqlx::query(
         "INSERT INTO station_keys
          (id, station_id, api_key, api_key_secret_id, enabled, priority, routing_order, created_at, updated_at)
          VALUES (?1, ?2, 'key-leak-canary', NULL, 1, ?3, ?3, ?3, '1')",
@@ -380,6 +442,25 @@ async fn insert_candidate(pool: &SqlitePool, index: usize) {
     .execute(pool)
     .await
     .expect("insert key");
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES ('station_key:' || ?1, 1, 0, 'baseline_snapshot')",
+    )
+    .bind(&key_id)
+    .execute(pool)
+    .await
+    .expect("insert key revision");
+}
+
+async fn insert_alias_revision(pool: &SqlitePool, id: &str) {
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES ('model_alias:' || ?1, 1, 0, 'baseline_snapshot')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .expect("insert alias revision");
 }
 
 #[tokio::test]
@@ -446,6 +527,7 @@ async fn fixed_query_count_does_not_scale_with_candidate_count() {
     .execute(&pool)
     .await
     .expect("alias");
+    insert_alias_revision(&pool, "alias-1").await;
 
     let store = OperationalFactStore;
     let mut read = TestReadSession::begin(&pool).await;
@@ -457,7 +539,7 @@ async fn fixed_query_count_does_not_scale_with_candidate_count() {
     .await;
 
     assert_eq!(bundle.candidates().len(), 100);
-    assert_eq!(bundle.query_count(), 9);
+    assert_eq!(bundle.query_count(), 4);
     assert!(!bundle.loaded_full_model_catalog());
 }
 
@@ -476,6 +558,7 @@ async fn single_model_shape_does_not_load_full_model_catalog() {
         .execute(&pool)
         .await
         .expect("alias");
+        insert_alias_revision(&pool, &format!("alias-{index}")).await;
     }
     sqlx::query(
         "INSERT INTO model_aliases (id, client_model, upstream_model, enabled, updated_at)
@@ -484,6 +567,7 @@ async fn single_model_shape_does_not_load_full_model_catalog() {
     .execute(&pool)
     .await
     .expect("target alias");
+    insert_alias_revision(&pool, "alias-target").await;
 
     let store = OperationalFactStore;
     let mut read = TestReadSession::begin(&pool).await;
@@ -560,5 +644,30 @@ async fn candidate_limit_failure_is_typed_and_not_silent_sql_truncation() {
             actual: 3,
             limit: 2
         }
+    ));
+}
+
+#[tokio::test]
+async fn missing_domain_revision_fails_closed_without_timestamp_fallback() {
+    let pool = test_pool().await;
+    insert_candidate(&pool, 1).await;
+    sqlx::query("DELETE FROM domain_revisions WHERE scope = 'station_key:key-1'")
+        .execute(&pool)
+        .await
+        .expect("remove revision");
+
+    let mut read = TestReadSession::begin(&pool).await;
+    let error = OperationalFactStore
+        .load_raw(
+            &mut read,
+            &OperationalFactReadOptions::for_request_model("gpt-4.1"),
+        )
+        .await
+        .expect_err("missing revision must not become one");
+
+    assert!(matches!(
+        error,
+        OperationalFactQueryError::RevisionUnavailable { scope }
+        if scope == "station_key:key-1"
     ));
 }

@@ -53,7 +53,7 @@ assert.ok(
 );
 
 assert.ok(
-  settingsServiceSource.includes("pub(crate) async fn update_local_access_key") &&
+  settingsServiceSource.includes("pub async fn update_local_access_key") &&
     settingsServiceSource.includes("encrypt_local_access_key") &&
     settingsStoreSource.includes("upsert_local_access_key_secret") &&
     settingsStoreSource.includes("app_secret_bindings") &&

@@ -28,6 +28,7 @@ const contracts = [
   ["node", ["scripts/request-lifecycle-architecture.test.mjs"]],
   ["node", ["scripts/monitoring-architecture.test.mjs"]],
   ["node", ["scripts/routing-operational-architecture.test.mjs"]],
+  ["node", ["scripts/intelligent-routing-architecture.test.mjs"]],
   ["node", ["scripts/routing-error-contract.test.mjs"]],
   ["node", ["scripts/routing-dto-completeness.test.mjs"]],
   ["node", ["scripts/routing-read-model-architecture.test.mjs"]],
@@ -38,10 +39,11 @@ const contracts = [
   ["node", ["scripts/routing-operational-local-self-check.test.mjs"]],
   ["node", ["scripts/routing-operational-legacy-doc-consistency.test.mjs"]],
   ["node", ["scripts/openai-compatible-live-qualification-boundary.test.mjs"]],
-  ["node", ["scripts/local-routing-lifecycle-smoke-boundary.test.mjs"]],
   ["node", ["scripts/routing-operational-manual-observation-boundary.test.mjs"]],
-  ["node", ["scripts/routing-task24-predeletion-gate.test.mjs"]],
   ["node", ["scripts/routing-single-owner.test.mjs"]],
+  ["node", ["scripts/routing-projection-runner.test.mjs"]],
+  ["node", ["scripts/routing-task24-predeletion-gate.test.mjs"]],
+  ["node", ["scripts/intelligent-routing-qualification.mjs"]],
   ["node", ["scripts/install-upgrade-matrix-contract.test.mjs"]],
 ];
 

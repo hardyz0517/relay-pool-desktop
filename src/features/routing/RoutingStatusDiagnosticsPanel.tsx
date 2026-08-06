@@ -84,7 +84,7 @@ export function RoutingStatusDiagnosticsPanel({
           usesTools: false,
           usesVision: false,
           usesReasoning: false,
-          policy: snapshot.productionPolicy,
+          policy: snapshot.policyConfig,
           maxRateMultiplier: snapshot.maxRateMultiplier,
           routingGroupFilter: snapshot.routingGroupFilter,
         }),
