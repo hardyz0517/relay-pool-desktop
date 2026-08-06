@@ -29,6 +29,89 @@ fn foundation_migration_is_additive_and_has_no_timestamp_revision_fallback() {
 }
 
 #[test]
+fn cutover_migration_removes_legacy_routing_truths_and_writeback_fields() {
+    let migration =
+        read_source("src/persistence/migrations/0026_intelligent_routing_cutover_cleanup.sql");
+    for statement in [
+        "DELETE FROM settings",
+        "DROP COLUMN health_writeback_mode",
+        "DROP COLUMN health_writeback_decision",
+        "DROP COLUMN health_writeback_reason",
+        "schema_version = 26",
+    ] {
+        assert!(
+            migration.contains(statement),
+            "cutover migration missing {statement}"
+        );
+    }
+    // Asset status and the two pre-v2 health tables remain as compatibility
+    // storage for installed databases. They are explicitly excluded from the
+    // portable catalog and are not read by the routing planner.
+    assert!(migration.contains("Legacy health tables remain as non-routing compatibility storage"));
+}
+
+#[test]
+fn projection_ingestion_migration_resets_only_derived_quality_state() {
+    let migration =
+        read_source("src/persistence/migrations/0027_routing_projection_monotonic_ingestion.sql");
+    for statement in [
+        "DELETE FROM routing_projector_checkpoints",
+        "DELETE FROM routing_quality_summaries",
+        "DELETE FROM routing_health_axes",
+        "schema_version = 27",
+    ] {
+        assert!(
+            migration.contains(statement),
+            "projection ingestion migration missing {statement}"
+        );
+    }
+    assert!(!migration.contains("DELETE FROM routing_observations"));
+}
+
+#[test]
+fn generation_upgrade_rebuilds_revision_baseline_after_legacy_copy() {
+    let importer = read_source("src/persistence/legacy_import/import.rs");
+    assert!(importer.contains("rebuild_domain_revision_baseline(&mut write).await?"));
+    for scope in ["station:' || id", "station_key:' || id", "model_alias:' || id"] {
+        assert!(
+            importer.contains(scope),
+            "legacy import must rebuild {scope} revisions"
+        );
+    }
+    assert!(importer.contains("legacy_monitor_policy_column"));
+    assert!(importer.contains("AS health_policy_mode"));
+}
+
+#[test]
+fn portable_reader_accepts_pre_cutover_health_tables_as_ignored_history() {
+    let reader = read_source("src/services/portable_migration/schema_reader.rs");
+    for table in ["station_endpoint_health", "station_key_health"] {
+        assert!(
+            reader.contains(&format!("\"{table}\"")),
+            "reader must accept legacy table {table}"
+        );
+    }
+}
+
+#[test]
+fn legacy_routing_settings_are_reset_during_portable_import() {
+    let catalog = read_source("src/services/portable_migration/catalog.rs");
+    for key in [
+        "default_routing_strategy",
+        "default_routing_group_filter",
+        "dispatch_algorithm_profile_json",
+        "max_rate_multiplier",
+        "allow_depleted_fallback",
+    ] {
+        assert!(
+            catalog.contains(&format!("\"{key}\"")),
+            "catalog must classify {key} as reset"
+        );
+    }
+    assert!(catalog.contains("SettingPolicy::Reset"));
+}
+
+#[test]
 fn portable_catalog_declares_foundation_tables_and_explicit_json_rules() {
     let catalog = read_source("src/services/portable_migration/catalog.rs");
     for table in [

@@ -20,10 +20,8 @@
                          "request_logs":  0,
                          "secrets":  0,
                          "station_credentials":  0,
-                         "station_endpoint_health":  0,
                          "station_group_bindings":  0,
                          "station_key_capabilities":  0,
-                         "station_key_health":  0,
                          "station_keys":  1,
                          "stations":  1
                      }

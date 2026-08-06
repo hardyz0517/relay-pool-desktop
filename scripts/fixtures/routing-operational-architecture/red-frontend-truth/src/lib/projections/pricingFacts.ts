@@ -1,3 +1,3 @@
-export function buildPricingGroupCandidates() {
+export function derivePricingGroupDisplayCandidates() {
   return [];
 }

@@ -109,7 +109,7 @@ function checkPreviewCapacityCannotLookAcquired() {
   const workspace = read("src-tauri/src/application/queries/routing_workspace.rs");
   const routing = read("src-tauri/src/application/routing.rs");
   assert.match(workspace, /RoutingCapacityReadMode::SnapshotOnly/u, "workspace preview must use snapshot-only capacity");
-  assert.match(workspace, /selected_capacity_acquired:\s*false/u, "preview simulation must not acquire capacity");
+  assert.match(workspace, /acquired:\s*false/u, "workspace read model must not acquire capacity");
   assert.match(routing, /selected_capacity_acquired:\s*false/u, "simulate_route preview metadata must not acquire capacity");
   assert.match(routing, /capacity_mode:\s*"snapshot_only"/u, "simulate_route must expose snapshot-only capacity metadata");
 }

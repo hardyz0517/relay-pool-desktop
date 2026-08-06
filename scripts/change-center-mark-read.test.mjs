@@ -541,7 +541,7 @@ assert.ok(
   tauriCommandsSource.includes("pub async fn clear_change_events") &&
     tauriCommandsSource.includes(".clear_change_events()") &&
     tauriRegistrySource.includes("clear_change_events =>") &&
-    changeServiceSource.includes("pub(crate) async fn clear") &&
+    changeServiceSource.includes("pub async fn clear") &&
     changeStoreSource.includes("DELETE FROM change_events"),
   "Tauri should register a clear_change_events command that deletes persisted change-event history",
 );
@@ -550,7 +550,7 @@ assert.ok(
   tauriCommandsSource.includes("pub async fn mark_change_events_read") &&
     tauriCommandsSource.includes(".mark_change_events_read(input.ids)") &&
     tauriRegistrySource.includes("mark_change_events_read =>") &&
-    changeServiceSource.includes("pub(crate) async fn mark_many_read") &&
+    changeServiceSource.includes("pub async fn mark_many_read") &&
     changeStoreSource.includes("WHERE id = ?1 AND status = 'unread'"),
   "batch read persistence should be registered and only transition rows that are still unread",
 );

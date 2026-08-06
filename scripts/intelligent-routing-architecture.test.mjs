@@ -16,12 +16,10 @@ if (fixtureMode) {
 const manifest = readJson("docs/superpowers/audits/intelligent-routing-boundary-manifest.json");
 assert.equal(manifest.schema_version, 1, "boundary manifest schema version must be 1");
 assert.deepEqual(
-  manifest.temporary_allowed_exceptions.map((entry) => entry.id),
-  ["intelligent_routing_qualification"],
-  "qualification must be the only temporary intelligent-routing boundary",
+  manifest.temporary_allowed_exceptions,
+  [],
+  "intelligent-routing cutover must not retain a temporary production boundary",
 );
-assert.equal(manifest.temporary_allowed_exceptions[0].delete_by_task, 17);
-assert.equal(manifest.temporary_allowed_exceptions[0].production_reachable, false);
 for (const owner of manifest.required_target_owners) {
   assert.equal(typeof owner, "string");
   assert.notEqual(owner.length, 0);
@@ -29,41 +27,44 @@ for (const owner of manifest.required_target_owners) {
 
 checkPlannerContractBoundary();
 checkObservationAndHealthOwnership();
+checkManifestOwnersAndForbiddenEdges();
 
 console.log("intelligent routing architecture manifest gate passed");
 
 function checkPlannerContractBoundary() {
-  const legacyPlanner = "src-tauri/src/application/routing_engine/planner_legacy.rs";
-  const removedPlanner = "src-tauri/src/application/routing_engine/planner.rs";
   const snapshotPlanner = "src-tauri/src/application/routing_engine/intelligent_planner.rs";
   const engineModule = "src-tauri/src/application/routing_engine/mod.rs";
-  const compileGate = "src-tauri/src/application/routing_engine/planner_contract_gate.rs";
+  const admission = "src-tauri/src/application/routing_engine/admission.rs";
+  const execution = "src-tauri/src/services/proxy/execution.rs";
   const productionConsumers = [
-    "src-tauri/src/application/routing_engine/controller.rs",
+    "src-tauri/src/application/routing_engine/admission.rs",
     "src-tauri/src/application/routing.rs",
   ];
-
-  assert.ok(existsSync(path.join(root, ...legacyPlanner.split("/"))), `${legacyPlanner} must own the legacy route contract`);
-  assert.ok(!existsSync(path.join(root, ...removedPlanner.split("/"))), `${removedPlanner} must not remain after the legacy rename`);
-
-  const legacySource = readSource(legacyPlanner);
   const snapshotSource = readSource(snapshotPlanner);
   const moduleSource = readSource(engineModule);
-  const compileGateSource = readSource(compileGate);
-
-  assert.match(moduleSource, /\bmod\s+planner_legacy\s*;/u, "routing engine must expose the legacy planner under an explicit legacy name");
-  assert.doesNotMatch(moduleSource, /\bmod\s+planner\s*;/u, "routing engine must not expose an ambiguous planner module");
-  assert.match(legacySource, /\bfn\s+plan_route\s*\(/u, "only the legacy planner may retain the plan_route entrypoint");
-  assert.doesNotMatch(snapshotSource, /\bplan_route\b/u, "the snapshot planner must not import or export the legacy plan_route contract");
-  assert.doesNotMatch(legacySource, /\b(?:intelligent_planner|planning_snapshot)\b/u, "the legacy planner must not import the snapshot planner contract");
-  assert.match(compileGateSource, /type\s+LegacyPlanRouteContract\b/u, "a Rust compile gate must pin the legacy contract");
-  assert.match(compileGateSource, /type\s+IntelligentPlanSnapshotContract\b/u, "a Rust compile gate must pin the snapshot contract");
-  assert.match(compileGateSource, /planner_legacy::plan_route/u, "the compile gate must type-check the legacy entrypoint");
-  assert.match(compileGateSource, /intelligent_planner::plan_snapshot/u, "the compile gate must type-check the snapshot entrypoint");
+  assert.doesNotMatch(moduleSource, /planner_legacy|planner_contract_gate|\bcontroller\b|\bselector\b|routing_snapshot|routing_types/u);
+  assert.match(snapshotSource, /fn\s+plan_snapshot\s*\(/u);
+  assert.match(snapshotSource, /weighted_rendezvous/u);
+  const admissionSource = readSource(admission);
+  const executionSource = readSource(execution);
+  assert.match(
+    admissionSource,
+    /pub\s+fn\s+next[\s\S]*?plan_snapshot_with_budget/u,
+    "production admission must invoke the canonical intelligent planner",
+  );
+  assert.match(
+    admissionSource,
+    /planning_snapshot_required/u,
+    "production admission must fail closed without a planning snapshot",
+  );
+  assert.doesNotMatch(
+    executionSource,
+    /planner_order|plan_route_from_order|build_route_plan_from_order/u,
+    "proxy execution must not bridge the intelligent planner into a legacy order",
+  );
   for (const consumer of productionConsumers) {
     const source = readSource(consumer);
-    assert.match(source, /\bplanner_legacy::/u, `${consumer} must explicitly import the legacy planner during qualification`);
-    assert.doesNotMatch(source, /\bplanner::/u, `${consumer} must not import an ambiguous planner module`);
+    assert.doesNotMatch(source, /planner_legacy|RouteAdmissionController|selector::|routing_snapshot|routing_types/u, `${consumer} must not depend on deleted routing owners`);
   }
 }
 
@@ -76,6 +77,46 @@ function checkObservationAndHealthOwnership() {
   assert.match(ingestion, /Sha256/u, "observation idempotency must use a payload hash");
   assert.doesNotMatch(transitions, /update_station_key_status/u, "health transitions must not write legacy status");
   assert.doesNotMatch(healthStore, /update_station_key_status/u, "health store must not expose a legacy status writer");
+}
+
+function checkManifestOwnersAndForbiddenEdges() {
+  const owners = {
+    PlanningSnapshotBuilder: "src-tauri/src/application/operational_facts/planning_snapshot.rs",
+    RoutingPolicyConfigV1: "src-tauri/src/models/routing_policy.rs",
+    RoutingObservation: "src-tauri/src/models/routing_observation.rs",
+    DispatchAlgorithmProfile: "src-tauri/src/application/routing_engine/algorithm_profile.rs",
+    RouteAdmissionCoordinator: "src-tauri/src/application/routing_engine/admission.rs",
+    RoutingWorkspaceReadModel: "src-tauri/src/application/queries/routing_workspace.rs",
+    DomainRevisionNotice: "src-tauri/src/application/queries/read_model_revision.rs",
+  };
+  for (const owner of manifest.required_target_owners) {
+    const file = owners[owner];
+    assert.ok(file, `manifest owner ${owner} must have an explicit source mapping`);
+    assert.ok(readSource(file).length > 0, `${owner} source must exist`);
+  }
+  const planner = readSource("src-tauri/src/application/routing_engine/intelligent_planner.rs");
+  for (const forbidden of manifest.forbidden_production_dependencies.planner) {
+    const pattern = new RegExp(`\\b${escapeRegExp(forbidden).replaceAll("\\ ", "\\\\s+")}\\b`, "iu");
+    assert.doesNotMatch(planner, pattern, `planner must not depend on ${forbidden}`);
+  }
+  assert.match(readSource("src-tauri/src/application/routing_engine/admission.rs"), /plan_snapshot_with_budget/u);
+  const routingApplication = readSource("src-tauri/src/application/routing.rs");
+  assert.match(routingApplication, /load_intelligent_planning_snapshot[\s\S]*plan_snapshot_with_budget/u);
+  const simulationBody = routingApplication.split("pub(crate) async fn simulate_route", 1)[1] ?? "";
+  assert.doesNotMatch(simulationBody, /load_(?:runtime|workspace_projection)_candidates_with_request_pricing/u, "simulation must not load the read-model candidate projection chain");
+  const executionRepository = readSource("src-tauri/src/services/proxy/routing_repository.rs")
+    .split("\n#[cfg(test)]\nmod tests", 1)[0]
+    .replace(/\s*#\[cfg\(test\)\]\s*pub\(crate\) legacy_candidates:[^,\n]+,?/u, "");
+  assert.doesNotMatch(executionRepository, /RouteCandidateProjection|load_runtime_candidates_with_request_pricing/u, "production execution repository must not rebuild legacy candidate projections");
+  assert.match(executionRepository, /OperationalRouteSnapshot[\s\S]*Vec<RoutePlanCandidate>/u, "execution snapshot must expose an execution-only candidate index");
+  assert.doesNotMatch(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /production_policy/u, "workspace read model must not expose legacy policy enum truth");
+  assert.match(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /policy_config: RoutingPolicyConfigV1/u, "workspace read model must expose canonical policy config");
+  assert.match(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /updateRoutingPolicy/u);
+  assert.doesNotMatch(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /schedulerAdvancedSettings|updateSettings/u);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function runFixtures() {
@@ -95,7 +136,7 @@ function checkFixture(fixtureRoot, shouldPass) {
   };
   reject(/\b(?:sqlx|reqwest|tauri|SecretManager|ipc::dto|request[_ ]log|monitoring[_ ]dto)\b/u, "planner imports an outer-layer dependency");
   reject(/\bRouteCandidateProjection\b|\bcandidates\s*:\s*&?\[/u, "planner accepts a legacy candidate slice");
-  reject(/\b(?:buildCurrentStationGroupFacts|buildPricingGroupCandidates|authoritative(?:Pricing|Group|Capability|Health|Score)Reducer)\b/u, "frontend owns routing truth");
+  reject(/\b(?:deriveStationGroupDisplayFacts|derivePricingGroupDisplayCandidates|authoritative(?:Pricing|Group|Capability|Health|Score)Reducer)\b/u, "frontend owns routing truth");
   reject(/\b(?:begin_write|begin\s*write)\b/u, "application query opens a write transaction");
   reject(/(?:unwrap_or\(1\)|fallback\s*=\s*1|CAST\(updated_at AS INTEGER\))/u, "timestamp or fallback revision remains");
   reject(/\brequireRegistration\(\s*old_symbol\s*\)|permanent[_ ]temporary/u, "legacy gate contains a permanent compatibility requirement");

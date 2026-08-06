@@ -29,7 +29,7 @@ assert.match(
 
 assert.match(
   captureFacade,
-  /pub\(crate\) async fn start_provider_draft_authorization[\s\S]*prepare_provider_draft_capture_session_start\(draft_id\)/,
+  /pub(?:\(crate\))? async fn start_provider_draft_authorization[\s\S]*prepare_provider_draft_capture_session_start\(draft_id\)/,
   "the capture facade should own draft authorization preparation",
 );
 

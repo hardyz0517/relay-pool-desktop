@@ -165,7 +165,6 @@ async fn transaction_rollback_covers_attempt_target_health_execution_rollup_and_
         count(&mut connection, "station_key_health_observations").await,
         0
     );
-    assert_eq!(count(&mut connection, "station_key_health").await, 0);
     assert_eq!(
         count(&mut connection, "channel_monitor_rollup_dirty_ranges").await,
         0
@@ -224,7 +223,7 @@ async fn commit_outcome_unknown_replay_is_idempotent_for_budget_and_health_obser
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
-            "SELECT success_count FROM station_key_health WHERE station_key_id = 'key-1'"
+            "SELECT success_count FROM routing_health_snapshot WHERE station_key_id = 'key-1'"
         )
         .fetch_one(&mut connection)
         .await
@@ -488,8 +487,6 @@ fn target(
         client_profile_version: 1,
         request_profile_hash: Some("hash".to_string()),
         traffic_equivalence: "standard_api".to_string(),
-        health_writeback_mode: "authoritative".to_string(),
-        health_writeback_decision: "write".to_string(),
         latency_ms: Some(120),
         semantic_confidence: "protocol_validated".to_string(),
         started_at_ms: 1_000,

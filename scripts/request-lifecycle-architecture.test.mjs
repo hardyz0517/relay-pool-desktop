@@ -28,7 +28,7 @@ function relative(file) {
 }
 
 function stripTestModules(source) {
-  return source.replaceAll(/#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub\(crate\)|mod|use|const|fn|struct|enum|impl)\b|$)/g, "");
+  return source.replaceAll(/#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub(?:\(crate\))?|mod|use|const|fn|struct|enum|impl)\b|$)/g, "");
 }
 
 function assertNoMatch(source, pattern, label) {

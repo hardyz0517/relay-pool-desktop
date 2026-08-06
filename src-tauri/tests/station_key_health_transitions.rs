@@ -188,7 +188,7 @@ async fn proxy_synthetic_and_manual_share_one_observation_contract() {
     );
 
     let status = station_key_status(&mut connection).await;
-    assert_eq!(status.as_deref(), Some("error"));
+    assert_eq!(status.as_deref(), Some("unchecked"));
 }
 
 #[tokio::test]
@@ -305,7 +305,7 @@ async fn outcome_matrix_handles_recovery_threshold_cooldown_and_non_applicable_r
     assert_eq!(health.get::<Option<String>, _>("cooldown_until"), None);
     assert_eq!(
         station_key_status(&mut connection).await.as_deref(),
-        Some("healthy")
+        Some("unchecked")
     );
 
     let hard_fail = record_observation(
@@ -534,7 +534,7 @@ async fn cli_compat_and_observe_only_probes_are_recorded_without_route_health_wr
     assert_eq!(health.get::<Option<String>, _>("cooldown_until"), None);
     assert_eq!(
         station_key_status(&mut connection).await.as_deref(),
-        Some("healthy")
+        Some("unchecked")
     );
 
     let decisions = sqlx::query(
@@ -672,12 +672,12 @@ async fn seed_station_monitor_target(
             terminal_outcome, requested_model, effective_model, used_fallback,
             attempt_count, decisive_attempt_id, protocol_kind, resolved_adapter_kind,
             client_profile_id, client_profile_version, request_profile_hash,
-            traffic_equivalence, health_writeback_mode, health_writeback_decision,
+            traffic_equivalence,
             latency_ms, semantic_confidence, started_at_ms, finished_at_ms, created_at_ms
         ) VALUES (
             ?1, ?2, 'monitor-1', 'station-1', ?3, 1, 'available', 'gpt-primary',
             'gpt-primary', 0, 1, ?4, 'generic_open_ai', 'generic_open_ai',
-            'standard_api', 1, 'hash', 'standard_api', 'authoritative', 'write',
+            'standard_api', 1, 'hash', 'standard_api',
             1, 'protocol_validated', 1, 2, 1
         )
         "#,
@@ -695,7 +695,7 @@ async fn station_key_health(connection: &mut SqliteConnection) -> sqlx::sqlite::
     sqlx::query(
         "SELECT endpoint_revision, success_count, failure_count, consecutive_failures,
                 last_error_summary, cooldown_until
-         FROM station_key_health WHERE station_key_id = 'key-1'",
+         FROM routing_health_snapshot WHERE station_key_id = 'key-1'",
     )
     .fetch_one(connection)
     .await

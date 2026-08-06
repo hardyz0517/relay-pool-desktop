@@ -51,7 +51,7 @@ assert.ok(
 assert.ok(
   facadeSource.includes("list_latest_collector_snapshots(") &&
     facadeSource.includes("list_latest_station_snapshots(station_ids)") &&
-    serviceSource.includes("pub(crate) async fn list_latest_station_snapshots(") &&
+    serviceSource.includes("pub async fn list_latest_station_snapshots(") &&
     serviceSource.includes("ROW_NUMBER() OVER") &&
     serviceSource.includes("PARTITION BY station_id") &&
     serviceSource.includes("WHERE station_id IN") &&

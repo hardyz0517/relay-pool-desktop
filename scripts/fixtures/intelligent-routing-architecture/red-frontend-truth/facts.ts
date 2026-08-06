@@ -1,1 +1,1 @@
-export function buildCurrentStationGroupFacts() {}
+export function deriveStationGroupDisplayFacts() {}

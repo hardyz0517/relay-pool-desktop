@@ -13,7 +13,7 @@ const pricingStoreSource = await readFile(
 
 assert.match(
   pricingServiceSource,
-  /pub\(crate\) async fn resolve_station_key_pricing_context\([\s\S]*?requested_model: &str[\s\S]*?\.resolve_station_key_pricing\(&mut read, station_key_id, requested_model, &now\)/,
+  /pub(?:\(crate\))? async fn resolve_station_key_pricing_context\([\s\S]*?requested_model: &str[\s\S]*?\.resolve_station_key_pricing\(&mut read, station_key_id, requested_model, &now\)/,
   "pricing application service should expose a model-aware station-key pricing lookup",
 );
 
@@ -25,31 +25,31 @@ assert.match(
 
 assert.match(
   pricingProjectorSource,
-  /pub\(crate\) fn pricing_context_from_resolution\(/,
+  /pub(?:\(crate\))? fn pricing_context_from_resolution\(/,
   "operational pricing projector should own the canonical pricing context projection",
 );
 
 assert.match(
   pricingProjectorSource,
-  /pub\(crate\) fn request_cost_comparison_context\(/,
+  /pub(?:\(crate\))? fn request_cost_comparison_context\(/,
   "operational pricing projector should expose routing cost-basis classification",
 );
 
 assert.match(
   pricingProjectorSource,
-  /pub\(crate\) source_chain: Vec<String>/,
+  /pub(?:\(crate\))? source_chain: Vec<String>/,
   "routing cost comparison context should freeze the pricing evidence source chain",
 );
 
 assert.match(
   pricingProjectorSource,
-  /pub\(crate\) observed_at: Option<String>/,
+  /pub(?:\(crate\))? observed_at: Option<String>/,
   "routing cost comparison context should carry pricing freshness",
 );
 
 assert.match(
   pricingProjectorSource,
-  /pub\(crate\) confidence: Option<f64>/,
+  /pub(?:\(crate\))? confidence: Option<f64>/,
   "routing cost comparison context should carry pricing confidence",
 );
 

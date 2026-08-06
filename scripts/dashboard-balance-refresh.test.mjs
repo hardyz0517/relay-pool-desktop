@@ -13,7 +13,7 @@ const pricingStoreSource = await readFile(
 const commandsSource = await readFile("src-tauri/src/commands/mod.rs", "utf8");
 const tauriLibSource = await readFile("src-tauri/src/lib.rs", "utf8");
 const currentBalanceQuerySource = pricingStoreSource.match(
-  /pub\(crate\) async fn latest_station_balances[\s\S]*?pub\(crate\) async fn resolve_station_key_pricing/,
+  /pub(?:\(crate\))? async fn latest_station_balances[\s\S]*?pub(?:\(crate\))? async fn resolve_station_key_pricing/,
 )?.[0] ?? "";
 
 assert.ok(
@@ -37,7 +37,7 @@ assert.ok(
 );
 
 assert.ok(
-  pricingServiceSource.includes("pub(crate) async fn latest_station_balances") &&
+  pricingServiceSource.includes("pub async fn latest_station_balances") &&
     pricingServiceSource.includes(".latest_station_balances(&mut read, limit.get())") &&
     currentBalanceQuerySource.includes(
       "FROM balance_snapshots b INDEXED BY idx_balance_snapshots_latest_station_scope",

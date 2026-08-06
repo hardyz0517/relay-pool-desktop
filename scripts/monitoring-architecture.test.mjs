@@ -72,7 +72,7 @@ function checkFiles(files, rules) {
 function checkProductionMonitorRunnerCutover(file) {
   if (!existsSync(file)) return;
   const source = readFileSync(file, "utf8");
-  const match = source.match(/pub\(crate\) fn compose_monitoring_runner[\s\S]*?\r?\n\}\r?\n/u);
+  const match = source.match(/pub(?:\(crate\))? fn compose_monitoring_runner[\s\S]*?\r?\n\}\r?\n/u);
   if (!match) {
     failures.push(`${file}: compose_monitoring_runner composition boundary is missing`);
     return;
@@ -170,7 +170,7 @@ function checkProductionStatusQueriesCutover() {
   }
 
   const persistenceSource = readFileSync(persistenceQueries, "utf8");
-  if (!persistenceSource.includes("pub(crate) struct MonitoringStatusQueryRepository")) {
+  if (!/pub(?:\(crate\))?\s+struct MonitoringStatusQueryRepository/u.test(persistenceSource)) {
     failures.push(`${persistenceQueries}: status_read_repository must define the production query repository`);
   }
   if (!/\bsqlx\b|sqlx::|QueryBuilder|SqliteConnection/u.test(persistenceSource)) {

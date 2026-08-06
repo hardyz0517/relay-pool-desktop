@@ -58,12 +58,12 @@ assertExcludes(routingPage, "removeQueries", "RoutingPage");
 assertExcludes(routingPage, "resetQueries", "RoutingPage");
 assertExcludes(routingPage, "setQueryData(routingQueryKeys.runtimeOverlay()", "RoutingPage");
 assertIncludes(routingPage, "refreshRoutingQueries(queryClient)", "RoutingPage");
-assertIncludes(routingSynchronization, "queryClient.invalidateQueries({ queryKey: queryKeys.localRoutingWorkspace })", "routing query synchronization");
+assertExcludes(routingSynchronization, "queryKeys.localRoutingWorkspace", "routing query synchronization");
 assertIncludes(routingSynchronization, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.all })", "routing query synchronization");
 assertIncludes(routingSynchronization, "synchronizeRoutingQueriesAfterMutation", "routing query synchronization");
 
 assertIncludes(diagnosticsPanel, "simulateRouteQuery", "RoutingStatusDiagnosticsPanel");
-assertIncludes(diagnosticsPanel, "snapshot.productionPolicy", "RoutingStatusDiagnosticsPanel");
+assertIncludes(diagnosticsPanel, "snapshot.policyConfig", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "snapshot.maxRateMultiplier", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "snapshot.routingGroupFilter", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "runtimeOverlay?.candidates", "RoutingStatusDiagnosticsPanel");

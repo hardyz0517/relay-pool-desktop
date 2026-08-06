@@ -242,6 +242,8 @@ fn target_ref(
         enabled: true,
         api_key_secret_ref,
         inline_api_key_present: false,
+        station_account_max_concurrency: 0,
+        station_key_max_concurrency: 1,
     }
 }
 

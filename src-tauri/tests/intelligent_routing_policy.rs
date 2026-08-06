@@ -9,7 +9,7 @@ fn policy_compiler_has_no_legacy_settings_lookup() {
     assert!(source.contains("pub(crate) fn compile_config"));
     assert!(source.contains("pub(crate) fn compile_json"));
     assert!(source.contains("RoutingPolicyConfigV1"));
-    assert!(!source.contains("default_routing_strategy"));
+    assert!(!source.contains("routing_policy_name"));
     assert!(!source.contains("unwrap_or(1)"));
 }
 

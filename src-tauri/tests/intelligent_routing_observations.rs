@@ -38,6 +38,6 @@ fn observation_model_rejects_anonymous_probe_quality_success() {
 fn request_finalization_uses_the_same_transaction_for_routing_observation() {
     let source = source("src/application/request_finalization/mod.rs");
     assert!(source.contains(".append(&mut session, observation)"));
-    assert!(source.contains("routing_observation(&write"));
+    assert!(source.contains("routing_observation(\n                    &write"));
     assert!(source.contains("producer_sequence"));
 }

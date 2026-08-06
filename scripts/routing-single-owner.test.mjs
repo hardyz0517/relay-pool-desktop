@@ -12,12 +12,14 @@ const files = {
   repository: read("src-tauri/src/services/proxy/routing_repository.rs"),
   upstream: read("src-tauri/src/services/proxy/upstream.rs"),
   endpointAdapter: read("src-tauri/src/services/proxy/endpoint_adapter.rs"),
-  routingTypes: read("src-tauri/src/application/routing_engine/routing_types.rs"),
+  routingTypes: read("src-tauri/src/application/routing_engine/routing_economics.rs"),
   routingModels: read("src-tauri/src/models/routing.rs"),
   routingHealthTypescript: read("src-tauri/src/ipc/dto/routing_health_reads.typescript.txt"),
   routingEngineMod: read("src-tauri/src/application/routing_engine/mod.rs"),
   routingWorkspaceQuery: read("src-tauri/src/application/queries/routing_workspace.rs"),
   operationalDetailQuery: read("src-tauri/src/application/queries/operational_detail.rs"),
+  routingRuntimeQuery: read("src-tauri/src/application/queries/routing_runtime.rs"),
+  requestDecisionTrace: read("src-tauri/src/application/queries/request_decision_trace.rs"),
 };
 
 checkDefaultV2ExecutionHasOneSelectorOwner();
@@ -25,8 +27,10 @@ checkApplicationRoutingCommandsUseHierarchicalPreview();
 checkDefaultV2ExecutionUsesLeasedController();
 checkCredentialAndEndpointResolveLate();
 checkLegacyRoutingSchedulerDeleted();
-checkRoutingWorkspaceUsesProjectionFacts();
+checkRoutingWorkspaceUsesCanonicalFacts();
 checkOperationalDetailUsesProjectionFacts();
+checkDecisionTraceUsesDurableDecisions();
+checkRuntimeOverlayUsesNarrowFacts();
 checkSimulationDtoUsesPlannerProjectionLanguage();
 checkFrontendDoesNotOwnRoutingTruth();
 
@@ -76,7 +80,7 @@ function stripRustTests(source) {
   }
   stripped += source.slice(cursor);
   return stripped.replaceAll(
-    /#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub\(crate\)|mod|use|const|fn|struct|enum|impl)\b|$)/g,
+    /#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub(?:\(crate\))?|mod|use|const|fn|struct|enum|impl)\b|$)/g,
     "",
   );
 }
@@ -120,8 +124,8 @@ function checkDefaultV2ExecutionHasOneSelectorOwner() {
   require(
     files.execution,
     file,
-    /\bRouteAdmissionController\b|\bControllerDecision\b/u,
-    "default-v2 execution must use the RouteAdmissionController as the production selection owner",
+    /\bRouteAdmissionCoordinator\b|\bAdmissionDecision\b/u,
+    "default-v2 execution must use the admission coordinator as the production selection owner",
   );
 }
 
@@ -131,13 +135,19 @@ function checkApplicationRoutingCommandsUseHierarchicalPreview() {
     files.applicationRouting,
     file,
     /\bSchedulerRuntimeState\b|select_route_candidates_with_scheduler|router::select_route_candidates/u,
-    "routing commands and simulation previews must use RouteCandidateProjection + hierarchical planner, not the legacy scheduler/router selector",
+    "routing commands and simulation previews must use the canonical snapshot planner, not the legacy scheduler/router selector",
   );
   require(
     files.applicationRouting,
     file,
-    /\broute_projection_from_runtime_candidate_with_pricing\b[\s\S]*\bplan_route\b/u,
-    "routing simulation must reuse request-priced operational projections and the hierarchical planner",
+    /\bload_intelligent_planning_snapshot\b/u,
+    "routing simulation must load the canonical planning snapshot",
+  );
+  require(
+    files.applicationRouting,
+    file,
+    /\bplan_snapshot_with_budget\b/u,
+    "routing simulation must invoke the intelligent planner",
   );
 }
 
@@ -178,14 +188,14 @@ function checkCredentialAndEndpointResolveLate() {
   );
   reject(
     files.routingTypes,
-    "src-tauri/src/application/routing_engine/routing_types.rs",
-    /pub\(crate\)\s+api_key:\s*String|pub\(crate\)\s+upstream_base_url:\s*String/u,
+    "src-tauri/src/application/routing_engine/routing_economics.rs",
+    /pub(?:\(crate\))?\s+api_key:\s*String|pub(?:\(crate\))?\s+upstream_base_url:\s*String/u,
     "routing engine executable candidate types must not carry plaintext credentials or full endpoint URLs",
   );
   reject(
     files.routingModels,
     "src-tauri/src/models/routing.rs",
-    /\bRuntimeRoutingCandidate\b[\s\S]*\bupstream_base_url\b/u,
+    /\bCanonicalRoutingCandidate\b[\s\S]*\bupstream_base_url\b/u,
     "runtime routing candidate DTO must carry sanitized_origin, not a full endpoint URL",
   );
   require(
@@ -230,19 +240,19 @@ function checkLegacyRoutingSchedulerDeleted() {
   );
 }
 
-function checkRoutingWorkspaceUsesProjectionFacts() {
+function checkRoutingWorkspaceUsesCanonicalFacts() {
   const file = "src-tauri/src/application/queries/routing_workspace.rs";
-  reject(
-    files.routingWorkspaceQuery,
-    file,
-    /\bRuntimeRoutingCandidate\b|\bworkspace_snapshot_from_runtime\b|\bcompatibility_runtime_candidate\b/u,
-    "routing workspace read model must consume RouteCandidateProjection rows, not direct RuntimeRoutingCandidate compatibility facts",
-  );
   require(
     files.routingWorkspaceQuery,
     file,
-    /\bRoutingWorkspaceProjectionCandidate\b[\s\S]*\bRouteCandidateProjection\b/u,
-    "routing workspace read model must expose the canonical backend projection path",
+    /\bCanonicalRoutingCandidate\b[\s\S]*\bworkspace_snapshot_from_canonical_candidates\b/u,
+    "routing workspace read model must consume canonical candidate facts through its dedicated read-model builder",
+  );
+  reject(
+    files.routingWorkspaceQuery,
+    file,
+    /\bRouteCandidateProjection\b|\bRoutingWorkspaceProjectionCandidate\b|\bworkspace_snapshot_from_projection_candidates\b/u,
+    "routing workspace read model must not depend on the legacy RouteCandidateProjection compatibility chain",
   );
 }
 
@@ -251,7 +261,7 @@ function checkOperationalDetailUsesProjectionFacts() {
   reject(
     files.operationalDetailQuery,
     file,
-    /\bRuntimeRoutingCandidate\b|\boperational_detail_from_runtime_candidate\b|\brouting_store\.runtime_candidate\b/u,
+    /\bCanonicalRoutingCandidate\b|\boperational_detail_from_runtime_candidate\b|\brouting_store\.runtime_candidate\b/u,
     "operational detail read model must consume RouteCandidateProjection facts, not rebuild runtime-candidate compatibility facts",
   );
   require(
@@ -259,6 +269,38 @@ function checkOperationalDetailUsesProjectionFacts() {
     file,
     /\boperational_detail_from_projection\b[\s\S]*\bRouteCandidateProjection\b/u,
     "operational detail read model must keep the canonical projection-backed adapter",
+  );
+}
+
+function checkDecisionTraceUsesDurableDecisions() {
+  const file = "src-tauri/src/application/queries/request_decision_trace.rs";
+  reject(
+    files.requestDecisionTrace,
+    file,
+    /\bRequestLog\b|list_recent|legacy request log|request[_ ]log scan/u,
+    "decision trace read model must not scan request logs or retain a legacy trace adapter",
+  );
+  require(
+    files.applicationRouting + "\n" + files.requestDecisionTrace,
+    "src-tauri/src/application/{routing.rs,queries/request_decision_trace.rs}",
+    /RoutingDecisionQueries|route_decisions/u,
+    "decision trace must consume the durable route_decisions read model",
+  );
+}
+
+function checkRuntimeOverlayUsesNarrowFacts() {
+  const file = "src-tauri/src/application/queries/routing_runtime.rs";
+  reject(
+    files.routingRuntimeQuery,
+    file,
+    /\bCanonicalRoutingCandidate\b/u,
+    "runtime overlay read model must consume narrow runtime facts, not executable legacy candidates",
+  );
+  require(
+    files.routingRuntimeQuery,
+    file,
+    /RoutingRuntimeCandidateFact/u,
+    "runtime overlay read model must declare its narrow runtime fact boundary",
   );
 }
 
@@ -320,7 +362,7 @@ function checkFrontendDoesNotOwnRoutingTruth() {
   for (const file of frontendTruthFiles) {
     const source = read(file);
     if (
-      /\bfirstMatchingPricingRule\b|\bbuildPricingGroupCandidates\b|\bbuildCurrentStationGroupFacts\b/u.test(
+      /\bfirstMatchingPricingRule\b|\bderivePricingGroupDisplayCandidates\b|\bderiveStationGroupDisplayFacts\b/u.test(
         source,
       ) &&
       !/RPD_ROUTING_BOUNDARY:display-only-routing-truth-compat/u.test(source)

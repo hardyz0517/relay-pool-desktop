@@ -294,9 +294,17 @@ async fn create_schema(pool: &SqlitePool) {
         );
         CREATE TABLE station_key_capabilities (
             station_key_id TEXT PRIMARY KEY,
+            supports_chat_completions INTEGER NOT NULL DEFAULT 1,
+            supports_responses INTEGER NOT NULL DEFAULT 1,
+            supports_stream INTEGER NOT NULL DEFAULT 1,
             supports_tools INTEGER NOT NULL,
             supports_vision INTEGER NOT NULL,
             supports_reasoning INTEGER NOT NULL,
+            model_allowlist_json TEXT NOT NULL DEFAULT '[]',
+            model_blocklist_json TEXT NOT NULL DEFAULT '[]',
+            preferred_models_json TEXT NOT NULL DEFAULT '[]',
+            only_use_as_backup INTEGER NOT NULL DEFAULT 0,
+            routing_tags_json TEXT NOT NULL DEFAULT '[]',
             updated_at TEXT NOT NULL
         );
         CREATE TABLE station_key_health (
@@ -311,6 +319,24 @@ async fn create_schema(pool: &SqlitePool) {
             station_id TEXT PRIMARY KEY,
             endpoint_revision INTEGER NOT NULL
         );
+        CREATE TABLE routing_health_snapshot (
+            station_key_id TEXT PRIMARY KEY,
+            endpoint_revision INTEGER NOT NULL,
+            consecutive_failures INTEGER NOT NULL,
+            success_count INTEGER NOT NULL,
+            failure_count INTEGER NOT NULL,
+            avg_latency_ms INTEGER,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE endpoint_health_snapshot (
+            station_id TEXT PRIMARY KEY,
+            endpoint_revision INTEGER NOT NULL
+        );
+        CREATE TABLE routing_policy (
+            singleton_key INTEGER PRIMARY KEY CHECK (singleton_key = 1),
+            config_json TEXT NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
         CREATE TABLE balance_snapshots (
             id TEXT PRIMARY KEY,
             station_id TEXT NOT NULL,
@@ -320,6 +346,7 @@ async fn create_schema(pool: &SqlitePool) {
             currency TEXT NOT NULL,
             low_balance_threshold REAL,
             status TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT '',
             updated_at TEXT NOT NULL
         );
         CREATE TABLE pricing_rules (
@@ -352,7 +379,7 @@ async fn create_schema(pool: &SqlitePool) {
         "default_routing_strategy",
         "max_rate_multiplier",
         "default_routing_group_filter",
-        "scheduler_advanced_settings_json",
+        "dispatch_algorithm_profile_json",
         "allow_depleted_fallback",
     ] {
         sqlx::query("INSERT INTO settings (key, value, updated_at) VALUES (?1, 'fixture', '1')")
@@ -369,6 +396,19 @@ async fn create_schema(pool: &SqlitePool) {
         .await
         .expect("insert setting revision");
     }
+    sqlx::query(
+        "INSERT INTO routing_policy (singleton_key, config_json, updated_at_ms) VALUES (1, ?1, 0)",
+    )
+    .bind(r#"{"version":1,"reliability_weight":4000,"responsiveness_weight":2500,"cost_weight":2000,"preference_weight":1500,"max_candidates":64,"exploration_share_basis_points":500,"allow_depleted_fallback":false,"affinity_enabled":false,"affinity_ttl_seconds":300}"#)
+    .execute(pool)
+    .await
+    .expect("insert routing policy");
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES ('routing_policy', 1, 0, 'baseline_snapshot')",
+    )
+    .execute(pool)
+    .await
+    .expect("insert routing policy revision");
 }
 
 async fn insert_candidate(pool: &SqlitePool, index: usize) {
@@ -499,7 +539,7 @@ async fn fixed_query_count_does_not_scale_with_candidate_count() {
     .await;
 
     assert_eq!(bundle.candidates().len(), 100);
-    assert_eq!(bundle.query_count(), 9);
+    assert_eq!(bundle.query_count(), 4);
     assert!(!bundle.loaded_full_model_catalog());
 }
 

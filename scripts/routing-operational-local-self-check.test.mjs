@@ -17,6 +17,7 @@ for (const suite of [
   "routing_production_startup_shutdown",
   "routing_policy_field_e2e",
   "routing_catalog_loopback",
+  "routing_security_boundaries",
 ]) {
   assert.ok(runner.includes(`"--test", "${suite}"`), `local self-check must run ${suite}`);
 }
@@ -28,6 +29,7 @@ for (const text of [
   "worktreeCleanAtFinish",
   "legacy-doc-anti-regression",
   "scripts/routing-operational-legacy-doc-consistency.test.mjs",
+  "scripts/local-proxy-auth-contract.test.mjs",
   "realProviderStatus",
   "not-run-without-user-authorization",
   "reset/reimport/reconfigure with the current dev binary",

@@ -41,7 +41,7 @@ for (const required of [
 
 for (const required of [
   "simulateRouteQuery",
-  "snapshot.productionPolicy",
+  "snapshot.policyConfig",
   "snapshot.maxRateMultiplier",
   "snapshot.routingGroupFilter",
   "decisions?.decisions",

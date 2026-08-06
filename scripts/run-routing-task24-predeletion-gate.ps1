@@ -82,7 +82,8 @@ $soakOutputPath = "output/routing-operational/self-check/task24-predeletion/task
 try {
   Add-Task24GateStepOrThrow -Name "production-composition" -Command "cargo" -Arguments @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_production_composition", "--", "--nocapture")
   Add-Task24GateStepOrThrow -Name "stream-finalization-faults" -Command "cargo" -Arguments @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_stream_finalization_faults", "--", "--nocapture")
-  Add-Task24GateStepOrThrow -Name "redaction-contract" -Command "node" -Arguments @("scripts/local-routing-redaction.test.mjs")
+  Add-Task24GateStepOrThrow -Name "redaction-contract" -Command "cargo" -Arguments @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_security_boundaries", "--", "--nocapture")
+  Add-Task24GateStepOrThrow -Name "proxy-auth-contract" -Command "node" -Arguments @("scripts/local-proxy-auth-contract.test.mjs")
 
   $soakArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/run-routing-operational-soak.ps1", "-DurationMinutes", "$DurationMinutes", "-CargoManifest", $CargoManifest, "-OutputPath", $soakOutputPath)
   if ($Smoke) {

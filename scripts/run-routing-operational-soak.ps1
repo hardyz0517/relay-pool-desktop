@@ -93,7 +93,7 @@ $failures = New-Object System.Collections.Generic.List[object]
 
 $commandPlan = @(
   [pscustomobject]@{ command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_production_composition", "--", "--nocapture") },
-  [pscustomobject]@{ command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_planner_controller", "--", "--nocapture") },
+  [pscustomobject]@{ command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "intelligent_routing_coordinator", "--", "--nocapture") },
   [pscustomobject]@{ command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_capacity_faults", "--", "--nocapture") },
   [pscustomobject]@{ command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "routing_runtime_state", "--", "--nocapture") },
   [pscustomobject]@{ command = "cargo"; arguments = @("test", "--locked", "--manifest-path", $CargoManifest, "--test", "proxy_lifecycle_concurrency", "--", "--nocapture") },

@@ -42,7 +42,7 @@ vm.runInNewContext(compiled.outputText, {
     }
     if (specifier === "@/lib/projections/groupFacts") {
       return {
-        buildCurrentStationGroupFacts: () => [],
+        deriveStationGroupDisplayFacts: () => [],
         isDisplayableStationGroupCurrentFact: () => false,
       };
     }
