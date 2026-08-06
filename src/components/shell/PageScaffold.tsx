@@ -8,6 +8,7 @@ type PageScaffoldProps = {
   status?: ReactNode;
   backAction?: ReactNode;
   width?: "full" | "settings";
+  fill?: boolean;
   stickyHeader?: boolean;
   children?: ReactNode;
 };
@@ -18,6 +19,7 @@ export function PageScaffold({
   actions,
   status,
   backAction,
+  fill = false,
   width = "full",
   stickyHeader = false,
   children,
@@ -27,14 +29,16 @@ export function PageScaffold({
       className={cn(
         width === "settings"
           ? "relative flex min-w-0 w-full max-w-none flex-col gap-[var(--shell-page-gap)]"
-          : "relative flex h-full min-h-full min-w-0 w-full flex-col gap-[var(--shell-page-gap)]",
+          : fill
+            ? "page-scaffold-fill relative flex h-full min-h-0 min-w-0 w-full flex-1 flex-col gap-0"
+            : "relative flex min-h-full min-w-0 w-full flex-col gap-[var(--shell-page-gap)]",
       )}
     >
       <div
         className={cn(
           "flex min-h-[44px] flex-wrap items-center justify-between gap-3",
           stickyHeader &&
-            "sticky top-0 z-20 -mx-[var(--shell-page-gap)] -mt-[var(--shell-page-gap)] border-b border-border bg-background/95 px-[var(--shell-page-gap)] py-3 backdrop-blur",
+            "sticky top-0 z-20 -mx-[var(--shell-page-gap)] -mt-[var(--shell-page-gap)] border-b border-border bg-background px-[var(--shell-page-gap)] py-3 backdrop-blur",
         )}
       >
         <div className="flex min-w-0 items-center gap-3">

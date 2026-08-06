@@ -301,6 +301,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
   return (
     <PageScaffold
       title="编辑密钥"
+      fill
       stickyHeader
       backAction={
         <IconButton label="返回密钥池" onClick={requestExit}>

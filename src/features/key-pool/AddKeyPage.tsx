@@ -202,6 +202,7 @@ export function AddKeyPage({ initialStationId, onBack, onCreated }: AddKeyPagePr
   return (
     <PageScaffold
       title="添加密钥"
+      fill
       stickyHeader
       backAction={
         <IconButton label="返回密钥池" onClick={requestExit}>

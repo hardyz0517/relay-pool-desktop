@@ -161,6 +161,7 @@ export function ChannelMonitorForm({
   return (
     <PageScaffold
       title={monitor ? "编辑渠道监控" : "新增渠道监控"}
+      fill
       stickyHeader
       backAction={
         <IconButton label="返回监控列表" onClick={onClose} disabled={saving}>

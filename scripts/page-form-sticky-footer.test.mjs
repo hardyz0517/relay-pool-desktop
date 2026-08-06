@@ -4,6 +4,17 @@ import path from "node:path";
 
 const pageFormSource = await readFile("src/components/ui/PageForm.tsx", "utf8");
 
+assert.match(
+  pageFormSource,
+  /<form className=\{cn\("flex h-full min-h-0 flex-1 flex-col"/,
+  "PageForm should reserve a fixed footer row while its content fills the remaining height",
+);
+assert.match(
+  pageFormSource,
+  /<div className="min-h-0 flex-1 overflow-y-auto pb-\[var\(--shell-page-gap\)\] \[scrollbar-width:none\] \[&::-webkit-scrollbar\]:hidden">/,
+  "PageForm content should scroll independently so long forms cannot overlap the footer",
+);
+
 const footerClassMatch = pageFormSource.match(
   /<div className="(?<className>[^"]+)">\s*\{footer\}/s,
 );
@@ -27,7 +38,7 @@ assert.match(
 );
 assert.match(
   footerClassName,
-  /\bself-start\b/,
+  /\bshrink-0\b/,
   "PageForm footer should keep its intrinsic height while the content row absorbs unused viewport space",
 );
 assert.doesNotMatch(

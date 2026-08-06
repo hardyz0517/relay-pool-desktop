@@ -87,6 +87,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
   return (
     <PageScaffold
       title={editing ? "编辑供应商" : "添加新供应商"}
+      fill
       stickyHeader
       backAction={
         <IconButton label="返回中转站" onClick={requestExit}>

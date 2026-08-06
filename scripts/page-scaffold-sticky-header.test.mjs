@@ -5,7 +5,7 @@ const source = await readFile("src/components/shell/PageScaffold.tsx", "utf8");
 
 assert.match(
   source,
-  /"relative flex h-full min-h-full min-w-0 w-full flex-col gap-\[var\(--shell-page-gap\)\]"/,
+  /fill\s*\?\s*"page-scaffold-fill relative flex h-full min-h-0 min-w-0 w-full flex-1 flex-col gap-0"/,
   "full-width page scaffolds should have a definite height so short PageForm content can keep its footer at the viewport bottom",
 );
 

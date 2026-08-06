@@ -321,7 +321,12 @@ textarea {
 }
 
 .app-page-transition-content {
-  height: 100%;
   min-height: 100%;
   padding: var(--shell-page-gap);
+}
+
+.app-page-transition-content:has(.page-scaffold-fill) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }

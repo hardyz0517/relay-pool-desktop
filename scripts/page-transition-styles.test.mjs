@@ -138,8 +138,12 @@ for (const property of ["animation", "transition", "transform"]) {
   assertNoDeclaration(overlayRule, property);
 }
 
-assertDeclaration(contentRule, "height", "100%");
 assertDeclaration(contentRule, "min-height", "100%");
+assert.match(
+  stylesSource,
+  /\.app-page-transition-content:has\(\.page-scaffold-fill\)\s*\{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;[\s\S]*?height:\s*100%;[\s\S]*?\}/,
+  "only filled form pages should establish the full-height transition flex chain",
+);
 
 assert.equal(
   stylesSource.includes("relayTransientEnter"),
