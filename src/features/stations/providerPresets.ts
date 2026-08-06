@@ -13,18 +13,18 @@ export type ProviderPreset = {
 
 export const providerPresets: ProviderPreset[] = [
   {
-    id: "newapi",
-    name: "NewAPI",
-    description: "NewAPI station with management collection support.",
-    stationType: "newapi",
-    websiteUrl: "",
-    apiBaseUrl: "",
-  },
-  {
     id: "sub2api",
     name: "Sub2API",
     description: "Sub2API station with balance and group collection support.",
     stationType: "sub2api",
+    websiteUrl: "",
+    apiBaseUrl: "",
+  },
+  {
+    id: "newapi",
+    name: "NewAPI",
+    description: "NewAPI station with management collection support.",
+    stationType: "newapi",
     websiteUrl: "",
     apiBaseUrl: "",
   },

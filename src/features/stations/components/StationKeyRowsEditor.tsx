@@ -1,6 +1,6 @@
 import { Trash2 } from "lucide-react";
-import { StationGroupOptionLabel, StationGroupTriggerLabel } from "@/components/group/StationGroupChip";
-import { Button, SelectControl, SwitchControl } from "@/components/ui";
+import { StationGroupSelectControl } from "@/components/group/StationGroupSelectControl";
+import { Button, SwitchControl } from "@/components/ui";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import { cn } from "@/lib/utils";
 import {
@@ -84,15 +84,6 @@ export function StationKeyRowsEditor({
         return { ...option, value: stationGroupSelectValue(option) };
       }),
   ]);
-  const selectOptions = [
-    { value: noGroupValue, label: "无", description: "不绑定分组，手动填写倍率" },
-    ...normalizedGroupOptions.map((group) => ({
-      value: stationGroupSelectValue(group),
-      label: <StationGroupOptionLabel option={group} />,
-      triggerLabel: <StationGroupTriggerLabel option={group} />,
-    })),
-  ];
-
   function updateRow(clientId: string, patch: Partial<StationKeyDraft>) {
     onRowsChange(rows.map((row) => (row.clientId === clientId ? { ...row, ...patch } : row)));
   }
@@ -164,15 +155,13 @@ export function StationKeyRowsEditor({
                   onChange={(event) => updateRow(row.clientId, { apiKey: event.target.value })}
                   placeholder={row.id ? "留空保留旧密钥" : "sk-..."}
                 />
-                <SelectControl
+                <StationGroupSelectControl
                   ariaLabel={`选择密钥 ${index + 1} 分组`}
                   className={selectClassName}
                   disabled={disabled}
-                  menuClassName="text-xs"
-                  // The option includes both a group badge and a multiplier badge. Keep enough
-                  // horizontal space for the common long group names before truncating.
-                  menuMinWidth={420}
-                  options={selectOptions}
+                  groups={normalizedGroupOptions}
+                  noGroupDescription="不绑定分组，手动填写倍率"
+                  noGroupLabel="无"
                   value={resolveSelectedGroupValue(row, normalizedGroupOptions)}
                   onChange={(value) => selectGroup(row, value)}
                 />

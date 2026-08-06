@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Button, Dialog, SelectControl } from "@/components/ui";
+import { StationGroupSelectControl } from "@/components/group/StationGroupSelectControl";
+import { Button, Dialog } from "@/components/ui";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import {
-  formatMultiplier,
   noGroupOptionValue,
   normalizeStationGroupOptions,
   stationGroupSelectValue,
@@ -36,22 +36,6 @@ export function CreateRemoteKeyDialog({
   const [error, setError] = useState<string | null>(null);
 
   const normalizedGroups = useMemo(() => normalizeStationGroupOptions(groups), [groups]);
-
-  const groupOptions = useMemo(
-    () => [
-      { value: noGroupOptionValue, label: "不指定分组", description: "按远端默认策略创建" },
-      ...normalizedGroups.map((group) => ({
-        value: stationGroupSelectValue(group),
-        label: (
-          <span className="inline-flex min-w-0 max-w-full items-center gap-2">
-            <span className="min-w-0 truncate">{group.groupName}</span>
-            <RemoteGroupRateTag rateMultiplier={group.rateMultiplier} />
-          </span>
-        ),
-      })),
-    ],
-    [normalizedGroups],
-  );
 
   useEffect(() => {
     if (!open) {
@@ -119,11 +103,13 @@ export function CreateRemoteKeyDialog({
         </label>
         <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
           远端分组
-          <SelectControl
+          <StationGroupSelectControl
             ariaLabel="远端分组"
             className="w-full"
             disabled={saving}
-            options={groupOptions}
+            groups={normalizedGroups}
+            noGroupDescription="按远端默认策略创建"
+            noGroupLabel="不指定分组"
             value={groupValue}
             onChange={setGroupValue}
           />
@@ -136,13 +122,5 @@ export function CreateRemoteKeyDialog({
         {error && <div className="text-xs text-danger-foreground">{error}</div>}
       </form>
     </Dialog>
-  );
-}
-
-function RemoteGroupRateTag({ rateMultiplier }: { rateMultiplier: number | null }) {
-  return (
-    <span className="shrink-0 rounded-[calc(var(--surface-radius)-3px)] border border-border bg-surface-subtle px-1.5 py-0.5 text-[11px] font-medium leading-none text-muted-foreground">
-      {rateMultiplier === null ? "倍率未采集" : `${formatMultiplier(rateMultiplier)}x`}
-    </span>
   );
 }
