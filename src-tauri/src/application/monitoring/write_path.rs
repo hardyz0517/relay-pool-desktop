@@ -199,11 +199,6 @@ fn target_row(
         .min()
         .unwrap_or(execution.started_at_ms);
     let finished_at_ms = target_finished_at(execution, target).or(Some(started_at_ms));
-    let health_mode = execution.plan.health_policy.writeback_mode;
-    let observation =
-        health_observation_from_parts(execution, target, &target_id(target), health_mode);
-    let decision = writeback_decision(&observation);
-
     Ok(FinalizeTargetRow {
         id: target_id(target),
         execution_id: execution.execution_id.clone(),
@@ -233,8 +228,6 @@ fn target_row(
         client_profile_version: i64::from(target_plan.client_profile.version),
         request_profile_hash: target.request_profile_hash.clone(),
         traffic_equivalence: target_traffic_equivalence(target_plan.client_profile.id).to_string(),
-        health_writeback_mode: health_mode.as_str().to_string(),
-        health_writeback_decision: decision.as_str().to_string(),
         latency_ms,
         semantic_confidence: semantic_confidence.as_str().to_string(),
         started_at_ms,

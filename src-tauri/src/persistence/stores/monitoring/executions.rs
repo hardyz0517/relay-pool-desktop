@@ -69,8 +69,6 @@ pub(crate) struct FinalizeTargetRow {
     pub(crate) client_profile_version: i64,
     pub(crate) request_profile_hash: Option<String>,
     pub(crate) traffic_equivalence: String,
-    pub(crate) health_writeback_mode: String,
-    pub(crate) health_writeback_decision: String,
     pub(crate) latency_ms: Option<i64>,
     pub(crate) semantic_confidence: String,
     pub(crate) started_at_ms: i64,
@@ -361,11 +359,11 @@ impl MonitoringExecutionRepository {
                 effective_model, used_fallback, attempt_count, decisive_attempt_id,
                 protocol_kind, resolved_adapter_kind, client_profile_id,
                 client_profile_version, request_profile_hash, traffic_equivalence,
-                health_writeback_mode, health_writeback_decision, latency_ms,
+                latency_ms,
                 semantic_confidence, started_at_ms, finished_at_ms, created_at_ms
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
+            ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
             )
             "#,
         )
@@ -387,8 +385,6 @@ impl MonitoringExecutionRepository {
         .bind(row.client_profile_version)
         .bind(&row.request_profile_hash)
         .bind(&row.traffic_equivalence)
-        .bind(&row.health_writeback_mode)
-        .bind(&row.health_writeback_decision)
         .bind(row.latency_ms)
         .bind(&row.semantic_confidence)
         .bind(row.started_at_ms)

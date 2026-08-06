@@ -102,8 +102,7 @@ impl MonitoringStatusQueryRepository {
                    requested_model, effective_model, used_fallback, attempt_count,
                    decisive_attempt_id, protocol_kind, resolved_adapter_kind,
                    resolved_dialect, client_profile_id, client_profile_version,
-                   request_profile_hash, traffic_equivalence, health_writeback_mode,
-                   health_writeback_decision, health_writeback_reason, latency_ms,
+                   request_profile_hash, traffic_equivalence, latency_ms,
                    semantic_confidence, started_at_ms, finished_at_ms
             FROM channel_monitor_target_results
             WHERE execution_id = ?1
@@ -654,9 +653,6 @@ fn target_result_from_row(row: SqliteRow) -> ChannelMonitorTargetResultRecord {
         client_profile_version: row.get("client_profile_version"),
         request_profile_hash: row.get("request_profile_hash"),
         traffic_equivalence: row.get("traffic_equivalence"),
-        health_writeback_mode: row.get("health_writeback_mode"),
-        health_writeback_decision: row.get("health_writeback_decision"),
-        health_writeback_reason: row.get("health_writeback_reason"),
         latency_ms: row.get("latency_ms"),
         semantic_confidence: row.get("semantic_confidence"),
         started_at_ms: row.get("started_at_ms"),
