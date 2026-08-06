@@ -1,6 +1,6 @@
 # Intelligent Routing Upgrade Baseline
 
-Status: in progress
+Status: superseded by the completed 2026-08-05 intelligent routing upgrade; retained as start-of-work evidence
 Captured: 2026-08-05
 Worktree: `E:\Dev\Projects\relay-pool-desktop-claude-audit`
 Branch: `codex/claude-audit`
@@ -19,7 +19,7 @@ Start HEAD: `b45bbeb42fe7439712f8baacc9d9b593329d5808`
 ```text
 Proxy startup
   -> V2RoutingRepository
-  -> RoutingService.load_runtime_candidates_with_request_pricing
+  -> RoutingService.load_workspace_projection_candidates_with_request_pricing
   -> runtime_candidate_adapter
   -> RouteCandidateProjection
   -> legacy planner/controller/capacity

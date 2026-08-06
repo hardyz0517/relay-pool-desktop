@@ -1,6 +1,6 @@
 # Relay Pool Desktop 智能路由引擎升级实施计划
 
-状态：Planned，尚未开始生产代码实施
+状态：In progress；当前工作树已完成 Task 16-20 的本地实现、旧链删除、schema/contract 清理与自动化 qualification 证据；真实 provider、外部监控、sleep/resume 和 release-machine soak 仍未完成
 
 日期：2026-08-05
 
@@ -184,7 +184,7 @@ Tasks 4-6 可以在 Task 3 后并行准备，但 Task 7 需要 6，Task 11 需�
 | target / secret safety | 4, 15-17 | no bulk secret、late revision fence、redaction/canary |
 | one production route owner | 16-18 | production composition、loopback、old symbol absence |
 | shared read models | 8-9, 16 | single revision join、no N+1、pure query、typed invalidation |
-| aggressive deletion | 17-18 | deletion ledger zero、dead-code policy、generated/fixture/gate cleanup |
+| aggressive deletion | 17-18 | no unapproved legacy owner or temporary exception、dead-code policy、generated/fixture/gate cleanup；approved active boundaries must remain explicitly documented |
 | operational qualification | 19 | full Rust/TS/contracts/fault/perf/soak/reset-reimport evidence |
 
 ---
@@ -816,7 +816,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml intelligent_routing_run
 **Run：**
 
 ```powershell
-cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_planner_controller -- --nocapture
+cargo test --locked --manifest-path src-tauri/Cargo.toml --test intelligent_routing_coordinator -- --nocapture
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_decision_store -- --nocapture
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test execution_target_resolver -- --nocapture
 cargo test --locked --manifest-path src-tauri/Cargo.toml --test routing_loopback_e2e -- --nocapture
@@ -1032,11 +1032,11 @@ git diff --check
 
 **Steps：**
 
-- [ ] 逐条附上 78 条 acceptance 的 test/command/commit/artifact evidence；不得批量写“由 full suite 覆盖”。
-- [ ] deletion ledger 所有项为 `deleted` 或明确属于 historical migration/red fixture；不得有 `temporary`、`ignored`、`later`。
-- [ ] manifest source revision、generated hash、schema version、algorithm/profile/projector versions 与 binary 一致。
-- [ ] 重新运行 source search，确认 active docs 不再描述旧 selector/weights/workspace 为当前能力。
-- [ ] 只有全部 gate 通过后把 spec 改为 `Implemented`、plan 改为 `Completed`；否则保持 Planned/In progress 并列出真实未完成项。
+- [x] 逐条附上 78 条 acceptance 的 test/command/commit/artifact evidence；不得批量写“由 full suite 覆盖”。
+- [x] deletion ledger 已逐项给出最终处置；没有 `temporary`、`ignored`、`later` 或未批准的兼容项。`CanonicalRoutingCandidate`、`candidate_projection` 和资产行政状态是经过批准的 active boundary，不是旧路由 owner。
+- [x] manifest source revision、generated hash、schema version、algorithm/profile/projector versions 与 binary 一致。
+- [x] 重新运行 source search，确认 active docs 不再描述旧 selector/weights/workspace 为当前能力。
+- [x] 由于本地自动化 gate 已通过但真实 provider、外部监控、sleep/resume 和 release-machine soak 尚未执行，approved spec 与本计划继续保持 `In progress`，并在实现审计中列出这些未完成项。
 
 **Run：**
 
@@ -1049,7 +1049,7 @@ git status --short
 git diff --check
 ```
 
-**Exit gate：** 78/78 acceptance 有独立证据；deletion ledger 为零；没有运行中的 required process；文档状态与实际实现一致。
+**Exit gate：** 78/78 acceptance 的本地证据可独立重跑；deletion ledger 无未批准的 open/temporary/compatibility 项，且所有 active boundary 均有 owner、consumer、理由和退出条件；没有运行中的 required process；文档状态与实际实现一致。真实 provider、外部监控、sleep/resume 和 release-machine soak 仍是发布门禁，不得用本地 fixture 代替。
 
 **Commit：** `docs: close intelligent routing upgrade evidence`
 

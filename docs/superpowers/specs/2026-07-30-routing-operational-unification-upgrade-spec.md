@@ -1,7 +1,7 @@
 # Relay Pool 路由与运行事实一体化升级 Spec
 
 Date: 2026-07-30
-Status: Normative architecture upgrade spec; implementation starts at Stage 0 development checks and must not skip directly to production cutover
+Status: Superseded on 2026-08-05 by `docs/proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`; retained as historical architecture record
 Scope: 本地路由、运行事实、状态监控、采集、价格、请求生命周期、请求日志、聚合 read model 与相关桌面 UI
 
 ## 1. 执行摘要

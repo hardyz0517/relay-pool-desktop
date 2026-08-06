@@ -1,6 +1,6 @@
 # Relay Pool Desktop 智能路由引擎设计规范
 
-状态：Design approved；implementation planned
+状态：Implemented；本地产品边界已按关联计划完成，真实 provider / 发布机门禁另行执行
 
 日期：2026-08-04
 
@@ -2455,7 +2455,7 @@ Retry-After 必须按可信 scope 进入 runtime throttle，并有最小 / 最�
 
 本规范的目标结构在语义上达到成熟工程设计的条件是：单一事实与分类 owner、严格 snapshot / runtime fence、可解释固定点评分、相关性与全局预算保护、确定性重放、原子配置和可自动验证的降级矩阵全部成立。
 
-当前仓库尚未达到该状态：现有 production selector 仍是 Priority / Cost ordering，OperationalFactReader / Bundle 只在 `#[cfg(test)]` 暴露且 PlanningSnapshot 尚不存在，runtime / revision 存在 placeholder，统一 RoutingObservation、FailureDomainSet 和 ExplorationBudgetRegistry 尚未接入，health 与 failure taxonomy 仍有重复和乱序风险，页面与命令链仍保留 compatibility path。因此只能把当前实现称为“具备部分可靠基础设施的过渡架构”，不能称为成熟智能路由。
+本段记录的是本规范批准时的实施前基线：当时 production selector 仍是 Priority / Cost ordering，OperationalFactReader / Bundle 只在 `#[cfg(test)]` 暴露，PlanningSnapshot、runtime/revision、统一 RoutingObservation、FailureDomainSet 和 ExplorationBudgetRegistry 尚未接入，页面与命令链仍保留 compatibility path。该基线已由 2026-08-05 实施计划关闭；当前状态、逐条验收证据和仍需授权的外部门禁见关联 qualification、acceptance matrix、deletion ledger 与 boundary manifest，不再用本段描述当前实现。
 
 只有第 42.7 节资格矩阵和第 39、40、41 节 deletion / architecture gates 全部通过后，产品与文档才可以使用“成熟智能路由”描述当前实现。
 

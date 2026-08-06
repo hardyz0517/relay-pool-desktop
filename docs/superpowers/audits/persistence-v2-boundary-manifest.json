@@ -10,6 +10,42 @@
   },
   "allowed_exports": {
     "application": [],
+    "application::queries::request_decision_trace": [
+      "decision_cursor",
+      "decision_trace_from_decision",
+      "recent_route_decisions_from_page"
+    ],
+    "application::queries::routing_runtime": [
+      "RoutingRuntimeCandidateFact"
+    ],
+    "application::routing": [
+      "CanonicalRoutingCandidateWithPricing"
+    ],
+    "application::routing_engine": [
+      "admission",
+      "candidate_plan"
+    ],
+    "application::routing_engine::admission": [
+      "ActualAttemptTerminal",
+      "AdmissionDecision",
+      "AdmissionEvidence",
+      "AdmissionFailure",
+      "AdmissionFailureKind",
+      "AdmissionPlanningInput",
+      "AdmissionSettings",
+      "AdmissionTraceEvent",
+      "AdmissionTransition",
+      "CandidateAdmissionProfile",
+      "FallbackPolicy",
+      "RouteAdmissionCoordinator",
+      "SelectedRoute"
+    ],
+    "application::routing_engine::candidate_plan": [
+      "AvailabilityTier",
+      "DecisionEvidence",
+      "RoutePlanCandidate",
+      "RoutePlanPricingSnapshot"
+    ],
     "persistence": [],
     "services::data_store::config": [
       "DataDirConfigV2",
@@ -402,11 +438,6 @@
     },
     {
       "from": "application::command_facades::local_proxy",
-      "to": "services::proxy",
-      "temporary": false
-    },
-    {
-      "from": "application::command_facades::local_proxy",
       "to": "services::proxy::lifecycle",
       "temporary": false
     },
@@ -693,26 +724,6 @@
     {
       "from": "application::request_lifecycle::request",
       "to": "application::request_lifecycle::delivery",
-      "temporary": false
-    },
-    {
-      "from": "application::routing",
-      "to": "application::routing_engine::routing_snapshot",
-      "temporary": false
-    },
-    {
-      "from": "application::routing",
-      "to": "application::routing_engine::routing_types",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::routing_snapshot",
-      "to": "application::routing_engine::routing_health",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::routing_snapshot",
-      "to": "application::routing_engine::routing_types",
       "temporary": false
     },
     {
@@ -1081,11 +1092,6 @@
       "temporary": false
     },
     {
-      "from": "commands::local_proxy",
-      "to": "ipc::dto::routing_mutations",
-      "temporary": false
-    },
-    {
       "from": "commands::model_aliases",
       "to": "application::command_facades",
       "temporary": false
@@ -1408,11 +1414,6 @@
     {
       "from": "ipc::dto::pricing_reads",
       "to": "models::shared_capabilities",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::proxy_workspace_reads",
-      "to": "application::routing_engine::routing_types",
       "temporary": false
     },
     {
@@ -2292,11 +2293,6 @@
     },
     {
       "from": "services::proxy",
-      "to": "application::routing_engine::routing_types",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy",
       "to": "models",
       "temporary": false
     },
@@ -3096,11 +3092,6 @@
       "temporary": false
     },
     {
-      "from": "application::operational_facts::runtime_candidate_adapter",
-      "to": "models::operational",
-      "temporary": false
-    },
-    {
       "from": "application::operational_facts::target_resolver",
       "to": "models::station_endpoints",
       "temporary": false
@@ -3212,11 +3203,6 @@
     },
     {
       "from": "services::proxy::execution",
-      "to": "application::routing_engine::controller",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy::execution",
       "to": "application::routing_engine::model_alias",
       "temporary": false
     },
@@ -3226,28 +3212,13 @@
       "temporary": false
     },
     {
-      "from": "services::proxy::execution",
-      "to": "application::routing_engine::selector",
-      "temporary": false
-    },
-    {
       "from": "services::proxy::routing_repository",
       "to": "application::operational_facts::candidate_projector",
       "temporary": false
     },
     {
       "from": "services::proxy::routing_repository",
-      "to": "application::operational_facts::runtime_candidate_adapter",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy::routing_repository",
       "to": "application::operational_facts::target_resolver",
-      "temporary": false
-    },
-    {
-      "from": "services::proxy::routing_repository",
-      "to": "application::routing_engine::controller",
       "temporary": false
     },
     {
@@ -3391,31 +3362,6 @@
       "temporary": false
     },
     {
-      "from": "application::operational_facts::runtime_candidate_adapter",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::operational_facts::runtime_candidate_adapter",
-      "to": "application::operational_facts::pricing_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::operational_facts::runtime_candidate_adapter",
-      "to": "application::routing_engine::capacity",
-      "temporary": false
-    },
-    {
-      "from": "application::operational_facts::runtime_candidate_adapter",
-      "to": "application::routing_engine::controller",
-      "temporary": false
-    },
-    {
-      "from": "application::operational_facts::runtime_candidate_adapter",
-      "to": "application::routing_engine::request",
-      "temporary": false
-    },
-    {
       "from": "application::operational_facts::target_resolver",
       "to": "application::routing_engine::capacity",
       "temporary": false
@@ -3432,7 +3378,12 @@
     },
     {
       "from": "application::queries::routing_workspace",
-      "to": "application::operational_facts::candidate_projector",
+      "to": "application::operational_facts::pricing_projector",
+      "temporary": false
+    },
+    {
+      "from": "application::queries::routing_workspace",
+      "to": "application::routing_engine::request",
       "temporary": false
     },
     {
@@ -3442,17 +3393,7 @@
     },
     {
       "from": "application::routing",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing",
       "to": "application::operational_facts::pricing_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing",
-      "to": "application::operational_facts::runtime_candidate_adapter",
       "temporary": false
     },
     {
@@ -3486,93 +3427,13 @@
       "temporary": false
     },
     {
-      "from": "application::routing",
-      "to": "application::routing_engine::selector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::controller",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::controller",
-      "to": "application::routing_engine::capacity",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::controller",
-      "to": "application::routing_engine::request",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::controller",
-      "to": "application::routing_engine::selector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::eligibility",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::eligibility",
-      "to": "application::routing_engine::request",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::planner",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::planner",
-      "to": "application::routing_engine::request",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::planner",
-      "to": "application::routing_engine::selector",
-      "temporary": false
-    },
-    {
       "from": "application::routing_engine::routing_failure",
       "to": "application::request_finalization::failure",
       "temporary": false
     },
     {
-      "from": "application::routing_engine::routing_snapshot",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::routing_types",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::selector",
-      "to": "application::operational_facts::candidate_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::selector",
-      "to": "application::operational_facts::pricing_projector",
-      "temporary": false
-    },
-    {
-      "from": "application::routing_engine::selector",
-      "to": "application::routing_engine::request",
-      "temporary": false
-    },
-    {
       "from": "application::command_facades::pricing",
       "to": "models::pricing_group_monitoring",
-      "temporary": false
-    },
-    {
-      "from": "application::operational_facts::runtime_candidate_adapter",
-      "to": "application::routing_engine::routing_health",
       "temporary": false
     },
     {
@@ -3659,7 +3520,85 @@
       "from": "persistence::stores::dashboard_metrics_rollup",
       "to": "models::dashboard_metrics",
       "temporary": false
-    }
+    },
+    {"from":"application::monitoring::write_path","to":"models::routing_observation","temporary":false},
+    {"from":"application::observation_ingestion","to":"models::routing_observation","temporary":false},
+    {"from":"application::observation_ingestion","to":"persistence::stores::routing_observation_store","temporary":false},
+    {"from":"application::operational_facts::candidate_projection","to":"application::operational_facts::candidate_projector","temporary":false},
+    {"from":"application::operational_facts::candidate_projection","to":"application::operational_facts::pricing_projector","temporary":false},
+    {"from":"application::operational_facts::candidate_projection","to":"application::routing_engine::capacity","temporary":false},
+    {"from":"application::operational_facts::candidate_projection","to":"application::routing_engine::request","temporary":false},
+    {"from":"application::operational_facts::candidate_projection","to":"application::routing_engine::routing_health","temporary":false},
+    {"from":"application::operational_facts::planning_snapshot","to":"models::routing_policy","temporary":false},
+    {"from":"application::operational_facts::planning_snapshot","to":"persistence::stores::operational_facts","temporary":false},
+    {"from":"application::operational_facts::planning_snapshot","to":"persistence::stores::routing_quality_store","temporary":false},
+    {"from":"application::operational_facts::reader","to":"persistence::stores::operational_facts","temporary":false},
+    {"from":"application::quality_projection","to":"models::routing_observation","temporary":false},
+    {"from":"application::queries::key_detail","to":"models::routing_read_models","temporary":false},
+    {"from":"application::queries::key_pool","to":"models::routing_read_models","temporary":false},
+    {"from":"application::queries::read_model_revision","to":"persistence::stores::asset_revision_store","temporary":false},
+    {"from":"application::queries::request_decision_trace","to":"persistence::stores::routing_decisions::queries","temporary":false},
+    {"from":"application::queries::station_assets","to":"models::routing_read_models","temporary":false},
+    {"from":"application::queries::station_detail","to":"models::routing_read_models","temporary":false},
+    {"from":"application::request_finalization","to":"models::routing_observation","temporary":false},
+    {"from":"application::routing","to":"application::queries::request_decision_trace","temporary":false},
+    {"from":"application::routing","to":"models::operational","temporary":false},
+    {"from":"application::routing","to":"persistence::stores::routing_decisions::queries","temporary":false},
+    {"from":"application::routing","to":"persistence::stores::routing_policy_store","temporary":false},
+    {"from":"application::routing_engine::admission","to":"application::operational_facts::candidate_projector","temporary":false},
+    {"from":"application::routing_engine::admission","to":"application::routing_engine::capacity","temporary":false},
+    {"from":"application::routing_engine::admission","to":"application::routing_engine::request","temporary":false},
+    {"from":"application::routing_engine::intelligent_planner","to":"models::routing_policy","temporary":false},
+    {"from":"application::routing_engine::planning_snapshot","to":"models::routing_policy","temporary":false},
+    {"from":"application::routing_policy","to":"models::routing_policy","temporary":false},
+    {"from":"application::routing_policy","to":"persistence::stores::routing_policy_store","temporary":false},
+    {"from":"background_tasks::routing_projection_runner","to":"application::quality_projection","temporary":false},
+    {"from":"background_tasks::routing_projection_runner","to":"models::routing_observation","temporary":false},
+    {"from":"background_tasks::routing_projection_runner","to":"persistence::error","temporary":false},
+    {"from":"background_tasks::routing_projection_runner","to":"persistence::runtime","temporary":false},
+    {"from":"background_tasks::routing_projection_runner","to":"persistence::stores::routing_observation_store","temporary":false},
+    {"from":"background_tasks::routing_projection_runner","to":"persistence::stores::routing_quality_store","temporary":false},
+    {"from":"lib","to":"background_tasks::routing_projection_runner","temporary":false},
+    {"from":"persistence::stores::operational_facts::queries","to":"models::operational","temporary":false},
+    {"from":"persistence::stores::routing_observation_store","to":"models::routing_observation","temporary":false},
+    {"from":"persistence::stores::routing_policy_store","to":"models::routing_policy","temporary":false},
+    {"from":"persistence::stores::routing_store","to":"models::routing_policy","temporary":false},
+    {"from":"persistence::stores::settings_store","to":"models::routing_policy","temporary":false},
+    {"from":"services::proxy::execution","to":"application::routing_engine::admission","temporary":false},
+    {"from":"services::proxy::execution","to":"application::routing_engine::candidate_plan","temporary":false},
+
+    {"from":"services::proxy::routing_repository","to":"application::routing_engine::admission","temporary":false},
+    {"from":"services::proxy::routing_repository","to":"application::routing_engine::planning_snapshot","temporary":false},
+    {"from":"services::proxy::routing_runtime","to":"application::routing_engine::capacity","temporary":false},
+    {"from":"services::proxy::routing_runtime","to":"application::routing_engine::planning_snapshot","temporary":false},
+    {"from":"test_support::routing_loopback","to":"application::routing_policy","temporary":false},
+    {"from":"application::operational_facts::candidate_projection","to":"application::routing_engine::admission","temporary":false},
+    {"from":"application::operational_facts::planning_snapshot","to":"application::routing_engine::planning_snapshot","temporary":false},
+    {"from":"application::routing","to":"application::routing_engine::planning_snapshot","temporary":false},
+    {"from":"application::routing","to":"application::routing_policy","temporary":false},
+    {"from":"application::routing_engine::admission","to":"application::routing_engine::candidate_plan","temporary":false},
+    {"from":"application::routing_engine::intelligent_planner","to":"application::routing_engine::planning_snapshot","temporary":false},
+    {"from":"application::operational_facts::planning_snapshot","to":"application::routing_engine::request","temporary":false},
+    {"from":"application::routing_engine::admission","to":"application::routing_engine::intelligent_planner","temporary":false},
+    {"from":"application::routing_engine::admission","to":"application::routing_engine::planning_snapshot","temporary":false},
+    {"from":"services::proxy::execution","to":"application::routing_engine::planning_snapshot","temporary":false},
+    {"from":"services::proxy::routing_runtime","to":"application::routing_engine::exploration","temporary":false},
+    {"from":"application::routing_engine::admission","to":"application::routing_engine::exploration","temporary":false},
+    {"from":"application::routing_engine::intelligent_planner","to":"application::routing_engine::exploration","temporary":false}
+    ,{"from":"application::command_facades::routing","to":"models::routing_policy","temporary":false}
+    ,{"from":"application::command_facades::routing","to":"persistence::stores::routing_policy_store","temporary":false}
+    ,{"from":"application::queries::routing_workspace","to":"models::routing_policy","temporary":false}
+    ,{"from":"application::routing","to":"application::routing_engine::intelligent_planner","temporary":false}
+    ,{"from":"application::routing","to":"models::routing_policy","temporary":false}
+    ,{"from":"commands::routing_health","to":"ipc::dto::routing_mutations","temporary":false}
+    ,{"from":"commands::routing_health","to":"models::routing_policy","temporary":false}
+    ,{"from":"ipc::dto::routing_health_reads","to":"models::routing_policy","temporary":false}
+    ,{"from":"ipc::dto::routing_mutations","to":"models::routing_policy","temporary":false}
+    ,{"from":"models::routing","to":"models::routing_policy","temporary":false}
+    ,{"from":"services::proxy::routing_repository","to":"application::operational_facts::pricing_projector","temporary":false}
+    ,{"from":"services::proxy::routing_repository","to":"application::routing_engine::candidate_plan","temporary":false}
+    ,{"from":"services::proxy::routing_repository","to":"application::routing_engine::capacity","temporary":false}
+    ,{"from":"application::routing_engine::candidate_plan","to":"application::operational_facts::pricing_projector","temporary":false}
   ],
   "temporary_legacy_consumers": [],
   "temporary_legacy_paths": [],

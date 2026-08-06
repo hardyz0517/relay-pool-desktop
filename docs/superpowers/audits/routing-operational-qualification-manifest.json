@@ -32,7 +32,7 @@
   ],
   "required_soak_suites": [
     "routing_production_composition",
-    "routing_planner_controller",
+    "intelligent_routing_coordinator",
     "routing_capacity_faults",
     "routing_runtime_state",
     "proxy_lifecycle_concurrency",
