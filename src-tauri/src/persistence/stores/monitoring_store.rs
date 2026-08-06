@@ -202,11 +202,11 @@ impl MonitoringStore {
                 health_policy_mode, health_failure_threshold, health_recovery_threshold,
                 attempt_timeout_ms, execution_timeout_ms, schedule_revision, next_due_at_ms,
                 last_run_at, next_run_at, last_status, last_error_message,
-                note, created_at, updated_at
+                note, created_at, updated_at, pause_on_zero_balance
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25,
-                ?26, ?27, 1, ?28, NULL, ?29, NULL, NULL, ?30, ?31, ?32
+                ?26, ?27, 1, ?28, NULL, ?29, NULL, NULL, ?30, ?31, ?32, ?33
             )
             "#,
         )
@@ -242,6 +242,7 @@ impl MonitoringStore {
         .bind(normalize_optional(&row.input.note))
         .bind(&row.now)
         .bind(&row.now)
+        .bind(bool_to_i64(row.input.pause_on_zero_balance))
         .execute(write.connection())
         .await?;
         monitor_by_id(write.connection(), &row.id).await
@@ -269,6 +270,7 @@ impl MonitoringStore {
                 station_key_id = ?4,
                 template_id = ?5,
                 enabled = ?6,
+                pause_on_zero_balance = ?32,
                 interval_seconds = ?7,
                 jitter_seconds = ?8,
                 timeout_seconds = ?9,
@@ -328,6 +330,7 @@ impl MonitoringStore {
         .bind(normalize_optional(&patch.input.note))
         .bind(&patch.now)
         .bind(&patch.input.id)
+        .bind(bool_to_i64(patch.input.pause_on_zero_balance))
         .execute(write.connection())
         .await?
         .rows_affected();
@@ -360,8 +363,33 @@ async fn list_monitors(
 ) -> Result<Vec<ChannelMonitor>, PersistenceError> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, target_type, station_id, station_key_id, template_id,
-               enabled, interval_seconds, jitter_seconds, timeout_seconds,
+        SELECT m.id, m.name, m.target_type, m.station_id, m.station_key_id, m.template_id,
+               m.enabled, m.pause_on_zero_balance,
+               CASE
+                   WHEN m.pause_on_zero_balance = 1
+                    AND COALESCE(
+                        (
+                            SELECT b.value
+                            FROM balance_snapshots b
+                            WHERE m.target_type = 'station_key'
+                              AND b.station_key_id = m.station_key_id
+                              AND b.scope = 'station_key'
+                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                            LIMIT 1
+                        ),
+                        (
+                            SELECT b.value
+                            FROM balance_snapshots b
+                            WHERE b.station_id = m.station_id
+                              AND b.station_key_id IS NULL
+                              AND b.scope = 'station'
+                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                            LIMIT 1
+                        )
+                    ) <= 0
+                   THEN 1 ELSE 0
+               END AS balance_paused,
+               m.interval_seconds, m.jitter_seconds, m.timeout_seconds,
                max_concurrency, consecutive_failure_threshold, fallback_models_json,
                protocol_kind, client_profile_id, client_profile_version, primary_model,
                fallback_models_v2_json, retry_max_attempts_per_model,
@@ -369,8 +397,8 @@ async fn list_monitors(
                health_policy_mode, health_failure_threshold, health_recovery_threshold,
                attempt_timeout_ms, execution_timeout_ms, schedule_revision,
                note, created_at, updated_at
-        FROM channel_monitors INDEXED BY idx_channel_monitors_list
-        ORDER BY enabled DESC, created_at ASC, id ASC
+        FROM channel_monitors m INDEXED BY idx_channel_monitors_list
+        ORDER BY m.enabled DESC, m.created_at ASC, m.id ASC
         LIMIT ?1
         "#,
     )
@@ -403,8 +431,33 @@ async fn monitor_by_id(
 ) -> Result<ChannelMonitor, PersistenceError> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, target_type, station_id, station_key_id, template_id,
-               enabled, interval_seconds, jitter_seconds, timeout_seconds,
+        SELECT m.id, m.name, m.target_type, m.station_id, m.station_key_id, m.template_id,
+               m.enabled, m.pause_on_zero_balance,
+               CASE
+                   WHEN m.pause_on_zero_balance = 1
+                    AND COALESCE(
+                        (
+                            SELECT b.value
+                            FROM balance_snapshots b
+                            WHERE m.target_type = 'station_key'
+                              AND b.station_key_id = m.station_key_id
+                              AND b.scope = 'station_key'
+                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                            LIMIT 1
+                        ),
+                        (
+                            SELECT b.value
+                            FROM balance_snapshots b
+                            WHERE b.station_id = m.station_id
+                              AND b.station_key_id IS NULL
+                              AND b.scope = 'station'
+                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                            LIMIT 1
+                        )
+                    ) <= 0
+                   THEN 1 ELSE 0
+               END AS balance_paused,
+               m.interval_seconds, m.jitter_seconds, m.timeout_seconds,
                max_concurrency, consecutive_failure_threshold, fallback_models_json,
                protocol_kind, client_profile_id, client_profile_version, primary_model,
                fallback_models_v2_json, retry_max_attempts_per_model,
@@ -412,7 +465,7 @@ async fn monitor_by_id(
                health_policy_mode, health_failure_threshold, health_recovery_threshold,
                attempt_timeout_ms, execution_timeout_ms, schedule_revision,
                note, created_at, updated_at
-        FROM channel_monitors WHERE id = ?1
+        FROM channel_monitors m WHERE m.id = ?1
         "#,
     )
     .bind(id)
@@ -585,6 +638,8 @@ fn row_to_monitor(row: sqlx::sqlite::SqliteRow) -> Result<ChannelMonitor, Persis
         station_key_id: row.get("station_key_id"),
         template_id: row.get("template_id"),
         enabled: i64_to_bool(row.get("enabled")),
+        pause_on_zero_balance: i64_to_bool(row.get("pause_on_zero_balance")),
+        balance_paused: i64_to_bool(row.get("balance_paused")),
         protocol_kind: row.get("protocol_kind"),
         client_profile_id: row.get("client_profile_id"),
         client_profile_version: row.get("client_profile_version"),
@@ -745,6 +800,7 @@ mod tests {
                                     station_key_id: update.station_key_id,
                                     template_id: update.template_id,
                                     enabled: update.enabled,
+                                    pause_on_zero_balance: update.pause_on_zero_balance,
                                     protocol_kind: update.protocol_kind,
                                     client_profile_id: update.client_profile_id,
                                     client_profile_version: update.client_profile_version,
@@ -802,6 +858,7 @@ mod tests {
             station_key_id: Some("key-1".into()),
             template_id: "template-1".into(),
             enabled: true,
+            pause_on_zero_balance: true,
             protocol_kind: "anthropic_messages".into(),
             client_profile_id: "claude_code_compat".into(),
             client_profile_version: 1,

@@ -140,7 +140,7 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
   const selected = row.selectedWindow;
   const runningExecutionId = row.running?.executionId ?? null;
   const currentOutcome = latest?.outcome ?? selected.latestOutcome;
-  const currentTone: StatusTone = row.monitor.enabled
+  const currentTone: StatusTone = row.monitor.enabled && !row.monitor.balancePaused
     ? runningExecutionId
       ? "running"
       : currentOutcome
@@ -170,7 +170,11 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     enabled: row.monitor.enabled,
     modelLabel: formatModelLabel(row.monitor.primaryModel, row.monitor.fallbackModels),
     currentTone,
-    currentLabel: statusLabel(currentTone),
+    currentLabel: !row.monitor.enabled
+      ? "停用"
+      : row.monitor.balancePaused
+        ? "余额暂停"
+        : statusLabel(currentTone),
     currentReason: latest?.terminalReason ?? latest?.failureKind ?? null,
     runningExecutionId,
     latestExecutionId: latest?.executionId ?? null,

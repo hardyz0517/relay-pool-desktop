@@ -467,6 +467,7 @@ describe("generated settings/stations transport envelopes", () => {
       attemptTimeoutMs: 10_000,
       executionTimeoutMs: 30_000,
       enabled: true,
+      pauseOnZeroBalance: true,
       intervalSeconds: 60,
       jitterSeconds: 5,
       timeoutSeconds: 15,

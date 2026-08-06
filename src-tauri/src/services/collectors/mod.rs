@@ -1594,9 +1594,24 @@ fn collector_task_kind(task: CollectorTask) -> Option<contract::CollectorTaskKin
 fn proxy_policy_from_collector_config(
     proxy: crate::services::outbound::ProxyConfig,
 ) -> Result<ProxyPolicy, String> {
+    let system_proxy_url = (proxy.mode == "system")
+        .then(crate::services::outbound::current_system_proxy_url)
+        .flatten();
+    proxy_policy_from_collector_config_with_system_proxy(proxy, system_proxy_url.as_deref())
+}
+
+fn proxy_policy_from_collector_config_with_system_proxy(
+    proxy: crate::services::outbound::ProxyConfig,
+    system_proxy_url: Option<&str>,
+) -> Result<ProxyPolicy, String> {
     match proxy.mode.as_str() {
         "direct" => Ok(ProxyPolicy::Direct),
-        "system" => Ok(ProxyPolicy::System),
+        "system" => match system_proxy_url {
+            Some(url) => ManualProxy::parse(url)
+                .map(ProxyPolicy::Manual)
+                .map_err(|error| crate::services::secrets::mask::redact_text(&error.to_string())),
+            None => Ok(ProxyPolicy::System),
+        },
         "manual" => {
             let Some(url) = proxy.url.as_deref() else {
                 return Err("鎵嬪姩閲囬泦浠ｇ悊鍦板潃涓嶈兘涓虹┖".to_string());
@@ -1781,5 +1796,37 @@ mod tests {
         assert!(provider_kind_for_station_type("openai-compatible").is_err());
         assert!(provider_kind_for_station_type("openai_compatible").is_err());
         assert!(provider_kind_for_station_type("custom").is_err());
+    }
+
+    #[test]
+    fn configured_system_proxy_is_materialized_for_collector_transport() {
+        let policy = proxy_policy_from_collector_config_with_system_proxy(
+            crate::services::outbound::ProxyConfig {
+                mode: "system".to_string(),
+                url: None,
+            },
+            Some("http://127.0.0.1:7890"),
+        )
+        .expect("system proxy should be valid");
+
+        assert!(matches!(
+            policy,
+            ProxyPolicy::Manual(ManualProxy { endpoint, .. })
+                if endpoint == "http://127.0.0.1:7890"
+        ));
+    }
+
+    #[test]
+    fn missing_system_proxy_preserves_system_transport_fallback() {
+        let policy = proxy_policy_from_collector_config_with_system_proxy(
+            crate::services::outbound::ProxyConfig {
+                mode: "system".to_string(),
+                url: None,
+            },
+            None,
+        )
+        .expect("system fallback should remain valid");
+
+        assert_eq!(policy, ProxyPolicy::System);
     }
 }

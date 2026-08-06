@@ -76,6 +76,13 @@ function validDraft() {
 }
 
 describe("channel monitor V2 view model", () => {
+  it("enables zero-balance automatic pause for newly created monitors", () => {
+    const draft = validDraft();
+
+    expect(draft.pauseOnZeroBalance).toBe(true);
+    expect(draftToMonitorInput(draft).pauseOnZeroBalance).toBe(true);
+  });
+
   it("validates protocol and Profile capabilities together", () => {
     const draft = validDraft();
 
@@ -196,7 +203,7 @@ describe("channel monitor V2 view model", () => {
       retryMaxAttemptsPerModel: 1,
       retryInitialBackoffMs: 200,
       retryMaxBackoffMs: 2_000,
-      riskDailyProbeBudget: 200,
+      riskDailyProbeBudget: 2_000,
       healthPolicyMode: "observe_only",
       healthFailureThreshold: 2,
       healthRecoveryThreshold: 2,

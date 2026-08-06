@@ -80,7 +80,8 @@ export type ChannelMonitorRunStatusDto = "success" | "warning" | "failed" | "ski
 
 export type ChannelMonitorDto = {
   id: string; name: string; targetType: ChannelMonitorTargetTypeDto; stationId: string;
-  stationKeyId: string | null; templateId: string; enabled: boolean; intervalSeconds: number;
+  stationKeyId: string | null; templateId: string; enabled: boolean;
+  pauseOnZeroBalance: boolean; balancePaused: boolean; intervalSeconds: number;
   protocolKind: MonitorProtocolKindInputDto; clientProfileId: MonitorClientProfileIdInputDto; clientProfileVersion: number; primaryModel: string;
   retryMaxAttemptsPerModel: number; retryInitialBackoffMs: number; retryMaxBackoffMs: number;
   riskDailyProbeBudget: number; healthPolicyMode: MonitorHealthWritebackModeInputDto; healthFailureThreshold: number;

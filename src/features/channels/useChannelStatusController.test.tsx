@@ -11,12 +11,12 @@ import {
 } from "./useChannelStatusController";
 
 const mocks = vi.hoisted(() => ({
-  runChannelMonitorNowWithTrigger: vi.fn(),
+  runChannelMonitorNow: vi.fn(),
 }));
 
 vi.mock("@/lib/api/channelMonitors", () => ({
   cancelChannelMonitorExecution: vi.fn(),
-  runChannelMonitorNowWithTrigger: mocks.runChannelMonitorNowWithTrigger,
+  runChannelMonitorNow: mocks.runChannelMonitorNow,
 }));
 
 vi.mock("@/lib/query/useActivityQuery", () => ({
@@ -48,7 +48,7 @@ beforeEach(async () => {
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   controller = null;
-  mocks.runChannelMonitorNowWithTrigger.mockReset().mockResolvedValue({
+  mocks.runChannelMonitorNow.mockReset().mockResolvedValue({
     executionId: "execution-1",
     monitorId: "monitor-1",
     status: "queued",
@@ -81,10 +81,34 @@ describe("useChannelStatusController", () => {
     await act(async () => {
       controller!.runNow(row);
       await vi.waitFor(() => {
-        expect(mocks.runChannelMonitorNowWithTrigger).toHaveBeenCalledTimes(1);
+        expect(mocks.runChannelMonitorNow).toHaveBeenCalledTimes(1);
       });
     });
 
     expect(controller!.selectedExecutionId).toBeNull();
+  });
+
+  it("starts a new execution when the same monitor is tested again", async () => {
+    const row = {
+      monitorId: "monitor-1",
+      runningExecutionId: null,
+    } as ChannelStatusRowView;
+
+    await act(async () => {
+      controller!.runNow(row);
+      await vi.waitFor(() => {
+        expect(mocks.runChannelMonitorNow).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    await act(async () => {
+      controller!.runNow(row);
+      await vi.waitFor(() => {
+        expect(mocks.runChannelMonitorNow).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    expect(mocks.runChannelMonitorNow).toHaveBeenNthCalledWith(1, "monitor-1");
+    expect(mocks.runChannelMonitorNow).toHaveBeenNthCalledWith(2, "monitor-1");
   });
 });

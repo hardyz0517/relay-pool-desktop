@@ -56,6 +56,30 @@ impl MonitoringDefinitionRepository {
                    primary_model, next_due_at_ms
             FROM channel_monitors
             WHERE enabled = 1
+              AND (
+                  pause_on_zero_balance = 0
+                  OR COALESCE(
+                      (
+                          SELECT b.value
+                          FROM balance_snapshots b
+                          WHERE channel_monitors.target_type = 'station_key'
+                            AND b.station_key_id = channel_monitors.station_key_id
+                            AND b.scope = 'station_key'
+                          ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                          LIMIT 1
+                      ),
+                      (
+                          SELECT b.value
+                          FROM balance_snapshots b
+                          WHERE b.station_id = channel_monitors.station_id
+                            AND b.station_key_id IS NULL
+                            AND b.scope = 'station'
+                          ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                          LIMIT 1
+                      ),
+                      1.0
+                  ) > 0
+              )
               AND (next_due_at_ms IS NULL OR next_due_at_ms <= ?1)
             ORDER BY COALESCE(next_due_at_ms, 0) ASC, id ASC
             LIMIT ?2
@@ -89,6 +113,30 @@ impl MonitoringDefinitionRepository {
             SELECT MIN(next_due_at_ms)
             FROM channel_monitors
             WHERE enabled = 1
+              AND (
+                  pause_on_zero_balance = 0
+                  OR COALESCE(
+                      (
+                          SELECT b.value
+                          FROM balance_snapshots b
+                          WHERE channel_monitors.target_type = 'station_key'
+                            AND b.station_key_id = channel_monitors.station_key_id
+                            AND b.scope = 'station_key'
+                          ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                          LIMIT 1
+                      ),
+                      (
+                          SELECT b.value
+                          FROM balance_snapshots b
+                          WHERE b.station_id = channel_monitors.station_id
+                            AND b.station_key_id IS NULL
+                            AND b.scope = 'station'
+                          ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                          LIMIT 1
+                      ),
+                      1.0
+                  ) > 0
+              )
               AND next_due_at_ms IS NOT NULL
             "#,
         )

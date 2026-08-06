@@ -23,6 +23,7 @@ export type ChannelMonitorDraft = {
   stationKeyId: string;
   templateId: string;
   enabled: boolean;
+  pauseOnZeroBalance: boolean;
   protocolKind: ChannelMonitorProtocolKind;
   clientProfileId: ChannelMonitorClientProfileId;
   clientProfileVersion: string;
@@ -166,6 +167,7 @@ export function createStationKeyMonitorInput(
     stationKeyId: key.id,
     templateId: template.id,
     enabled: true,
+    pauseOnZeroBalance: true,
     protocolKind: template.endpointKind === "responses" ? "open_ai_responses" : "open_ai_chat",
     clientProfileId: "standard_api",
     clientProfileVersion: 1,
@@ -173,7 +175,7 @@ export function createStationKeyMonitorInput(
     retryMaxAttemptsPerModel: 1,
     retryInitialBackoffMs: 200,
     retryMaxBackoffMs: 2_000,
-    riskDailyProbeBudget: 200,
+    riskDailyProbeBudget: 2_000,
     healthPolicyMode: "observe_only",
     healthFailureThreshold: 2,
     healthRecoveryThreshold: 2,
@@ -201,6 +203,7 @@ export function updateStationKeyMonitorEnabledInput(
     stationKeyId: monitor.stationKeyId,
     templateId: monitor.templateId,
     enabled,
+    pauseOnZeroBalance: monitor.pauseOnZeroBalance,
     protocolKind: monitor.protocolKind,
     clientProfileId: monitor.clientProfileId,
     clientProfileVersion: monitor.clientProfileVersion,
@@ -242,6 +245,7 @@ export function createEmptyMonitorDraft(
     stationKeyId: "",
     templateId: firstTemplate?.id ?? "",
     enabled: true,
+    pauseOnZeroBalance: true,
     protocolKind,
     clientProfileId: "standard_api",
     clientProfileVersion: String(standardProfile?.version ?? 1),
@@ -270,6 +274,7 @@ export function monitorToDraft(monitor: ChannelMonitor): ChannelMonitorDraft {
     stationKeyId: monitor.stationKeyId ?? "",
     templateId: monitor.templateId,
     enabled: monitor.enabled,
+    pauseOnZeroBalance: monitor.pauseOnZeroBalance,
     protocolKind: monitor.protocolKind,
     clientProfileId: monitor.clientProfileId,
     clientProfileVersion: String(monitor.clientProfileVersion),
@@ -298,6 +303,7 @@ export function monitorToCreateInput(monitor: ChannelMonitor, name = `${monitor.
     stationKeyId: monitor.targetType === "station_key" ? monitor.stationKeyId : null,
     templateId: monitor.templateId,
     enabled: monitor.enabled,
+    pauseOnZeroBalance: monitor.pauseOnZeroBalance,
     protocolKind: monitor.protocolKind,
     clientProfileId: monitor.clientProfileId,
     clientProfileVersion: monitor.clientProfileVersion,
@@ -334,6 +340,7 @@ export function draftToMonitorInput(draft: ChannelMonitorDraft): CreateChannelMo
     stationKeyId: draft.targetType === "station_key" ? draft.stationKeyId : null,
     templateId: draft.templateId,
     enabled: draft.enabled,
+    pauseOnZeroBalance: draft.pauseOnZeroBalance,
     protocolKind: draft.protocolKind,
     clientProfileId: draft.clientProfileId,
     clientProfileVersion: toInteger(draft.clientProfileVersion),

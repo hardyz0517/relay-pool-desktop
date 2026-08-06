@@ -194,6 +194,8 @@ pub struct ChannelStatusMonitor {
     pub name: String,
     pub target_type: String,
     pub enabled: bool,
+    pub pause_on_zero_balance: bool,
+    pub balance_paused: bool,
     pub protocol_kind: String,
     pub client_profile_id: String,
     pub client_profile_version: i64,

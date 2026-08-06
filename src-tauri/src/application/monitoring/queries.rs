@@ -171,6 +171,8 @@ impl ChannelStatusReadModelQuery {
                         name: base.monitor_name,
                         target_type: base.target_type,
                         enabled: base.enabled,
+                        pause_on_zero_balance: base.pause_on_zero_balance,
+                        balance_paused: base.balance_paused,
                         protocol_kind: base.protocol_kind,
                         client_profile_id: base.client_profile_id,
                         client_profile_version: base.client_profile_version,

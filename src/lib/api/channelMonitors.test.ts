@@ -121,6 +121,7 @@ describe("channel monitor backend cutover", () => {
       maxConcurrency: 1,
       consecutiveFailureThreshold: 3,
       enabled: true,
+      pauseOnZeroBalance: true,
       note: null,
     } as const;
     const templateInput = {

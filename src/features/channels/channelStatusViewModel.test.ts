@@ -13,6 +13,16 @@ import {
 } from "./channelStatusViewModel";
 
 describe("channel status V2 view model", () => {
+  it("distinguishes balance pause from a user-controlled disable", () => {
+    const row = fixtureRow();
+    row.monitor.balancePaused = true;
+
+    expect(buildRowView(row, "recent").currentLabel).toBe("余额暂停");
+
+    row.monitor.enabled = false;
+    expect(buildRowView(row, "recent").currentLabel).toBe("停用");
+  });
+
   it.each([
     [null, null],
     [-1, 0],
@@ -153,6 +163,8 @@ function fixtureRow(): ChannelStatusRow {
       name: "OpenAI monitor",
       targetType: "station_key",
       enabled: true,
+      pauseOnZeroBalance: true,
+      balancePaused: false,
       protocolKind: "open_ai_chat",
       clientProfileId: "standard_api",
       clientProfileVersion: 1,

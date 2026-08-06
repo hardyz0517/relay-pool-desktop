@@ -41,6 +41,13 @@ const TOTAL_BASE_CONSUMPTION_FIELDS: &[&str] = &[
     "quota_consumption",
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SubscriptionQuotaSummary {
+    pub remaining: f64,
+    pub used: f64,
+    pub total: f64,
+}
+
 pub fn parse_usage_balance(
     station_id: &str,
     station_key_id: Option<String>,
@@ -70,9 +77,9 @@ pub fn parse_usage_balance(
         station_id: station_id.to_string(),
         station_key_id,
         scope: "station_key".to_string(),
-        value: normalize_credit_value(remaining, credit_per_cny),
-        used_value: normalize_credit_value(used, credit_per_cny),
-        total_value: normalize_credit_value(total, credit_per_cny),
+        value: normalize_point_balance_to_usd(remaining, credit_per_cny),
+        used_value: normalize_point_balance_to_usd(used, credit_per_cny),
+        total_value: normalize_point_balance_to_usd(total, credit_per_cny),
         today_request_count: parse_i64_field(
             payload,
             &[
@@ -312,13 +319,17 @@ pub fn parse_group_rate_facts(
     facts
 }
 
-fn normalize_credit_value(value: Option<f64>, credit_per_cny: f64) -> Option<f64> {
-    let divisor = if credit_per_cny.is_finite() && credit_per_cny > 0.0 {
-        credit_per_cny
+fn normalize_point_balance_to_usd(value: Option<f64>, points_per_usd: f64) -> Option<f64> {
+    value.map(|value| point_balance_to_usd(value, points_per_usd))
+}
+
+fn point_balance_to_usd(value: f64, points_per_usd: f64) -> f64 {
+    let divisor = if points_per_usd.is_finite() && points_per_usd > 0.0 {
+        points_per_usd
     } else {
         1.0
     };
-    value.map(|value| value / divisor)
+    value / divisor
 }
 
 fn collect_available_groups(payload: &Value) -> Vec<AvailableGroup> {
@@ -1016,6 +1027,258 @@ pub(crate) fn merge_dashboard_usage_stats(
     balances.push(station_balance);
 }
 
+pub(crate) fn parse_active_subscription_quota(
+    payload: &Value,
+    credit_per_cny: f64,
+) -> Option<SubscriptionQuotaSummary> {
+    let items = payload
+        .pointer("/data")
+        .and_then(Value::as_array)
+        .or_else(|| payload.get("subscriptions").and_then(Value::as_array))
+        .or_else(|| payload.as_array())?;
+    let mut summary = SubscriptionQuotaSummary {
+        remaining: 0.0,
+        used: 0.0,
+        total: 0.0,
+    };
+    let mut found = false;
+
+    for subscription in items {
+        if subscription
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| !status.eq_ignore_ascii_case("active"))
+        {
+            continue;
+        }
+        let Some(group) = subscription.get("group") else {
+            continue;
+        };
+        add_subscription_quota_window(
+            &mut summary,
+            &mut found,
+            subscription,
+            group,
+            credit_per_cny,
+        );
+    }
+
+    found.then_some(summary)
+}
+
+pub(crate) fn parse_platform_quota(
+    payload: &Value,
+    credit_per_cny: f64,
+) -> Option<SubscriptionQuotaSummary> {
+    let mut summary = SubscriptionQuotaSummary {
+        remaining: 0.0,
+        used: 0.0,
+        total: 0.0,
+    };
+    let mut found = false;
+
+    for item in platform_quota_items(payload) {
+        add_subscription_quota_window(&mut summary, &mut found, item, item, credit_per_cny);
+    }
+
+    found.then_some(summary)
+}
+
+fn add_subscription_quota_window(
+    summary: &mut SubscriptionQuotaSummary,
+    found: &mut bool,
+    usage: &Value,
+    limits: &Value,
+    credit_per_cny: f64,
+) {
+    let Some((remaining, used, limit)) = subscription_quota_window(usage, limits) else {
+        return;
+    };
+    summary.remaining += point_balance_to_usd(remaining, credit_per_cny);
+    summary.used += point_balance_to_usd(used, credit_per_cny);
+    summary.total += point_balance_to_usd(limit, credit_per_cny);
+    *found = true;
+}
+
+pub(crate) fn merge_subscription_quota(
+    balances: &mut Vec<CollectedBalanceFact>,
+    station_id: &str,
+    quota: SubscriptionQuotaSummary,
+) {
+    if let Some(station_balance) = balances
+        .iter_mut()
+        .find(|balance| balance.station_id == station_id && balance.scope == "station")
+    {
+        station_balance.value = add_balance_values(station_balance.value, quota.remaining);
+        station_balance.used_value = add_balance_values(station_balance.used_value, quota.used);
+        station_balance.total_value = add_balance_values(station_balance.total_value, quota.total);
+        station_balance.status = if station_balance.value == Some(0.0) {
+            "depleted"
+        } else {
+            "normal"
+        }
+        .to_string();
+        station_balance.source = "sub2api_account_profile_with_subscription".to_string();
+        return;
+    }
+
+    let key_balances = balances
+        .iter()
+        .filter(|balance| balance.station_id == station_id && balance.scope == "station_key")
+        .collect::<Vec<_>>();
+    let key_value = sum_present_f64_values(key_balances.iter().map(|balance| balance.value));
+    let key_used_value =
+        sum_present_f64_values(key_balances.iter().map(|balance| balance.used_value));
+    let key_total_value =
+        sum_present_f64_values(key_balances.iter().map(|balance| balance.total_value));
+    let currency = shared_balance_text_value(
+        key_balances
+            .iter()
+            .map(|balance| Some(balance.currency.as_str())),
+    )
+    .unwrap_or(NORMALIZED_BALANCE_CURRENCY)
+    .to_string();
+    let credit_unit = shared_balance_text_value(
+        key_balances
+            .iter()
+            .map(|balance| balance.credit_unit.as_deref()),
+    )
+    .map(ToString::to_string);
+    let account_concurrency_limit = key_balances
+        .iter()
+        .find_map(|balance| balance.account_concurrency_limit);
+    let confidence = key_balances
+        .iter()
+        .map(|balance| balance.confidence)
+        .fold(0.9_f64, f64::min);
+    let collected_at = key_balances
+        .iter()
+        .filter_map(|balance| balance.collected_at.as_ref())
+        .max()
+        .cloned();
+    let value = key_value.unwrap_or(0.0) + quota.remaining;
+    balances.push(CollectedBalanceFact {
+        station_id: station_id.to_string(),
+        station_key_id: None,
+        scope: "station".to_string(),
+        value: Some(value),
+        used_value: key_used_value
+            .map(|value| value + quota.used)
+            .or(Some(quota.used)),
+        total_value: key_total_value
+            .map(|value| value + quota.total)
+            .or(Some(quota.total)),
+        today_request_count: None,
+        total_request_count: None,
+        today_consumption: None,
+        total_consumption: None,
+        today_base_consumption: None,
+        total_base_consumption: None,
+        today_token_count: None,
+        total_token_count: None,
+        today_input_token_count: None,
+        today_output_token_count: None,
+        total_input_token_count: None,
+        total_output_token_count: None,
+        account_concurrency_limit,
+        currency,
+        credit_unit,
+        status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+        source: "sub2api_balance_with_subscription".to_string(),
+        confidence,
+        collected_at,
+    });
+}
+
+fn add_balance_values(value: Option<f64>, extra: f64) -> Option<f64> {
+    value.map(|value| value + extra).or(Some(extra))
+}
+
+fn platform_quota_items(payload: &Value) -> Vec<&Value> {
+    for pointer in [
+        "/data/platform_quotas",
+        "/data/platformQuotas",
+        "/platform_quotas",
+        "/platformQuotas",
+    ] {
+        if let Some(items) = payload.pointer(pointer).and_then(Value::as_array) {
+            return items.iter().collect();
+        }
+    }
+    if let Some(items) = payload.as_array() {
+        return items.iter().collect();
+    }
+    Vec::new()
+}
+
+fn subscription_quota_window(usage: &Value, limits: &Value) -> Option<(f64, f64, f64)> {
+    let windows = [
+        (
+            &[
+                "daily_limit_usd",
+                "dailyLimitUsd",
+                "daily_limit",
+                "dailyLimit",
+            ][..],
+            &[
+                "daily_usage_usd",
+                "daily_used_usd",
+                "dailyUsageUsd",
+                "dailyUsedUsd",
+                "daily_usage",
+                "dailyUsage",
+            ][..],
+        ),
+        (
+            &[
+                "weekly_limit_usd",
+                "weeklyLimitUsd",
+                "weekly_limit",
+                "weeklyLimit",
+            ][..],
+            &[
+                "weekly_usage_usd",
+                "weekly_used_usd",
+                "weeklyUsageUsd",
+                "weeklyUsedUsd",
+                "weekly_usage",
+                "weeklyUsage",
+            ][..],
+        ),
+        (
+            &[
+                "monthly_limit_usd",
+                "monthlyLimitUsd",
+                "monthly_limit",
+                "monthlyLimit",
+            ][..],
+            &[
+                "monthly_usage_usd",
+                "monthly_used_usd",
+                "monthlyUsageUsd",
+                "monthlyUsedUsd",
+                "monthly_usage",
+                "monthlyUsage",
+            ][..],
+        ),
+    ];
+    windows
+        .into_iter()
+        .filter_map(|(limit_fields, usage_fields)| {
+            let limit = limit_fields
+                .iter()
+                .find_map(|field| parse_optional_f64(limits.get(*field)))
+                .filter(|value| value.is_finite() && *value > 0.0)?;
+            let used = usage_fields
+                .iter()
+                .find_map(|field| parse_optional_f64(usage.get(*field)))
+                .unwrap_or(0.0)
+                .max(0.0);
+            Some(((limit - used).max(0.0), used.min(limit), limit))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+}
+
 fn sum_present_f64_values(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
     let mut total = 0.0_f64;
     let mut has_value = false;
@@ -1052,9 +1315,9 @@ pub(crate) fn parse_account_balance(
         station_id: station_id.to_string(),
         station_key_id: None,
         scope: "station".to_string(),
-        value: normalize_credit_value(value, credit_per_cny),
-        used_value: normalize_credit_value(used, credit_per_cny),
-        total_value: normalize_credit_value(total, credit_per_cny),
+        value: normalize_point_balance_to_usd(value, credit_per_cny),
+        used_value: normalize_point_balance_to_usd(used, credit_per_cny),
+        total_value: normalize_point_balance_to_usd(total, credit_per_cny),
         today_request_count: parse_account_i64_field(
             payload,
             &[
@@ -1302,6 +1565,93 @@ mod tests {
         assert!((key_balance.value.expect("key balance") - 7.28).abs() < f64::EPSILON * 10.0);
         assert_eq!(key_balance.currency, NORMALIZED_BALANCE_CURRENCY);
         assert_eq!(account_balance.currency, NORMALIZED_BALANCE_CURRENCY);
+    }
+
+    #[test]
+    fn platform_quota_uses_the_most_restrictive_active_window() {
+        let quota = parse_platform_quota(
+            &json!({
+                "data": {
+                    "platform_quotas": [{
+                        "platform": "claude",
+                        "daily_limit_usd": 135.0,
+                        "daily_usage_usd": 0.0,
+                        "weekly_limit_usd": 945.0,
+                        "weekly_usage_usd": 120.0
+                    }]
+                }
+            }),
+            10.0,
+        )
+        .expect("subscription quota");
+
+        assert_eq!(
+            quota,
+            SubscriptionQuotaSummary {
+                remaining: 13.5,
+                used: 0.0,
+                total: 13.5
+            }
+        );
+    }
+
+    #[test]
+    fn subscription_quota_reads_active_subscription_group_limits() {
+        let quota = parse_active_subscription_quota(
+            &json!({
+                "data": [{
+                    "id": 12,
+                    "status": "active",
+                    "daily_usage_usd": 0.0,
+                    "weekly_usage_usd": 120.0,
+                    "group": {
+                        "daily_limit_usd": 135.0,
+                        "weekly_limit_usd": 945.0
+                    }
+                }]
+            }),
+            10.0,
+        )
+        .expect("subscription quota");
+
+        assert_eq!(
+            quota,
+            SubscriptionQuotaSummary {
+                remaining: 13.5,
+                used: 0.0,
+                total: 13.5
+            }
+        );
+    }
+
+    #[test]
+    fn subscription_points_are_added_after_point_balance_conversion() {
+        let mut balances =
+            vec![
+                parse_account_balance("station-1", &json!({"data": {"balance": 720.0}}), 10.0)
+                    .expect("account balance"),
+            ];
+
+        let quota = parse_active_subscription_quota(
+            &json!({
+                "data": [{
+                    "status": "active",
+                    "daily_usage_usd": 0.0,
+                    "group": { "daily_limit_usd": 135.0 }
+                }]
+            }),
+            10.0,
+        )
+        .expect("subscription quota");
+
+        merge_subscription_quota(&mut balances, "station-1", quota);
+
+        assert_eq!(balances[0].value, Some(85.5));
+        assert_eq!(balances[0].total_value, Some(13.5));
+        assert_eq!(
+            balances[0].source,
+            "sub2api_account_profile_with_subscription"
+        );
     }
 
     #[test]

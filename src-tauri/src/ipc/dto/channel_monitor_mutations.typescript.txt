@@ -6,7 +6,8 @@ export type ChannelMonitorMutationIdInputDto = { id: string };
 
 export type CreateChannelMonitorInputDto = {
   name: string; targetType: ChannelMonitorTargetTypeInputDto; stationId: string;
-  stationKeyId: string | null; templateId: string; enabled: boolean; intervalSeconds: number;
+  stationKeyId: string | null; templateId: string; enabled: boolean; pauseOnZeroBalance: boolean;
+  intervalSeconds: number;
   protocolKind: MonitorProtocolKindInputDto; clientProfileId: MonitorClientProfileIdInputDto;
   clientProfileVersion: number; primaryModel: string;
   retryMaxAttemptsPerModel: number; retryInitialBackoffMs: number; retryMaxBackoffMs: number;

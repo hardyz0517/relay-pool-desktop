@@ -27,7 +27,8 @@ export type ChannelStatusPageDto = {
 };
 
 export type ChannelStatusMonitorDto = {
-  id: string; name: string; targetType: string; enabled: boolean; protocolKind: string;
+  id: string; name: string; targetType: string; enabled: boolean;
+  pauseOnZeroBalance: boolean; balancePaused: boolean; protocolKind: string;
   clientProfileId: string; clientProfileVersion: number; primaryModel: string;
   fallbackModels: string[]; intervalSeconds: number; jitterSeconds: number;
   nextDueAtMs: number | null;

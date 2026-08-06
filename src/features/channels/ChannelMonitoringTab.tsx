@@ -80,6 +80,7 @@ export function ChannelMonitoringTab({
 
   const summary = useMemo(() => {
     const enabledCount = monitors.filter((monitor) => monitor.enabled).length;
+    const balancePausedCount = monitors.filter((monitor) => monitor.enabled && monitor.balancePaused).length;
     const stationTargetCount = monitors.filter((monitor) => monitor.targetType === "station").length;
     const attentionCount = monitors.filter((monitor) => {
       const outcome = latestStatusByMonitor.get(monitor.id)?.outcome;
@@ -88,6 +89,7 @@ export function ChannelMonitoringTab({
     return {
       total: monitors.length,
       enabledCount,
+      balancePausedCount,
       stationTargetCount,
       attentionCount,
     };
@@ -236,6 +238,9 @@ export function ChannelMonitoringTab({
         <div className="flex flex-wrap gap-2">
           <SummaryPill label="监控" value={`${summary.total}`} />
           <SummaryPill label="启用" value={`${summary.enabledCount}`} />
+          {summary.balancePausedCount > 0 ? (
+            <SummaryPill label="余额暂停" value={`${summary.balancePausedCount}`} />
+          ) : null}
           <SummaryPill label="整站目标" value={`${summary.stationTargetCount}`} />
           <SummaryPill label="需关注" value={`${summary.attentionCount}`} tone={summary.attentionCount > 0 ? "warning" : "neutral"} />
         </div>
@@ -397,8 +402,8 @@ function MonitorRow({
         />
 
         <div className="flex min-w-0 flex-col items-center gap-1">
-          <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"}>
-            {monitor.enabled ? "启用" : "停用"}
+          <StatusBadge tone={monitor.enabled && !monitor.balancePaused ? "healthy" : "disabled"}>
+            {!monitor.enabled ? "停用" : monitor.balancePaused ? "余额暂停" : "启用"}
           </StatusBadge>
           <div className="max-w-full truncate text-xs text-muted-foreground">
             {intervalLabel}
@@ -431,8 +436,8 @@ function MonitorRow({
           </MonitorCardField>
           <MonitorCardField label="请求方式" value={`${protocolLabel(monitor.protocolKind)} · ${profileLabel(monitor.clientProfileId)}`} />
           <MonitorCardField label="调度" value={intervalLabel}>
-            <StatusBadge tone={monitor.enabled ? "healthy" : "disabled"} className="ml-2">
-              {monitor.enabled ? "启用" : "停用"}
+            <StatusBadge tone={monitor.enabled && !monitor.balancePaused ? "healthy" : "disabled"} className="ml-2">
+              {!monitor.enabled ? "停用" : monitor.balancePaused ? "余额暂停" : "启用"}
             </StatusBadge>
           </MonitorCardField>
         </div>

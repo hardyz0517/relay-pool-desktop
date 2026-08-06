@@ -182,6 +182,31 @@ impl MonitoringStatusQueryRepository {
                 eh.latency_ms AS endpoint_ping_latency_ms,
                 eh.checked_at AS endpoint_ping_checked_at,
                 m.enabled,
+                m.pause_on_zero_balance,
+                CASE
+                    WHEN m.pause_on_zero_balance = 1
+                     AND COALESCE(
+                         (
+                             SELECT b.value
+                             FROM balance_snapshots b
+                             WHERE m.target_type = 'station_key'
+                               AND b.station_key_id = m.station_key_id
+                               AND b.scope = 'station_key'
+                             ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                             LIMIT 1
+                         ),
+                         (
+                             SELECT b.value
+                             FROM balance_snapshots b
+                             WHERE b.station_id = m.station_id
+                               AND b.station_key_id IS NULL
+                               AND b.scope = 'station'
+                             ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
+                             LIMIT 1
+                         )
+                     ) <= 0
+                    THEN 1 ELSE 0
+                END AS balance_paused,
                 m.protocol_kind,
                 m.client_profile_id,
                 m.client_profile_version,
@@ -256,6 +281,8 @@ impl MonitoringStatusQueryRepository {
                     effective_group_category: row.get("effective_group_category"),
                     endpoint_ping: endpoint_ping_from_row(&row),
                     enabled: row.get::<i64, _>("enabled") != 0,
+                    pause_on_zero_balance: row.get::<i64, _>("pause_on_zero_balance") != 0,
+                    balance_paused: row.get::<i64, _>("balance_paused") != 0,
                     protocol_kind: row.get("protocol_kind"),
                     client_profile_id: row.get("client_profile_id"),
                     client_profile_version: row.get("client_profile_version"),
@@ -584,6 +611,8 @@ pub(crate) struct BaseStatusRow {
     pub(crate) effective_group_category: Option<String>,
     pub(crate) endpoint_ping: Option<ChannelStatusEndpointPing>,
     pub(crate) enabled: bool,
+    pub(crate) pause_on_zero_balance: bool,
+    pub(crate) balance_paused: bool,
     pub(crate) protocol_kind: String,
     pub(crate) client_profile_id: String,
     pub(crate) client_profile_version: i64,

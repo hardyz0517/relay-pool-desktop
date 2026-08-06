@@ -1835,6 +1835,7 @@
       "output": [
         {
           "attemptTimeoutMs": 10000,
+          "balancePaused": false,
           "clientProfileId": "standard_api",
           "clientProfileVersion": 1,
           "consecutiveFailureThreshold": 3,
@@ -1853,6 +1854,7 @@
           "maxConcurrency": 1,
           "name": "Fixture monitor",
           "note": null,
+          "pauseOnZeroBalance": true,
           "primaryModel": "fixture-model",
           "protocolKind": "open_ai_chat",
           "retryInitialBackoffMs": 200,
@@ -1980,6 +1982,7 @@
         "maxConcurrency": 1,
         "name": "Fixture monitor",
         "note": null,
+        "pauseOnZeroBalance": true,
         "primaryModel": "fixture-model",
         "protocolKind": "open_ai_chat",
         "retryInitialBackoffMs": 200,
@@ -1994,6 +1997,7 @@
       },
       "output": {
         "attemptTimeoutMs": 10000,
+        "balancePaused": false,
         "clientProfileId": "standard_api",
         "clientProfileVersion": 1,
         "consecutiveFailureThreshold": 2,
@@ -2012,6 +2016,7 @@
         "maxConcurrency": 1,
         "name": "Fixture monitor",
         "note": null,
+        "pauseOnZeroBalance": true,
         "primaryModel": "fixture-model",
         "protocolKind": "open_ai_chat",
         "retryInitialBackoffMs": 200,
@@ -2048,6 +2053,7 @@
         "maxConcurrency": 1,
         "name": "Fixture monitor",
         "note": null,
+        "pauseOnZeroBalance": true,
         "primaryModel": "fixture-model",
         "protocolKind": "open_ai_chat",
         "retryInitialBackoffMs": 200,
@@ -2062,6 +2068,7 @@
       },
       "output": {
         "attemptTimeoutMs": 10000,
+        "balancePaused": false,
         "clientProfileId": "standard_api",
         "clientProfileVersion": 1,
         "consecutiveFailureThreshold": 2,
@@ -2080,6 +2087,7 @@
         "maxConcurrency": 1,
         "name": "Fixture monitor",
         "note": null,
+        "pauseOnZeroBalance": true,
         "primaryModel": "fixture-model",
         "protocolKind": "open_ai_chat",
         "retryInitialBackoffMs": 200,

@@ -297,6 +297,8 @@ fn fixture_monitor() -> ChannelMonitor {
         station_key_id: Some("key-1".into()),
         template_id: "template-1".into(),
         enabled: true,
+        pause_on_zero_balance: true,
+        balance_paused: false,
         protocol_kind: "open_ai_chat".into(),
         client_profile_id: "standard_api".into(),
         client_profile_version: 1,

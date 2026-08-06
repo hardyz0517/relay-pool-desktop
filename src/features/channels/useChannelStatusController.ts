@@ -1,8 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   cancelChannelMonitorExecution,
-  runChannelMonitorNowWithTrigger,
+  runChannelMonitorNow,
 } from "@/lib/api/channelMonitors";
 import {
   channelMonitorExecutionsQueryOptions,
@@ -38,7 +38,6 @@ export function useChannelStatusController() {
   const [filters, setFilters] = useState<ChannelStatusFilters>(defaultChannelStatusFilters);
   const [sort, setSort] = useState<ChannelStatusSortModel>(defaultChannelStatusSort);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
-  const triggerRequestIds = useRef(new Map<string, string>());
   const setWindow = useCallback((value: ChannelStatusWorkspaceWindow) => {
     setWindowState(value);
     writeChannelStatusWindow(value);
@@ -62,8 +61,7 @@ export function useChannelStatusController() {
 
   const runNowMutation = useMutation({
     mutationFn: async (row: ChannelStatusRowView) => {
-      const triggerRequestId = getOrCreateTriggerRequestId(triggerRequestIds.current, row.monitorId);
-      return runChannelMonitorNowWithTrigger(row.monitorId, triggerRequestId);
+      return runChannelMonitorNow(row.monitorId);
     },
     onSuccess: async () => {
       await invalidateMonitoringQueries(queryClient);
@@ -121,14 +119,4 @@ async function invalidateMonitoringQueries(queryClient: ReturnType<typeof useQue
     invalidatePricingMonitoringQueries(queryClient),
     queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitorExecutions }),
   ]);
-}
-
-function getOrCreateTriggerRequestId(triggerRequestIds: Map<string, string>, monitorId: string) {
-  const existing = triggerRequestIds.get(monitorId);
-  if (existing) {
-    return existing;
-  }
-  const requestId = `manual:${monitorId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
-  triggerRequestIds.set(monitorId, requestId);
-  return requestId;
 }

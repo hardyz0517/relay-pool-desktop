@@ -27,10 +27,8 @@ async fn status_monitoring_v2_fresh_migrator_reaches_monitoring_schema() {
         .fetch_one(&mut connection)
         .await
         .expect("sqlx migration version");
-    assert!(
-        schema_version <= sqlx_version,
-        "compatibility schema must not claim a version beyond the SQL migration ledger"
-    );
+    assert_eq!(schema_version, 28);
+    assert_eq!(sqlx_version, 28);
     assert!(
         schema_version >= 10,
         "Monitoring V2 requires migration 0010"
@@ -43,6 +41,23 @@ async fn status_monitoring_v2_fresh_migrator_reaches_monitoring_schema() {
     .await
     .expect("execution table");
     assert_eq!(execution_table, "channel_monitor_executions");
+
+    let pause_column = sqlx::query(
+        r#"
+        SELECT name, "notnull", dflt_value
+        FROM pragma_table_info('channel_monitors')
+        WHERE name = 'pause_on_zero_balance'
+        "#,
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("zero-balance pause policy column");
+    assert_eq!(
+        pause_column.get::<String, _>("name"),
+        "pause_on_zero_balance"
+    );
+    assert_eq!(pause_column.get::<i64, _>("notnull"), 1);
+    assert_eq!(pause_column.get::<String, _>("dflt_value"), "1");
 }
 
 #[tokio::test]

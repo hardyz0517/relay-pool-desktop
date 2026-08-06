@@ -41,6 +41,8 @@ export type ChannelMonitor = {
   stationKeyId: string | null;
   templateId: string;
   enabled: boolean;
+  pauseOnZeroBalance: boolean;
+  balancePaused: boolean;
   protocolKind: ChannelMonitorProtocolKind;
   clientProfileId: ChannelMonitorClientProfileId;
   clientProfileVersion: number;
@@ -73,6 +75,7 @@ export type CreateChannelMonitorInput = {
   stationKeyId: string | null;
   templateId: string;
   enabled: boolean;
+  pauseOnZeroBalance: boolean;
   protocolKind: ChannelMonitorProtocolKind;
   clientProfileId: ChannelMonitorClientProfileId;
   clientProfileVersion: number;
@@ -180,6 +183,8 @@ export type ChannelStatusMonitor = {
   name: string;
   targetType: string;
   enabled: boolean;
+  pauseOnZeroBalance: boolean;
+  balancePaused: boolean;
   protocolKind: string;
   clientProfileId: string;
   clientProfileVersion: number;

@@ -476,6 +476,92 @@ async fn monitoring_list_queries_are_bounded_and_indexed() {
 }
 
 #[tokio::test]
+async fn zero_balance_pause_is_reversible_without_changing_user_enabled_state() {
+    let mut connection = ready_connection().await;
+    let definitions = MonitoringDefinitionRepository;
+
+    assert_eq!(
+        definitions
+            .list_due(&mut connection, 10_000, 10)
+            .await
+            .expect("initial due monitors")
+            .len(),
+        1
+    );
+
+    insert_station_balance(&mut connection, "balance-zero", 0.0, "100").await;
+    assert!(definitions
+        .list_due(&mut connection, 10_000, 10)
+        .await
+        .expect("zero-balance due monitors")
+        .is_empty());
+    assert_eq!(
+        definitions
+            .next_due_at_ms(&mut connection)
+            .await
+            .expect("zero-balance next due"),
+        None
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT enabled FROM channel_monitors WHERE id = 'monitor-1'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("user enabled state"),
+        1,
+        "balance policy must never rewrite the user-controlled enabled flag"
+    );
+
+    insert_station_balance(&mut connection, "balance-restored", 8.0, "200").await;
+    assert_eq!(
+        definitions
+            .list_due(&mut connection, 10_000, 10)
+            .await
+            .expect("restored-balance due monitors")
+            .len(),
+        1
+    );
+
+    sqlx::query("UPDATE channel_monitors SET enabled = 0 WHERE id = 'monitor-1'")
+        .execute(&mut connection)
+        .await
+        .expect("manual disable");
+    insert_station_balance(&mut connection, "balance-restored-again", 12.0, "300").await;
+    assert!(
+        definitions
+            .list_due(&mut connection, 10_000, 10)
+            .await
+            .expect("manually disabled due monitors")
+            .is_empty(),
+        "balance recovery must not override a user-controlled disable"
+    );
+}
+
+async fn insert_station_balance(
+    connection: &mut SqliteConnection,
+    id: &str,
+    value: f64,
+    updated_at: &str,
+) {
+    sqlx::query(
+        r#"
+        INSERT INTO balance_snapshots (
+            id, station_id, station_key_id, scope, value, currency,
+            status, source, confidence, created_at, updated_at
+        ) VALUES (?1, 'station-1', NULL, 'station', ?2, 'CNY',
+                  'normal', 'fixture', 1.0, ?3, ?3)
+        "#,
+    )
+    .bind(id)
+    .bind(value)
+    .bind(updated_at)
+    .execute(connection)
+    .await
+    .expect("insert station balance");
+}
+
+#[tokio::test]
 async fn monitoring_definition_config_loads_v2_fields_without_legacy_fallback_primary_guessing() {
     let mut connection = ready_connection().await;
     let definitions = MonitoringDefinitionRepository;

@@ -21,7 +21,6 @@ import {
   validateMonitorDraft,
   type ChannelMonitorDraft,
 } from "@/lib/channelMonitorViewModel";
-import { profileLabel } from "@/lib/channelMonitorDisplay";
 import { MonitorProfileSelector } from "./components/MonitorProfileSelector";
 import { MonitorProtocolSelector } from "./components/MonitorProtocolSelector";
 
@@ -119,9 +118,6 @@ export function ChannelMonitorForm({
   const highRisk = draft.healthPolicyMode === "authoritative" || Number(draft.intervalSeconds) < 60;
   const canSubmit = !validationError && !saving && (!highRisk || riskAcknowledged);
   const isStationTarget = draft.targetType === "station";
-  const theoreticalAttempts = (1 + draft.fallbackModels.filter((model) => model.trim()).length)
-    * (Number(draft.retryMaxAttemptsPerModel) || 0);
-
   function updateDraft(patch: Partial<ChannelMonitorDraft>) {
     setDraft((current) => ({ ...current, ...patch }));
   }
@@ -245,12 +241,20 @@ export function ChannelMonitorForm({
           </SectionCard>
 
           <SectionCard title="调度与预算">
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               <Field label="间隔（秒）"><NumberInput value={draft.intervalSeconds} onChange={(intervalSeconds) => updateDraft({ intervalSeconds })} /></Field>
               <Field label="抖动（秒）"><NumberInput value={draft.jitterSeconds} onChange={(jitterSeconds) => updateDraft({ jitterSeconds })} /></Field>
               <Field label="单次超时（毫秒）"><NumberInput value={draft.attemptTimeoutMs} onChange={(attemptTimeoutMs) => updateDraft({ attemptTimeoutMs })} /></Field>
               <Field label="任务超时（毫秒）"><NumberInput value={draft.executionTimeoutMs} onChange={(executionTimeoutMs) => updateDraft({ executionTimeoutMs })} /></Field>
               <Field label="每日尝试次数上限"><NumberInput value={draft.riskDailyProbeBudget} onChange={(riskDailyProbeBudget) => updateDraft({ riskDailyProbeBudget })} /></Field>
+              <Field label="零余额自动暂停">
+                <SwitchControl
+                  checked={draft.pauseOnZeroBalance}
+                  ariaLabel="余额为零时自动暂停监控"
+                  onCheckedChange={() => updateDraft({ pauseOnZeroBalance: !draft.pauseOnZeroBalance })}
+                  showLabel={false}
+                />
+              </Field>
             </div>
           </SectionCard>
 
@@ -266,9 +270,6 @@ export function ChannelMonitorForm({
               </Field>
               <Field label="连续失败阈值"><NumberInput value={draft.healthFailureThreshold} onChange={(healthFailureThreshold) => updateDraft({ healthFailureThreshold })} /></Field>
               <Field label="连续恢复阈值"><NumberInput value={draft.healthRecoveryThreshold} onChange={(healthRecoveryThreshold) => updateDraft({ healthRecoveryThreshold })} /></Field>
-            </div>
-            <div className="mt-3 rounded-[var(--surface-radius)] border border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
-              当前配置单目标每次任务理论最多 {theoreticalAttempts} 次请求 · {profileLabel(draft.clientProfileId)} v{draft.clientProfileVersion}
             </div>
           </SectionCard>
 

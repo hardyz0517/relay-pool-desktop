@@ -918,6 +918,22 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
                 mapping::merge_account_profile_balance(&mut facts.balances, profile_balance);
             }
         }
+        if let Some(subscription_quota) = collect_subscription_quota(
+            context,
+            &website_url,
+            &auth,
+            &mut access_token,
+            &mut evidence,
+            &mut endpoint_results,
+        )
+        .await?
+        {
+            mapping::merge_subscription_quota(
+                &mut facts.balances,
+                &context.station.station_id,
+                subscription_quota,
+            );
+        }
         if !facts.balances.is_empty() {
             if let Some(stats) = collect_dashboard_usage_stats(
                 context,
@@ -993,6 +1009,52 @@ async fn collect_account_profile_balance(
             auth.credit_per_cny,
         ) {
             return Ok(Some(balance));
+        }
+    }
+    Ok(None)
+}
+
+async fn collect_subscription_quota(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    auth: &Sub2ApiAuth,
+    access_token: &mut Option<String>,
+    evidence: &mut Vec<EndpointEvidence>,
+    endpoint_results: &mut Vec<Value>,
+) -> Result<Option<mapping::SubscriptionQuotaSummary>, DriverFailure> {
+    for (path, parser) in [
+        (
+            "/api/v1/subscriptions/active",
+            mapping::parse_active_subscription_quota
+                as fn(&Value, f64) -> Option<mapping::SubscriptionQuotaSummary>,
+        ),
+        (
+            "/api/v1/user/platform-quotas",
+            mapping::parse_platform_quota
+                as fn(&Value, f64) -> Option<mapping::SubscriptionQuotaSummary>,
+        ),
+    ] {
+        let Some(token) = ensure_access_token(context, website_url, auth, access_token).await?
+        else {
+            return Ok(None);
+        };
+        let mut token = token;
+        let execution = execute_bearer_json_with_recovery(
+            context,
+            EndpointRole::Balance,
+            website_url,
+            path,
+            &mut token,
+            auth.login.as_ref(),
+        )
+        .await?;
+        *access_token = Some(token);
+        evidence.push(execution.evidence.clone());
+        endpoint_results.push(execution.redacted);
+        if execution.ok {
+            if let Some(quota) = parser(&execution.payload, auth.credit_per_cny) {
+                return Ok(Some(quota));
+            }
         }
     }
     Ok(None)
@@ -1856,6 +1918,87 @@ mod tests {
             cancellation: CancellationToken::new(),
             correlation_id: "test-correlation".to_string(),
         }
+    }
+
+    fn test_balance_context<'a>(
+        base_url: &str,
+        secrets: &'a TestSecretAccessor,
+        outbound: &'a AsyncOutboundClient,
+    ) -> CollectorContext<'a> {
+        let access_token = test_credential();
+        let station_key = OpaqueCredentialHandle {
+            station_id: "station-1".to_string(),
+            credential_revision: 7,
+            scope: CredentialScope::StationKey,
+        };
+        CollectorContext {
+            station: test_station_identity(),
+            endpoints: ProviderEndpoints {
+                api_base_url: Some(base_url.to_string()),
+                website_url: Some(base_url.to_string()),
+            },
+            credential: access_token.clone(),
+            auth: Some(ProviderAuthContext::Sub2Api {
+                station_keys: vec![Sub2ApiStationKeyCredential {
+                    station_key_id: "key-1".to_string(),
+                    credential: station_key,
+                }],
+                access_token: Some(access_token),
+                login: None,
+                credit_per_cny: 10.0,
+            }),
+            secrets,
+            outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn balance_collection_adds_subscription_quota_to_station_balance() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({"quota": {"remaining": 0.0, "used": 0.0}}),
+            )),
+            Some(json_response(200, json!({"data": {"balance": 0.0}}))),
+            Some(json_response(
+                200,
+                json!({
+                    "data": [{
+                        "id": 12,
+                        "status": "active",
+                        "daily_usage_usd": 0.0,
+                        "group": { "daily_limit_usd": 135.0 }
+                    }]
+                }),
+            )),
+            Some(json_response(200, json!({}))),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_balance_context(&server.base_url, &secrets, &outbound);
+
+        let output = collect_balance(&context).await.expect("collect balance");
+        let requests = server.finish();
+        let station_balance = output
+            .facts
+            .balances
+            .iter()
+            .find(|balance| balance.scope == "station")
+            .expect("station balance");
+
+        assert_eq!(station_balance.value, Some(13.5));
+        assert_eq!(requests.len(), 4);
+        assert!(requests[0].starts_with("GET /usage "));
+        assert!(requests[1].starts_with("GET /api/v1/user/profile "));
+        assert!(requests[2].starts_with("GET /api/v1/subscriptions/active "));
+        assert!(requests[3].starts_with("GET /api/v1/usage/dashboard/stats "));
+        assert!(!requests
+            .iter()
+            .any(|request| request.contains("/api/v1/user/platform-quotas")));
     }
 
     #[tokio::test]
