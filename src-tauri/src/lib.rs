@@ -121,8 +121,9 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+    let restart_item = MenuItem::with_id(app, "restart", "Restart", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &restart_item, &quit_item])?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("Relay Pool Desktop")
@@ -132,6 +133,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             let menu_id = event.id();
             if menu_id.as_ref() == "show" {
                 show_main_window(app);
+            }
+            if menu_id.as_ref() == "restart" {
+                app.request_restart();
             }
             if menu_id.as_ref() == "quit" {
                 if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
