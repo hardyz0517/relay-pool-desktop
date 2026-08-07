@@ -9,5 +9,7 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
+    minWorkers: 1,
+    maxWorkers: 2,
   },
 });
