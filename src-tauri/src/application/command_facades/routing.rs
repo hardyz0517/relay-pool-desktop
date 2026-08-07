@@ -25,6 +25,7 @@ use crate::{
     services::{
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
         time::now_millis_for_services,
+        proxy::runtime::ProxyRuntimeState,
     },
 };
 
@@ -44,16 +45,19 @@ impl From<ApplicationError> for EndpointPingCommandError {
 pub(crate) struct RoutingCommandFacade {
     routing: Arc<RoutingService>,
     outbound: AsyncOutboundClient,
+    proxy: Arc<ProxyRuntimeState>,
 }
 
 impl RoutingCommandFacade {
     pub(crate) fn new(
         routing: Arc<RoutingService>,
         outbound: AsyncOutboundClient,
+        proxy: Arc<ProxyRuntimeState>,
     ) -> Self {
         Self {
             routing,
             outbound,
+            proxy,
         }
     }
 
@@ -108,7 +112,7 @@ impl RoutingCommandFacade {
     pub(crate) async fn load_routing_runtime_overlay(
         &self,
     ) -> Result<RoutingRuntimeOverlay, ApplicationError> {
-        self.routing.load_routing_runtime_overlay().await
+        self.routing.load_routing_runtime_overlay(Arc::clone(&self.proxy)).await
     }
 
     pub(crate) async fn list_recent_route_decisions(

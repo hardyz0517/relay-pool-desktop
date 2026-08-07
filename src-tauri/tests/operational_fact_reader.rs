@@ -282,6 +282,8 @@ async fn create_schema(pool: &SqlitePool) {
             enabled INTEGER NOT NULL,
             priority INTEGER NOT NULL,
             routing_order INTEGER,
+            group_binding_id TEXT,
+            group_id_hash TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -315,6 +317,12 @@ async fn create_schema(pool: &SqlitePool) {
             failure_count INTEGER NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE station_group_bindings (
+            id TEXT PRIMARY KEY,
+            group_id_hash TEXT,
+            group_category_override TEXT,
+            inferred_group_category TEXT
+        );
         CREATE TABLE station_endpoint_health (
             station_id TEXT PRIMARY KEY,
             endpoint_revision INTEGER NOT NULL
@@ -326,6 +334,8 @@ async fn create_schema(pool: &SqlitePool) {
             success_count INTEGER NOT NULL,
             failure_count INTEGER NOT NULL,
             avg_latency_ms INTEGER,
+            last_error_summary TEXT,
+            cooldown_until TEXT,
             updated_at TEXT NOT NULL
         );
         CREATE TABLE endpoint_health_snapshot (
@@ -539,7 +549,7 @@ async fn fixed_query_count_does_not_scale_with_candidate_count() {
     .await;
 
     assert_eq!(bundle.candidates().len(), 100);
-    assert_eq!(bundle.query_count(), 4);
+    assert_eq!(bundle.query_count(), 3);
     assert!(!bundle.loaded_full_model_catalog());
 }
 
@@ -622,7 +632,7 @@ async fn reader_does_not_return_secret_raw_json_or_full_endpoint_url() {
 }
 
 #[tokio::test]
-async fn candidate_limit_failure_is_typed_and_not_silent_sql_truncation() {
+async fn candidate_limit_is_a_deterministic_sql_bound() {
     let pool = test_pool().await;
     for index in 0..3 {
         insert_candidate(&pool, index).await;
@@ -630,21 +640,17 @@ async fn candidate_limit_failure_is_typed_and_not_silent_sql_truncation() {
 
     let store = OperationalFactStore;
     let mut read = TestReadSession::begin(&pool).await;
-    let error = store
+    let rows = store
         .load_raw(
             &mut read,
             &OperationalFactReadOptions::for_request_model("gpt-4.1").with_candidate_limit(2),
         )
         .await
-        .expect_err("candidate limit");
+        .expect("candidate rows are bounded");
 
-    assert!(matches!(
-        error,
-        OperationalFactQueryError::CandidateLimitExceeded {
-            actual: 3,
-            limit: 2
-        }
-    ));
+    assert_eq!(rows.candidates.len(), 2);
+    assert_eq!(rows.candidates[0].station_key_id, "key-0");
+    assert_eq!(rows.candidates[1].station_key_id, "key-1");
 }
 
 #[tokio::test]

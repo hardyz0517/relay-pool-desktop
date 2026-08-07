@@ -154,10 +154,12 @@ pub(crate) fn compose_remote_keys_command_facade(
 pub(crate) fn compose_routing_command_facade(
     services: &AppServices,
     outbound: AsyncOutboundClient,
+    proxy: Arc<ProxyRuntimeState>,
 ) -> RoutingCommandFacade {
     RoutingCommandFacade::new(
         Arc::clone(&services.routing),
         outbound,
+        proxy,
     )
 }
 

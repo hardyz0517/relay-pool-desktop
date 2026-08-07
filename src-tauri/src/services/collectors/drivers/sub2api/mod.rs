@@ -1945,7 +1945,7 @@ mod tests {
                 }],
                 access_token: Some(access_token),
                 login: None,
-                credit_per_cny: 10.0,
+                credit_per_cny: 27.0,
             }),
             secrets,
             outbound,
@@ -1990,7 +1990,7 @@ mod tests {
             .find(|balance| balance.scope == "station")
             .expect("station balance");
 
-        assert_eq!(station_balance.value, Some(13.5));
+        assert_eq!(station_balance.value, Some(5.0));
         assert_eq!(requests.len(), 4);
         assert!(requests[0].starts_with("GET /usage "));
         assert!(requests[1].starts_with("GET /api/v1/user/profile "));

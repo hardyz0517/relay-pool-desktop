@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+
 use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 
 use crate::{
@@ -919,7 +921,10 @@ impl CredentialStore {
         station_key_ids: &[String],
         now: &str,
     ) -> Result<Vec<KeyPoolItem>, PersistenceError> {
-        if station_key_ids.is_empty() {
+        let expected_ids = sqlx::query_scalar::<_, String>("SELECT id FROM station_keys")
+            .fetch_all(write.connection())
+            .await?;
+        if !is_complete_key_pool_order(station_key_ids, &expected_ids) {
             return Err(PersistenceError::ConstraintViolation);
         }
         for (index, id) in station_key_ids.iter().enumerate() {
@@ -2434,6 +2439,21 @@ fn i64_to_bool(value: i64) -> bool {
     value != 0
 }
 
+fn is_complete_key_pool_order(submitted_ids: &[String], expected_ids: &[String]) -> bool {
+    if submitted_ids.len() != expected_ids.len() {
+        return false;
+    }
+    let submitted = submitted_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let expected = expected_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    submitted.len() == submitted_ids.len() && submitted == expected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2456,5 +2476,34 @@ mod tests {
                 1.0,
             )
         );
+    }
+
+    #[test]
+    fn key_pool_reorder_requires_each_current_key_exactly_once() {
+        let expected = vec![
+            "key-a".to_string(),
+            "key-b".to_string(),
+            "key-c".to_string(),
+        ];
+        assert!(is_complete_key_pool_order(
+            &[
+                "key-c".to_string(),
+                "key-a".to_string(),
+                "key-b".to_string()
+            ],
+            &expected,
+        ));
+        assert!(!is_complete_key_pool_order(
+            &[
+                "key-a".to_string(),
+                "key-a".to_string(),
+                "key-b".to_string()
+            ],
+            &expected,
+        ));
+        assert!(!is_complete_key_pool_order(
+            &["key-a".to_string(), "key-b".to_string()],
+            &expected,
+        ));
     }
 }

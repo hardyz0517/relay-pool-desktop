@@ -310,7 +310,7 @@ fn append_station_balance_aggregates(balances: &mut Vec<CollectedBalanceFact>) {
                 .find_map(|balance| balance.account_concurrency_limit),
             currency,
             credit_unit,
-            status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+            status: if value <= 0.0 { "depleted" } else { "normal" }.to_string(),
             source: "station_key_balance_aggregate".to_string(),
             confidence: key_balances
                 .iter()

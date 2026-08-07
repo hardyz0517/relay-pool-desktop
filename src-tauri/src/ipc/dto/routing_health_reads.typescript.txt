@@ -276,6 +276,8 @@ export type RoutingWorkspaceCandidateDto = {
   priceBasis: string;
   pricing: RoutingCandidatePricingSnapshotDto;
   balanceStatus: string | null;
+  balanceValue: number | null;
+  balanceCurrency: string | null;
   capacity: RoutingCandidateCapacitySnapshotDto;
   sourceRefs: RoutingCandidateSourceRefsDto;
   hardRejectionCodes: string[];

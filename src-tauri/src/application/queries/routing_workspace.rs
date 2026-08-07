@@ -9,7 +9,7 @@ use crate::{
     },
     models::{
         pricing::ResolvedPricingContext,
-        routing::{CanonicalRoutingCandidate, RoutingGroupFilter},
+        routing::{CanonicalRoutingCandidate, RoutingGroupFilter, RuntimeRoutingBalance},
         routing_policy::RoutingPolicyConfigV1,
     },
 };
@@ -78,6 +78,8 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) price_basis: String,
     pub(crate) pricing: RoutingCandidatePricingSnapshot,
     pub(crate) balance_status: Option<String>,
+    pub(crate) balance_value: Option<f64>,
+    pub(crate) balance_currency: Option<String>,
     pub(crate) capacity: RoutingCandidateCapacitySnapshot,
     pub(crate) source_refs: RoutingCandidateSourceRefs,
     pub(crate) hard_rejection_codes: Vec<String>,
@@ -179,12 +181,22 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
         .and_then(|cursor| cursor.strip_prefix("offset:"))
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
-    let total = candidates.len();
-    let rows = candidates
+    let mut ordered_candidates = candidates
+        .into_iter()
+        .map(|(candidate, pricing)| candidate_from_canonical(candidate, pricing, request, generated_at_ms))
+        .collect::<Vec<_>>();
+    ordered_candidates.sort_by(|left, right| {
+        depleted_rank(left.balance_value, left.balance_status.as_deref())
+            .cmp(&depleted_rank(right.balance_value, right.balance_status.as_deref()))
+            .then_with(|| (!left.schedulable).cmp(&(!right.schedulable)))
+            .then_with(|| left.priority.cmp(&right.priority))
+            .then_with(|| left.station_key_id.cmp(&right.station_key_id))
+    });
+    let total = ordered_candidates.len();
+    let rows = ordered_candidates
         .into_iter()
         .skip(start)
         .take(limit)
-        .map(|(candidate, pricing)| candidate_from_canonical(candidate, pricing, request, generated_at_ms))
         .collect::<Vec<_>>();
     let next = start + rows.len();
     RoutingWorkspaceSnapshot {
@@ -202,6 +214,32 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
         },
         candidates: rows,
         read_model_status: RoutingReadModelStatus::Available,
+    }
+}
+
+fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
+    if value.is_some_and(|value| value.is_finite() && value <= 0.0)
+        || status.is_some_and(|status| {
+            matches!(
+                status.trim().to_ascii_lowercase().as_str(),
+                "low" | "depleted" | "exhausted" | "empty"
+            )
+        })
+    {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::depleted_rank;
+
+    #[test]
+    fn negative_balance_is_always_in_the_depleted_display_tier() {
+        assert_eq!(depleted_rank(Some(-0.05), Some("normal")), 1);
+        assert_eq!(depleted_rank(Some(0.06), Some("normal")), 0);
     }
 }
 
@@ -251,7 +289,7 @@ fn candidate_from_canonical(
     if request.uses_tools() && !capability.supports_tools { hard_rejection_codes.push("capability_rejected".to_string()); }
     if request.uses_vision() && !capability.supports_vision { hard_rejection_codes.push("capability_rejected".to_string()); }
     if request.uses_reasoning() && !capability.supports_reasoning { hard_rejection_codes.push("capability_rejected".to_string()); }
-    if !request.allow_depleted_fallback() && candidate.balance_snapshot.as_ref().is_some_and(|balance| matches!(balance.status.as_str(), "depleted" | "exhausted" | "empty")) {
+    if !request.allow_depleted_fallback() && candidate.balance_snapshot.as_ref().is_some_and(RuntimeRoutingBalance::is_depleted) {
         hard_rejection_codes.push("balance_depleted".to_string());
     }
     let health_state = candidate.health.as_ref().map(|health| {
@@ -259,7 +297,18 @@ fn candidate_from_canonical(
         else if health.consecutive_failures > 0 { "degraded" }
         else { "ready" }
     }).unwrap_or("unknown").to_string();
-    let capacity_limit = candidate.max_concurrency.max(0);
+    let capacity_limit = if matches!(
+        candidate.station_type.trim().to_ascii_lowercase().as_str(),
+        "sub2api" | "newapi"
+    ) {
+        candidate
+            .station_account_concurrency_limit
+            .filter(|value| *value > 0)
+            .unwrap_or(candidate.max_concurrency)
+    } else {
+        candidate.max_concurrency
+    }
+    .max(0);
     let in_flight = candidate.load_factor.map(|value| value.max(0));
     RoutingWorkspaceCandidate {
         station_key_id: candidate.station_key_id.clone(),
@@ -312,6 +361,8 @@ fn candidate_from_canonical(
             confidence: pricing_context.confidence,
         },
         balance_status: candidate.balance_snapshot.as_ref().map(|balance| balance.status.clone()),
+        balance_value: candidate.balance_snapshot.as_ref().and_then(|balance| balance.value),
+        balance_currency: candidate.balance_snapshot.as_ref().map(|balance| balance.currency.clone()),
         capacity: RoutingCandidateCapacitySnapshot {
             mode: RoutingCapacityReadMode::SnapshotOnly,
             max_concurrency: capacity_limit,

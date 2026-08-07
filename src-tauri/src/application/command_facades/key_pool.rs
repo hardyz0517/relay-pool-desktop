@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     application::{
-        credentials::CredentialService,
-        error::ApplicationError,
-        queries::key_pool::KeyPoolQuery,
+        credentials::CredentialService, error::ApplicationError, queries::key_pool::KeyPoolQuery,
     },
     models::{
         group_facts::UpdateStationKeyGroupBindingInput,
@@ -22,10 +20,7 @@ pub(crate) struct KeyPoolCommandFacade {
 }
 
 impl KeyPoolCommandFacade {
-    pub(crate) fn new(
-        credentials: Arc<CredentialService>,
-        key_pool: Arc<KeyPoolQuery>,
-    ) -> Self {
+    pub(crate) fn new(credentials: Arc<CredentialService>, key_pool: Arc<KeyPoolQuery>) -> Self {
         Self {
             credentials,
             key_pool,
@@ -121,11 +116,7 @@ impl KeyPoolCommandFacade {
     }
 
     pub(crate) async fn list_key_pool_items(&self) -> Result<Vec<KeyPoolItem>, ApplicationError> {
-        let read_model = self
-            .key_pool
-            .load(crate::application::pagination::PageLimit::new(500).expect("bounded limit"))
-            .await?;
-        Ok(read_model.data.rows)
+        self.key_pool.load_all().await
     }
 
     pub(crate) async fn reorder_key_pool(

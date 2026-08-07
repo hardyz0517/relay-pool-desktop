@@ -116,13 +116,12 @@ impl CredentialAvailabilityFact {
         self.available
     }
 
-    #[cfg(test)]
     pub(crate) fn record_revision(&self) -> RecordRevision {
         self.record_revision
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OperationalCandidateFact {
     station_key_id: StationKeyId,
     station_id: StationId,
@@ -130,6 +129,9 @@ pub(crate) struct OperationalCandidateFact {
     credential: CredentialAvailabilityFact,
     priority: i64,
     backup_only: bool,
+    group_binding_id: Option<String>,
+    group_id_hash: Option<String>,
+    group_category: Option<String>,
     supports_chat_completions: bool,
     supports_responses: bool,
     supports_stream: bool,
@@ -144,7 +146,10 @@ pub(crate) struct OperationalCandidateFact {
     failure_count: i64,
     consecutive_failures: i64,
     avg_latency_ms: Option<i64>,
+    last_error_summary: Option<String>,
+    cooldown_until: Option<String>,
     balance_status: Option<String>,
+    balance_value: Option<f64>,
 }
 
 impl OperationalCandidateFact {
@@ -164,22 +169,132 @@ impl OperationalCandidateFact {
         &self.credential
     }
 
-    pub(crate) fn priority(&self) -> i64 { self.priority }
-    pub(crate) fn backup_only(&self) -> bool { self.backup_only }
-    pub(crate) fn supports_chat_completions(&self) -> bool { self.supports_chat_completions }
-    pub(crate) fn supports_responses(&self) -> bool { self.supports_responses }
-    pub(crate) fn supports_stream(&self) -> bool { self.supports_stream }
-    pub(crate) fn supports_tools(&self) -> bool { self.supports_tools }
-    pub(crate) fn supports_vision(&self) -> bool { self.supports_vision }
-    pub(crate) fn supports_reasoning(&self) -> bool { self.supports_reasoning }
-    pub(crate) fn model_allowlist(&self) -> &[String] { &self.model_allowlist }
-    pub(crate) fn model_blocklist(&self) -> &[String] { &self.model_blocklist }
-    pub(crate) fn preferred_models(&self) -> &[String] { &self.preferred_models }
-    pub(crate) fn routing_tags(&self) -> &[String] { &self.routing_tags }
-    pub(crate) fn success_count(&self) -> i64 { self.success_count }
-    pub(crate) fn failure_count(&self) -> i64 { self.failure_count }
-    pub(crate) fn avg_latency_ms(&self) -> Option<i64> { self.avg_latency_ms }
-    pub(crate) fn balance_status(&self) -> Option<&str> { self.balance_status.as_deref() }
+    pub(crate) fn priority(&self) -> i64 {
+        self.priority
+    }
+    pub(crate) fn backup_only(&self) -> bool {
+        self.backup_only
+    }
+    pub(crate) fn group_binding_id(&self) -> Option<&str> {
+        self.group_binding_id.as_deref()
+    }
+    pub(crate) fn group_id_hash(&self) -> Option<&str> {
+        self.group_id_hash.as_deref()
+    }
+    pub(crate) fn group_category(&self) -> Option<&str> {
+        self.group_category.as_deref()
+    }
+    pub(crate) fn supports_chat_completions(&self) -> bool {
+        self.supports_chat_completions
+    }
+    pub(crate) fn supports_responses(&self) -> bool {
+        self.supports_responses
+    }
+    pub(crate) fn supports_stream(&self) -> bool {
+        self.supports_stream
+    }
+    pub(crate) fn supports_tools(&self) -> bool {
+        self.supports_tools
+    }
+    pub(crate) fn supports_vision(&self) -> bool {
+        self.supports_vision
+    }
+    pub(crate) fn supports_reasoning(&self) -> bool {
+        self.supports_reasoning
+    }
+    pub(crate) fn model_allowlist(&self) -> &[String] {
+        &self.model_allowlist
+    }
+    pub(crate) fn model_blocklist(&self) -> &[String] {
+        &self.model_blocklist
+    }
+    pub(crate) fn preferred_models(&self) -> &[String] {
+        &self.preferred_models
+    }
+    pub(crate) fn routing_tags(&self) -> &[String] {
+        &self.routing_tags
+    }
+    pub(crate) fn success_count(&self) -> i64 {
+        self.success_count
+    }
+    pub(crate) fn failure_count(&self) -> i64 {
+        self.failure_count
+    }
+    pub(crate) fn avg_latency_ms(&self) -> Option<i64> {
+        self.avg_latency_ms
+    }
+    pub(crate) fn last_error_summary(&self) -> Option<&str> {
+        self.last_error_summary.as_deref()
+    }
+    pub(crate) fn cooldown_until(&self) -> Option<&str> {
+        self.cooldown_until.as_deref()
+    }
+    pub(crate) fn balance_status(&self) -> Option<&str> {
+        self.balance_status.as_deref()
+    }
+    pub(crate) fn balance_value(&self) -> Option<f64> {
+        self.balance_value
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_planning_test(
+        group_binding_id: Option<&str>,
+        group_id_hash: Option<&str>,
+        group_category: Option<&str>,
+    ) -> Self {
+        let station_id = StationId::new("station-a").expect("valid test station");
+        Self {
+            station_key_id: StationKeyId::new("key-a").expect("valid test key"),
+            station_id: station_id.clone(),
+            endpoint: EndpointFacts::new(
+                EndpointRef::new(
+                    station_id,
+                    EndpointId::new("primary").expect("valid endpoint"),
+                    EndpointRevision::new(1).expect("valid revision"),
+                ),
+                SanitizedOrigin::from_endpoint_url("https://example.test")
+                    .expect("valid test origin"),
+                OutboundPolicyRef::new("station-default").expect("valid outbound policy"),
+            ),
+            credential: CredentialAvailabilityFact::new(
+                true,
+                RecordRevision::new(1).expect("valid record revision"),
+            ),
+            priority: 0,
+            backup_only: false,
+            group_binding_id: group_binding_id.map(ToString::to_string),
+            group_id_hash: group_id_hash.map(ToString::to_string),
+            group_category: group_category.map(ToString::to_string),
+            supports_chat_completions: true,
+            supports_responses: false,
+            supports_stream: true,
+            supports_tools: true,
+            supports_vision: true,
+            supports_reasoning: true,
+            model_allowlist: Vec::new(),
+            model_blocklist: Vec::new(),
+            preferred_models: Vec::new(),
+            routing_tags: Vec::new(),
+            success_count: 0,
+            failure_count: 0,
+            consecutive_failures: 0,
+            avg_latency_ms: None,
+            last_error_summary: None,
+            cooldown_until: None,
+            balance_status: None,
+            balance_value: Some(1.0),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_durable_health_for_planning_test(
+        &mut self,
+        cooldown_until: Option<&str>,
+        last_error_summary: Option<&str>,
+    ) {
+        self.cooldown_until = cooldown_until.map(ToString::to_string);
+        self.last_error_summary = last_error_summary.map(ToString::to_string);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,7 +335,7 @@ impl ModelAliasFact {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OperationalFactBundle {
     snapshot_id: OperationalFactSnapshotId,
     version_vector: FactVersionVector,
@@ -307,6 +422,9 @@ pub(crate) fn assemble_operational_fact_bundle(
                 ),
                 priority: row.priority,
                 backup_only: row.backup_only,
+                group_binding_id: row.group_binding_id,
+                group_id_hash: row.group_id_hash,
+                group_category: row.group_category,
                 supports_chat_completions: row.supports_chat_completions,
                 supports_responses: row.supports_responses,
                 supports_stream: row.supports_stream,
@@ -330,7 +448,10 @@ pub(crate) fn assemble_operational_fact_bundle(
                 failure_count: row.failure_count.max(0),
                 consecutive_failures: row.consecutive_failures.max(0),
                 avg_latency_ms: row.avg_latency_ms.filter(|value| *value >= 0),
+                last_error_summary: row.last_error_summary,
+                cooldown_until: row.cooldown_until,
                 balance_status: row.balance_status,
+                balance_value: row.balance_value.filter(|value| value.is_finite()),
             })
         })
         .collect::<Result<Vec<_>, OperationalFactAssemblyError>>()?;

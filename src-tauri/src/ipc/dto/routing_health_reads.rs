@@ -706,6 +706,14 @@ mod tests {
     }
 
     #[test]
+    fn accepts_null_policy_for_current_routing_settings() {
+        let mut input = valid_input();
+        input["policy"] = Value::Null;
+
+        assert!(RouteSimulationInputDto::parse(input).is_ok());
+    }
+
+    #[test]
     fn station_key_id_input_rejects_unknown_fields_and_invalid_ids() {
         for value in [
             serde_json::json!({"stationKeyId":"bad id"}),

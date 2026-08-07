@@ -83,7 +83,9 @@ impl EndpointId {
     pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
         let value = value.into();
         if value.trim().is_empty() {
-            return Err(OperationalValidationError::EmptyId { field: "endpoint_id" });
+            return Err(OperationalValidationError::EmptyId {
+                field: "endpoint_id",
+            });
         }
         Ok(Self(value))
     }
@@ -107,7 +109,9 @@ impl OutboundPolicyRef {
     pub fn new(value: impl Into<String>) -> Result<Self, OperationalValidationError> {
         let value = value.into();
         if value.trim().is_empty() {
-            return Err(OperationalValidationError::EmptyId { field: "outbound_policy_ref" });
+            return Err(OperationalValidationError::EmptyId {
+                field: "outbound_policy_ref",
+            });
         }
         Ok(Self(value))
     }
@@ -130,7 +134,6 @@ impl RecordRevision {
         Ok(Self(value))
     }
 
-    #[cfg(test)]
     pub fn get(self) -> i64 {
         self.0
     }

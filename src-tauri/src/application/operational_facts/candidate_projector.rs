@@ -205,6 +205,8 @@ pub(crate) fn project_route_candidate(
         group.as_ref(),
     ) {
         (GroupFilterMode::Any, _, _) => true,
+        (GroupFilterMode::UngroupedOnly, _, None) => true,
+        (GroupFilterMode::UngroupedOnly, _, Some(_)) => false,
         (GroupFilterMode::Required, Some(required), Some(group)) => group.stable_key == required,
         (GroupFilterMode::Required, _, _) => false,
     };

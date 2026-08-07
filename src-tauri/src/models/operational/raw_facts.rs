@@ -43,7 +43,7 @@ impl OperationalFactReadOptions {
 
 pub(crate) const MAX_OPERATIONAL_CANDIDATES: usize = 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RawOperationalCandidateRow {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
@@ -54,6 +54,9 @@ pub(crate) struct RawOperationalCandidateRow {
     pub(crate) station_record_revision: i64,
     pub(crate) priority: i64,
     pub(crate) backup_only: bool,
+    pub(crate) group_binding_id: Option<String>,
+    pub(crate) group_id_hash: Option<String>,
+    pub(crate) group_category: Option<String>,
     pub(crate) supports_chat_completions: bool,
     pub(crate) supports_responses: bool,
     pub(crate) supports_stream: bool,
@@ -68,7 +71,10 @@ pub(crate) struct RawOperationalCandidateRow {
     pub(crate) failure_count: i64,
     pub(crate) consecutive_failures: i64,
     pub(crate) avg_latency_ms: Option<i64>,
+    pub(crate) last_error_summary: Option<String>,
+    pub(crate) cooldown_until: Option<String>,
     pub(crate) balance_status: Option<String>,
+    pub(crate) balance_value: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +91,7 @@ pub(crate) struct RawOperationalModelAliasRow {
     pub(crate) record_revision: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RawOperationalFactRows {
     pub(crate) candidates: Vec<RawOperationalCandidateRow>,
     pub(crate) settings: Vec<RawOperationalSettingRow>,

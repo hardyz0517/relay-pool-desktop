@@ -5,9 +5,7 @@
 
 use serde::Serialize;
 
-use super::{
-    station_keys::KeyPoolItem, stations::Station,
-};
+use super::{station_keys::KeyPoolItem, stations::Station};
 
 pub(crate) const ASSET_READ_MODEL_SCHEMA_VERSION: u16 = 1;
 
@@ -55,10 +53,4 @@ pub(crate) struct StationAssetReadRow {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StationAssetsReadModel {
     pub(crate) rows: Vec<StationAssetReadRow>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct KeyPoolReadModel {
-    pub(crate) rows: Vec<KeyPoolItem>,
 }

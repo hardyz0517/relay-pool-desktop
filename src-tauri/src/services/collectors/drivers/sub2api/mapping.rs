@@ -67,7 +67,7 @@ pub fn parse_usage_balance(
         .pointer("/quota/total")
         .and_then(Value::as_f64)
         .or_else(|| payload.get("total").and_then(Value::as_f64));
-    let status = if remaining == Some(0.0) {
+    let status = if remaining.is_some_and(|value| value <= 0.0) {
         "depleted"
     } else {
         "normal"
@@ -1018,7 +1018,7 @@ pub(crate) fn merge_dashboard_usage_stats(
         account_concurrency_limit,
         currency,
         credit_unit,
-        status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+        status: if value <= 0.0 { "depleted" } else { "normal" }.to_string(),
         source: "station_key_balance_aggregate".to_string(),
         confidence,
         collected_at,
@@ -1051,14 +1051,12 @@ pub(crate) fn parse_active_subscription_quota(
         {
             continue;
         }
-        let Some(group) = subscription.get("group") else {
-            continue;
-        };
+        let limits = subscription.get("group").unwrap_or(subscription);
         add_subscription_quota_window(
             &mut summary,
             &mut found,
             subscription,
-            group,
+            limits,
             credit_per_cny,
         );
     }
@@ -1112,7 +1110,7 @@ pub(crate) fn merge_subscription_quota(
         station_balance.value = add_balance_values(station_balance.value, quota.remaining);
         station_balance.used_value = add_balance_values(station_balance.used_value, quota.used);
         station_balance.total_value = add_balance_values(station_balance.total_value, quota.total);
-        station_balance.status = if station_balance.value == Some(0.0) {
+        station_balance.status = if station_balance.value.is_some_and(|value| value <= 0.0) {
             "depleted"
         } else {
             "normal"
@@ -1183,7 +1181,7 @@ pub(crate) fn merge_subscription_quota(
         account_concurrency_limit,
         currency,
         credit_unit,
-        status: if value == 0.0 { "depleted" } else { "normal" }.to_string(),
+        status: if value <= 0.0 { "depleted" } else { "normal" }.to_string(),
         source: "sub2api_balance_with_subscription".to_string(),
         confidence,
         collected_at,
@@ -1432,7 +1430,7 @@ pub(crate) fn parse_account_balance(
         account_concurrency_limit,
         currency: NORMALIZED_BALANCE_CURRENCY.to_string(),
         credit_unit: None,
-        status: if value == Some(0.0) {
+        status: if value.is_some_and(|value| value <= 0.0) {
             "depleted"
         } else if value.is_some() {
             "normal"
@@ -1568,6 +1566,19 @@ mod tests {
     }
 
     #[test]
+    fn negative_remaining_quota_is_depleted() {
+        let fact = parse_usage_balance(
+            "station-1",
+            Some("key-1".to_string()),
+            &json!({"quota": {"remaining": -0.05}}),
+            1.0,
+        );
+
+        assert_eq!(fact.value, Some(-0.05));
+        assert_eq!(fact.status, "depleted");
+    }
+
+    #[test]
     fn platform_quota_uses_the_most_restrictive_active_window() {
         let quota = parse_platform_quota(
             &json!({
@@ -1625,10 +1636,29 @@ mod tests {
     }
 
     #[test]
+    fn subscription_quota_reads_direct_limits_and_applies_exchange_ratio() {
+        let quota = parse_active_subscription_quota(
+            &json!({
+                "data": [{
+                    "status": "active",
+                    "daily_usage": 0.0,
+                    "daily_limit": 135.0
+                }]
+            }),
+            27.0,
+        )
+        .expect("direct subscription quota");
+
+        assert_eq!(quota.remaining, 5.0);
+        assert_eq!(quota.used, 0.0);
+        assert_eq!(quota.total, 5.0);
+    }
+
+    #[test]
     fn subscription_points_are_added_after_point_balance_conversion() {
         let mut balances =
             vec![
-                parse_account_balance("station-1", &json!({"data": {"balance": 720.0}}), 10.0)
+                parse_account_balance("station-1", &json!({"data": {"balance": 720.0}}), 27.0)
                     .expect("account balance"),
             ];
 
@@ -1640,14 +1670,14 @@ mod tests {
                     "group": { "daily_limit_usd": 135.0 }
                 }]
             }),
-            10.0,
+            27.0,
         )
         .expect("subscription quota");
 
         merge_subscription_quota(&mut balances, "station-1", quota);
 
-        assert_eq!(balances[0].value, Some(85.5));
-        assert_eq!(balances[0].total_value, Some(13.5));
+        assert!((balances[0].value.expect("merged balance") - (720.0 / 27.0 + 5.0)).abs() < 1e-12);
+        assert_eq!(balances[0].total_value, Some(5.0));
         assert_eq!(
             balances[0].source,
             "sub2api_account_profile_with_subscription"

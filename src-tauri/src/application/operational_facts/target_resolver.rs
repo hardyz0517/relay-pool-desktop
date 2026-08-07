@@ -16,6 +16,7 @@ pub(crate) struct ExecutionTargetRef {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
+    pub(crate) credential_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
     pub(crate) collector_proxy_mode: String,

@@ -10,8 +10,6 @@ use crate::{
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OperationalFactQueryError {
-    #[error("operational candidate count {actual} exceeds limit {limit}")]
-    CandidateLimitExceeded { actual: usize, limit: usize },
     #[error("routing revision is unavailable for scope {scope}")]
     RevisionUnavailable { scope: String },
     #[error("{0}")]
@@ -34,25 +32,6 @@ impl OperationalFactStore {
         options: &OperationalFactReadOptions,
     ) -> Result<RawOperationalFactRows, OperationalFactQueryError> {
         let mut query_count = 0;
-        let candidate_count = sqlx::query_scalar::<_, i64>(
-            r#"
-            SELECT COUNT(*)
-            FROM station_keys k
-            JOIN stations s ON s.id = k.station_id
-            WHERE k.enabled = 1
-              AND s.enabled = 1
-            "#,
-        )
-        .fetch_one(read.connection())
-        .await?;
-        query_count += 1;
-        if candidate_count as usize > options.candidate_limit() {
-            return Err(OperationalFactQueryError::CandidateLimitExceeded {
-                actual: candidate_count as usize,
-                limit: options.candidate_limit(),
-            });
-        }
-
         let candidate_rows = sqlx::query(
             r#"
             SELECT
@@ -66,6 +45,9 @@ impl OperationalFactStore {
                 END AS credential_available,
                 k.priority AS priority,
                 COALESCE(c.only_use_as_backup, 0) AS backup_only,
+                k.group_binding_id AS group_binding_id,
+                COALESCE(k.group_id_hash, group_binding.group_id_hash) AS group_id_hash,
+                COALESCE(group_binding.group_category_override, group_binding.inferred_group_category) AS group_category,
                 COALESCE(c.supports_chat_completions, 1) AS supports_chat_completions,
                 COALESCE(c.supports_responses, 1) AS supports_responses,
                 COALESCE(c.supports_stream, 1) AS supports_stream,
@@ -80,7 +62,10 @@ impl OperationalFactStore {
                 COALESCE(h.failure_count, 0) AS failure_count,
                 COALESCE(h.consecutive_failures, 0) AS consecutive_failures,
                 h.avg_latency_ms AS avg_latency_ms,
+                h.last_error_summary AS last_error_summary,
+                h.cooldown_until AS cooldown_until,
                 b.status AS balance_status,
+                b.value AS balance_value,
                 key_revision.revision AS key_record_revision,
                 station_revision.revision AS station_record_revision
             FROM station_keys k
@@ -88,6 +73,7 @@ impl OperationalFactStore {
             LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
             LEFT JOIN routing_health_snapshot h
                 ON h.station_key_id = k.id AND h.endpoint_revision = s.endpoint_revision
+            LEFT JOIN station_group_bindings group_binding ON group_binding.id = k.group_binding_id
             LEFT JOIN balance_snapshots b ON b.id = (
                 SELECT latest.id
                 FROM balance_snapshots latest
@@ -105,8 +91,10 @@ impl OperationalFactStore {
                      k.priority ASC,
                      k.created_at ASC,
                      k.id ASC
+            LIMIT ?1
             "#,
         )
+        .bind(options.candidate_limit() as i64)
         .fetch_all(read.connection())
         .await?;
         query_count += 1;
@@ -172,6 +160,9 @@ impl OperationalFactStore {
                     credential_available: row.get::<i64, _>("credential_available") != 0,
                     priority: row.get("priority"),
                     backup_only: row.get::<i64, _>("backup_only") != 0,
+                    group_binding_id: row.get("group_binding_id"),
+                    group_id_hash: row.get("group_id_hash"),
+                    group_category: row.get("group_category"),
                     supports_chat_completions: row.get::<i64, _>("supports_chat_completions") != 0,
                     supports_responses: row.get::<i64, _>("supports_responses") != 0,
                     supports_stream: row.get::<i64, _>("supports_stream") != 0,
@@ -186,7 +177,10 @@ impl OperationalFactStore {
                     failure_count: row.get("failure_count"),
                     consecutive_failures: row.get("consecutive_failures"),
                     avg_latency_ms: row.get("avg_latency_ms"),
+                    last_error_summary: row.get("last_error_summary"),
+                    cooldown_until: row.get("cooldown_until"),
                     balance_status: row.get("balance_status"),
+                    balance_value: row.get("balance_value"),
                     key_record_revision: required_revision(
                         row.get("key_record_revision"),
                         format!("station_key:{}", row.get::<String, _>("station_key_id")),

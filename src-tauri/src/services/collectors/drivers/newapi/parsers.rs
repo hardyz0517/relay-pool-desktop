@@ -78,10 +78,25 @@ pub(crate) fn parse_balance_fact(
         today_output_token_count: parse_i64_field(data, &["today_output_token_count"]),
         total_input_token_count: parse_i64_field(data, &["total_input_token_count"]),
         total_output_token_count: parse_i64_field(data, &["total_output_token_count"]),
-        account_concurrency_limit: None,
+        account_concurrency_limit: parse_i64_field(
+            data,
+            &[
+                "concurrency_limit",
+                "concurrent_limit",
+                "request_concurrency",
+                "parallel_limit",
+                "max_concurrency",
+                "concurrencyLimit",
+                "concurrentLimit",
+                "requestConcurrency",
+                "parallelLimit",
+                "maxConcurrency",
+            ],
+        )
+        .filter(|value| *value > 0),
         currency: NORMALIZED_BALANCE_CURRENCY.to_string(),
         credit_unit: quota_per_unit.map(|value| format!("newapi_quota_{value}")),
-        status: if remaining == Some(0.0) {
+        status: if remaining.is_some_and(|value| value <= 0.0) {
             "depleted"
         } else {
             "normal"
@@ -224,6 +239,18 @@ mod tests {
     }
 
     #[test]
+    fn negative_remaining_quota_is_depleted() {
+        let fact = parse_balance_fact(
+            "station-1",
+            &json!({"quota": -1.0, "used_quota": 2.0}),
+            Some(1.0),
+        );
+
+        assert_eq!(fact.value, Some(-1.0));
+        assert_eq!(fact.status, "depleted");
+    }
+
+    #[test]
     fn balance_quota_converts_to_usd_units() {
         let fact = parse_balance_fact(
             "station-1",
@@ -309,6 +336,17 @@ mod tests {
         assert_eq!(fact.today_token_count, Some(43210));
         assert_eq!(fact.total_token_count, Some(987654));
         assert_eq!(fact.account_concurrency_limit, None);
+    }
+
+    #[test]
+    fn balance_captures_account_concurrency_limit() {
+        let fact = parse_balance_fact(
+            "station-1",
+            &json!({"quota": 750000, "concurrency_limit": 8}),
+            Some(250000.0),
+        );
+
+        assert_eq!(fact.account_concurrency_limit, Some(8));
     }
 
     #[test]

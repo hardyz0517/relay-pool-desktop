@@ -15,13 +15,13 @@ pub use capability::{
     StationKeyCapabilityFacts,
 };
 #[cfg(test)]
+pub(crate) use economics::EconomicsValidationError;
+#[cfg(test)]
 pub use economics::{
     BalanceFacts, CurrencyCode, Money, MoneyAmount, PricingUnit, RequestCostBasis,
     RequestPricingAssessment,
 };
 pub use economics::{BalanceScope, PriceConfidence, RateMultiplier};
-#[cfg(test)]
-pub(crate) use economics::EconomicsValidationError;
 #[cfg(not(test))]
 pub use health::HealthState;
 #[cfg(test)]
@@ -32,12 +32,11 @@ pub use health::{
 };
 pub use identity::SanitizedOrigin;
 pub use identity::{EndpointFacts, OutboundPolicyRef};
+pub use identity::{
+    EndpointId, EndpointRef, EndpointRevision, ModelName, RecordRevision, StationId, StationKeyId,
+};
 #[cfg(test)]
 pub use identity::{EvidenceHash, StationAccountRef};
-pub use identity::{
-    EndpointId, EndpointRef, EndpointRevision, ModelName,
-    RecordRevision, StationId, StationKeyId,
-};
 pub use identity::{OperationalValidationError, UnixMillis};
 #[cfg(test)]
 pub use provenance::{EvidenceConfidence, EvidenceCoverage};

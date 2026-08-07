@@ -119,6 +119,18 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+fn restart_application<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    #[cfg(dev)]
+    {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.eval("window.location.reload()");
+        }
+    }
+
+    #[cfg(not(dev))]
+    app.request_restart();
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
     let restart_item = MenuItem::with_id(app, "restart", "Restart", true, None::<&str>)?;
@@ -135,7 +147,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 show_main_window(app);
             }
             if menu_id.as_ref() == "restart" {
-                app.request_restart();
+                restart_application(app);
             }
             if menu_id.as_ref() == "quit" {
                 if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
@@ -880,6 +892,7 @@ pub fn run() {
                             app_composition::compose_routing_command_facade(
                                 &app_services,
                                 outbound_client.clone(),
+                                Arc::clone(&proxy_runtime),
                             );
                         let request_logs_command_facade =
                             app_composition::compose_request_logs_command_facade(&app_services);

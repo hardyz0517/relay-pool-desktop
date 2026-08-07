@@ -35,6 +35,7 @@ pub(crate) struct OperationalExecutionTargetRefRow {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
+    pub(crate) credential_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
     pub(crate) collector_proxy_mode: String,
@@ -197,12 +198,13 @@ impl RoutingStore {
                 k.id AS station_key_id,
                 k.station_id,
                 s.endpoint_revision,
+                COALESCE(key_revision.revision, 0) AS credential_revision,
                 s.api_base_url,
                 s.upstream_api_format,
                 s.collector_proxy_mode,
                 s.collector_proxy_url,
                 CASE
-                    WHEN LOWER(s.station_type) = 'sub2api' THEN COALESCE((
+                    WHEN LOWER(s.station_type) IN ('sub2api', 'newapi') THEN COALESCE((
                         SELECT b.account_concurrency_limit
                         FROM balance_snapshots b
                         WHERE b.station_id = s.id
@@ -226,6 +228,7 @@ impl RoutingStore {
                 CASE WHEN TRIM(k.api_key) != '' THEN 1 ELSE 0 END AS inline_api_key_present
             FROM station_keys k
             JOIN stations s ON s.id = k.station_id
+            LEFT JOIN domain_revisions key_revision ON key_revision.scope = 'station_key:' || k.id
             LEFT JOIN secrets sec ON sec.id = k.api_key_secret_id
             WHERE k.id IN (
             "#,
@@ -924,6 +927,7 @@ fn row_to_operational_execution_target_ref(
         station_key_id: row.get("station_key_id"),
         station_id: row.get("station_id"),
         endpoint_revision: row.get("endpoint_revision"),
+        credential_revision: row.get("credential_revision"),
         api_base_url: row.get("api_base_url"),
         upstream_api_format: parse_upstream_api_format(row.get::<String, _>("upstream_api_format")),
         collector_proxy_mode: row.get("collector_proxy_mode"),

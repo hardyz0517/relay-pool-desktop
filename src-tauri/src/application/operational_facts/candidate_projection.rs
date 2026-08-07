@@ -28,8 +28,8 @@ use crate::{
             },
         },
         routing_engine::{
-            capacity::ProviderAccountConstraint,
             admission::CandidateAdmissionProfile,
+            capacity::ProviderAccountConstraint,
             request::{
                 CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind,
                 RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
@@ -44,7 +44,7 @@ use crate::{
         },
         pricing::ResolvedPricingContext,
         routing::{
-            RoutingGroupFilter, RoutingPolicy, CanonicalRoutingCandidate, RuntimeRoutingSettings,
+            CanonicalRoutingCandidate, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingSettings,
         },
     },
 };
@@ -95,7 +95,8 @@ pub(crate) fn ordering_profile(policy: &RoutingPolicy) -> OrderingProfile {
 
 pub(crate) fn group_filter_mode(filter: &RoutingGroupFilter) -> GroupFilterMode {
     match filter {
-        RoutingGroupFilter::AllGroups | RoutingGroupFilter::UngroupedOnly => GroupFilterMode::Any,
+        RoutingGroupFilter::AllGroups => GroupFilterMode::Any,
+        RoutingGroupFilter::UngroupedOnly => GroupFilterMode::UngroupedOnly,
         RoutingGroupFilter::GroupBindingId(_)
         | RoutingGroupFilter::GroupIdHash(_)
         | RoutingGroupFilter::GroupType(_) => GroupFilterMode::Required,
@@ -106,9 +107,16 @@ pub(crate) fn required_group_stable_key(filter: &RoutingGroupFilter) -> Option<S
     match filter {
         RoutingGroupFilter::GroupBindingId(id) => Some(format!("binding:{id}")),
         RoutingGroupFilter::GroupIdHash(hash) => Some(format!("group-id:{hash}")),
-        RoutingGroupFilter::GroupType(group_type) => {
-            Some(format!("group-type:{group_type:?}").to_lowercase())
-        }
+        RoutingGroupFilter::GroupType(group_type) => Some(format!(
+            "group-type:{}",
+            match group_type {
+                crate::models::routing::PricingGroupType::Gpt => "gpt",
+                crate::models::routing::PricingGroupType::Claude => "claude",
+                crate::models::routing::PricingGroupType::Gemini => "gemini",
+                crate::models::routing::PricingGroupType::Grok => "grok",
+                crate::models::routing::PricingGroupType::ImageGeneration => "image_generation",
+            }
+        )),
         RoutingGroupFilter::AllGroups | RoutingGroupFilter::UngroupedOnly => None,
     }
 }
@@ -442,8 +450,8 @@ fn balance_projection(
     balance: Option<&crate::models::routing::RuntimeRoutingBalance>,
     now: UnixMillis,
 ) -> BalanceProjection {
-    let (status, reason) = match balance.map(|balance| balance.status.as_str()) {
-        Some("depleted") | Some("low") => (
+    let (status, reason) = match balance {
+        Some(balance) if balance.is_depleted() => (
             BalanceProjectionStatus::DepletedEmergency,
             "balance_depleted",
         ),
