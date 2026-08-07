@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Copy, ExternalLink, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
+import relayPoolLogo from "@/assets/relay-pool-logo.png";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -510,9 +511,12 @@ function UpdateSettingsCard({
     <div className="flex min-h-[88px] flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-info-surface text-sm text-info-foreground">
-            ✺
-          </span>
+          <img
+            src={relayPoolLogo}
+            alt="Relay Pool Desktop"
+            className="h-8 w-8 shrink-0 object-contain"
+            draggable={false}
+          />
           <div className="truncate text-base font-semibold text-foreground">Relay Pool</div>
         </div>
         <div className="mt-2 inline-flex h-6 items-center rounded-full border border-border bg-muted px-2 text-xs font-medium text-muted-foreground">
