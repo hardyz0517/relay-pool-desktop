@@ -45,6 +45,8 @@ export type RoutingCandidateView = {
   previewEligible: boolean;
   previewRejectReasons: string[];
   facts: DecisionFact[];
+  balanceValue?: number | null;
+  balanceCurrency?: string | null;
 };
 
 export type RoutingWorkspaceView = {
@@ -126,6 +128,8 @@ export function toRoutingWorkspaceView(
       previewEligible: hardRejectionCodes.length === 0,
       previewRejectReasons: hardRejectionCodes,
       facts: candidateFacts(candidate),
+      balanceValue: candidate.balanceValue,
+      balanceCurrency: candidate.balanceCurrency,
     } satisfies RoutingCandidateView;
   });
 

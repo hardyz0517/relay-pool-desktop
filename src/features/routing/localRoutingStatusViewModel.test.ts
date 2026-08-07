@@ -56,9 +56,18 @@ describe("local routing status view model", () => {
   it("renders candidate economics from backend facts without legacy multiplier fields", () => {
     const display = buildCandidateDisplayFacts(candidate());
 
-    expect(display.multiplierLabel).toBe("1.2500x");
+    expect(display.multiplierLabel).toBe("1.25x");
     expect(display.multiplierDetail).toBeNull();
     expect(display.balanceLabel).toBe("正常");
+    expect(display.balanceDetail).toBeNull();
+  });
+
+  it("shows the collected balance amount instead of its status", () => {
+    const display = buildCandidateDisplayFacts(
+      candidate({ balanceValue: 12.5, balanceCurrency: "USD" }),
+    );
+
+    expect(display.balanceLabel).toBe("12.50$");
     expect(display.balanceDetail).toBeNull();
   });
 

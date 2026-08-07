@@ -221,7 +221,7 @@ export function buildChangeEventListItem(
   const stationSubject = formatStationSubject(event, oldValue, newValue, impact, options);
   const baseItem: ChangeEventListItem = {
     title: event.title,
-    description: event.message,
+    description: localizeChangeEventDescription(event, oldValue, newValue),
     metaLabel: `${sourceLabels[event.source] ?? event.source} / ${objectTypeLabels[event.objectType] ?? event.objectType}`,
     kindLabel: eventTypeLabels[event.eventType] ?? event.eventType,
     objectLabel: objectTypeLabels[event.objectType] ?? event.objectType,
@@ -502,6 +502,45 @@ function formatCollectorTaskLabel(value: string | null) {
   if (value === "models") return "模型采集";
   if (value === "full") return "完整采集";
   return "采集";
+}
+
+function localizeChangeEventDescription(
+  event: ChangeEvent,
+  oldValue: Record<string, unknown> | null,
+  newValue: Record<string, unknown> | null,
+) {
+  const groupName =
+    readString(newValue, "groupName") ??
+    readString(oldValue, "groupName") ??
+    extractGroupName(event.message);
+
+  if (event.eventType === "rate_changed" || event.eventType === "group_rate_changed") {
+    return groupName ? `分组 ${groupName} 倍率发生变化` : "分组倍率发生变化";
+  }
+  if (event.eventType === "group_added") {
+    return groupName ? `分组 ${groupName} 已可用` : "新增分组";
+  }
+  if (event.eventType === "group_missing") {
+    return groupName ? `分组 ${groupName} 在最新采集中不可见` : "分组在最新采集中不可见";
+  }
+  if (event.eventType === "key_group_bound") {
+    return groupName ? `Key 已绑定分组 ${groupName}` : "Key 已绑定分组";
+  }
+  if (event.eventType === "key_group_unresolved") {
+    return "采集器无法识别此 Key 的分组";
+  }
+  if (event.eventType === "collector_failed" || event.eventType === "collector_recovered") {
+    const status = event.eventType === "collector_failed" ? "失败" : "恢复";
+    if (/^all full collector child tasks failed$/i.test(event.message.trim())) {
+      return `完整采集子任务全部${status}`;
+    }
+    const taskMatch = event.message.match(/^Collector task\s+(.+?)\s+(?:failed|recovered)$/i);
+    if (taskMatch?.[1]) {
+      return `${formatCollectorTaskLabel(taskMatch[1])}${status}`;
+    }
+    return `采集${status}`;
+  }
+  return event.message;
 }
 
 function formatRecordSummary(value: Record<string, unknown> | null) {

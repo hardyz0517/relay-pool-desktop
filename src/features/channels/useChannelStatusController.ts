@@ -7,6 +7,7 @@ import {
 import {
   channelMonitorExecutionsQueryOptions,
   channelStatusQueryOptions,
+  currentStationBalanceSnapshotsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { invalidatePricingMonitoringQueries } from "@/lib/query/pricingMonitoringInvalidation";
@@ -31,6 +32,7 @@ import {
 } from "./channelStatusWindowStorage";
 
 export type ChannelStatusController = ReturnType<typeof useChannelStatusController>;
+export type ChannelStatusTestScope = "enabled" | "with_balance";
 
 export function useChannelStatusController() {
   const queryClient = useQueryClient();
@@ -38,6 +40,7 @@ export function useChannelStatusController() {
   const [filters, setFilters] = useState<ChannelStatusFilters>(defaultChannelStatusFilters);
   const [sort, setSort] = useState<ChannelStatusSortModel>(defaultChannelStatusSort);
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+  const [batchTesting, setBatchTesting] = useState(false);
   const setWindow = useCallback((value: ChannelStatusWorkspaceWindow) => {
     setWindowState(value);
     writeChannelStatusWindow(value);
@@ -48,6 +51,7 @@ export function useChannelStatusController() {
     [filters, sort, window],
   );
   const statusQuery = useActivityQuery(channelStatusQueryOptions(5_000, workspaceInput));
+  const balanceQuery = useActivityQuery(currentStationBalanceSnapshotsQueryOptions(5_000));
   const workspaceView = useMemo(
     () => buildChannelStatusWorkspaceView(statusQuery.data),
     [statusQuery.data],
@@ -97,7 +101,7 @@ export function useChannelStatusController() {
     executionsQuery,
     selectedExecutionId,
     setSelectedExecutionId,
-    isRunningAction: runNowMutation.isPending || cancelMutation.isPending,
+    isRunningAction: batchTesting || runNowMutation.isPending || cancelMutation.isPending,
     runNow(row: ChannelStatusRowView) {
       if (row.runningExecutionId) {
         setSelectedExecutionId(row.runningExecutionId);
@@ -107,6 +111,21 @@ export function useChannelStatusController() {
     },
     cancel(executionId: string) {
       cancelMutation.mutate(executionId);
+    },
+    async testAll(scope: ChannelStatusTestScope = "enabled") {
+      if (batchTesting) return;
+      const rows = workspaceView.rows.filter((row) => scope === "enabled"
+        ? row.enabled && !row.balancePaused
+        : hasCurrentBalance(row, balanceQuery.data ?? []));
+      if (rows.length === 0) return;
+      setBatchTesting(true);
+      try {
+        await Promise.allSettled(rows.map((row) => runChannelMonitorNow(row.monitorId)));
+        await invalidateMonitoringQueries(queryClient);
+        await statusQuery.refetch({ throwOnError: true });
+      } finally {
+        setBatchTesting(false);
+      }
     },
     async refresh() {
       await statusQuery.refetch({ throwOnError: true });
@@ -119,4 +138,17 @@ async function invalidateMonitoringQueries(queryClient: ReturnType<typeof useQue
     invalidatePricingMonitoringQueries(queryClient),
     queryClient.invalidateQueries({ queryKey: queryKeys.channelMonitorExecutions }),
   ]);
+}
+
+function hasCurrentBalance(
+  row: ChannelStatusRowView,
+  snapshots: Array<{ stationId: string; stationKeyId: string | null; value: number | null; totalValue: number | null; status: string }>,
+) {
+  const snapshot = snapshots.find((candidate) =>
+    row.stationKeyId && candidate.stationKeyId
+      ? candidate.stationKeyId === row.stationKeyId
+      : candidate.stationId === row.stationId,
+  );
+  if (!snapshot) return false;
+  return (snapshot.value ?? snapshot.totalValue ?? 0) > 0;
 }

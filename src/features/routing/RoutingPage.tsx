@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCcw } from "lucide-react";
+import { RefreshCcw, Upload } from "lucide-react";
 import { usePageQueryEnabled } from "@/app/navigation/PageVisibility";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, SegmentedControl, useToast } from "@/components/ui";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
+import { importRelayPoolToCCSwitch } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
-import { proxyStatusQueryOptions } from "@/lib/query/resourceQueries";
+import { keyPoolQueryOptions, proxyStatusQueryOptions } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -39,7 +40,12 @@ export function RoutingPage({
   const queryEnabled = usePageQueryEnabled();
   const [activeTab, setActiveTab] = useState<LocalRoutingTab>("status");
   const [proxyActionPending, setProxyActionPending] = useState(false);
+  const [importingCCSwitch, setImportingCCSwitch] = useState(false);
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions());
+  const keyPoolItemsQuery = useActivityQuery({
+    ...keyPoolQueryOptions(),
+    enabled: activeTab === "edit",
+  });
   const routingSnapshotQuery = useActivityQuery({
     queryKey: routingQueryKeys.workspaceSnapshot({ limit: 50 }),
     queryFn: () => loadRoutingWorkspaceSnapshotQuery({ limit: 50 }),
@@ -136,6 +142,19 @@ export function RoutingPage({
     void refreshRoutingQueries(queryClient);
   }, [queryClient]);
 
+  const handleImportToCCSwitch = useCallback(async () => {
+    if (importingCCSwitch) return;
+    setImportingCCSwitch(true);
+    try {
+      const result = await importRelayPoolToCCSwitch();
+      toast.success("已唤起 CCSwitch", `${result.providerName} - ${result.endpoint}`);
+    } catch (importError) {
+      toast.error("导入 CCSwitch 失败", readError(importError));
+    } finally {
+      setImportingCCSwitch(false);
+    }
+  }, [importingCCSwitch, toast]);
+
   useEffect(() => {
     if (error) toast.error("刷新本地路由状态失败", error);
   }, [error, toast]);
@@ -151,6 +170,14 @@ export function RoutingPage({
       title="路由规则"
       actions={
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            disabled={importingCCSwitch}
+            variant="secondary"
+            onClick={() => void handleImportToCCSwitch()}
+          >
+            <Upload className="h-4 w-4" />
+            {importingCCSwitch ? "导入中" : "导入到 CCSwitch"}
+          </Button>
           <SegmentedControl
             ariaLabel="本地路由页面"
             value={activeTab}
@@ -191,7 +218,11 @@ export function RoutingPage({
           />
         </div>
       ) : activeTab === "edit" ? (
-        <LocalRoutingEditTab loading={loading} workspace={workspace} />
+        <LocalRoutingEditTab
+          loading={loading || keyPoolItemsQuery.isPending}
+          keyPoolItems={keyPoolItemsQuery.data}
+          workspace={workspace}
+        />
       ) : null}
     </PageScaffold>
   );

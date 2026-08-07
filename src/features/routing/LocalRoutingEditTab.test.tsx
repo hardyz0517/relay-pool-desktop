@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { RoutingCandidateView, RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 
@@ -73,6 +74,7 @@ afterEach(() => {
 describe("LocalRoutingEditTab", () => {
   it("publishes a saved reorder and invalidates both routing read models", async () => {
     const initial = workspace([candidate("key-1"), candidate("key-2")]);
+    const keyPoolItems = [keyPoolItem("key-3"), keyPoolItem("key-2"), keyPoolItem("key-1")];
     mocks.reorderKeyPool.mockResolvedValue([]);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -86,7 +88,7 @@ describe("LocalRoutingEditTab", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <LocalRoutingEditTab loading={false} workspace={initial} />
+            <LocalRoutingEditTab loading={false} keyPoolItems={keyPoolItems} workspace={initial} />
           </ToastProvider>
         </QueryClientProvider>,
       );
@@ -100,16 +102,67 @@ describe("LocalRoutingEditTab", () => {
     expect(candidateSection?.querySelector(".p-4")).toBeNull();
 
     await act(async () => {
-      await mocks.dragEnd?.({ active: { id: "key-2" }, over: { id: "key-1" } });
+      await mocks.dragEnd?.({ active: { id: "key-1" }, over: { id: "key-3" } });
     });
 
-    expect(mocks.reorderKeyPool).toHaveBeenCalledWith(["key-2", "key-1"]);
+    expect(mocks.reorderKeyPool).toHaveBeenCalledWith(["key-1", "key-3", "key-2"]);
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["routing"] });
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
+
+  it("keeps the persisted Key Pool order when status candidates refresh", async () => {
+    const keyPoolItems = [keyPoolItem("key-3"), keyPoolItem("key-2"), keyPoolItem("key-1")];
+    const initial = workspace([candidate("key-1"), candidate("key-2")]);
+    const refreshed = workspace([candidate("key-2"), candidate("key-1")]);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <LocalRoutingEditTab loading={false} keyPoolItems={keyPoolItems} workspace={initial} />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <LocalRoutingEditTab loading={false} keyPoolItems={keyPoolItems} workspace={refreshed} />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    expect(Array.from(host.querySelectorAll("[data-candidate-id]")).map((node) => node.getAttribute("data-candidate-id"))).toEqual([
+      "key-3",
+      "key-2",
+      "key-1",
+    ]);
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
 });
+
+function keyPoolItem(id: string): KeyPoolItem {
+  return {
+    id,
+    stationId: "station-1",
+    stationName: "Station",
+    name: id,
+    enabled: true,
+    priority: 0,
+    schedulable: true,
+    cooldownUntil: null,
+    consecutiveFailures: 0,
+  } as KeyPoolItem;
+}
 
 function candidate(stationKeyId: string): RoutingCandidateView {
   return {

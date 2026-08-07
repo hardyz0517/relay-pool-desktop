@@ -73,7 +73,20 @@ export function LocalRoutingStatusCandidateRow({
         <StatusBadge tone={health.tone}>{health.label}</StatusBadge>
       </MetricCell>
       <MetricCell label="有效倍率" value={displayFacts.multiplierLabel} detail={displayFacts.multiplierDetail} />
-      <MetricCell label="余额" value={displayFacts.balanceLabel} detail={displayFacts.balanceDetail} />
+      <MetricCell
+        label="余额"
+        value={
+          displayFacts.balanceUnit ? (
+            <>
+              <span className="text-success-foreground">{displayFacts.balanceAmountLabel}</span>
+              {displayFacts.balanceUnit}
+            </>
+          ) : (
+            displayFacts.balanceLabel
+          )
+        }
+        detail={displayFacts.balanceDetail}
+      />
       <MetricCell
         label="冷却"
         value={cooldown.label}

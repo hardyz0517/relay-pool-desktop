@@ -19,17 +19,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { EmptyState, StatusBadge, useToast } from "@/components/ui";
 import { reorderKeyPool } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
+import { queryKeys } from "@/lib/query/queryKeys";
 import { synchronizeRoutingQueriesAfterMutation } from "@/lib/query/routingQuerySynchronization";
 import type { RoutingCandidateView as LocalRoutingCandidate, RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import {
   LocalRoutingCandidateHeader,
   LocalRoutingCandidateRow,
 } from "./LocalRoutingCandidateRow";
 import { LocalRoutingSettingsEditor } from "./LocalRoutingSettingsEditor";
+import { buildEditableRoutingCandidates } from "./editableRoutingCandidates";
 
 type LocalRoutingEditTabProps = {
   workspace: RoutingWorkspaceView | null;
+  keyPoolItems: readonly KeyPoolItem[] | undefined;
   loading: boolean;
 };
 
@@ -48,37 +52,50 @@ const reorderSyncTones: Record<Exclude<ReorderSyncState, "idle">, "healthy" | "w
   failed: "error",
 };
 
-export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabProps) {
+export function LocalRoutingEditTab({ workspace, keyPoolItems, loading }: LocalRoutingEditTabProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [candidates, setCandidates] = useState<LocalRoutingCandidate[]>([]);
+  const [candidateIds, setCandidateIds] = useState<string[]>([]);
   const [syncState, setSyncState] = useState<ReorderSyncState>("idle");
   const [syncError, setSyncError] = useState<string | null>(null);
   const saveOperationRef = useRef(0);
-  const workspaceVersionRef = useRef(0);
+  const keyPoolVersionRef = useRef(0);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
-  const candidateIds = useMemo(
-    () => candidates.map((candidate) => candidate.stationKeyId),
-    [candidates],
+  const candidateById = useMemo(() => {
+    if (!workspace) return new Map<string, LocalRoutingCandidate>();
+    return new Map(
+      buildEditableRoutingCandidates(
+        keyPoolItems ?? [],
+        workspace.candidates,
+        workspace.settings.routingGroupFilter,
+      ).map((candidate) => [candidate.stationKeyId, candidate]),
+    );
+  }, [keyPoolItems, workspace]);
+  const candidates = useMemo(
+    () => candidateIds.flatMap((candidateId) => {
+      const candidate = candidateById.get(candidateId);
+      return candidate ? [candidate] : [];
+    }),
+    [candidateById, candidateIds],
   );
   const syncLabel = reorderSyncLabels[syncState];
 
   useEffect(() => {
-    workspaceVersionRef.current += 1;
+    keyPoolVersionRef.current += 1;
     saveOperationRef.current += 1;
-    if (!workspace) {
-      setCandidates([]);
+    if (!keyPoolItems) {
+      setCandidateIds([]);
       setSyncState("idle");
       setSyncError(null);
       return;
     }
-    setCandidates(workspace.candidates);
+    setCandidateIds(keyPoolItems.map((item) => item.id));
     setSyncState("idle");
     setSyncError(null);
-  }, [workspace]);
+  }, [keyPoolItems]);
 
   async function handleDragEnd(event: DragEndEvent) {
     if (syncState === "saving") {
@@ -96,26 +113,26 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
       return;
     }
 
-    const previousCandidates = candidates;
-    const nextCandidates = [...candidates];
-    const [moved] = nextCandidates.splice(activeIndex, 1);
-    nextCandidates.splice(overIndex, 0, moved);
-    const nextStationKeyIds = nextCandidates.map((candidate) => candidate.stationKeyId);
+    const previousCandidateIds = candidateIds;
+    const nextStationKeyIds = [...candidateIds];
+    const [moved] = nextStationKeyIds.splice(activeIndex, 1);
+    nextStationKeyIds.splice(overIndex, 0, moved);
     const operationId = saveOperationRef.current + 1;
-    const workspaceVersionAtStart = workspaceVersionRef.current;
+    const keyPoolVersionAtStart = keyPoolVersionRef.current;
 
     saveOperationRef.current = operationId;
-    setCandidates(nextCandidates);
+    setCandidateIds(nextStationKeyIds);
     setSyncState("saving");
     setSyncError(null);
 
     try {
-      await reorderKeyPool(nextStationKeyIds);
+      const saved = await reorderKeyPool(nextStationKeyIds);
+      queryClient.setQueryData(queryKeys.keyPool, saved);
     } catch (requestError) {
-      if (operationId !== saveOperationRef.current || workspaceVersionAtStart !== workspaceVersionRef.current) {
+      if (operationId !== saveOperationRef.current || keyPoolVersionAtStart !== keyPoolVersionRef.current) {
         return;
       }
-      setCandidates(previousCandidates);
+      setCandidateIds(previousCandidateIds);
       setSyncState("failed");
       const message = readError(requestError);
       setSyncError(message);
@@ -125,13 +142,16 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
 
     const operationIsCurrent =
       operationId === saveOperationRef.current &&
-      workspaceVersionAtStart === workspaceVersionRef.current;
+      keyPoolVersionAtStart === keyPoolVersionRef.current;
     if (operationIsCurrent) {
-      setCandidates(nextCandidates);
+      setCandidateIds(nextStationKeyIds);
       setSyncState("synced");
     }
 
-    const synchronization = await synchronizeRoutingQueriesAfterMutation(queryClient);
+    const [synchronization] = await Promise.all([
+      synchronizeRoutingQueriesAfterMutation(queryClient),
+      queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
+    ]);
     if (!synchronization.refreshed && operationIsCurrent) {
       toast.error("候选顺序已保存，但状态刷新失败", readError(synchronization.errors[0]));
     }
@@ -160,6 +180,8 @@ export function LocalRoutingEditTab({ workspace, loading }: LocalRoutingEditTabP
         )}
         {loading && !workspace ? (
           <div className="text-sm text-muted-foreground">正在加载候选 Key...</div>
+        ) : workspace && !keyPoolItems ? (
+          <div className="text-sm text-muted-foreground">Loading complete Key Pool...</div>
         ) : candidates.length === 0 ? (
           <EmptyState title="暂无候选 Key" description="尚未发现可用候选。" />
         ) : (

@@ -42,13 +42,20 @@ import {
   dashboardCumulativeRequestMetricsQueryOptions,
   dashboardLiveRequestMetricsQueryOptions,
   keyPoolQueryOptions,
+  channelMonitoringQueryOptions,
   proxyStatusQueryOptions,
   requestLogsQueryOptions,
   settingsQueryOptions,
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
-import { formatChangeTime, severityLabels, severityTone, unreadRiskCount } from "@/lib/changeEvents/changeEventViewModels";
+import {
+  buildChangeEventListItem,
+  formatChangeTime,
+  severityLabels,
+  severityTone,
+  unreadRiskCount,
+} from "@/lib/changeEvents/changeEventViewModels";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
 import { formatRecentRequestCost } from "@/features/dashboard/requestCostFormat";
 import { useUpdater } from "@/lib/updater/UpdaterProvider";
@@ -59,6 +66,7 @@ import {
   msUntilNextLocalDay,
 } from "@/features/dashboard/dashboardRequestMetricsViewModel";
 import type { DashboardCostMetrics, DashboardCostTotal, DashboardPeriodMetrics } from "@/lib/types/dashboardMetrics";
+import { summarizeDashboardKeyHealth } from "@/features/dashboard/dashboardKeyHealth";
 
 const healthTone = {
   healthy: "healthy",
@@ -67,6 +75,14 @@ const healthTone = {
   disabled: "disabled",
   unchecked: "info",
 } as const;
+
+const dashboardKeyHealthLabels: Record<StationKeyStatus, string> = {
+  unchecked: "未检测",
+  healthy: "正常",
+  warning: "降级",
+  error: "错误",
+  disabled: "禁用",
+};
 
 const dashboardMetricToneClassName: Record<MetricTone, string> = {
   neutral: "text-foreground",
@@ -117,6 +133,7 @@ export function DashboardPage() {
     requestLogsQueryOptions(proxyRunning ? 2_000 : false),
   );
   const keyPoolQuery = useActivityQuery(keyPoolQueryOptions());
+  const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions(5_000));
   const stationsQuery = useActivityQuery(stationsQueryOptions());
   const balancesQuery = useActivityQuery(
     currentStationBalanceSnapshotsQueryOptions(),
@@ -136,6 +153,11 @@ export function DashboardPage() {
   const todayCosts = liveRequestMetrics?.todayCosts ?? null;
   const lifetimeCosts = cumulativeRequestMetrics?.lifetimeCosts ?? null;
   const keyPoolItems = keyPoolQuery.data ?? [];
+  const keyHealthSummary = useMemo(() => summarizeDashboardKeyHealth(
+    keyPoolItems,
+    channelMonitoringQuery.data?.monitors ?? [],
+    channelMonitoringQuery.data?.statusWorkspace.rows ?? [],
+  ), [channelMonitoringQuery.data, keyPoolItems]);
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
   const settings = settingsQuery.data ?? null;
@@ -156,80 +178,28 @@ export function DashboardPage() {
     }, msUntilNextLocalDay());
     return () => window.clearTimeout(timeout);
   }, [localDayMetricsInput.localDayStartMs]);
-  async function copyText(value: string, label = "内容") {
-    if (isMaskedDisplayValue(value)) {
-      toast.error("复制失败", `${label}是脱敏展示值，不能复制。`);
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(value);
-      toast.success(`${label}已复制`);
-    } catch (copyError) {
-      toast.error("复制失败", readError(copyError));
-    }
-  }
-
-  async function copyLocalAccessKey() {
-    try {
-      const localAccessKey = await getLocalAccessKey();
-      await navigator.clipboard.writeText(localAccessKey);
-      toast.success("本地访问密钥已复制");
-    } catch (copyError) {
-      toast.error("复制失败", readError(copyError));
-    }
-  }
-
-  async function handleStartLocalProxy() {
-    setStartingLocalProxy(true);
-    try {
-      await queryClient.cancelQueries({ queryKey: queryKeys.proxyStatus });
-      const nextStatus = await startLocalProxy();
-      queryClient.setQueryData(queryKeys.proxyStatus, nextStatus);
-      toast.success("本地路由已启动", `监听 ${nextStatus.bindAddr}:${nextStatus.port}`);
-    } catch (startError) {
-      toast.error("启动本地路由失败", readError(startError));
-    } finally {
-      setStartingLocalProxy(false);
-    }
-  }
-
-  async function handleStopLocalProxy() {
-    setStoppingLocalProxy(true);
-    try {
-      await queryClient.cancelQueries({ queryKey: queryKeys.proxyStatus });
-      const nextStatus = await stopLocalProxy();
-      queryClient.setQueryData(queryKeys.proxyStatus, nextStatus);
-      toast.success("本地路由已关闭");
-    } catch (stopError) {
-      toast.error("关闭本地路由失败", readError(stopError));
-    } finally {
-      setStoppingLocalProxy(false);
-    }
-  }
-
-  async function handleImportToCCSwitch() {
-    setImportingCCSwitch(true);
-    try {
-      const result = await importRelayPoolToCCSwitch();
-      toast.success("已唤起 CCSwitch", `${result.providerName} - ${result.endpoint}`);
-    } catch (importError) {
-      toast.error("导入 CCSwitch 失败", readError(importError));
-    } finally {
-      setImportingCCSwitch(false);
-    }
-  }
-
+  async function copyText(value: string, label = "内容") { if (isMaskedDisplayValue(value)) return; try { await navigator.clipboard.writeText(value); toast.success(`${label}已复制`); } catch (error) { toast.error("复制失败", readError(error)); } }
+  async function copyLocalAccessKey() { try { await navigator.clipboard.writeText(await getLocalAccessKey()); toast.success("本地访问密钥已复制"); } catch (error) { toast.error("复制失败", readError(error)); } }
+  async function handleStartLocalProxy() { setStartingLocalProxy(true); try { const nextStatus = await startLocalProxy(); queryClient.setQueryData(queryKeys.proxyStatus, nextStatus); } catch (error) { toast.error("启动本地路由失败", readError(error)); } finally { setStartingLocalProxy(false); } }
+  async function handleStopLocalProxy() { setStoppingLocalProxy(true); try { const nextStatus = await stopLocalProxy(); queryClient.setQueryData(queryKeys.proxyStatus, nextStatus); } catch (error) { toast.error("关闭本地路由失败", readError(error)); } finally { setStoppingLocalProxy(false); } }
+  async function handleImportToCCSwitch() { setImportingCCSwitch(true); try { const result = await importRelayPoolToCCSwitch(); toast.success("已唤起 CCSwitch", `${result.providerName} - ${result.endpoint}`); } catch (error) { toast.error("导入 CCSwitch 失败", readError(error)); } finally { setImportingCCSwitch(false); } }
   const liveMetricsState = dashboardMetricsQueryState(liveRequestMetricsQuery);
   const cumulativeMetricsState = dashboardMetricsQueryState(cumulativeRequestMetricsQuery);
   const todayRequests = todayMetrics?.requestCount ?? null;
-  const proxyBaseUrl = proxyStatus
-    ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1`
-    : `http://127.0.0.1:${settings?.localProxyPort ?? 8787}/v1`;
+  const proxyBaseUrl = proxyStatus ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1` : `http://127.0.0.1:${settings?.localProxyPort ?? 8787}/v1`;
   const localKeyMasked = settings?.localKeyMasked ?? "未读取";
   const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
   const requestKeyNameById = useMemo(
     () => new Map(keyPoolItems.map((key) => [key.id, key.name])),
     [keyPoolItems],
+  );
+  const stationNamesById = useMemo(
+    () => new Map(stations.map((station) => [station.id, station.name] as const)),
+    [stations],
+  );
+  const stationCreditPerCnyById = useMemo(
+    () => new Map(stations.map((station) => [station.id, station.creditPerCny] as const)),
+    [stations],
   );
   const proxyRequestCount = Math.max(lifetimeMetrics?.requestCount ?? 0, proxyStatus?.requestCount ?? 0);
   const todayTokens = todayMetrics?.totalTokens ?? null;
@@ -277,7 +247,7 @@ export function DashboardPage() {
   return (
     <PageScaffold title="总览" actions={updateAction}>
       <div className="grid gap-4">
-        <SectionCard
+        {/* <SectionCard
           title="当前路由"
           action={
             <StatusBadge tone={proxyRunning ? "healthy" : "warning"}>
@@ -364,7 +334,7 @@ export function DashboardPage() {
               </button>
             </div>
           </div>
-        </SectionCard>
+        </SectionCard> */}
 
         <MetricPanel
           title="本地路由指标"
@@ -572,17 +542,19 @@ export function DashboardPage() {
           </div>
         ) : (
           <div className="grid min-w-0 gap-2">
-            {activeRiskEvents.slice(0, 5).map((event) => (
-              <ObjectRow
-                key={event.id}
-                className="min-w-0"
-                icon={<AlertTriangle className="h-4 w-4" />}
-                title={event.title}
-                subtitle={`${event.message} · ${formatChangeTime(event.detectedAt)}`}
-                badges={<StatusBadge tone={severityTone[event.severity]}>{severityLabels[event.severity]}</StatusBadge>}
-                metrics={[{ label: "来源", value: event.source }]}
-              />
-            ))}
+            {activeRiskEvents.slice(0, 5).map((event) => {
+              const item = buildChangeEventListItem(event, { stationNamesById, stationCreditPerCnyById });
+              return (
+                <ObjectRow
+                  key={event.id}
+                  className="min-w-0"
+                  icon={<AlertTriangle className="h-4 w-4" />}
+                  title={item.title}
+                  subtitle={`${item.description} · ${formatChangeTime(event.detectedAt)}`}
+                  badges={<StatusBadge tone={severityTone[event.severity]}>{severityLabels[event.severity]}</StatusBadge>}
+                />
+              );
+            })}
           </div>
         )}
       </section>
@@ -696,8 +668,8 @@ export function DashboardPage() {
             {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
               <DashboardMetricTile
                 key={key}
-                label={stationKeyStatusLabels[key]}
-                value={keyPoolItems.filter((item) => item.status === key).length}
+                label={dashboardKeyHealthLabels[key]}
+                value={keyHealthSummary[key]}
                 detail="密钥"
                 icon={Server}
                 tone={metricToneForHealth(key)}

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Clock3, Route, Search } from "lucide-react";
+import { Activity } from "lucide-react";
 import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
-import { readError } from "@/lib/errors";
-import { simulateRouteQuery } from "@/lib/queries/routingQueries";
 import type {
   RecentRouteDecisionsPage,
   RouteCandidateExplanation,
@@ -31,12 +29,8 @@ export function RoutingStatusDiagnosticsPanel({
   deepLink,
   onOpenRequestLog,
 }: RoutingStatusDiagnosticsPanelProps) {
-  const [model, setModel] = useState("gpt-4o-mini");
   const [stationScopeId, setStationScopeId] = useState<string | null>(null);
   const [highlightedStationKeyId, setHighlightedStationKeyId] = useState<string | null>(null);
-  const [simulation, setSimulation] = useState<RouteSimulationResult | null>(null);
-  const [simulating, setSimulating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const overlayByKey = useMemo(
     () => new Map((runtimeOverlay?.candidates ?? []).map((candidate) => [candidate.stationKeyId, candidate])),
@@ -46,16 +40,18 @@ export function RoutingStatusDiagnosticsPanel({
     if (!stationScopeId) return snapshot?.candidates ?? [];
     return snapshot?.candidates.filter((candidate) => candidate.stationId === stationScopeId) ?? [];
   }, [snapshot?.candidates, stationScopeId]);
-  const unpricedCount = snapshot?.candidates.filter((candidate) => candidate.pricing.basis === "unpriced").length ?? 0;
+  const unpricedCount =
+    snapshot?.candidates.filter(
+      (candidate) =>
+        candidate.pricing.basis === "unpriced" &&
+        candidate.multiplier.multiplier == null &&
+        candidate.pricing.comparisonValue == null,
+    ).length ?? 0;
   const availableCount =
     snapshot?.candidates.filter((candidate) => {
       const overlay = overlayByKey.get(candidate.stationKeyId);
       return (overlay?.healthState ?? candidate.healthState) === "available" && candidate.hardRejectionCodes.length === 0;
     }).length ?? 0;
-  const selectedCandidate = simulation?.selectedStationKeyId
-    ? simulation.candidates.find((candidate) => candidate.stationKeyId === simulation.selectedStationKeyId) ?? null
-    : null;
-
   useEffect(() => {
     if (!deepLink || !snapshot) return;
     if (deepLink.kind === "station") {
@@ -65,36 +61,8 @@ export function RoutingStatusDiagnosticsPanel({
       const candidate = snapshot.candidates.find((item) => item.stationKeyId === deepLink.stationKeyId);
       setStationScopeId(candidate?.stationId ?? null);
       setHighlightedStationKeyId(deepLink.stationKeyId);
-    } else if (deepLink.kind === "simulate-model") {
-      setModel(deepLink.model);
-      void runSimulation(deepLink.endpoint ?? "chat_completions", deepLink.model);
     }
   }, [deepLink?.sequence, snapshot?.generatedAtMs]);
-
-  async function runSimulation(endpoint: RouteEndpointKind = "chat_completions", nextModel = model) {
-    if (!snapshot || simulating) return;
-    setSimulating(true);
-    setError(null);
-    try {
-      setSimulation(
-        await simulateRouteQuery({
-          endpoint,
-          model: nextModel,
-          stream: true,
-          usesTools: false,
-          usesVision: false,
-          usesReasoning: false,
-          policy: snapshot.policyConfig,
-          maxRateMultiplier: snapshot.maxRateMultiplier,
-          routingGroupFilter: snapshot.routingGroupFilter,
-        }),
-      );
-    } catch (simulationError) {
-      setError(readError(simulationError));
-    } finally {
-      setSimulating(false);
-    }
-  }
 
   if (loading && !snapshot) {
     return (
@@ -165,7 +133,7 @@ export function RoutingStatusDiagnosticsPanel({
         )}
       </SectionCard>
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
+      {/* <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
         <SectionCard
           title="模拟路由"
           description="输入模型名，查看当前规则会选择哪个 Key；这里不会真的占用并发。"
@@ -195,38 +163,7 @@ export function RoutingStatusDiagnosticsPanel({
           )}
         </SectionCard>
 
-        <SectionCard
-          title="最近决策"
-          description="真实请求经过本地代理后，这里会显示最终选择和 fallback 情况。"
-          action={<StatusBadge tone={decisions?.readModelStatus === "available" ? "healthy" : "warning"}>{decisions?.readModelStatus ?? "unavailable"}</StatusBadge>}
-          contentClassName="grid min-w-0 gap-2"
-        >
-          {(decisions?.decisions.length ?? 0) === 0 ? (
-            <EmptyState title="暂无最近决策" description="先通过本地代理发起一次请求，这里才会出现路由记录。" />
-          ) : (
-            decisions?.decisions.slice(0, 5).map((decision) => (
-              <button
-                key={decision.requestLogId}
-                type="button"
-                className="grid min-w-0 gap-1 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-left text-sm hover:bg-hover"
-                onClick={() => onOpenRequestLog?.(decision.requestLogId)}
-              >
-                <span className="flex min-w-0 items-center justify-between gap-2">
-                  <span className="truncate font-medium text-foreground">{decision.model ?? "未知模型"}</span>
-                  <StatusBadge tone={decision.status === "success" ? "healthy" : "warning"}>{decision.status}</StatusBadge>
-                </span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {decision.stationKeyId ? `Key ${decision.stationKeyId}` : "未选中 Key"} · fallback {decision.fallbackCount}
-                </span>
-                <span className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                  <Clock3 className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{formatTime(decision.createdAt)}</span>
-                </span>
-              </button>
-            ))
-          )}
-        </SectionCard>
-      </div>
+      </div> */}
     </section>
   );
 }
@@ -278,10 +215,10 @@ function CandidateLine({
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
         <StatusBadge tone={blocked ? "warning" : healthState === "available" ? "healthy" : "disabled"}>
-          {blocked ? "不可参与" : healthState}
+          {blocked ? "不可参与" : healthState === "unknown" ? "可参与" : healthState}
         </StatusBadge>
         <span className="text-xs text-muted-foreground">
-          并发 {inFlight ?? "?"}/{formatConcurrencyLimit(candidate.capacity.maxConcurrency)}
+          本地在途 {inFlight ?? 0}/{formatConcurrencyLimit(candidate.capacity.maxConcurrency)}
         </span>
       </div>
     </div>
@@ -347,19 +284,11 @@ function formatConcurrencyLimit(limit: number) {
 }
 
 function formatPrice(candidate: RoutingWorkspaceCandidate) {
-  if (candidate.pricing.basis === "unpriced") return "缺失";
   if (candidate.multiplier.multiplier != null) return `${candidate.multiplier.multiplier}x`;
+  if (candidate.pricing.basis === "unpriced") {
+    return candidate.pricing.reason === "pricing_context_missing" ? "需指定模型" : "缺失";
+  }
   if (candidate.pricing.comparisonValue != null) return `${candidate.pricing.comparisonValue}`;
   return candidate.pricing.statusLabel;
 }
 
-function formatTime(value: string) {
-  const time = Date.parse(value);
-  if (!Number.isFinite(time)) return value;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(time));
-}

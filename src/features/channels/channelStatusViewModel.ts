@@ -54,6 +54,8 @@ export type ChannelStatusRowView = {
   rowKey: string;
   monitorId: string;
   monitorName: string;
+  stationId: string;
+  stationKeyId: string | null;
   targetName: string;
   stationName: string;
   keyName: string | null;
@@ -61,6 +63,7 @@ export type ChannelStatusRowView = {
   visualPlatform: StationGroupVisualPlatform;
   visualPlatformLabel: string;
   enabled: boolean;
+  balancePaused: boolean;
   modelLabel: string;
   currentTone: StatusTone;
   currentLabel: string;
@@ -161,6 +164,8 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     rowKey: row.rowKey,
     monitorId: row.monitor.id,
     monitorName: row.monitor.name,
+    stationId: row.target.stationId,
+    stationKeyId: row.target.stationKeyId,
     targetName: row.target.stationKeyName ?? row.target.stationName ?? row.monitor.name,
     stationName: row.target.stationName ?? row.target.stationId,
     keyName: row.target.stationKeyName,
@@ -168,6 +173,7 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     visualPlatform: groupVisualMeta.platform,
     visualPlatformLabel: groupVisualMeta.label,
     enabled: row.monitor.enabled,
+    balancePaused: row.monitor.balancePaused,
     modelLabel: formatModelLabel(row.monitor.primaryModel, row.monitor.fallbackModels),
     currentTone,
     currentLabel: !row.monitor.enabled

@@ -1,7 +1,7 @@
 import type { DraggableAttributes } from "@dnd-kit/core";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Clock3, Edit3, GripVertical, KeyRound, RefreshCw, Route, ShieldCheck, Trash2 } from "lucide-react";
+import { Clock3, Edit3, GripVertical, RefreshCw, Route, ShieldCheck, Trash2 } from "lucide-react";
 import { IconButton } from "@/components/ui";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
@@ -189,9 +189,6 @@ export function StationAssetListRow({
       >
         <IconButton className="text-muted-foreground hover:text-foreground" label={`编辑 ${station.name}`} onClick={() => onEdit(station)}>
           <Edit3 className="h-4 w-4" />
-        </IconButton>
-        <IconButton className="text-muted-foreground hover:text-foreground" label={`管理 Key ${station.name}`} onClick={() => onEdit(station)}>
-          <KeyRound className="h-4 w-4" />
         </IconButton>
         {supportsManualAuthorization(station) && (
           <IconButton

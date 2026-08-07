@@ -18,6 +18,8 @@ export type CandidateDisplayFacts = {
   multiplierLabel: string;
   multiplierDetail: string | null;
   balanceLabel: string;
+  balanceAmountLabel: string;
+  balanceUnit: string | null;
   balanceDetail: string | null;
 };
 
@@ -144,13 +146,29 @@ export function buildCandidateDisplayFacts(candidate: RoutingCandidateView): Can
     null;
   const balanceFact = candidate.facts.find((fact) => fact.kind === "balance") ?? null;
 
+  const formattedBalance = formatBalanceValue(candidate.balanceValue);
+  const balanceLabel =
+    formattedBalance?.label ??
+    (balanceFact ? formatBalanceStatus(balanceFact.value) : "后端未提供");
+
   return {
     rejectReasonLabel: rejectReason ? formatPreviewRejectReason(rejectReason) : null,
     multiplierLabel: formatMultiplierFactValue(multiplierFact?.value),
     multiplierDetail: null,
-    balanceLabel: balanceFact ? formatBalanceStatus(balanceFact.value) : "后端未提供",
+    balanceLabel,
+    balanceAmountLabel: formattedBalance?.amount ?? balanceLabel,
+    balanceUnit: formattedBalance?.unit ?? null,
     balanceDetail: null,
   };
+}
+
+function formatBalanceValue(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return null;
+  const formatted = value.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return { amount: formatted, unit: "$", label: `${formatted}$` };
 }
 
 export function formatBalanceStatus(value: string | null) {
@@ -159,7 +177,13 @@ export function formatBalanceStatus(value: string | null) {
 
 function formatMultiplierFactValue(value: string | null | undefined) {
   if (!value) return "后端未提供";
-  return value.replace(/\s+via\s+\S+\s*$/i, "").trim() || "后端未提供";
+  const normalized = value.replace(/\s+via\s+\S+\s*$/i, "").trim();
+  const numericMultiplier = normalized.match(/^(-?\d+(?:\.\d+)?)x$/i);
+  if (!numericMultiplier) return normalized || "后端未提供";
+  return `${Number(numericMultiplier[1]).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}x`;
 }
 
 export function formatRoutingDecisionTime(value: string | null) {

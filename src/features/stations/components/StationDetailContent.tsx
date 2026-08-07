@@ -150,9 +150,17 @@ export function StationDetailContent({
             重新采集
           </Button>
           {station.stationType === "sub2api" && (
-            <IconButton label={`重新授权 ${station.name}`} disabled={actionBusy} onClick={onAuthorize}>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-label={`重新授权 ${station.name}`}
+              title={`重新授权 ${station.name}`}
+              disabled={actionBusy}
+              onClick={onAuthorize}
+            >
               <ShieldCheck className={cn("h-4 w-4", loadingAction === "authorize" && "animate-pulse")} />
-            </IconButton>
+              窗口授权
+            </Button>
           )}
           <Button variant="ghost" size="sm" onClick={onEdit}>
             <Edit3 className="h-3.5 w-3.5" />
