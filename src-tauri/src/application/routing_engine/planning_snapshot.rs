@@ -7,6 +7,7 @@ pub(crate) struct CandidateSnapshot {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
+    pub(crate) credential_revision: i64,
     pub(crate) credential_available: bool,
     pub(crate) hard_eligible: bool,
     pub(crate) backup_only: bool,
@@ -61,6 +62,7 @@ impl PlanningSnapshot {
             candidate.station_key_id.is_empty()
                 || candidate.station_id.is_empty()
                 || candidate.endpoint_revision <= 0
+                || candidate.credential_revision <= 0
                 || candidate.capability_basis_points > 10_000
                 || candidate.reliability_basis_points > 10_000
                 || candidate.responsiveness_basis_points > 10_000

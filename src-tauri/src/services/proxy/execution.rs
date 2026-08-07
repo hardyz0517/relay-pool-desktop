@@ -44,20 +44,20 @@ use crate::{
         },
         request_finalization::failure::{failure_from_provider_signal, CapabilityApplicabilitySet},
         routing_engine::{
-            affinity::{AffinityKind, AffinityLookup, AffinityRegistry},
-            capacity::CompositeCapacityRegistry,
             admission::{
                 ActualAttemptTerminal, AdmissionDecision, AdmissionEvidence, AdmissionFailure,
-                AdmissionFailureKind, AdmissionPlanningInput, FallbackPolicy,
-                RouteAdmissionCoordinator, AdmissionSettings, SelectedRoute,
+                AdmissionFailureKind, AdmissionPlanningInput, AdmissionSettings, FallbackPolicy,
+                RouteAdmissionCoordinator, SelectedRoute,
             },
+            affinity::{AffinityKind, AffinityLookup, AffinityRegistry},
+            candidate_plan::RoutePlanCandidate,
+            capacity::CompositeCapacityRegistry,
             model_alias,
             request::{
                 CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind,
                 RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
             },
             routing_failure::RoutePlanningFailure,
-            candidate_plan::RoutePlanCandidate,
         },
     },
     models::{
@@ -133,7 +133,7 @@ pub(crate) enum ProxyExecutionBody {
     Stream(ByteStream),
 }
 
-const DEFAULT_AFFINITY_TTL_MS: i64 = 30 * 60 * 1_000;
+const MAX_EXECUTION_REPLANS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetryDecision {
@@ -233,50 +233,22 @@ impl ExecutionEngine {
             request_started_at_ms,
             mapped_model.as_deref(),
         );
-        let affinity_station_key_id = self.affinity_station_key_id(
-            &request,
-            &execution_settings,
-            mapped_model.as_deref(),
-            request_started_at_ms,
-        );
-        // The canonical planner is fed by the same request-scoped runtime
-        // overlay as capacity/admission. A missing policy is a configuration
-        // error in production; only unit fixtures without a lifecycle writer
-        // may exercise the execution shell without a planner snapshot.
-        let mut runtime_overlay = self.routing_runtime.snapshot();
-        runtime_overlay.affinity_station_key_id = affinity_station_key_id.clone();
-        let planning_result = self
-            .repository
-            .load_planning_snapshot(route_facts.clone(), runtime_overlay)
-            .await
-            .map_err(|error| {
-                internal_failure(format!("load intelligent planning snapshot failed: {error}"))
-            });
-        let planning_snapshot = match planning_result {
-            Ok(snapshot) => snapshot,
-            Err(_error) if self.lifecycle_writer.is_none() => None,
-            Err(error) => return Err(error),
-        };
-        let snapshot = match planning_snapshot.clone() {
-            Some(planning_snapshot) => self
-                .repository
-                .load_operational_route_snapshot(route_facts.clone(), planning_snapshot)
-                .await
-                .map_err(|error| {
-                    internal_failure(format!("load execution route index failed: {error}"))
-                })?,
-            None if self.lifecycle_writer.is_none() => {
-                return Err(routing_configuration_required_failure());
-            }
-            None => return Err(routing_configuration_required_failure()),
-        };
+        let (mut planning_snapshot, mut snapshot) = self
+            .load_route_snapshots(
+                &request,
+                &execution_settings,
+                route_facts.clone(),
+                mapped_model.as_deref(),
+            )
+            .await?;
         if matches!(request.endpoint, RouteEndpointKind::Models) {
             return self
                 .execute_models(
                     request,
                     route_facts,
                     snapshot,
-                    planning_snapshot.clone(),
+                    planning_snapshot,
+                    &execution_settings,
                     mapped_model,
                     request_started_at_ms,
                     precommit_started,
@@ -288,24 +260,15 @@ impl ExecutionEngine {
         let mut last_failure = None;
         let mut attempted_count = 0_i64;
         let mut controller = RouteAdmissionCoordinator::new_with_retry_budget(
-            route_facts,
+            route_facts.clone(),
             AdmissionSettings {
                 deadline_ms: precommit_deadline_ms(
                     request_started_at_ms,
                     self.retry_policy.precommit_budget,
                 ),
-                initial_snapshot_id: planning_snapshot
-                    .as_ref()
-                    .map(|snapshot| snapshot.snapshot_id.clone())
-                    .unwrap_or_else(|| snapshot.snapshot_id.clone()),
-                initial_runtime_overlay_revision: planning_snapshot
-                    .as_ref()
-                    .map(|snapshot| snapshot.runtime.runtime_revision)
-                    .unwrap_or(snapshot.runtime_overlay_revision),
-                initial_durable_generation: planning_snapshot
-                    .as_ref()
-                    .map(|snapshot| snapshot.durable_revision)
-                    .unwrap_or(snapshot.durable_generation),
+                initial_snapshot_id: planning_snapshot.snapshot_id.clone(),
+                initial_runtime_overlay_revision: planning_snapshot.runtime.runtime_revision,
+                initial_durable_generation: planning_snapshot.durable_revision,
                 fallback_policy: FallbackPolicy {
                     has_stable_idempotency_key: idempotent,
                     non_idempotent: !idempotent,
@@ -316,7 +279,9 @@ impl ExecutionEngine {
         let root_seed = self.routing_runtime.root_seed();
         let exploration_budget = self.routing_runtime.exploration_budget();
 
-        for attempt_index in 0..self.retry_policy.max_candidate_attempts {
+        let mut attempt_index = 0_usize;
+        let mut replan_count = 0_usize;
+        while attempt_index < self.retry_policy.max_candidate_attempts {
             if self
                 .retry_policy
                 .remaining_precommit_budget(precommit_started)
@@ -326,37 +291,23 @@ impl ExecutionEngine {
             }
             let admission_input = AdmissionPlanningInput {
                 execution_candidates: &snapshot.candidates,
-                planning_snapshot: planning_snapshot.as_ref(),
+                planning_snapshot: Some(&planning_snapshot),
                 root_seed: &root_seed,
                 exploration_budget: Some(&exploration_budget),
                 #[cfg(test)]
-                affinity_station_key_id: affinity_station_key_id.as_deref(),
+                affinity_station_key_id: planning_snapshot
+                    .runtime
+                    .affinity_station_key_id
+                    .as_deref(),
                 profiles: &snapshot.profiles,
                 capacity: &self.capacity,
-                current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                current_runtime_overlay_revision: self.routing_runtime.snapshot().runtime_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
                 #[cfg(test)]
                 candidates: &snapshot.legacy_candidates,
             };
-            let decision = match if planning_snapshot.is_some() {
-                controller.next(admission_input)
-            } else {
-                #[cfg(test)]
-                {
-                    controller.next_legacy(admission_input)
-                }
-                #[cfg(not(test))]
-                {
-                    Err(AdmissionFailure {
-                        kind: AdmissionFailureKind::ConfigUnstable,
-                        evidence: vec![AdmissionEvidence {
-                            code: "planning_snapshot_required",
-                            detail: "production planner snapshot missing".to_string(),
-                        }],
-                    })
-                }
-            } {
+            let decision = match controller.next(admission_input) {
                 Ok(decision) => decision,
                 Err(failure) if last_failure.is_some() && catalog_planning_exhausted(&failure) => {
                     break;
@@ -365,8 +316,36 @@ impl ExecutionEngine {
                     return Err(controller_failure(failure, &execution_settings.policy));
                 }
             };
-            let selected = selected_route_or_failure(decision)
-                .map_err(|failure| controller_failure(failure, &execution_settings.policy))?;
+            let selected = match decision {
+                AdmissionDecision::Selected(selected) => selected,
+                AdmissionDecision::Replan { .. } => {
+                    if replan_count >= MAX_EXECUTION_REPLANS {
+                        return Err(controller_failure(
+                            AdmissionFailure {
+                                kind: AdmissionFailureKind::ConfigUnstable,
+                                evidence: vec![AdmissionEvidence {
+                                    code: "execution_replan_limit_exceeded",
+                                    detail: "routing state changed repeatedly before admission"
+                                        .to_string(),
+                                }],
+                            },
+                            &execution_settings.policy,
+                        ));
+                    }
+                    replan_count += 1;
+                    (planning_snapshot, snapshot) = self
+                        .load_route_snapshots(
+                            &request,
+                            &execution_settings,
+                            route_facts.clone(),
+                            mapped_model.as_deref(),
+                        )
+                        .await?;
+                    continue;
+                }
+                other => selected_route_or_failure(other)
+                    .map_err(|failure| controller_failure(failure, &execution_settings.policy))?,
+            };
             attempted_count = attempted_count.max(attempt_index as i64 + 1);
             let candidate = selected.candidate.clone();
             let attempt_started_at_ms = now_millis_for_services() as i64;
@@ -407,8 +386,9 @@ impl ExecutionEngine {
                         &request,
                         &execution_settings,
                         mapped_model.as_deref(),
-                        &candidate.station_key_id,
-                        request_started_at_ms,
+                        &candidate,
+                        &planning_snapshot.policy,
+                        now_millis_for_services() as i64,
                     );
                     return Ok(ProxyExecutionResponse::from_prepared(
                         prepared,
@@ -453,6 +433,8 @@ impl ExecutionEngine {
                     if decision == RetryDecision::Stop {
                         break;
                     }
+                    self.routing_runtime.mark_runtime_changed();
+                    attempt_index += 1;
                 }
             }
         }
@@ -561,8 +543,9 @@ impl ExecutionEngine {
         &self,
         request: CanonicalProxyRequest,
         route_facts: RouteRequestFacts,
-        snapshot: OperationalRouteSnapshot,
-        planning_snapshot: Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
+        mut snapshot: OperationalRouteSnapshot,
+        mut planning_snapshot: crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
+        execution_settings: &RoutingExecutionSettings,
         mapped_model: Option<String>,
         request_started_at_ms: i64,
         precommit_started: Instant,
@@ -574,24 +557,15 @@ impl ExecutionEngine {
         let mut last_failure = None;
         let mut headers = HeaderMap::new();
         let mut controller = RouteAdmissionCoordinator::new_with_retry_budget(
-            route_facts,
+            route_facts.clone(),
             AdmissionSettings {
                 deadline_ms: precommit_deadline_ms(
                     request_started_at_ms,
                     self.retry_policy.precommit_budget,
                 ),
-                initial_snapshot_id: planning_snapshot
-                    .as_ref()
-                    .map(|snapshot| snapshot.snapshot_id.clone())
-                    .unwrap_or_else(|| snapshot.snapshot_id.clone()),
-                initial_runtime_overlay_revision: planning_snapshot
-                    .as_ref()
-                    .map(|snapshot| snapshot.runtime.runtime_revision)
-                    .unwrap_or(snapshot.runtime_overlay_revision),
-                initial_durable_generation: planning_snapshot
-                    .as_ref()
-                    .map(|snapshot| snapshot.durable_revision)
-                    .unwrap_or(snapshot.durable_generation),
+                initial_snapshot_id: planning_snapshot.snapshot_id.clone(),
+                initial_runtime_overlay_revision: planning_snapshot.runtime.runtime_revision,
+                initial_durable_generation: planning_snapshot.durable_revision,
                 fallback_policy: FallbackPolicy {
                     has_stable_idempotency_key: true,
                     non_idempotent: false,
@@ -602,7 +576,9 @@ impl ExecutionEngine {
         let root_seed = self.routing_runtime.root_seed();
         let exploration_budget = self.routing_runtime.exploration_budget();
 
-        for attempt_index in 0..self.retry_policy.max_candidate_attempts {
+        let mut attempt_index = 0_usize;
+        let mut replan_count = 0_usize;
+        while attempt_index < self.retry_policy.max_candidate_attempts {
             if self
                 .retry_policy
                 .remaining_precommit_budget(precommit_started)
@@ -612,37 +588,20 @@ impl ExecutionEngine {
             }
             let admission_input = AdmissionPlanningInput {
                 execution_candidates: &snapshot.candidates,
-                planning_snapshot: planning_snapshot.as_ref(),
+                planning_snapshot: Some(&planning_snapshot),
                 root_seed: &root_seed,
                 exploration_budget: Some(&exploration_budget),
                 #[cfg(test)]
                 affinity_station_key_id: None,
                 profiles: &snapshot.profiles,
                 capacity: &self.capacity,
-                current_runtime_overlay_revision: snapshot.runtime_overlay_revision,
+                current_runtime_overlay_revision: self.routing_runtime.snapshot().runtime_revision,
                 now_ms: controller_now_ms(request_started_at_ms, precommit_started),
                 max_waiters_per_constraint: 0,
                 #[cfg(test)]
                 candidates: &snapshot.legacy_candidates,
             };
-            let decision = match if planning_snapshot.is_some() {
-                controller.next(admission_input)
-            } else {
-                #[cfg(test)]
-                {
-                    controller.next_legacy(admission_input)
-                }
-                #[cfg(not(test))]
-                {
-                    Err(AdmissionFailure {
-                        kind: AdmissionFailureKind::ConfigUnstable,
-                        evidence: vec![AdmissionEvidence {
-                            code: "planning_snapshot_required",
-                            detail: "production planner snapshot missing".to_string(),
-                        }],
-                    })
-                }
-            } {
+            let decision = match controller.next(admission_input) {
                 Ok(decision) => decision,
                 Err(failure) if attempted_count > 0 && catalog_planning_exhausted(&failure) => {
                     break;
@@ -654,17 +613,45 @@ impl ExecutionEngine {
                     ));
                 }
             };
-            let selected = match selected_route_or_failure(decision) {
-                Ok(selected) => selected,
-                Err(failure) if attempted_count > 0 && catalog_planning_exhausted(&failure) => {
-                    break;
+            let selected = match decision {
+                AdmissionDecision::Selected(selected) => selected,
+                AdmissionDecision::Replan { .. } => {
+                    if replan_count >= MAX_EXECUTION_REPLANS {
+                        return Err(controller_failure(
+                            AdmissionFailure {
+                                kind: AdmissionFailureKind::ConfigUnstable,
+                                evidence: vec![AdmissionEvidence {
+                                    code: "execution_replan_limit_exceeded",
+                                    detail: "routing state changed repeatedly before admission"
+                                        .to_string(),
+                                }],
+                            },
+                            &RoutingPolicy::PriorityFallback,
+                        ));
+                    }
+                    replan_count += 1;
+                    (planning_snapshot, snapshot) = self
+                        .load_route_snapshots(
+                            &request,
+                            execution_settings,
+                            route_facts.clone(),
+                            mapped_model.as_deref(),
+                        )
+                        .await?;
+                    continue;
                 }
-                Err(failure) => {
-                    return Err(controller_failure(
-                        failure,
-                        &RoutingPolicy::PriorityFallback,
-                    ));
-                }
+                other => match selected_route_or_failure(other) {
+                    Ok(selected) => selected,
+                    Err(failure) if attempted_count > 0 && catalog_planning_exhausted(&failure) => {
+                        break;
+                    }
+                    Err(failure) => {
+                        return Err(controller_failure(
+                            failure,
+                            &RoutingPolicy::PriorityFallback,
+                        ));
+                    }
+                },
             };
             let candidate = selected.candidate.clone();
             attempted_count = attempted_count.max(attempt_index as i64 + 1);
@@ -686,6 +673,8 @@ impl ExecutionEngine {
                         .map_err(|failure| {
                             controller_failure(failure, &RoutingPolicy::PriorityFallback)
                         })?;
+                    self.routing_runtime.mark_runtime_changed();
+                    attempt_index += 1;
                     continue;
                 }
             };
@@ -806,6 +795,8 @@ impl ExecutionEngine {
                         })?;
                 }
             }
+            self.routing_runtime.mark_runtime_changed();
+            attempt_index += 1;
         }
 
         if models.is_empty() {
@@ -835,17 +826,78 @@ impl ExecutionEngine {
         ))
     }
 
+    async fn load_route_snapshots(
+        &self,
+        request: &CanonicalProxyRequest,
+        settings: &RoutingExecutionSettings,
+        route_facts: RouteRequestFacts,
+        model: Option<&str>,
+    ) -> Result<
+        (
+            crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
+            OperationalRouteSnapshot,
+        ),
+        ProxyFailure,
+    > {
+        let load_planning_snapshot = |runtime| {
+            self.repository
+                .load_planning_snapshot(route_facts.clone(), runtime)
+        };
+        let mut planning_snapshot = load_planning_snapshot(self.routing_runtime.snapshot())
+            .await
+            .map_err(|error| {
+                internal_failure(format!(
+                    "load intelligent planning snapshot failed: {error}"
+                ))
+            })?
+            .ok_or_else(routing_configuration_required_failure)?;
+
+        if let Some(station_key_id) = self.affinity_station_key_id(
+            request,
+            settings,
+            model,
+            &planning_snapshot,
+            now_millis_for_services() as i64,
+        ) {
+            let mut runtime_overlay = self.routing_runtime.snapshot();
+            runtime_overlay.affinity_station_key_id = Some(station_key_id);
+            planning_snapshot = load_planning_snapshot(runtime_overlay)
+                .await
+                .map_err(|error| {
+                    internal_failure(format!("reload affinity planning snapshot failed: {error}"))
+                })?
+                .ok_or_else(routing_configuration_required_failure)?;
+        }
+
+        let snapshot = self
+            .repository
+            .load_operational_route_snapshot(route_facts, planning_snapshot.clone())
+            .await
+            .map_err(|error| {
+                internal_failure(format!("load execution route index failed: {error}"))
+            })?;
+        Ok((planning_snapshot, snapshot))
+    }
+
     fn affinity_station_key_id(
         &self,
         request: &CanonicalProxyRequest,
         settings: &RoutingExecutionSettings,
         model: Option<&str>,
+        planning_snapshot: &crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
         now_ms: i64,
     ) -> Option<String> {
+        if !planning_snapshot.policy.affinity_enabled {
+            return None;
+        }
         let mut registry = self.affinity.lock().ok()?;
-        for lookup in affinity_lookups(request, settings, model) {
-            if let Ok(hit) = registry.lookup(&lookup, now_ms) {
-                return Some(hit.station_key_id);
+        for candidate in &planning_snapshot.candidates {
+            for lookup in affinity_lookups(request, settings, model, candidate.endpoint_revision) {
+                if let Ok(hit) = registry.lookup(&lookup, now_ms) {
+                    if hit.station_key_id == candidate.station_key_id {
+                        return Some(hit.station_key_id);
+                    }
+                }
             }
         }
         None
@@ -856,14 +908,19 @@ impl ExecutionEngine {
         request: &CanonicalProxyRequest,
         settings: &RoutingExecutionSettings,
         model: Option<&str>,
-        station_key_id: &str,
+        candidate: &RoutePlanCandidate,
+        policy: &crate::models::routing_policy::RoutingPolicyConfigV1,
         now_ms: i64,
     ) {
+        if !policy.affinity_enabled {
+            return;
+        }
         let Ok(mut registry) = self.affinity.lock() else {
             return;
         };
-        for lookup in affinity_lookups(request, settings, model) {
-            let _ = registry.bind(lookup, station_key_id, now_ms, DEFAULT_AFFINITY_TTL_MS);
+        let ttl_ms = i64::from(policy.affinity_ttl_seconds).saturating_mul(1_000);
+        for lookup in affinity_lookups(request, settings, model, candidate.endpoint_revision) {
+            let _ = registry.bind(lookup, &candidate.station_key_id, now_ms, ttl_ms);
         }
     }
 
@@ -1485,7 +1542,10 @@ fn route_request_facts(
             preferred_models: Vec::new(),
             required_tags: Vec::new(),
             allow_depleted_fallback: settings.allow_depleted_fallback,
-            affinity_enabled: true,
+            // The canonical policy is loaded with the planning snapshot. Do
+            // not let the legacy execution settings enable affinity before
+            // that policy has admitted it.
+            affinity_enabled: false,
         },
         admitted_at_ms,
     )
@@ -1495,6 +1555,7 @@ fn affinity_lookups(
     request: &CanonicalProxyRequest,
     settings: &RoutingExecutionSettings,
     model: Option<&str>,
+    endpoint_revision: i64,
 ) -> Vec<AffinityLookup> {
     let routing_group_scope = routing_group_scope_label(&settings.routing_group_scope);
     let mut lookups = Vec::with_capacity(2);
@@ -1503,7 +1564,7 @@ fn affinity_lookups(
             AffinityKind::PreviousResponse,
             routing_group_scope.clone(),
             previous_response_id,
-            0,
+            endpoint_revision,
             model,
         ));
     }
@@ -1512,7 +1573,7 @@ fn affinity_lookups(
             AffinityKind::Session,
             routing_group_scope,
             session_hash,
-            0,
+            endpoint_revision,
             model,
         ));
     }
@@ -1542,8 +1603,8 @@ fn ordering_profile(policy: &RoutingPolicy) -> OrderingProfile {
 
 fn group_filter_mode(filter: &crate::models::routing::RoutingGroupFilter) -> GroupFilterMode {
     match filter {
-        crate::models::routing::RoutingGroupFilter::AllGroups
-        | crate::models::routing::RoutingGroupFilter::UngroupedOnly => GroupFilterMode::Any,
+        crate::models::routing::RoutingGroupFilter::AllGroups => GroupFilterMode::Any,
+        crate::models::routing::RoutingGroupFilter::UngroupedOnly => GroupFilterMode::UngroupedOnly,
         crate::models::routing::RoutingGroupFilter::GroupBindingId(_)
         | crate::models::routing::RoutingGroupFilter::GroupIdHash(_)
         | crate::models::routing::RoutingGroupFilter::GroupType(_) => GroupFilterMode::Required,
@@ -1972,7 +2033,10 @@ fn upstream_first_byte_failure(message: impl Into<String>) -> ProxyFailure {
 mod tests {
     use std::{
         collections::BTreeMap,
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
         time::Duration,
     };
 
@@ -1987,11 +2051,14 @@ mod tests {
             },
             operational_facts::target_resolver::{ExecutionTargetHandle, ExecutionTargetRef},
             routing_engine::request::RouteRequestFacts,
-            routing_engine::{algorithm_profile::DispatchAlgorithmProfile, planning_snapshot::{CandidateSnapshot, PlanningSnapshot, RuntimeOverlaySnapshot}},
+            routing_engine::{
+                algorithm_profile::DispatchAlgorithmProfile,
+                planning_snapshot::{CandidateSnapshot, PlanningSnapshot},
+            },
         },
         models::{
             proxy::UpstreamApiFormat,
-            routing::{RouteEndpointKind, CanonicalRoutingCandidate, StationKeyCapabilities},
+            routing::{CanonicalRoutingCandidate, RouteEndpointKind, StationKeyCapabilities},
         },
         services::proxy::{
             error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
@@ -1999,14 +2066,14 @@ mod tests {
             request::{CanonicalProxyRequest, RequestRequirements},
             routing_repository::{
                 admission_profile_from_candidate, route_projection_from_runtime,
-                OperationalRouteSnapshot, RoutingRepository,
+                OperationalRouteSnapshot, RoutingExecutionSettings, RoutingRepository,
             },
         },
     };
 
     use super::{
         transform_stream_body, AffinityKind, AffinityLookup, AttemptExecutor, ExecutionEngine,
-        PreparedAttempt, RetryDecision, RetryPolicy, DEFAULT_AFFINITY_TTL_MS,
+        PreparedAttempt, RetryDecision, RetryPolicy,
     };
     use crate::services::proxy::protocol::DownstreamTransform;
 
@@ -2104,12 +2171,12 @@ mod tests {
                     AffinityKind::Session,
                     "all_groups",
                     "session-test",
-                    0,
+                    1,
                     Some("gpt-test"),
                 ),
                 "b",
                 crate::services::time::now_millis_for_services() as i64,
-                DEFAULT_AFFINITY_TTL_MS,
+                300_000,
             )
             .expect("bind affinity");
 
@@ -2120,6 +2187,98 @@ mod tests {
 
         assert_eq!(attempts.seen_ids(), ["b"]);
         assert_eq!(response.selected_station_key_id(), Some("b"));
+    }
+
+    #[tokio::test]
+    async fn execution_reloads_snapshots_after_runtime_revision_changes() {
+        let repository = Arc::new(FakeRepository::with_candidates(vec![
+            rich_candidate("a"),
+            rich_candidate("b"),
+        ]));
+        let attempts = Arc::new(FakeAttemptExecutor::responses(vec![
+            Err(failure(429)),
+            Ok(buffered_success(b"{\"ok\":true}")),
+        ]));
+        let engine = test_engine(repository.clone(), attempts.clone());
+        attempts.bump_runtime_on_next_attempt(engine.routing_runtime.clone());
+
+        let response = engine
+            .execute(canonical_chat_request().await)
+            .await
+            .expect("response after replan");
+
+        assert_eq!(attempts.seen_ids(), ["a", "b"]);
+        assert_eq!(response.selected_station_key_id(), Some("b"));
+        assert!(repository.planning_loads() >= 2);
+    }
+
+    #[tokio::test]
+    async fn affinity_binding_uses_the_canonical_policy_ttl_and_enabled_flag() {
+        let repository = Arc::new(FakeRepository::with_candidates(vec![rich_candidate("a")]));
+        let attempts = Arc::new(FakeAttemptExecutor::responses(Vec::new()));
+        let engine = test_engine(repository, attempts);
+        let request = canonical_chat_request_with_session("session-test").await;
+        let settings = RoutingExecutionSettings::default();
+        let candidate = crate::application::routing_engine::candidate_plan::RoutePlanCandidate {
+            station_key_id: "a".to_string(),
+            station_id: "station-a".to_string(),
+            endpoint_revision: 1,
+            priority: 0,
+            tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
+            pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot {
+                basis: crate::application::operational_facts::pricing_projector::RoutingCostBasis::Unpriced,
+                currency: None,
+                unit: None,
+                estimated_input_price: None,
+                estimated_output_price: None,
+                estimated_fixed_price: None,
+                status_label: "test".to_string(),
+            },
+            evidence: Vec::new(),
+        };
+        let now_ms = 10_000;
+        let mut enabled = crate::models::routing_policy::RoutingPolicyConfigV1::default();
+        enabled.affinity_enabled = true;
+        enabled.affinity_ttl_seconds = 1_200;
+        engine.bind_success_affinity(
+            &request,
+            &settings,
+            Some("gpt-test"),
+            &candidate,
+            &enabled,
+            now_ms,
+        );
+        let lookup = AffinityLookup::new(
+            AffinityKind::Session,
+            "all_groups",
+            "session-test",
+            1,
+            Some("gpt-test"),
+        );
+        let hit = engine
+            .affinity
+            .lock()
+            .expect("affinity lock")
+            .lookup(&lookup, now_ms + 1)
+            .expect("canonical affinity binding");
+        assert_eq!(hit.expires_at_ms, now_ms + 1_200_000);
+
+        let disabled = crate::models::routing_policy::RoutingPolicyConfigV1::default();
+        engine.bind_success_affinity(
+            &request,
+            &settings,
+            Some("gpt-test"),
+            &candidate,
+            &disabled,
+            now_ms + 2,
+        );
+        let retained = engine
+            .affinity
+            .lock()
+            .expect("affinity lock")
+            .lookup(&lookup, now_ms + 3)
+            .expect("disabled policy must not overwrite the binding");
+        assert_eq!(retained.expires_at_ms, now_ms + 1_200_000);
     }
 
     #[tokio::test]
@@ -2320,11 +2479,19 @@ mod tests {
 
     struct FakeRepository {
         candidates: Vec<CanonicalRoutingCandidate>,
+        planning_loads: AtomicUsize,
     }
 
     impl FakeRepository {
         fn with_candidates(candidates: Vec<CanonicalRoutingCandidate>) -> Self {
-            Self { candidates }
+            Self {
+                candidates,
+                planning_loads: AtomicUsize::new(0),
+            }
+        }
+
+        fn planning_loads(&self) -> usize {
+            self.planning_loads.load(Ordering::Acquire)
         }
     }
 
@@ -2333,38 +2500,56 @@ mod tests {
             &self,
             _request: RouteRequestFacts,
             runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
-        ) -> BoxFuture<'static, Result<Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>, String>> {
-            let candidates = self.candidates.iter().enumerate().map(|(index, candidate)| CandidateSnapshot {
-                station_key_id: candidate.station_key_id.clone(),
-                station_id: candidate.station_id.clone(),
-                endpoint_revision: candidate.station_endpoint_revision,
-                credential_available: candidate.api_key.is_some() || candidate.api_key_secret.is_some(),
-                hard_eligible: candidate.schedulable,
-                backup_only: candidate.capabilities.only_use_as_backup,
-                depleted: false,
-                capability_basis_points: 10_000,
-                reliability_basis_points: 8_000,
-                responsiveness_basis_points: 8_000,
-                cost_basis_points: Some(5_000),
-                preference_basis_points: 10_000_u16.saturating_sub((index as u16).saturating_mul(100)),
-                failure_domains: vec![format!("station:{}", candidate.station_id)],
-            }).collect();
-            Box::pin(async move { Ok(Some(PlanningSnapshot {
-                snapshot_id: "test-planning-snapshot".to_string(),
-                durable_revision: 1,
-                policy: {
-                    let mut policy = crate::models::routing_policy::RoutingPolicyConfigV1::default();
-                    policy.affinity_enabled = true;
-                    policy
-                },
-                profile: {
-                    let mut profile = DispatchAlgorithmProfile::default();
-                    profile.exploit_band_basis_points = 0;
-                    profile
-                },
-                candidates,
-                runtime,
-            })) })
+        ) -> BoxFuture<
+            'static,
+            Result<
+                Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
+                String,
+            >,
+        > {
+            self.planning_loads.fetch_add(1, Ordering::AcqRel);
+            let candidates = self
+                .candidates
+                .iter()
+                .enumerate()
+                .map(|(index, candidate)| CandidateSnapshot {
+                    station_key_id: candidate.station_key_id.clone(),
+                    station_id: candidate.station_id.clone(),
+                    endpoint_revision: candidate.station_endpoint_revision,
+                    credential_revision: 1,
+                    credential_available: candidate.api_key.is_some()
+                        || candidate.api_key_secret.is_some(),
+                    hard_eligible: candidate.schedulable,
+                    backup_only: candidate.capabilities.only_use_as_backup,
+                    depleted: false,
+                    capability_basis_points: 10_000,
+                    reliability_basis_points: 8_000,
+                    responsiveness_basis_points: 8_000,
+                    cost_basis_points: Some(5_000),
+                    preference_basis_points: 10_000_u16
+                        .saturating_sub((index as u16).saturating_mul(100)),
+                    failure_domains: vec![format!("station:{}", candidate.station_id)],
+                })
+                .collect();
+            Box::pin(async move {
+                Ok(Some(PlanningSnapshot {
+                    snapshot_id: "test-planning-snapshot".to_string(),
+                    durable_revision: 1,
+                    policy: {
+                        let mut policy =
+                            crate::models::routing_policy::RoutingPolicyConfigV1::default();
+                        policy.affinity_enabled = true;
+                        policy
+                    },
+                    profile: {
+                        let mut profile = DispatchAlgorithmProfile::default();
+                        profile.exploit_band_basis_points = 0;
+                        profile
+                    },
+                    candidates,
+                    runtime,
+                }))
+            })
         }
 
         fn load_operational_route_snapshot(
@@ -2405,9 +2590,6 @@ mod tests {
                     }).collect(),
                     targets,
                     profiles,
-                    snapshot_id: "test-operational-snapshot".to_string(),
-                    runtime_overlay_revision: 1,
-                    durable_generation: 1,
                     legacy_candidates: projections,
                 })
             })
@@ -2418,6 +2600,7 @@ mod tests {
         responses: Mutex<Vec<Result<PreparedAttempt, ProxyFailure>>>,
         seen_ids: Mutex<Vec<String>>,
         delay: Option<Duration>,
+        runtime_to_bump: Mutex<Option<Arc<super::RoutingRuntimeState>>>,
     }
 
     impl FakeAttemptExecutor {
@@ -2426,6 +2609,7 @@ mod tests {
                 responses: Mutex::new(responses),
                 seen_ids: Mutex::new(Vec::new()),
                 delay: None,
+                runtime_to_bump: Mutex::new(None),
             }
         }
 
@@ -2437,11 +2621,16 @@ mod tests {
                 responses: Mutex::new(responses),
                 seen_ids: Mutex::new(Vec::new()),
                 delay: Some(delay),
+                runtime_to_bump: Mutex::new(None),
             }
         }
 
         fn seen_ids(&self) -> Vec<String> {
             self.seen_ids.lock().expect("seen lock").clone()
+        }
+
+        fn bump_runtime_on_next_attempt(&self, runtime: Arc<super::RoutingRuntimeState>) {
+            *self.runtime_to_bump.lock().expect("runtime bump lock") = Some(runtime);
         }
     }
 
@@ -2456,6 +2645,14 @@ mod tests {
                 .lock()
                 .expect("seen lock")
                 .push(target.station_key_id.clone());
+            if let Some(runtime) = self
+                .runtime_to_bump
+                .lock()
+                .expect("runtime bump lock")
+                .take()
+            {
+                runtime.mark_runtime_changed();
+            }
             Box::pin(async move {
                 if let Some(delay) = self.delay {
                     tokio::time::sleep(delay).await;
@@ -2661,6 +2858,7 @@ mod tests {
             station_key_id: candidate.station_key_id.clone(),
             station_id: candidate.station_id.clone(),
             endpoint_revision: candidate.station_endpoint_revision,
+            credential_revision: 1,
             api_base_url: "https://upstream.example.test/v1".to_string(),
             upstream_api_format: candidate.upstream_api_format.clone(),
             collector_proxy_mode: candidate.collector_proxy_mode.clone(),

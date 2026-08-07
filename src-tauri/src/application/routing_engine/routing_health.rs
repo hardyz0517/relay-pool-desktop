@@ -1,8 +1,6 @@
 #[cfg(test)]
-use super::{
-    routing_failure::{
-        ClassifiedRouteFailure, RouteFailureAction, RouteFailureKind, RouteFailureScope,
-    },
+use super::routing_failure::{
+    ClassifiedRouteFailure, RouteFailureAction, RouteFailureKind, RouteFailureScope,
 };
 use crate::models::routing::StationKeyHealth;
 
@@ -77,18 +75,27 @@ pub(crate) fn error_summary_indicates_offline(summary: &str) -> bool {
 }
 
 pub(crate) fn health_is_blocked(health: Option<&StationKeyHealth>, now_ms: i64) -> bool {
-    let Some(health) = health else {
-        return false;
-    };
-    let cooldown_active = health
-        .cooldown_until
-        .as_deref()
+    health.is_some_and(|health| {
+        health_values_are_blocked(
+            health.cooldown_until.as_deref(),
+            health.last_error_summary.as_deref(),
+            now_ms,
+        )
+    })
+}
+
+/// Canonical durable health gate for both the legacy read model and immutable
+/// planner facts. Invalid cooldown values are ignored rather than turning a
+/// malformed observation into a permanent routing outage.
+pub(crate) fn health_values_are_blocked(
+    cooldown_until: Option<&str>,
+    last_error_summary: Option<&str>,
+    now_ms: i64,
+) -> bool {
+    let cooldown_active = cooldown_until
         .and_then(|value| value.parse::<i64>().ok())
         .is_some_and(|until_ms| until_ms > now_ms);
-    let offline = health
-        .last_error_summary
-        .as_deref()
-        .is_some_and(error_summary_indicates_offline);
+    let offline = last_error_summary.is_some_and(error_summary_indicates_offline);
     cooldown_active || offline
 }
 

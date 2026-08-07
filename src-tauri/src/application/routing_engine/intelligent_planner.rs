@@ -115,7 +115,12 @@ pub(crate) fn plan_snapshot_with_budget(
             id: candidate.station_key_id.clone(),
             utility: candidate.utility.value(),
             tier: candidate.tier,
-            failure_domains: Vec::new(),
+            failure_domains: snapshot
+                .candidates
+                .iter()
+                .find(|raw| raw.station_key_id == candidate.station_key_id)
+                .map(|raw| raw.failure_domains.clone())
+                .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
     let affinity_dispatch = snapshot
@@ -233,6 +238,7 @@ mod tests {
                 station_key_id: "key-a".into(),
                 station_id: "station-a".into(),
                 endpoint_revision: 1,
+                credential_revision: 1,
                 credential_available: true,
                 hard_eligible: true,
                 backup_only: false,
@@ -277,6 +283,7 @@ mod tests {
                     station_key_id: "ordinary".into(),
                     station_id: "station-a".into(),
                     endpoint_revision: 1,
+                    credential_revision: 1,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: false,
@@ -292,6 +299,7 @@ mod tests {
                     station_key_id: "sticky".into(),
                     station_id: "station-b".into(),
                     endpoint_revision: 1,
+                    credential_revision: 1,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: false,
@@ -335,6 +343,7 @@ mod tests {
                     station_key_id: "primary-known".into(),
                     station_id: "station-primary".into(),
                     endpoint_revision: 1,
+                    credential_revision: 1,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: false,
@@ -350,6 +359,7 @@ mod tests {
                     station_key_id: "backup-unknown".into(),
                     station_id: "station-backup".into(),
                     endpoint_revision: 1,
+                    credential_revision: 1,
                     credential_available: true,
                     hard_eligible: true,
                     backup_only: true,

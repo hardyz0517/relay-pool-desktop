@@ -10,8 +10,6 @@ pub(crate) mod dispatch;
 pub(crate) mod eligibility;
 pub(crate) mod exploration;
 pub(crate) mod factors;
-#[cfg(test)]
-pub(crate) mod failure_domains;
 pub(crate) mod fixed_point;
 pub(crate) mod intelligent_planner;
 pub(crate) mod model_alias;

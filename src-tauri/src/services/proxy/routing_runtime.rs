@@ -6,7 +6,7 @@ use std::sync::{
 use rand::{rngs::OsRng, RngCore};
 
 use crate::application::routing_engine::{
-    capacity::{CompositeCapacityRegistry, RetryBudgetRegistry},
+    capacity::{CapacityConstraintKey, CompositeCapacityRegistry, RetryBudgetRegistry},
     exploration::ExplorationBudgetRegistry,
     planning_snapshot::RuntimeOverlaySnapshot,
 };
@@ -64,6 +64,14 @@ impl RoutingRuntimeState {
         }
     }
 
+    /// Signals that process-local routing state changed and a currently
+    /// planning request must rebuild its immutable view before another
+    /// admission decision.
+    pub(crate) fn mark_runtime_changed(&self) -> u64 {
+        self.candidate_set_revision.fetch_add(1, Ordering::AcqRel);
+        self.runtime_revision.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
     pub(crate) fn root_seed(&self) -> [u8; 32] {
         self.root_seed
     }
@@ -78,6 +86,15 @@ impl RoutingRuntimeState {
 
     pub fn capacity_registry(&self) -> Arc<CompositeCapacityRegistry> {
         Arc::clone(&self.capacity)
+    }
+
+    pub(crate) fn active_for_station(&self, station_type: &str, station_id: &str, station_key_id: &str) -> i64 {
+        let constraint = if matches!(station_type.trim().to_ascii_lowercase().as_str(), "sub2api" | "newapi") {
+            CapacityConstraintKey::StationAccount(station_id.to_string())
+        } else {
+            CapacityConstraintKey::StationKey(station_key_id.to_string())
+        };
+        i64::from(self.capacity.active_for(&constraint))
     }
 
     #[cfg(test)]

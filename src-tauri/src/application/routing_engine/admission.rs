@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::application::routing_engine::{
+    candidate_plan::{AvailabilityTier as LegacyAvailabilityTier, RoutePlanCandidate},
     capacity::{
         CapacityAcquireFailure, CapacityConstraintKey, CapacityLease, CapacityMissObservation,
         CapacityWaitMiss, CapacityWaitPermit, CompositeCapacityRegistry, CompositeCapacityRequest,
@@ -8,10 +9,9 @@ use crate::application::routing_engine::{
         RetryBudgetRegistry, RetryPermit, RetryPermitDecision,
     },
     exploration::ExplorationBudgetRegistry,
-    intelligent_planner::{plan_snapshot_with_budget, PlannerError, PlannedCandidate, RoutePlan},
+    intelligent_planner::{plan_snapshot_with_budget, PlannedCandidate, PlannerError, RoutePlan},
     planning_snapshot::PlanningSnapshot,
     request::{RouteProgress, RouteRequestFacts},
-    candidate_plan::{AvailabilityTier as LegacyAvailabilityTier, RoutePlanCandidate},
 };
 
 #[cfg(test)]
@@ -19,8 +19,8 @@ use crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot
 
 #[cfg(test)]
 use crate::application::routing_engine::{
-    hierarchical_preview::{ordered_plan_candidates, plan_route, PlanningInput},
     candidate_plan::RoutePlannerError,
+    hierarchical_preview::{ordered_plan_candidates, plan_route, PlanningInput},
     request::PlanningRoundContext,
 };
 
@@ -60,9 +60,6 @@ fn route_plan_candidate_from_projection(
         }
         crate::application::routing_engine::tiers::AvailabilityTier::Backup => {
             LegacyAvailabilityTier::ConfiguredBackup
-        }
-        crate::application::routing_engine::tiers::AvailabilityTier::Emergency => {
-            LegacyAvailabilityTier::DepletedEmergency
         }
     };
     RoutePlanCandidate {
@@ -107,10 +104,7 @@ pub struct CandidateAdmissionProfile {
 }
 
 impl CandidateAdmissionProfile {
-    pub fn capacity_request(
-        &self,
-        candidate: &RoutePlanCandidate,
-    ) -> CompositeCapacityRequest {
+    pub fn capacity_request(&self, candidate: &RoutePlanCandidate) -> CompositeCapacityRequest {
         CompositeCapacityRequest {
             station_id: candidate.station_id.clone(),
             station_key_id: candidate.station_key_id.clone(),
@@ -159,6 +153,8 @@ pub struct RouteAdmissionCoordinator {
     fallback_policy: FallbackPolicy,
     fallback_blocked: Option<AdmissionFailureKind>,
     max_attempts: Option<u32>,
+    candidate_failure_domains: BTreeMap<String, Vec<String>>,
+    excluded_failure_domains: BTreeSet<String>,
     trace: Vec<AdmissionTraceEvent>,
 }
 
@@ -195,6 +191,8 @@ impl RouteAdmissionCoordinator {
             fallback_policy: settings.fallback_policy,
             fallback_blocked: None,
             max_attempts: None,
+            candidate_failure_domains: BTreeMap::new(),
+            excluded_failure_domains: BTreeSet::new(),
             trace: Vec::new(),
         }
     }
@@ -228,20 +226,40 @@ impl RouteAdmissionCoordinator {
             });
         }
 
-        let planning_snapshot = input
-            .planning_snapshot
-            .ok_or_else(|| self.failure(AdmissionFailureKind::ConfigUnstable, "planning_snapshot_required"))?;
-        let mut working_snapshot = planning_snapshot.clone();
-        working_snapshot
+        let planning_snapshot = input.planning_snapshot.ok_or_else(|| {
+            self.failure(
+                AdmissionFailureKind::ConfigUnstable,
+                "planning_snapshot_required",
+            )
+        })?;
+        self.candidate_failure_domains = planning_snapshot
             .candidates
-            .retain(|candidate| !self.progress.view().excludes_station_key(&candidate.station_key_id));
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.station_key_id.clone(),
+                    candidate.failure_domains.clone(),
+                )
+            })
+            .collect();
+        let mut working_snapshot = planning_snapshot.clone();
+        working_snapshot.candidates.retain(|candidate| {
+            !self
+                .progress
+                .view()
+                .excludes_station_key(&candidate.station_key_id)
+                && !candidate_uses_excluded_failure_domain(
+                    candidate,
+                    &self.excluded_failure_domains,
+                )
+        });
         let plan = plan_snapshot_with_budget(
             &working_snapshot,
             input.root_seed,
             self.progress.view().ordinal as u64 + 1,
             input.exploration_budget,
         )
-            .map_err(|error| self.intelligent_planner_failure(error))?;
+        .map_err(|error| self.intelligent_planner_failure(error))?;
 
         let eligible_count = plan.candidates.len();
         if eligible_count == 0 {
@@ -262,17 +280,29 @@ impl RouteAdmissionCoordinator {
             {
                 let mut candidate = base.clone();
                 candidate.tier = match planned.tier {
-                    crate::application::routing_engine::tiers::AvailabilityTier::Primary => LegacyAvailabilityTier::Primary,
-                    crate::application::routing_engine::tiers::AvailabilityTier::Backup => LegacyAvailabilityTier::ConfiguredBackup,
-                    crate::application::routing_engine::tiers::AvailabilityTier::Emergency => LegacyAvailabilityTier::DepletedEmergency,
+                    crate::application::routing_engine::tiers::AvailabilityTier::Primary => {
+                        LegacyAvailabilityTier::Primary
+                    }
+                    crate::application::routing_engine::tiers::AvailabilityTier::Backup => {
+                        LegacyAvailabilityTier::ConfiguredBackup
+                    }
                 };
                 candidate.evidence = vec![
-                    crate::application::routing_engine::candidate_plan::DecisionEvidence { code: "planner_snapshot", detail: plan.snapshot_id.clone() },
-                    crate::application::routing_engine::candidate_plan::DecisionEvidence { code: "utility_score", detail: planned.utility.value().to_string() },
+                    crate::application::routing_engine::candidate_plan::DecisionEvidence {
+                        code: "planner_snapshot",
+                        detail: plan.snapshot_id.clone(),
+                    },
+                    crate::application::routing_engine::candidate_plan::DecisionEvidence {
+                        code: "utility_score",
+                        detail: planned.utility.value().to_string(),
+                    },
                 ];
                 candidate
             } else {
-                return Err(self.failure(AdmissionFailureKind::ConfigUnstable, "candidate_snapshot_missing"));
+                return Err(self.failure(
+                    AdmissionFailureKind::ConfigUnstable,
+                    "candidate_snapshot_missing",
+                ));
             };
             let Some(profile) = input.profiles.get(&candidate.station_key_id) else {
                 return Err(self.failure(AdmissionFailureKind::ConfigUnstable, "missing_profile"));
@@ -303,10 +333,7 @@ impl RouteAdmissionCoordinator {
                         candidate,
                         lease,
                         retry_permit,
-                        evidence: vec![AdmissionEvidence::new(
-                            "selected",
-                            selected_station_key_id,
-                        )],
+                        evidence: vec![AdmissionEvidence::new("selected", selected_station_key_id)],
                     }));
                 }
                 Err(failure) => {
@@ -394,14 +421,20 @@ impl RouteAdmissionCoordinator {
             if self.profile_invalidates_candidate(&candidate, profile) {
                 return self.rebuild_or_fail_config(profile);
             }
-            match input.capacity.try_acquire(profile.capacity_request(candidate)) {
+            match input
+                .capacity
+                .try_acquire(profile.capacity_request(candidate))
+            {
                 Ok(mut lease) => {
                     let retry_permit = self.acquire_retry_permit_after_capacity(&mut lease)?;
                     return Ok(AdmissionDecision::Selected(SelectedRoute {
                         candidate: candidate.clone(),
                         lease,
                         retry_permit,
-                        evidence: vec![AdmissionEvidence::new("selected", candidate.station_key_id.clone())],
+                        evidence: vec![AdmissionEvidence::new(
+                            "selected",
+                            candidate.station_key_id.clone(),
+                        )],
                     }));
                 }
                 Err(failure) => {
@@ -409,7 +442,10 @@ impl RouteAdmissionCoordinator {
                 }
             }
         }
-        Err(self.failure(AdmissionFailureKind::CapacityExhausted, "all_strata_capacity_exhausted"))
+        Err(self.failure(
+            AdmissionFailureKind::CapacityExhausted,
+            "all_strata_capacity_exhausted",
+        ))
     }
 
     #[cfg(test)]
@@ -435,6 +471,11 @@ impl RouteAdmissionCoordinator {
         station_key_id: String,
         outcome: ActualAttemptTerminal,
     ) -> Result<(), AdmissionFailure> {
+        if outcome == ActualAttemptTerminal::FailedBeforeCommit {
+            if let Some(domains) = self.candidate_failure_domains.get(&station_key_id) {
+                self.excluded_failure_domains.extend(domains.iter().cloned());
+            }
+        }
         self.progress.record_actual_attempt(station_key_id);
         self.pass_capacity.clear();
         self.trace_event(AdmissionTransition::AttemptTerminal, outcome.as_code());
@@ -449,9 +490,7 @@ impl RouteAdmissionCoordinator {
     }
 
     #[cfg(test)]
-    pub fn progress_view(
-        &self,
-    ) -> crate::application::routing_engine::request::RouteProgressView {
+    pub fn progress_view(&self) -> crate::application::routing_engine::request::RouteProgressView {
         self.progress.view()
     }
 
@@ -559,9 +598,10 @@ impl RouteAdmissionCoordinator {
             PlannerError::NoEligibleCandidate => {
                 self.failure(AdmissionFailureKind::NoEligible, "no_eligible_candidate")
             }
-            PlannerError::RuntimeAtCapacity => {
-                self.failure(AdmissionFailureKind::CapacityExhausted, "runtime_at_capacity")
-            }
+            PlannerError::RuntimeAtCapacity => self.failure(
+                AdmissionFailureKind::CapacityExhausted,
+                "runtime_at_capacity",
+            ),
         }
     }
 
@@ -602,6 +642,16 @@ impl RouteAdmissionCoordinator {
             self.trace.remove(0);
         }
     }
+}
+
+fn candidate_uses_excluded_failure_domain(
+    candidate: &crate::application::routing_engine::planning_snapshot::CandidateSnapshot,
+    excluded_failure_domains: &BTreeSet<String>,
+) -> bool {
+    candidate
+        .failure_domains
+        .iter()
+        .any(|domain| excluded_failure_domains.contains(domain))
 }
 
 #[derive(Debug)]
@@ -722,5 +772,43 @@ fn miss_observation(failure: &CapacityAcquireFailure) -> CapacityMissObservation
             in_flight: *in_flight,
             max_concurrency: *max_concurrency,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::routing_engine::planning_snapshot::CandidateSnapshot;
+
+    fn candidate(domains: &[&str]) -> CandidateSnapshot {
+        CandidateSnapshot {
+            station_key_id: "key".to_string(),
+            station_id: "station".to_string(),
+            endpoint_revision: 1,
+            credential_revision: 1,
+            credential_available: true,
+            hard_eligible: true,
+            backup_only: false,
+            depleted: false,
+            capability_basis_points: 10_000,
+            reliability_basis_points: 5_000,
+            responsiveness_basis_points: 5_000,
+            cost_basis_points: None,
+            preference_basis_points: 5_000,
+            failure_domains: domains.iter().map(|value| (*value).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn retry_excludes_candidates_in_a_failed_candidate_failure_domain() {
+        let excluded = BTreeSet::from(["station:shared".to_string()]);
+        assert!(candidate_uses_excluded_failure_domain(
+            &candidate(&["station:shared", "key:key-a"]),
+            &excluded,
+        ));
+        assert!(!candidate_uses_excluded_failure_domain(
+            &candidate(&["station:other", "key:key-b"]),
+            &excluded,
+        ));
     }
 }

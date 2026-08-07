@@ -193,6 +193,7 @@ mod tests {
                 station_key_id: "a".into(),
                 station_id: "st".into(),
                 endpoint_revision: 1,
+                credential_revision: 1,
                 credential_available: true,
                 hard_eligible: true,
                 backup_only: false,

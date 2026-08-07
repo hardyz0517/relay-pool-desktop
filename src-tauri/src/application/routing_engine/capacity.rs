@@ -68,6 +68,16 @@ pub(crate) struct CompositeCapacityRegistry {
 }
 
 impl CompositeCapacityRegistry {
+    pub(crate) fn active_for(&self, constraint: &CapacityConstraintKey) -> u32 {
+        self.shared
+            .lock()
+            .expect("capacity registry poisoned")
+            .counters
+            .get(constraint)
+            .map(|counter| counter.active)
+            .unwrap_or_default()
+    }
+
     pub(crate) fn try_acquire(
         &self,
         request: CompositeCapacityRequest,

@@ -29,9 +29,6 @@ pub(crate) struct OperationalRouteSnapshot {
     pub(crate) candidates: Vec<RoutePlanCandidate>,
     pub(crate) targets: BTreeMap<String, ExecutionTargetRef>,
     pub(crate) profiles: BTreeMap<String, CandidateAdmissionProfile>,
-    pub(crate) snapshot_id: String,
-    pub(crate) runtime_overlay_revision: u64,
-    pub(crate) durable_generation: u64,
     #[cfg(test)]
     pub(crate) legacy_candidates: Vec<crate::application::operational_facts::candidate_projector::RouteCandidateProjection>,
 }
@@ -163,8 +160,10 @@ impl RoutingRepository for RoutingExecutionRepository {
                         candidate.station_key_id.clone(),
                         CandidateAdmissionProfile {
                             endpoint_revision: candidate.endpoint_revision,
-                            expected_credential_revision: candidate.endpoint_revision,
-                            credential_revision: candidate.endpoint_revision,
+                            expected_credential_revision: candidate.credential_revision,
+                            credential_revision: target
+                                .map(|target| target.credential_revision)
+                                .unwrap_or_default(),
                             durable_generation: planning_snapshot.durable_revision,
                             global_max_concurrency: planning_snapshot.runtime.max_concurrency.max(1),
                             station_account_max_concurrency: target
@@ -200,9 +199,6 @@ impl RoutingRepository for RoutingExecutionRepository {
                 candidates,
                 targets,
                 profiles,
-                snapshot_id: planning_snapshot.snapshot_id.clone(),
-                runtime_overlay_revision: planning_snapshot.runtime.runtime_revision,
-                durable_generation: planning_snapshot.durable_revision,
                 #[cfg(test)]
                 legacy_candidates: Vec::new(),
             })
@@ -293,6 +289,7 @@ mod tests {
                 station_key_id: seeded.station_key_id.clone(),
                 station_id: seeded.station_id.clone(),
                 endpoint_revision: 1,
+                credential_revision: 314,
                 credential_available: true,
                 hard_eligible: true,
                 backup_only: false,
@@ -327,6 +324,8 @@ mod tests {
             .get(&seeded.station_key_id)
             .expect("candidate admission profile");
         assert_eq!(profile.global_max_concurrency, 64);
+        assert_eq!(profile.expected_credential_revision, 314);
+        assert!(profile.credential_revision > 0);
         assert_eq!(profile.station_account_max_concurrency, 0);
         assert_eq!(profile.station_key_max_concurrency, 0);
     }

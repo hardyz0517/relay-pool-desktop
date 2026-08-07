@@ -15,6 +15,7 @@ pub(crate) enum OrderingProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GroupFilterMode {
     Any,
+    UngroupedOnly,
     Required,
 }
 

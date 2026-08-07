@@ -82,6 +82,14 @@ impl Default for ProxyRuntimeState {
 }
 
 impl ProxyRuntimeState {
+    pub(crate) async fn active_for_station(&self, station_type: &str, station_id: &str, station_key_id: &str) -> Option<i64> {
+        let inner = self.v2.lock().await;
+        Some(inner
+            .routing_runtime
+            .as_ref()
+            .map(|runtime| runtime.active_for_station(station_type, station_id, station_key_id))
+            .unwrap_or(0))
+    }
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
         Self::default()
@@ -843,9 +851,6 @@ mod tests {
                     candidates: Vec::new(),
                     targets: Default::default(),
                     profiles: Default::default(),
-                    snapshot_id: "correlation-test-empty-snapshot".to_string(),
-                    runtime_overlay_revision: 1,
-                    durable_generation: 1,
                     legacy_candidates: Vec::new(),
                 })
             })

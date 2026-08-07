@@ -5,8 +5,6 @@ pub(crate) struct DispatchAlgorithmProfile {
     pub(crate) version: u16,
     pub(crate) reliability_prior_alpha: u32,
     pub(crate) reliability_prior_beta: u32,
-    pub(crate) reliability_decay_basis_points_per_hour: u16,
-    pub(crate) minimum_sample_mass_basis_points: u32,
     pub(crate) exploit_band_basis_points: u16,
     pub(crate) exploration_share_basis_points: u16,
     pub(crate) latency_cap_ms: u32,
@@ -18,8 +16,6 @@ impl Default for DispatchAlgorithmProfile {
             version: 1,
             reliability_prior_alpha: 2,
             reliability_prior_beta: 2,
-            reliability_decay_basis_points_per_hour: 9_500,
-            minimum_sample_mass_basis_points: 10_000,
             exploit_band_basis_points: 500,
             exploration_share_basis_points: 500,
             latency_cap_ms: 120_000,
@@ -32,9 +28,6 @@ impl DispatchAlgorithmProfile {
         if self.version != 1
             || self.reliability_prior_alpha == 0
             || self.reliability_prior_beta == 0
-            || self.reliability_decay_basis_points_per_hour == 0
-            || self.reliability_decay_basis_points_per_hour > 10_000
-            || self.minimum_sample_mass_basis_points == 0
             || self.exploit_band_basis_points > 5_000
             || self.exploration_share_basis_points > 2_000
             || self.latency_cap_ms == 0

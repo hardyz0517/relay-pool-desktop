@@ -1,19 +1,15 @@
 #[cfg(test)]
 use std::collections::BTreeMap;
 
-use crate::application::{
-    operational_facts::{
-        pricing_projector::RoutingCostBasis,
-    },
-};
+use crate::application::operational_facts::pricing_projector::RoutingCostBasis;
 #[cfg(test)]
 use crate::application::operational_facts::{
-        balance_projector::BalanceProjectionStatus, candidate_projector::RouteCandidateProjection,
+    balance_projector::BalanceProjectionStatus, candidate_projector::RouteCandidateProjection,
 };
 #[cfg(test)]
-use crate::application::routing_engine::request::{OrderingProfile, PlanningRoundContext};
-#[cfg(test)]
 use crate::application::routing_engine::eligibility::RouteRejection;
+#[cfg(test)]
+use crate::application::routing_engine::request::{OrderingProfile, PlanningRoundContext};
 
 #[cfg(test)]
 pub const HIERARCHICAL_ROUTE_PLANNER_VERSION: &str = "hierarchical_route_planner_v1";
@@ -24,6 +20,7 @@ pub const MAX_ROUTE_PLAN_CANDIDATES: usize = 1024;
 pub enum AvailabilityTier {
     Primary,
     ConfiguredBackup,
+    #[cfg(test)]
     DepletedEmergency,
 }
 

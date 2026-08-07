@@ -18,7 +18,7 @@ impl Default for AffinityPolicy {
     fn default() -> Self {
         Self {
             max_entries: 1_024,
-            ttl_ms: 30 * 60 * 1_000,
+            ttl_ms: 86_400 * 1_000,
         }
     }
 }
@@ -131,11 +131,16 @@ impl AffinityRegistry {
         now_ms: i64,
     ) -> Result<AffinityHit, AffinityMiss> {
         validate_lookup(lookup).map_err(|_| AffinityMiss::InvalidInput)?;
-        if let Some(entry) = self.entries.get(lookup) {
-            if entry.expires_at_ms <= now_ms {
-                self.entries.remove(lookup);
-                return Err(AffinityMiss::Expired);
-            }
+        if self
+            .entries
+            .get(lookup)
+            .is_some_and(|entry| entry.expires_at_ms <= now_ms)
+        {
+            self.entries.remove(lookup);
+            return Err(AffinityMiss::Expired);
+        }
+        if let Some(entry) = self.entries.get_mut(lookup) {
+            entry.last_touched_ms = now_ms;
             return Ok(AffinityHit {
                 station_key_id: entry.station_key_id.clone(),
                 bound_at_ms: entry.bound_at_ms,
@@ -225,4 +230,30 @@ fn validate_lookup(lookup: &AffinityLookup) -> Result<(), AffinityBindError> {
         return Err(AffinityBindError::InvalidInput);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lookup(value: &str) -> AffinityLookup {
+        AffinityLookup::new(AffinityKind::Session, "all_groups", value, 1, Some("gpt-5"))
+    }
+
+    #[test]
+    fn lookup_refreshes_lru_recency_before_enforcing_entry_bound() {
+        let mut registry = AffinityRegistry::new(AffinityPolicy {
+            max_entries: 2,
+            ttl_ms: 1_000,
+        });
+        registry.bind(lookup("old"), "key-old", 10, 1_000).unwrap();
+        registry.bind(lookup("hot"), "key-hot", 20, 1_000).unwrap();
+
+        registry.lookup(&lookup("old"), 30).unwrap();
+        registry.bind(lookup("new"), "key-new", 40, 1_000).unwrap();
+
+        assert!(matches!(registry.lookup(&lookup("old"), 41), Ok(_)));
+        assert!(matches!(registry.lookup(&lookup("hot"), 41), Err(AffinityMiss::NotFound)));
+        assert!(matches!(registry.lookup(&lookup("new"), 41), Ok(_)));
+    }
 }

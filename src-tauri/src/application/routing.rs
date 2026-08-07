@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
@@ -374,6 +376,7 @@ impl RoutingService {
                     station_key_id: row.station_key_id,
                     station_id: row.station_id,
                     endpoint_revision: row.endpoint_revision,
+                    credential_revision: row.credential_revision,
                     api_base_url: row.api_base_url,
                     upstream_api_format: row.upstream_api_format,
                     collector_proxy_mode: row.collector_proxy_mode,
@@ -423,12 +426,12 @@ impl RoutingService {
 
     pub(crate) async fn load_routing_runtime_overlay(
         &self,
+        proxy: Arc<crate::services::proxy::runtime::ProxyRuntimeState>,
     ) -> Result<RoutingRuntimeOverlay, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
         let candidates = self.store.load_runtime_candidates(&mut read).await?;
-        let facts = candidates
-            .into_iter()
-            .map(|candidate| {
+        let mut facts = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
                 let cooldown_until = candidate
                     .health
                     .as_ref()
@@ -447,16 +450,19 @@ impl RoutingService {
                     })
                     .unwrap_or("unknown")
                     .to_string();
-                RoutingRuntimeCandidateFact {
+                let in_flight = proxy
+                    .active_for_station(&candidate.station_type, &candidate.station_id, &candidate.station_key_id)
+                    .await
+                    .or(candidate.load_factor);
+                facts.push(RoutingRuntimeCandidateFact {
                     station_key_id: candidate.station_key_id,
                     station_id: candidate.station_id,
                     endpoint_revision: candidate.station_endpoint_revision,
-                    in_flight: candidate.load_factor,
+                    in_flight,
                     health_state,
                     cooldown_until,
-                }
-            })
-            .collect();
+                });
+        }
         Ok(runtime_overlay_from_candidates(
             facts,
             chrono::Utc::now().timestamp_millis(),

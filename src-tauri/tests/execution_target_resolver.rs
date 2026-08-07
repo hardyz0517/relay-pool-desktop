@@ -235,6 +235,7 @@ fn target_ref(
         station_key_id: station_key_id.to_string(),
         station_id: format!("station-{station_key_id}"),
         endpoint_revision,
+        credential_revision: 1,
         api_base_url: "https://relay.example/proxy/v1".to_string(),
         upstream_api_format: UpstreamApiFormat::Auto,
         collector_proxy_mode: "direct".to_string(),

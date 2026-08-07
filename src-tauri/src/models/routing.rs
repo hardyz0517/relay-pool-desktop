@@ -402,6 +402,13 @@ pub struct RuntimeRoutingBalance {
     pub collected_at: Option<String>,
 }
 
+impl RuntimeRoutingBalance {
+    pub fn is_depleted(&self) -> bool {
+        self.value.is_some_and(|value| value.is_finite() && value <= 0.0)
+            || matches!(self.status.trim().to_ascii_lowercase().as_str(), "low" | "depleted" | "exhausted" | "empty")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeRoutingEconomicSnapshot {
@@ -556,5 +563,19 @@ mod automatic_scheduler_contract_tests {
         settings
             .validate_for_routing()
             .expect("missing multiplier ceiling should mean unlimited routing");
+    }
+
+    #[test]
+    fn negative_runtime_balance_is_depleted_even_with_stale_normal_status() {
+        let balance = RuntimeRoutingBalance {
+            scope: "station".to_string(),
+            value: Some(-0.05),
+            currency: "USD".to_string(),
+            low_balance_threshold: None,
+            status: "normal".to_string(),
+            collected_at: None,
+        };
+
+        assert!(balance.is_depleted());
     }
 }
