@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const page = read("src/features/routing/RoutingPage.tsx");
 const diagnostics = read("src/features/routing/RoutingStatusDiagnosticsPanel.tsx");
+const localRoutingStatusTab = read("src/features/routing/LocalRoutingStatusTab.tsx");
 const routingApi = read("src/lib/api/routing.ts");
 const routingQueries = read("src/lib/queries/routingQueries.ts");
 const generated = read("src/lib/bridge/generated.ts");
@@ -40,17 +41,23 @@ for (const required of [
 }
 
 for (const required of [
-  "simulateRouteQuery",
-  "snapshot.policyConfig",
-  "snapshot.maxRateMultiplier",
-  "snapshot.routingGroupFilter",
   "decisions?.decisions",
   "runtimeOverlay?.candidates",
 ]) {
   assert.match(
-    diagnostics,
+    required === "decisions?.decisions" || required === "runtimeOverlay?.candidates"
+      ? diagnostics
+      : localRoutingStatusTab,
     new RegExp(escapeRegExp(required), "u"),
     `routing status diagnostics must reuse backend operational read-model data: ${required}`,
+  );
+}
+
+for (const required of ["simulateRouteQuery", "deepLink?.kind !== \"simulate-model\""]) {
+  assert.match(
+    localRoutingStatusTab,
+    new RegExp(escapeRegExp(required), "u"),
+    `local routing status must own simulation behavior: ${required}`,
   );
 }
 

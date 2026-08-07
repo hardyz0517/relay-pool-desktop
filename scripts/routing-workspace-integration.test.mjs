@@ -21,6 +21,7 @@ function assertExcludes(source, needle, label) {
 
 const routingPage = read("src/features/routing/RoutingPage.tsx");
 const diagnosticsPanel = read("src/features/routing/RoutingStatusDiagnosticsPanel.tsx");
+const localRoutingStatusTab = read("src/features/routing/LocalRoutingStatusTab.tsx");
 const routingQueries = read("src/lib/queries/routingQueries.ts");
 const routingSynchronization = read("src/lib/query/routingQuerySynchronization.ts");
 const routingTypes = read("src/lib/types/routing.ts");
@@ -62,16 +63,13 @@ assertExcludes(routingSynchronization, "queryKeys.localRoutingWorkspace", "routi
 assertIncludes(routingSynchronization, "queryClient.invalidateQueries({ queryKey: routingQueryKeys.all })", "routing query synchronization");
 assertIncludes(routingSynchronization, "synchronizeRoutingQueriesAfterMutation", "routing query synchronization");
 
-assertIncludes(diagnosticsPanel, "simulateRouteQuery", "RoutingStatusDiagnosticsPanel");
-assertIncludes(diagnosticsPanel, "snapshot.policyConfig", "RoutingStatusDiagnosticsPanel");
-assertIncludes(diagnosticsPanel, "snapshot.maxRateMultiplier", "RoutingStatusDiagnosticsPanel");
-assertIncludes(diagnosticsPanel, "snapshot.routingGroupFilter", "RoutingStatusDiagnosticsPanel");
+assertIncludes(localRoutingStatusTab, "simulateRouteQuery", "LocalRoutingStatusTab");
+assertIncludes(localRoutingStatusTab, "deepLink?.kind !== \"simulate-model\"", "LocalRoutingStatusTab");
 assertIncludes(diagnosticsPanel, "runtimeOverlay?.candidates", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "decisions?.decisions", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "onOpenRequestLog", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "deepLink.kind === \"station-key\"", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "deepLink.kind === \"station\"", "RoutingStatusDiagnosticsPanel");
-assertIncludes(diagnosticsPanel, "deepLink.kind === \"simulate-model\"", "RoutingStatusDiagnosticsPanel");
 assertIncludes(diagnosticsPanel, "candidate.stationId === stationScopeId", "RoutingStatusDiagnosticsPanel");
 assertExcludes(diagnosticsPanel, "pricing_projector", "RoutingStatusDiagnosticsPanel");
 assertExcludes(diagnosticsPanel, "candidate_projector", "RoutingStatusDiagnosticsPanel");

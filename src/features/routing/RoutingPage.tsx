@@ -207,6 +207,7 @@ export function RoutingPage({
             nowMs={nowMs}
             proxyActionPending={proxyActionPending}
             onToggleProxy={() => void handleToggleProxy()}
+            deepLink={deepLink}
           />
           <RoutingStatusDiagnosticsPanel
             snapshot={routingSnapshotQuery.data ?? null}

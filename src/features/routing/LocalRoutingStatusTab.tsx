@@ -1,6 +1,6 @@
 ﻿import { AlertCircle, Clock3, Filter, Gauge, Power, PowerOff, Route, Search, Server, UsersRound } from "lucide-react";
 import { Button, Dialog, EmptyState, MetricPanel, SectionCard, useToast } from "@/components/ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
 import type { RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import type { RouteCandidateExplanation, RouteEndpointKind, RouteSimulationResult, RoutingGroupFilter } from "@/lib/types/routing";
@@ -9,6 +9,7 @@ import { getLocalAccessKey } from "@/lib/api/settings";
 import { settingsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import { simulateRouteQuery } from "@/lib/queries/routingQueries";
+import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import {
   buildLatestDecisionDisplay,
   formatRoutingDecisionTime,
@@ -25,6 +26,7 @@ type LocalRoutingStatusTabProps = {
   nowMs: number;
   proxyActionPending: boolean;
   onToggleProxy: () => void;
+  deepLink?: VersionedRoutingDeepLink | null;
 };
 
 const endpointLabels: Record<RouteEndpointKind, string> = {
@@ -43,6 +45,7 @@ export function LocalRoutingStatusTab({
   nowMs,
   proxyActionPending,
   onToggleProxy,
+  deepLink,
 }: LocalRoutingStatusTabProps) {
   const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
   const latestDecisionId = workspace?.latestDecision?.id ?? null;
@@ -51,6 +54,11 @@ export function LocalRoutingStatusTab({
   const [simulation, setSimulation] = useState<RouteSimulationResult | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  useEffect(() => {
+    if (deepLink?.kind !== "simulate-model") return;
+    setSimulationModel(deepLink.model);
+    setSimulationOpen(true);
+  }, [deepLink?.sequence]);
   const toast = useToast();
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const localKeyMasked = settingsQuery.data?.localKeyMasked ?? "未读取";
