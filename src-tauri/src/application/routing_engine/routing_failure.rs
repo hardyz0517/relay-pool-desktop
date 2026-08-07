@@ -171,10 +171,15 @@ pub(crate) enum RoutePlanningFailure {
     HealthUnavailable,
     CapacityExhausted,
     #[cfg(test)]
-    CandidateLimitExceeded { actual: usize, limit: usize },
+    CandidateLimitExceeded {
+        actual: usize,
+        limit: usize,
+    },
     ConfigUnstable,
     DeadlineExceeded,
-    InvariantViolation { code: &'static str },
+    InvariantViolation {
+        code: &'static str,
+    },
 }
 
 impl RoutePlanningFailure {
@@ -227,7 +232,11 @@ impl RoutePlanningFailure {
             Self::CapacityExhausted => "route_capacity_exhausted",
             #[cfg(test)]
             Self::CandidateLimitExceeded { actual, limit } => {
-                if actual > limit { "route_candidate_limit_exceeded" } else { "route_candidate_limit_invalid" }
+                if actual > limit {
+                    "route_candidate_limit_exceeded"
+                } else {
+                    "route_candidate_limit_invalid"
+                }
             }
             Self::ConfigUnstable => "route_configuration_changed",
             Self::DeadlineExceeded => "route_deadline_exceeded",

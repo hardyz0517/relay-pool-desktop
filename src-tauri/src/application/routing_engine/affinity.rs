@@ -253,7 +253,10 @@ mod tests {
         registry.bind(lookup("new"), "key-new", 40, 1_000).unwrap();
 
         assert!(matches!(registry.lookup(&lookup("old"), 41), Ok(_)));
-        assert!(matches!(registry.lookup(&lookup("hot"), 41), Err(AffinityMiss::NotFound)));
+        assert!(matches!(
+            registry.lookup(&lookup("hot"), 41),
+            Err(AffinityMiss::NotFound)
+        ));
         assert!(matches!(registry.lookup(&lookup("new"), 41), Ok(_)));
     }
 }

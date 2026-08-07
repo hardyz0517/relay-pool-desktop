@@ -5,7 +5,6 @@ use crate::{
     application::command_facades::RoutingCommandFacade,
     commands::error,
     ipc::dto::{
-        routing_mutations::{RoutingPolicySnapshotDto, UpdateRoutingPolicyInputDto},
         routing_health_reads::{
             RecentRouteDecisionsInputDto, RecentRouteDecisionsPageDto, RequestDecisionTraceDto,
             RequestDecisionTraceInputDto, RouteSimulationInputDto, RouteSimulationResultDto,
@@ -13,6 +12,7 @@ use crate::{
             RoutingWorkspaceSnapshotInputDto, StationEndpointHealthDto, StationKeyHealthDto,
             StationKeyOperationalDetailDto, StationKeyOperationalDetailInputDto,
         },
+        routing_mutations::{RoutingPolicySnapshotDto, UpdateRoutingPolicyInputDto},
         EmptyInputDto,
     },
     observability::correlation,
@@ -44,8 +44,9 @@ pub async fn load_routing_policy(
             .load_routing_policy()
             .await
             .map_err(super::public_command_application_error)?;
-        let config: crate::models::routing_policy::RoutingPolicyConfigV1 = serde_json::from_value(stored.config)
-            .map_err(|_| error::CommandError::internal(None))?;
+        let config: crate::models::routing_policy::RoutingPolicyConfigV1 =
+            serde_json::from_value(stored.config)
+                .map_err(|_| error::CommandError::internal(None))?;
         Ok(RoutingPolicySnapshotDto {
             config: config.into(),
             revision: stored.revision,
@@ -70,8 +71,9 @@ pub async fn update_routing_policy(
             .save_routing_policy(config, input.expected_revision)
             .await
             .map_err(super::public_command_application_error)?;
-        let config: crate::models::routing_policy::RoutingPolicyConfigV1 = serde_json::from_value(stored.config)
-            .map_err(|_| error::CommandError::internal(None))?;
+        let config: crate::models::routing_policy::RoutingPolicyConfigV1 =
+            serde_json::from_value(stored.config)
+                .map_err(|_| error::CommandError::internal(None))?;
         Ok(RoutingPolicySnapshotDto {
             config: config.into(),
             revision: stored.revision,

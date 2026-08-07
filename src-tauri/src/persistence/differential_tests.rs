@@ -15,10 +15,10 @@ use crate::{
         },
         ids::IdGenerator,
         operational_facts::{
-            pricing_projector::RoutingCostBasis,
             candidate_projection::{
                 route_projection_from_runtime_candidate_with_pricing, validated_route_settings,
             },
+            pricing_projector::RoutingCostBasis,
         },
         request_finalization::RequestFinalizationService,
         request_lifecycle::{

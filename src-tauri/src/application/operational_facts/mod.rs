@@ -4,6 +4,7 @@ pub(crate) mod assembler;
 #[cfg(test)]
 pub(crate) mod asset_status_projector;
 pub(crate) mod balance_projector;
+pub(crate) mod candidate_projection;
 pub(crate) mod candidate_projector;
 pub(crate) mod capability_projector;
 pub(crate) mod group_projector;
@@ -14,7 +15,6 @@ pub(crate) mod pricing_projector;
 pub(crate) mod reader;
 pub(crate) mod reliability_projector;
 pub(crate) mod responsiveness_projector;
-pub(crate) mod candidate_projection;
 #[cfg(test)]
 pub(crate) mod runtime_health_port;
 pub(crate) mod target_resolver;

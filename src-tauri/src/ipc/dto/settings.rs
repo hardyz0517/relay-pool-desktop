@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    routing::{RoutingGroupFilter, DispatchAlgorithmSettings},
+    routing::{DispatchAlgorithmSettings, RoutingGroupFilter},
     settings::{AppSettings, UpdateSettingsInput},
     AppStatus,
 };

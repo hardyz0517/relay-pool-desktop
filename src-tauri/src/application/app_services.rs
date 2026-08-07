@@ -12,8 +12,7 @@ use super::{
     provider_drafts::ProviderDraftService,
     queries::{
         channel_status::ChannelStatusQuery, dashboard_metrics::DashboardMetricsQuery,
-        key_pool::KeyPoolQuery,
-        pricing_comparison::PricingComparisonQuery,
+        key_pool::KeyPoolQuery, pricing_comparison::PricingComparisonQuery,
         pricing_group_monitor_status::PricingGroupMonitorStatusQuery,
         station_assets::StationAssetsQuery,
     },

@@ -7,7 +7,9 @@ use crate::{
         error::ApplicationError,
         queries::{
             operational_detail::StationKeyOperationalDetail,
-            request_decision_trace::{RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace},
+            request_decision_trace::{
+                RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
+            },
             routing_runtime::RoutingRuntimeOverlay,
             routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
         },
@@ -24,8 +26,7 @@ use crate::{
     outbound::AsyncOutboundClient,
     services::{
         endpoint_ping::ping_station_endpoint as probe_station_endpoint,
-        time::now_millis_for_services,
-        proxy::runtime::ProxyRuntimeState,
+        proxy::runtime::ProxyRuntimeState, time::now_millis_for_services,
     },
 };
 
@@ -67,7 +68,10 @@ impl RoutingCommandFacade {
 
     pub(crate) async fn load_routing_policy(
         &self,
-    ) -> Result<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy, ApplicationError> {
+    ) -> Result<
+        crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+        ApplicationError,
+    > {
         self.routing.load_routing_policy().await
     }
 
@@ -75,8 +79,13 @@ impl RoutingCommandFacade {
         &self,
         config: crate::models::routing_policy::RoutingPolicyConfigV1,
         expected_revision: Option<u64>,
-    ) -> Result<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy, ApplicationError> {
-        self.routing.save_routing_policy(config, expected_revision).await
+    ) -> Result<
+        crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+        ApplicationError,
+    > {
+        self.routing
+            .save_routing_policy(config, expected_revision)
+            .await
     }
 
     pub(crate) async fn upsert_model_alias(
@@ -112,7 +121,9 @@ impl RoutingCommandFacade {
     pub(crate) async fn load_routing_runtime_overlay(
         &self,
     ) -> Result<RoutingRuntimeOverlay, ApplicationError> {
-        self.routing.load_routing_runtime_overlay(Arc::clone(&self.proxy)).await
+        self.routing
+            .load_routing_runtime_overlay(Arc::clone(&self.proxy))
+            .await
     }
 
     pub(crate) async fn list_recent_route_decisions(
@@ -135,7 +146,9 @@ impl RoutingCommandFacade {
         &self,
         request_log_id: String,
     ) -> Result<RequestDecisionTrace, ApplicationError> {
-        self.routing.get_request_decision_trace(request_log_id).await
+        self.routing
+            .get_request_decision_trace(request_log_id)
+            .await
     }
 
     pub(crate) async fn simulate_route(

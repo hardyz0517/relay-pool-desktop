@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use crate::{
-    TrayBehaviorState,
     application::{
         app_services::AppServices,
         command_facades::{
@@ -26,14 +25,15 @@ use crate::{
     runtime_composition::{RuntimeCompositionError, WorkRuntimeBundle},
     services::{
         collectors::{
-            drivers::{REQUIRED_PROVIDER_KINDS, static_provider_entries},
+            drivers::{static_provider_entries, REQUIRED_PROVIDER_KINDS},
             orchestration::{ProviderRegistry, ProviderRegistryError},
         },
         monitoring::runner::MonitoringRunner,
         pricing_catalog::StaticBuiltinModelBasePriceCatalog,
         proxy::runtime::ProxyRuntimeState,
-        secrets::{DeviceKeyResolver, vault::DataKeyVault},
+        secrets::{vault::DataKeyVault, DeviceKeyResolver},
     },
+    TrayBehaviorState,
 };
 
 pub(crate) type ManagedWorkRuntime =
@@ -156,11 +156,7 @@ pub(crate) fn compose_routing_command_facade(
     outbound: AsyncOutboundClient,
     proxy: Arc<ProxyRuntimeState>,
 ) -> RoutingCommandFacade {
-    RoutingCommandFacade::new(
-        Arc::clone(&services.routing),
-        outbound,
-        proxy,
-    )
+    RoutingCommandFacade::new(Arc::clone(&services.routing), outbound, proxy)
 }
 
 pub(crate) fn compose_request_logs_command_facade(
@@ -215,7 +211,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        app_composition::{WorkRuntimeConfig, compose_provider_registry, compose_work_runtime},
+        app_composition::{compose_provider_registry, compose_work_runtime, WorkRuntimeConfig},
         background_tasks::{BlockingExecutorConfig, OperationRegistryConfig, TaskId},
         outbound::{AsyncOutboundClientConfig, OutboundHeaderPolicy, TimeoutPolicy},
         runtime_composition::RuntimeCompositionError,

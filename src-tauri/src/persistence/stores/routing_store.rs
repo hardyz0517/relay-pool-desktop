@@ -7,10 +7,10 @@ use crate::{
         pricing::BalanceSnapshot,
         proxy::UpstreamApiFormat,
         routing::{
-            ModelAlias, RoutingGroupFilter, RoutingPolicy, RuntimeRoutingBalance,
-            CanonicalRoutingCandidate, RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret,
-            RuntimeRoutingSettings, DispatchAlgorithmSettings, StationKeyCapabilities,
-            StationKeyHealth, UpsertModelAliasInput,
+            CanonicalRoutingCandidate, DispatchAlgorithmSettings, ModelAlias, RoutingGroupFilter,
+            RoutingPolicy, RuntimeRoutingBalance, RuntimeRoutingEconomicSnapshot,
+            RuntimeRoutingSecret, RuntimeRoutingSettings, StationKeyCapabilities, StationKeyHealth,
+            UpsertModelAliasInput,
         },
         routing_policy::RoutingPolicyConfigV1,
         stations::StationEndpointHealth,
@@ -939,12 +939,9 @@ fn row_to_operational_execution_target_ref(
         api_key_secret_owner_id: row.get("api_key_secret_owner_id"),
         api_key_secret_kind: row.get("api_key_secret_kind"),
         inline_api_key_present: i64_to_bool(row.get("inline_api_key_present")),
-        station_account_max_concurrency: row
-            .get::<i64, _>("station_account_max_concurrency")
-            .max(0) as u32,
-        station_key_max_concurrency: row
-            .get::<i64, _>("station_key_max_concurrency")
-            .max(0) as u32,
+        station_account_max_concurrency: row.get::<i64, _>("station_account_max_concurrency").max(0)
+            as u32,
+        station_key_max_concurrency: row.get::<i64, _>("station_key_max_concurrency").max(0) as u32,
     }
 }
 

@@ -5,8 +5,8 @@ use crate::{
     application::{error::ApplicationError, pagination::PageLimit},
     models::{
         routing_read_models::{
-            ASSET_READ_MODEL_SCHEMA_VERSION, ReadModelEnvelope, ReadModelPage, StationAssetReadRow,
-            StationAssetsReadModel,
+            ReadModelEnvelope, ReadModelPage, StationAssetReadRow, StationAssetsReadModel,
+            ASSET_READ_MODEL_SCHEMA_VERSION,
         },
         station_keys::KeyPoolItem,
     },

@@ -1,5 +1,5 @@
-pub(crate) mod change_store;
 pub(crate) mod asset_revision_store;
+pub(crate) mod change_store;
 pub(crate) mod collector_store;
 pub(crate) mod credential_store;
 pub(crate) mod dashboard_metrics_read;

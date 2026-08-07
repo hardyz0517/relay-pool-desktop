@@ -5,10 +5,7 @@ use tauri::State;
 use crate::{
     application::command_facades::LocalProxyCommandFacade,
     commands::error,
-    ipc::dto::{
-        proxy_workspace_reads::ProxyStatusDto,
-        EmptyInputDto,
-    },
+    ipc::dto::{proxy_workspace_reads::ProxyStatusDto, EmptyInputDto},
     observability::correlation,
     services::proxy::runtime::ProxyRuntimeState,
 };

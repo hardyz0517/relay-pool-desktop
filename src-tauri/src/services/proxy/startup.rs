@@ -44,8 +44,9 @@ pub(crate) fn config_from_v2_services(
     local_access_key: String,
     port: u16,
 ) -> ProxyStartConfig {
-    let routing_repository: Arc<dyn RoutingRepository> =
-    Arc::new(RoutingExecutionRepository::new(services.routing.as_ref().clone()));
+    let routing_repository: Arc<dyn RoutingRepository> = Arc::new(RoutingExecutionRepository::new(
+        services.routing.as_ref().clone(),
+    ));
     let lifecycle_store: Arc<dyn RequestLifecycleStore> = services.request_finalization.clone();
     ProxyStartConfig::new_v2(
         routing_repository,

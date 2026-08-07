@@ -4,8 +4,8 @@ use crate::{
     application::{
         credentials::CredentialService, error::ApplicationError,
         request_finalization::RequestFinalizationService,
-        request_lifecycle::ports::LifecycleWriteError,
-        routing::RoutingService, settings::SettingsService,
+        request_lifecycle::ports::LifecycleWriteError, routing::RoutingService,
+        settings::SettingsService,
     },
     models::proxy::ProxyStatus,
     services::proxy::{
@@ -133,8 +133,9 @@ impl LocalProxyCommandFacade {
             .reconcile_startup_interrupted_request_lifecycle()
             .await
             .map_err(local_proxy_startup_reconciliation_error)?;
-        let routing_repository: Arc<dyn RoutingRepository> =
-            Arc::new(RoutingExecutionRepository::new(self.routing.as_ref().clone()));
+        let routing_repository: Arc<dyn RoutingRepository> = Arc::new(
+            RoutingExecutionRepository::new(self.routing.as_ref().clone()),
+        );
         let lifecycle_store: Arc<dyn RequestLifecycleStore> = self.request_finalization.clone();
         let config = ProxyStartConfig::new_v2(
             routing_repository,

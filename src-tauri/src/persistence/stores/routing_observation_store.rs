@@ -381,7 +381,13 @@ mod tests {
             .await
             .expect("load complete scope history");
         assert_eq!(history.len(), 300);
-        assert_eq!(history.first().map(|value| value.id.as_str()), Some("observation-0"));
-        assert_eq!(history.last().map(|value| value.id.as_str()), Some("observation-299"));
+        assert_eq!(
+            history.first().map(|value| value.id.as_str()),
+            Some("observation-0")
+        );
+        assert_eq!(
+            history.last().map(|value| value.id.as_str()),
+            Some("observation-299")
+        );
     }
 }

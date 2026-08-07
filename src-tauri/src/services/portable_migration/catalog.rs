@@ -436,19 +436,15 @@ const STATION_KEY_HEALTH_COLUMNS: &[&str] = &[
     "updated_at",
 ];
 
-const STATION_ENDPOINT_HEALTH_RULES: &[FieldRule] = &[
-    FieldRule {
-        name: "error_summary",
-        transform: FieldTransform::RedactText,
-    },
-];
+const STATION_ENDPOINT_HEALTH_RULES: &[FieldRule] = &[FieldRule {
+    name: "error_summary",
+    transform: FieldTransform::RedactText,
+}];
 
-const STATION_KEY_HEALTH_RULES: &[FieldRule] = &[
-    FieldRule {
-        name: "last_error_summary",
-        transform: FieldTransform::RedactText,
-    },
-];
+const STATION_KEY_HEALTH_RULES: &[FieldRule] = &[FieldRule {
+    name: "last_error_summary",
+    transform: FieldTransform::RedactText,
+}];
 const MODEL_ALIASES_COLUMNS: &[&str] = &[
     "id",
     "client_model",
@@ -1154,9 +1150,18 @@ const STATIONS_RULES: &[FieldRule] = &[
         name: "api_key_secret_id",
         transform: FieldTransform::SecretReference,
     },
-    FieldRule { name: "status", transform: FieldTransform::ResetText("unchecked") },
-    FieldRule { name: "latency_ms", transform: FieldTransform::ResetNull },
-    FieldRule { name: "last_checked_at", transform: FieldTransform::ResetNull },
+    FieldRule {
+        name: "status",
+        transform: FieldTransform::ResetText("unchecked"),
+    },
+    FieldRule {
+        name: "latency_ms",
+        transform: FieldTransform::ResetNull,
+    },
+    FieldRule {
+        name: "last_checked_at",
+        transform: FieldTransform::ResetNull,
+    },
 ];
 const STATION_KEYS_RULES: &[FieldRule] = &[
     FieldRule {
@@ -1167,8 +1172,14 @@ const STATION_KEYS_RULES: &[FieldRule] = &[
         name: "api_key_secret_id",
         transform: FieldTransform::SecretReference,
     },
-    FieldRule { name: "status", transform: FieldTransform::ResetText("unchecked") },
-    FieldRule { name: "last_checked_at", transform: FieldTransform::ResetNull },
+    FieldRule {
+        name: "status",
+        transform: FieldTransform::ResetText("unchecked"),
+    },
+    FieldRule {
+        name: "last_checked_at",
+        transform: FieldTransform::ResetNull,
+    },
 ];
 const STATION_CREDENTIALS_RULES: &[FieldRule] = &[
     FieldRule {
@@ -1428,9 +1439,10 @@ const CHANNEL_ATTEMPT_RULES: &[FieldRule] = &[
         transform: FieldTransform::RedactText,
     },
 ];
-const CHANNEL_TARGET_RESULT_RULES: &[FieldRule] = &[
-    FieldRule { name: "terminal_reason", transform: FieldTransform::RedactText },
-];
+const CHANNEL_TARGET_RESULT_RULES: &[FieldRule] = &[FieldRule {
+    name: "terminal_reason",
+    transform: FieldTransform::RedactText,
+}];
 const CHANNEL_BUCKET_ROLLUP_RULES: &[FieldRule] = &[FieldRule {
     name: "failure_counts_json",
     transform: FieldTransform::BoundedJson,

@@ -12,13 +12,13 @@ use crate::{
 };
 
 use super::{
-        routing_health::{error_summary_indicates_offline, RouteHealthState},
     routing_economics::{
         DecisionFact, DecisionFactKind, DecisionFactSeverity, LocalRoutingCandidateRow,
         LocalRoutingPreviewKind, LocalRoutingSettingsView, LocalRoutingSummary,
-        RoutingPreviewWorkspace, RouteCandidateEconomics, RouteDecisionEvent, RouteDecisionStatus,
-        RouteDecisionSummary,
+        RouteCandidateEconomics, RouteDecisionEvent, RouteDecisionStatus, RouteDecisionSummary,
+        RoutingPreviewWorkspace,
     },
+    routing_health::{error_summary_indicates_offline, RouteHealthState},
 };
 
 #[derive(Debug, Clone)]
@@ -46,12 +46,7 @@ pub fn build_local_routing_workspace(
         .iter()
         .enumerate()
         .map(|(index, candidate)| {
-            candidate_row(
-                index,
-                candidate,
-                &settings.routing_group_scope,
-                now_ms,
-            )
+            candidate_row(index, candidate, &settings.routing_group_scope, now_ms)
         })
         .collect::<Vec<_>>();
 
@@ -447,7 +442,7 @@ mod tests {
         models::{
             proxy::UpstreamApiFormat,
             routing::{
-                PricingGroupType, RoutingPolicy, CanonicalRoutingCandidate, RuntimeRoutingSettings,
+                CanonicalRoutingCandidate, PricingGroupType, RoutingPolicy, RuntimeRoutingSettings,
             },
         },
     };

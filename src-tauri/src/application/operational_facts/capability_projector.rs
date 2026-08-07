@@ -1,19 +1,21 @@
 #[cfg(test)]
 use std::cmp::Reverse;
 
-use crate::models::operational::{
-    CapabilityVerdict,
-};
+use crate::models::operational::CapabilityVerdict;
 #[cfg(test)]
-use crate::models::operational::{EndpointRevision, EvidenceConfidence, EvidenceCoverage, UnixMillis};
+use crate::models::operational::{
+    EndpointRevision, EvidenceConfidence, EvidenceCoverage, UnixMillis,
+};
 
 pub(crate) const CAPABILITY_PROJECTOR_VERSION: &str = "capability_evidence_v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CapabilityProtocol {
     ChatCompletions,
-    #[cfg(test)] Responses,
-    #[cfg(test)] Embeddings,
+    #[cfg(test)]
+    Responses,
+    #[cfg(test)]
+    Embeddings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -151,14 +153,17 @@ pub(crate) fn project_capability(
         subject,
         truth,
         decision,
-        #[cfg(test)] observed_at: winner.as_ref().map(|item| item.observed_at),
-        #[cfg(test)] confidence: winner.as_ref().map(|item| item.confidence),
+        #[cfg(test)]
+        observed_at: winner.as_ref().map(|item| item.observed_at),
+        #[cfg(test)]
+        confidence: winner.as_ref().map(|item| item.confidence),
         winner,
         overridden,
         conflict_reason,
         projector_version: CAPABILITY_PROJECTOR_VERSION,
         reason_code,
-        #[cfg(test)] source_refs: relevant.iter().map(|item| item.id.clone()).collect(),
+        #[cfg(test)]
+        source_refs: relevant.iter().map(|item| item.id.clone()).collect(),
     }
 }
 

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::routing::{RoutingGroupFilter, DispatchAlgorithmSettings};
+use super::routing::{DispatchAlgorithmSettings, RoutingGroupFilter};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

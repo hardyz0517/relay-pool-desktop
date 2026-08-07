@@ -2,9 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     application::{
-        operational_facts::pricing_projector::{
-            request_cost_comparison_context, PricingRouteKind,
-        },
+        operational_facts::pricing_projector::{request_cost_comparison_context, PricingRouteKind},
         routing_engine::request::RouteRequestFacts,
     },
     models::{
@@ -183,11 +181,16 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
         .unwrap_or(0);
     let mut ordered_candidates = candidates
         .into_iter()
-        .map(|(candidate, pricing)| candidate_from_canonical(candidate, pricing, request, generated_at_ms))
+        .map(|(candidate, pricing)| {
+            candidate_from_canonical(candidate, pricing, request, generated_at_ms)
+        })
         .collect::<Vec<_>>();
     ordered_candidates.sort_by(|left, right| {
         depleted_rank(left.balance_value, left.balance_status.as_deref())
-            .cmp(&depleted_rank(right.balance_value, right.balance_status.as_deref()))
+            .cmp(&depleted_rank(
+                right.balance_value,
+                right.balance_status.as_deref(),
+            ))
             .then_with(|| (!left.schedulable).cmp(&(!right.schedulable)))
             .then_with(|| left.priority.cmp(&right.priority))
             .then_with(|| left.station_key_id.cmp(&right.station_key_id))
@@ -254,49 +257,112 @@ fn candidate_from_canonical(
             .group_binding_id
             .as_deref()
             .map(|value| format!("binding:{value}"))
-            .or_else(|| economics.group_id_hash.as_deref().map(|value| format!("group-id:{value}")))
-            .or_else(|| economics.group_key_hash.as_deref().map(|value| format!("key-hash:{value}")))?;
+            .or_else(|| {
+                economics
+                    .group_id_hash
+                    .as_deref()
+                    .map(|value| format!("group-id:{value}"))
+            })
+            .or_else(|| {
+                economics
+                    .group_key_hash
+                    .as_deref()
+                    .map(|value| format!("key-hash:{value}"))
+            })?;
         Some(RoutingCandidateGroupSnapshot {
             stable_key,
-            display_name: economics.group_name.clone().unwrap_or_else(|| "Unnamed group".to_string()),
-            available: !matches!(economics.group_status.as_deref(), Some("disabled" | "missing")),
-            reason: economics.group_status.clone().unwrap_or_else(|| "available".to_string()),
+            display_name: economics
+                .group_name
+                .clone()
+                .unwrap_or_else(|| "Unnamed group".to_string()),
+            available: !matches!(
+                economics.group_status.as_deref(),
+                Some("disabled" | "missing")
+            ),
+            reason: economics
+                .group_status
+                .clone()
+                .unwrap_or_else(|| "available".to_string()),
         })
     });
-    let multiplier = candidate.economic_snapshot.as_ref().and_then(|economics| economics.rate_multiplier);
+    let multiplier = candidate
+        .economic_snapshot
+        .as_ref()
+        .and_then(|economics| economics.rate_multiplier);
     let ceiling_rejected = request
         .max_rate_multiplier()
         .zip(multiplier)
         .is_some_and(|(ceiling, value)| value > ceiling);
-    let pricing_context = request_cost_comparison_context(PricingRouteKind::Inference, pricing.as_ref());
+    let pricing_context =
+        request_cost_comparison_context(PricingRouteKind::Inference, pricing.as_ref());
     let capability = &candidate.capabilities;
     let model_allowed = request.requested_model().is_none_or(|model| {
-        !capability.model_blocklist.iter().any(|blocked| blocked.eq_ignore_ascii_case(model))
+        !capability
+            .model_blocklist
+            .iter()
+            .any(|blocked| blocked.eq_ignore_ascii_case(model))
             && (capability.model_allowlist.is_empty()
-                || capability.model_allowlist.iter().any(|allowed| allowed.eq_ignore_ascii_case(model)))
+                || capability
+                    .model_allowlist
+                    .iter()
+                    .any(|allowed| allowed.eq_ignore_ascii_case(model)))
     });
     let protocol_allowed = capability.supports_chat_completions || capability.supports_responses;
     let group_matches = request.required_group_stable_key().is_none_or(|required| {
-        group.as_ref().is_some_and(|candidate_group| candidate_group.stable_key == required)
+        group
+            .as_ref()
+            .is_some_and(|candidate_group| candidate_group.stable_key == required)
     });
     let mut hard_rejection_codes = Vec::new();
-    if !candidate.schedulable { hard_rejection_codes.push("candidate_unschedulable".to_string()); }
-    if candidate.api_key.is_none() && candidate.api_key_secret.is_none() { hard_rejection_codes.push("credential_missing".to_string()); }
-    if !group_matches { hard_rejection_codes.push("group_mismatch".to_string()); }
-    if ceiling_rejected { hard_rejection_codes.push("multiplier_ceiling".to_string()); }
-    if !protocol_allowed || !model_allowed { hard_rejection_codes.push("capability_rejected".to_string()); }
-    if request.stream() && !capability.supports_stream { hard_rejection_codes.push("capability_rejected".to_string()); }
-    if request.uses_tools() && !capability.supports_tools { hard_rejection_codes.push("capability_rejected".to_string()); }
-    if request.uses_vision() && !capability.supports_vision { hard_rejection_codes.push("capability_rejected".to_string()); }
-    if request.uses_reasoning() && !capability.supports_reasoning { hard_rejection_codes.push("capability_rejected".to_string()); }
-    if !request.allow_depleted_fallback() && candidate.balance_snapshot.as_ref().is_some_and(RuntimeRoutingBalance::is_depleted) {
+    if !candidate.schedulable {
+        hard_rejection_codes.push("candidate_unschedulable".to_string());
+    }
+    if candidate.api_key.is_none() && candidate.api_key_secret.is_none() {
+        hard_rejection_codes.push("credential_missing".to_string());
+    }
+    if !group_matches {
+        hard_rejection_codes.push("group_mismatch".to_string());
+    }
+    if ceiling_rejected {
+        hard_rejection_codes.push("multiplier_ceiling".to_string());
+    }
+    if !protocol_allowed || !model_allowed {
+        hard_rejection_codes.push("capability_rejected".to_string());
+    }
+    if request.stream() && !capability.supports_stream {
+        hard_rejection_codes.push("capability_rejected".to_string());
+    }
+    if request.uses_tools() && !capability.supports_tools {
+        hard_rejection_codes.push("capability_rejected".to_string());
+    }
+    if request.uses_vision() && !capability.supports_vision {
+        hard_rejection_codes.push("capability_rejected".to_string());
+    }
+    if request.uses_reasoning() && !capability.supports_reasoning {
+        hard_rejection_codes.push("capability_rejected".to_string());
+    }
+    if !request.allow_depleted_fallback()
+        && candidate
+            .balance_snapshot
+            .as_ref()
+            .is_some_and(RuntimeRoutingBalance::is_depleted)
+    {
         hard_rejection_codes.push("balance_depleted".to_string());
     }
-    let health_state = candidate.health.as_ref().map(|health| {
-        if health.cooldown_until.is_some() { "cooldown" }
-        else if health.consecutive_failures > 0 { "degraded" }
-        else { "ready" }
-    }).unwrap_or("unknown").to_string();
+    let health_state = candidate
+        .health
+        .as_ref()
+        .map(|health| {
+            if health.cooldown_until.is_some() {
+                "cooldown"
+            } else if health.consecutive_failures > 0 {
+                "degraded"
+            } else {
+                "ready"
+            }
+        })
+        .unwrap_or("unknown")
+        .to_string();
     let capacity_limit = if matches!(
         candidate.station_type.trim().to_ascii_lowercase().as_str(),
         "sub2api" | "newapi"
@@ -321,11 +387,20 @@ fn candidate_from_canonical(
         health_state,
         group,
         multiplier: RoutingCandidateMultiplierSnapshot {
-            status: multiplier.map(|_| "resolved".to_string()).unwrap_or_else(|| "missing".to_string()),
+            status: multiplier
+                .map(|_| "resolved".to_string())
+                .unwrap_or_else(|| "missing".to_string()),
             multiplier,
-            selected_source: candidate.economic_snapshot.as_ref().and_then(|economics| economics.rate_source.clone()),
+            selected_source: candidate
+                .economic_snapshot
+                .as_ref()
+                .and_then(|economics| economics.rate_source.clone()),
             ceiling_rejected,
-            reason: if ceiling_rejected { "above_policy_ceiling".to_string() } else { "canonical_economic_snapshot".to_string() },
+            reason: if ceiling_rejected {
+                "above_policy_ceiling".to_string()
+            } else {
+                "canonical_economic_snapshot".to_string()
+            },
         },
         capability_summary: RoutingCapabilitySummary {
             chat_completions: capability.supports_chat_completions,
@@ -339,11 +414,35 @@ fn candidate_from_canonical(
         capability_verdicts: RoutingCapabilityVerdictSnapshot {
             protocol: if protocol_allowed { "allow" } else { "deny" }.to_string(),
             model: if model_allowed { "allow" } else { "deny" }.to_string(),
-            stream: if capability.supports_stream { "allow" } else { "deny" }.to_string(),
-            tools: if capability.supports_tools { "allow" } else { "deny" }.to_string(),
-            vision: if capability.supports_vision { "allow" } else { "deny" }.to_string(),
-            reasoning: if capability.supports_reasoning { "allow" } else { "deny" }.to_string(),
-            rejection_subjects: hard_rejection_codes.iter().filter(|code| code.as_str() == "capability_rejected").cloned().collect(),
+            stream: if capability.supports_stream {
+                "allow"
+            } else {
+                "deny"
+            }
+            .to_string(),
+            tools: if capability.supports_tools {
+                "allow"
+            } else {
+                "deny"
+            }
+            .to_string(),
+            vision: if capability.supports_vision {
+                "allow"
+            } else {
+                "deny"
+            }
+            .to_string(),
+            reasoning: if capability.supports_reasoning {
+                "allow"
+            } else {
+                "deny"
+            }
+            .to_string(),
+            rejection_subjects: hard_rejection_codes
+                .iter()
+                .filter(|code| code.as_str() == "capability_rejected")
+                .cloned()
+                .collect(),
         },
         price_basis: pricing_context.basis.as_str().to_string(),
         pricing: RoutingCandidatePricingSnapshot {
@@ -360,9 +459,18 @@ fn candidate_from_canonical(
             observed_at: pricing_context.observed_at,
             confidence: pricing_context.confidence,
         },
-        balance_status: candidate.balance_snapshot.as_ref().map(|balance| balance.status.clone()),
-        balance_value: candidate.balance_snapshot.as_ref().and_then(|balance| balance.value),
-        balance_currency: candidate.balance_snapshot.as_ref().map(|balance| balance.currency.clone()),
+        balance_status: candidate
+            .balance_snapshot
+            .as_ref()
+            .map(|balance| balance.status.clone()),
+        balance_value: candidate
+            .balance_snapshot
+            .as_ref()
+            .and_then(|balance| balance.value),
+        balance_currency: candidate
+            .balance_snapshot
+            .as_ref()
+            .map(|balance| balance.currency.clone()),
         capacity: RoutingCandidateCapacitySnapshot {
             mode: RoutingCapacityReadMode::SnapshotOnly,
             max_concurrency: capacity_limit,
@@ -374,7 +482,21 @@ fn candidate_from_canonical(
             station_id: candidate.station_id,
             endpoint_revision: candidate.station_endpoint_revision,
             snapshot_id: format!("workspace-{generated_at_ms}"),
-            fact_version_vector: format!("endpoint:{};capabilities:{};health:{};balance:{}", candidate.station_endpoint_revision, candidate.capabilities.updated_at, candidate.health.as_ref().map(|health| health.updated_at.as_str()).unwrap_or("missing"), candidate.balance_snapshot.as_ref().and_then(|balance| balance.collected_at.as_deref()).unwrap_or("missing")),
+            fact_version_vector: format!(
+                "endpoint:{};capabilities:{};health:{};balance:{}",
+                candidate.station_endpoint_revision,
+                candidate.capabilities.updated_at,
+                candidate
+                    .health
+                    .as_ref()
+                    .map(|health| health.updated_at.as_str())
+                    .unwrap_or("missing"),
+                candidate
+                    .balance_snapshot
+                    .as_ref()
+                    .and_then(|balance| balance.collected_at.as_deref())
+                    .unwrap_or("missing")
+            ),
             projector_version: "routing_workspace_canonical_v1".to_string(),
         },
         hard_rejection_codes,

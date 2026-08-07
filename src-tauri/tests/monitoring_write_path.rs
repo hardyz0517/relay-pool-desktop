@@ -10,14 +10,14 @@ pub mod model_monitoring;
 pub mod monitoring_executions;
 #[path = "../src/persistence/stores/monitoring/retention.rs"]
 pub mod monitoring_retention;
-#[path = "../src/persistence/stores/routing_observation_store.rs"]
-pub mod routing_observation_store;
+#[path = "../src/application/observation_ingestion.rs"]
+pub mod observation_ingestion;
 #[path = "../src/persistence/error.rs"]
 pub mod persistence_error;
 #[path = "../src/models/routing_observation.rs"]
 pub mod routing_observation;
-#[path = "../src/application/observation_ingestion.rs"]
-pub mod observation_ingestion;
+#[path = "../src/persistence/stores/routing_observation_store.rs"]
+pub mod routing_observation_store;
 
 mod models {
     pub(crate) mod health {

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ProtocolKind,
     policy::{HealthPolicy, RetryPolicy, RiskPolicy, SchedulePolicy},
+    ProtocolKind,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

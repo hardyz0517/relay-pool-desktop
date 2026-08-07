@@ -54,7 +54,9 @@ impl From<RoutingPolicyConfigV1> for RoutingPolicyConfigV1Dto {
 }
 
 impl RoutingPolicyConfigV1Dto {
-    pub fn into_domain(self) -> Result<RoutingPolicyConfigV1, crate::commands::error::CommandError> {
+    pub fn into_domain(
+        self,
+    ) -> Result<RoutingPolicyConfigV1, crate::commands::error::CommandError> {
         let config = RoutingPolicyConfigV1 {
             version: self.version,
             reliability_weight: self.reliability_weight,
@@ -67,7 +69,9 @@ impl RoutingPolicyConfigV1Dto {
             affinity_enabled: self.affinity_enabled,
             affinity_ttl_seconds: self.affinity_ttl_seconds,
         };
-        config.validate().map_err(|_| invalid_input("config", "invalid_policy", "The routing policy is invalid."))?;
+        config.validate().map_err(|_| {
+            invalid_input("config", "invalid_policy", "The routing policy is invalid.")
+        })?;
         Ok(config)
     }
 }

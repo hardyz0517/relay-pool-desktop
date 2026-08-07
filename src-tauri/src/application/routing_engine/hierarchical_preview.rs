@@ -1,12 +1,12 @@
 use crate::application::{
     operational_facts::candidate_projector::RouteCandidateProjection,
     routing_engine::{
-        eligibility::evaluate_candidate,
-        request::PlanningRoundContext,
         candidate_plan::{
             build_route_plan, RoutePlan, RoutePlanCandidate, RoutePlannerError,
             MAX_ROUTE_PLAN_CANDIDATES,
         },
+        eligibility::evaluate_candidate,
+        request::PlanningRoundContext,
     },
 };
 
@@ -47,4 +47,3 @@ pub fn ordered_plan_candidates(plan: &RoutePlan) -> Vec<&RoutePlanCandidate> {
         .flat_map(|stratum| stratum.candidates.iter())
         .collect()
 }
-

@@ -137,9 +137,7 @@ fn encoded_cursor(cursor: Option<&RoutingDecisionCursor>) -> Option<String> {
     cursor.map(|cursor| format!("decision:{}:{}", cursor.decided_at_ms, cursor.id))
 }
 
-pub fn recent_route_decisions_from_page(
-    page: RoutingDecisionPage,
-) -> RecentRouteDecisionsPage {
+pub fn recent_route_decisions_from_page(page: RoutingDecisionPage) -> RecentRouteDecisionsPage {
     RecentRouteDecisionsPage {
         page_version: RECENT_ROUTE_DECISION_PAGE_VERSION,
         decisions: page.rows.into_iter().map(summary_from_decision).collect(),
@@ -167,7 +165,12 @@ pub fn decision_trace_from_decision(
         route_reason: Some(summary.trace_status.clone()),
         station_key_id: selected.clone(),
         station_id: summary.selected_station_id.clone(),
-        attempt_count: Some(candidates.iter().filter(|candidate| candidate.attempted).count() as i64),
+        attempt_count: Some(
+            candidates
+                .iter()
+                .filter(|candidate| candidate.attempted)
+                .count() as i64,
+        ),
         fallback_count: Some(0),
         duration_ms: None,
         cost_status: None,

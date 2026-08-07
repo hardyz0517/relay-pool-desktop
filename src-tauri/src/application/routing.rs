@@ -4,24 +4,21 @@ use crate::{
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
         intelligent_planner::plan_snapshot_with_budget,
-        planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
         model_alias::mapped_model,
-        request::{
-            CanonicalRouteRequest, RouteKind,
-            RouteRequestClassifier,
-        },
+        planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
+        request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
     },
     application::{
         credentials::SecretRef,
         error::ApplicationError,
         health_transitions::HealthTransitionService,
         operational_facts::{
-            planning_snapshot::PlanningSnapshotBuilder,
-            pricing_projector::pricing_context_from_resolution,
             candidate_projection::{
                 route_projection_from_runtime_candidate_with_pricing,
                 route_request_facts_for_read_model, validated_route_settings,
             },
+            planning_snapshot::PlanningSnapshotBuilder,
+            pricing_projector::pricing_context_from_resolution,
             target_resolver::ExecutionTargetRef,
         },
         queries::{
@@ -29,19 +26,18 @@ use crate::{
                 operational_detail_from_projection, unavailable_operational_detail,
                 StationKeyOperationalDetail,
             },
-            routing_runtime::{
-                monitoring_target_snapshots_from_facts, runtime_overlay_from_candidates,
-                RoutingMonitoringTargetFacts, RoutingMonitoringTargetSnapshot,
-                RoutingRuntimeCandidateFact,
-                RoutingRuntimeOverlay,
-            },
-            routing_workspace::{
-                workspace_snapshot_from_canonical_candidates,
-                RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput,
-            },
             request_decision_trace::{
                 decision_cursor, decision_trace_from_decision, recent_route_decisions_from_page,
                 RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
+            },
+            routing_runtime::{
+                monitoring_target_snapshots_from_facts, runtime_overlay_from_candidates,
+                RoutingMonitoringTargetFacts, RoutingMonitoringTargetSnapshot,
+                RoutingRuntimeCandidateFact, RoutingRuntimeOverlay,
+            },
+            routing_workspace::{
+                workspace_snapshot_from_canonical_candidates, RoutingWorkspaceSnapshot,
+                RoutingWorkspaceSnapshotInput,
             },
         },
         routing_policy::RoutingPolicyAggregate,
@@ -53,8 +49,8 @@ use crate::{
         },
         pricing::{BalanceSnapshot, ResolvedPricingContext},
         routing::{
-            ModelAlias, RouteCandidateExplanation, RouteEndpointKind, RouteSimulationInput,
-            RouteSimulationResult, RoutingGroupFilter, CanonicalRoutingCandidate,
+            CanonicalRoutingCandidate, ModelAlias, RouteCandidateExplanation, RouteEndpointKind,
+            RouteSimulationInput, RouteSimulationResult, RoutingGroupFilter,
             RuntimeRoutingSettings, StationKeyHealth, UpsertModelAliasInput,
         },
         stations::StationEndpointHealth,
@@ -62,8 +58,8 @@ use crate::{
     persistence::{
         runtime::PersistenceHandle,
         stores::pricing_store::PricingStore,
-        stores::routing_policy_store::RoutingPolicyStore,
         stores::routing_decisions::queries::RoutingDecisionQueries,
+        stores::routing_policy_store::RoutingPolicyStore,
         stores::routing_store::{RoutingStore, StationEndpointProbeTarget},
     },
 };
@@ -133,7 +129,10 @@ impl RoutingService {
 
     pub(crate) async fn load_routing_policy(
         &self,
-    ) -> Result<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy, ApplicationError> {
+    ) -> Result<
+        crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+        ApplicationError,
+    > {
         let mut read = self.runtime.begin_read().await?;
         RoutingPolicyStore
             .load(read.connection())
@@ -146,12 +145,15 @@ impl RoutingService {
         &self,
         config: crate::models::routing_policy::RoutingPolicyConfigV1,
         expected_revision: Option<u64>,
-    ) -> Result<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy, ApplicationError> {
+    ) -> Result<
+        crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+        ApplicationError,
+    > {
         config
             .validate()
             .map_err(|_| ApplicationError::ConstraintViolation)?;
-        let value = serde_json::to_value(&config)
-            .map_err(|_| ApplicationError::ConstraintViolation)?;
+        let value =
+            serde_json::to_value(&config).map_err(|_| ApplicationError::ConstraintViolation)?;
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut write = self.runtime.begin_write().await?;
         let stored = RoutingPolicyStore
@@ -195,7 +197,9 @@ impl RoutingService {
         let options = request
             .requested_model()
             .map(crate::models::operational::OperationalFactReadOptions::for_request_model)
-            .unwrap_or_else(crate::models::operational::OperationalFactReadOptions::for_model_catalog);
+            .unwrap_or_else(
+                crate::models::operational::OperationalFactReadOptions::for_model_catalog,
+            );
         let policy = aggregate.config;
         let builder = PlanningSnapshotBuilder;
         let mut snapshot = builder
@@ -234,11 +238,17 @@ impl RoutingService {
                                 .or(rule.input_price)
                                 .or(rule.output_price)
                                 .map(|price| {
-                                    price * rule.rate_multiplier.unwrap_or(1.0)
+                                    price
+                                        * rule.rate_multiplier.unwrap_or(1.0)
                                         * resolution.group_rate_multiplier.unwrap_or(1.0)
                                 })
                         })
-                        .or_else(|| resolution.model_base_price.as_ref().and_then(|base| base.input_price));
+                        .or_else(|| {
+                            resolution
+                                .model_base_price
+                                .as_ref()
+                                .and_then(|base| base.input_price)
+                        });
                     candidate.cost_basis_points = value.and_then(
                         crate::application::routing_engine::factors::cost_efficiency_from_comparable_value,
                     );
@@ -301,12 +311,7 @@ impl RoutingService {
                     .collect::<Vec<_>>();
                 let at = request.admitted_at_ms().to_string();
                 PricingStore
-                    .resolve_station_key_pricing_many(
-                        read,
-                        &station_key_ids,
-                        requested_model,
-                        &at,
-                    )
+                    .resolve_station_key_pricing_many(read, &station_key_ids, requested_model, &at)
                     .await?
                     .into_iter()
                     .map(|(station_key_id, resolution)| {
@@ -432,36 +437,40 @@ impl RoutingService {
         let candidates = self.store.load_runtime_candidates(&mut read).await?;
         let mut facts = Vec::with_capacity(candidates.len());
         for candidate in candidates {
-                let cooldown_until = candidate
-                    .health
-                    .as_ref()
-                    .and_then(|health| health.cooldown_until.clone());
-                let health_state = candidate
-                    .health
-                    .as_ref()
-                    .map(|health| {
-                        if health.cooldown_until.is_some() {
-                            "cooldown"
-                        } else if health.consecutive_failures > 0 {
-                            "degraded"
-                        } else {
-                            "ready"
-                        }
-                    })
-                    .unwrap_or("unknown")
-                    .to_string();
-                let in_flight = proxy
-                    .active_for_station(&candidate.station_type, &candidate.station_id, &candidate.station_key_id)
-                    .await
-                    .or(candidate.load_factor);
-                facts.push(RoutingRuntimeCandidateFact {
-                    station_key_id: candidate.station_key_id,
-                    station_id: candidate.station_id,
-                    endpoint_revision: candidate.station_endpoint_revision,
-                    in_flight,
-                    health_state,
-                    cooldown_until,
-                });
+            let cooldown_until = candidate
+                .health
+                .as_ref()
+                .and_then(|health| health.cooldown_until.clone());
+            let health_state = candidate
+                .health
+                .as_ref()
+                .map(|health| {
+                    if health.cooldown_until.is_some() {
+                        "cooldown"
+                    } else if health.consecutive_failures > 0 {
+                        "degraded"
+                    } else {
+                        "ready"
+                    }
+                })
+                .unwrap_or("unknown")
+                .to_string();
+            let in_flight = proxy
+                .active_for_station(
+                    &candidate.station_type,
+                    &candidate.station_id,
+                    &candidate.station_key_id,
+                )
+                .await
+                .or(candidate.load_factor);
+            facts.push(RoutingRuntimeCandidateFact {
+                station_key_id: candidate.station_key_id,
+                station_id: candidate.station_id,
+                endpoint_revision: candidate.station_endpoint_revision,
+                in_flight,
+                health_state,
+                cooldown_until,
+            });
         }
         Ok(runtime_overlay_from_candidates(
             facts,
@@ -751,33 +760,50 @@ impl RoutingService {
                 station_id: candidate.station_id.clone(),
                 station_name: candidate.station_id.clone(),
                 key_name: candidate.station_key_id.clone(),
-                hard_rejection_codes: if candidate.hard_eligible { Vec::new() } else { vec!["hard_ineligible".to_string()] },
+                hard_rejection_codes: if candidate.hard_eligible {
+                    Vec::new()
+                } else {
+                    vec!["hard_ineligible".to_string()]
+                },
             })
             .collect::<Vec<_>>();
-        let canonical_plan = plan_snapshot_with_budget(&planning_snapshot, b"simulation", 1, None)
-            .ok();
+        let canonical_plan =
+            plan_snapshot_with_budget(&planning_snapshot, b"simulation", 1, None).ok();
         let explanations = canonical_plan
             .as_ref()
-            .map(|plan| canonical_simulation_explanations(&projected, plan, mapped_model.clone(), routing_group_filter.clone()))
+            .map(|plan| {
+                canonical_simulation_explanations(
+                    &projected,
+                    plan,
+                    mapped_model.clone(),
+                    routing_group_filter.clone(),
+                )
+            })
             .unwrap_or_else(|| {
                 projected
                     .iter()
-                    .map(|candidate| canonical_rejected_explanation(candidate, mapped_model.clone(), routing_group_filter.clone()))
+                    .map(|candidate| {
+                        canonical_rejected_explanation(
+                            candidate,
+                            mapped_model.clone(),
+                            routing_group_filter.clone(),
+                        )
+                    })
                     .collect()
             });
-        let selected_station_key_id = canonical_plan.as_ref().map(|plan| plan.selected_station_key_id.clone());
+        let selected_station_key_id = canonical_plan
+            .as_ref()
+            .map(|plan| plan.selected_station_key_id.clone());
         let selected_station_id = selected_station_key_id
             .as_deref()
             .and_then(|station_key_id| {
                 projected
-                .iter()
+                    .iter()
                     .find(|candidate| candidate.station_key_id == station_key_id)
                     .map(|candidate| candidate.station_id.clone())
             });
         let planner_error_code = if selected_station_key_id.is_none() {
-            Some(
-                "no_eligible_candidate".to_string(),
-            )
+            Some("no_eligible_candidate".to_string())
         } else {
             None
         };
@@ -884,7 +910,15 @@ fn canonical_simulation_explanations(
                 vec!["not_selected_or_ineligible".to_string()]
             };
             let accepted = planned.is_some() && rejection_reasons.is_empty();
-            route_explanation_from_canonical_candidate(candidate, mapped_model.clone(), routing_group_scope.clone(), accepted, reasons, rejection_reasons, rank)
+            route_explanation_from_canonical_candidate(
+                candidate,
+                mapped_model.clone(),
+                routing_group_scope.clone(),
+                accepted,
+                reasons,
+                rejection_reasons,
+                rank,
+            )
         })
         .collect()
 }
@@ -965,7 +999,10 @@ fn route_explanation_from_projection(
         rejection_reasons,
         mapped_model,
         pricing_rule_id: None,
-        group_binding_id: projection.group.as_ref().map(|group| group.stable_key.clone()),
+        group_binding_id: projection
+            .group
+            .as_ref()
+            .map(|group| group.stable_key.clone()),
         rate_multiplier: projection.multiplier.multiplier,
         normalization_status: Some(projection.pricing.status_label.clone()),
         price_confidence: projection.pricing.confidence,
@@ -977,7 +1014,11 @@ fn route_explanation_from_projection(
         balance_scope: projection.balance.selected_scope.clone(),
         balance_collected_at: projection.pricing.observed_at.clone(),
         economic_freshness: projection.pricing.reason.map(ToString::to_string),
-        economic_reasons: projection.pricing.reason.map(|reason| vec![reason.to_string()]).unwrap_or_default(),
+        economic_reasons: projection
+            .pricing
+            .reason
+            .map(|reason| vec![reason.to_string()])
+            .unwrap_or_default(),
         routing_group_scope: Some(routing_group_scope),
         routing_group_match: projection.policy.group_matches,
         top_k_rank,
@@ -992,7 +1033,8 @@ fn simulation_explanations(
     mapped_model: Option<String>,
     routing_group_scope: RoutingGroupFilter,
 ) -> Vec<RouteCandidateExplanation> {
-    let ordered = crate::application::routing_engine::hierarchical_preview::ordered_plan_candidates(plan);
+    let ordered =
+        crate::application::routing_engine::hierarchical_preview::ordered_plan_candidates(plan);
     candidates
         .iter()
         .map(|candidate| {
@@ -1090,13 +1132,11 @@ fn simulation_explanation(
 mod tests {
     use super::*;
     use crate::application::operational_facts::{
-        pricing_projector::RoutingCostBasis,
         candidate_projection::route_projection_from_runtime_candidate,
+        pricing_projector::RoutingCostBasis,
     };
+    use crate::application::routing_engine::hierarchical_preview::{plan_route, PlanningInput};
     use crate::application::routing_engine::request::{PlanningRoundContext, RouteProgress};
-    use crate::application::routing_engine::hierarchical_preview::{
-        plan_route, PlanningInput,
-    };
     use crate::models::{
         pricing::{PricingStatus, RequestKind},
         proxy::UpstreamApiFormat,

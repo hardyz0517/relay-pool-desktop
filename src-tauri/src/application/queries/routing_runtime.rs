@@ -73,15 +73,13 @@ pub(crate) fn runtime_overlay_from_candidates(
         candidates: candidates
             .into_iter()
             .take(limit)
-            .map(|candidate| {
-                RoutingRuntimeCandidateOverlay {
-                    station_key_id: candidate.station_key_id,
-                    station_id: candidate.station_id,
-                    endpoint_revision: candidate.endpoint_revision,
-                    in_flight: candidate.in_flight,
-                    health_state: candidate.health_state,
-                    cooldown_until: candidate.cooldown_until,
-                }
+            .map(|candidate| RoutingRuntimeCandidateOverlay {
+                station_key_id: candidate.station_key_id,
+                station_id: candidate.station_id,
+                endpoint_revision: candidate.endpoint_revision,
+                in_flight: candidate.in_flight,
+                health_state: candidate.health_state,
+                cooldown_until: candidate.cooldown_until,
             })
             .collect(),
     }

@@ -72,7 +72,11 @@ fn projection_ingestion_migration_resets_only_derived_quality_state() {
 fn generation_upgrade_rebuilds_revision_baseline_after_legacy_copy() {
     let importer = read_source("src/persistence/legacy_import/import.rs");
     assert!(importer.contains("rebuild_domain_revision_baseline(&mut write).await?"));
-    for scope in ["station:' || id", "station_key:' || id", "model_alias:' || id"] {
+    for scope in [
+        "station:' || id",
+        "station_key:' || id",
+        "model_alias:' || id",
+    ] {
         assert!(
             importer.contains(scope),
             "legacy import must rebuild {scope} revisions"

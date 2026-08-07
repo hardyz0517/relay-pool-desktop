@@ -392,13 +392,11 @@ mod tests {
                 api_base_url: "https://api.example/proxy/v1".to_string(),
             }
         );
-        assert!(
-            same_origin(
-                "https://relay.example/path",
-                "https://relay.example:443/other",
-            )
-            .unwrap()
-        );
+        assert!(same_origin(
+            "https://relay.example/path",
+            "https://relay.example:443/other",
+        )
+        .unwrap());
         assert!(!same_origin("https://relay.example/path", "http://relay.example/path",).unwrap());
     }
 }

@@ -154,7 +154,9 @@ async fn project_once(
             }
             scoped_histories.push((
                 scope.clone(),
-                observation_store.list_for_scope(read.connection(), &scope).await?,
+                observation_store
+                    .list_for_scope(read.connection(), &scope)
+                    .await?,
             ));
         }
         (observations, scoped_histories)

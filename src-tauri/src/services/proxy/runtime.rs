@@ -82,13 +82,20 @@ impl Default for ProxyRuntimeState {
 }
 
 impl ProxyRuntimeState {
-    pub(crate) async fn active_for_station(&self, station_type: &str, station_id: &str, station_key_id: &str) -> Option<i64> {
+    pub(crate) async fn active_for_station(
+        &self,
+        station_type: &str,
+        station_id: &str,
+        station_key_id: &str,
+    ) -> Option<i64> {
         let inner = self.v2.lock().await;
-        Some(inner
-            .routing_runtime
-            .as_ref()
-            .map(|runtime| runtime.active_for_station(station_type, station_id, station_key_id))
-            .unwrap_or(0))
+        Some(
+            inner
+                .routing_runtime
+                .as_ref()
+                .map(|runtime| runtime.active_for_station(station_type, station_id, station_key_id))
+                .unwrap_or(0),
+        )
     }
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
@@ -827,15 +834,23 @@ mod tests {
             &self,
             _request: crate::application::routing_engine::request::RouteRequestFacts,
             runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
-        ) -> BoxFuture<'static, Result<Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>, String>> {
-            Box::pin(async move { Ok(Some(crate::application::routing_engine::planning_snapshot::PlanningSnapshot {
+        ) -> BoxFuture<
+            'static,
+            Result<
+                Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
+                String,
+            >,
+        > {
+            Box::pin(async move {
+                Ok(Some(crate::application::routing_engine::planning_snapshot::PlanningSnapshot {
                 snapshot_id: "correlation-test-planning-snapshot".to_string(),
                 durable_revision: 1,
                 policy: crate::models::routing_policy::RoutingPolicyConfigV1::default(),
                 profile: crate::application::routing_engine::algorithm_profile::DispatchAlgorithmProfile::default(),
                 candidates: Vec::new(),
                 runtime,
-            })) })
+            }))
+            })
         }
 
         fn load_operational_route_snapshot(
@@ -1329,10 +1344,7 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             authorization_headers,
-            std::collections::BTreeSet::from([
-                "Bearer sk-v2-first",
-                "Bearer sk-v2-second",
-            ])
+            std::collections::BTreeSet::from(["Bearer sk-v2-first", "Bearer sk-v2-second",])
         );
         let upstream_body: serde_json::Value =
             serde_json::from_slice(&captured[1].body).expect("upstream body");

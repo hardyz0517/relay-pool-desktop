@@ -241,16 +241,12 @@ mod tests {
 
         let redacted = redact_value(&value);
 
-        assert!(
-            redacted["error"]["message"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("[REDACTED]")
-        );
-        assert!(
-            !redacted
-                .to_string()
-                .contains("sk-p8-secret-plaintext-canary")
-        );
+        assert!(redacted["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[REDACTED]"));
+        assert!(!redacted
+            .to_string()
+            .contains("sk-p8-secret-plaintext-canary"));
     }
 }

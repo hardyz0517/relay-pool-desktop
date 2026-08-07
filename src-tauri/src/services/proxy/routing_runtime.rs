@@ -5,13 +5,13 @@ use std::sync::{
 
 use rand::{rngs::OsRng, RngCore};
 
+#[cfg(test)]
+use crate::application::routing_engine::capacity::{CapacityLease, CompositeCapacityRequest};
 use crate::application::routing_engine::{
     capacity::{CapacityConstraintKey, CompositeCapacityRegistry, RetryBudgetRegistry},
     exploration::ExplorationBudgetRegistry,
     planning_snapshot::RuntimeOverlaySnapshot,
 };
-#[cfg(test)]
-use crate::application::routing_engine::capacity::{CapacityLease, CompositeCapacityRequest};
 
 /// Runtime-owned mutable state for one proxy process instance. Durable facts
 /// and policy never live here; they are captured into a PlanningSnapshot.
@@ -88,8 +88,16 @@ impl RoutingRuntimeState {
         Arc::clone(&self.capacity)
     }
 
-    pub(crate) fn active_for_station(&self, station_type: &str, station_id: &str, station_key_id: &str) -> i64 {
-        let constraint = if matches!(station_type.trim().to_ascii_lowercase().as_str(), "sub2api" | "newapi") {
+    pub(crate) fn active_for_station(
+        &self,
+        station_type: &str,
+        station_id: &str,
+        station_key_id: &str,
+    ) -> i64 {
+        let constraint = if matches!(
+            station_type.trim().to_ascii_lowercase().as_str(),
+            "sub2api" | "newapi"
+        ) {
             CapacityConstraintKey::StationAccount(station_id.to_string())
         } else {
             CapacityConstraintKey::StationKey(station_key_id.to_string())
@@ -112,7 +120,6 @@ impl RoutingRuntimeState {
             lease: Some(lease),
         })
     }
-
 }
 
 #[cfg(test)]

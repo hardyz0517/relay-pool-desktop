@@ -3,10 +3,10 @@ use sqlx::{Executor, Row, Sqlite, SqliteConnection};
 use crate::{
     models::{
         proxy::{normalize_proxy_mode, normalize_proxy_url},
-        routing::{RoutingGroupFilter, DispatchAlgorithmSettings},
+        routing::{DispatchAlgorithmSettings, RoutingGroupFilter},
+        routing_policy::RoutingPolicyConfigV1,
         secrets::mask_secret,
         settings::{AppSettings, UpdateSettingsInput},
-        routing_policy::RoutingPolicyConfigV1,
     },
     persistence::{
         error::PersistenceError,
@@ -468,9 +468,7 @@ async fn canonical_policy_projection(
     };
     let config = serde_json::from_str::<RoutingPolicyConfigV1>(&config_json)
         .map_err(|_| invalid_persisted_setting())?;
-    config
-        .validate()
-        .map_err(|_| invalid_persisted_setting())?;
+    config.validate().map_err(|_| invalid_persisted_setting())?;
     Ok(CanonicalPolicyProjection {
         allow_depleted_fallback: config.allow_depleted_fallback,
     })

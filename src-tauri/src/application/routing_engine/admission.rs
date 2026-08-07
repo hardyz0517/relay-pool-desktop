@@ -473,7 +473,8 @@ impl RouteAdmissionCoordinator {
     ) -> Result<(), AdmissionFailure> {
         if outcome == ActualAttemptTerminal::FailedBeforeCommit {
             if let Some(domains) = self.candidate_failure_domains.get(&station_key_id) {
-                self.excluded_failure_domains.extend(domains.iter().cloned());
+                self.excluded_failure_domains
+                    .extend(domains.iter().cloned());
             }
         }
         self.progress.record_actual_attempt(station_key_id);

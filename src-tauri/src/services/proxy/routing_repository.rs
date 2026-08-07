@@ -3,15 +3,17 @@ use std::collections::BTreeMap;
 use crate::{
     application::{
         operational_facts::target_resolver::ExecutionTargetRef,
-        routing_engine::planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
         routing::RoutingService,
+        routing_engine::planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
         routing_engine::{admission::CandidateAdmissionProfile, request::RouteRequestFacts},
     },
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
 };
 
-use crate::application::routing_engine::candidate_plan::{RoutePlanCandidate, RoutePlanPricingSnapshot};
 use crate::application::operational_facts::pricing_projector::RoutingCostBasis;
+use crate::application::routing_engine::candidate_plan::{
+    RoutePlanCandidate, RoutePlanPricingSnapshot,
+};
 
 pub(crate) type RoutingExecutionSettings = RuntimeRoutingSettings;
 
@@ -30,7 +32,8 @@ pub(crate) struct OperationalRouteSnapshot {
     pub(crate) targets: BTreeMap<String, ExecutionTargetRef>,
     pub(crate) profiles: BTreeMap<String, CandidateAdmissionProfile>,
     #[cfg(test)]
-    pub(crate) legacy_candidates: Vec<crate::application::operational_facts::candidate_projector::RouteCandidateProjection>,
+    pub(crate) legacy_candidates:
+        Vec<crate::application::operational_facts::candidate_projector::RouteCandidateProjection>,
 }
 
 #[derive(Clone)]
@@ -212,8 +215,7 @@ mod tests {
     use crate::{
         application::{
             operational_facts::{
-                pricing_projector::RoutingCostBasis,
-                candidate_projection::validated_route_settings,
+                candidate_projection::validated_route_settings, pricing_projector::RoutingCostBasis,
             },
             routing_engine::request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
         },
@@ -310,9 +312,13 @@ mod tests {
                 affinity_station_key_id: None,
             },
         };
-        let snapshot = RoutingRepository::load_operational_route_snapshot(&repository, request, planning_snapshot)
-            .await
-            .expect("operational route snapshot");
+        let snapshot = RoutingRepository::load_operational_route_snapshot(
+            &repository,
+            request,
+            planning_snapshot,
+        )
+        .await
+        .expect("operational route snapshot");
 
         assert_eq!(snapshot.candidates.len(), 1);
         let candidate = &snapshot.candidates[0];

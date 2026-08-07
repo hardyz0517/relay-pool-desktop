@@ -1,7 +1,7 @@
+use super::routing_health::RouteHealthState;
 use crate::models::proxy::ProxyStatus;
 use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 use serde::Serialize;
-use super::routing_health::RouteHealthState;
 
 #[allow(unused_imports)]
 pub(crate) use crate::application::operational_facts::candidate_projector::RouteCandidateProjection;

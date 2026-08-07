@@ -1,17 +1,15 @@
 use std::sync::Arc;
 
 use crate::{
-    TrayBehavior, TrayBehaviorState,
     application::{
-        error::ApplicationError,
-        queries::station_assets::StationAssetsQuery,
-        settings::SettingsService,
-        stations::StationService,
+        error::ApplicationError, queries::station_assets::StationAssetsQuery,
+        settings::SettingsService, stations::StationService,
     },
     models::{
         settings::{AppSettings, UpdateSettingsInput},
         stations::{CreateStationInput, Station, UpdateStationInput},
     },
+    TrayBehavior, TrayBehaviorState,
 };
 
 #[derive(Clone)]

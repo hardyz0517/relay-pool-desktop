@@ -264,7 +264,8 @@ impl RoutingLoopbackHarness {
             .handle()
             .write(|write| {
                 Box::pin(async move {
-                    let config = crate::application::routing_policy::legacy_policy_mapping(strategy).preset;
+                    let config =
+                        crate::application::routing_policy::legacy_policy_mapping(strategy).preset;
                     let config_json = serde_json::to_string(&config).expect("policy json");
                     sqlx::query(
                         "UPDATE routing_policy

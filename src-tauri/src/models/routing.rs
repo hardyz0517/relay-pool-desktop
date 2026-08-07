@@ -404,8 +404,12 @@ pub struct RuntimeRoutingBalance {
 
 impl RuntimeRoutingBalance {
     pub fn is_depleted(&self) -> bool {
-        self.value.is_some_and(|value| value.is_finite() && value <= 0.0)
-            || matches!(self.status.trim().to_ascii_lowercase().as_str(), "low" | "depleted" | "exhausted" | "empty")
+        self.value
+            .is_some_and(|value| value.is_finite() && value <= 0.0)
+            || matches!(
+                self.status.trim().to_ascii_lowercase().as_str(),
+                "low" | "depleted" | "exhausted" | "empty"
+            )
     }
 }
 
