@@ -1,31 +1,29 @@
-# Relay Pool Desktop
+<h1 align='center'>Relay Pool Desktop</h1>
 
 <p align='center'>
-  <img src='src/assets/relay-pool-logo.png' alt='Relay Pool Desktop logo' width='180' />
+  <img src='src/assets/relay-pool-logo.png' alt='Relay Pool Desktop 标志' width='180' />
 </p>
 
 <p align='center'>
-  <strong>本地 AI 中转资产管理与 OpenAI-compatible 路由网关</strong>
+  <strong>本地 AI 中转站资产与路由控制台</strong>
   <br />
-  <span>A local desktop control plane for relay stations, station keys, pricing facts, health signals, and localhost routing.</span>
+  <span>统一管理中转站的余额、秘钥、价格与分组健康状态，为本地 AI 客户端提供固定的智能网关。</span>
 </p>
 
 <p align='center'>
-  <a href='https://github.com/hardyz0517/relay-pool-desktop/releases/latest'><img alt='Release' src='https://img.shields.io/github/v/release/hardyz0517/relay-pool-desktop?label=release&color=2563eb' /></a>
-  <img alt='Version' src='https://img.shields.io/badge/version-v0.4.3-0f766e' />
-  <img alt='Preview' src='https://img.shields.io/badge/status-technical%20preview-f59e0b' />
-  <img alt='Platform' src='https://img.shields.io/badge/platform-Windows%20x64-111827' />
+  <a href='https://github.com/hardyz0517/relay-pool-desktop/releases/latest'><img alt='版本' src='https://img.shields.io/github/v/release/hardyz0517/relay-pool-desktop?label=%E7%89%88%E6%9C%AC&color=2563eb' /></a>
+  <img alt='版本' src='https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.4.3-0f766e' />
+  <img alt='状态' src='https://img.shields.io/badge/%E7%8A%B6%E6%80%81-%E6%8A%80%E6%9C%AF%E9%A2%84%E8%A7%88-f59e0b' />
+  <img alt='平台' src='https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20x64-111827' />
   <img alt='Tauri' src='https://img.shields.io/badge/Tauri-2.x-24c8db' />
   <img alt='React' src='https://img.shields.io/badge/React-18-61dafb' />
-  <img alt='Rust' src='https://img.shields.io/badge/Rust-native-b7410e' />
+  <img alt='Rust 原生' src='https://img.shields.io/badge/Rust-%E5%8E%9F%E7%94%9F-b7410e' />
 </p>
 
 <p align='center'>
   <a href='https://github.com/hardyz0517/relay-pool-desktop/releases/latest'><strong>下载最新版</strong></a>
   ·
-  <a href='docs/PROJECT_PLAN.md'>项目规划</a>
-  ·
-  <a href='docs/PRODUCT_MODEL.md'>产品模型</a>
+  <a href='#第一次使用'>第一次使用</a>
   ·
   <a href='docs/README.md'>文档导航</a>
   ·
@@ -34,106 +32,143 @@
 
 ---
 
-**当前版本：v0.4.3（技术预览）**。本版本同步更新了 Relay Pool 的应用 logo，并将品牌资源应用到桌面应用及打包图标；核心管理、本地代理、路由、采集、请求日志、Windows 预览安装包和应用内更新检查已经进入可运行状态。接口、数据结构、兼容范围和安装方式仍可能变化，请在真实凭据环境中谨慎升级，并先保留必要备份。
+**当前版本：v0.4.3（技术预览）**。Relay Pool Desktop 是 Windows 本地桌面工具。接口、数据结构、兼容范围和安装方式仍可能变化，请在真实凭据环境中谨慎升级，并先保留必要备份。
 
-Relay Pool Desktop 是一款面向个人开发者和本地 AI 工具用户的桌面控制台。它把多个 Sub2API / NewAPI / OpenAI-compatible 中转站账号、站内 Key、余额、分组倍率、模型能力、健康状态和请求记录收束到本机，并向 Codex、Claude Code、Gemini CLI、CCSwitch 等客户端提供固定的 OpenAI-compatible 入口。
+## 适合谁
 
-你无需在每个客户端里反复更换上游地址和 Key。Relay Pool Desktop 在本机负责采集站点事实、筛选可用 Key、执行路由与失败切换，并留下足够解释一次请求为什么这样走的运行记录。
+- 管理多个 Sub2API、NewAPI 中转站，希望集中查看余额、秘钥、价格、分组与健康状态；
+- 需要持续检测站点和秘钥的可用性，及时发现余额不足、价格变化、分组异常、故障和冷却；
+- 希望让 Codex、Claude Code、Gemini CLI、CCSwitch 等客户端始终连接一个固定网关，由本地策略完成智能路由和失败切换。
 
-## 为什么需要它
+## 路由架构示意图
 
-| 日常痛点 | Relay Pool Desktop 的处理方式 |
-| --- | --- |
-| 多个中转站、多个 Key 分散在不同后台 | 用 Station / Station Key 模型统一管理站点账号、API Base URL 和实际路由 Key |
-| 客户端频繁改 Provider、Base URL 和 Key | 对外固定暴露 localhost OpenAI-compatible 入口，客户端配置保持稳定 |
-| 不知道哪把 Key 还能用、为什么失败 | 汇总健康、冷却、请求结果、fallback 和错误摘要 |
-| 只知道倍率，不知道路由时如何使用 | 将分组、倍率、模型能力、余额和价格整理为可被界面与路由消费的本地事实 |
-| 上游故障时排查成本高 | 请求日志记录候选筛选、最终选择、耗时、usage、估算成本和失败原因 |
-
-## 它如何工作
+下图展示客户端请求从固定本地网关进入 Relay Pool Desktop，再由站点、秘钥池与路由器选择上游中转站的完整路径。
 
 ```text
 Codex / Claude Code / Gemini CLI / CCSwitch
-                       |
-                       v
-            http://127.0.0.1:<local-port>/v1
-                       |
-                       v
-          Relay Pool Desktop (Tauri + Rust)
-           |       |        |        |
-        能力匹配  健康状态  优先级  价格事实
-                       |
-                       v
-        Sub2API / NewAPI / OpenAI-compatible
+                         |
+                         v
+             http://127.0.0.1:<local-port>/v1
+                         |
+                         v
+              Relay Pool Desktop
+              |       |       |
+          站点       秘钥池    路由器
+              |       |       |
+              +-------+-------+
+                      |
+                      v
+          Sub2API / NewAPI / OpenAI-compatible
 ```
 
-Relay Pool Desktop 不是云端中转服务，也不是 CCSwitch 的替代品。CCSwitch 可以继续负责本机 AI 工具配置；Relay Pool Desktop 则负责它背后的中转站资产、Station Key、采集事实和本地路由决策。
+客户端只需要连接一个固定的本地入口。Relay Pool Desktop 在本机管理站点账号和站点秘钥，持续采集余额、秘钥、价格、分组、模型与健康事实，展示状态变化，再将这些事实用于候选筛选、故障切换、请求记录和成本解释。
 
-## 核心能力
+## 功能概览
 
-| 模块 | 已覆盖能力 |
-| --- | --- |
-| 中转站资产 | 管理多个站点账号、前端网址、API Base URL、登录状态、余额来源、分组来源和采集状态 |
-| Station Key 池 | 查看启用状态、优先级、模型范围、协议能力、余额、健康、备用状态和远端同步结果 |
-| 信息采集 | 采集余额、分组、倍率、模型、账号状态和 collector run / snapshot 信息 |
-| 价格与倍率 | 按模型系列比较跨站点分组倍率，并维护模型基准价格与归一化价格事实 |
-| 本地网关 | 支持 `GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/responses` 和 usage 查询 |
-| 路由策略 | 根据模型、协议能力、健康、冷却、优先级、余额和价格事实筛选候选 Key |
-| 可观察性 | 总览、渠道状态、请求日志、变更中心、路由模拟和失败摘要 |
-| 本地安全 | SQLite 本地存储、系统凭据库保护数据密钥、AES-GCM 加密敏感字段、界面与日志脱敏 |
+### 总览
 
-## Relay Pool 的侧重点
+集中查看本地网关、站点余额、可用秘钥、今日请求、成本、失败率和待处理风险，快速判断当前运行状态。
 
-[CCSwitch](https://github.com/farion1231/cc-switch) 主要管理本机 AI 工具、Provider 配置和通用代理；[Cockpit Tools](https://github.com/jlcodes99/cockpit-tools) 主要管理官方 AI IDE 账号、订阅配额和多开实例。Relay Pool Desktop 不追求覆盖更多客户端，而是继续向上游深入，管理真实中转站账号、站内 Key 及其运行时路由。
+![总览页](docs/assets/readme/overview.png)
 
-| 工具 | 主要管理对象 | 更适合解决的问题 |
-| --- | --- | --- |
-| CCSwitch | AI 工具与 Provider 配置 | 跨客户端配置、切换和通用代理 |
-| Cockpit Tools | 官方 IDE 账号与应用实例 | 账号切换、配额监控和多实例运行 |
-| Relay Pool Desktop | 中转站账号与 Station Key | 站点采集、Key 池路由、价格与健康决策 |
+### 中转站资产
 
-Relay Pool Desktop 的优势不在于替代这些工具，而在于补齐它们背后的中转资产控制层：
+管理多个中转站账号、网站地址、API 基础地址、登录状态、余额、分组、倍率、模型、采集状态和路由参与状态，并在详情页查看站点下的秘钥与运行事实。
 
-- **从站点账号深入到实际路由 Key**：区分负责登录和采集的 Station 与真正参与请求转发的 Station Key，并在适配器支持时扫描、同步或创建远端 Key。
-- **让采集事实直接参与运行时决策**：将余额、分组、倍率、模型能力、健康和价格整理为本地事实，再用于候选筛选、排序、冷却和 fallback，而不是只保存一组静态 URL 与 Key。
-- **同时考虑成本与可用性**：按模型与协议能力、健康状态、优先级、余额和价格事实选择候选，并通过跨站点分组倍率比较识别更合适的上游。
-- **提供从变化到请求的解释链**：通过采集记录、变更中心、路由模拟和请求日志说明数据何时变化、某把 Key 为什么被选择或拒绝，以及 fallback 后最终走向哪里。
-- **保留现有客户端工作流**：Codex、Claude Code、Gemini CLI 或 CCSwitch 只需连接固定的本地入口；后续调整中转站和 Key 池时，无需反复修改每个客户端的上游配置。
+![中转站资产页](docs/assets/readme/stations.png)
 
-## 支持范围
+### 秘钥池
 
-当前优先适配 **Sub2API** 及其常见变体，同时提供分层的 **NewAPI** 与通用 **OpenAI-compatible** 支持。不同站点的接口路径、鉴权方式和字段结构并不统一，实际可用的余额、倍率、模型或远端 Key 能力取决于对应适配器与站点实现。
+统一管理所有站点秘钥，支持启用与停用、优先级排序、模型范围、协议能力、分组绑定、余额、健康状态和远端秘钥同步。
 
-本项目当前不包含：
+![秘钥池页](docs/assets/readme/key-pool.png)
 
-- 账号、支付、团队权限或多用户后台；
-- 云同步或托管式代理服务；
-- 对所有中转站魔改版本的兼容承诺；
-- 可直接替代 CCSwitch 的客户端配置管理体系。
+### 路由规则
 
-## 下载安装
+配置默认路由策略、模型映射、候选范围、优先级、价格偏好、余额边界和故障切换，并通过路由模拟解释一次请求的候选筛选与最终选择。
 
-Windows 用户可以从 [GitHub Releases](https://github.com/hardyz0517/relay-pool-desktop/releases/latest) 下载最新版 NSIS 安装包；已安装版本也可以在应用内设置页手动检查更新，更新元数据来自公开的 `latest.json`。
+![路由规则页](docs/assets/readme/routing.png)
 
-当前发布通道仍是技术预览：
+### 价格 / 倍率
 
-- 主要验证平台是 Windows x86_64；
-- 安装范围为当前用户，不需要管理员权限；
-- 准备安装更新时会协调停止本地代理，再安装并重启应用；
+维护模型基准价格、站点分组倍率和归一化价格，比较不同中转站的模型成本与可用性，并联动查看价格对应的监控状态。
+
+![价格与倍率页](docs/assets/readme/pricing.png)
+
+### 渠道状态
+
+按站点秘钥查看延迟、成功率、失败率、连续失败、冷却、最近探测和可用性趋势，支持执行单个秘钥或整站秘钥的健康检查。
+
+![渠道状态页](docs/assets/readme/channels.png)
+
+### 采集中心
+
+运行站点探测、余额、分组 / 倍率、模型和完整采集任务，查看登录态、采集任务、快照、解析字段和失败原因，并调整高级采集设置。
+
+<!-- 截图位置：采集中心页 -->
+
+### 变更中心
+
+追踪余额、秘钥、采集、价格、倍率、模型和路由变化，集中查看哪些变化需要处理，以及它们对本地路由的影响。
+
+![变更中心页](docs/assets/readme/changes.png)
+
+### 使用记录
+
+查看请求、模型、耗时、用量、估算成本、尝试次数、候选秘钥、故障切换轨迹和失败原因，解释每次请求实际走向。
+
+<!-- 截图位置：使用记录页 -->
+
+### 设置
+
+管理本地网关端口、网络出口、数据目录、登录配置、安全选项、高级工具可见性和应用更新。
+
+<!-- 截图位置：设置页 -->
+
+本地数据使用 SQLite 存储，敏感字段使用系统凭据库保护的数据密钥和 AES-GCM 加密；界面、日志、快照和导出默认脱敏，不记录提示词与响应正文。
+
+## 支持范围与产品边界
+
+Relay Pool Desktop 支持 **Sub2API**、**NewAPI** 中转站。通过统一适配器管理站点登录、余额、分组、倍率、价格、模型、秘钥与健康状态，并将这些事实直接用于本地智能网关和路由决策。
+
+## 下载与第一次使用
+
+### 下载桌面应用
+
+Windows x64 用户可以从 [GitHub 发布页](https://github.com/hardyz0517/relay-pool-desktop/releases/latest) 下载最新版 NSIS 安装包。已安装版本可以在设置页手动检查更新。
+
+### 第一次使用
+
+1. 启动 Relay Pool Desktop，在设置页确认本地代理端口；
+2. 添加一个中转站，填写站点网址、API 基础地址和对应登录信息；
+3. 添加至少一把站点秘钥，确认它已启用并通过连通性检查；
+4. 启动本地代理，将客户端指向：
+
+```text
+http://127.0.0.1:<local-port>/v1
+```
+
+第一次接入建议先使用 `/v1/models` 验证模型列表，再发送一条低风险请求确认路由、日志和故障切换状态。
+
+## 当前发布状态
+
+- 主要验证平台：Windows 10/11 x86_64；
+- 安装范围：当前用户，不需要管理员权限；
+- 更新安装会协调停止本地代理，再安装并重启应用；
 - macOS、Linux、Windows ARM64、强制静默更新、增量更新和多发布通道暂未支持；
-- 预览安装包可能仍触发系统安全提示，正式代码签名与更完整的兼容矩阵会在后续版本继续补齐。
+- 预览安装包可能仍触发系统安全提示，正式代码签名和更完整的兼容矩阵仍在补齐。
 
 ## 从源码运行
 
 ### 环境要求
 
-- Windows 10/11（当前主要开发与验证平台）；
+- Windows 10/11；
 - [Node.js](https://nodejs.org/) 20 或更高版本；
 - [pnpm](https://pnpm.io/) 11；
-- [Rust](https://www.rust-lang.org/tools/install) stable toolchain；
-- [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/)（Windows 需要 WebView2 与 Microsoft C++ Build Tools）。
+- [Rust](https://www.rust-lang.org/tools/install) 稳定版工具链；
+- [Tauri 2 前置条件](https://v2.tauri.app/start/prerequisites/)。
 
-### 启动桌面应用
+### 启动完整桌面应用
 
 ```powershell
 git clone https://github.com/hardyz0517/relay-pool-desktop.git
@@ -142,69 +177,30 @@ pnpm install
 pnpm tauri:dev
 ```
 
-`pnpm dev` 只启动 Vite 前端，适合界面开发；涉及 SQLite、采集、凭据或本地代理时，应使用 `pnpm tauri:dev` 启动完整桌面应用。
+`pnpm dev` 只启动 Vite 前端，适合界面开发；涉及 SQLite、采集、凭据或本地代理时，应使用 `pnpm tauri:dev`。
 
-### 构建检查
+### 常用检查
 
 ```powershell
-# TypeScript 类型检查与 Vite 构建
 pnpm build
-
-# Tauri 应用构建
-pnpm tauri:build
+pnpm test
 ```
 
-项目仍处于技术预览阶段。发布版本通过 tag 触发的 GitHub Actions 构建 Windows NSIS 安装包、updater artifact 和 `latest.json`；本地构建主要用于开发验证，不等同于正式发布流程。
-
-## 项目结构
-
-```text
-src/
-  app/                 应用入口与页面路由
-  components/          桌面 Shell 与通用 UI
-  features/            中转站、Key 池、路由、价格、渠道、日志等功能
-  lib/                 前端 API、类型、查询与视图投影
-src-tauri/src/
-  commands/            Tauri 命令边界
-  models/              Rust 领域模型
-  application/         持久化用例与应用服务
-  persistence/         SQLx Store、migration、备份与恢复
-  services/            采集、路由、代理、监控与凭据服务
-docs/                   当前规范、工程记录、研究资料与历史归档
-scripts/                聚焦业务契约的回归检查脚本
-```
-
-主要技术栈：
-
-- [Tauri 2](https://tauri.app/) + Rust
-- React 18 + TypeScript + Vite
-- Tailwind CSS
-- SQLite（`SQLx`）
-- Windows Credential Manager + AES-GCM
+更完整的前端、Rust、契约和发布验证见 [AGENTS.md](AGENTS.md) 与 [文档导航](docs/README.md)。
 
 ## 安全说明
 
-Relay Pool Desktop 会在本机处理真实上游凭据。请勿提交 API Key、密码、Cookie、Token、本地数据库、日志或配置文件，也不要在 Issue 和截图中暴露这些信息。
+Relay Pool Desktop 会在本机处理真实上游凭据。请勿提交 API 秘钥、密码、Cookie、Token、本地数据库、日志或配置文件，也不要在问题反馈和截图中暴露这些信息。
 
-默认日志和导出以元数据为主，不记录 Prompt 与 Response 正文。数据库备份可能包含加密后的凭据密文，并依赖原系统凭据库中的数据密钥；它不等同于可跨设备恢复的加密导出。
+数据库备份可能包含加密后的凭据密文，并依赖原系统凭据库中的数据密钥；它不等同于可跨设备恢复的加密导出。详细边界见 [安全导入导出策略](docs/SECURITY_EXPORT_IMPORT.md)。
 
-详细边界见 [Security Export and Import Policy](docs/SECURITY_EXPORT_IMPORT.md)。
+## 文档与参与
 
-跨设备数据搬家（portable migration）已在 `codex/cross-device-encrypted-migration` 升级分支获得安全批准并开启 capability；正式合并/发布前仍需要完成两机 smoke、签名包门禁和 artifact/canary 审计。默认导出、本机备份和同机数据目录迁移仍不是跨设备恢复方案。
+- [项目规划](docs/PROJECT_PLAN.md)：产品定位、能力边界与当前阶段；
+- [产品模型](docs/PRODUCT_MODEL.md)：站点、站点秘钥、路由和事实层术语；
+- [文档导航](docs/README.md)：当前规范、工程记录、研究资料和历史归档；
+- [问题反馈](https://github.com/hardyz0517/relay-pool-desktop/issues)：报告可复现问题或讨论兼容需求。
 
-## 路线图
-
-当前工作重点是提高真实站点采集的兼容性与恢复能力、完善路由事实层和可观察性，并继续打磨 v0.3.x Windows 预览发布与自动更新流程。更完整的兼容矩阵、迁移体验和正式分发体验将在发布流程继续成熟后提供。
-
-详细规划与领域术语：
-
-- [项目规划](docs/PROJECT_PLAN.md)
-- [产品模型](docs/PRODUCT_MODEL.md)
-- [安全导入导出策略](docs/SECURITY_EXPORT_IMPORT.md)
-- [文档导航与有效性说明](docs/README.md)
-
-## 参与项目
-
-欢迎通过 [Issues](https://github.com/hardyz0517/relay-pool-desktop/issues) 报告可复现的问题或讨论兼容需求，也欢迎提交范围清晰的 Pull Request。涉及中转站适配时，请提供脱敏后的请求路径、状态码和响应结构，不要附带真实凭据或用户数据。
+涉及中转站适配时，请提供脱敏后的请求路径、状态码和响应结构，不要附带真实凭据或用户数据。
 
 仓库当前尚未添加开源许可证。在许可证明确之前，源码默认保留全部权利，不应视为已获得复制、分发或衍生使用授权。
