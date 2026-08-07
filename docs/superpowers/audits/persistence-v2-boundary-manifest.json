@@ -3535,7 +3535,6 @@
     {"from":"application::operational_facts::reader","to":"persistence::stores::operational_facts","temporary":false},
     {"from":"application::quality_projection","to":"models::routing_observation","temporary":false},
     {"from":"application::queries::key_detail","to":"models::routing_read_models","temporary":false},
-    {"from":"application::queries::key_pool","to":"models::routing_read_models","temporary":false},
     {"from":"application::queries::read_model_revision","to":"persistence::stores::asset_revision_store","temporary":false},
     {"from":"application::queries::request_decision_trace","to":"persistence::stores::routing_decisions::queries","temporary":false},
     {"from":"application::queries::station_assets","to":"models::routing_read_models","temporary":false},
@@ -3566,6 +3565,7 @@
     {"from":"persistence::stores::settings_store","to":"models::routing_policy","temporary":false},
     {"from":"services::proxy::execution","to":"application::routing_engine::admission","temporary":false},
     {"from":"services::proxy::execution","to":"application::routing_engine::candidate_plan","temporary":false},
+    {"from":"services::proxy::runtime","to":"application::queries::routing_runtime","temporary":false},
 
     {"from":"services::proxy::routing_repository","to":"application::routing_engine::admission","temporary":false},
     {"from":"services::proxy::routing_repository","to":"application::routing_engine::planning_snapshot","temporary":false},
@@ -3587,18 +3587,21 @@
     {"from":"application::routing_engine::intelligent_planner","to":"application::routing_engine::exploration","temporary":false}
     ,{"from":"application::command_facades::routing","to":"models::routing_policy","temporary":false}
     ,{"from":"application::command_facades::routing","to":"persistence::stores::routing_policy_store","temporary":false}
+    ,{"from":"application::command_facades::routing","to":"services::proxy::runtime","temporary":false}
     ,{"from":"application::queries::routing_workspace","to":"models::routing_policy","temporary":false}
     ,{"from":"application::routing","to":"application::routing_engine::intelligent_planner","temporary":false}
     ,{"from":"application::routing","to":"models::routing_policy","temporary":false}
     ,{"from":"commands::routing_health","to":"ipc::dto::routing_mutations","temporary":false}
     ,{"from":"commands::routing_health","to":"models::routing_policy","temporary":false}
-    ,{"from":"ipc::dto::routing_health_reads","to":"models::routing_policy","temporary":false}
     ,{"from":"ipc::dto::routing_mutations","to":"models::routing_policy","temporary":false}
     ,{"from":"models::routing","to":"models::routing_policy","temporary":false}
     ,{"from":"services::proxy::routing_repository","to":"application::operational_facts::pricing_projector","temporary":false}
     ,{"from":"services::proxy::routing_repository","to":"application::routing_engine::candidate_plan","temporary":false}
     ,{"from":"services::proxy::routing_repository","to":"application::routing_engine::capacity","temporary":false}
     ,{"from":"application::routing_engine::candidate_plan","to":"application::operational_facts::pricing_projector","temporary":false}
+    ,{"from":"application::operational_facts::planning_snapshot","to":"application::routing_engine::routing_health","temporary":false}
+    ,{"from":"ipc::dto::routing_health_reads","to":"ipc::dto::routing_mutations","temporary":false}
+    ,{"from":"services::proxy::execution","to":"models::routing_policy","temporary":false}
   ],
   "temporary_legacy_consumers": [],
   "temporary_legacy_paths": [],

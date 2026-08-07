@@ -8,6 +8,7 @@ use std::{
 
 use crate::{
     application::credentials::ExecutionCredentialResolver,
+    application::queries::routing_runtime::RoutingRuntimeActivity,
     models::proxy::{ProxyLifecycle, ProxyStatus},
     observability::correlation,
     services::{
@@ -69,6 +70,20 @@ pub struct ProxyRuntimeState {
     v2: tokio::sync::Mutex<V2RuntimeInner>,
     lifecycle_operation: tokio::sync::Mutex<()>,
     status_snapshot: RwLock<ProxyStatus>,
+}
+
+impl RoutingRuntimeActivity for ProxyRuntimeState {
+    fn active_for_station<'a>(
+        &'a self,
+        station_type: &'a str,
+        station_id: &'a str,
+        station_key_id: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Option<i64>> {
+        Box::pin(async move {
+            ProxyRuntimeState::active_for_station(self, station_type, station_id, station_key_id)
+                .await
+        })
+    }
 }
 
 impl Default for ProxyRuntimeState {

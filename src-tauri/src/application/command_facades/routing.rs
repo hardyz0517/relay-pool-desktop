@@ -10,7 +10,7 @@ use crate::{
             request_decision_trace::{
                 RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
             },
-            routing_runtime::RoutingRuntimeOverlay,
+            routing_runtime::{RoutingRuntimeActivity, RoutingRuntimeOverlay},
             routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
         },
         routing::RoutingService,
@@ -121,9 +121,8 @@ impl RoutingCommandFacade {
     pub(crate) async fn load_routing_runtime_overlay(
         &self,
     ) -> Result<RoutingRuntimeOverlay, ApplicationError> {
-        self.routing
-            .load_routing_runtime_overlay(Arc::clone(&self.proxy))
-            .await
+        let proxy: Arc<dyn RoutingRuntimeActivity> = self.proxy.clone();
+        self.routing.load_routing_runtime_overlay(proxy).await
     }
 
     pub(crate) async fn list_recent_route_decisions(

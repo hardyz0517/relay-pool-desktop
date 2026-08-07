@@ -1,8 +1,18 @@
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
 use crate::models::proxy::UpstreamApiFormat;
 
 pub(crate) const ROUTING_RUNTIME_OVERLAY_VERSION: &str = "routing_runtime_overlay_v1";
+
+pub(crate) trait RoutingRuntimeActivity: Send + Sync {
+    fn active_for_station<'a>(
+        &'a self,
+        station_type: &'a str,
+        station_id: &'a str,
+        station_key_id: &'a str,
+    ) -> BoxFuture<'a, Option<i64>>;
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

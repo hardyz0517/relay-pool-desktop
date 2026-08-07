@@ -33,7 +33,7 @@ use crate::{
             routing_runtime::{
                 monitoring_target_snapshots_from_facts, runtime_overlay_from_candidates,
                 RoutingMonitoringTargetFacts, RoutingMonitoringTargetSnapshot,
-                RoutingRuntimeCandidateFact, RoutingRuntimeOverlay,
+                RoutingRuntimeActivity, RoutingRuntimeCandidateFact, RoutingRuntimeOverlay,
             },
             routing_workspace::{
                 workspace_snapshot_from_canonical_candidates, RoutingWorkspaceSnapshot,
@@ -431,7 +431,7 @@ impl RoutingService {
 
     pub(crate) async fn load_routing_runtime_overlay(
         &self,
-        proxy: Arc<crate::services::proxy::runtime::ProxyRuntimeState>,
+        proxy: Arc<dyn RoutingRuntimeActivity>,
     ) -> Result<RoutingRuntimeOverlay, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
         let candidates = self.store.load_runtime_candidates(&mut read).await?;
