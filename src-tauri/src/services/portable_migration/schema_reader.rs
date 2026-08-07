@@ -31,6 +31,7 @@ use super::{
 
 const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_app_secret_bindings_secret_id",
+    "idx_balance_snapshots_latest_key_scope",
     "idx_balance_snapshots_latest_station_scope",
     "idx_balance_snapshots_station_scope_updated",
     "idx_change_events_page",
@@ -513,7 +514,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, 50);
-        assert_eq!(fingerprint.index_count, 53);
+        assert_eq!(fingerprint.index_count, 54);
     }
 
     #[tokio::test]

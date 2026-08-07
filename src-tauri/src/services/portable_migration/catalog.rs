@@ -873,6 +873,7 @@ const CHANNEL_MONITORS_COLUMNS: &[&str] = &[
     "execution_timeout_ms",
     "schedule_revision",
     "next_due_at_ms",
+    "pause_on_zero_balance",
 ];
 const CHANNEL_MONITOR_RUNS_COLUMNS: &[&str] = &[
     "id",

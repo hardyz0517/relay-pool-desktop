@@ -501,11 +501,16 @@ mod services {
             if !path.starts_with('/') || path.contains("://") {
                 return Err("invalid path".to_string());
             }
-            Ok(format!("{base}{path}"))
+            let resource = path.strip_prefix("/v1/").unwrap_or(path);
+            Ok(format!("{base}/{resource}"))
         }
 
         pub fn build_management_url(base_url: &str, path: &str) -> Result<String, String> {
-            build_api_url(base_url, path)
+            let base = base_url.trim_end_matches('/');
+            if !path.starts_with('/') || path.contains("://") {
+                return Err("invalid path".to_string());
+            }
+            Ok(format!("{base}/{}", path.trim_start_matches('/')))
         }
     }
 

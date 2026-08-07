@@ -17,7 +17,7 @@ assert.match(observationStore, /id > \?2/);
 assert.match(observationStore, /MAX\(ingested_at_ms\)/);
 assert.match(observationStore, /list_for_scope/);
 assert.match(runner, /rebuild_quality_summary_with_checkpoint/);
-assert.match(runner, /observation_store\.list_for_scope/);
+assert.match(runner, /observation_store\s*\.\s*list_for_scope/);
 assert.match(qualityProjection, /routing_quality_v2/);
 assert.doesNotMatch(runner, /list_after\(read\.connection\(\), 0,/);
 assert.match(startup, /register_routing_projection_task/);

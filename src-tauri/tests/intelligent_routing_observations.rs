@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 fn source(relative: &str) -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(relative))
         .expect("source file must exist")
+        .replace("\r\n", "\n")
 }
 
 #[test]

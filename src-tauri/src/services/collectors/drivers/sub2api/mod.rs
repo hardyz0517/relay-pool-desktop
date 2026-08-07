@@ -1990,9 +1990,18 @@ mod tests {
             .find(|balance| balance.scope == "station")
             .expect("station balance");
 
-        assert_eq!(station_balance.value, Some(5.0));
+        assert_eq!(
+            station_balance.value,
+            Some(5.0),
+            "unexpected balances: {:?}; requests: {:?}",
+            output.facts.balances,
+            requests
+        );
         assert_eq!(requests.len(), 4);
-        assert!(requests[0].starts_with("GET /usage "));
+        assert!(
+            requests[0].starts_with("GET /usage "),
+            "unexpected request sequence: {requests:?}"
+        );
         assert!(requests[1].starts_with("GET /api/v1/user/profile "));
         assert!(requests[2].starts_with("GET /api/v1/subscriptions/active "));
         assert!(requests[3].starts_with("GET /api/v1/usage/dashboard/stats "));
