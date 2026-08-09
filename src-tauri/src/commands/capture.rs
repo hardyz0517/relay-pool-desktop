@@ -164,7 +164,24 @@ pub async fn finish_web_authorization_session(
             .await
             .map_err(CaptureCommandError::Message)
             .map_err(capture_command_error)?;
-        let cookie_header = read_capture_window_cookies(app, &input.station_id, &cookie_url)
+        let window = app
+            .get_webview_window(&capture_window_label(&input.station_id))
+            .ok_or_else(|| {
+                CaptureCommandError::Message(
+                    "Capture authorization window is not available; reopen it and retry."
+                        .to_string(),
+                )
+            })
+            .map_err(capture_command_error)?;
+        let target = tauri::Url::parse(&cookie_url)
+            .map_err(|error| {
+                CaptureCommandError::Message(format!(
+                    "Station website URL cannot be used for cookie lookup: {error}"
+                ))
+            })
+            .map_err(capture_command_error)?;
+        let cookie_header = facade
+            .read_capture_window_cookies(window, target)
             .await
             .map_err(capture_command_error)?;
         facade
@@ -188,7 +205,24 @@ pub async fn finish_provider_draft_authorization_session(
             .await
             .map_err(CaptureCommandError::Message)
             .map_err(capture_command_error)?;
-        let cookie_header = read_capture_window_cookies(app, &input.draft_id, &cookie_url)
+        let window = app
+            .get_webview_window(&capture_window_label(&input.draft_id))
+            .ok_or_else(|| {
+                CaptureCommandError::Message(
+                    "Capture authorization window is not available; reopen it and retry."
+                        .to_string(),
+                )
+            })
+            .map_err(capture_command_error)?;
+        let target = tauri::Url::parse(&cookie_url)
+            .map_err(|error| {
+                CaptureCommandError::Message(format!(
+                    "Station website URL cannot be used for cookie lookup: {error}"
+                ))
+            })
+            .map_err(capture_command_error)?;
+        let cookie_header = facade
+            .read_capture_window_cookies(window, target)
             .await
             .map_err(capture_command_error)?;
         facade
@@ -272,66 +306,6 @@ fn schedule_capture_script_injection(window: tauri::WebviewWindow, script: Strin
             let _ = window.eval(&script);
         }
     });
-}
-
-async fn read_capture_window_cookies(
-    app: tauri::AppHandle,
-    owner_id: &str,
-    website_url: &str,
-) -> Result<String, CaptureCommandError> {
-    let label = capture_window_label(owner_id);
-    let window = app.get_webview_window(&label).ok_or_else(|| {
-        CaptureCommandError::Message(
-            "Capture authorization window is not available; reopen it and retry.".to_string(),
-        )
-    })?;
-    let target = tauri::Url::parse(website_url).map_err(|error| {
-        CaptureCommandError::Message(format!(
-            "Station website URL cannot be used for cookie lookup: {error}"
-        ))
-    })?;
-    let mut last_error = None;
-    for attempt in 0..3 {
-        let cookie_result = tauri::async_runtime::spawn_blocking({
-            let window = window.clone();
-            let target = target.clone();
-            move || window.cookies_for_url(target)
-        })
-        .await
-        .map_err(|error| {
-            CaptureCommandError::Message(format!(
-                "Reading capture authorization cookies task failed: {error}"
-            ))
-        })?;
-        let cookies = match cookie_result {
-            Ok(cookies) => cookies,
-            Err(error) => {
-                last_error = Some(format!("cookie lookup failed: {error}"));
-                if attempt < 2 {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    continue;
-                }
-                break;
-            }
-        };
-        let pairs = cookies
-            .into_iter()
-            .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
-            .collect::<Vec<_>>();
-        if let Some(header) =
-            service_capture::web_authorization::build_cookie_header_from_pairs(&pairs)
-        {
-            return Ok(header);
-        }
-        last_error = Some("no usable cookies in the capture window".to_string());
-        if attempt < 2 {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-    }
-    Err(CaptureCommandError::Message(format!(
-        "Capture authorization did not provide usable cookies; finish login in the capture window and retry.{}",
-        last_error.map(|error| format!(" ({error})")).unwrap_or_default()
-    )))
 }
 
 #[cfg(test)]

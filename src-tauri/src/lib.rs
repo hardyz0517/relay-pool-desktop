@@ -933,6 +933,7 @@ pub fn run() {
                                 capture_session_store.clone(),
                                 outbound_client.clone(),
                                 Arc::clone(&provider_registry),
+                                blocking_executor.clone(),
                             );
                         let pricing_command_facade =
                             app_composition::compose_pricing_command_facade(&app_services);
