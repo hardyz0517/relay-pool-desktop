@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "revision": "2026-08-08-alerting-foundation",
+  "status": "cutover",
+  "legacy_write_allowlist": [],
+  "legacy_read_allowlist": [
+    "src-tauri/src/services/data_store/alerting_upgrade.rs"
+  ],
+  "new_domain": [
+    "src-tauri/src/models/alerting",
+    "src-tauri/src/application/alerting",
+    "src-tauri/src/persistence/stores/alerting"
+  ],
+  "cutover_required_before_delete": [],
+  "production_scan_roots": [
+    "src-tauri/src",
+    "src"
+  ],
+  "historical_paths": [
+    "src-tauri/src/persistence/migrations.rs",
+    "src-tauri/src/persistence/upgrade_fault.rs",
+    "src-tauri/src/services/data_store/generation_upgrade.rs",
+    "src-tauri/src/services/data_store/startup_upgrade_executor.rs",
+    "src-tauri/src/persistence/legacy_import/import.rs",
+    "src-tauri/src/persistence/legacy_import/validate.rs",
+    "src-tauri/src/services/data_store/alerting_upgrade.rs",
+    "src-tauri/src/services/portable_migration/catalog.rs",
+    "src-tauri/src/services/portable_migration/schema_reader.rs",
+    "src-tauri/src/application/provider_drafts.rs"
+  ],
+  "legacy_production_paths": [],
+  "protected_user_files": [
+    "src/components/ui/SelectControl.tsx",
+    "src/features/changes/ChangeCenterPage.tsx",
+    "src/features/key-pool/KeyPoolPage.tsx"
+  ]
+}

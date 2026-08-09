@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "revision": "2026-08-08-alerting-cutover",
+  "status": "cutover",
+  "producer": {
+    "ingress": "src-tauri/src/application/alerting",
+    "collector": "src-tauri/src/application/collectors.rs",
+    "legacy_writer_allowlist": []
+  },
+  "read_model": {
+    "query": "src-tauri/src/application/queries/change_center_workspace.rs",
+    "ipc": "src-tauri/src/commands/alerting.rs",
+    "frontend": [
+      "src/features/changes/ChangeCenterPage.tsx",
+      "src/components/shell/AppShell.tsx",
+      "src/lib/queries/alertingQueries.ts"
+    ]
+  },
+  "contract": {
+    "registry": "src-tauri/src/ipc/registry.rs",
+    "acl": "src-tauri/permissions/main-window.toml",
+    "generated_binding": "src/lib/bridge/generated.ts",
+    "runtime_capability": "alerting"
+  },
+  "legacy_runtime_entries_deleted": [
+    "src-tauri/src/application/changes.rs",
+    "src-tauri/src/application/command_facades/change_events.rs",
+    "src-tauri/src/commands/change_events.rs",
+    "src-tauri/src/ipc/dto/change_logs.rs",
+    "src-tauri/src/persistence/stores/change_store.rs",
+    "src/lib/api/changeEvents.ts",
+    "src/lib/types/changeEvents.ts",
+    "src/lib/changeEvents/changeEventViewModels.ts",
+    "src/features/changes/changeEventViewModels.ts"
+  ],
+  "zero_reader_evidence": {
+    "command": "pnpm.cmd architecture:alerting",
+    "result": "passed; no legacy production hits outside migration/backfill/import history paths",
+    "legacy_table_readers": "upgrade-only allowlist",
+    "legacy_table_writers": 0
+  },
+  "task_13_required_before_close": [
+    "observation period complete",
+    "legacy read adapter invocation count is zero",
+    "backup and restore qualification passed",
+    "schema15 to latest recovery passed",
+    "independent destructive migration removes change_events and indexes"
+  ]
+}

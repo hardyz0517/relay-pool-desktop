@@ -10,11 +10,11 @@ import { afterEach, describe, expect, test } from "vitest";
 import { setActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type { BackendClient } from "@/lib/bridge/BackendClient";
 import {
-  changeEventsQueryOptions,
   currentStationBalanceSnapshotsQueryOptions,
   stationAssetsQueryOptions,
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
+import { alertingCurrentQueryOptions } from "@/lib/queries/alertingQueries";
 import { canonicalJson, DATASET_SIZES, generateDataset, sha256 } from "./dataset.mjs";
 
 const WARMUP_RUNS = 5;
@@ -36,11 +36,11 @@ afterEach(() => {
 function CurrentStationsQueryTopology({ enabled, onReady }: { enabled: boolean; onReady: () => void }) {
   const stationsQuery = useQuery({ ...stationsQueryOptions(), enabled, subscribed: enabled });
   const balancesQuery = useQuery({ ...currentStationBalanceSnapshotsQueryOptions(), enabled, subscribed: enabled });
-  const changesQuery = useQuery({ ...changeEventsQueryOptions(false), enabled, subscribed: enabled });
+  const incidentsQuery = useQuery({ ...alertingCurrentQueryOptions(), enabled, subscribed: enabled });
   const stations = stationsQuery.data ?? [];
   const stationIds = stations.map((station) => station.id);
   const stationAssetsQuery = useQuery({ ...stationAssetsQueryOptions(stationIds), subscribed: enabled });
-  const ready = enabled && stationsQuery.isSuccess && balancesQuery.isSuccess && changesQuery.isSuccess && stationAssetsQuery.isSuccess;
+  const ready = enabled && stationsQuery.isSuccess && balancesQuery.isSuccess && incidentsQuery.isSuccess && stationAssetsQuery.isSuccess;
   useEffect(() => {
     if (ready) onReady();
   }, [onReady, ready]);
@@ -61,8 +61,23 @@ function installCurrentBackendMock(dataset: Dataset, calls: CommandCall[]) {
     economics: {
       listCurrentStationBalanceSnapshots: async () => record("list_current_station_balance_snapshots", []) as never,
     },
-    changeEvents: {
-      listChangeEvents: async () => record("list_change_events", []) as never,
+    alerting: {
+      loadWorkspace: async () => record("load_alerting_workspace", {}) as never,
+      getSettings: async () => record("get_alerting_settings", {}) as never,
+      updateSettings: async () => record("update_alerting_settings", {}) as never,
+      listPolicies: async () => record("list_alert_policies", []) as never,
+      upsertPolicy: async () => record("upsert_alert_policy", {}) as never,
+      deletePolicy: async () => undefined,
+      listCurrentIncidents: async () => record("list_current_alerting_incidents", { items: [], nextCursor: null, totalApprox: 0 }) as never,
+      getIncident: async () => record("get_alerting_incident", {}) as never,
+      listOccurrences: async () => record("list_alerting_occurrences", { items: [], nextCursor: null }) as never,
+      listDeliveries: async () => record("list_alerting_deliveries", { items: [], nextCursor: null }) as never,
+      markSeen: async () => undefined,
+      acknowledge: async () => undefined,
+      snooze: async () => undefined,
+      sendTestNotification: async () => undefined,
+      getDesktopNotificationPermission: async () => "unavailable",
+      requestDesktopNotificationPermission: async () => "unavailable",
     },
     collectors: {
       listLatestCollectorSnapshots: async () => record("list_latest_collector_snapshots", []) as never,

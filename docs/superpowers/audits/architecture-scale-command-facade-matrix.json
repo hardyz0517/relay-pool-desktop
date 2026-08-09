@@ -232,6 +232,11 @@
           "dependencies": ["RoutingService"]
         },
         {
+          "command": "load_routing_policy",
+          "use_case": "load_routing_policy",
+          "dependencies": ["RoutingService"]
+        },
+        {
           "command": "list_station_endpoint_health",
           "use_case": "list_station_endpoint_health",
           "dependencies": ["RoutingService"]
@@ -282,6 +287,7 @@
           "dependencies": ["RoutingService", "endpoint ping probe"]
         }
       ],
+      "support_methods": ["save_routing_policy"],
       "non_goals": [
         "local proxy workspace and lifecycle commands"
       ]
@@ -453,59 +459,6 @@
       ],
       "non_goals": [
         "list_balance_snapshots_for_station"
-      ]
-    },
-    {
-      "state_type": "ChangeEventsCommandFacade",
-      "source_path": "src-tauri/src/application/command_facades/change_events.rs",
-      "dependencies": [
-        "ChangeService"
-      ],
-      "commands": [
-        {
-          "command": "list_change_events",
-          "use_case": "list_change_events",
-          "dependencies": ["ChangeService"]
-        },
-        {
-          "command": "clear_change_events",
-          "use_case": "clear_change_events",
-          "dependencies": ["ChangeService"]
-        },
-        {
-          "command": "list_change_events_for_station",
-          "use_case": "list_change_events",
-          "dependencies": ["ChangeService"]
-        },
-        {
-          "command": "upsert_change_event",
-          "use_case": "upsert_change_event",
-          "dependencies": ["ChangeService"]
-        },
-        {
-          "command": "mark_change_event_read",
-          "use_case": "mark_change_event_read",
-          "dependencies": ["ChangeService"]
-        },
-        {
-          "command": "mark_change_events_read",
-          "use_case": "mark_change_events_read",
-          "dependencies": ["ChangeService"]
-        },
-        {
-          "command": "dismiss_change_event",
-          "use_case": "dismiss_change_event",
-          "dependencies": ["ChangeService"]
-        },
-        {
-          "command": "resolve_change_event",
-          "use_case": "resolve_change_event",
-          "dependencies": ["ChangeService"]
-        }
-      ],
-      "non_goals": [
-        "collector-emitted change events",
-        "change-store persistence implementation"
       ]
     },
     {
@@ -829,16 +782,6 @@
           "command": "get_proxy_status",
           "use_case": "get_proxy_status",
           "dependencies": ["SettingsService", "ProxyRuntimeState"]
-        },
-        {
-          "command": "load_local_routing_workspace",
-          "use_case": "load_local_routing_workspace",
-          "dependencies": ["SettingsService", "RoutingService", "RequestLogService", "ProxyRuntimeState"]
-        },
-        {
-          "command": "reorder_local_routing_keys",
-          "use_case": "reorder_local_routing_keys",
-          "dependencies": ["RoutingService", "SettingsService", "RequestLogService", "ProxyRuntimeState"]
         },
         {
           "command": "start_local_proxy",

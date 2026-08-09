@@ -11,7 +11,7 @@ const remoteListSource = await readFile(
 );
 
 assert.ok(
-  remoteListSource.includes("作为本地秘钥"),
+  remoteListSource.includes("作为本地密钥"),
   "remote discovery table should expose a local-key toggle column",
 );
 

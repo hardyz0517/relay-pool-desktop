@@ -129,7 +129,7 @@ assertIncludes(statusTab, "最近一次路由", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "候选顺序预览", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "previewEligibleCandidateCount", "LocalRoutingStatusTab");
 assertIncludes(statusTab, "previewExcludedCandidateCount", "LocalRoutingStatusTab");
-assertExcludes(statusTab, "当前秘钥", "LocalRoutingStatusTab");
+assertExcludes(statusTab, "当前密钥", "LocalRoutingStatusTab");
 assertExcludes(statusTab, "当前密钥", "LocalRoutingStatusTab");
 assertExcludes(statusTab, "eligibleUnderMultiplierLimitCount", "LocalRoutingStatusTab");
 assertExcludes(statusTab, "healthyCandidateCount", "LocalRoutingStatusTab");

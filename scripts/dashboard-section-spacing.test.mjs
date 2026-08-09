@@ -44,7 +44,7 @@ assert.ok(
 
 assert.match(
   dashboardSource,
-  /<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*秘钥健康\s*<\/h2>\s*<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">[\s\S]*?stationKeyStatusLabels/,
+  /<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*密钥健康\s*<\/h2>\s*<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">[\s\S]*?stationKeyStatusLabels/,
   "key health cards should use the requested title and desktop five-column rhythm",
 );
 

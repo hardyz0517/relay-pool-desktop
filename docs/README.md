@@ -26,6 +26,11 @@
 ## 提案与待排期规格
 
 - [`proposals/`](proposals/)：尚未成为当前实现基线的 Draft、RFC 和待排期规格。
+- [`proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md`](proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md)：变更中心告警闭环、恢复状态机、提醒策略与“设置 → 提醒与告警”入口 Draft。
+- [`superpowers/plans/2026-08-08-change-center-alerting-upgrade.md`](superpowers/plans/2026-08-08-change-center-alerting-upgrade.md)：上述 Draft 的完整执行计划；待规格批准后方可实施。
+- [`superpowers/audits/change-center-alerting-baseline.md`](superpowers/audits/change-center-alerting-baseline.md)：Task 0 基线事实、已完成证据与未完成范围。
+- [`superpowers/audits/change-center-alerting-deletion-ledger.md`](superpowers/audits/change-center-alerting-deletion-ledger.md)：旧变更中心代码、IPC、表和前端入口的 owner、删除前置条件与状态。
+- [`superpowers/audits/change-center-alerting-boundary-manifest.json`](superpowers/audits/change-center-alerting-boundary-manifest.json)：legacy allowlist、新领域边界和受保护用户文件清单。
 - [`proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md)：已完成设计评审的智能路由、共享后端事实、评分、置信度、监控反馈与解释合同。
 - [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：上述智能路由规范的详细实施任务、原子 cutover、删除合同与验证命令。
 - [`proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md`](proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md)：跨设备加密迁移 Draft。

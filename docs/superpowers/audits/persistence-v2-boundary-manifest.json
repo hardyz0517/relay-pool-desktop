@@ -218,11 +218,6 @@
     },
     {
       "from": "application",
-      "to": "models::change_events",
-      "temporary": false
-    },
-    {
-      "from": "application",
       "to": "models::channel_monitors",
       "temporary": false
     },
@@ -299,11 +294,6 @@
     {
       "from": "application",
       "to": "persistence::runtime",
-      "temporary": false
-    },
-    {
-      "from": "application",
-      "to": "persistence::stores::change_store",
       "temporary": false
     },
     {
@@ -932,21 +922,6 @@
       "temporary": false
     },
     {
-      "from": "commands::change_events",
-      "to": "application::command_facades",
-      "temporary": false
-    },
-    {
-      "from": "commands::change_events",
-      "to": "commands::error",
-      "temporary": false
-    },
-    {
-      "from": "commands::change_events",
-      "to": "ipc::dto::change_logs",
-      "temporary": false
-    },
-    {
       "from": "commands::channel_monitoring",
       "to": "application::command_facades",
       "temporary": false
@@ -1177,11 +1152,6 @@
       "temporary": false
     },
     {
-      "from": "commands::request_logs",
-      "to": "ipc::dto::change_logs",
-      "temporary": false
-    },
-    {
       "from": "commands::routing_health",
       "to": "application::command_facades",
       "temporary": false
@@ -1329,16 +1299,6 @@
     {
       "from": "ipc::dto::data_migration",
       "to": "services::portable_migration::limits",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::change_logs",
-      "to": "models::change_events",
-      "temporary": false
-    },
-    {
-      "from": "ipc::dto::change_logs",
-      "to": "models::proxy",
       "temporary": false
     },
     {
@@ -1714,11 +1674,6 @@
     {
       "from": "outbound::client",
       "to": "observability::correlation",
-      "temporary": false
-    },
-    {
-      "from": "persistence",
-      "to": "models::change_events",
       "temporary": false
     },
     {
@@ -3601,7 +3556,63 @@
     ,{"from":"application::routing_engine::candidate_plan","to":"application::operational_facts::pricing_projector","temporary":false}
     ,{"from":"application::operational_facts::planning_snapshot","to":"application::routing_engine::routing_health","temporary":false}
     ,{"from":"ipc::dto::routing_health_reads","to":"ipc::dto::routing_mutations","temporary":false}
-    ,{"from":"services::proxy::execution","to":"models::routing_policy","temporary":false}
+    ,{"from":"services::proxy::execution","to":"models::routing_policy","temporary":false},
+    {"from":"application::alerting::attention_service","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::condition_key","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::delivery_planner","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::delivery_worker","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::delivery_worker","to":"persistence::stores::alerting","temporary":false},
+    {"from":"application::alerting::delivery_worker","to":"services::alerting","temporary":false},
+    {"from":"application::alerting::incident_projector","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::ingress","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::ingress","to":"persistence::stores::alerting","temporary":false},
+    {"from":"application::alerting::ingress","to":"services::data_store::alerting_upgrade","temporary":false},
+    {"from":"application::alerting::policy_resolver","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::policy_service","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::policy_service","to":"persistence::stores::alerting","temporary":false},
+    {"from":"application::alerting::reconcile","to":"models::alerting","temporary":false},
+    {"from":"application::alerting::reconcile","to":"persistence::stores::alerting","temporary":false},
+    {"from":"application::alerting::retention_worker","to":"persistence::stores::alerting","temporary":false},
+    {"from":"application::collectors","to":"models::alerting","temporary":false},
+    {"from":"application::command_facades::alerting","to":"models::alerting","temporary":false},
+    {"from":"application::command_facades::alerting","to":"persistence::stores::alerting","temporary":false},
+    {"from":"application::queries::change_center_workspace","to":"persistence::stores::alerting::workspace","temporary":false},
+    {"from":"background_tasks::alerting_runner","to":"application::alerting::delivery_worker","temporary":false},
+    {"from":"background_tasks::alerting_runner","to":"application::alerting::policy_service","temporary":false},
+    {"from":"background_tasks::alerting_runner","to":"application::alerting::reconcile","temporary":false},
+    {"from":"background_tasks::alerting_runner","to":"application::alerting::retention_worker","temporary":false},
+    {"from":"background_tasks::alerting_runner","to":"models::alerting","temporary":false},
+    {"from":"background_tasks::alerting_runner","to":"persistence::runtime","temporary":false},
+    {"from":"background_tasks::alerting_runner","to":"services::alerting","temporary":false},
+    {"from":"commands::alerting","to":"application::queries::change_center_workspace","temporary":false},
+    {"from":"commands::alerting","to":"commands::error","temporary":false},
+    {"from":"commands::alerting","to":"ipc::dto::alerting","temporary":false},
+    {"from":"commands::alerting","to":"services::alerting","temporary":false},
+    {"from":"commands::request_logs","to":"ipc::dto::request_logs","temporary":false},
+    {"from":"ipc::dto::alerting","to":"application::alerting::policy_service","temporary":false},
+    {"from":"ipc::dto::alerting","to":"application::queries::change_center_workspace","temporary":false},
+    {"from":"ipc::dto::alerting","to":"models::alerting","temporary":false},
+    {"from":"ipc::dto::alerting","to":"persistence::error","temporary":false},
+    {"from":"ipc::dto::request_logs","to":"models::proxy","temporary":false},
+    {"from":"lib","to":"background_tasks::alerting_runner","temporary":false},
+    {"from":"lib","to":"services::alerting","temporary":false},
+    {"from":"persistence::stores::alerting","to":"models::alerting","temporary":false},
+    {"from":"services::data_store::alerting_upgrade","to":"application::alerting","temporary":false},
+    {"from":"services::data_store::alerting_upgrade","to":"models::alerting","temporary":false},
+    {"from":"services::data_store::alerting_upgrade","to":"persistence::error","temporary":false},
+    {"from":"services::data_store::alerting_upgrade","to":"persistence::stores::alerting","temporary":false},
+    {"from":"services::data_store::startup_upgrade_executor","to":"persistence::migrations","temporary":false},
+    {"from":"application::alerting::delivery_planner","to":"application::alerting::policy_service","temporary":false},
+    {"from":"application::alerting::ingress","to":"application::alerting::policy_service","temporary":false},
+    {"from":"application::alerting::policy_resolver","to":"application::alerting::policy_service","temporary":false},
+    {"from":"application::alerting::reconcile","to":"application::alerting::policy_service","temporary":false},
+    {"from":"application::collectors","to":"application::alerting","temporary":false},
+    {"from":"application::command_facades::alerting","to":"application::alerting","temporary":false},
+    {"from":"application::command_facades::alerting","to":"application::alerting::policy_service","temporary":false},
+    {"from":"application::command_facades::alerting","to":"application::queries::change_center_workspace","temporary":false},
+    {"from":"services::data_store::generation_upgrade","to":"services::data_store::alerting_upgrade","temporary":false},
+    {"from":"services::data_store::startup_upgrade_executor","to":"services::data_store::alerting_upgrade","temporary":false},
+    {"from":"services::data_store::startup_upgrade_plan","to":"services::data_store::alerting_upgrade","temporary":false}
   ],
   "temporary_legacy_consumers": [],
   "temporary_legacy_paths": [],
