@@ -82,7 +82,7 @@ function candidate(): LocalRoutingCandidate {
     stationKeyId: "key-1",
     stationId: "station-1",
     stationName: "Station",
-    keyName: "Key",
+    keyName: "密钥",
     endpoint: "chat_completions",
     priority: 0,
     enabled: true,

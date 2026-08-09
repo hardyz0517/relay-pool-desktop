@@ -34,7 +34,7 @@ export function ChannelStatusCardGrid({
     return (
       <EmptyState
         title={loading ? "正在读取状态监控" : "暂无状态监控卡片"}
-        description="创建或启用监控后，卡片视图会显示每个 Key 的当前状态、可用性、延迟和趋势。"
+        description="创建或启用监控后，卡片视图会显示每个密钥的当前状态、可用性、延迟和趋势。"
       />
     );
   }

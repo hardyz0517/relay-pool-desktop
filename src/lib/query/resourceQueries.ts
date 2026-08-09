@@ -1,5 +1,4 @@
 import { queryOptions } from "@tanstack/react-query";
-import { listChangeEvents } from "@/lib/api/changeEvents";
 import {
   getCaptureSessionStatus,
   getLatestCollectorSnapshot,
@@ -158,14 +157,6 @@ export const currentStationBalanceSnapshotsQueryOptions = (
     queryKey: queryKeys.balanceSnapshots,
     queryFn: listCurrentStationBalanceSnapshots,
     staleTime: 5_000,
-    refetchInterval,
-  });
-
-export const changeEventsQueryOptions = (refetchInterval: number | false = false) =>
-  queryOptions({
-    queryKey: queryKeys.changeEvents,
-    queryFn: listChangeEvents,
-    staleTime: 2_000,
     refetchInterval,
   });
 

@@ -35,6 +35,8 @@ export function ChannelStatusToolbar({
   const scopeMenuRef = useRef<HTMLDivElement | null>(null);
   const [scopeMenuPosition, setScopeMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const testing = controller.isRunningAction;
+  // Background polling should not make the action controls blink disabled.
+  const actionsDisabled = testing || controller.statusQuery.isPending;
 
   useEffect(() => {
     if (!scopeMenuOpen) return;
@@ -110,7 +112,7 @@ export function ChannelStatusToolbar({
         <div className="inline-flex h-8 items-stretch">
           <Button
             className="rounded-r-none border-r border-primary-foreground/25"
-            disabled={testing || controller.statusQuery.isFetching}
+            disabled={actionsDisabled}
             onClick={() => void controller.testAll(testScope)}
             title={testScope === "enabled" ? "测试所有启用渠道" : "测试所有有余额的监控"}
           >
@@ -123,7 +125,7 @@ export function ChannelStatusToolbar({
             aria-label="选择测试范围"
             title={testScope === "enabled" ? "切换为测试所有有余额的监控" : "切换为测试所有启用渠道"}
             className="inline-flex w-8 items-center justify-center rounded-r-[var(--surface-radius)] bg-primary-solid text-primary-foreground hover:bg-primary-solid/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50"
-            disabled={testing || controller.statusQuery.isFetching}
+            disabled={actionsDisabled}
             onClick={() => setScopeMenuOpen((open) => !open)}
           >
             <ChevronDown className="h-4 w-4" />
@@ -155,7 +157,7 @@ export function ChannelStatusToolbar({
             document.body,
           ) : null}
         </div>
-        <Button className="hidden" variant="secondary" disabled={controller.statusQuery.isFetching} onClick={() => void controller.refresh()}>
+        <Button className="hidden" variant="secondary" disabled={controller.statusQuery.isPending} onClick={() => void controller.refresh()}>
           <RefreshCw className="h-4 w-4" />
           刷新
         </Button>

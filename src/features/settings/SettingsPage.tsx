@@ -305,7 +305,6 @@ export function SettingsPage() {
     <PageScaffold title="设置" width="settings">
       <div className="grid min-w-0 gap-[var(--shell-page-gap)]">
         <ThemeSettings />
-
         <CommonLoginProfilesSettings />
 
         <SectionCard

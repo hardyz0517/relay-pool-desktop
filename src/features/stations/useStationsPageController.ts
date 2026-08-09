@@ -25,11 +25,11 @@ import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { discoverCreatedStationKeyModels } from "@/lib/stationKeyModelDiscovery";
 import {
-  changeEventsQueryOptions,
   currentStationBalanceSnapshotsQueryOptions,
   stationAssetsQueryOptions,
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
+import { alertingCurrentQueryOptions } from "@/lib/queries/alertingQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
@@ -102,11 +102,11 @@ export function useStationsPageController({
   const balancesQuery = useActivityQuery(
     currentStationBalanceSnapshotsQueryOptions(BALANCE_BACKGROUND_SYNC_INTERVAL_MS),
   );
-  const changesQuery = useActivityQuery(changeEventsQueryOptions(false));
+  const alertingQuery = useActivityQuery(alertingCurrentQueryOptions({ limit: 100 }));
   const stations = stationsQuery.data ?? [];
   const stationIds = useMemo(() => stations.map((station) => station.id), [stations]);
   const balanceSnapshots = balancesQuery.data ?? [];
-  const changeEvents = changesQuery.data ?? [];
+  const alertingIncidents = alertingQuery.data?.items ?? [];
   const loading = stationsQuery.isPending && stationsQuery.data === undefined;
   const queryError = stationsQuery.error ? readError(stationsQuery.error) : null;
   const loadError = queryError ?? error;
@@ -200,9 +200,9 @@ export function useStationsPageController({
         balanceFactsReady,
         snapshotsByStation,
         groupBindingsByStation,
-        changes: changeEvents,
+        incidents: alertingIncidents,
       }),
-    [balanceFactsReady, balanceSnapshots, changeEvents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
+    [balanceFactsReady, balanceSnapshots, alertingIncidents, groupBindingsByStation, keysByStation, snapshotsByStation, stations],
   );
   const filteredStationAssetRows = useMemo(
     () => filterStationAssetRowsByIssue(stationAssetRows, issueFilter),
@@ -260,6 +260,7 @@ export function useStationsPageController({
         queryClient.invalidateQueries({ queryKey: queryKeys.keyPool }),
         queryClient.invalidateQueries({ queryKey: queryKeys.balanceSnapshots }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stationAssets }),
+        queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] }),
       ]);
     },
     [queryClient],
@@ -676,7 +677,7 @@ export function useStationsPageController({
     activeDialogStation,
     activeDragRow,
     attentionCount,
-    changeEvents,
+    alertingIncidents,
     closeDialog,
     closeDrawer,
     collectedBalanceCount,

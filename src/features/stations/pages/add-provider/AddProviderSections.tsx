@@ -431,7 +431,7 @@ export function ProviderKeysSection({
             onClick={onScanRemoteKeys}
           >
             <RefreshCw className={cn("h-3.5 w-3.5", remoteLoading && "animate-spin")} />
-            获取所有 Key
+            获取所有密钥
           </Button>
           <Button
             disabled={createRemoteDisabled}
@@ -441,7 +441,7 @@ export function ProviderKeysSection({
             onClick={onOpenCreateRemoteKey}
           >
             <Plus className="h-3.5 w-3.5" />
-            新建远端 Key
+            新建远端密钥
           </Button>
           <Button
             disabled={disabled}
@@ -557,7 +557,7 @@ export function ProviderOptionsSection({ form, onFormChange }: ProviderOptionsSe
               />
             )}
             <p className="text-xs text-muted-foreground">
-              登录刷新、余额/分组采集、远端 Key 和本地 key 路由都会使用该站点的有效代理。
+              登录刷新、余额/分组采集、远端密钥和本地密钥路由都会使用该站点的有效代理。
             </p>
           </div>
         </Field>

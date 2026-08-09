@@ -147,7 +147,7 @@ export function LocalRoutingSettingsEditor() {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 id="routing-policy-affinity-title" className="text-sm font-medium text-foreground">会话亲和</h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">在有效期内优先复用同一候选 Key。</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">在有效期内优先复用同一候选 密钥。</p>
             </div>
             <SwitchControl
               ariaLabel="启用会话亲和"

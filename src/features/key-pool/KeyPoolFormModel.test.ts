@@ -134,7 +134,7 @@ describe("KeyPoolFormModel", () => {
     expect(createFormForStation({ id: "station-1", name: "Relay" } as Station, [keyPoolItem()])).toMatchObject({
       stationId: "station-1",
       stationName: "Relay",
-      name: "Relay Key 2",
+      name: "Relay 密钥 2",
       priority: "1",
     });
   });

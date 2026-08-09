@@ -54,7 +54,7 @@ export function CreateRemoteKeyDialog({
     event.preventDefault();
     const trimmedName = name.trim();
     if (!trimmedName) {
-      setError("请填写远端 Key 名称");
+      setError("请填写远端密钥名称");
       return;
     }
 
@@ -71,8 +71,8 @@ export function CreateRemoteKeyDialog({
   return (
     <Dialog
       open={open}
-      title="新建远端 Key"
-      description="创建后会同步保存为本地 Key。"
+      title="新建远端 密钥"
+      description="创建后会同步保存为本地密钥。"
       className="max-w-[520px]"
       onClose={onClose}
       footer={
@@ -88,7 +88,7 @@ export function CreateRemoteKeyDialog({
     >
       <form id="create-remote-key-form" className="grid gap-4 p-5" onSubmit={handleSubmit}>
         <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-          Key 名称
+          密钥名称
           <input
             className={inputClassName}
             disabled={saving}
@@ -97,7 +97,7 @@ export function CreateRemoteKeyDialog({
               setName(event.target.value);
               setError(null);
             }}
-            placeholder="例如 默认转发 Key"
+            placeholder="例如 默认转发 密钥"
             required
           />
         </label>

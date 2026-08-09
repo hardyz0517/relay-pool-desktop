@@ -77,7 +77,7 @@ export function RoutingStatusDiagnosticsPanel({
       <SectionCard title="路由诊断">
         <EmptyState
           title="暂无路由诊断数据"
-          description="刷新后仍无数据时，请先检查站点、Key 池和本地路由配置。"
+          description="刷新后仍无数据时，请先检查站点、密钥池和本地路由配置。"
         />
       </SectionCard>
     );
@@ -113,7 +113,7 @@ export function RoutingStatusDiagnosticsPanel({
         ) : null}
 
         {scopedCandidates.length === 0 ? (
-          <EmptyState title="没有候选 Key" description="当前配置下没有可参与路由的 Key。" />
+          <EmptyState title="没有候选密钥" description="当前配置下没有可参与路由的密钥。" />
         ) : (
           <div className="grid gap-2">
             {scopedCandidates.slice(0, 6).map((candidate) => (
@@ -136,7 +136,7 @@ export function RoutingStatusDiagnosticsPanel({
       {/* <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
         <SectionCard
           title="模拟路由"
-          description="输入模型名，查看当前规则会选择哪个 Key；这里不会真的占用并发。"
+          description="输入模型名，查看当前规则会选择哪个密钥；这里不会真的占用并发。"
           contentClassName="grid min-w-0 gap-3"
         >
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -235,7 +235,7 @@ function SimulationSummary({
   if (!simulation.selectedStationKeyId) {
     return (
       <div className="rounded-[var(--surface-radius)] border border-warning-border bg-warning-surface px-3 py-2 text-sm text-warning-foreground">
-        没有可用候选：{simulation.message || simulation.plannerErrorCode || "当前规则未选出 Key"}
+        没有可用候选：{simulation.message || simulation.plannerErrorCode || "当前规则未选出密钥"}
       </div>
     );
   }

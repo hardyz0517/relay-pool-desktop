@@ -1,4 +1,4 @@
-﻿import { AlertCircle, Clock3, Filter, Gauge, Power, PowerOff, Route, Search, Server, UsersRound } from "lucide-react";
+import { AlertCircle, Clock3, Filter, Gauge, Power, PowerOff, Route, Search, Server, UsersRound } from "lucide-react";
 import { Button, Dialog, EmptyState, MetricPanel, SectionCard, useToast } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
@@ -139,7 +139,7 @@ export function LocalRoutingStatusTab({
                 <span className="truncate text-sm font-semibold text-foreground">
                   {workspace.settings.bindAddr}:{workspace.settings.port}
                 </span>
-                <span className="ml-3 text-sm font-bold text-foreground">秘钥：</span>
+                <span className="ml-3 text-sm font-bold text-foreground">密钥：</span>
                 <code className="rounded bg-surface-subtle px-1.5 py-0.5 text-xs text-info-foreground">{localKeyMasked}</code>
                 <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-hover hover:text-foreground" aria-label="复制本地访问密钥" onClick={() => void copyLocalAccessKey()}>
                   <Copy className="h-3.5 w-3.5" />
@@ -258,7 +258,7 @@ export function LocalRoutingStatusTab({
           <div>状态：{workspace.latestDecision?.status ?? "unavailable"}</div><div>原因：{workspace.latestDecision?.reason || "暂无说明"}</div><div>路由策略：{workspace.latestDecision?.policy ?? "暂无记录"}</div>
         </div>
       </Dialog>
-      <Dialog open={simulationOpen} title="模拟路由" description="输入模型名，查看当前规则会选择哪个 Key" onClose={() => setSimulationOpen(false)}>
+      <Dialog open={simulationOpen} title="模拟路由" description="输入模型名，查看当前规则会选择哪个 密钥" onClose={() => setSimulationOpen(false)}>
         <div className="grid gap-3 p-4">
           <div className="flex gap-2"><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-2 top-2 h-4 w-4" /><input className="h-8 w-full border border-border pl-8" value={simulationModel} onChange={(e) => setSimulationModel(e.target.value)} /></div><Button size="sm" disabled={simulating} onClick={() => void runSimulation()}><Route className="h-4 w-4" />模拟</Button></div>
           {simulationError ? <div className="text-sm text-danger-foreground">{simulationError}</div> : null}

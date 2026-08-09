@@ -178,7 +178,7 @@ function fixtureRow(): ChannelStatusRow {
       stationId: "station-1",
       stationName: "Station A",
       stationKeyId: "key-1",
-      stationKeyName: "Key A",
+      stationKeyName: "密钥 A",
       groupName: "plus",
       effectiveGroupCategory: "gpt",
       endpointPing: {

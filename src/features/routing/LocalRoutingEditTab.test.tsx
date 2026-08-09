@@ -112,7 +112,7 @@ describe("LocalRoutingEditTab", () => {
     queryClient.clear();
   });
 
-  it("keeps the persisted Key Pool order when status candidates refresh", async () => {
+  it("keeps the persisted 密钥池 order when status candidates refresh", async () => {
     const keyPoolItems = [keyPoolItem("key-3"), keyPoolItem("key-2"), keyPoolItem("key-1")];
     const initial = workspace([candidate("key-1"), candidate("key-2")]);
     const refreshed = workspace([candidate("key-2"), candidate("key-1")]);

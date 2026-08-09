@@ -11,7 +11,6 @@ import {
   activateDataStoreCandidate,
   appStatus,
   bindRemoteStationKey,
-  clearChangeEvents,
   clearRequestLogs,
   clearStationCredentials,
   collectStationInfo,
@@ -35,7 +34,6 @@ import {
   deleteStation,
   detectStationInfo,
   detectSub2apiStation,
-  dismissChangeEvent,
   duplicateChannelMonitorTemplate,
   exportDataStoreDiagnostic,
   getDataStoreStartupState,
@@ -54,8 +52,6 @@ import {
   inspectLatestUpdateManifest,
   listKeyPoolItems,
   listModelBasePrices,
-  listChangeEvents,
-  listChangeEventsForStation,
   listChannelMonitorRuns,
   listChannelMonitorTemplates,
   listChannelMonitors,
@@ -82,8 +78,6 @@ import {
   listStations,
   listStationGroupBindings,
   listStationGroupOptions,
-  markChangeEventRead,
-  markChangeEventsRead,
   openDataStoreBackupDir,
   openExternalUrl,
   pingStationEndpoint,
@@ -93,7 +87,6 @@ import {
   reorderStations,
   resetModelBasePricesToBuiltins,
   resetDataDir,
-  resolveChangeEvent,
   resolveStationKeyPricingContext,
   restartLocalProxy,
   refreshDataStoreCandidates,
@@ -117,7 +110,6 @@ import {
   updateLocalAccessKey,
   updateStation,
   upsertBalanceSnapshot,
-  upsertChangeEvent,
   upsertModelAlias,
   upsertModelBasePrice,
   upsertPricingRule,
@@ -310,47 +302,13 @@ describe("generated settings/stations transport envelopes", () => {
     ]);
   });
 
-  it("sends every changes/logs command through generated envelopes", async () => {
-    const input = {
-      severity: "warning" as const,
-      eventType: "fixture.changed",
-      title: "Fixture change",
-      message: "Fixture message",
-      objectType: "station",
-      objectId: "station-1",
-      stationId: "station-1",
-      stationKeyId: null,
-      pricingRuleId: null,
-      requestLogId: null,
-      oldValueJson: null,
-      newValueJson: "{}",
-      impactJson: null,
-      dedupeKey: "fixture-change-1",
-      source: "fixture",
-    };
-
+  it("sends every request-log command through generated envelopes", async () => {
     await listRequestLogs();
     await clearRequestLogs();
-    await listChangeEvents();
-    await clearChangeEvents();
-    await listChangeEventsForStation({ stationId: "station-1" });
-    await upsertChangeEvent(input);
-    await markChangeEventRead({ id: "change-1" });
-    await markChangeEventsRead({ ids: ["change-1", "change-2"] });
-    await dismissChangeEvent({ id: "change-1" });
-    await resolveChangeEvent({ id: "change-1" });
 
-    expect(transport.invoke.mock.calls.slice(-10)).toEqual([
+    expect(transport.invoke.mock.calls.slice(-2)).toEqual([
       ["list_request_logs", { input: {} }],
       ["clear_request_logs", { input: {} }],
-      ["list_change_events", { input: {} }],
-      ["clear_change_events", { input: {} }],
-      ["list_change_events_for_station", { input: { stationId: "station-1" } }],
-      ["upsert_change_event", { input }],
-      ["mark_change_event_read", { input: { id: "change-1" } }],
-      ["mark_change_events_read", { input: { ids: ["change-1", "change-2"] } }],
-      ["dismiss_change_event", { input: { id: "change-1" } }],
-      ["resolve_change_event", { input: { id: "change-1" } }],
     ]);
   });
 

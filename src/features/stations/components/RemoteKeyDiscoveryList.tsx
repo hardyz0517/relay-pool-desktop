@@ -41,11 +41,11 @@ export function RemoteKeyDiscoveryList({
   );
 
   if (loading && keys.length === 0) {
-    return <RemoteKeyEmptyState>正在获取远端 Key...</RemoteKeyEmptyState>;
+    return <RemoteKeyEmptyState>正在获取远端密钥...</RemoteKeyEmptyState>;
   }
 
   if (keys.length === 0) {
-    return <RemoteKeyEmptyState>暂无远端发现，先点击获取所有 Key。</RemoteKeyEmptyState>;
+    return <RemoteKeyEmptyState>暂无远端发现，先点击获取所有密钥。</RemoteKeyEmptyState>;
   }
 
   return (
@@ -58,7 +58,7 @@ export function RemoteKeyDiscoveryList({
             <span>分组</span>
             <span>倍率</span>
             <span className="text-center">本地匹配</span>
-            <span className="text-center">Key 池</span>
+            <span className="text-center">密钥池</span>
             <span className="text-center">操作</span>
           </div>
 
@@ -81,7 +81,7 @@ export function RemoteKeyDiscoveryList({
                   className={cn("grid min-h-9 items-center gap-2 rounded-[var(--surface-radius)] px-1 text-xs text-foreground", remoteKeyGridClassName)}
                 >
                   <span className="min-w-0 truncate font-medium text-foreground">
-                    {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名 Key"}
+                    {key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名密钥"}
                   </span>
                   <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
                     {key.apiKeyMasked || key.apiKeyFingerprint || "未提供"}
@@ -101,7 +101,7 @@ export function RemoteKeyDiscoveryList({
                       </span>
                     ) : (
                       <span className="w-full truncate text-center text-muted-foreground">
-                        {identityVerified ? "无对应本地 Key" : "无法校验密钥"}
+                        {identityVerified ? "无对应本地密钥" : "无法校验密钥"}
                       </span>
                     )}
                   </div>
@@ -116,7 +116,7 @@ export function RemoteKeyDiscoveryList({
                       <IconButton
                         className="h-7 w-7 text-muted-foreground"
                         disabled={loading || readOnly}
-                        label={`导入 ${key.remoteKeyName ?? "远端 Key"} 到 Key 池`}
+                        label={`导入 ${key.remoteKeyName ?? "远端密钥"} 到密钥池`}
                         onClick={() => onImport(key)}
                       >
                         <Download className="h-3.5 w-3.5" />
@@ -128,7 +128,7 @@ export function RemoteKeyDiscoveryList({
                       <IconButton
                         className="h-7 w-7 text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"
                         disabled={loading || readOnly}
-                        label={`从 Key 池移除 ${key.remoteKeyName ?? "远端 Key"}`}
+                      label={`从密钥池移除 ${key.remoteKeyName ?? "远端密钥"}`}
                         onClick={() => onDeleteImportedLocalKey(key)}
                       >
                         <CircleMinus className="h-3.5 w-3.5" />
@@ -137,7 +137,7 @@ export function RemoteKeyDiscoveryList({
                     <IconButton
                       className="h-7 w-7 shrink-0 text-muted-foreground hover:bg-danger-surface hover:text-danger-foreground"
                       disabled={loading || readOnly || deleteDisabled || isPendingUnbind}
-                      label={`删除远端 Key ${key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名"}`}
+                      label={`删除远端密钥 ${key.remoteKeyName?.trim() || key.remoteKeyIdHash || "未命名"}`}
                       onClick={() => onDelete(key)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />

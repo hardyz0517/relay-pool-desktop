@@ -282,7 +282,7 @@ export function SelectControl<T extends string>({
           aria-label={ariaLabel}
           onKeyDown={handleMenuKeyDown}
           className={cn(
-            "fixed z-[80] overflow-auto rounded-[var(--surface-radius)] border border-border bg-popover p-1 text-sm text-foreground shadow-popover outline-none motion-safe:animate-[selectMenuIn_140ms_ease-out]",
+            "fixed z-[80] overflow-auto rounded-[var(--surface-radius)] border border-border bg-popover p-1 text-sm text-foreground shadow-popover outline-none [scrollbar-width:none] motion-safe:animate-[selectMenuIn_140ms_ease-out] [&::-webkit-scrollbar]:hidden",
             menuClassName,
           )}
           style={{

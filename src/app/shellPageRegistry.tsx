@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { ChannelStatusPage } from "@/features/channels";
-import { ChangeCenterPage } from "@/features/changes";
+import { ChangeCenterPage, ChangeCenterSettingsPage } from "@/features/changes";
 import { CollectorsPage } from "@/features/collectors";
 import { DashboardPage } from "@/features/dashboard";
 import { KeyPoolPage } from "@/features/key-pool";
@@ -13,6 +13,8 @@ import { SettingsPage } from "@/features/settings";
 import { StationsPage } from "@/features/stations";
 import type { AppRouteId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
+import { settingsQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 
 export type ShellPageActions = {
   addProvider: () => void;
@@ -21,6 +23,7 @@ export type ShellPageActions = {
   addKey: (stationId: string | null) => void;
   editKey: (stationKeyId: string) => void;
   openModelBasePrices: () => void;
+  openChangeCenterSettings: () => void;
   openRoutingDeepLink: (link: RoutingDeepLink) => void;
   routingDeepLink: VersionedRoutingDeepLink | null;
   openRequestLogDeepLink: (link: RequestLogDeepLink) => void;
@@ -34,13 +37,18 @@ export const ShellPageContent = memo(function ShellPageContent({
   routeId: AppRouteId;
   actions: ShellPageActions;
 }) {
+  const settingsQuery = useActivityQuery(settingsQueryOptions());
+  const routingDeepLinkHandler = settingsQuery.data?.developerModeEnabled
+    ? actions.openRoutingDeepLink
+    : undefined;
+
   switch (routeId) {
     case "stations":
       return (
         <StationsPage
           onAddProvider={actions.addProvider}
           onEditProvider={actions.editProvider}
-          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
+          onOpenRoutingDeepLink={routingDeepLinkHandler}
           onOpenStation={actions.openStation}
         />
       );
@@ -49,26 +57,32 @@ export const ShellPageContent = memo(function ShellPageContent({
         <KeyPoolPage
           onAddKey={actions.addKey}
           onEditKey={actions.editKey}
-          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
+          onOpenRoutingDeepLink={routingDeepLinkHandler}
         />
       );
     case "channels":
-      return <ChannelStatusPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
+      return <ChannelStatusPage onOpenRoutingDeepLink={routingDeepLinkHandler} />;
     case "collectors":
-      return <CollectorsPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
+      return <CollectorsPage onOpenRoutingDeepLink={routingDeepLinkHandler} />;
     case "changes":
-      return <ChangeCenterPage onOpenRoutingDeepLink={actions.openRoutingDeepLink} />;
+      return (
+        <ChangeCenterPage
+          onOpenRoutingDeepLink={routingDeepLinkHandler}
+          onOpenSettings={actions.openChangeCenterSettings}
+        />
+      );
     case "pricing":
       return (
         <PricingPage
           onOpenModelBasePrices={actions.openModelBasePrices}
-          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
+          onOpenRoutingDeepLink={routingDeepLinkHandler}
         />
       );
     case "routing":
       return (
         <RoutingPage
           deepLink={actions.routingDeepLink}
+          developerModeEnabled={settingsQuery.data?.developerModeEnabled === true}
           onOpenRequestLog={(requestLogId) =>
             actions.openRequestLogDeepLink({
               kind: "request-log",
@@ -82,7 +96,7 @@ export const ShellPageContent = memo(function ShellPageContent({
       return (
         <LogsPage
           deepLink={actions.requestLogDeepLink}
-          onOpenRoutingDeepLink={actions.openRoutingDeepLink}
+          onOpenRoutingDeepLink={routingDeepLinkHandler}
         />
       );
     case "settings":

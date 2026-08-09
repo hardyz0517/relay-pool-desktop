@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Coins, Image, RefreshCw, RotateCcw, ShieldCheck, TrendingDown } from "lucide-react";
+import { Coins, Image, RotateCcw, ShieldCheck, TrendingDown } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -153,23 +153,6 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
     ),
   );
 
-  async function refresh(showSuccess = false) {
-    try {
-      await pricingQuery.refetch({ throwOnError: true });
-      if (monitorInput !== null) {
-        // Monitoring is an optional read projection. A stale/unavailable
-        // summary must not make the price refresh look like a failure.
-        await monitorQuery.refetch({ throwOnError: false });
-      }
-      if (showSuccess) {
-        toast.success("价格倍率已刷新");
-      }
-    } catch (requestError) {
-      const message = readError(requestError);
-      toast.error("刷新价格倍率失败", message);
-    }
-  }
-
   const viewModel = useMemo(
     () =>
       buildPricingComparisonViewModel({
@@ -274,7 +257,7 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
         contentClassName="overflow-visible rounded-none border-0 bg-transparent p-0 !shadow-none"
       >
         <Toolbar className="mb-4 items-end rounded-[var(--surface-radius)] border bg-surface px-4 py-3 !shadow-none">
-          <div className="grid w-full grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-[repeat(6,minmax(0,1fr))_auto]">
+          <div className="grid w-full grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(7,minmax(0,1fr))_auto]">
             <FilterField label="分组类型">
               <SelectControl
                 ariaLabel="按分组类型筛选"
@@ -282,16 +265,6 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
                 value={groupTypeFilter}
                 options={visibleGroupTypeFilterOptions(developerModeEnabled)}
                 onChange={setGroupTypeFilter}
-              />
-            </FilterField>
-            <FilterField label="搜索">
-              <input
-                id="pricing-group-search"
-                aria-label="搜索中转站、Key 或分组"
-                className={`${inputClassName} w-full`}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="中转站 / Key / 分组"
               />
             </FilterField>
             <FilterField label="中转站">
@@ -306,15 +279,15 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
                 onChange={setSelectedStationId}
               />
             </FilterField>
-            <FilterField label="Key">
+            <FilterField label="密钥">
               <SelectControl
-                ariaLabel="Key 筛选"
+                ariaLabel="密钥筛选"
                 className="w-full !shadow-none"
                 value={keyPresenceFilter}
                 options={[
-                  { value: "all", label: "全部 Key" },
-                  { value: "with_key", label: "仅有 Key" },
-                  { value: "with_credentialed_key", label: "仅有凭据 Key" },
+                  { value: "all", label: "全部密钥" },
+                  { value: "with_key", label: "仅有密钥" },
+                  { value: "with_credentialed_key", label: "仅有凭据密钥" },
                 ]}
                 onChange={setKeyPresenceFilter}
               />
@@ -351,11 +324,17 @@ export function PricingPage({ onOpenModelBasePrices, onOpenRoutingDeepLink }: Pr
                 onChange={setMonitorOutcomeFilter}
               />
             </FilterField>
-            <div className="flex items-center justify-end gap-2 sm:col-span-2 lg:col-span-2 2xl:col-span-1">
-              <Button variant="secondary" disabled={pricingQuery.isFetching} onClick={() => void refresh(true)}>
-                <RefreshCw className="h-4 w-4" />
-                刷新
-              </Button>
+            <FilterField label="搜索" className="lg:col-span-2">
+              <input
+                id="pricing-group-search"
+                aria-label="搜索中转站、密钥或分组"
+                className={`${inputClassName} w-full`}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="中转站 / 密钥 / 分组"
+              />
+            </FilterField>
+            <div className="flex items-center justify-end gap-2 sm:col-span-2 lg:col-span-1">
               <Button variant="secondary" onClick={resetFilters}>
                 <RotateCcw className="h-4 w-4" />
                 重置
@@ -500,7 +479,7 @@ function PricingMonitorStatus({
 }) {
   const meta: Record<PricingComparisonRow["monitorDisplayState"], { label: string; className: string }> = {
     unresolved: { label: "无法解析", className: "border-warning-border bg-warning-surface text-warning-foreground" },
-    no_key: { label: "无 Key", className: "border-border bg-muted text-muted-foreground" },
+    no_key: { label: "无密钥", className: "border-border bg-muted text-muted-foreground" },
     unmonitored: { label: "无监控", className: "border-border bg-muted text-muted-foreground" },
     running: { label: "运行中", className: "border-info-border bg-info-surface text-info-foreground" },
     untested: { label: "未测试", className: "border-border bg-muted text-muted-foreground" },
@@ -579,9 +558,9 @@ function PricingEmptyState({ reason }: { reason: EmptyReason }) {
   );
 }
 
-function FilterField({ label, children }: { label: string; children: ReactNode }) {
+function FilterField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
-    <label className="grid min-w-0 gap-1.5 text-xs font-medium text-muted-foreground">
+    <label className={cn("grid min-w-0 gap-1.5 text-xs font-medium text-muted-foreground [&>button]:min-w-0", className)}>
       <span>{label}</span>
       {children}
     </label>

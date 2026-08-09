@@ -122,7 +122,7 @@ describe("buildStationDetailViewModel", () => {
       latestSnapshot: null,
       credentials: null,
       stationKeys: [],
-      changes: [],
+      incidents: [],
     });
 
     expect(viewModel.statusLabel).toBe("采集需关注");

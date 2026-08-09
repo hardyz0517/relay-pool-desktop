@@ -75,7 +75,6 @@ import type {
   UpdateStationKeyInput,
   UpdateStationSessionInput,
 } from "@/lib/types/stationKeys";
-import type { ChangeEvent, UpsertChangeEventInput } from "@/lib/types/changeEvents";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { ActivationResult, DataStoreCandidate, DataStoreStartupView } from "@/lib/types/dataRecovery";
 import type {
@@ -121,6 +120,7 @@ import type {
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
 import type { AppUpdateCheckResult, DownloadProgress } from "@/lib/types/updater";
+import type { AlertingDomainClient } from "@/lib/types/alerting";
 import type {
   PricingGroupMonitorStatusInput,
   PricingGroupMonitorStatusWorkspace,
@@ -188,17 +188,6 @@ export type StationKeysDomainClient = {
   }): Promise<StationCredentials>;
   clearStationCredentials(stationId: string): Promise<StationCredentials>;
   updateStationSession(input: UpdateStationSessionInput): Promise<StationCredentials>;
-};
-
-export type ChangeEventsDomainClient = {
-  listChangeEvents(): Promise<ChangeEvent[]>;
-  clearChangeEvents(): Promise<void>;
-  listChangeEventsForStation(stationId: string): Promise<ChangeEvent[]>;
-  upsertChangeEvent(input: UpsertChangeEventInput): Promise<ChangeEvent>;
-  markChangeEventRead(id: string): Promise<ChangeEvent>;
-  markChangeEventsRead(ids: string[]): Promise<ChangeEvent[]>;
-  dismissChangeEvent(id: string): Promise<ChangeEvent>;
-  resolveChangeEvent(id: string): Promise<ChangeEvent>;
 };
 
 export type CollectorRunsDomainClient = {
@@ -382,7 +371,7 @@ export type BackendClient = {
   readonly settings: SettingsDomainClient;
   readonly stations: StationsDomainClient;
   readonly stationKeys: StationKeysDomainClient;
-  readonly changeEvents: ChangeEventsDomainClient;
+  readonly alerting: AlertingDomainClient;
   readonly collectorRuns: CollectorRunsDomainClient;
   readonly proxy: ProxyDomainClient;
   readonly dashboard: DashboardDomainClient;

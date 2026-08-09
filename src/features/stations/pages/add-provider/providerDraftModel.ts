@@ -48,7 +48,7 @@ export function providerDraftPayloadFromEditor(
       .filter((row) => !row.deleteRequested && (row.apiKey.trim() || row.id || row.name.trim()))
       .map((row, index) => ({
         clientId: row.clientId,
-        name: row.name.trim() || `Key ${index + 1}`,
+        name: row.name.trim() || `密钥 ${index + 1}`,
         enabled: row.enabled,
         groupClientId:
           row.groupBindingId && groupClientIds.has(row.groupBindingId) ? row.groupBindingId : null,

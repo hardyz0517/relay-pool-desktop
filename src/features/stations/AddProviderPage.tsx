@@ -192,9 +192,9 @@ export function AddProviderPage(props: AddProviderPageProps) {
       />
       <ConfirmDialog
         open={Boolean(importedLocalKeyPendingDelete)}
-        title="从 Key 池移除本地 Key？"
-        description={`将删除由 ${importedLocalKeyPendingDelete?.remoteKey.remoteKeyName?.trim() || "这条远端记录"} 导入的本地 Station Key；如果仍有关联，也会一并解除。远端 Key 不会被删除。`}
-        confirmLabel="删除本地 Key"
+        title="从密钥池移除本地密钥？"
+        description={`将删除由 ${importedLocalKeyPendingDelete?.remoteKey.remoteKeyName?.trim() || "这条远端记录"} 导入的本地站点密钥；如果仍有关联，也会一并解除。远端密钥不会被删除。`}
+        confirmLabel="删除本地密钥"
         cancelLabel="取消"
         confirming={remoteLoading}
         onCancel={cancelDeleteImportedLocalKey}
@@ -202,13 +202,13 @@ export function AddProviderPage(props: AddProviderPageProps) {
       />
       <ConfirmDialog
         open={Boolean(remoteKeyPendingDelete)}
-        title="删除远端 Key？"
+        title="删除远端 密钥？"
         description={
           remoteKeyPendingDelete?.matchedStationKeyId
-            ? `将从远端删除 ${remoteKeyPendingDelete.remoteKeyName?.trim() || "这把 Key"}。已关联的本地 Station Key 会保留；只有远端对账确认 Key 已消失后，操作才会完成。`
-            : `将从远端删除 ${remoteKeyPendingDelete?.remoteKeyName?.trim() || "这把 Key"}。只有远端对账确认 Key 已消失后，操作才会完成。`
+            ? `将从远端删除 ${remoteKeyPendingDelete.remoteKeyName?.trim() || "这把密钥"}。已关联的本地站点密钥会保留；只有远端对账确认密钥已消失后，操作才会完成。`
+            : `将从远端删除 ${remoteKeyPendingDelete?.remoteKeyName?.trim() || "这把密钥"}。只有远端对账确认密钥已消失后，操作才会完成。`
         }
-        confirmLabel="删除远端 Key"
+        confirmLabel="删除远端密钥"
         cancelLabel="取消"
         confirming={remoteLoading}
         onCancel={cancelDeleteRemoteKey}

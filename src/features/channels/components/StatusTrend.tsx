@@ -77,7 +77,9 @@ export function StatusTrend({
             key={cell?.id ?? `empty-${index}`}
             className={cn(
               bars ? "min-h-[3px] min-w-0 flex-1 rounded-[2px]" : "rounded-[3px]",
-              cell && "cursor-help origin-bottom transition-[filter,opacity,transform] duration-150 ease-out hover:-translate-y-px hover:brightness-110 hover:opacity-90 motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+              // Keep the hit area stable while hovering. Moving the bar itself can
+              // make the pointer leave/re-enter at the edge and rapidly toggle the tooltip.
+              cell && "cursor-default transition-[filter,opacity] duration-150 ease-out hover:brightness-110 hover:opacity-90 motion-reduce:transition-none",
               trendToneClassName[cell?.tone ?? "missing"],
             )}
             style={bars ? { height: trendBarHeight[cell?.tone ?? "missing"] } : undefined}

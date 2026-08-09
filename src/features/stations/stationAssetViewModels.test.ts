@@ -17,6 +17,6 @@ describe("hasPositiveBalance", () => {
 
 describe("station issue filters", () => {
   it("does not treat a missing station API key as an issue", () => {
-    expect(STATION_ISSUE_FILTER_OPTIONS.map((option) => option.label)).not.toContain("缺 API Key");
+    expect(STATION_ISSUE_FILTER_OPTIONS.map((option) => option.label)).not.toContain("缺 API 密钥");
   });
 });

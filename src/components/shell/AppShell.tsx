@@ -1,27 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { markNavigation, navigationMarks } from "@/app/navigationPerformance";
 import { appRoutes } from "@/app/routes";
 import { LocalProxyRadarIcon } from "@/components/shell/LocalProxyRadarIcon";
 import { shellLayout } from "@/components/ui/layout";
 import {
-  markChangeEventsRead,
-} from "@/lib/api/changeEvents";
-import {
-  changeEventsQueryOptions,
   proxyStatusQueryOptions,
   settingsQueryOptions,
 } from "@/lib/query/resourceQueries";
-import { queryKeys } from "@/lib/query/queryKeys";
+import { alertingCurrentQueryOptions as currentAlertingQueryOptions } from "@/lib/queries/alertingQueries";
 import { cn } from "@/lib/utils";
-import {
-  markCapturedChangeEventsReadLocally,
-  mergeChangeEventUpdates,
-  markUnreadChangeEventsRead,
-  markUnreadChangeEventsReadLocally,
-  unreadChangeCount,
-} from "@/lib/changeEvents/changeEventViewModels";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
 import type { AppRouteId } from "@/lib/types/navigation";
 
 type AppShellProps = {
@@ -37,8 +25,7 @@ export function AppShell({
   navigationSequence,
   onRouteChange,
 }: AppShellProps) {
-  const queryClient = useQueryClient();
-  const { data: changeEvents = [] } = useQuery(changeEventsQueryOptions(10_000));
+  const { data: alertingPage } = useQuery(currentAlertingQueryOptions({ limit: 200 }));
   const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
   const { data: settings = null } = useQuery(settingsQueryOptions());
 
@@ -54,42 +41,7 @@ export function AppShell({
     }
   }, [activeRouteId, onRouteChange, settings]);
 
-  useLayoutEffect(() => {
-    if (activeRouteId !== "changes") {
-      return;
-    }
-    const currentEvents = queryClient.getQueryData<ChangeEvent[]>(queryKeys.changeEvents) ?? changeEvents;
-    const optimisticReadResult = markUnreadChangeEventsReadLocally(currentEvents);
-    if (optimisticReadResult.changedCount === 0) {
-      return;
-    }
-
-    queryClient.setQueryData(queryKeys.changeEvents, optimisticReadResult.events);
-    const capturedUnreadIds = currentEvents
-      .filter((event) => event.status === "unread")
-      .map((event) => event.id);
-
-    void (async () => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
-      queryClient.setQueryData<ChangeEvent[]>(queryKeys.changeEvents, (latestEvents) =>
-        markCapturedChangeEventsReadLocally(
-          latestEvents ?? currentEvents,
-          capturedUnreadIds,
-        ).events,
-      );
-
-      try {
-        const readOnEntryResult = await markUnreadChangeEventsRead(currentEvents, markChangeEventsRead);
-        queryClient.setQueryData<ChangeEvent[]>(queryKeys.changeEvents, (latestEvents) =>
-          mergeChangeEventUpdates(latestEvents ?? currentEvents, readOnEntryResult.updatedEvents),
-        );
-      } catch {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.changeEvents });
-      }
-    })();
-  }, [activeRouteId, changeEvents, queryClient]);
-
-  const changeUnreadCount = useMemo(() => unreadChangeCount(changeEvents), [changeEvents]);
+  const changeUnreadCount = alertingPage?.unseenCount ?? 0;
   const proxyRunning = proxyStatus?.running ?? false;
 
   useLayoutEffect(() => {

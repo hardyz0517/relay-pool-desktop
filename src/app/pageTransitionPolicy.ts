@@ -126,6 +126,13 @@ const transientPagePolicies = {
     retention: "keep",
     prewarmPriority: null,
   },
+  changeSettings: {
+    pageId: "changeSettings",
+    kind: "transient",
+    parentRouteId: "changes",
+    retention: "keep",
+    prewarmPriority: null,
+  },
 } satisfies Record<string, PageTransitionPolicy>;
 
 const pageTransitionPolicies = {

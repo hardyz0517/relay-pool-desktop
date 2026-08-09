@@ -33,12 +33,11 @@ import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { getLocalAccessKey, importRelayPoolToCCSwitch } from "@/lib/api/settings";
-import type { StationKeyStatus } from "@/lib/types/stationKeys";
+import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   currentStationBalanceSnapshotsQueryOptions,
-  changeEventsQueryOptions,
   dashboardCumulativeRequestMetricsQueryOptions,
   dashboardLiveRequestMetricsQueryOptions,
   keyPoolQueryOptions,
@@ -48,14 +47,9 @@ import {
   settingsQueryOptions,
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
+import { alertingCurrentQueryOptions } from "@/lib/queries/alertingQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
-import {
-  buildChangeEventListItem,
-  formatChangeTime,
-  severityLabels,
-  severityTone,
-  unreadRiskCount,
-} from "@/lib/changeEvents/changeEventViewModels";
+import type { AlertingIncident } from "@/lib/types/alerting";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
 import { formatRecentRequestCost } from "@/features/dashboard/requestCostFormat";
 import { useUpdater } from "@/lib/updater/UpdaterProvider";
@@ -139,7 +133,7 @@ export function DashboardPage() {
     currentStationBalanceSnapshotsQueryOptions(),
   );
   const settingsQuery = useActivityQuery(settingsQueryOptions());
-  const changeEventsQuery = useActivityQuery(changeEventsQueryOptions(false));
+  const alertingQuery = useActivityQuery(alertingCurrentQueryOptions({ limit: 50 }));
   const [startingLocalProxy, setStartingLocalProxy] = useState(false);
   const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
@@ -161,7 +155,7 @@ export function DashboardPage() {
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
   const settings = settingsQuery.data ?? null;
-  const changeEvents = changeEventsQuery.data ?? [];
+  const alertingIncidents = alertingQuery.data?.items ?? [];
   const dashboardLoaded = [
     proxyStatusQuery.data,
     requestLogsQuery.data,
@@ -169,7 +163,7 @@ export function DashboardPage() {
     stationsQuery.data,
     balancesQuery.data,
     settingsQuery.data,
-    changeEventsQuery.data,
+    alertingQuery.data,
   ].every((value) => value !== undefined);
 
   useEffect(() => {
@@ -197,10 +191,6 @@ export function DashboardPage() {
     () => new Map(stations.map((station) => [station.id, station.name] as const)),
     [stations],
   );
-  const stationCreditPerCnyById = useMemo(
-    () => new Map(stations.map((station) => [station.id, station.creditPerCny] as const)),
-    [stations],
-  );
   const proxyRequestCount = Math.max(lifetimeMetrics?.requestCount ?? 0, proxyStatus?.requestCount ?? 0);
   const todayTokens = todayMetrics?.totalTokens ?? null;
   const todayPromptTokens = todayMetrics?.promptTokens ?? null;
@@ -217,15 +207,14 @@ export function DashboardPage() {
   const { lowBalanceStations, primaryBalanceCurrency, stationUsage, totalBalance } = balanceSummary;
   const activeRiskEvents = useMemo(
     () =>
-      changeEvents.filter(
+      alertingIncidents.filter(
         (event) =>
           (event.severity === "critical" || event.severity === "warning") &&
-          event.status !== "dismissed" &&
-          event.status !== "resolved",
+          event.lifecycleState !== "resolved",
       ),
-    [changeEvents],
+    [alertingIncidents],
   );
-  const unreadRisks = unreadRiskCount(changeEvents);
+  const unreadRisks = alertingQuery.data?.unseenCount ?? 0;
   const p9RiskBreakdown = useMemo(() => ({
     unresolvedCritical: activeRiskEvents.filter((event) => event.severity === "critical").length,
     groupBindingIssues: activeRiskEvents.filter((event) => event.eventType === "group_missing" || event.eventType === "key_group_unresolved").length,
@@ -543,15 +532,15 @@ export function DashboardPage() {
         ) : (
           <div className="grid min-w-0 gap-2">
             {activeRiskEvents.slice(0, 5).map((event) => {
-              const item = buildChangeEventListItem(event, { stationNamesById, stationCreditPerCnyById });
+              const item = buildAlertingRiskItem(event, stationNamesById, keyPoolItems);
               return (
                 <ObjectRow
                   key={event.id}
                   className="min-w-0"
                   icon={<AlertTriangle className="h-4 w-4" />}
                   title={item.title}
-                  subtitle={`${item.description} · ${formatChangeTime(event.detectedAt)}`}
-                  badges={<StatusBadge tone={severityTone[event.severity]}>{severityLabels[event.severity]}</StatusBadge>}
+                  subtitle={`${item.description} · ${formatAlertingTime(event.lastSeenAtMs)}`}
+                  badges={<StatusBadge tone={alertingSeverityTone(event.severity)}>{alertingSeverityLabel(event.severity)}</StatusBadge>}
                 />
               );
             })}
@@ -571,7 +560,7 @@ export function DashboardPage() {
               </div>
               <div className="mt-4 text-sm font-medium text-foreground">暂无路由队列</div>
               <p className="mt-2 text-sm text-muted-foreground">
-                添加或导入 Key 后，可用路由将显示在这里。
+                添加或导入密钥后，可用路由将显示在这里。
               </p>
             </div>
           ) : (
@@ -636,7 +625,7 @@ export function DashboardPage() {
                       {request.model ?? request.path}
                     </span>
                     <span className="max-w-[45%] shrink truncate text-xs text-muted-foreground">
-                      Key：{requestKeyName}
+                      密钥：{requestKeyName}
                     </span>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -662,7 +651,7 @@ export function DashboardPage() {
 
         <section className="grid gap-3">
           <h2 className="truncate text-[13px] font-semibold text-foreground">
-            秘钥健康
+            密钥健康
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
@@ -846,6 +835,65 @@ function formatAverageDurationDetail(metrics: DashboardPeriodMetrics) {
 
 function formatTokenCount(value: number | null | undefined) {
   return (value ?? 0).toLocaleString("zh-CN");
+}
+
+function buildAlertingRiskItem(
+  incident: AlertingIncident,
+  stationNamesById: Map<string, string>,
+  keyPoolItems: KeyPoolItem[],
+) {
+  const stationName = incident.stationId ? stationNamesById.get(incident.stationId) : null;
+  const keyId = incident.conditionKey.startsWith("key:") ? incident.conditionKey.slice(4) : null;
+  const key = keyId ? keyPoolItems.find((item) => item.id === keyId) : null;
+  const keyOwner = key?.stationName ?? stationName ?? "未知站点";
+  const keyLabel = key?.name ?? keyId ?? "未知密钥";
+  const title = incident.eventType === "key_invalid"
+    ? `${keyOwner} 的密钥「${keyLabel}」无效`
+    : eventLabel(incident.eventType);
+  const scope = stationName ?? incident.stationId ?? incident.conditionKey;
+  const state = incidentStateLabel(incident.lifecycleState);
+  const description = incident.eventType === "key_invalid"
+    ? `${keyOwner} · 密钥「${keyLabel}」· ${state} · 第 ${incident.episodeNumber} 次`
+    : `${scope} · ${state} · 第 ${incident.episodeNumber} 次`;
+  return { title, description };
+}
+
+function eventLabel(eventType: string) {
+  return ({
+    collector_failed: "采集失败",
+    station_down: "站点不可用",
+    balance_low: "余额偏低",
+    balance_depleted: "余额耗尽",
+    price_expired: "价格已过期",
+    key_invalid: "密钥无效",
+    route_impacted: "路由受影响",
+    group_missing: "分组缺失",
+    key_group_unresolved: "密钥分组无法解析",
+    group_added: "新增分组",
+    rate_changed: "倍率变化",
+    group_rate_changed: "分组倍率变化",
+    price_changed: "价格变化",
+    model_added: "新增模型",
+    model_removed: "模型移除",
+    audit_change: "配置变更",
+  } as Record<string, string>)[eventType] ?? eventType;
+}
+
+function formatAlertingTime(value: number) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "时间未知" : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function incidentStateLabel(state: AlertingIncident["lifecycleState"]) {
+  return ({ pending: "检测中", open: "未处理", recovering: "恢复中", resolved: "已恢复" } as Record<string, string>)[state] ?? state;
+}
+
+function alertingSeverityTone(severity: AlertingIncident["severity"]): "error" | "warning" | "info" {
+  return severity === "critical" ? "error" : severity === "warning" ? "warning" : "info";
+}
+
+function alertingSeverityLabel(severity: AlertingIncident["severity"]) {
+  return severity === "critical" ? "严重" : severity === "warning" ? "警告" : "信息";
 }
 
 function formatCompactNumber(value: number) {

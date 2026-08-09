@@ -6,7 +6,7 @@ const matching = {
   appVersion: "0.3.2",
   ipcContractVersion: IPC_CONTRACT_VERSION,
   bindingHash: IPC_BINDING_HASH,
-  capabilities: ["runtime_contract", "settings", "stations"],
+  capabilities: ["runtime_contract", "settings", "stations", "alerting"],
 };
 
 describe("runtime contract validator", () => {

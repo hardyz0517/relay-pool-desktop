@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
-import { listChangeEventsForStation } from "@/lib/api/changeEvents";
+import { listCurrentAlertingIncidents } from "@/lib/api/alerting";
 import { collectStationTask, getLatestCollectorSnapshot, startManualAuthorization } from "@/lib/api/collector";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listBalanceSnapshotsForStation } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationCredentials, listStationKeys } from "@/lib/api/stationKeys";
 import { listStations } from "@/lib/api/stations";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { AlertingIncident } from "@/lib/types/alerting";
 import type { CollectorSnapshot, CollectorTaskType } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
@@ -48,7 +48,7 @@ type DetailData = {
   latestSnapshot: CollectorSnapshot | null;
   credentials: StationCredentials | null;
   stationKeys: StationKey[];
-  changes: ChangeEvent[];
+  incidents: AlertingIncident[];
 };
 
 type LoadMode = "initial" | "silent";
@@ -131,7 +131,7 @@ export function StationDetailPage({
         collectorRuns,
         latestSnapshot,
         balanceSnapshots,
-        changeEvents,
+        alertingPage,
       ] = await Promise.all([
         listStations(),
         getStationCredentials(id),
@@ -141,7 +141,7 @@ export function StationDetailPage({
         listCollectorRuns(id),
         getLatestCollectorSnapshot(id),
         listBalanceSnapshotsForStation(id),
-        listChangeEventsForStation(id),
+        listCurrentAlertingIncidents({ stationId: id, limit: 100 }),
       ]);
       const station = stations.find((item) => item.id === id);
 
@@ -162,7 +162,7 @@ export function StationDetailPage({
         collectorRuns,
         latestSnapshot,
         balances: balanceSnapshots,
-        changes: changeEvents,
+        incidents: alertingPage.items,
       };
       setDetailData(nextData);
       setPageError(null);
@@ -328,6 +328,6 @@ function createDetailDataSeed(station: Station): DetailData {
     latestSnapshot: null,
     credentials: null,
     stationKeys: [],
-    changes: [],
+    incidents: [],
   };
 }

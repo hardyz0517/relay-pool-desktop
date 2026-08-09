@@ -292,4 +292,4 @@ function keyPoolItemGroupRow(item: KeyPoolItem) {
 }
 
 const selectClassName =
-  "h-8 rounded-[12px] border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";
+  "h-8 rounded-[12px] border border-border bg-surface px-3 text-sm text-foreground shadow-surface outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";

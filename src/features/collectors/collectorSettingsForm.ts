@@ -18,7 +18,7 @@ export type CollectorSettingsField = keyof CollectorSettingsDraft;
 export type CollectorSettingsErrors = Partial<Record<CollectorSettingsField, string>>;
 
 export type CollectorSettingsValue = {
-  [Key in CollectorSettingsField]: number;
+  [key in CollectorSettingsField]: number;
 };
 
 type ParsedCollectorSettingsDraft =

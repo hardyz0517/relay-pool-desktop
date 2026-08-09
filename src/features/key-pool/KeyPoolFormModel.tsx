@@ -223,7 +223,7 @@ export function createFormForStation(station: Station, items: KeyPoolItem[]): Ke
     ...emptyEditForm,
     stationId: station.id,
     stationName: station.name,
-    name: `${station.name} Key ${nextIndex + 1}`,
+    name: `${station.name} 密钥 ${nextIndex + 1}`,
     priority: String(nextIndex),
   };
 }

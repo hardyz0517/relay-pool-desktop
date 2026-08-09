@@ -179,11 +179,11 @@ export function LocalRoutingEditTab({ workspace, keyPoolItems, loading }: LocalR
           </div>
         )}
         {loading && !workspace ? (
-          <div className="text-sm text-muted-foreground">正在加载候选 Key...</div>
+          <div className="text-sm text-muted-foreground">正在加载候选 密钥...</div>
         ) : workspace && !keyPoolItems ? (
-          <div className="text-sm text-muted-foreground">Loading complete Key Pool...</div>
+          <div className="text-sm text-muted-foreground">密钥池加载完成</div>
         ) : candidates.length === 0 ? (
-          <EmptyState title="暂无候选 Key" description="尚未发现可用候选。" />
+          <EmptyState title="暂无候选密钥" description="尚未发现可用候选。" />
         ) : (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={candidateIds} strategy={verticalListSortingStrategy}>

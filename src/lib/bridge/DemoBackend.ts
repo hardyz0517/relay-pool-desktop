@@ -1,6 +1,18 @@
 import { IPC_BINDING_HASH, IPC_CONTRACT_VERSION } from "./contract";
 import { DemoBackendUnsupportedError, type BackendClient } from "./BackendClient";
 import type { RuntimeContractInfo } from "./contract";
+import type {
+  AlertPolicy,
+  AlertPolicyInput,
+  AlertingCurrentInput,
+  AlertingHistoryInput,
+  AlertingDomainClient,
+  AlertingIncidentInput,
+  AlertingIncidentPage,
+  AlertingSettings,
+  AlertingSettingsInput,
+} from "@/lib/types/alerting";
+import { DEFAULT_ALERTING_SETTINGS, defaultAlertPolicy } from "@/lib/types/alerting";
 
 const DEMO_SEED = "relay-pool-demo-v1";
 const DEMO_CLOCK_ISO = "2026-07-22T00:00:00.000Z";
@@ -12,6 +24,12 @@ type DemoStore = {
 
 export class DemoBackend implements BackendClient {
   readonly mode = "demo" as const;
+  private alertingSettings: AlertingSettings = { ...DEFAULT_ALERTING_SETTINGS };
+  private alertingPolicies: AlertPolicy[] = [
+    defaultAlertPolicy("collector_failed"),
+    defaultAlertPolicy("station_down"),
+    defaultAlertPolicy("balance_low"),
+  ];
   readonly settings: BackendClient["settings"] = {
     getSettings: () => this.rejectUnsupported("settings"),
     getLocalAccessKey: () => this.rejectUnsupported("settings.local_access_key"),
@@ -28,6 +46,59 @@ export class DemoBackend implements BackendClient {
     getCommonLoginPassword: (_id: string) =>
       this.rejectUnsupported("settings.common_login_options"),
   };
+  readonly alerting: AlertingDomainClient = {
+    loadWorkspace: async () => ({
+      settings: { ...this.alertingSettings },
+      policies: this.alertingPolicies.map((policy) => ({ ...policy })),
+    }),
+    getSettings: async () => ({ ...this.alertingSettings }),
+    updateSettings: async (input: AlertingSettingsInput) => {
+      this.alertingSettings = {
+        ...this.alertingSettings,
+        ...input,
+        revision: this.alertingSettings.revision + 1,
+        updatedAtMs: Date.now(),
+      };
+      return { ...this.alertingSettings };
+    },
+    listPolicies: async () => this.alertingPolicies.map((policy) => ({ ...policy })),
+    upsertPolicy: async (input: AlertPolicyInput) => {
+      const id = input.id ?? `demo-policy-${Date.now()}`;
+      const current = this.alertingPolicies.find((policy) => policy.id === id);
+      const policy = {
+        ...input,
+        id,
+        revision: (current?.revision ?? 0) + 1,
+        createdAtMs: current?.createdAtMs ?? Date.now(),
+        updatedAtMs: Date.now(),
+      } as AlertPolicy;
+      this.alertingPolicies = current
+        ? this.alertingPolicies.map((item) => item.id === id ? policy : item)
+        : [...this.alertingPolicies, policy];
+      return { ...policy };
+    },
+    deletePolicy: async (id: string) => {
+      this.alertingPolicies = this.alertingPolicies.filter((policy) => policy.id !== id);
+    },
+    listCurrentIncidents: async (_input: AlertingCurrentInput = {}): Promise<AlertingIncidentPage> => ({
+      items: [],
+      nextCursor: null,
+      activeCount: 0,
+      unseenCount: 0,
+    }),
+    getIncident: async (_input: AlertingIncidentInput) => {
+      throw new DemoBackendUnsupportedError("alerting.incident");
+    },
+    listOccurrences: async (_input: AlertingHistoryInput) => ({ items: [], nextCursor: null }),
+    listDeliveries: async (_input: AlertingHistoryInput) => ({ items: [], nextCursor: null }),
+    markSeen: async () => undefined,
+    markAllSeen: async () => 0,
+    resolveAllActive: async () => 0,
+    snooze: async () => undefined,
+    sendTestNotification: async () => undefined,
+    getDesktopNotificationPermission: async () => "unavailable",
+    requestDesktopNotificationPermission: async () => "unavailable",
+  };
   readonly stations: BackendClient["stations"] = {
     listStations: () => this.rejectUnsupported("stations"),
     createStation: () => this.rejectUnsupported("stations"),
@@ -37,16 +108,6 @@ export class DemoBackend implements BackendClient {
     reorderStations: () => this.rejectUnsupported("stations"),
     listStationEndpointHealth: () => this.rejectUnsupported("stations.endpoint_health"),
     pingStationEndpoint: (_stationId: string) => this.rejectUnsupported("stations.endpoint_ping"),
-  };
-  readonly changeEvents: BackendClient["changeEvents"] = {
-    listChangeEvents: () => this.rejectUnsupported("change_events"),
-    clearChangeEvents: () => this.rejectUnsupported("change_events"),
-    listChangeEventsForStation: (_stationId: string) => this.rejectUnsupported("change_events"),
-    upsertChangeEvent: () => this.rejectUnsupported("change_events"),
-    markChangeEventRead: (_id: string) => this.rejectUnsupported("change_events"),
-    markChangeEventsRead: (_ids: string[]) => this.rejectUnsupported("change_events"),
-    dismissChangeEvent: (_id: string) => this.rejectUnsupported("change_events"),
-    resolveChangeEvent: (_id: string) => this.rejectUnsupported("change_events"),
   };
   readonly collectorRuns: BackendClient["collectorRuns"] = {
     listCollectorRuns: (_stationId: string) => this.rejectUnsupported("collector_runs"),

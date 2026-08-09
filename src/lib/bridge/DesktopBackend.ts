@@ -7,7 +7,6 @@ import {
   bindRemoteStationKey as bindRemoteStationKeyBinding,
   deleteModelAlias as deleteModelAliasBinding,
   deletePricingRule as deletePricingRuleBinding,
-  clearChangeEvents as clearChangeEventsBinding,
   clearRequestLogs as clearRequestLogsBinding,
   clearCaptureSession as clearCaptureSessionBinding,
   cancelChannelMonitorExecution as cancelChannelMonitorExecutionBinding,
@@ -58,6 +57,7 @@ import {
   getPortableMigrationCapability as getPortableMigrationCapabilityBinding,
   getPortableMigrationOperation as getPortableMigrationOperationBinding,
   getRuntimeContractInfo,
+  getAlertingIncident as getAlertingIncidentBinding,
   getRuntimeStatus as getRuntimeStatusBinding,
   getSettings as getSettingsBinding,
   getStationCredentials as getStationCredentialsBinding,
@@ -77,8 +77,11 @@ import {
   listCurrentStationBalanceSnapshots as listCurrentStationBalanceSnapshotsBinding,
   listGroupRateRecords as listGroupRateRecordsBinding,
   listKeyPoolItems as listKeyPoolItemsBinding,
-  listChangeEvents as listChangeEventsBinding,
-  listChangeEventsForStation as listChangeEventsForStationBinding,
+  listAlertingDeliveries as listAlertingDeliveriesBinding,
+  getDesktopNotificationPermission as getDesktopNotificationPermissionBinding,
+  requestDesktopNotificationPermission as requestDesktopNotificationPermissionBinding,
+  listAlertingIncidents as listAlertingIncidentsBinding,
+  listAlertingOccurrences as listAlertingOccurrencesBinding,
   listCollectorRuns as listCollectorRunsBinding,
   loadDashboardCumulativeRequestMetrics as loadDashboardCumulativeRequestMetricsBinding,
   loadDashboardLiveRequestMetrics as loadDashboardLiveRequestMetricsBinding,
@@ -108,9 +111,6 @@ import {
   getProviderDraft as getProviderDraftBinding,
   getRequestDecisionTrace as getRequestDecisionTraceBinding,
   getStationKeyOperationalDetail as getStationKeyOperationalDetailBinding,
-  markChangeEventRead as markChangeEventReadBinding,
-  markChangeEventsRead as markChangeEventsReadBinding,
-  dismissChangeEvent as dismissChangeEventBinding,
   listRequestLogs as listRequestLogsBinding,
   reorderKeyPool as reorderKeyPoolBinding,
   reorderStationKeys as reorderStationKeysBinding,
@@ -121,7 +121,6 @@ import {
   resetModelBasePricesToBuiltins as resetModelBasePricesToBuiltinsBinding,
   resolveStationKeyPricingContext as resolveStationKeyPricingContextBinding,
   resetDataDir as resetDataDirBinding,
-  resolveChangeEvent as resolveChangeEventBinding,
   runChannelMonitorNow as runChannelMonitorNowBinding,
   saveStationKeyWithDefaults as saveStationKeyWithDefaultsBinding,
   scanRemoteStationKeys as scanRemoteStationKeysBinding,
@@ -133,7 +132,6 @@ import {
   upsertBalanceSnapshot as upsertBalanceSnapshotBinding,
   upsertCommonLoginEmail as upsertCommonLoginEmailBinding,
   upsertCommonLoginPassword as upsertCommonLoginPasswordBinding,
-  upsertChangeEvent as upsertChangeEventBinding,
   upsertModelAlias as upsertModelAliasBinding,
   upsertModelBasePrice as upsertModelBasePriceBinding,
   upsertPricingRule as upsertPricingRuleBinding,
@@ -159,9 +157,22 @@ import {
   stopLocalProxy as stopLocalProxyBinding,
   restartLocalProxy as restartLocalProxyBinding,
 } from "./generated";
+import { invokeCommand } from "./generated";
 import type { UpdateStationKeyInputDto } from "./generated";
 import type { BackendClient } from "./BackendClient";
 import type { RuntimeContractInfo } from "./contract";
+import type {
+  AlertPolicy,
+  AlertPolicyInput,
+  AlertingCurrentInput,
+  AlertingHistoryInput,
+  AlertingDomainClient,
+  AlertingIncidentInput,
+  AlertingIncident,
+  AlertingIncidentPage,
+  AlertingSettings,
+  AlertingSettingsInput,
+} from "@/lib/types/alerting";
 import {
   normalizeSettings,
   normalizeEndpointPingResult,
@@ -216,16 +227,44 @@ export class DesktopBackend implements BackendClient {
     pingStationEndpoint: (stationId: string) =>
       pingStationEndpointBinding({ stationId }).then(normalizeEndpointPingResult),
   };
-  readonly changeEvents = {
-    listChangeEvents: () => listChangeEventsBinding(),
-    clearChangeEvents: () => clearChangeEventsBinding(),
-    listChangeEventsForStation: (stationId: string) => listChangeEventsForStationBinding({ stationId }),
-    upsertChangeEvent: (input: Parameters<BackendClient["changeEvents"]["upsertChangeEvent"]>[0]) =>
-      upsertChangeEventBinding(input),
-    markChangeEventRead: (id: string) => markChangeEventReadBinding({ id }),
-    markChangeEventsRead: (ids: string[]) => markChangeEventsReadBinding({ ids }),
-    dismissChangeEvent: (id: string) => dismissChangeEventBinding({ id }),
-    resolveChangeEvent: (id: string) => resolveChangeEventBinding({ id }),
+  readonly alerting: AlertingDomainClient = {
+    loadWorkspace: async () => {
+      const [settings, policies] = await Promise.all([
+        this.alerting.getSettings(),
+        this.alerting.listPolicies(),
+      ]);
+      return { settings, policies };
+    },
+    getSettings: () => invokeCommand<AlertingSettings>("get_alerting_settings", { input: {} }),
+    updateSettings: (input: AlertingSettingsInput) =>
+      invokeCommand<AlertingSettings>("update_alerting_settings", { input }),
+    listPolicies: () => invokeCommand<AlertPolicy[]>("list_alert_policies", { input: {} }),
+    upsertPolicy: (input: AlertPolicyInput) =>
+      invokeCommand<AlertPolicy>("upsert_alert_policy", { input }),
+    deletePolicy: (id: string, expectedRevision?: number) =>
+      invokeCommand<void>("delete_alert_policy", { input: { id, expectedRevision } }),
+    listCurrentIncidents: (input: AlertingCurrentInput = {}) =>
+      listAlertingIncidentsBinding(input).then(normalizeAlertingIncidentPage),
+    getIncident: (input: AlertingIncidentInput) =>
+      getAlertingIncidentBinding(input).then(normalizeAlertingIncident),
+    listOccurrences: (input: AlertingHistoryInput) =>
+      listAlertingOccurrencesBinding(input),
+    listDeliveries: (input: AlertingHistoryInput) =>
+      listAlertingDeliveriesBinding(input),
+    markSeen: (incidentId: string, episodeNumber: number) =>
+      invokeCommand<void>("mark_alerting_seen", { input: { incidentId, episodeNumber } }),
+    markAllSeen: (input = {}) =>
+      invokeCommand<number>("mark_all_alerting_seen", { input }),
+    resolveAllActive: (input = {}) =>
+      invokeCommand<number>("resolve_all_alerting_incidents", { input }),
+    snooze: (incidentId: string, episodeNumber: number, untilMs: number) =>
+      invokeCommand<void>("snooze_alerting_incident", { input: { incidentId, episodeNumber, untilMs } }),
+    sendTestNotification: (channel = "in_app") =>
+      invokeCommand<void>("test_alerting_notification", { input: { channel } }),
+    getDesktopNotificationPermission: () =>
+      getDesktopNotificationPermissionBinding({}).then(normalizeDesktopNotificationPermission),
+    requestDesktopNotificationPermission: () =>
+      requestDesktopNotificationPermissionBinding({}).then(normalizeDesktopNotificationPermission),
   };
   readonly collectorRuns = {
     listCollectorRuns: (stationId: string) => listCollectorRunsBinding({ stationId }),
@@ -565,6 +604,29 @@ export class DesktopBackend implements BackendClient {
     }
     return validation.contract;
   }
+}
+
+function normalizeDesktopNotificationPermission(value: string): "allowed" | "denied" | "unavailable" {
+  return value === "allowed" || value === "denied" ? value : "unavailable";
+}
+
+function normalizeAlertingIncidentPage(
+  page: Awaited<ReturnType<typeof listAlertingIncidentsBinding>>,
+): AlertingIncidentPage {
+  return {
+    ...page,
+    items: page.items.map(normalizeAlertingIncident),
+  };
+}
+
+function normalizeAlertingIncident(
+  incident: Awaited<ReturnType<typeof getAlertingIncidentBinding>>,
+): AlertingIncident {
+  return {
+    ...incident,
+    severity: incident.severity === "critical" || incident.severity === "warning" ? incident.severity : "info",
+    lifecycleState: incident.lifecycleState,
+  };
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {

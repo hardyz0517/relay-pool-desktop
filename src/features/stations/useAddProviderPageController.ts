@@ -174,18 +174,18 @@ export function useAddProviderPageController({
     }
     if (summary.failures.length > 0) {
       toast.info(
-        "本地 Key 已创建，部分模型列表获取失败",
-        `${summary.failures.length}/${summary.requestedCount} 把 Key 获取失败：${readError(summary.failures[0].error)}`,
+        "本地密钥已创建，部分模型列表获取失败",
+        `${summary.failures.length}/${summary.requestedCount} 把密钥获取失败：${readError(summary.failures[0].error)}`,
       );
       return;
     }
     if (summary.updatedCount === 0) {
-      toast.info("本地 Key 已创建，未获取到模型", "模型接口返回了空列表。");
+      toast.info("本地密钥已创建，未获取到模型", "模型接口返回了空列表。");
       return;
     }
     toast.success(
       "模型列表已自动获取并保存",
-      `${summary.updatedCount} 把 Key 共获取 ${summary.modelCount} 个模型。`,
+      `${summary.updatedCount} 把密钥共获取 ${summary.modelCount} 个模型。`,
     );
   }
 
@@ -284,12 +284,12 @@ export function useAddProviderPageController({
 
   const remoteUnsupportedReason = remoteCapability?.unsupportedReason ?? null;
   const remoteCapabilityUnavailableReason = remoteCapabilityError
-    ? `远端 Key 能力读取失败：${remoteCapabilityError}`
+    ? `远端密钥能力读取失败：${remoteCapabilityError}`
     : remoteUnsupportedReason;
   const remoteActionUnavailableReason = remoteCapabilityUnavailableReason;
   const remoteDiscoveryReason =
     remoteCapabilityUnavailableReason ??
-    (remoteListError ? `远端 Key 列表读取失败：${remoteListError}` : null);
+    (remoteListError ? `远端密钥列表读取失败：${remoteListError}` : null);
   const scanRemoteDisabled =
     remoteLoading ||
     Boolean(remoteCapabilityError) ||
@@ -518,7 +518,7 @@ export function useAddProviderPageController({
       await Promise.all(stationKeyIds.map((stationKeyId) => deleteStationKey(stationKeyId)));
       await refreshStationKeyState(targetStationId);
       await invalidateProviderWorkspaceCaches();
-      toast.success(stationKeyIds.length === 1 ? "本地 Key 已删除" : `已删除 ${stationKeyIds.length} 个本地 Key`);
+      toast.success(stationKeyIds.length === 1 ? "本地密钥已删除" : `已删除 ${stationKeyIds.length} 个本地密钥`);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
@@ -527,7 +527,7 @@ export function useAddProviderPageController({
       } catch {
         // Keep the original mutation error as the actionable failure.
       }
-      toast.error("删除本地 Key 失败", message);
+      toast.error("删除本地密钥失败", message);
     } finally {
       setRemoteLoading(false);
     }
@@ -543,7 +543,7 @@ export function useAddProviderPageController({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (remoteLoading) {
-      toast.info("请等待 Key 操作完成");
+      toast.info("请等待密钥操作完成");
       return;
     }
     if (!form.name.trim()) {
@@ -642,6 +642,36 @@ export function useAddProviderPageController({
       toast.info("请填写前端网址");
       return;
     }
+    if (form.stationType === "sub2api") {
+      setTestingConnection(true);
+      setError(null);
+      setConnectionTest({ status: "testing", message: "正在使用授权会话采集..." });
+      try {
+        if (activeStationId) {
+          const result = await collectStationTask(activeStationId, "full");
+          const status = result.snapshot.status === "success" ? "success" : "warning";
+          setConnectionTest({
+            status,
+            message: result.snapshot.errorMessage ?? `采集${status === "success" ? "成功" : "已完成"}`,
+          });
+        } else {
+          const draft = await flushProviderDraft();
+          const preview = await collectProviderDraftPreview(draft.id, "full");
+          const status = preview.status === "success" ? "success" : "warning";
+          setConnectionTest({
+            status,
+            message: `授权会话采集${status === "success" ? "成功" : "已完成"}：${preview.groups.length} 个分组`,
+          });
+        }
+      } catch (requestError) {
+        const message = readError(requestError);
+        setConnectionTest({ status: "error", message });
+        toast.error("Sub2API 授权会话采集失败", message);
+      } finally {
+        setTestingConnection(false);
+      }
+      return;
+    }
     if (!form.loginUsername.trim() || !form.loginPassword.trim()) {
       toast.info("请填写登录用户名和密码");
       return;
@@ -711,12 +741,12 @@ export function useAddProviderPageController({
       if (activeStationId) {
         await refreshLocalStationKeyState(activeStationId);
       }
-      toast.success("远端 Key 已更新", result.message || `发现 ${result.keys.length} 个远端 Key`);
+      toast.success("远端密钥已更新", result.message || `发现 ${result.keys.length} 个远端密钥`);
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
       setRemoteListError(message);
-      toast.error("获取远端 Key 失败", message);
+      toast.error("获取远端密钥失败", message);
     } finally {
       setRemoteLoading(false);
     }
@@ -798,11 +828,11 @@ export function useAddProviderPageController({
       await refreshLocalStationKeyState(targetStationId);
       await invalidateProviderWorkspaceCaches();
       setCreateRemoteOpen(false);
-      toast.success("远端 Key 已创建", result.message || "已同步保存为本地 Key");
+      toast.success("远端密钥已创建", result.message || "已同步保存为本地密钥");
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      toast.error("创建远端 Key 失败", message);
+      toast.error("创建远端密钥失败", message);
     } finally {
       setRemoteLoading(false);
     }
@@ -810,7 +840,7 @@ export function useAddProviderPageController({
 
   async function handleImportRemoteKey(remoteKey: RemoteStationKey) {
     if (!activeStationId) {
-      toast.info("草稿阶段只能查看远端 Key");
+      toast.info("草稿阶段只能查看远端密钥");
       return;
     }
     setRemoteLoading(true);
@@ -820,7 +850,7 @@ export function useAddProviderPageController({
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      toast.error("导入本地 Key 失败", message);
+      toast.error("导入本地密钥失败", message);
     } finally {
       setRemoteLoading(false);
     }
@@ -852,7 +882,7 @@ export function useAddProviderPageController({
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
-      toast.error("删除导入的本地 Key 失败", message);
+      toast.error("删除导入的本地密钥失败", message);
     } finally {
       setImportedLocalKeyPendingDelete(null);
       setRemoteLoading(false);
@@ -871,7 +901,7 @@ export function useAddProviderPageController({
     }
     await refreshStationKeyState(targetStationId);
     await invalidateProviderWorkspaceCaches();
-    toast.success("已创建本地 Key", result.message || `${remoteKeyDisplayName(remoteKey)} 已保存为本地 Key。`);
+    toast.success("已创建本地密钥", result.message || `${remoteKeyDisplayName(remoteKey)} 已保存为本地密钥。`);
   }
 
   async function deleteRemoteCreatedLocalKey(
@@ -880,13 +910,13 @@ export function useAddProviderPageController({
   ) {
     const expectedLocalKey = localStationKeys.find((key) => key.id === expectedStationKeyId);
     if (!expectedLocalKey || !isRemoteCreatedLocalKey(remoteKey, expectedLocalKey)) {
-      throw new Error("这把本地 Key 不是由远端导入的，未删除。");
+      throw new Error("这把本地密钥不是由远端导入的，未删除。");
     }
 
     await deleteStationKey(expectedStationKeyId);
     await refreshStationKeyState(remoteKey.stationId);
     await invalidateProviderWorkspaceCaches();
-    toast.success("已删除导入的本地 Key");
+    toast.success("已删除导入的本地密钥");
   }
 
   function requestDeleteRemoteKey(remoteKey: RemoteStationKey) {
@@ -916,14 +946,14 @@ export function useAddProviderPageController({
       setRemoteKeys(result.keys);
       await invalidateProviderWorkspaceCaches();
       toast.success(
-        result.alreadyAbsent ? "远端 Key 已不存在" : "远端 Key 已删除",
-        result.message || `${remoteKeyDisplayName(remoteKey)} 已从远端删除，本地 Key 保留。`,
+        result.alreadyAbsent ? "远端密钥已不存在" : "远端密钥已删除",
+        result.message || `${remoteKeyDisplayName(remoteKey)} 已从远端删除，本地密钥保留。`,
       );
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);
       setRemoteListError(message);
-      toast.error("删除远端 Key 失败", message);
+      toast.error("删除远端密钥失败", message);
     } finally {
       setRemoteKeyPendingDelete(null);
       setRemoteLoading(false);

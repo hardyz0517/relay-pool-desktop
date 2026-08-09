@@ -42,7 +42,7 @@ export function ChannelStatusTable({
     return (
       <EmptyState
         title={loading ? "正在读取状态监控" : "暂无状态监控行"}
-        description="创建或启用 monitor 后，后端 V2 read model 会在这里显示每个 Key 的独立事实行。"
+        description="创建或启用 monitor 后，后端 V2 read model 会在这里显示每个密钥的独立事实行。"
       />
     );
   }

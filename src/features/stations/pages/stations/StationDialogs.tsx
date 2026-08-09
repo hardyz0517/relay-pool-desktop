@@ -1,7 +1,7 @@
 import type { FormEvent, ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Button, Dialog, MaskedSecret, PropertyList, PropertyRow, SelectControl, StatusBadge } from "@/components/ui";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { AlertingIncident } from "@/lib/types/alerting";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
@@ -31,6 +31,34 @@ const statusTone: Record<Station["status"], "healthy" | "warning" | "error" | "d
 };
 
 const inputClassName = "h-8 rounded-[12px] border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";
+
+const incidentEventLabels: Record<string, string> = {
+  balance_low: "余额偏低",
+  balance_depleted: "余额耗尽",
+  collector_failed: "采集失败",
+  group_missing: "分组缺失",
+  key_group_unresolved: "密钥分组未解析",
+  key_invalid: "密钥无效",
+  price_expired: "价格已过期",
+  route_impacted: "路由受影响",
+  station_down: "站点不可用",
+};
+
+const incidentLifecycleLabels: Record<string, string> = {
+  pending: "待确认",
+  open: "处理中",
+  recovering: "恢复中",
+  resolved: "已恢复",
+};
+
+function formatIncidentEventLabel(eventType: string) {
+  return incidentEventLabels[eventType] ?? eventType.replace(/_/g, " ");
+}
+
+function formatIncidentSummary(event: AlertingIncident) {
+  const lifecycle = incidentLifecycleLabels[event.lifecycleState] ?? event.lifecycleState;
+  return `${lifecycle} · 第 ${event.episodeNumber} 次 · ${event.occurrenceCount} 次观测 · 条件 ${event.conditionKey}`;
+}
 
 export function StationDialogs({
   activeDialogStation,
@@ -201,7 +229,7 @@ export function StationDialogs({
 
 export function DetailBody({
   activeDialogStation,
-  changeEvents,
+  incidents = [],
   credentials,
   keyCountLabel,
   snapshot,
@@ -214,7 +242,7 @@ export function DetailBody({
   onEditKey,
 }: {
   activeDialogStation: Station;
-  changeEvents: ChangeEvent[];
+  incidents: AlertingIncident[];
   credentials: StationCredentials | null;
   keyCountLabel: string;
   snapshot: CollectorSnapshot | null;
@@ -366,19 +394,19 @@ export function DetailBody({
       </SectionBlock>
 
       <SectionBlock title="关联变更">
-        {changeEvents.length === 0 ? (
+        {incidents.length === 0 ? (
           <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm text-muted-foreground shadow-[var(--surface-shadow)]">暂无关联变更。</div>
         ) : (
           <div className="space-y-2">
-            {changeEvents.slice(0, 6).map((event) => (
+            {incidents.slice(0, 6).map((event) => (
               <div key={event.id} className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm shadow-[var(--surface-shadow)]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-foreground">{event.title}</span>
+                  <span className="font-medium text-foreground">{formatIncidentEventLabel(event.eventType)}</span>
                   <StatusBadge tone={event.severity === "critical" ? "error" : event.severity === "warning" ? "warning" : "info"}>
                     {event.severity === "critical" ? "严重" : event.severity === "warning" ? "警告" : "信息"}
                   </StatusBadge>
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">{event.message}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{formatIncidentSummary(event)}</div>
               </div>
             ))}
           </div>

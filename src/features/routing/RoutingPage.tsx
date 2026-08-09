@@ -31,9 +31,11 @@ type LocalRoutingTab = "status" | "edit";
 export function RoutingPage({
   deepLink,
   onOpenRequestLog,
+  developerModeEnabled = false,
 }: {
   deepLink?: VersionedRoutingDeepLink | null;
   onOpenRequestLog?: (requestLogId: string) => void;
+  developerModeEnabled?: boolean;
 }) {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -209,14 +211,16 @@ export function RoutingPage({
             onToggleProxy={() => void handleToggleProxy()}
             deepLink={deepLink}
           />
-          <RoutingStatusDiagnosticsPanel
-            snapshot={routingSnapshotQuery.data ?? null}
-            runtimeOverlay={routingRuntimeQuery.data ?? null}
-            decisions={routeDecisionsQuery.data ?? null}
-            loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
-            deepLink={deepLink}
-            onOpenRequestLog={onOpenRequestLog}
-          />
+          {developerModeEnabled ? (
+            <RoutingStatusDiagnosticsPanel
+              snapshot={routingSnapshotQuery.data ?? null}
+              runtimeOverlay={routingRuntimeQuery.data ?? null}
+              decisions={routeDecisionsQuery.data ?? null}
+              loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
+              deepLink={deepLink}
+              onOpenRequestLog={onOpenRequestLog}
+            />
+          ) : null}
         </div>
       ) : activeTab === "edit" ? (
         <LocalRoutingEditTab

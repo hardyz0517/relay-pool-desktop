@@ -10,7 +10,7 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     stationKeyId: "key-1",
     stationId: "station-1",
     stationName: "Station",
-    keyName: "Key",
+    keyName: "密钥",
     endpoint: "chat_completions",
     priority: 1,
     enabled: true,

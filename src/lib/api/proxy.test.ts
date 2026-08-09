@@ -28,7 +28,7 @@ describe("request log backend cutover", () => {
       settings: {} as never,
       stations: {} as never,
       stationKeys: {} as never,
-      changeEvents: {} as never,
+      alerting: {} as never,
       collectorRuns: {} as never,
       collectors: {} as never,
       proxy: proxy as never,

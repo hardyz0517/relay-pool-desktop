@@ -25,7 +25,6 @@ export const queryKeys = {
   keyPool: ["keyPool"] as const,
   modelBasePrices: ["modelBasePrices"] as const,
   balanceSnapshots: ["balanceSnapshots"] as const,
-  changeEvents: ["changeEvents"] as const,
   channelMonitoring: ["channelMonitoring"] as const,
   pricing: ["pricing"] as const,
   pricingGroupMonitorStatus: (input: PricingGroupMonitorStatusInput) =>
@@ -36,4 +35,12 @@ export const queryKeys = {
   channelMonitorExecution: (executionId: string) => ["channelMonitorExecution", executionId] as const,
   channelMonitorAttempts: ["channelMonitorAttempts"] as const,
   monitoringCapabilities: ["monitoringCapabilities"] as const,
+  alertingWorkspace: ["alertingWorkspace"] as const,
+  alertingSettings: ["alertingSettings"] as const,
+  alertPolicies: ["alertPolicies"] as const,
+  alertingCurrent: (input: unknown = {}) => ["alertingCurrent", input] as const,
+  alertingIncident: (incidentId: string, episodeNumber: number) =>
+    ["alertingIncident", incidentId, episodeNumber] as const,
+  alertingOccurrences: (input: unknown) => ["alertingOccurrences", input] as const,
+  alertingDeliveries: (input: unknown) => ["alertingDeliveries", input] as const,
 } as const;

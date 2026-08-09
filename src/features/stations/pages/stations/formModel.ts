@@ -130,7 +130,7 @@ export function stationEndpointOriginWarnings(station: Station, form: StationFor
     warnings.push("前端网址 origin 变化后，保存的登录状态会被清除。");
   }
   if (endpointOriginKey(station.apiBaseUrl) !== endpointOriginKey(form.apiBaseUrl)) {
-    warnings.push("API origin 变化后，站点会被禁用，现有 Key 将不会路由，直到重新验证并启用。");
+    warnings.push("API origin 变化后，站点会被禁用，现有密钥将不会路由，直到重新验证并启用。");
   }
   return warnings;
 }

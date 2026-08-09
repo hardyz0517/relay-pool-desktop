@@ -37,7 +37,7 @@ function fallbackCandidate(
 }
 
 /**
- * Key Pool is the write model for ordering. Workspace candidates remain a
+ * 密钥池 is the write model for ordering. Workspace candidates remain a
  * status projection and must never determine the persisted sequence.
  */
 export function buildEditableRoutingCandidates(

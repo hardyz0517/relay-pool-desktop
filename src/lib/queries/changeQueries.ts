@@ -1,18 +1,21 @@
-import { listChangeEvents } from "@/lib/api/changeEvents";
+import { listCurrentAlertingIncidents } from "@/lib/api/alerting";
 import { listStations } from "@/lib/api/stations";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { AlertingIncident } from "@/lib/types/alerting";
 import type { Station } from "@/lib/types/stations";
 
 export type ChangeCenterWorkspace = {
-  changeEvents: ChangeEvent[];
+  incidents: AlertingIncident[];
   stations: Station[];
 };
 
 export async function loadChangeCenterWorkspace(): Promise<ChangeCenterWorkspace> {
-  const [changeEvents, stations] = await Promise.all([listChangeEvents(), listStations()]);
+  const [incidentPage, stations] = await Promise.all([
+    listCurrentAlertingIncidents({ limit: 100 }),
+    listStations(),
+  ]);
 
   return {
-    changeEvents,
+    incidents: incidentPage.items,
     stations,
   };
 }

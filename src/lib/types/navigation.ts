@@ -19,7 +19,8 @@ export type AppPageId =
   | "stationDetail"
   | "addKey"
   | "editKey"
-  | "modelBasePrices";
+  | "modelBasePrices"
+  | "changeSettings";
 
 export type TransientPageId = Exclude<AppPageId, AppRouteId>;
 

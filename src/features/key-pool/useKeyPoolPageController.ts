@@ -253,7 +253,7 @@ export function useKeyPoolPageController({
 
   function handleTestConnectivity(item: KeyPoolItem) {
     if (!item.apiKeyPresent) {
-      toast.error("无法测试连通性", "该密钥没有保存 API Key。");
+      toast.error("无法测试连通性", "该密钥没有保存 API 密钥。");
       return;
     }
     setConnectivityDialogItem(item);

@@ -47,7 +47,7 @@ export const mockRequestLogs: MockRequestLog[] = [
     estimatedCostCny: 0.043,
     candidateStations: ["Orchid Relay", "Lantern NewAPI"],
     fallbackTrace: [{ stationName: "Orchid Relay", result: "selected", reason: "优先级最高且健康状态正常" }],
-    redactedRequestSummary: "POST /v1/responses · messages[3] · key sk-local-****2w9",
+    redactedRequestSummary: "POST /v1/responses · messages[3] · 密钥 sk-local-****2w9",
   },
   {
     id: "req-1006",
@@ -68,7 +68,7 @@ export const mockRequestLogs: MockRequestLog[] = [
       { stationName: "Harbor Compatible", result: "failed", reason: "429 rate_limit" },
       { stationName: "Lantern NewAPI", result: "selected", reason: "fallback 后第一个可用站点" },
     ],
-    redactedRequestSummary: "POST /v1/chat/completions · stream=true · key sk-local-****2w9",
+    redactedRequestSummary: "POST /v1/chat/completions · stream=true · 密钥 sk-local-****2w9",
   },
   {
     id: "req-1005",
@@ -86,6 +86,6 @@ export const mockRequestLogs: MockRequestLog[] = [
     errorReason: "模型不在当前分组",
     candidateStations: ["Lantern NewAPI"],
     fallbackTrace: [{ stationName: "Lantern NewAPI", result: "failed", reason: "403 forbidden" }],
-    redactedRequestSummary: "POST /v1/responses · input[1] · key sk-local-****2w9",
+    redactedRequestSummary: "POST /v1/responses · input[1] · 密钥 sk-local-****2w9",
   },
 ];

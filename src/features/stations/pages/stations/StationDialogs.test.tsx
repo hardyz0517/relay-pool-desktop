@@ -131,7 +131,7 @@ describe("StationDialogs", () => {
         <ToastProvider>
           <DetailBody
             activeDialogStation={station()}
-            changeEvents={[]}
+            incidents={[]}
             collectorRuns={[]}
             credentials={null}
             groupBindings={[]}

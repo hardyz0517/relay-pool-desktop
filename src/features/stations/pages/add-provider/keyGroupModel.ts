@@ -340,7 +340,7 @@ export function findReusableDefaultKey(keys: StationKey[]) {
   if (keys.length === 1) {
     return keys[0];
   }
-  const defaultKeys = keys.filter((key) => key.priority === 0 && key.name === "Default Key");
+  const defaultKeys = keys.filter((key) => key.priority === 0 && key.name === "Default 密钥");
   return defaultKeys.length === 1 ? defaultKeys[0] : null;
 }
 
@@ -543,7 +543,7 @@ function resolveLegacyRemoteCreatedLocalKeyId(
 }
 
 export function remoteKeyDisplayName(remoteKey: RemoteStationKey) {
-  return remoteKey.remoteKeyName?.trim() || remoteKey.apiKeyMasked || remoteKey.remoteKeyIdHash || "远端 Key";
+  return remoteKey.remoteKeyName?.trim() || remoteKey.apiKeyMasked || remoteKey.remoteKeyIdHash || "远端 密钥";
 }
 
 export function groupsMatch(row: StationGroupDraft, group: StationKeyGroupOption) {

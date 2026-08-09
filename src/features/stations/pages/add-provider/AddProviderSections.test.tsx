@@ -230,11 +230,11 @@ describe("AddProviderSections", () => {
 
     const buttons = [...host.querySelectorAll<HTMLButtonElement>("button")];
     await act(async () =>
-      buttons.find((button) => button.textContent?.includes("获取所有 Key"))!
+      buttons.find((button) => button.textContent?.includes("获取所有密钥"))!
         .dispatchEvent(new MouseEvent("click", { bubbles: true })),
     );
     await act(async () =>
-      buttons.find((button) => button.textContent?.includes("新建远端 Key"))!
+      buttons.find((button) => button.textContent?.includes("新建远端密钥"))!
         .dispatchEvent(new MouseEvent("click", { bubbles: true })),
     );
     await act(async () =>
@@ -316,7 +316,7 @@ describe("AddProviderSections", () => {
     );
 
     const deleteButton = host.querySelector<HTMLButtonElement>(
-      'button[aria-label="删除远端 Key Remote fixture"]',
+      'button[aria-label="删除远端密钥 Remote fixture"]',
     )!;
     await act(async () => deleteButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 
@@ -399,9 +399,9 @@ describe("AddProviderSections", () => {
     expect(host.textContent).not.toContain("已关联");
     expect(host.textContent).not.toContain("未绑定");
     expect(host.textContent).not.toContain("状态");
-    expect(host.textContent).toContain("Key 池");
-    expect(host.textContent).toContain("无对应本地 Key");
-    expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).not.toBeNull();
+    expect(host.textContent).toContain("密钥池");
+    expect(host.textContent).toContain("无对应本地密钥");
+    expect(host.querySelector('button[aria-label="导入 Matched remote 到密钥池"]')).not.toBeNull();
 
     await act(async () =>
       root.render(
@@ -436,7 +436,7 @@ describe("AddProviderSections", () => {
       ),
     );
     expect(host.textContent).toContain("已导入");
-    expect(host.querySelector('button[aria-label="从 Key 池移除 Matched remote"]')).not.toBeNull();
+    expect(host.querySelector('button[aria-label="从密钥池移除 Matched remote"]')).not.toBeNull();
 
     await act(async () =>
       root.render(
@@ -459,8 +459,8 @@ describe("AddProviderSections", () => {
     expect(host.textContent).not.toContain("待解绑");
     expect(host.textContent).toContain("正在解除绑定");
     expect(host.textContent).toContain("删除中");
-    expect(host.querySelector('button[aria-label="导入 Matched remote 到 Key 池"]')).toBeNull();
-    expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除远端 Key Matched remote"]')?.disabled).toBe(true);
+    expect(host.querySelector('button[aria-label="导入 Matched remote 到密钥池"]')).toBeNull();
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="删除远端密钥 Matched remote"]')?.disabled).toBe(true);
 
     await act(async () => root.unmount());
   });

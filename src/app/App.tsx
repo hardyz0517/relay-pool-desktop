@@ -13,11 +13,14 @@ import {
 } from "@/app/pageTransitionPolicy";
 import { AddKeyPage, EditKeyPage } from "@/features/key-pool";
 import { ModelBasePricesPage } from "@/features/pricing";
+import { ChangeCenterSettingsPage } from "@/features/changes";
 import type { RequestLogDeepLink, VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import type { RoutingDeepLink, VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { AddProviderPage, StationDetailPage } from "@/features/stations";
 import type { AppPageId, AppRouteId, TransientPageId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
+import { settingsQueryOptions } from "@/lib/query/resourceQueries";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
 
 const ACTIONABLE_ELEMENT_SELECTOR = [
   "[data-page-autofocus]",
@@ -31,6 +34,8 @@ const ACTIONABLE_ELEMENT_SELECTOR = [
 
 export function App() {
   const { intent, committed, pending, navigate } = useNavigationController("dashboard");
+  const settingsQuery = useActivityQuery(settingsQueryOptions());
+  const developerModeEnabled = settingsQuery.data?.developerModeEnabled === true;
   const { activeRouteId, previousRouteId, transientParentRouteId } = committed;
   const [mountedRouteIds, setMountedRouteIds] = useState<Set<AppRouteId>>(
     () => new Set(["dashboard"]),
@@ -190,6 +195,10 @@ export function App() {
     navigateTo("modelBasePrices");
   }, [navigateTo]);
 
+  const openChangeCenterSettings = useCallback(() => {
+    navigateTo("changeSettings");
+  }, [navigateTo]);
+
   const openRoutingDeepLink = useCallback((link: RoutingDeepLink) => {
     routingDeepLinkSequenceRef.current += 1;
     setRoutingDeepLink({ ...link, sequence: routingDeepLinkSequenceRef.current });
@@ -210,6 +219,7 @@ export function App() {
       addKey: openAddKey,
       editKey: openEditKey,
       openModelBasePrices,
+      openChangeCenterSettings,
       openRoutingDeepLink,
       routingDeepLink,
       openRequestLogDeepLink,
@@ -222,6 +232,7 @@ export function App() {
       openAddKey,
       openEditKey,
       openModelBasePrices,
+      openChangeCenterSettings,
       openRoutingDeepLink,
       routingDeepLink,
       openRequestLogDeepLink,
@@ -261,7 +272,7 @@ export function App() {
               initialStation={detailStationPreview}
               onBack={returnToStations}
               onEditProvider={openEditProvider}
-              onOpenRoutingDeepLink={openRoutingDeepLink}
+              onOpenRoutingDeepLink={developerModeEnabled ? openRoutingDeepLink : undefined}
             />
           ),
         };
@@ -297,7 +308,17 @@ export function App() {
             <ModelBasePricesPage
               backLabel={`返回${activeShellRouteLabel}`}
               onBack={() => navigateTo(activeShellRouteId)}
-              onOpenRoutingDeepLink={openRoutingDeepLink}
+              onOpenRoutingDeepLink={developerModeEnabled ? openRoutingDeepLink : undefined}
+            />
+          ),
+        };
+      case "changeSettings":
+        return {
+          pageId: "changeSettings",
+          instanceKey: "changeSettings",
+          node: (
+            <ChangeCenterSettingsPage
+              onBack={() => navigateTo("changes")}
             />
           ),
         };

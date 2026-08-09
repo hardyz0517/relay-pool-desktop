@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Route, Search, Trash2 } from "lucide-react";
+import { CheckCheck, ChevronDown, ChevronUp, RefreshCw, Route, Search, Settings, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -15,345 +15,323 @@ import {
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
-import { clearChangeEvents } from "@/lib/api/changeEvents";
-import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
-  changeEventsQueryOptions,
-  stationsQueryOptions,
-} from "@/lib/query/resourceQueries";
+  alertingCurrentQueryOptions,
+  alertingDeliveriesQueryOptions,
+  alertingOccurrencesQueryOptions,
+} from "@/lib/queries/alertingQueries";
+import { settingsQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
+import { useActivityQuery } from "@/lib/query/useActivityQuery";
+import type { AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
-import {
-  activeSeverityCount,
-  buildChangeEventListItem,
-  filterChangeEvents,
-  formatChangeTime,
-  objectTypeLabels,
-  paginateChangeEvents,
-  severityTone,
-  type ChangeFilter,
-} from "./changeEventViewModels";
+import { markAlertingSeen, markAllAlertingSeen, resolveAllAlertingIncidents } from "@/lib/api/alerting";
 
 type ChangeCenterRoutingDeepLink = Extract<
   RoutingDeepLink,
   { kind: "request" } | { kind: "station-key" } | { kind: "station" }
-> & {
-  source: "change_center";
-};
+> & { source: "change_center" };
 
 type ChangeCenterPageProps = {
   onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void;
+  onOpenSettings?: () => void;
 };
 
-export function ChangeCenterPage({ onOpenRoutingDeepLink }: ChangeCenterPageProps = {}) {
+type ChangeCenterLinkEvent = AlertingIncident & {
+  requestLogId?: string | null;
+  objectType?: string | null;
+  objectId?: string | null;
+  stationKeyId?: string | null;
+};
+
+function createChangeCenterRoutingLink(event: ChangeCenterLinkEvent): ChangeCenterRoutingDeepLink | null {
+  if (event.requestLogId) {
+    return { kind: "request", requestLogId: event.requestLogId, source: "change_center" };
+  }
+  if (event.objectType === "station_key" && (event.stationKeyId || event.objectId)) {
+    return { kind: "station-key", stationKeyId: event.stationKeyId ?? event.objectId!, source: "change_center" };
+  }
+  if (event.objectType === "station" && (event.stationId || event.objectId)) {
+    return { kind: "station", stationId: event.stationId ?? event.objectId!, source: "change_center" };
+  }
+  return event.stationId ? { kind: "station", stationId: event.stationId, source: "change_center" } : null;
+}
+
+type View = "active" | "unread" | "resolved" | "all";
+type Severity = "all" | "critical" | "warning" | "info";
+
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
+
+export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: ChangeCenterPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const eventsQuery = useActivityQuery(changeEventsQueryOptions(false));
+  const [view, setView] = useState<View>("active");
+  const [severity, setSeverity] = useState<Severity>("all");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [pageCursors, setPageCursors] = useState<Record<number, AlertingCursor | null>>({ 1: null });
+  const [busyIncidentId, setBusyIncidentId] = useState<string | null>(null);
+  const [isMarkingAllSeen, setIsMarkingAllSeen] = useState(false);
+  const [isClearingAll, setIsClearingAll] = useState(false);
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [expandedIncidentKey, setExpandedIncidentKey] = useState<string | null>(null);
   const stationsQuery = useActivityQuery(stationsQueryOptions());
-  const events = eventsQuery.data ?? [];
-  const stationNamesById = useMemo(
+  const settingsQuery = useActivityQuery(settingsQueryOptions());
+  const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;
+  const incidentQuery = useActivityQuery(
+    alertingCurrentQueryOptions({
+      severity: severity === "all" ? null : severity,
+      lifecycleState: view === "active" || view === "unread" ? view : view === "resolved" ? "resolved" : null,
+      cursor: pageCursors[page] ?? null,
+      limit: pageSize,
+    }),
+  );
+  const incidents = incidentQuery.data?.items ?? [];
+  const stationNames = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
   );
-  const stationCreditPerCnyById = useMemo(
-    () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.creditPerCny] as const)),
-    [stationsQuery.data],
-  );
-  const loading = eventsQuery.isPending && eventsQuery.data === undefined;
-  const error = eventsQuery.error ? readError(eventsQuery.error) : null;
-  const [filter, setFilter] = useState<ChangeFilter>({ severity: "all", status: "active", objectType: "all", query: "" });
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(CHANGE_EVENTS_DEFAULT_PAGE_SIZE);
-  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const filteredIncidents = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return incidents.filter((incident) => {
+      const active = incident.lifecycleState !== "resolved";
+      if (view === "active" && !active) return false;
+      if (view === "resolved" && active) return false;
+      if (view === "unread" && incident.seenAtMs != null) return false;
+      if (!needle) return true;
+      return [incident.eventType, incident.conditionKey, incident.stationId, incident.lifecycleState]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(needle));
+    });
+  }, [incidents, query, view]);
+  const pageInfo = useMemo(() => {
+    return {
+      currentPage: page,
+      totalPages: incidentQuery.data?.nextCursor ? page + 1 : page,
+      startIndex: filteredIncidents.length === 0 ? 0 : 1,
+      endIndex: filteredIncidents.length,
+      total: filteredIncidents.length,
+      items: filteredIncidents,
+    };
+  }, [filteredIncidents, incidentQuery.data?.nextCursor, page]);
 
   async function refresh(showSuccess = false) {
     try {
       await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["alertingCurrent"], type: "active" }),
         queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" }),
-        queryClient.refetchQueries({ queryKey: queryKeys.changeEvents, type: "active" }),
       ]);
-      if (showSuccess) {
-        toast.success("变更中心已刷新");
-      }
+      if (showSuccess) toast.success("变更中心已刷新");
     } catch (requestError) {
-      const message = readError(requestError);
-      toast.error("刷新变更中心失败", message);
+      toast.error("刷新失败", readError(requestError));
     }
   }
 
-  async function clearChangeHistory() {
-    setSaving(true);
+  function changeView(next: View) {
+    setView(next);
+    setPage(1);
+    setPageCursors({ 1: null });
+  }
+
+  function changeSeverity(next: Severity) {
+    setSeverity(next);
+    setPage(1);
+    setPageCursors({ 1: null });
+  }
+
+  function changePage(nextPage: number) {
+    if (nextPage > page && incidentQuery.data?.nextCursor) {
+      setPageCursors((current) => ({ ...current, [nextPage]: incidentQuery.data?.nextCursor ?? null }));
+    }
+    setPage(nextPage);
+  }
+
+  async function markSeen(incident: AlertingIncident) {
+    setBusyIncidentId(incident.id);
     try {
-      await queryClient.cancelQueries({ queryKey: queryKeys.changeEvents });
-      await clearChangeEvents();
-      queryClient.setQueryData(queryKeys.changeEvents, []);
-      setPage(1);
-      toast.success("变更记录已清除");
-      setClearConfirmOpen(false);
+      await markAlertingSeen(incident.id, incident.episodeNumber);
+      await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
     } catch (requestError) {
-      toast.error("清除变更记录失败", readError(requestError));
+      toast.error("标记提醒已读失败", readError(requestError));
     } finally {
-      setSaving(false);
+      setBusyIncidentId(null);
     }
   }
 
-  const filteredEvents = useMemo(
-    () => filterChangeEvents(events, filter, { stationNamesById, stationCreditPerCnyById }),
-    [events, filter, stationCreditPerCnyById, stationNamesById],
-  );
-  const pageInfo = useMemo(() => paginateChangeEvents(filteredEvents, page, pageSize), [filteredEvents, page, pageSize]);
-  const objectOptions = useMemo(() => {
-    const values = Array.from(new Set(events.map((event) => event.objectType))).sort((a, b) => a.localeCompare(b));
-    return values.map((value) => ({ value, label: objectTypeLabels[value] ?? value }));
-  }, [events]);
+  async function markAllSeen() {
+    setIsMarkingAllSeen(true);
+    try {
+      const markedCount = await markAllAlertingSeen({ severity: severity === "all" ? null : severity });
+      await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
+      toast.success(markedCount > 0 ? `已将 ${markedCount} 条提醒标记为已读` : "没有需要标记的未读提醒");
+    } catch (requestError) {
+      toast.error("一键标记已读失败", readError(requestError));
+    } finally {
+      setIsMarkingAllSeen(false);
+    }
+  }
+
+  function requestClearAll() {
+    if ((incidentQuery.data?.activeCount ?? 0) === 0) return;
+    setIsClearConfirmOpen(true);
+  }
+
+  async function confirmClearAll() {
+    setIsClearingAll(true);
+    try {
+      const clearedCount = await resolveAllAlertingIncidents({ severity: severity === "all" ? null : severity });
+      await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
+      toast.success(clearedCount > 0 ? `已清空 ${clearedCount} 条活动告警` : "没有可清空的活动告警");
+    } catch (requestError) {
+      toast.error("清空告警失败", readError(requestError));
+    } finally {
+      setIsClearingAll(false);
+      setIsClearConfirmOpen(false);
+    }
+  }
 
   return (
     <PageScaffold
       title="变更中心"
       actions={
-        <div className="flex items-center gap-2">
-          <Button variant="danger" onClick={() => setClearConfirmOpen(true)} disabled={loading || saving || events.length === 0}>
-            <Trash2 className="h-4 w-4" />
-            清除记录
-          </Button>
-          <Button variant="secondary" onClick={() => void refresh(true)} disabled={loading || saving}>
-            <RefreshCw className="h-4 w-4" />
-            刷新
-          </Button>
-        </div>
+        <>
+          {onOpenSettings ? (
+            <IconButton className="h-9 w-9" label="变更中心设置" title="变更中心设置" onClick={onOpenSettings}>
+              <Settings className="h-5 w-5" />
+            </IconButton>
+          ) : null}
+        </>
       }
     >
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="grid gap-3 md:grid-cols-3">
-          <SummaryTile label="严重" value={activeSeverityCount(events, "critical")} />
-          <SummaryTile label="警告" value={activeSeverityCount(events, "warning")} />
-          <SummaryTile label="信息" value={activeSeverityCount(events, "info")} />
+          <SummaryTile label="活动问题" value={incidentQuery.data?.activeCount ?? 0} />
+          <SummaryTile label="未读提醒" value={incidentQuery.data?.unseenCount ?? 0} />
+          <SummaryTile label="当前加载" value={incidents.length} />
         </div>
-
         <div className="min-w-0">
-          <div
-            data-testid="change-center-toolbar-surface"
-            className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
-          >
-            <Toolbar>
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <SegmentedControl
-                  value={filter.status}
-                  options={[
-                    { value: "active", label: "活跃" },
-                    { value: "unread", label: "未读" },
-                    { value: "resolved", label: "已解决" },
-                    { value: "all", label: "全部" },
-                  ]}
-                  onChange={(status) => {
-                    setPage(1);
-                    setFilter((current) => ({ ...current, status }));
-                  }}
-                />
-                <SelectControl
-                  ariaLabel="变更级别"
-                  className={inputClassName}
-                  value={filter.severity}
-                  options={[
-                    { value: "all", label: "全部级别" },
-                    { value: "critical", label: "严重" },
-                    { value: "warning", label: "警告" },
-                    { value: "info", label: "信息" },
-                  ]}
-                  onChange={(severity) => {
-                    setPage(1);
-                    setFilter((current) => ({ ...current, severity }));
-                  }}
-                />
-                <SelectControl
-                  ariaLabel="对象类型"
-                  className={inputClassName}
-                  value={filter.objectType}
-                  options={[
-                    { value: "all", label: "全部对象" },
-                    ...objectOptions,
-                  ]}
-                  onChange={(objectType) => {
-                    setPage(1);
-                    setFilter((current) => ({ ...current, objectType }));
-                  }}
-                />
+          <div data-testid="change-center-toolbar-surface" className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
+            <Toolbar className="flex-wrap">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <SegmentedControl value={view} options={[{ value: "active", label: "活动" }, { value: "unread", label: "未读" }, { value: "resolved", label: "已恢复" }, { value: "all", label: "全部" }]} onChange={changeView} />
+                <SelectControl ariaLabel="严重度" className={inputClassName} value={severity} options={[{ value: "all", label: "全部严重度" }, { value: "critical", label: "严重" }, { value: "warning", label: "警告" }, { value: "info", label: "信息" }]} onChange={changeSeverity} />
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
-                  <input
-                    className={`${inputClassName} pl-8`}
-                    value={filter.query}
-                    placeholder="搜索变更 / 对象 / 来源"
-                    onChange={(event) => {
-                      setPage(1);
-                      setFilter((current) => ({ ...current, query: event.target.value }));
-                    }}
-                  />
+                  <input aria-label="搜索问题" className={`${inputClassName} pl-8`} value={query} placeholder="搜索事件或站点" onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
                 </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (incidentQuery.data?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
+                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || (incidentQuery.data?.activeCount ?? 0) === 0}><Trash2 className="h-4 w-4" />一键清空</Button>
+                <Button variant="secondary" onClick={() => void refresh(true)} disabled={incidentQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
               </div>
             </Toolbar>
           </div>
-          <div
-            data-testid="change-center-list-surface"
-            className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]"
-          >
-            {error && <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{error}</div>}
-            {filteredEvents.length === 0 ? (
-              <EmptyState
-                title={loading ? "正在读取变更" : "暂无变更"}
-                description="余额、密钥、采集、价格、倍率、模型和路由状态变化会在这里形成记录。"
-              />
-            ) : (
-              <>
-                <div className="divide-y divide-border bg-surface">
-                  {pageInfo.events.map((event) => (
-                    <ChangeEventRow
-                      key={event.id}
-                      event={event}
-                      stationNamesById={stationNamesById}
-                      stationCreditPerCnyById={stationCreditPerCnyById}
-                      deferStationIdentifierFallback={stationsQuery.isPending && stationsQuery.data === undefined}
-                      onOpenRoutingDeepLink={onOpenRoutingDeepLink}
-                    />
-                  ))}
-                </div>
-              </>
+          <div data-testid="change-center-list-surface" className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
+            {incidentQuery.error ? <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{readError(incidentQuery.error)}</div> : null}
+            {pageInfo.items.length === 0 ? <EmptyState title={incidentQuery.isPending ? "正在加载问题" : "暂无问题"} description="当前事实、恢复状态和待处理提醒会显示在这里。" /> : (
+              <div className="divide-y divide-border bg-surface">
+                {pageInfo.items.map((incident) => {
+                  const key = `${incident.id}:${incident.episodeNumber}`;
+                  return <IncidentRow key={key} incident={incident} stationName={incident.stationId ? stationNames.get(incident.stationId) : null} busy={busyIncidentId === incident.id} developerModeEnabled={developerModeEnabled} expanded={expandedIncidentKey === key} onToggle={() => setExpandedIncidentKey((current) => current === key ? null : key)} onMarkSeen={() => void markSeen(incident)} onOpenRoutingDeepLink={onOpenRoutingDeepLink} />;
+                })}
+              </div>
             )}
           </div>
-          {filteredEvents.length > 0 && (
-            <div
-              data-testid="change-center-pagination-surface"
-              className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground"
-            >
-              <div className="flex flex-wrap items-center gap-3">
-                <span>
-                  第 {pageInfo.startIndex}-{pageInfo.endIndex} 条 / 共 {pageInfo.totalCount} 条
-                </span>
-                <label className="flex items-center gap-2">
-                  <span>每页</span>
-                  <select
-                    aria-label="每页记录数"
-                    value={pageSize}
-                    onChange={(event) => {
-                      setPageSize(Number(event.target.value));
-                      setPage(1);
-                    }}
-                    className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20"
-                  >
-                    {[20, 50, 100].map((size) => (
-                      <option key={size} value={size}>{size}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <Pagination
-                ariaLabel="变更中心分页"
-                page={pageInfo.page}
-                totalPages={pageInfo.totalPages}
-                disabled={loading || saving}
-                onPageChange={setPage}
-              />
-            </div>
-          )}
+          {pageInfo.total > 0 ? <div data-testid="change-center-pagination-surface" className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-3"><span>第 {pageInfo.currentPage} 页：{pageInfo.startIndex}-{pageInfo.endIndex}</span><label className="flex items-center gap-2"><span>每页数量</span><select aria-label="每页数量" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); setPageCursors({ 1: null }); }} className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-ring">{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label></div>
+            <Pagination ariaLabel="变更中心分页" page={pageInfo.currentPage} totalPages={pageInfo.totalPages} disabled={incidentQuery.isFetching} onPageChange={changePage} />
+          </div> : null}
         </div>
-        <ConfirmDialog
-          open={clearConfirmOpen}
-          title="清除变更记录"
-          description="确定要清除全部变更记录吗？此操作不会删除中转站、密钥或价格配置，但记录本身无法恢复。"
-          confirmLabel="清除"
-          confirming={saving}
-          onCancel={() => setClearConfirmOpen(false)}
-          onConfirm={() => void clearChangeHistory()}
-        />
       </div>
+      <ConfirmDialog
+        open={isClearConfirmOpen}
+        title="清空活动告警"
+        description="确认清空当前活动告警吗？清空后这些告警会进入已恢复状态。"
+        confirmLabel="清空告警"
+        confirming={isClearingAll}
+        onCancel={() => setIsClearConfirmOpen(false)}
+        onConfirm={() => void confirmClearAll()}
+      />
     </PageScaffold>
   );
 }
 
-function ChangeEventRow({
-  event,
-  stationNamesById,
-  stationCreditPerCnyById,
-  deferStationIdentifierFallback,
-  onOpenRoutingDeepLink,
-}: {
-  event: ChangeEvent;
-  stationNamesById: Map<string, string>;
-  stationCreditPerCnyById: Map<string, number>;
-  deferStationIdentifierFallback: boolean;
-  onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void;
-}) {
-  const item = buildChangeEventListItem(event, {
-    stationNamesById,
-    stationCreditPerCnyById,
-    deferStationIdentifierFallback,
-  });
-  const routingLink = createChangeCenterRoutingLink(event);
-  return (
-    <div className="grid min-h-[48px] w-full grid-cols-[56px_minmax(0,1fr)_88px_32px] items-center gap-3 bg-surface px-3 py-2 text-left">
-      <div className="flex flex-col items-start gap-1">
-        <StatusBadge tone={severityTone[event.severity]}>{item.severityLabel}</StatusBadge>
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-[13px] font-semibold text-foreground">{item.title}</div>
-      </div>
-      <div className="flex flex-col items-end text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">{formatChangeTime(event.detectedAt)}</span>
-      </div>
-      <div className="flex justify-end">
-        {onOpenRoutingDeepLink && routingLink ? (
-          <IconButton
-            className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary"
-            label={`查看路由影响 ${item.title}`}
-            onClick={() => onOpenRoutingDeepLink(routingLink)}
-          >
-            <Route className="h-4 w-4" />
-          </IconButton>
-        ) : null}
-      </div>
+function IncidentRow({ incident, stationName, busy, developerModeEnabled, expanded, onToggle, onMarkSeen, onOpenRoutingDeepLink }: { incident: AlertingIncident; stationName: string | null | undefined; busy: boolean; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onMarkSeen: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
+  const routingLink = createChangeCenterRoutingLink(incident);
+  const stateLabel = incident.lifecycleState === "resolved" ? "已恢复" : incident.lifecycleState === "recovering" ? "恢复中" : incident.lifecycleState === "pending" ? "检测中" : "未处理";
+  return <div className="bg-surface">
+    <div className={`grid min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_auto_minmax(0,1fr)_auto_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}>
+    {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起问题" : "展开问题"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
+    <StatusBadge className="justify-self-start" tone={incident.severity === "critical" ? "error" : incident.severity === "warning" ? "warning" : "info"}>{severityLabel(incident.severity)}</StatusBadge>
+    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(incident.eventType)}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? incident.stationId ?? incident.conditionKey} · {stateLabel} · 第 {incident.episodeNumber} 次 · {incident.occurrenceCount} 次出现</div></div>
+    <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(incident.lastSeenAtMs)}</span><span>{incident.seenAtMs == null ? "未读" : "已读"}</span></div>
+    <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" disabled={busy || incident.seenAtMs != null} onClick={onMarkSeen}>标记已读</Button>{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
     </div>
-  );
+    {developerModeEnabled && expanded ? <IncidentDetail incident={incident} /> : null}
+  </div>;
 }
 
-function createChangeCenterRoutingLink(event: ChangeEvent): ChangeCenterRoutingDeepLink | null {
-  if (event.requestLogId) {
-    return {
-      kind: "request",
-      requestLogId: event.requestLogId,
-      source: "change_center",
-    };
-  }
-  if (event.stationKeyId ?? (event.objectType === "station_key" ? event.objectId : null)) {
-    return {
-      kind: "station-key",
-      stationKeyId: event.stationKeyId ?? event.objectId!,
-      source: "change_center",
-    };
-  }
-  if (event.stationId ?? (event.objectType === "station" ? event.objectId : null)) {
-    return {
-      kind: "station",
-      stationId: event.stationId ?? event.objectId!,
-      source: "change_center",
-    };
-  }
-  return null;
+function IncidentDetail({ incident }: { incident: AlertingIncident }) {
+  const occurrencesQuery = useActivityQuery(alertingOccurrencesQueryOptions({ incidentId: incident.id, episodeNumber: incident.episodeNumber, limit: 20 }));
+  const deliveriesQuery = useActivityQuery(alertingDeliveriesQueryOptions({ incidentId: incident.id, episodeNumber: incident.episodeNumber, limit: 20 }));
+  return <div className="grid gap-3 border-t border-border bg-muted/20 px-12 py-3 text-xs md:grid-cols-2">
+    <section><div className="mb-2 font-semibold text-foreground">出现历史</div>{occurrencesQuery.isPending ? <div className="text-muted-foreground">正在加载…</div> : occurrencesQuery.data?.items.length ? <div className="space-y-1">{occurrencesQuery.data.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-2"><span className="truncate text-muted-foreground">{observationLabel(item.observationKind)} · {item.reasonCode ?? item.source}</span><span className="shrink-0 text-foreground">{formatChangeTime(item.observedAtMs)}</span></div>)}</div> : <div className="text-muted-foreground">暂无出现记录</div>}</section>
+    <section><div className="mb-2 font-semibold text-foreground">投递历史</div>{deliveriesQuery.isPending ? <div className="text-muted-foreground">正在加载…</div> : deliveriesQuery.data?.items.length ? <div className="space-y-1">{deliveriesQuery.data.items.map((item) => <div key={item.id} className="flex items-center justify-between gap-2"><span className="truncate text-muted-foreground">{channelLabel(item.channel)} · {deliveryKindLabel(item.deliveryKind)}</span><span className="shrink-0 text-foreground">{deliveryStatusLabel(item.status)}</span></div>)}</div> : <div className="text-muted-foreground">暂无投递记录</div>}</section>
+  </div>;
 }
 
-function SummaryTile({ label, value, tone = "text-foreground" }: { label: string; value: number; tone?: string }) {
-  return (
-    <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 shadow-[var(--surface-shadow)]">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold ${tone}`}>{value}</div>
-    </div>
-  );
+function eventLabel(eventType: string) {
+  const labels: Record<string, string> = {
+    collector_failed: "采集失败",
+    station_down: "站点不可用",
+    balance_low: "余额偏低",
+    balance_depleted: "余额耗尽",
+    price_expired: "价格已过期",
+    key_invalid: "密钥无效",
+    route_impacted: "路由受影响",
+    group_missing: "分组缺失",
+    key_group_unresolved: "密钥分组无法解析",
+    group_added: "新增分组",
+    rate_changed: "倍率变化",
+    group_rate_changed: "分组倍率变化",
+    price_changed: "价格变化",
+    model_added: "新增模型",
+    model_removed: "模型移除",
+    audit_change: "配置发生变化",
+  };
+  return labels[eventType] ?? eventType;
 }
 
+function severityLabel(value: string) {
+  return ({ critical: "严重", warning: "警告", info: "信息" } as Record<string, string>)[value] ?? value;
+}
 
-const inputClassName =
-  "h-8 rounded-[12px] border border-info-border bg-info-surface px-3 text-sm text-foreground outline-none transition focus:border-ring focus:bg-surface focus:ring-2 focus:ring-ring/20";
+function observationLabel(value: string) {
+  return ({ observed: "已观察", recovered: "已恢复", triggered: "已触发" } as Record<string, string>)[value] ?? value;
+}
 
-const CHANGE_EVENTS_DEFAULT_PAGE_SIZE = 20;
+function channelLabel(value: string) {
+  return ({ in_app: "应用内", desktop: "桌面" } as Record<string, string>)[value] ?? value;
+}
+
+function deliveryKindLabel(value: string) {
+  return ({ initial: "首次提醒", repeat: "重复提醒", recovery: "恢复提醒" } as Record<string, string>)[value] ?? value;
+}
+
+function deliveryStatusLabel(value: string) {
+  return ({ pending: "待投递", claimed: "投递中", delivered: "已投递", failed: "失败", suppressed: "已抑制" } as Record<string, string>)[value] ?? value;
+}
+
+function formatChangeTime(value: number) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "时间未知";
+  return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function SummaryTile({ label, value }: { label: string; value: number }) {
+  return <div className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 shadow-[var(--surface-shadow)]"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 text-2xl font-semibold text-foreground">{value}</div></div>;
+}
+
+const inputClassName = "h-8 rounded-[12px] border border-border bg-surface px-3 text-sm text-foreground shadow-surface outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30";

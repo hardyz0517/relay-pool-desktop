@@ -22,7 +22,7 @@ function stationKey(overrides: Partial<StationKey> = {}): StationKey {
   return {
     id: "key-1",
     stationId: "station-1",
-    name: "Default Key",
+    name: "Default 密钥",
     apiKeyMasked: "sk-***",
     apiKeyPresent: true,
     enabled: true,
@@ -55,7 +55,7 @@ function remoteKey(overrides: Partial<RemoteStationKey> = {}): RemoteStationKey 
     id: "remote-1",
     stationId: "station-1",
     remoteKeyIdHash: "remote-hash",
-    remoteKeyName: "Remote Key",
+    remoteKeyName: "Remote 密钥",
     apiKeyMasked: "sk-remote",
     apiKeyFingerprint: null,
     groupIdHash: "group-hash",
@@ -283,7 +283,7 @@ describe("add provider key/group model", () => {
     expect(input).toEqual({
       id: "key-1",
       stationId: "station-1",
-      name: "Default Key",
+      name: "Default 密钥",
       apiKey: null,
       enabled: true,
       priority: 0,

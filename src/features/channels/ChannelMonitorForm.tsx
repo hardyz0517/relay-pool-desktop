@@ -45,9 +45,9 @@ const healthWritebackOptions: Array<{
   label: string;
   description: string;
 }> = [
-  { value: "disabled", label: "不写回", description: "只保留监控结果，不影响 Key 健康状态" },
+  { value: "disabled", label: "不写回", description: "只保留监控结果，不影响密钥健康状态" },
   { value: "observe_only", label: "仅观察", description: "记录健康观察，但不改变路由资格" },
-  { value: "authoritative", label: "权威写回", description: "达到阈值后更新 Key 健康状态，仅限标准 API Profile" },
+  { value: "authoritative", label: "权威写回", description: "达到阈值后更新密钥健康状态，仅限标准 API Profile" },
 ];
 
 export function ChannelMonitorForm({

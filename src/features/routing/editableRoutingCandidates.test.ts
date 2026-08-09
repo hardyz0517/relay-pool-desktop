@@ -4,7 +4,7 @@ import type { RoutingCandidateView } from "@/lib/types/routingWorkspace";
 import { buildEditableRoutingCandidates } from "./editableRoutingCandidates";
 
 describe("buildEditableRoutingCandidates", () => {
-  it("uses Key Pool order even when the status projection is dynamically sorted", () => {
+  it("uses 密钥池 order even when the status projection is dynamically sorted", () => {
     const candidates = buildEditableRoutingCandidates(
       [keyPoolItem("key-3", 0), keyPoolItem("key-1", 1), keyPoolItem("key-2", 2)],
       [workspaceCandidate("key-1"), workspaceCandidate("key-2")],

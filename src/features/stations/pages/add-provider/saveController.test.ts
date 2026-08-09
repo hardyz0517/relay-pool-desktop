@@ -14,7 +14,7 @@ function keyDraft(overrides: Partial<StationKeyDraft> = {}): StationKeyDraft {
   return {
     clientId: "key-draft",
     id: null,
-    name: "Key",
+    name: "密钥",
     apiKey: "sk-test",
     groupBindingId: null,
     groupIdHash: null,

@@ -19,7 +19,7 @@ const CAPABILITIES = new Set<RuntimeCapability>([
   "proxy",
   "channel_monitoring",
   "pricing",
-  "change_events",
+  "alerting",
   "capture",
   "typed_streaming",
 ]);

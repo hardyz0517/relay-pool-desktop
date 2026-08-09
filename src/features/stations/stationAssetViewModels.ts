@@ -7,7 +7,7 @@ import {
   deriveStationGroupDisplayFacts,
   isDisplayableStationGroupCurrentFact,
 } from "@/lib/projections/groupFacts";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { AlertingIncident } from "@/lib/types/alerting";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { BalanceSnapshot } from "@/lib/types/economics";
 import type { GroupRateRecord, StationGroupBinding } from "@/lib/types/groupFacts";
@@ -60,8 +60,8 @@ type StationIssueTagDefinition = Omit<StationIssueTag, "kind" | "title">;
 
 const STATION_ISSUE_TAG_DEFINITIONS: Record<StationIssueTagKind, StationIssueTagDefinition> = {
   disabled: { label: "已禁用", tone: "disabled" },
-  no_enabled_key: { label: "无可用 Key", tone: "warning" },
-  key_warning: { label: "Key 异常", tone: "warning" },
+  no_enabled_key: { label: "无可用 密钥", tone: "warning" },
+  key_warning: { label: "密钥异常", tone: "warning" },
   login_required: { label: "需登录", tone: "warning" },
   collection_failed: { label: "采集失败", tone: "error" },
   not_collected: { label: "未采集", tone: "info" },
@@ -98,7 +98,7 @@ export type StationAssetRow = {
   latestBalance: BalanceSnapshot | null;
   currentBalance: StationBalanceCurrentFact;
   latestSnapshot: CollectorSnapshot | null;
-  riskEvents: ChangeEvent[];
+  riskEvents: AlertingIncident[];
   rateChips: RateChip[];
   participatesInRouting: boolean;
 };
@@ -110,7 +110,7 @@ export function buildStationAssetRows({
   snapshotsByStation,
   groupBindingsByStation,
   groupRatesByStation,
-  changes,
+  incidents,
   balanceFactsReady = true,
 }: {
   stations: Station[];
@@ -119,7 +119,7 @@ export function buildStationAssetRows({
   snapshotsByStation: Map<string, CollectorSnapshot | null>;
   groupBindingsByStation: Map<string, StationGroupBinding[]>;
   groupRatesByStation?: Map<string, GroupRateRecord[]>;
-  changes: ChangeEvent[];
+  incidents: AlertingIncident[];
   balanceFactsReady?: boolean;
 }): StationAssetRow[] {
   const currentBalancesByStation = buildCurrentStationBalanceFacts({ stations, balances });
@@ -128,11 +128,10 @@ export function buildStationAssetRows({
     const currentBalance = currentBalancesByStation.get(station.id);
     const groupBindings = groupBindingsByStation.get(station.id) ?? [];
     const groupRates = groupRatesByStation?.get(station.id) ?? [];
-    const riskEvents = changes.filter(
+    const riskEvents = incidents.filter(
       (event) =>
         event.stationId === station.id &&
-        event.status !== "dismissed" &&
-        event.status !== "resolved" &&
+        event.lifecycleState !== "resolved" &&
         (event.severity === "critical" || event.severity === "warning"),
     );
     const enabledKeyCount = keys.length > 0 ? keys.filter((key) => key.enabled).length : station.keyCount;
@@ -387,12 +386,12 @@ function stationGroupIssueMessage(
   const statusText = bindingStatus === "missing" ? "已下架" : "已禁用";
   const visibleNames = affectedKeyNames.slice(0, 3);
   if (affectedKeyCount === 1 && visibleNames.length === 1) {
-    return `分组「${groupName}」${statusText}，但仍被启用 Key「${visibleNames[0]}」使用。`;
+    return `分组「${groupName}」${statusText}，但仍被启用密钥「${visibleNames[0]}」使用。`;
   }
   const nameSuffix = visibleNames.length > 0
     ? `：${visibleNames.join("、")}${affectedKeyNames.length > visibleNames.length ? "等" : ""}`
     : "";
-  return `分组「${groupName}」${statusText}，但仍被 ${affectedKeyCount} 个启用 Key 使用${nameSuffix}。`;
+  return `分组「${groupName}」${statusText}，但仍被 ${affectedKeyCount} 个启用密钥使用${nameSuffix}。`;
 }
 
 function countMissingRates(bindings: StationGroupBinding[], rates: GroupRateRecord[]) {

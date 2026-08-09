@@ -7,7 +7,7 @@ import {
   type StationGroupCurrentFact,
 } from "@/lib/projections/groupFacts";
 import { toTimestampMillis } from "@/lib/time";
-import type { ChangeEvent } from "@/lib/types/changeEvents";
+import type { AlertingIncident } from "@/lib/types/alerting";
 import type { CollectorSnapshot } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
 import type { BalanceSnapshot } from "@/lib/types/economics";
@@ -96,8 +96,8 @@ const balanceSourceLabels: Record<string, string> = {
   mock: "示例数据",
   station_config: "站点配置",
   station_balance: "站点余额接口",
-  station_key_balance: "站点 Key 余额",
-  station_key_balance_aggregate: "站点 Key 余额汇总",
+  station_key_balance: "站点密钥余额",
+  station_key_balance_aggregate: "站点密钥余额汇总",
   collector_snapshot: "采集快照",
 };
 
@@ -291,7 +291,7 @@ export function buildStationDetailViewModel({
   latestSnapshot,
   credentials,
   stationKeys,
-  changes,
+  incidents,
 }: {
   station: Station;
   balances: BalanceSnapshot[];
@@ -301,16 +301,15 @@ export function buildStationDetailViewModel({
   latestSnapshot: CollectorSnapshot | null;
   credentials: StationCredentials | null;
   stationKeys: StationKey[];
-  changes: ChangeEvent[];
+  incidents: AlertingIncident[];
 }): StationDetailViewModel {
-  const activeChanges = changes
+  const activeIncidents = incidents
     .filter(
       (event) =>
         event.stationId === station.id &&
-        event.status !== "dismissed" &&
-        event.status !== "resolved",
+        event.lifecycleState !== "resolved",
     )
-    .sort((left, right) => toTime(right.detectedAt) - toTime(left.detectedAt));
+    .sort((left, right) => right.lastSeenAtMs - left.lastSeenAtMs);
   const stationRuns = collectorRuns.filter((run) => run.stationId === station.id);
   const topLevelRuns = stationRuns.filter((run) => run.parentRunId === null);
   const latestRun = latestByTime(topLevelRuns, (run) => run.finishedAt ?? run.startedAt);
@@ -341,7 +340,7 @@ export function buildStationDetailViewModel({
     loginItems: buildLoginItems(credentials, stationKeyEnabledCount, stationKeyTotalCount),
     collectorItems: buildCollectorItems(latestRun),
     snapshotItems: buildSnapshotItems(latestSnapshot),
-    changeItems: buildChangeItems(activeChanges),
+    changeItems: buildIncidentItems(activeIncidents),
   };
 }
 
@@ -386,7 +385,7 @@ function buildLoginItems(
       tone: credentials?.passwordPresent ? "good" : "muted",
     },
     {
-      label: "站点 Key",
+      label: "站点密钥",
       value: `${stationKeyEnabledCount} / ${stationKeyTotalCount} 启用`,
       tone: stationKeyEnabledCount > 0 ? "good" : "warning",
     },
@@ -433,8 +432,8 @@ function buildSnapshotItems(snapshot: CollectorSnapshot | null): StationDetailDi
   ];
 }
 
-function buildChangeItems(changes: ChangeEvent[]): StationDetailDiagnosticItem[] {
-  if (changes.length === 0) {
+function buildIncidentItems(incidents: AlertingIncident[]): StationDetailDiagnosticItem[] {
+  if (incidents.length === 0) {
     return [
       {
         label: "活跃变更",
@@ -444,11 +443,18 @@ function buildChangeItems(changes: ChangeEvent[]): StationDetailDiagnosticItem[]
     ];
   }
 
-  return changes.slice(0, 4).map((event) => ({
-    label: event.title,
-    value: event.message,
+  return incidents.slice(0, 4).map((event) => ({
+    label: formatIncidentEventLabel(event.eventType),
+    value: `${event.lifecycleState} · episode ${event.episodeNumber} · ${event.occurrenceCount} occurrences`,
     tone: event.severity === "critical" ? "error" : event.severity === "warning" ? "warning" : "neutral",
   }));
+}
+
+function formatIncidentEventLabel(eventType: string): string {
+  return eventType
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function balanceToneFor(

@@ -414,7 +414,7 @@ function createFormForStation(station: Station): AddKeyFormState {
     ...emptyForm,
     stationId: station.id,
     stationApiBaseUrl: station.apiBaseUrl,
-    name: `${station.name} Key`,
+    name: `${station.name} 密钥`,
   };
 }
 
