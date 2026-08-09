@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "e77d03356140f295dbea31467565ac4d6e79f99da87421a97a2439ecf52e7d2c";
+    "a497d1e4d3202e4629efce466764eff5c902014c287d1eaf431678044884d2e4";
 
 #[cfg_attr(
     not(test),
@@ -214,6 +214,7 @@ macro_rules! ipc_command_registry {
             mark_alerting_seen => $crate::commands::alerting::mark_alerting_seen,
             mark_all_alerting_seen => $crate::commands::alerting::mark_all_alerting_seen,
             resolve_all_alerting_incidents => $crate::commands::alerting::resolve_all_alerting_incidents,
+            clear_alerting_incidents => $crate::commands::alerting::clear_alerting_incidents,
             snooze_alerting_incident => $crate::commands::alerting::snooze_alerting_incident,
             test_alerting_notification => $crate::commands::alerting::test_alerting_notification,
             request_desktop_notification_permission => $crate::commands::alerting::request_desktop_notification_permission,
@@ -547,6 +548,9 @@ fn command_contract(name: &str) -> CommandContract {
         }
         "resolve_all_alerting_incidents" => {
             migrated_mutation("AlertingMarkAllSeenInputDto", "u64", "idempotent", false)
+        }
+        "clear_alerting_incidents" => {
+            migrated_mutation("AlertingClearInputDto", "u64", "idempotent", false)
         }
         "snooze_alerting_incident" => {
             migrated_mutation("AlertingSnoozeInputDto", "unit", "idempotent", false)
@@ -1739,6 +1743,14 @@ export function markAllAlertingSeen(input: AlertingMarkAllSeenInputDto = {}): Pr
   return invokeCommand<number>("mark_all_alerting_seen", { input });
 }
 
+export function resolveAllAlertingIncidents(input: AlertingMarkAllSeenInputDto = {}): Promise<number> {
+  return invokeCommand<number>("resolve_all_alerting_incidents", { input });
+}
+
+export function clearAlertingIncidents(input: AlertingClearInputDto = {}): Promise<number> {
+  return invokeCommand<number>("clear_alerting_incidents", { input });
+}
+
 export function snoozeAlertingIncident(input: AlertingSnoozeInputDto): Promise<void> {
   return invokeCommand<void>("snooze_alerting_incident", { input });
 }
@@ -2524,6 +2536,8 @@ mod tests {
         assert!(source.contains("function loadChannelStatusWorkspace("));
         assert!(source.contains("function testStationLoginInput("));
         for function in [
+            "resolveAllAlertingIncidents",
+            "clearAlertingIncidents",
             "getStationKeyCapabilities",
             "listModelAliases",
             "listStationKeyHealth",

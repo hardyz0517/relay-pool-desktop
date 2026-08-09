@@ -140,6 +140,8 @@ commands.allow = [
   "list_alerting_occurrences",
   "mark_alerting_seen",
   "mark_all_alerting_seen",
+  "resolve_all_alerting_incidents",
+  "clear_alerting_incidents",
   "record_alerting_observation",
   "request_desktop_notification_permission",
   "snooze_alerting_incident",

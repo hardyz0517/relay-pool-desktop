@@ -33,7 +33,8 @@ pub(crate) use crate::persistence::runtime_lifecycle::{RuntimeState, RuntimeTran
 
 #[derive(Clone, Debug)]
 pub(crate) struct PersistenceHandle {
-    pool: SqlitePool,
+    read_pool: SqlitePool,
+    write_pool: SqlitePool,
     lifecycle: Arc<RuntimeLifecycle>,
     writes: Arc<WriteCoordinator>,
 }
@@ -55,7 +56,10 @@ impl PersistenceHandle {
             .lifecycle
             .admit()
             .ok_or(PersistenceError::RuntimeUnavailable)?;
-        Ok(ReadSession::new(self.pool.begin().await?, runtime_permit))
+        Ok(ReadSession::new(
+            self.read_pool.begin().await?,
+            runtime_permit,
+        ))
     }
 
     pub(crate) async fn begin_write(&self) -> Result<WriteSession, PersistenceError> {
@@ -69,7 +73,7 @@ impl PersistenceHandle {
             .await
             .map_err(|_| PersistenceError::RuntimeUnavailable)?;
         self.writes.record_session_started();
-        let transaction = match self.pool.begin().await {
+        let transaction = match self.write_pool.begin().await {
             Ok(transaction) => transaction,
             Err(error) => {
                 self.writes.record_rollback();
@@ -111,7 +115,7 @@ impl PersistenceHandle {
             .lifecycle
             .admit()
             .ok_or(PersistenceError::RuntimeUnavailable)?;
-        create_verified_backup(&self.pool, final_path).await
+        create_verified_backup(&self.read_pool, final_path).await
     }
 
     #[cfg(test)]
@@ -202,21 +206,31 @@ impl PersistenceRuntime {
         }
         connection.close().await?;
 
-        let pool = SqlitePoolOptions::new()
+        let read_pool = SqlitePoolOptions::new()
             .max_connections(4)
+            .acquire_timeout(Duration::from_secs(5))
+            .idle_timeout(Duration::from_secs(300))
+            .after_connect(|connection, _| Box::pin(configure_connection(connection)))
+            .connect_with(options.clone())
+            .await?;
+        // Keep the single serialized writer independent from read-pool pressure.
+        // Long-lived read snapshots must not make a user write wait for a free read slot.
+        let write_pool = SqlitePoolOptions::new()
+            .max_connections(1)
             .acquire_timeout(Duration::from_secs(5))
             .idle_timeout(Duration::from_secs(300))
             .after_connect(|connection, _| Box::pin(configure_connection(connection)))
             .connect_with(options)
             .await?;
-        record_runtime_open(&pool, open_mode).await?;
+        record_runtime_open(&write_pool, open_mode).await?;
         let lifecycle = Arc::new(RuntimeLifecycle::new());
         lifecycle
             .transition(RuntimeState::Ready)
             .expect("ready state");
         Ok(Self {
             handle: PersistenceHandle {
-                pool,
+                read_pool,
+                write_pool,
                 lifecycle,
                 writes: Arc::new(WriteCoordinator::new()),
             },
@@ -272,7 +286,7 @@ impl PersistenceRuntime {
             .lifecycle
             .admit()
             .ok_or(PersistenceError::RuntimeUnavailable)?;
-        runtime_health(&self.handle.pool, self.open_mode, &self.compatibility).await
+        runtime_health(&self.handle.read_pool, self.open_mode, &self.compatibility).await
     }
 
     #[cfg(test)]
@@ -329,11 +343,11 @@ impl PersistenceRuntime {
             RuntimeState::Draining => {}
             RuntimeState::Starting => {
                 let _ = self.handle.lifecycle.transition(RuntimeState::Unavailable);
-                self.handle.pool.close().await;
+                self.close_pools().await;
                 return Err(RuntimeTransitionError::Invalid);
             }
             RuntimeState::Unavailable => {
-                self.handle.pool.close().await;
+                self.close_pools().await;
                 return Err(RuntimeTransitionError::CloseFailed);
             }
         }
@@ -348,10 +362,10 @@ impl PersistenceRuntime {
             .await
             .map_err(|_| RuntimeTransitionError::MaintenanceWriteDrainTimedOut)?;
 
-        checkpoint_wal_truncate(&self.handle.pool)
+        checkpoint_wal_truncate(&self.handle.write_pool)
             .await
             .map_err(|_| RuntimeTransitionError::MaintenanceCheckpointFailed)?;
-        self.handle.pool.close().await;
+        self.close_pools().await;
         let evidence = verify_and_remove_empty_sidecars_after_close(&self.database_path, timeout)
             .await
             .map_err(|_| RuntimeTransitionError::MaintenanceSidecarNonEmpty)?;
@@ -369,24 +383,29 @@ impl PersistenceRuntime {
             RuntimeState::Draining => {}
             RuntimeState::Starting => {
                 let _ = self.handle.lifecycle.transition(RuntimeState::Unavailable);
-                self.handle.pool.close().await;
+                self.close_pools().await;
                 return Err(RuntimeTransitionError::Invalid);
             }
             RuntimeState::Unavailable => {
-                self.handle.pool.close().await;
+                self.close_pools().await;
                 return Err(RuntimeTransitionError::CloseFailed);
             }
         }
 
         let before_close = fault(RuntimeCloseStep::BeforePoolClose);
         self.handle.lifecycle.wait_for_idle().await;
-        self.handle.pool.close().await;
+        self.close_pools().await;
         let close_result = before_close.and_then(|_| fault(RuntimeCloseStep::AfterPoolClose));
         if let Err(error) = close_result {
             let _ = self.handle.lifecycle.transition(RuntimeState::Unavailable);
             return Err(error);
         }
         self.handle.lifecycle.transition(RuntimeState::Closed)
+    }
+
+    async fn close_pools(&self) {
+        self.handle.read_pool.close().await;
+        self.handle.write_pool.close().await;
     }
 
     #[cfg(test)]
@@ -577,7 +596,8 @@ mod tests {
         drop(session);
         closing.await.expect("close task").expect("close runtime");
         assert_eq!(runtime.state(), RuntimeState::Closed);
-        assert!(runtime.handle.pool.is_closed());
+        assert!(runtime.handle.read_pool.is_closed());
+        assert!(runtime.handle.write_pool.is_closed());
     }
 
     #[tokio::test]
@@ -597,7 +617,8 @@ mod tests {
                 Err(RuntimeTransitionError::CloseFailed)
             );
             assert_eq!(runtime.state(), RuntimeState::Unavailable);
-            assert!(runtime.handle.pool.is_closed());
+            assert!(runtime.handle.read_pool.is_closed());
+            assert!(runtime.handle.write_pool.is_closed());
             assert!(matches!(
                 runtime.begin_write().await,
                 Err(PersistenceError::RuntimeUnavailable)
@@ -642,7 +663,40 @@ mod tests {
             .expect("freeze succeeds");
         assert_eq!(evidence.database_path, path);
         assert_eq!(runtime.state(), RuntimeState::Closed);
-        assert!(runtime.handle.pool.is_closed());
+        assert!(runtime.handle.read_pool.is_closed());
+        assert!(runtime.handle.write_pool.is_closed());
+    }
+
+    #[tokio::test]
+    async fn write_session_has_a_reserved_connection_when_read_pool_is_full() {
+        let root = tempfile::tempdir().expect("temp directory");
+        let path = root.path().join("runtime.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("initialize runtime");
+        let mut reads = Vec::new();
+        for _ in 0..4 {
+            reads.push(runtime.begin_read().await.expect("begin read"));
+        }
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            runtime.write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('write_pool_canary', '1', '1')",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            }),
+        )
+        .await
+        .expect("write must not wait for a read-pool slot")
+        .expect("write succeeds with read pool exhausted");
+
+        drop(reads);
     }
 
     #[tokio::test]

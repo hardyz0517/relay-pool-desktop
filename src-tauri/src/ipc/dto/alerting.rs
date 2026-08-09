@@ -307,6 +307,32 @@ pub(crate) struct AlertingMarkAllSeenInputDto {
     pub severity: Option<Severity>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AlertingClearScope {
+    Active,
+    Unread,
+    Resolved,
+}
+
+impl AlertingClearScope {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Unread => "unread",
+            Self::Resolved => "resolved",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AlertingClearInputDto {
+    pub station_id: Option<String>,
+    pub severity: Option<Severity>,
+    pub lifecycle_state: Option<AlertingClearScope>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AlertingSnoozeInputDto {
@@ -450,6 +476,12 @@ impl AlertingAttentionInputDto {
 }
 
 impl AlertingMarkAllSeenInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        serde_json::from_value(value).map_err(|_| invalid())
+    }
+}
+
+impl AlertingClearInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
         serde_json::from_value(value).map_err(|_| invalid())
     }
@@ -675,6 +707,11 @@ export type AlertingCurrentInputDto = {
 };
 export type AlertingAttentionInputDto = { incidentId: string; episodeNumber: number };
 export type AlertingMarkAllSeenInputDto = { stationId?: string | null; severity?: AlertSeverity | null };
+export type AlertingClearScope = "active" | "unread" | "resolved";
+export type AlertingClearInputDto = {
+  stationId?: string | null; severity?: AlertSeverity | null;
+  lifecycleState?: AlertingClearScope | null;
+};
 export type AlertingSnoozeInputDto = AlertingAttentionInputDto & { untilMs: number };
 export type AlertingObservationInputDto = {
   sourceObservationKey: string; eventType: string; conditionKey: string;

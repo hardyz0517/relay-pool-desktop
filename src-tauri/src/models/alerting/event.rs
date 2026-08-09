@@ -325,7 +325,7 @@ pub fn event_registry() -> &'static [EventDefinition] {
         EventDefinition::audit(AlertEventType::GroupRateChanged, Severity::Info),
         EventDefinition::audit(AlertEventType::PriceChanged, Severity::Info),
         EventDefinition::audit(AlertEventType::ModelAdded, Severity::Info),
-        EventDefinition::audit(AlertEventType::ModelRemoved, Severity::Warning),
+        EventDefinition::audit(AlertEventType::ModelRemoved, Severity::Info),
         EventDefinition::audit(AlertEventType::AuditChange, Severity::Info),
     ];
     &REGISTRY

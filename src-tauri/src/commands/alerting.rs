@@ -11,11 +11,11 @@ use crate::{
     commands::error,
     ipc::dto::alerting::{
         AlertPolicyDeleteInputDto, AlertPolicyDto, AlertPolicyInputDto, AlertingAttentionInputDto,
-        AlertingCurrentInputDto, AlertingDeliveryPageDto, AlertingHistoryInputDto,
-        AlertingIncidentInputDto, AlertingIncidentPageDto, AlertingIncidentSummaryDto,
-        AlertingMarkAllSeenInputDto, AlertingNotificationTestInputDto, AlertingObservationInputDto,
-        AlertingOccurrencePageDto, AlertingSettingsDto, AlertingSettingsInputDto,
-        AlertingSnoozeInputDto,
+        AlertingClearInputDto, AlertingClearScope, AlertingCurrentInputDto,
+        AlertingDeliveryPageDto, AlertingHistoryInputDto, AlertingIncidentInputDto,
+        AlertingIncidentPageDto, AlertingIncidentSummaryDto, AlertingMarkAllSeenInputDto,
+        AlertingNotificationTestInputDto, AlertingObservationInputDto, AlertingOccurrencePageDto,
+        AlertingSettingsDto, AlertingSettingsInputDto, AlertingSnoozeInputDto,
     },
     observability::correlation,
 };
@@ -296,6 +296,25 @@ pub async fn resolve_all_alerting_incidents(
         let input = AlertingMarkAllSeenInputDto::parse(input)?;
         facade
             .resolve_all_active(input.station_id, input.severity, now_ms())
+            .await
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn clear_alerting_incidents(
+    facade: State<'_, AlertingCommandFacade>,
+    input: Value,
+) -> Result<u64, error::CommandError> {
+    correlation::in_command_scope("clear_alerting_incidents", async {
+        let input = AlertingClearInputDto::parse(input)?;
+        facade
+            .clear_incidents(
+                input.station_id,
+                input.severity,
+                input.lifecycle_state.map(AlertingClearScope::as_str),
+            )
             .await
             .map_err(super::public_command_application_error)
     })

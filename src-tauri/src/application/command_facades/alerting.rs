@@ -222,6 +222,31 @@ impl AlertingCommandFacade {
             .map_err(ApplicationError::from)
     }
 
+    pub(crate) async fn clear_incidents(
+        &self,
+        station_id: Option<String>,
+        severity: Option<Severity>,
+        lifecycle_state: Option<&str>,
+    ) -> Result<u64, ApplicationError> {
+        let incident_store = crate::persistence::stores::alerting::IncidentStore;
+        let lifecycle_state = lifecycle_state.map(str::to_owned);
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    incident_store
+                        .clear(
+                            write,
+                            station_id.as_deref(),
+                            severity,
+                            lifecycle_state.as_deref(),
+                        )
+                        .await
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     pub(crate) async fn snooze(
         &self,
         incident_id: &str,

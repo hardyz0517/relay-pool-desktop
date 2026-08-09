@@ -761,10 +761,7 @@ async fn collect_current_facts(
         facts.push(fact(
             AlertEventType::KeyInvalid,
             key,
-            matches!(
-                outcome.as_str(),
-                "unavailable" | "observe_failure" | "hard_fail"
-            ),
+            is_key_invalid_outcome(&outcome),
             Severity::Critical,
             "station_key",
             Some(key_id.clone()),
@@ -909,6 +906,10 @@ fn parse_severity(value: String) -> Severity {
     }
 }
 
+fn is_key_invalid_outcome(outcome: &str) -> bool {
+    outcome == "hard_fail"
+}
+
 fn parse_timestamp_ms(value: &str) -> i64 {
     if let Ok(value) = value.parse::<i64>() {
         return value;
@@ -937,6 +938,14 @@ mod tests {
     fn legacy_status_does_not_change_audit_observation_kind() {
         assert_eq!(ObservationKind::Change, ObservationKind::Change);
         assert_eq!(parse_severity("unknown".to_string()), Severity::Info);
+    }
+
+    #[test]
+    fn only_hard_fail_marks_a_key_as_invalid() {
+        assert!(is_key_invalid_outcome("hard_fail"));
+        assert!(!is_key_invalid_outcome("unavailable"));
+        assert!(!is_key_invalid_outcome("observe_failure"));
+        assert!(!is_key_invalid_outcome("success"));
     }
 
     #[tokio::test]

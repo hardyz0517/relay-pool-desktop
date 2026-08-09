@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::event::{AlertEventType, Severity};
+use super::event::{event_definition, AlertEventType, EventCategory, Severity};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -220,7 +220,22 @@ pub struct AlertPolicy {
 }
 
 impl AlertPolicy {
+    #[cfg(test)]
     pub fn system_default(base_severity: Severity) -> Self {
+        Self::system_default_for_event(None, base_severity)
+    }
+
+    pub fn system_default_for_event(
+        event_type: Option<AlertEventType>,
+        base_severity: Severity,
+    ) -> Self {
+        let audit = event_type
+            .and_then(event_definition)
+            .is_some_and(|definition| definition.category == EventCategory::AuditChange);
+        let immediate = audit
+            || event_type == Some(AlertEventType::KeyInvalid)
+            || (event_type.is_none() && base_severity == Severity::Critical);
+        let recovery_count = Some(1);
         Self {
             id: "system_default".to_string(),
             name: "System default".to_string(),
@@ -232,14 +247,21 @@ impl AlertPolicy {
             station_key_id: None,
             minimum_severity: None,
             severity_offset: 0,
-            trigger_mode: match base_severity {
-                Severity::Critical => TriggerMode::Immediate,
-                _ => TriggerMode::ConsecutiveOccurrences,
+            trigger_mode: if immediate {
+                TriggerMode::Immediate
+            } else {
+                TriggerMode::ConsecutiveOccurrences
             },
-            trigger_count: (base_severity != Severity::Critical).then_some(2),
+            trigger_count: (!immediate).then_some(
+                if event_type == Some(AlertEventType::CollectorFailed) {
+                    3
+                } else {
+                    2
+                },
+            ),
             trigger_duration_seconds: None,
             recovery_mode: RecoveryMode::ConsecutiveHealthy,
-            recovery_count: Some(2),
+            recovery_count,
             recovery_duration_seconds: None,
             in_app_enabled: true,
             desktop_enabled: false,
@@ -402,7 +424,9 @@ pub fn resolve_policy<'a>(
             )
         })
         .cloned()
-        .unwrap_or_else(|| AlertPolicy::system_default(context.base_severity))
+        .unwrap_or_else(|| {
+            AlertPolicy::system_default_for_event(Some(context.event_type), context.base_severity)
+        })
 }
 
 #[cfg(test)]
@@ -461,6 +485,52 @@ mod tests {
         for severity in [Severity::Info, Severity::Warning, Severity::Critical] {
             assert!(AlertPolicy::system_default(severity).validate().is_ok());
         }
+    }
+
+    #[test]
+    fn event_defaults_match_condition_and_audit_semantics() {
+        let station_down = AlertPolicy::system_default_for_event(
+            Some(AlertEventType::StationDown),
+            Severity::Critical,
+        );
+        assert_eq!(
+            station_down.trigger_mode,
+            TriggerMode::ConsecutiveOccurrences
+        );
+        assert_eq!(station_down.trigger_count, Some(2));
+        assert_eq!(station_down.recovery_count, Some(1));
+
+        let balance_depleted = AlertPolicy::system_default_for_event(
+            Some(AlertEventType::BalanceDepleted),
+            Severity::Critical,
+        );
+        assert_eq!(
+            balance_depleted.trigger_mode,
+            TriggerMode::ConsecutiveOccurrences
+        );
+        assert_eq!(balance_depleted.trigger_count, Some(2));
+
+        let collector_failed = AlertPolicy::system_default_for_event(
+            Some(AlertEventType::CollectorFailed),
+            Severity::Warning,
+        );
+        assert_eq!(collector_failed.trigger_count, Some(3));
+
+        let key_invalid = AlertPolicy::system_default_for_event(
+            Some(AlertEventType::KeyInvalid),
+            Severity::Critical,
+        );
+        assert_eq!(key_invalid.trigger_mode, TriggerMode::Immediate);
+        assert_eq!(key_invalid.trigger_count, None);
+        assert_eq!(key_invalid.recovery_count, Some(1));
+
+        let audit = AlertPolicy::system_default_for_event(
+            Some(AlertEventType::PriceChanged),
+            Severity::Info,
+        );
+        assert_eq!(audit.trigger_mode, TriggerMode::Immediate);
+        assert_eq!(audit.trigger_count, None);
+        assert_eq!(audit.recovery_count, Some(1));
     }
 
     #[test]

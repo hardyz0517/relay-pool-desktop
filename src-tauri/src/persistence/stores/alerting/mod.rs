@@ -314,6 +314,38 @@ impl IncidentStore {
         .rows_affected())
     }
 
+    pub(crate) async fn clear(
+        &self,
+        session: &mut WriteSession,
+        station_id: Option<&str>,
+        severity: Option<Severity>,
+        lifecycle_state: Option<&str>,
+    ) -> Result<u64, PersistenceError> {
+        let affected = sqlx::query(
+            "DELETE FROM change_incidents
+             WHERE id IN (
+                 SELECT i.id FROM change_incidents i
+                 LEFT JOIN incident_attention a
+                   ON a.incident_id = i.id AND a.episode_number = i.episode_number
+                 WHERE (?1 IS NULL OR i.station_id = ?1)
+                   AND (?2 IS NULL OR i.severity = ?2)
+                   AND (
+                       ?3 IS NULL
+                       OR (?3 = 'active' AND i.lifecycle_state IN ('pending', 'open', 'recovering'))
+                       OR (?3 = 'unread' AND i.lifecycle_state IN ('pending', 'open', 'recovering') AND a.seen_at_ms IS NULL)
+                       OR (?3 = 'resolved' AND i.lifecycle_state = 'resolved')
+                   )
+             )",
+        )
+        .bind(station_id)
+        .bind(severity.map(Severity::as_str))
+        .bind(lifecycle_state)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        Ok(affected)
+    }
+
     /// Resolve active incidents left behind by an earlier station deletion.
     ///
     /// Older deletions relied on `ON DELETE SET NULL`, so the incident no
