@@ -201,6 +201,21 @@ mod outbound {
                 .push((name.as_str().to_string(), value.to_string(), false));
             Ok(())
         }
+
+        pub fn materialize(
+            &self,
+            _policy: &OutboundHeaderPolicy,
+        ) -> Result<HeaderMap, OutboundFailure> {
+            let mut headers = HeaderMap::new();
+            for (name, value, _) in &self.entries {
+                let name = HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| OutboundFailure::new(OutboundFailureKind::InvalidHeader))?;
+                let value = HeaderValue::from_str(value)
+                    .map_err(|_| OutboundFailure::new(OutboundFailureKind::InvalidHeader))?;
+                headers.insert(name, value);
+            }
+            Ok(headers)
+        }
     }
 
     pub struct SecretHeaderValue(String);
