@@ -272,11 +272,13 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             let url =
                 build_management_url(&website_url, &format!("/api/v1/keys/{provider_key_id}"))
                     .map_err(|error| invalid_request(redact_text(&error)))?;
+            let session_cookie = resolve_session_cookie(context, &auth).await?;
             let mut deletion = execute_bearer_json_once(
                 context,
                 EndpointRole::RemoteKeys,
                 &url,
                 &access_token,
+                session_cookie.as_deref(),
                 None,
                 Method::DELETE,
             )
@@ -290,6 +292,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                             EndpointRole::RemoteKeys,
                             &url,
                             &access_token,
+                            session_cookie.as_deref(),
                             None,
                             Method::DELETE,
                         )
@@ -423,7 +426,7 @@ async fn fetch_remote_key_list(
             website_url,
             &path,
             access_token,
-            auth.login.as_ref(),
+            auth,
         )
         .await?;
         evidence.push(execution.evidence.clone());
@@ -544,12 +547,14 @@ async fn create_remote_key_once(
     {
         body["group_id"] = mapping::sub2api_group_id_value(group_id);
     }
+    let session_cookie = resolve_session_cookie(context, auth).await?;
 
     let mut result = execute_bearer_json_once(
         context,
         EndpointRole::RemoteKeys,
         &url,
         access_token,
+        session_cookie.as_deref(),
         Some(body.clone()),
         Method::POST,
     )
@@ -563,6 +568,7 @@ async fn create_remote_key_once(
                     EndpointRole::RemoteKeys,
                     &url,
                     access_token,
+                    session_cookie.as_deref(),
                     Some(body),
                     Method::POST,
                 )
@@ -716,7 +722,7 @@ async fn collect_groups(context: &CollectorContext<'_>) -> Result<DriverOutput, 
         &website_url,
         "/api/v1/groups/available",
         &mut access_token,
-        auth.login.as_ref(),
+        &auth,
     )
     .await?;
     evidence.push(available.evidence.clone());
@@ -728,7 +734,7 @@ async fn collect_groups(context: &CollectorContext<'_>) -> Result<DriverOutput, 
         &website_url,
         "/api/v1/groups/rates",
         &mut access_token,
-        auth.login.as_ref(),
+        &auth,
     )
     .await?;
     evidence.push(rates.evidence.clone());
@@ -840,6 +846,7 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
             &usage_url,
             api_key.expose(),
             None,
+            None,
             Method::GET,
         )
         .await;
@@ -874,6 +881,7 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
                 EndpointRole::Balance,
                 &usage_url,
                 &api_key,
+                None,
                 None,
                 Method::GET,
             )
@@ -994,7 +1002,7 @@ async fn collect_account_profile_balance(
             website_url,
             path,
             &mut token,
-            auth.login.as_ref(),
+            auth,
         )
         .await?;
         *access_token = Some(token);
@@ -1045,7 +1053,7 @@ async fn collect_subscription_quota(
             website_url,
             path,
             &mut token,
-            auth.login.as_ref(),
+            auth,
         )
         .await?;
         *access_token = Some(token);
@@ -1078,7 +1086,7 @@ async fn collect_dashboard_usage_stats(
         website_url,
         "/api/v1/usage/dashboard/stats",
         &mut token,
-        auth.login.as_ref(),
+        auth,
     )
     .await?;
     *access_token = Some(token);
@@ -1116,6 +1124,7 @@ async fn ensure_access_token(
 struct Sub2ApiAuth {
     station_keys: Vec<Sub2ApiStationKeyCredential>,
     access_token: Option<crate::services::collectors::contract::OpaqueCredentialHandle>,
+    session_cookie: Option<crate::services::collectors::contract::OpaqueCredentialHandle>,
     login: Option<Sub2ApiLoginCredential>,
     credit_per_cny: f64,
 }
@@ -1125,11 +1134,13 @@ fn sub2api_auth(context: &CollectorContext<'_>) -> Result<Sub2ApiAuth, DriverFai
         Some(ProviderAuthContext::Sub2Api {
             station_keys,
             access_token,
+            session_cookie,
             login,
             credit_per_cny,
         }) => Ok(Sub2ApiAuth {
             station_keys,
             access_token,
+            session_cookie,
             login,
             credit_per_cny,
         }),
@@ -1146,13 +1157,38 @@ async fn resolve_access_token(
     auth: &Sub2ApiAuth,
 ) -> Result<String, DriverFailure> {
     if let Some(handle) = &auth.access_token {
+        if let Ok(secret) = context
+            .secrets
+            .resolve_secret(handle, CredentialSecretPurpose::AuthorizationHeader)
+            .await
+        {
+            let token = secret.expose().trim();
+            if !token.is_empty() {
+                return Ok(token.to_string());
+            }
+        }
+        // Older prepared contexts stored the browser token under the session
+        // cookie purpose. Keep accepting that shape while new contexts use
+        // AuthorizationHeader for JWTs.
+        if let Ok(secret) = context
+            .secrets
+            .resolve_secret(handle, CredentialSecretPurpose::SessionCookie)
+            .await
+        {
+            let token = secret.expose().trim();
+            if !token.is_empty() {
+                return Ok(token.to_string());
+            }
+        }
+    }
+    if let Some(handle) = &auth.session_cookie {
         let secret = context
             .secrets
             .resolve_secret(handle, CredentialSecretPurpose::SessionCookie)
             .await?;
-        let token = secret.expose().trim();
-        if !token.is_empty() {
-            return Ok(token.to_string());
+        let cookie = secret.expose().trim();
+        if !cookie.is_empty() {
+            return Ok(cookie.to_string());
         }
     }
     if let Some(login) = &auth.login {
@@ -1163,6 +1199,36 @@ async fn resolve_access_token(
     Err(manual_required(
         "Sub2API collector requires an access token or saved login password",
     ))
+}
+
+async fn resolve_session_cookie(
+    context: &CollectorContext<'_>,
+    auth: &Sub2ApiAuth,
+) -> Result<Option<String>, DriverFailure> {
+    if let Some(handle) = &auth.session_cookie {
+        let secret = context
+            .secrets
+            .resolve_secret(handle, CredentialSecretPurpose::SessionCookie)
+            .await?;
+        let cookie = secret.expose().trim();
+        if !cookie.is_empty() {
+            return Ok(Some(cookie.to_string()));
+        }
+    }
+    // Compatibility for contexts created before session_cookie was added.
+    if let Some(handle) = &auth.access_token {
+        if let Ok(secret) = context
+            .secrets
+            .resolve_secret(handle, CredentialSecretPurpose::SessionCookie)
+            .await
+        {
+            let cookie = secret.expose().trim();
+            if looks_like_cookie_header(cookie) {
+                return Ok(Some(cookie.to_string()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone)]
@@ -1187,7 +1253,7 @@ async fn execute_bearer_json_with_recovery(
     base_url: &str,
     path: &str,
     access_token: &mut String,
-    login: Option<&Sub2ApiLoginCredential>,
+    auth: &Sub2ApiAuth,
 ) -> Result<JsonExecution, DriverFailure> {
     let url = build_management_url(base_url, path)
         .map_err(|error| invalid_request(redact_text(&error)))?;
@@ -1195,12 +1261,22 @@ async fn execute_bearer_json_with_recovery(
     let mut attempts = Vec::new();
     let mut recovery_actions = Vec::new();
     let mut auth_refreshed = false;
+    let mut cookie_fallback_used = false;
     let mut malformed_attempts = 0;
     let mut latest = None;
+    let session_cookie = resolve_session_cookie(context, auth).await?;
 
     for attempt in 1..=REQUEST_MAX_ATTEMPTS {
-        let result =
-            execute_bearer_json_once(context, role, &url, access_token, None, Method::GET).await;
+        let result = execute_bearer_json_once(
+            context,
+            role,
+            &url,
+            access_token,
+            session_cookie.as_deref(),
+            None,
+            Method::GET,
+        )
+        .await;
         if let Some(failure) = fatal_attempt_failure(&result, role) {
             return Err(failure);
         }
@@ -1211,7 +1287,13 @@ async fn execute_bearer_json_with_recovery(
         }
         let action = if failure.is_none() {
             "complete"
-        } else if failure == Some("auth_rejected") && !auth_refreshed && login.is_some() {
+        } else if failure == Some("auth_rejected")
+            && !cookie_fallback_used
+            && session_cookie.is_some()
+            && !looks_like_cookie_header(access_token)
+        {
+            "cookie_fallback"
+        } else if failure == Some("auth_rejected") && !auth_refreshed && auth.login.is_some() {
             "auth_refresh"
         } else if is_retryable_failure(failure, malformed_attempts)
             && attempt < REQUEST_MAX_ATTEMPTS
@@ -1233,10 +1315,19 @@ async fn execute_bearer_json_with_recovery(
         if failure.is_none() {
             break;
         }
+        if action == "cookie_fallback" {
+            cookie_fallback_used = true;
+            recovery_actions.push("cookie_fallback");
+            if let Some(cookie) = session_cookie.as_deref() {
+                *access_token = cookie.to_string();
+                continue;
+            }
+            break;
+        }
         if action == "auth_refresh" {
             auth_refreshed = true;
             recovery_actions.push("auth_refresh");
-            if let Some(login) = login {
+            if let Some(login) = auth.login.as_ref() {
                 if let Some(fresh) = login_access_token(context, base_url, login).await? {
                     *access_token = fresh;
                     continue;
@@ -1329,11 +1420,20 @@ async fn execute_bearer_json_once(
     role: EndpointRole,
     url: &str,
     bearer: &str,
+    session_cookie: Option<&str>,
     body: Option<Value>,
     method: Method,
 ) -> JsonAttemptResult {
     let started_at = Instant::now();
-    let request = match build_json_request(context, role, url, bearer, body, method.clone()) {
+    let request = match build_json_request(
+        context,
+        role,
+        url,
+        bearer,
+        session_cookie,
+        body,
+        method.clone(),
+    ) {
         Ok(request) => request,
         Err(error) => {
             return JsonAttemptResult {
@@ -1409,6 +1509,7 @@ fn build_json_request(
     role: EndpointRole,
     url: &str,
     bearer: &str,
+    session_cookie: Option<&str>,
     body: Option<Value>,
     method: Method,
 ) -> Result<OutboundRequest, DriverFailure> {
@@ -1421,13 +1522,43 @@ fn build_json_request(
             &policy,
         )
         .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
-    headers
-        .insert_sensitive(
-            header::AUTHORIZATION,
-            SecretHeaderValue::new(format!("Bearer {bearer}")),
-            &policy,
-        )
-        .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+    if let Some(user_agent) = context
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let value = HeaderValue::try_from(user_agent)
+            .map_err(|_| invalid_request("captured User-Agent is not a valid header value"))?;
+        headers
+            .insert_public(header::USER_AGENT, value, &policy)
+            .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+    }
+    // CF-protected browser sessions may require the browser Cookie alongside
+    // a captured JWT. Cookie-only sessions continue to use Cookie auth.
+    let bearer = bearer.trim();
+    let cookie = session_cookie
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| looks_like_cookie_header(bearer).then_some(bearer));
+    if !bearer.is_empty() && !looks_like_cookie_header(bearer) {
+        headers
+            .insert_sensitive(
+                header::AUTHORIZATION,
+                SecretHeaderValue::new(format!("Bearer {bearer}")),
+                &policy,
+            )
+            .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+    }
+    if let Some(cookie) = cookie {
+        headers
+            .insert_sensitive(
+                header::COOKIE,
+                SecretHeaderValue::new(cookie.to_string()),
+                &policy,
+            )
+            .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+    }
     let body = match body {
         Some(body) => {
             headers
@@ -1450,6 +1581,14 @@ fn build_json_request(
         proxy: context.proxy.clone(),
         budget: context.budget,
         retry_policy: OutboundRetryPolicy::Never,
+    })
+}
+
+fn looks_like_cookie_header(value: &str) -> bool {
+    value.split(';').any(|part| {
+        part.trim()
+            .split_once('=')
+            .is_some_and(|(name, value)| !name.trim().is_empty() && !value.trim().is_empty())
     })
 }
 
@@ -1513,6 +1652,20 @@ fn build_login_request(
         .map_err(|failure| {
             driver_failure_from_outbound(EndpointRole::Authorization, failure.kind)
         })?;
+    if let Some(user_agent) = context
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let value = HeaderValue::try_from(user_agent)
+            .map_err(|_| invalid_request("captured User-Agent is not a valid header value"))?;
+        headers
+            .insert_public(header::USER_AGENT, value, &policy)
+            .map_err(|failure| {
+                driver_failure_from_outbound(EndpointRole::Authorization, failure.kind)
+            })?;
+    }
     Ok(OutboundRequest {
         method: Method::POST,
         url: url.to_string(),
@@ -1872,6 +2025,33 @@ mod tests {
         }
     }
 
+    struct HybridSessionSecretAccessor;
+
+    impl crate::services::collectors::contract::DriverSecretAccessor for HybridSessionSecretAccessor {
+        fn resolve_secret<'a>(
+            &'a self,
+            _handle: &'a OpaqueCredentialHandle,
+            purpose: CredentialSecretPurpose,
+        ) -> BoxFuture<
+            'a,
+            Result<crate::services::collectors::contract::CredentialSecret, DriverFailure>,
+        > {
+            async move {
+                let secret = match purpose {
+                    CredentialSecretPurpose::AuthorizationHeader => "captured-jwt",
+                    CredentialSecretPurpose::SessionCookie => {
+                        "cf_clearance=clearance; session=browser"
+                    }
+                    CredentialSecretPurpose::LoginPassword => {
+                        return Err(DriverFailure::unsupported("login password is unavailable"));
+                    }
+                };
+                Ok(crate::services::collectors::contract::CredentialSecret::new(secret))
+            }
+            .boxed()
+        }
+    }
+
     fn test_station_identity() -> StationIdentity {
         StationIdentity {
             station_id: "station-1".to_string(),
@@ -1895,6 +2075,167 @@ mod tests {
         }
     }
 
+    #[test]
+    fn cookie_shaped_session_is_distinguished_from_bearer_token() {
+        assert!(looks_like_cookie_header("cf_clearance=fake; session=abc"));
+        assert!(!looks_like_cookie_header("eyJhbGciOiJIUzI1NiJ9.fake"));
+    }
+
+    #[test]
+    fn management_request_keeps_bearer_and_browser_cookie_together() {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context("https://relay.example", &secrets, &outbound);
+        let policy = OutboundHeaderPolicy::provider_default();
+
+        let request = build_json_request(
+            &context,
+            EndpointRole::Groups,
+            "https://relay.example/api/v1/groups/available",
+            "captured-jwt",
+            Some("cf_clearance=clearance; session=browser"),
+            None,
+            Method::GET,
+        )
+        .expect("request should build");
+        let headers = request
+            .headers
+            .materialize(&policy)
+            .expect("headers should materialize");
+
+        assert_eq!(
+            headers
+                .get(header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer captured-jwt")
+        );
+        assert_eq!(
+            headers
+                .get(header::COOKIE)
+                .and_then(|value| value.to_str().ok()),
+            Some("cf_clearance=clearance; session=browser")
+        );
+    }
+
+    #[test]
+    fn management_request_reuses_captured_browser_user_agent() {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let mut context = test_context("https://relay.example", &secrets, &outbound);
+        context.user_agent = Some(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0"
+                .to_string(),
+        );
+        let policy = OutboundHeaderPolicy::provider_default();
+
+        let request = build_json_request(
+            &context,
+            EndpointRole::Groups,
+            "https://relay.example/api/v1/groups/available",
+            "captured-jwt",
+            Some("cf_clearance=clearance; session=browser"),
+            None,
+            Method::GET,
+        )
+        .expect("request should build");
+        let headers = request
+            .headers
+            .materialize(&policy)
+            .expect("headers should materialize");
+
+        assert_eq!(
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0")
+        );
+    }
+
+    #[test]
+    fn cookie_only_management_request_does_not_add_bearer_header() {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context("https://relay.example", &secrets, &outbound);
+        let policy = OutboundHeaderPolicy::provider_default();
+
+        let request = build_json_request(
+            &context,
+            EndpointRole::Groups,
+            "https://relay.example/api/v1/groups/available",
+            "cf_clearance=clearance; session=browser",
+            Some("cf_clearance=clearance; session=browser"),
+            None,
+            Method::GET,
+        )
+        .expect("request should build");
+        let headers = request
+            .headers
+            .materialize(&policy)
+            .expect("headers should materialize");
+
+        assert!(headers.get(header::AUTHORIZATION).is_none());
+        assert_eq!(
+            headers
+                .get(header::COOKIE)
+                .and_then(|value| value.to_str().ok()),
+            Some("cf_clearance=clearance; session=browser")
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_rejection_retries_the_fresh_browser_cookie_without_bearer() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(401, json!({"error": "expired token"}))),
+            Some(json_response(200, json!({"data": []}))),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = HybridSessionSecretAccessor;
+        let credential = test_credential();
+        let context = CollectorContext {
+            station: test_station_identity(),
+            endpoints: test_endpoints(&server.base_url),
+            credential: credential.clone(),
+            auth: Some(ProviderAuthContext::Sub2Api {
+                station_keys: Vec::new(),
+                access_token: Some(credential.clone()),
+                session_cookie: Some(credential),
+                login: None,
+                credit_per_cny: 1.0,
+            }),
+            user_agent: None,
+            secrets: &secrets,
+            outbound: &outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        };
+        let auth = sub2api_auth(&context).expect("auth context should resolve");
+        let mut token = "captured-jwt".to_string();
+
+        let execution = execute_bearer_json_with_recovery(
+            &context,
+            EndpointRole::Groups,
+            &server.base_url,
+            "/api/v1/groups/available",
+            &mut token,
+            &auth,
+        )
+        .await
+        .expect("cookie fallback should succeed");
+        let requests = server.finish();
+
+        assert!(execution.ok);
+        assert_eq!(token, "cf_clearance=clearance; session=browser");
+        assert_eq!(requests.len(), 2);
+        let first_request = requests[0].to_ascii_lowercase();
+        let second_request = requests[1].to_ascii_lowercase();
+        assert!(first_request.contains("authorization: bearer captured-jwt"));
+        assert!(first_request.contains("cookie: cf_clearance=clearance; session=browser"));
+        assert!(!second_request.contains("authorization: bearer captured-jwt"));
+        assert!(second_request.contains("cookie: cf_clearance=clearance; session=browser"));
+    }
+
     fn test_context<'a>(
         base_url: &str,
         secrets: &'a TestSecretAccessor,
@@ -1908,9 +2249,11 @@ mod tests {
             auth: Some(ProviderAuthContext::Sub2Api {
                 station_keys: Vec::new(),
                 access_token: Some(access_token),
+                session_cookie: None,
                 login: None,
                 credit_per_cny: 1.0,
             }),
+            user_agent: None,
             secrets,
             outbound,
             proxy: ProxyPolicy::Direct,
@@ -1944,9 +2287,11 @@ mod tests {
                     credential: station_key,
                 }],
                 access_token: Some(access_token),
+                session_cookie: None,
                 login: None,
                 credit_per_cny: 27.0,
             }),
+            user_agent: None,
             secrets,
             outbound,
             proxy: ProxyPolicy::Direct,

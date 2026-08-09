@@ -163,7 +163,7 @@ pub(crate) async fn upgrade_existing_v2_database_to_schema(
     let schema_version = applied_schema_version(&pool).await?;
     let binary = current_binary_compatibility();
     let open_mode = decide_open_mode(&binary, &compatibility, schema_version)?;
-    if compatibility.schema_version == target_schema && schema_version >= target_schema {
+    if compatibility.schema_version >= target_schema && schema_version >= target_schema {
         pool.close().await;
         return Ok(None);
     }
@@ -616,6 +616,18 @@ mod tests {
             .await
             .expect("insert change event");
         }
+        migrator_through(21)
+            .expect("schema 21 migrator")
+            .run(&pool)
+            .await
+            .expect("apply schema 21 quarantine");
+        let quarantined_model_events: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_events WHERE event_type IN ('model_added', 'model_removed')",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("schema 21 model events");
+        assert_eq!(quarantined_model_events, 0);
         pool.close().await;
 
         upgrade_existing_v2_database(&path)
@@ -665,13 +677,13 @@ mod tests {
         .await
         .expect("models task state");
         assert_eq!(removed_model_task_state, 0);
-        let removed_model_events: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM change_events WHERE event_type IN ('model_added', 'model_removed')",
+        let legacy_change_events_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_events'",
         )
         .fetch_one(&pool)
         .await
-        .expect("model events");
-        assert_eq!(removed_model_events, 0);
+        .expect("legacy change events table postcondition");
+        assert_eq!(legacy_change_events_table, 0);
         let model_setting_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM settings WHERE key = 'model_list_interval_minutes'",
         )

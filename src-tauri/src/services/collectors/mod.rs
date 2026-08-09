@@ -251,6 +251,7 @@ pub(crate) struct PreparedSub2ApiDriverCollection {
     timeout: Duration,
     credential_handle: contract::OpaqueCredentialHandle,
     auth_context: contract::ProviderAuthContext,
+    user_agent: Option<String>,
     secret_accessor: MultiSecretAccessor,
 }
 
@@ -406,15 +407,36 @@ fn prepare_sub2api_collection_v2(
             };
             records.push(SecretRecord {
                 handle: handle.clone(),
-                purpose: contract::CredentialSecretPurpose::SessionCookie,
+                purpose: contract::CredentialSecretPurpose::AuthorizationHeader,
                 secret: token,
             });
             handle
         });
 
+    // Keep the browser cookie separately from the JWT.  Cloudflare-protected
+    // deployments may require both headers on the same management request.
+    let session_cookie_handle = session
+        .cookie
+        .filter(|cookie| !cookie.trim().is_empty())
+        .map(|cookie| {
+            let handle = contract::OpaqueCredentialHandle {
+                station_id: station_id.clone(),
+                credential_revision: station.endpoint_revision,
+                scope: contract::CredentialScope::LoginSession,
+            };
+            records.push(SecretRecord {
+                handle: handle.clone(),
+                purpose: contract::CredentialSecretPurpose::SessionCookie,
+                secret: cookie,
+            });
+            handle
+        });
+    let access_token_handle = access_token_handle.or_else(|| session_cookie_handle.clone());
+
     let credentials = source
         .get_station_credentials(station_id.clone())
         .map_err(|_| ApplicationError::Internal)?;
+    let user_agent = credentials.session_user_agent.clone();
     let login = credentials
         .login_username
         .as_deref()
@@ -481,9 +503,11 @@ fn prepare_sub2api_collection_v2(
             auth_context: contract::ProviderAuthContext::Sub2Api {
                 station_keys: station_key_credentials,
                 access_token: access_token_handle,
+                session_cookie: session_cookie_handle,
                 login,
                 credit_per_cny: station.credit_per_cny,
             },
+            user_agent,
             secret_accessor: MultiSecretAccessor { records },
         },
     ))
@@ -664,6 +688,7 @@ pub(crate) async fn finish_sub2api_collection_v2(
                 },
                 credential: prepared.credential_handle,
                 auth: Some(prepared.auth_context),
+                user_agent: prepared.user_agent,
                 secrets: &prepared.secret_accessor,
                 outbound,
                 proxy: prepared.proxy,
@@ -776,6 +801,7 @@ pub(crate) async fn finish_newapi_collection_v2(
                             token_expires_at: None,
                             session_expires_at: None,
                             session_source: "password_login".to_string(),
+                            session_user_agent: None,
                         },
                         prepared.endpoint_revision,
                     )
@@ -803,6 +829,7 @@ pub(crate) async fn finish_newapi_collection_v2(
                 },
                 credential: prepared.credential_handle,
                 auth: prepared.auth_context,
+                user_agent: None,
                 secrets: &prepared.secret_accessor,
                 outbound,
                 proxy: prepared.proxy,
@@ -1097,6 +1124,7 @@ pub(crate) async fn finish_station_login_probe_v2(
                     token_expires_at: None,
                     session_expires_at: None,
                     session_source: "password_login".to_string(),
+                    session_user_agent: None,
                 },
                 prepared.station.endpoint_revision,
             )

@@ -20,6 +20,7 @@ pub struct CapturedHttpEventInput {
     pub response_json: Option<Value>,
     pub response_text: Option<String>,
     pub error_message: Option<String>,
+    pub user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

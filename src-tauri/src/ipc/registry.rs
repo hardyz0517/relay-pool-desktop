@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "46ec9c6288b971f3c2440aa01b8f1ac8b44f5d3a0a5babd3d8da2a2ff33cdb2e";
+    "e77d03356140f295dbea31467565ac4d6e79f99da87421a97a2439ecf52e7d2c";
 
 #[cfg_attr(
     not(test),
@@ -201,14 +201,23 @@ macro_rules! ipc_command_registry {
             upsert_station_group_binding => $crate::commands::collector_metadata::upsert_station_group_binding,
             list_group_rate_records => $crate::commands::collector_metadata::list_group_rate_records,
             list_collector_runs => $crate::commands::collector_metadata::list_collector_runs,
-            list_change_events => $crate::commands::change_events::list_change_events,
-            clear_change_events => $crate::commands::change_events::clear_change_events,
-            list_change_events_for_station => $crate::commands::change_events::list_change_events_for_station,
-            upsert_change_event => $crate::commands::change_events::upsert_change_event,
-            mark_change_event_read => $crate::commands::change_events::mark_change_event_read,
-            mark_change_events_read => $crate::commands::change_events::mark_change_events_read,
-            dismiss_change_event => $crate::commands::change_events::dismiss_change_event,
-            resolve_change_event => $crate::commands::change_events::resolve_change_event,
+            list_alerting_incidents => $crate::commands::alerting::list_alerting_incidents,
+            get_alerting_incident => $crate::commands::alerting::get_alerting_incident,
+            list_alerting_occurrences => $crate::commands::alerting::list_alerting_occurrences,
+            list_alerting_deliveries => $crate::commands::alerting::list_alerting_deliveries,
+            list_alert_policies => $crate::commands::alerting::list_alert_policies,
+            upsert_alert_policy => $crate::commands::alerting::upsert_alert_policy,
+            delete_alert_policy => $crate::commands::alerting::delete_alert_policy,
+            get_alerting_settings => $crate::commands::alerting::get_alerting_settings,
+            update_alerting_settings => $crate::commands::alerting::update_alerting_settings,
+            record_alerting_observation => $crate::commands::alerting::record_alerting_observation,
+            mark_alerting_seen => $crate::commands::alerting::mark_alerting_seen,
+            mark_all_alerting_seen => $crate::commands::alerting::mark_all_alerting_seen,
+            resolve_all_alerting_incidents => $crate::commands::alerting::resolve_all_alerting_incidents,
+            snooze_alerting_incident => $crate::commands::alerting::snooze_alerting_incident,
+            test_alerting_notification => $crate::commands::alerting::test_alerting_notification,
+            request_desktop_notification_permission => $crate::commands::alerting::request_desktop_notification_permission,
+            get_desktop_notification_permission => $crate::commands::alerting::get_desktop_notification_permission,
             get_station_credentials => $crate::commands::credentials::get_station_credentials,
             update_station_credentials => $crate::commands::credentials::update_station_credentials,
             update_station_session => $crate::commands::credentials::update_station_session,
@@ -501,31 +510,57 @@ fn command_contract(name: &str) -> CommandContract {
             "EmptyInputDto",
             "DashboardCumulativeRequestMetricsSnapshotDto",
         ),
-        "list_change_events" => migrated_read("EmptyInputDto", "Vec<ChangeEventDto>"),
-        "clear_change_events" => migrated_mutation("EmptyInputDto", "unit", "idempotent", false),
-        "list_change_events_for_station" => {
-            migrated_read("ChangeLogStationIdInputDto", "Vec<ChangeEventDto>")
+        "list_alerting_incidents" => {
+            migrated_read("AlertingCurrentInputDto", "AlertingIncidentPageDto")
         }
-        "upsert_change_event" => migrated_mutation(
-            "UpsertChangeEventInputDto",
-            "ChangeEventDto",
+        "get_alerting_incident" => {
+            migrated_read("AlertingIncidentInputDto", "AlertingIncidentSummaryDto")
+        }
+        "list_alerting_occurrences" => {
+            migrated_read("AlertingHistoryInputDto", "AlertingOccurrencePageDto")
+        }
+        "list_alerting_deliveries" => {
+            migrated_read("AlertingHistoryInputDto", "AlertingDeliveryPageDto")
+        }
+        "list_alert_policies" => migrated_read("EmptyInputDto", "Vec<AlertPolicyDto>"),
+        "upsert_alert_policy" => {
+            migrated_mutation("AlertPolicyInputDto", "AlertPolicyDto", "idempotent", false)
+        }
+        "delete_alert_policy" => {
+            migrated_mutation("AlertPolicyDeleteInputDto", "unit", "idempotent", false)
+        }
+        "get_alerting_settings" => migrated_read("EmptyInputDto", "AlertingSettingsDto"),
+        "update_alerting_settings" => migrated_mutation(
+            "AlertingSettingsInputDto",
+            "AlertingSettingsDto",
             "idempotent",
             false,
         ),
-        "mark_change_event_read" | "dismiss_change_event" | "resolve_change_event" => {
-            migrated_mutation(
-                "ChangeEventIdInputDto",
-                "ChangeEventDto",
-                "idempotent",
-                false,
-            )
+        "record_alerting_observation" => {
+            migrated_mutation("AlertingObservationInputDto", "bool", "idempotent", false)
         }
-        "mark_change_events_read" => migrated_mutation(
-            "ChangeEventIdsInputDto",
-            "Vec<ChangeEventDto>",
+        "mark_alerting_seen" => {
+            migrated_mutation("AlertingAttentionInputDto", "unit", "idempotent", false)
+        }
+        "mark_all_alerting_seen" => {
+            migrated_mutation("AlertingMarkAllSeenInputDto", "u64", "idempotent", false)
+        }
+        "resolve_all_alerting_incidents" => {
+            migrated_mutation("AlertingMarkAllSeenInputDto", "u64", "idempotent", false)
+        }
+        "snooze_alerting_incident" => {
+            migrated_mutation("AlertingSnoozeInputDto", "unit", "idempotent", false)
+        }
+        "test_alerting_notification" => migrated_mutation(
+            "AlertingNotificationTestInputDto",
+            "unit",
             "idempotent",
             false,
         ),
+        "request_desktop_notification_permission" => {
+            migrated_mutation("EmptyInputDto", "string", "idempotent", false)
+        }
+        "get_desktop_notification_permission" => migrated_read("EmptyInputDto", "string"),
         "list_balance_snapshots" | "list_current_station_balance_snapshots" => {
             migrated_read("EmptyInputDto", "Vec<BalanceSnapshotDto>")
         }
@@ -1073,7 +1108,7 @@ fn pilot_serialization_fixture() -> String {
         serde_json::json!({"command": "reorder_stations", "input": reorder_stations, "output": [station]}),
     ];
     commands.extend(super::dto::station_keys::serialization_fixtures());
-    commands.extend(super::dto::change_logs::serialization_fixtures());
+    commands.extend(super::dto::request_logs::serialization_fixtures());
     commands.extend(super::dto::collector_facts::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_reads::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_mutations::serialization_fixtures());
@@ -1226,38 +1261,6 @@ export function loadDashboardLiveRequestMetrics(input: DashboardRequestMetricsIn
 
 export function loadDashboardCumulativeRequestMetrics(input: EmptyInputDto = {}): Promise<DashboardCumulativeRequestMetricsSnapshotDto> {
   return invokeCommand<DashboardCumulativeRequestMetricsSnapshotDto>("load_dashboard_cumulative_request_metrics", { input });
-}
-
-export function listChangeEvents(input: EmptyInputDto = {}): Promise<ChangeEventDto[]> {
-  return invokeCommand<ChangeEventDto[]>("list_change_events", { input });
-}
-
-export function clearChangeEvents(input: EmptyInputDto = {}): Promise<void> {
-  return invokeCommand<void>("clear_change_events", { input });
-}
-
-export function listChangeEventsForStation(input: ChangeLogStationIdInputDto): Promise<ChangeEventDto[]> {
-  return invokeCommand<ChangeEventDto[]>("list_change_events_for_station", { input });
-}
-
-export function upsertChangeEvent(input: UpsertChangeEventInputDto): Promise<ChangeEventDto> {
-  return invokeCommand<ChangeEventDto>("upsert_change_event", { input });
-}
-
-export function markChangeEventRead(input: ChangeEventIdInputDto): Promise<ChangeEventDto> {
-  return invokeCommand<ChangeEventDto>("mark_change_event_read", { input });
-}
-
-export function markChangeEventsRead(input: ChangeEventIdsInputDto): Promise<ChangeEventDto[]> {
-  return invokeCommand<ChangeEventDto[]>("mark_change_events_read", { input });
-}
-
-export function dismissChangeEvent(input: ChangeEventIdInputDto): Promise<ChangeEventDto> {
-  return invokeCommand<ChangeEventDto>("dismiss_change_event", { input });
-}
-
-export function resolveChangeEvent(input: ChangeEventIdInputDto): Promise<ChangeEventDto> {
-  return invokeCommand<ChangeEventDto>("resolve_change_event", { input });
 }
 
 export function listBalanceSnapshots(input: EmptyInputDto = {}): Promise<BalanceSnapshotDto[]> {
@@ -1691,6 +1694,66 @@ export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
 export function bindRemoteStationKey(input: BindRemoteStationKeyInputDto)"#,
         )
         .replace(
+            "export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>",
+            r#"export function listAlertPolicies(input: EmptyInputDto = {}): Promise<AlertPolicyDto[]> {
+  return invokeCommand<AlertPolicyDto[]>("list_alert_policies", { input });
+}
+
+export function upsertAlertPolicy(input: AlertPolicyInputDto): Promise<AlertPolicyDto> {
+  return invokeCommand<AlertPolicyDto>("upsert_alert_policy", { input });
+}
+
+export function deleteAlertPolicy(input: AlertPolicyDeleteInputDto): Promise<void> {
+  return invokeCommand<void>("delete_alert_policy", { input });
+}
+
+export function getAlertingSettings(input: EmptyInputDto = {}): Promise<AlertingSettingsDto> {
+  return invokeCommand<AlertingSettingsDto>("get_alerting_settings", { input });
+}
+
+export function updateAlertingSettings(input: AlertingSettingsInputDto): Promise<AlertingSettingsDto> {
+  return invokeCommand<AlertingSettingsDto>("update_alerting_settings", { input });
+}
+
+export function listAlertingIncidents(input: AlertingCurrentInputDto = {}): Promise<AlertingIncidentPageDto> {
+  return invokeCommand<AlertingIncidentPageDto>("list_alerting_incidents", { input });
+}
+
+export function getAlertingIncident(input: AlertingIncidentInputDto): Promise<AlertingIncidentSummaryDto> {
+  return invokeCommand<AlertingIncidentSummaryDto>("get_alerting_incident", { input });
+}
+
+export function listAlertingOccurrences(input: AlertingHistoryInputDto): Promise<AlertingOccurrencePageDto> {
+  return invokeCommand<AlertingOccurrencePageDto>("list_alerting_occurrences", { input });
+}
+
+export function listAlertingDeliveries(input: AlertingHistoryInputDto): Promise<AlertingDeliveryPageDto> {
+  return invokeCommand<AlertingDeliveryPageDto>("list_alerting_deliveries", { input });
+}
+
+export function markAlertingSeen(input: AlertingAttentionInputDto): Promise<void> {
+  return invokeCommand<void>("mark_alerting_seen", { input });
+}
+
+export function markAllAlertingSeen(input: AlertingMarkAllSeenInputDto = {}): Promise<number> {
+  return invokeCommand<number>("mark_all_alerting_seen", { input });
+}
+
+export function snoozeAlertingIncident(input: AlertingSnoozeInputDto): Promise<void> {
+  return invokeCommand<void>("snooze_alerting_incident", { input });
+}
+
+export function requestDesktopNotificationPermission(input: EmptyInputDto = {}): Promise<string> {
+  return invokeCommand<string>("request_desktop_notification_permission", { input });
+}
+
+export function getDesktopNotificationPermission(input: EmptyInputDto = {}): Promise<string> {
+  return invokeCommand<string>("get_desktop_notification_permission", { input });
+}
+
+export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
+        )
+        .replace(
             r#"export function getRuntimeContractInfo(): Promise<RuntimeContractInfo> {
   return invokeCommand<RuntimeContractInfo>("get_runtime_contract_info");
 }"#,
@@ -1854,19 +1917,8 @@ mod tests {
     }
 
     #[test]
-    fn changes_logs_commands_have_closed_schemas_and_frozen_mutation_semantics() {
-        for name in [
-            "clear_change_events",
-            "clear_request_logs",
-            "dismiss_change_event",
-            "list_change_events",
-            "list_change_events_for_station",
-            "list_request_logs",
-            "mark_change_event_read",
-            "mark_change_events_read",
-            "resolve_change_event",
-            "upsert_change_event",
-        ] {
+    fn request_log_commands_have_closed_schemas_and_frozen_mutation_semantics() {
+        for name in ["clear_request_logs", "list_request_logs"] {
             let contract = command_contract(name);
             assert!(!contract.input.starts_with("legacy_"), "{name}");
             assert!(!contract.output.starts_with("legacy_"), "{name}");
@@ -1877,10 +1929,6 @@ mod tests {
             assert!(!contract.transport_retry, "{name}");
             assert!(!contract.result_unknown, "{name}");
         }
-        assert_eq!(
-            command_contract("upsert_change_event").mutation_kind,
-            "idempotent"
-        );
     }
 
     #[test]

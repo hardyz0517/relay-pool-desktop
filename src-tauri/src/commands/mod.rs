@@ -1,8 +1,8 @@
 use std::process::Command;
 
+pub(crate) mod alerting;
 pub(crate) mod capture;
 pub(crate) mod ccswitch_import;
-pub(crate) mod change_events;
 pub(crate) mod channel_monitoring;
 pub(crate) mod channel_status;
 pub(crate) mod collector_metadata;

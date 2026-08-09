@@ -386,6 +386,7 @@ async fn clear_station_origin_bound_login_material(
             token_expires_at = NULL,
             token_refreshed_at = NULL,
             session_source = 'none',
+            session_user_agent = NULL,
             updated_at = ?1
         WHERE station_id = ?2
         "#,

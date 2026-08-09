@@ -1,5 +1,5 @@
+mod alerting;
 mod capture;
-mod change_events;
 mod channel_monitoring;
 mod channel_status;
 mod collector_metadata;
@@ -17,8 +17,8 @@ mod settings_stations;
 mod station_collection;
 mod station_key_connectivity;
 
+pub(crate) use alerting::{parse_observation, AlertingCommandFacade};
 pub(crate) use capture::{CaptureCommandError, CaptureCommandFacade, CaptureSessionStartPlan};
-pub(crate) use change_events::ChangeEventsCommandFacade;
 pub(crate) use channel_monitoring::ChannelMonitoringCommandFacade;
 pub(crate) use channel_status::ChannelStatusCommandFacade;
 pub(crate) use collector_metadata::CollectorMetadataCommandFacade;

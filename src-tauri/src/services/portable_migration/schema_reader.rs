@@ -34,11 +34,12 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_balance_snapshots_latest_key_scope",
     "idx_balance_snapshots_latest_station_scope",
     "idx_balance_snapshots_station_scope_updated",
-    "idx_change_events_page",
-    "idx_change_events_station_key_updated",
-    "idx_change_events_station_page",
-    "idx_change_events_station_updated",
-    "idx_change_events_status_severity_updated",
+    "idx_alert_policies_enabled_scope_priority",
+    "idx_change_event_occurrences_incident_episode_observed",
+    "idx_change_event_occurrences_type_observed",
+    "idx_change_incidents_lifecycle_severity_updated",
+    "idx_change_incidents_station_key_lifecycle_updated",
+    "idx_change_incidents_station_lifecycle_updated",
     "idx_channel_monitor_runs_monitor_started",
     "idx_channel_monitor_runs_station_started",
     "idx_channel_monitor_templates_list",
@@ -62,6 +63,9 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_group_rate_records_station_checked",
     "idx_model_aliases_client_upstream",
     "idx_model_base_prices_selection",
+    "idx_notification_deliveries_delivery_key",
+    "idx_notification_deliveries_incident_episode_created",
+    "idx_notification_deliveries_status_scheduled",
     "idx_pricing_rules_comparison",
     "idx_pricing_rules_selection",
     "idx_pricing_rules_station_model",
@@ -513,8 +517,8 @@ mod tests {
         let fingerprint = trusted_schema_fingerprint_v1();
 
         assert_eq!(fingerprint.sha256, fixture);
-        assert_eq!(fingerprint.table_count, 50);
-        assert_eq!(fingerprint.index_count, 54);
+        assert_eq!(fingerprint.table_count, 55);
+        assert_eq!(fingerprint.index_count, 58);
     }
 
     #[tokio::test]

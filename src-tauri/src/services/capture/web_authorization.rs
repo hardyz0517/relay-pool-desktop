@@ -69,6 +69,70 @@ pub(crate) fn is_newapi_completion_candidate(
         && extract_verified_user_id(payload).is_some()
 }
 
+/// Sub2API installations protected by a browser challenge often establish a
+/// usable session without going through the NewAPI `/api/user/self` endpoint.
+/// Login responses are deliberately excluded: CF clearance may still be
+/// written after the login response, so completion must wait for an identity
+/// probe made with the settled browser session.
+pub(crate) fn is_sub2api_completion_candidate(
+    request_path: &str,
+    status: Option<i64>,
+    response_json: Option<&Value>,
+) -> bool {
+    if !matches!(status, Some(200..=299)) {
+        return false;
+    }
+    let path = request_path
+        .split('?')
+        .next()
+        .unwrap_or(request_path)
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+    let is_auth_endpoint = matches!(
+        path.as_str(),
+        "/api/v1/auth/me"
+            | "/api/v1/auth/session"
+            | "/api/v1/user/profile"
+            | "/api/v1/user/info"
+            | "/api/v1/user/self"
+            | "/auth/me"
+            | "/auth/session"
+            | "/user/profile"
+            | "/user/info"
+            | "/user/self"
+            | "/api/user/profile"
+            | "/api/user/info"
+            | "/api/user/self"
+    );
+    if !is_auth_endpoint {
+        return false;
+    }
+    response_json.and_then(extract_verified_user_id).is_some()
+        || response_json.is_some_and(contains_session_credential)
+}
+
+fn contains_session_credential(payload: &Value) -> bool {
+    match payload {
+        Value::Object(map) => {
+            [
+                "id",
+                "access_token",
+                "accessToken",
+                "token",
+                "cookie",
+                "session",
+                "session_cookie",
+                "sessionCookie",
+            ]
+            .iter()
+            .any(|name| map.contains_key(*name))
+                || map.values().any(contains_session_credential)
+        }
+        Value::Array(items) => items.iter().any(contains_session_credential),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +261,31 @@ mod tests {
             "/api/user/self",
             Some(200),
             Some(&json!({ "success": false, "data": { "id": 42 } })),
+        ));
+    }
+
+    #[test]
+    fn recognizes_sub2api_identity_candidates_only() {
+        let payload = json!({"data": {"id": 42}, "access_token": "token"});
+        assert!(!is_sub2api_completion_candidate(
+            "/api/v1/auth/login",
+            Some(200),
+            Some(&payload)
+        ));
+        assert!(is_sub2api_completion_candidate(
+            "/api/v1/user/profile",
+            Some(200),
+            Some(&json!({"id": 42}))
+        ));
+        assert!(!is_sub2api_completion_candidate(
+            "/api/v1/groups/available",
+            Some(200),
+            Some(&payload)
+        ));
+        assert!(is_sub2api_completion_candidate(
+            "/auth/me",
+            Some(200),
+            Some(&json!({"user": {"email": "session@example.invalid"}, "cookie": "present"}))
         ));
     }
 }

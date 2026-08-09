@@ -60,6 +60,7 @@ impl CaptureSessionStore {
             active_commit_id: None,
             events: Vec::new(),
             web_authorization_user_id: None,
+            web_authorization_user_agent: None,
             last_error: None,
         };
         let status = session.status();
@@ -72,6 +73,7 @@ impl CaptureSessionStore {
         station_id: &str,
         event: CapturedHttpEvent,
         web_authorization_user_id: Option<String>,
+        user_agent: Option<String>,
     ) -> Result<CaptureEventReceipt, String> {
         let mut sessions = self.sessions()?;
         let Some(session) = sessions.get_mut(station_id) else {
@@ -86,6 +88,13 @@ impl CaptureSessionStore {
         session.events.push(event);
         if let Some(user_id) = web_authorization_user_id.filter(|value| !value.trim().is_empty()) {
             session.web_authorization_user_id = Some(user_id.trim().to_string());
+        }
+        if session.web_authorization_user_agent.is_none() {
+            session.web_authorization_user_agent = user_agent
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
         }
         Ok(CaptureEventReceipt {
             status: session.status(),
@@ -112,11 +121,41 @@ impl CaptureSessionStore {
         }))
     }
 
+    pub(crate) fn ensure_web_authorization_candidate(
+        &self,
+        station_id: &str,
+        user_id: &str,
+    ) -> Result<(), String> {
+        let user_id = user_id.trim();
+        if user_id.is_empty() {
+            return Err("web authorization candidate user id is empty".to_string());
+        }
+        let mut sessions = self.sessions()?;
+        let session = sessions
+            .get_mut(station_id)
+            .ok_or_else(|| "capture session does not exist".to_string())?;
+        if session.phase != CaptureSessionPhase::Capturing {
+            return Err("capture session is currently being committed".to_string());
+        }
+        if session.web_authorization_user_id.is_none() {
+            session.web_authorization_user_id = Some(user_id.to_string());
+        }
+        Ok(())
+    }
+
     pub fn web_authorization_cookie_url(&self, station_id: &str) -> Result<String, String> {
         let sessions = self.sessions()?;
         sessions
             .get(station_id)
             .map(|session| session.web_authorization_cookie_url.clone())
+            .ok_or_else(|| "capture session does not exist".to_string())
+    }
+
+    pub fn web_authorization_user_agent(&self, station_id: &str) -> Result<Option<String>, String> {
+        let sessions = self.sessions()?;
+        sessions
+            .get(station_id)
+            .map(|session| session.web_authorization_user_agent.clone())
             .ok_or_else(|| "capture session does not exist".to_string())
     }
 
@@ -257,6 +296,7 @@ struct CaptureSession {
     active_commit_id: Option<u64>,
     events: Vec<CapturedHttpEvent>,
     web_authorization_user_id: Option<String>,
+    web_authorization_user_agent: Option<String>,
     last_error: Option<String>,
 }
 
@@ -327,7 +367,7 @@ mod tests {
         user_id: &str,
     ) -> CaptureSessionStatus {
         store
-            .push_event("station-1", event, Some(user_id.to_string()))
+            .push_event("station-1", event, Some(user_id.to_string()), None)
             .expect("push authorization candidate")
             .status
     }
@@ -364,7 +404,7 @@ mod tests {
         event.source_window_id = "capture-station-2".to_string();
 
         assert!(store
-            .push_event("station-1", event, Some("42".to_string()))
+            .push_event("station-1", event, Some("42".to_string()), None)
             .is_err());
         let status = store.status("station-1").expect("status");
         assert_eq!(status.capture_count, 0);
@@ -448,7 +488,7 @@ mod tests {
             .expect("start capture");
 
         let receipt = store
-            .push_event("station-1", captured_event(), None)
+            .push_event("station-1", captured_event(), None, None)
             .expect("accept event");
         assert_eq!(receipt.endpoint_revision, 4);
     }
@@ -468,7 +508,7 @@ mod tests {
 
         assert_eq!(commit.endpoint_revision, 4);
         assert!(store
-            .push_event("station-1", captured_event(), None)
+            .push_event("station-1", captured_event(), None, None)
             .is_err());
         assert!(store.clear("station-1").is_err());
 
@@ -476,7 +516,7 @@ mod tests {
             .abort_commit("station-1", &commit)
             .expect("abort finish");
         store
-            .push_event("station-1", captured_event(), None)
+            .push_event("station-1", captured_event(), None, None)
             .expect("capture resumes after abort");
     }
 

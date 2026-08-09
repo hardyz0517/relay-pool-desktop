@@ -1,5 +1,5 @@
+pub(crate) mod alerting;
 pub mod capture;
-pub mod change_events;
 pub mod channel_monitors;
 pub mod collector;
 pub mod collector_runs;

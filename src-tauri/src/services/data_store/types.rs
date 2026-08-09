@@ -21,6 +21,7 @@ pub enum RecoveryReason {
     CorruptedDatabase,
     InterruptedUpgrade,
     SchemaMigrationFailed,
+    AlertingUpgradeFailed,
     SecretBaselineFailed,
     InternalUpgradeError,
     UnsupportedSchemaVersion,

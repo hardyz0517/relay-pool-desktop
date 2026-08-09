@@ -151,6 +151,7 @@ impl CaptureCommandFacade {
             &label,
             target.login_username.as_deref(),
             target.login_password.as_ref().map(|value| value.as_str()),
+            &target.station.station_type,
             "finish_web_authorization_session",
             "stationId",
         );
@@ -186,6 +187,7 @@ impl CaptureCommandFacade {
             &label,
             target.login_username.as_deref(),
             target.login_password.as_ref().map(|value| value.as_str()),
+            &target.station.station_type,
             "finish_provider_draft_authorization_session",
             "draftId",
         );
@@ -213,13 +215,15 @@ impl CaptureCommandFacade {
                 "捕获事件不属于当前站点 Base URL，已拒绝。".to_string(),
             ));
         }
-        let web_authorization_user_id = web_authorization_candidate_user_id_from_input(&input);
+        let web_authorization_user_id =
+            web_authorization_candidate_user_id_from_input(&input, &station.station_type);
         let captured_credentials = capture::extract_session_credentials(&input);
+        let user_agent = input.user_agent.clone();
         let station_id = input.station_id.clone();
         let event = capture::sanitize_event(input);
-        let receipt = self
-            .sessions
-            .push_event(&station_id, event, web_authorization_user_id)?;
+        let receipt =
+            self.sessions
+                .push_event(&station_id, event, web_authorization_user_id, user_agent)?;
         if let Some(session) = captured_credentials {
             match owner {
                 CaptureOwner::Station(_) => {
@@ -275,17 +279,29 @@ impl CaptureCommandFacade {
         cookie_header: String,
     ) -> Result<CollectorRunResult, CaptureCommandError> {
         let station = self.stations.station_for_capture(&station_id).await?;
-        let candidate = self
-            .sessions
-            .web_authorization_candidate(&station_id)?
-            .ok_or_else(|| {
-                CaptureCommandError::Message(
+        let candidate = self.sessions.web_authorization_candidate(&station_id)?;
+        let candidate = match candidate {
+            Some(candidate) => candidate,
+            None if station.station_type.eq_ignore_ascii_case("sub2api") => {
+                // Some CF-protected Sub2API pages complete authorization with
+                // a cookie-only browser flow and never expose a standard user
+                // identity response to the capture script.
+                self.sessions
+                    .ensure_web_authorization_candidate(&station_id, "sub2api-session")?;
+                self.sessions
+                    .web_authorization_candidate(&station_id)?
+                    .ok_or_else(|| CaptureCommandError::Application(ApplicationError::Internal))?
+            }
+            None => {
+                return Err(CaptureCommandError::Message(
                     "网页登录授权尚未捕获到用户身份，请在授权窗口完成登录后重试。".to_string(),
-                )
-            })?;
+                ));
+            }
+        };
         let verified = self
-            .verify_newapi_web_authorization_session(&station, cookie_header, &candidate.user_id)
+            .verify_web_authorization_session(&station, cookie_header, &candidate.user_id)
             .await?;
+        let user_agent = self.sessions.web_authorization_user_agent(&station_id)?;
         let commit = self
             .sessions
             .begin_web_authorization_commit(&station_id, &candidate)?;
@@ -293,6 +309,7 @@ impl CaptureCommandFacade {
             .persist_web_authorization_session_inner(
                 station_id.clone(),
                 verified,
+                user_agent,
                 commit.endpoint_revision,
             )
             .await
@@ -352,22 +369,33 @@ impl CaptureCommandFacade {
                 "provider draft authorization requires an active draft".to_string(),
             ));
         };
-        let candidate = self
-            .sessions
-            .web_authorization_candidate(&draft_id)?
-            .ok_or_else(|| {
-                CaptureCommandError::Message(
+        let candidate = self.sessions.web_authorization_candidate(&draft_id)?;
+        let candidate = match candidate {
+            Some(candidate) => candidate,
+            None if station.station_type.eq_ignore_ascii_case("sub2api") => {
+                self.sessions
+                    .ensure_web_authorization_candidate(&draft_id, "sub2api-session")?;
+                self.sessions
+                    .web_authorization_candidate(&draft_id)?
+                    .ok_or_else(|| CaptureCommandError::Application(ApplicationError::Internal))?
+            }
+            None => {
+                return Err(CaptureCommandError::Message(
                     "Web authorization has not captured a user identity yet.".to_string(),
-                )
-            })?;
+                ));
+            }
+        };
         let verified = self
-            .verify_newapi_web_authorization_session(&station, cookie_header, &candidate.user_id)
+            .verify_web_authorization_session(&station, cookie_header, &candidate.user_id)
             .await?;
+        let user_agent = self.sessions.web_authorization_user_agent(&draft_id)?;
         let commit = self
             .sessions
             .begin_web_authorization_commit(&draft_id, &candidate)?;
         let result = self
-            .persist_provider_draft_authorization_inner(&draft_id, &payload, verified, &commit)
+            .persist_provider_draft_authorization_inner(
+                &draft_id, &payload, verified, user_agent, &commit,
+            )
             .await;
         match result {
             Ok(preview) => {
@@ -405,7 +433,7 @@ impl CaptureCommandFacade {
         )
     }
 
-    async fn verify_newapi_web_authorization_session(
+    async fn verify_web_authorization_session(
         &self,
         station: &Station,
         cookie_header: String,
@@ -421,6 +449,18 @@ impl CaptureCommandFacade {
         if expected_user_id.is_empty() {
             return Err(CaptureCommandError::Message(
                 "Web authorization did not capture a usable user id.".to_string(),
+            ));
+        }
+
+        // Sub2API uses the browser session (and, for CF-protected sites, the
+        // clearance cookie) for management requests.  It has no NewAPI-style
+        // `/api/user/self` contract, so do not send it through the NewAPI
+        // authorization driver.  The cookie is still persisted only after the
+        // capture session supplied a verified auth response candidate.
+        if station.station_type.eq_ignore_ascii_case("sub2api") {
+            return Ok(VerifiedWebAuthorizationSession::new(
+                cookie_header,
+                expected_user_id,
             ));
         }
 
@@ -449,6 +489,7 @@ impl CaptureCommandFacade {
                 user_id: expected_user_id.clone(),
                 secret_purpose: CredentialSecretPurpose::SessionCookie,
             }),
+            user_agent: None,
             secrets: &secret_accessor,
             outbound: &self.outbound,
             proxy: ProxyPolicy::Direct,
@@ -492,8 +533,13 @@ impl CaptureCommandFacade {
         &self,
         station_id: String,
         verified: VerifiedWebAuthorizationSession,
+        user_agent: Option<String>,
         endpoint_revision: i64,
     ) -> Result<(), ApplicationError> {
+        let existing = self
+            .credentials
+            .get_station_credentials(station_id.clone())
+            .await?;
         self.credentials
             .persist_station_session_if_revision(
                 PersistStationSessionInput {
@@ -501,10 +547,13 @@ impl CaptureCommandFacade {
                     access_token: None,
                     refresh_token: None,
                     cookie: Some(verified.cookie_header),
-                    newapi_user_id: Some(verified.newapi_user_id),
-                    token_expires_at: None,
-                    session_expires_at: None,
+                    newapi_user_id: existing
+                        .newapi_user_id
+                        .or_else(|| Some(verified.newapi_user_id)),
+                    token_expires_at: existing.token_expires_at,
+                    session_expires_at: existing.session_expires_at,
                     session_source: verified.session_source,
+                    session_user_agent: user_agent,
                 },
                 endpoint_revision,
             )
@@ -517,6 +566,7 @@ impl CaptureCommandFacade {
         draft_id: &str,
         payload: &ProviderDraftPayload,
         verified: VerifiedWebAuthorizationSession,
+        user_agent: Option<String>,
         commit: &CaptureCommit,
     ) -> Result<ProviderDraftPreview, CaptureCommandError> {
         self.drafts
@@ -530,6 +580,7 @@ impl CaptureCommandFacade {
                     token_expires_at: None,
                     session_expires_at: None,
                     session_source: verified.session_source,
+                    session_user_agent: user_agent,
                 },
                 commit.endpoint_revision,
             )
@@ -707,6 +758,7 @@ fn capture_script(
     window_label: &str,
     login_username: Option<&str>,
     login_password: Option<&str>,
+    station_type: &str,
     finish_authorization_command: &str,
     finish_authorization_input_key: &str,
 ) -> String {
@@ -714,6 +766,8 @@ fn capture_script(
         serde_json::to_string(&login_username).unwrap_or_else(|_| "null".to_string());
     let login_password_json =
         serde_json::to_string(&login_password).unwrap_or_else(|_| "null".to_string());
+    let station_type_json =
+        serde_json::to_string(station_type).unwrap_or_else(|_| "\"unknown\"".to_string());
     format!(
         r#"
 (() => {{
@@ -721,6 +775,7 @@ fn capture_script(
   window.__relayPoolCaptureInstalled = true;
   const stationId = {station_id:?};
   const sourceWindowId = {window_label:?};
+  const stationType = {station_type_json};
   const loginUsername = {login_username_json};
   const loginPassword = {login_password_json};
   const limit = 4000;
@@ -735,31 +790,184 @@ fn capture_script(
     try {{ return headers && headers.get ? (headers.get("content-type") || "") : ""; }}
     catch (_) {{ return ""; }}
   }};
-  const tryFinishWebAuthorization = (status) => {{
-    if (!invoke || !status || !status.webAuthorizationCandidate) return;
-    if (window.__relayPoolAuthorizationFinishInFlight) return;
-    window.__relayPoolAuthorizationFinishInFlight = true;
-    invoke({finish_authorization_command:?}, {{ [{finish_authorization_input_key:?}]: stationId }})
-      .catch(() => undefined)
-      .finally(() => {{
-        window.__relayPoolAuthorizationFinishInFlight = false;
-      }});
+  const isSub2ApiIdentityProbe = (input) => {{
+    if (stationType.toLowerCase() !== "sub2api" || !input) return false;
+    const path = String(input.requestPath || pathFromUrl(input.requestUrl || ""))
+      .split("?")[0]
+      .replace(/\/$/, "")
+      .toLowerCase();
+    return [
+      "/api/v1/auth/me",
+      "/api/v1/auth/session",
+      "/api/v1/user/profile",
+      "/api/v1/user/info",
+      "/api/v1/user/self",
+      "/auth/me",
+      "/auth/session",
+      "/user/profile",
+      "/user/info",
+      "/user/self",
+      "/api/user/profile",
+      "/api/user/info",
+      "/api/user/self",
+    ].includes(path);
+  }};
+  const hasSessionCredential = (value, depth = 0) => {{
+    if (depth > 5 || value == null) return false;
+    if (Array.isArray(value)) return value.some((item) => hasSessionCredential(item, depth + 1));
+    if (typeof value !== "object") return false;
+    if (Object.entries(value).some(([key, child]) =>
+      ["access_token", "accessToken", "token"].includes(key) &&
+      typeof child === "string" && child.trim().length > 0
+    )) return true;
+    return Object.values(value).some((child) => hasSessionCredential(child, depth + 1));
+  }};
+  const isSub2ApiCredentialResponse = (input) => {{
+    if (stationType.toLowerCase() !== "sub2api" || !input) return false;
+    const path = String(input.requestPath || pathFromUrl(input.requestUrl || ""))
+      .split("?")[0]
+      .replace(/\/$/, "")
+      .toLowerCase();
+    const isAuthResponse = path === "/api/v1/auth/login"
+      || path === "/auth/login"
+      || isSub2ApiIdentityProbe(input);
+    return isAuthResponse
+      && Number(input.status) >= 200
+      && Number(input.status) < 300
+      && hasSessionCredential(input.responseJson);
+  }};
+  const scheduleAuthorizationFinish = (delayMs) => {{
+    if (window.__relayPoolAuthorizationFinishInFlight
+      || window.__relayPoolAuthorizationFinishScheduled) return;
+    window.__relayPoolAuthorizationFinishScheduled = true;
+    window.setTimeout(() => {{
+      window.__relayPoolAuthorizationFinishScheduled = false;
+      if (window.__relayPoolAuthorizationFinishInFlight || !invoke) return;
+      window.__relayPoolAuthorizationFinishInFlight = true;
+      invoke({finish_authorization_command:?}, {{ [{finish_authorization_input_key:?}]: stationId }})
+        .catch(() => undefined)
+        .finally(() => {{
+          window.__relayPoolAuthorizationFinishInFlight = false;
+        }});
+    }}, delayMs);
+  }};
+  const tryFinishWebAuthorization = (status, input) => {{
+    if (!invoke || !status) return;
+    const credentialResponse = isSub2ApiCredentialResponse(input);
+    if (!status.webAuthorizationCandidate && !credentialResponse) return;
+    // A Sub2API login response only proves that a token was issued.  The
+    // browser may still be completing the CF challenge and setting cookies;
+    // wait for the first authenticated identity probe before auto-finishing.
+    if (stationType.toLowerCase() === "sub2api"
+      && status.webAuthorizationCandidate
+      && !isSub2ApiIdentityProbe(input)
+      && !credentialResponse) return;
+    // Login/storage events need a short settling window for CF cookies;
+    // ordinary identity probes can finish immediately.
+    scheduleAuthorizationFinish(credentialResponse ? 1800 : 0);
   }};
   const send = (input) => {{
     if (!invoke) return;
     invoke("record_capture_event", {{ input }})
-      .then(tryFinishWebAuthorization)
+      .then((status) => tryFinishWebAuthorization(status, input))
       .catch(() => undefined);
   }};
   const buildBase = (url, method, startedAt) => ({{
     stationId,
     sourceWindowId,
     pageUrl: window.location.href,
+    userAgent: navigator.userAgent,
     requestUrl: String(new URL(url, window.location.href)),
     requestPath: pathFromUrl(url),
     method,
     startedAt,
   }});
+  let capturedStorageSignature = null;
+  const captureStoredSession = () => {{
+    try {{
+      if (stationType.toLowerCase() !== "sub2api") return;
+      const readStorage = (storage, key) => {{
+        try {{ return storage.getItem(key); }} catch (_) {{ return null; }}
+      }};
+      const storageEntries = [localStorage, sessionStorage].flatMap((storage) => {{
+        const entries = [];
+        try {{
+          for (let index = 0; index < storage.length; index += 1) {{
+            const key = storage.key(index);
+            if (key) entries.push([key, readStorage(storage, key)]);
+          }}
+        }} catch (_) {{}}
+        return entries;
+      }});
+      const tokenNames = ["access_token", "accessToken", "auth_token", "authToken", "token", "jwt"];
+      const tokenFromValue = (value, keyHint, depth = 0) => {{
+        if (depth > 4 || value == null) return null;
+        if (typeof value === "string") {{
+          const text = value.trim();
+          if (!text) return null;
+          const normalizedKey = String(keyHint || "").replace(/[-_]/g, "").toLowerCase();
+          if (tokenNames.some((name) => name.replace(/[-_]/g, "").toLowerCase() === normalizedKey)
+              || (text.split(".").length === 3 && text.length > 40)) return text;
+          try {{ return tokenFromValue(JSON.parse(text), keyHint, depth + 1); }} catch (_) {{ return null; }}
+        }}
+        if (Array.isArray(value)) return value.map((item) => tokenFromValue(item, keyHint, depth + 1)).find(Boolean) || null;
+        if (typeof value === "object") {{
+          for (const [key, child] of Object.entries(value)) {{
+            const found = tokenFromValue(child, key, depth + 1);
+            if (found) return found;
+          }}
+        }}
+        return null;
+      }};
+      const accessToken = storageEntries
+        .map(([key, value]) => tokenFromValue(value, key))
+        .find(Boolean);
+      const tokenExpiresAt = ["token_expires_at", "tokenExpiresAt"]
+        .flatMap((key) => storageEntries
+          .filter(([entryKey]) => entryKey === key)
+          .map(([, value]) => value))
+        .find((value) => value && value.trim());
+      const refreshToken = ["refresh_token", "refreshToken"]
+        .flatMap((key) => storageEntries
+          .filter(([entryKey]) => entryKey === key)
+        .map(([, value]) => value))
+        .find((value) => value && value.trim());
+      if (!accessToken) return;
+      const signature = [accessToken, refreshToken || "", tokenExpiresAt || ""].join("\\u001f");
+      if (signature === capturedStorageSignature) return;
+      capturedStorageSignature = signature;
+      const responseJson = {{
+        access_token: accessToken,
+        ...(refreshToken ? {{ refresh_token: refreshToken }} : {{}}),
+        ...(tokenExpiresAt ? {{ token_expires_at: tokenExpiresAt }} : {{}}),
+      }};
+      // Sub2API can redirect immediately after setting auth_token. Report the
+      // token synchronously so a document unload cannot lose the login event.
+      send({{
+        ...buildBase("/api/v1/auth/me", "GET", new Date().toISOString()),
+        status: 200,
+        contentType: "application/json",
+        finishedAt: new Date().toISOString(),
+        responseKind: "json",
+        responseJson,
+        responseSize: JSON.stringify(responseJson).length,
+      }});
+    }} catch (_) {{}}
+  }};
+  captureStoredSession();
+  try {{
+    const originalStorageSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {{
+      const result = originalStorageSetItem.apply(this, arguments);
+      if (stationType.toLowerCase() === "sub2api"
+        && ["auth_token", "access_token", "refresh_token", "token_expires_at"].includes(String(key))) {{
+        captureStoredSession();
+      }}
+      return result;
+    }};
+  }} catch (_) {{}}
+  const storageTimer = window.setInterval(captureStoredSession, 800);
+  window.setTimeout(() => window.clearInterval(storageTimer), 120000);
   const setNativeValue = (element, value) => {{
     if (!element || value == null || element.value === value) return false;
     const prototype = Object.getPrototypeOf(element);
@@ -909,6 +1117,7 @@ fn capture_request_belongs_to_station(
 
 fn web_authorization_candidate_user_id_from_input(
     input: &CapturedHttpEventInput,
+    station_type: &str,
 ) -> Option<String> {
     let fallback_path;
     let request_path = if let Some(path) = input.request_path.as_deref() {
@@ -917,17 +1126,31 @@ fn web_authorization_candidate_user_id_from_input(
         fallback_path = path_from_request_url(&input.request_url);
         &fallback_path
     };
-    if !capture::web_authorization::is_newapi_completion_candidate(
-        request_path,
-        input.status,
-        input.response_json.as_ref(),
-    ) {
+    let candidate = if station_type.eq_ignore_ascii_case("sub2api") {
+        capture::web_authorization::is_sub2api_completion_candidate(
+            request_path,
+            input.status,
+            input.response_json.as_ref(),
+        )
+    } else {
+        capture::web_authorization::is_newapi_completion_candidate(
+            request_path,
+            input.status,
+            input.response_json.as_ref(),
+        )
+    };
+    if !candidate {
         return None;
     }
     input
         .response_json
         .as_ref()
         .and_then(capture::web_authorization::extract_verified_user_id)
+        .or_else(|| {
+            station_type
+                .eq_ignore_ascii_case("sub2api")
+                .then(|| "sub2api-session".to_string())
+        })
 }
 
 fn path_from_request_url(url: &str) -> String {
@@ -950,6 +1173,7 @@ mod tests {
             "capture-station-1",
             None,
             None,
+            "sub2api",
             "finish_web_authorization_session",
             "stationId",
         );
@@ -957,5 +1181,15 @@ mod tests {
         assert!(script.contains("finish_web_authorization_session"));
         assert!(script.contains("webAuthorizationCandidate"));
         assert!(script.contains("window.__relayPoolAuthorizationFinishInFlight"));
+        assert!(script.contains("/api/v1/auth/login"));
+        assert!(script.contains("scheduleAuthorizationFinish"));
+        assert!(script.contains("1800"));
+        assert!(script.contains("\"auth_token\""));
+        assert!(script.contains("token_expires_at"));
+        assert!(script.contains("Storage.prototype.setItem"));
+        assert!(script.contains("userAgent: navigator.userAgent"));
+        assert!(script.contains("document unload cannot lose the login event"));
+        assert!(script.contains(".replace(/\\/$/, \"\")"));
+        assert!(!script.contains(".replace(/\\\\/$/, \"\")"));
     }
 }

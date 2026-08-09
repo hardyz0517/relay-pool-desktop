@@ -74,5 +74,4 @@ const VALIDATED_TABLES: &[&str] = &[
     "request_attempts",
     "routing_health_snapshot",
     "endpoint_health_snapshot",
-    "change_events",
 ];

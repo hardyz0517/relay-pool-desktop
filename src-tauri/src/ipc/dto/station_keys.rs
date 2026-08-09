@@ -1305,6 +1305,7 @@ fn fixture_credentials() -> StationCredentials {
         token_expires_at: None,
         token_refreshed_at: None,
         session_source: "fixture".into(),
+        session_user_agent: None,
         updated_at: Some("2026-01-01T00:00:00Z".into()),
     }
 }

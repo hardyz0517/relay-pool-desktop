@@ -27,8 +27,8 @@ async fn status_monitoring_v2_fresh_migrator_reaches_monitoring_schema() {
         .fetch_one(&mut connection)
         .await
         .expect("sqlx migration version");
-    assert_eq!(schema_version, 28);
-    assert_eq!(sqlx_version, 28);
+    assert_eq!(schema_version, 31);
+    assert_eq!(sqlx_version, 31);
     assert!(
         schema_version >= 10,
         "Monitoring V2 requires migration 0010"

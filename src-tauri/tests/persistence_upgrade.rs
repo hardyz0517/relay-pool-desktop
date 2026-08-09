@@ -614,60 +614,6 @@ async fn request_logs_with_deleted_keys_keep_history_with_a_null_reference() {
     remove_sqlite_set(&target_path);
 }
 
-#[tokio::test]
-async fn change_events_with_deleted_owners_keep_history_with_null_references() {
-    let path = copy_released_fixture("change-event-deleted-owner");
-    let options = SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(false);
-    let mut connection = SqliteConnection::connect_with(&options)
-        .await
-        .expect("change event fixture");
-    sqlx::query(
-        r#"
-        INSERT INTO change_events (
-            id, severity, event_type, status, title, message, object_type, object_id,
-            station_id, station_key_id, dedupe_key, source, detected_at, created_at, updated_at
-        ) VALUES (
-            'legacy-change-deleted-owner', 'warning', 'fixture', 'unread', 'Fixture',
-            'Synthetic fixture event', 'station', 'deleted-station-001',
-            'deleted-station-001', 'deleted-key-001', 'fixture-deleted-owner', 'fixture',
-            '1000', '1000', '1000'
-        )
-        "#,
-    )
-    .execute(&mut connection)
-    .await
-    .expect("change event row");
-    connection
-        .close()
-        .await
-        .expect("close change event fixture");
-
-    let profile = detect_profile(&path).await.expect("known schema");
-    let target_path = temp_db_path("change-event-deleted-owner-target");
-    create_v2_target(&target_path).await;
-    let runtime = PersistenceRuntime::open(&target_path, binary_v2_schema_8())
-        .await
-        .expect("V2 runtime");
-    import_profile(&profile, &path, &runtime.handle())
-        .await
-        .expect("change event import");
-    let mut read = runtime.begin_read().await.expect("change event read");
-    let imported = sqlx::query(
-        "SELECT station_id, station_key_id FROM change_events WHERE id = 'legacy-change-deleted-owner'",
-    )
-    .fetch_one(read.connection())
-    .await
-    .expect("imported change event");
-    assert_eq!(imported.get::<Option<String>, _>("station_id"), None);
-    assert_eq!(imported.get::<Option<String>, _>("station_key_id"), None);
-    drop(read);
-    drop(runtime);
-    remove_sqlite_set(&path);
-    remove_sqlite_set(&target_path);
-}
-
 #[test]
 fn legacy_secret_transform_contract_keeps_material_and_ciphertext_typed() {
     use legacy_import::{

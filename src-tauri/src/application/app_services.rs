@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use super::{
-    changes::ChangeService,
     clock::{Clock, SystemClock},
     collectors::CollectorService,
     credentials::{CredentialService, CredentialVault},
@@ -27,7 +26,6 @@ use crate::background_tasks::BlockingExecutor;
 #[derive(Clone)]
 pub(crate) struct AppServices {
     pub(crate) stations: Arc<StationService>,
-    pub(crate) changes: Arc<ChangeService>,
     pub(crate) data_directory: Arc<DataDirectoryService>,
     pub(crate) credentials: Arc<CredentialService>,
     pub(crate) collectors: Arc<CollectorService>,
@@ -83,11 +81,6 @@ impl AppServices {
                 clock.clone(),
                 ids.clone(),
             )),
-            Arc::new(ChangeService::new(
-                runtime.clone(),
-                clock.clone(),
-                ids.clone(),
-            )),
             data_directory,
             Arc::new(CredentialService::new(
                 runtime.clone(),
@@ -128,7 +121,6 @@ impl AppServices {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         stations: Arc<StationService>,
-        changes: Arc<ChangeService>,
         data_directory: Arc<DataDirectoryService>,
         credentials: Arc<CredentialService>,
         collectors: Arc<CollectorService>,
@@ -148,7 +140,6 @@ impl AppServices {
     ) -> Self {
         Self {
             stations,
-            changes,
             data_directory,
             credentials,
             collectors,

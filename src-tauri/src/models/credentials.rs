@@ -52,6 +52,8 @@ pub struct StationCredentials {
     pub token_expires_at: Option<String>,
     pub token_refreshed_at: Option<String>,
     pub session_source: String,
+    #[serde(skip_serializing)]
+    pub session_user_agent: Option<String>,
     pub updated_at: Option<String>,
 }
 
@@ -85,6 +87,7 @@ pub struct PersistStationSessionInput {
     pub token_expires_at: Option<String>,
     pub session_expires_at: Option<String>,
     pub session_source: String,
+    pub session_user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

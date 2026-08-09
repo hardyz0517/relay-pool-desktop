@@ -173,6 +173,7 @@ pub(crate) struct StationSessionPatch {
     pub(crate) token_expires_at: Option<String>,
     pub(crate) session_expires_at: Option<String>,
     pub(crate) session_source: String,
+    pub(crate) session_user_agent: Option<String>,
     pub(crate) now: String,
 }
 
@@ -477,7 +478,8 @@ impl CredentialStore {
                 station_id, login_username, login_password, login_password_secret_id,
                 remember_password, login_status, login_error, session_status,
                 session_source, created_at, updated_at
-            ) VALUES (?1, ?2, NULL, ?3, ?4, 'saved', NULL, 'none', 'none', ?5, ?5)
+                , session_user_agent
+            ) VALUES (?1, ?2, NULL, ?3, ?4, 'saved', NULL, 'none', 'none', ?5, ?5, NULL)
             ON CONFLICT(station_id) DO UPDATE SET
                 login_username = excluded.login_username,
                 login_password = NULL,
@@ -536,7 +538,8 @@ impl CredentialStore {
                 session_expires_at, access_token_secret_id, refresh_token_secret_id,
                 cookie_secret_id, newapi_user_id, token_expires_at, token_refreshed_at,
                 session_source, created_at, updated_at
-            ) VALUES (?1, 0, 'saved', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+                , session_user_agent
+            ) VALUES (?1, 0, 'saved', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12)
             ON CONFLICT(station_id) DO UPDATE SET
                 session_status = excluded.session_status,
                 session_expires_at = excluded.session_expires_at,
@@ -547,6 +550,10 @@ impl CredentialStore {
                 token_expires_at = excluded.token_expires_at,
                 token_refreshed_at = excluded.token_refreshed_at,
                 session_source = excluded.session_source,
+                session_user_agent = COALESCE(
+                    excluded.session_user_agent,
+                    station_credentials.session_user_agent
+                ),
                 updated_at = excluded.updated_at
             "#,
         )
@@ -557,9 +564,9 @@ impl CredentialStore {
             "manual_required"
         })
         .bind(normalize_optional_string(patch.session_expires_at))
-        .bind(access_token_secret_id)
-        .bind(refresh_token_secret_id)
-        .bind(cookie_secret_id)
+        .bind(&access_token_secret_id)
+        .bind(&refresh_token_secret_id)
+        .bind(&cookie_secret_id)
         .bind(normalize_optional_string(patch.newapi_user_id))
         .bind(normalize_optional_string(patch.token_expires_at))
         .bind(&patch.now)
@@ -568,8 +575,18 @@ impl CredentialStore {
             "manual_token",
         ))
         .bind(&patch.now)
+        .bind(normalize_optional_string(patch.session_user_agent))
         .execute(write.connection())
         .await?;
+        if existing.0 != access_token_secret_id {
+            delete_unreferenced_secret(write.connection(), existing.0.as_deref()).await?;
+        }
+        if existing.1 != refresh_token_secret_id {
+            delete_unreferenced_secret(write.connection(), existing.1.as_deref()).await?;
+        }
+        if existing.2 != cookie_secret_id {
+            delete_unreferenced_secret(write.connection(), existing.2.as_deref()).await?;
+        }
         station_credentials(write.connection(), &patch.station_id).await
     }
 
@@ -1592,6 +1609,7 @@ where
                remember_password, login_status, login_error, last_login_at,
                session_status, session_expires_at, newapi_user_id, token_expires_at,
                token_refreshed_at, session_source, updated_at
+               , session_user_agent
         FROM station_credentials
         WHERE station_id = ?1
         "#,
@@ -1630,6 +1648,7 @@ fn row_to_station_credentials(row: sqlx::sqlite::SqliteRow) -> StationCredential
         token_expires_at: row.get("token_expires_at"),
         token_refreshed_at: row.get("token_refreshed_at"),
         session_source: row.get("session_source"),
+        session_user_agent: row.get("session_user_agent"),
         updated_at: row.get("updated_at"),
     }
 }
@@ -1652,6 +1671,7 @@ fn default_station_credentials(station_id: &str) -> StationCredentials {
         token_expires_at: None,
         token_refreshed_at: None,
         session_source: "none".to_string(),
+        session_user_agent: None,
         updated_at: None,
     }
 }

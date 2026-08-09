@@ -9,12 +9,14 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     application::{
+        alerting::{AlertingIngress, ObservationIngress},
         clock::Clock,
         error::ApplicationError,
         ids::IdGenerator,
         pagination::{PageLimit, MAX_PAGE_LIMIT},
     },
     models::{
+        alerting::{AlertEventType, ObservationKind, Severity},
         collector::{CollectorEvent, CollectorRunResult, CollectorSnapshot},
         collector_runs::CollectorRun,
         group_facts::{
@@ -29,10 +31,9 @@ use crate::{
     persistence::{
         runtime::PersistenceHandle,
         stores::{
-            change_store::{ChangeStore, NewChangeEvent},
             collector_store::{
                 BalanceWrite, CollectorRunFinish, CollectorRunStart, CollectorSnapshotWrite,
-                CollectorStore, CollectorTaskStateWrite, GroupState, GroupTransition, GroupWrite,
+                CollectorStore, CollectorTaskStateWrite, GroupTransition, GroupWrite,
                 RateTransition, RateWrite, StationGroupBindingWrite, StoredCollectorApply,
             },
             station_catalog::StationCatalogStore,
@@ -174,7 +175,7 @@ pub(crate) struct CollectorService {
     ids: Arc<dyn IdGenerator>,
     collectors: CollectorStore,
     stations: StationCatalogStore,
-    changes: ChangeStore,
+    alerting: AlertingIngress,
 }
 
 impl CollectorService {
@@ -209,12 +210,12 @@ impl CollectorService {
         ids: Arc<dyn IdGenerator>,
     ) -> Self {
         Self {
-            runtime,
+            runtime: runtime.clone(),
             clock,
             ids,
             collectors: CollectorStore,
             stations: StationCatalogStore,
-            changes: ChangeStore,
+            alerting: AlertingIngress::new(runtime.clone()),
         }
     }
 
@@ -298,8 +299,11 @@ impl CollectorService {
             .await?
             .endpoint_revision;
         let collectors = self.collectors;
-        let changes = self.changes;
-        let ids = self.ids.clone();
+        let alerting = self.alerting.clone();
+        // Manual binding edits have no collector run id.  Allocate an
+        // operation-scoped source key so a later missing/available episode is
+        // not collapsed into the first occurrence for this binding.
+        let source_observation_key = self.ids.next_id();
 
         self.runtime
             .write(move |write| {
@@ -310,10 +314,12 @@ impl CollectorService {
                     let stored = collectors
                         .upsert_station_group_binding(write, &binding)
                         .await?;
-                    if let Some(event) =
-                        binding_upsert_event(ids.as_ref(), &stored.transition, &binding.now)
-                    {
-                        changes.upsert(write, &event).await?;
+                    if let Some(observation) = group_transition_observation(
+                        &stored.transition,
+                        &binding.now,
+                        &source_observation_key,
+                    ) {
+                        alerting.record_in_session(write, observation).await?;
                     }
                     Ok(stored.binding)
                 })
@@ -561,7 +567,7 @@ impl CollectorService {
         let snapshot_id = self.ids.next_id();
         let ids = self.ids.clone();
         let collectors = self.collectors;
-        let changes = self.changes;
+        let alerting = self.alerting.clone();
 
         self.runtime
             .write(move |write| {
@@ -793,18 +799,25 @@ impl CollectorService {
                     }
 
                     for transition in group_transitions.values() {
-                        if let Some(event) = group_event(ids.as_ref(), transition, &now) {
-                            changes.upsert(write, &event).await?;
+                        if let Some(observation) =
+                            group_transition_observation(transition, &now, &run_id)
+                        {
+                            alerting.record_in_session(write, observation).await?;
                         }
                     }
                     for transition in rate_transitions
                         .iter()
                         .filter(|transition| transition.old_effective_rate_multiplier.is_some())
                     {
-                        changes
-                            .upsert(
+                        alerting
+                            .record_in_session(
                                 write,
-                                &rate_event(ids.as_ref(), &request.station_id, transition, &now),
+                                rate_change_observation(
+                                    &request.station_id,
+                                    transition,
+                                    &run_id,
+                                    &now,
+                                ),
                             )
                             .await?;
                     }
@@ -812,17 +825,27 @@ impl CollectorService {
                     let failure_key =
                         collector_failure_key(&request.station_id, &request.task_type);
                     if matches!(request.status.as_str(), "success" | "partial") {
-                        changes
-                            .resolve_by_dedupe_key(write, &failure_key, &now)
-                            .await?;
-                    } else if request.status == "failed" {
-                        changes
-                            .upsert(
+                        alerting
+                            .record_in_session(
                                 write,
-                                &collector_failure_event(
-                                    ids.as_ref(),
+                                collector_observation(
                                     &request,
                                     &failure_key,
+                                    &run_id,
+                                    ObservationKind::Healthy,
+                                    &now,
+                                ),
+                            )
+                            .await?;
+                    } else if request.status == "failed" {
+                        alerting
+                            .record_in_session(
+                                write,
+                                collector_observation(
+                                    &request,
+                                    &failure_key,
+                                    &run_id,
+                                    ObservationKind::Abnormal,
                                     &now,
                                 ),
                             )
@@ -1045,226 +1068,212 @@ fn remember_group_scope(
     scope.1.insert(group_key_hash);
 }
 
-fn group_event(
-    ids: &dyn IdGenerator,
+fn group_transition_observation(
     transition: &GroupTransition,
     now: &str,
-) -> Option<NewChangeEvent> {
-    if transition.current.binding_kind != "station_group" {
-        return None;
-    }
-    let was_available = transition
-        .previous
-        .as_ref()
-        .is_some_and(|previous| previous.binding_status == "available");
-    let is_available = transition.current.binding_status == "available";
-    let (event_type, severity, title, message, old_value, new_value) =
-        if !was_available && is_available {
-            (
-                "group_added",
-                "info",
-                "Group added",
-                format!(
-                    "Station group {} is available",
-                    transition.current.group_name
-                ),
-                None,
-                Some(group_value(&transition.current)),
-            )
-        } else if was_available && transition.current.binding_status == "missing" {
-            (
-                "group_missing",
-                "warning",
-                "Group missing",
-                format!("Station group {} is missing", transition.current.group_name),
-                transition.previous.as_ref().map(group_value),
-                Some(group_value(&transition.current)),
-            )
-        } else {
-            return None;
-        };
-    Some(NewChangeEvent {
-        id: ids.next_id(),
-        severity: severity.to_string(),
-        event_type: event_type.to_string(),
-        title: title.to_string(),
-        message,
-        object_type: "station_group_binding".to_string(),
-        object_id: Some(transition.current.id.clone()),
-        station_id: Some(transition.current.station_id.clone()),
-        station_key_id: None,
-        pricing_rule_id: None,
-        request_log_id: None,
-        old_value_json: old_value,
-        new_value_json: new_value,
-        impact_json: None,
-        dedupe_key: format!(
-            "collector:{}:{}:{}",
-            transition.current.station_id, event_type, transition.current.group_key_hash
-        ),
-        source: "collector".to_string(),
-        now: now.to_string(),
-    })
-}
-
-fn binding_upsert_event(
-    ids: &dyn IdGenerator,
-    transition: &GroupTransition,
-    now: &str,
-) -> Option<NewChangeEvent> {
-    if transition.current.binding_kind == BINDING_KIND_STATION_GROUP {
-        return group_event(ids, transition, now);
-    }
-    if transition.current.binding_kind != BINDING_KIND_KEY_BINDING {
-        return None;
-    }
-    let station_key_id = transition.current.station_key_id.as_ref()?;
+    source_run_key: &str,
+) -> Option<ObservationIngress> {
     let previous_status = transition
         .previous
         .as_ref()
-        .map(|previous| previous.binding_status.as_str());
-    let (event_type, severity, title, message, new_value_json, impact_json) =
-        if transition.current.binding_status == BINDING_STATUS_BOUND
-            && previous_status != Some(BINDING_STATUS_BOUND)
-        {
-            (
-                "key_group_bound",
-                "info",
-                "Key group bound",
-                format!("Key was bound to group {}", transition.current.group_name),
-                Some(
-                    json!({
-                        "groupBindingId": transition.current.id,
-                        "groupName": transition.current.group_name
-                    })
-                    .to_string(),
-                ),
-                Some(json!({ "cheapFirstConfidence": "improved" }).to_string()),
-            )
-        } else if transition.current.binding_status == BINDING_STATUS_MISSING
-            && previous_status != Some(BINDING_STATUS_MISSING)
-        {
-            (
-                "key_group_unresolved",
-                "warning",
-                "Key group unresolved",
-                "The collector could not resolve this key's group".to_string(),
-                None,
-                Some(json!({ "cheapFirstConfidence": "reduced" }).to_string()),
-            )
+        .map(|value| value.binding_status.as_str());
+    let current = &transition.current;
+    let (event_type, kind, severity, reason_code) = match current.binding_kind.as_str() {
+        BINDING_KIND_STATION_GROUP => {
+            if current.binding_status == BINDING_STATUS_MISSING
+                && previous_status != Some(BINDING_STATUS_MISSING)
+            {
+                (
+                    AlertEventType::GroupMissing,
+                    ObservationKind::Abnormal,
+                    Severity::Warning,
+                    "group_missing",
+                )
+            } else if current.binding_status == BINDING_STATUS_AVAILABLE
+                && previous_status == Some(BINDING_STATUS_MISSING)
+            {
+                (
+                    AlertEventType::GroupMissing,
+                    ObservationKind::Healthy,
+                    Severity::Warning,
+                    "group_available",
+                )
+            } else if current.binding_status == BINDING_STATUS_AVAILABLE
+                && transition.previous.is_none()
+            {
+                (
+                    AlertEventType::GroupAdded,
+                    ObservationKind::Change,
+                    Severity::Info,
+                    "group_added",
+                )
+            } else {
+                return None;
+            }
+        }
+        BINDING_KIND_KEY_BINDING => {
+            if current.binding_status == BINDING_STATUS_MISSING
+                && previous_status != Some(BINDING_STATUS_MISSING)
+            {
+                (
+                    AlertEventType::KeyGroupUnresolved,
+                    ObservationKind::Abnormal,
+                    Severity::Warning,
+                    "key_group_unresolved",
+                )
+            } else if current.binding_status == BINDING_STATUS_BOUND
+                && previous_status == Some(BINDING_STATUS_MISSING)
+            {
+                (
+                    AlertEventType::KeyGroupUnresolved,
+                    ObservationKind::Healthy,
+                    Severity::Warning,
+                    "key_group_bound",
+                )
+            } else if current.binding_status == BINDING_STATUS_BOUND
+                && transition.previous.is_none()
+            {
+                (
+                    AlertEventType::AuditChange,
+                    ObservationKind::Change,
+                    Severity::Info,
+                    "key_group_bound",
+                )
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+    let condition_key = if current.binding_kind == BINDING_KIND_KEY_BINDING {
+        format!(
+            "station_key:{}:group",
+            current.station_key_id.as_deref().unwrap_or(&current.id)
+        )
+    } else {
+        format!(
+            "station_group:{}:{}",
+            current.station_id, current.group_key_hash
+        )
+    };
+    let observed_at_ms = parse_now_ms(now);
+    Some(ObservationIngress {
+        source_observation_key: format!(
+            "collector:{}:{}:{}:{}",
+            source_run_key,
+            event_type.as_str(),
+            current.station_id,
+            current.group_key_hash
+        ),
+        event_type,
+        condition_key: crate::models::alerting::ConditionKey::new(condition_key).ok()?,
+        kind,
+        severity,
+        object_type: if current.binding_kind == BINDING_KIND_KEY_BINDING {
+            "station_key".to_string()
         } else {
-            return None;
-        };
-
-    Some(NewChangeEvent {
-        id: ids.next_id(),
-        severity: severity.to_string(),
-        event_type: event_type.to_string(),
-        title: title.to_string(),
-        message,
-        object_type: "station_key".to_string(),
-        object_id: Some(station_key_id.clone()),
-        station_id: Some(transition.current.station_id.clone()),
-        station_key_id: Some(station_key_id.clone()),
-        pricing_rule_id: None,
-        request_log_id: None,
-        old_value_json: None,
-        new_value_json,
-        impact_json,
-        dedupe_key: format!("{event_type}:station_key:{station_key_id}"),
+            "station_group_binding".to_string()
+        },
+        object_id: Some(current.id.clone()),
+        station_id: Some(current.station_id.clone()),
+        station_key_id: current.station_key_id.clone(),
         source: "collector".to_string(),
-        now: now.to_string(),
+        reason_code: Some(reason_code.to_string()),
+        summary_json: json!({
+            "groupName": current.group_name,
+            "status": current.binding_status,
+            "groupKeyHash": current.group_key_hash,
+        })
+        .to_string(),
+        observed_at_ms,
+        fact_fresh_until_ms: observed_at_ms.saturating_add(900_000),
     })
 }
 
-fn rate_event(
-    ids: &dyn IdGenerator,
+fn rate_change_observation(
     station_id: &str,
     transition: &RateTransition,
+    source_run_key: &str,
     now: &str,
-) -> NewChangeEvent {
-    NewChangeEvent {
-        id: ids.next_id(),
-        severity: "warning".to_string(),
-        event_type: "group_rate_changed".to_string(),
-        title: "Group rate changed".to_string(),
-        message: format!("Group {} rate changed", transition.group_name),
+) -> ObservationIngress {
+    let observed_at_ms = parse_now_ms(now);
+    ObservationIngress {
+        source_observation_key: format!(
+            "collector:{}:group_rate_changed:{}:{}",
+            source_run_key, station_id, transition.group_binding_id
+        ),
+        event_type: AlertEventType::GroupRateChanged,
+        condition_key: crate::models::alerting::ConditionKey::new(format!(
+            "station_group_rate:{}:{}",
+            station_id, transition.group_binding_id
+        ))
+        .expect("collector rate condition key is bounded"),
+        kind: ObservationKind::Change,
+        severity: Severity::Warning,
         object_type: "station_group_binding".to_string(),
         object_id: Some(transition.group_binding_id.clone()),
         station_id: Some(station_id.to_string()),
         station_key_id: None,
-        pricing_rule_id: None,
-        request_log_id: None,
-        old_value_json: Some(
-            json!({
-                "groupName": transition.group_name,
-                "effectiveRateMultiplier": transition.old_effective_rate_multiplier
-            })
-            .to_string(),
-        ),
-        new_value_json: Some(
-            json!({
-                "groupName": transition.group_name,
-                "effectiveRateMultiplier": transition.new_effective_rate_multiplier
-            })
-            .to_string(),
-        ),
-        impact_json: Some(json!({ "routingCostMayChange": true }).to_string()),
-        dedupe_key: format!(
-            "collector:{}:group_rate_changed:{}",
-            station_id, transition.group_binding_id
-        ),
         source: "collector".to_string(),
-        now: now.to_string(),
+        reason_code: Some("group_rate_changed".to_string()),
+        summary_json: json!({
+            "groupName": transition.group_name,
+            "oldEffectiveRateMultiplier": transition.old_effective_rate_multiplier,
+            "newEffectiveRateMultiplier": transition.new_effective_rate_multiplier,
+        })
+        .to_string(),
+        observed_at_ms,
+        fact_fresh_until_ms: observed_at_ms.saturating_add(900_000),
     }
 }
 
-fn collector_failure_event(
-    ids: &dyn IdGenerator,
+fn collector_observation(
     request: &CollectorApplyRequest,
-    dedupe_key: &str,
+    failure_key: &str,
+    source_run_key: &str,
+    kind: ObservationKind,
     now: &str,
-) -> NewChangeEvent {
-    NewChangeEvent {
-        id: ids.next_id(),
-        severity: "warning".to_string(),
-        event_type: "collector_failed".to_string(),
-        title: "Collector failed".to_string(),
-        message: request
-            .error_message
-            .clone()
-            .unwrap_or_else(|| format!("Collector task {} failed", request.task_type)),
+) -> ObservationIngress {
+    let observed_at_ms = parse_now_ms(now);
+    ObservationIngress {
+        source_observation_key: format!("collector:{}:{}", source_run_key, failure_key),
+        event_type: AlertEventType::CollectorFailed,
+        condition_key: crate::models::alerting::ConditionKey::new(failure_key.to_string())
+            .expect("collector failure condition key is bounded"),
+        kind,
+        severity: Severity::Warning,
         object_type: "station".to_string(),
         object_id: Some(request.station_id.clone()),
         station_id: Some(request.station_id.clone()),
         station_key_id: None,
-        pricing_rule_id: None,
-        request_log_id: None,
-        old_value_json: None,
-        new_value_json: request
-            .error_code
-            .as_ref()
-            .map(|code| json!({ "errorCode": code }).to_string()),
-        impact_json: None,
-        dedupe_key: dedupe_key.to_string(),
         source: "collector".to_string(),
-        now: now.to_string(),
+        reason_code: Some(
+            request
+                .error_code
+                .as_deref()
+                .unwrap_or(if kind == ObservationKind::Healthy {
+                    "collector_recovered"
+                } else {
+                    "collector_failed"
+                })
+                .to_string(),
+        ),
+        summary_json: json!({
+            "taskType": request.task_type,
+            "status": request.status,
+            "errorCode": request.error_code,
+        })
+        .to_string(),
+        observed_at_ms,
+        fact_fresh_until_ms: observed_at_ms.saturating_add(900_000),
     }
 }
 
+fn parse_now_ms(value: &str) -> i64 {
+    value.parse::<i64>().unwrap_or_default().max(0)
+}
 fn collector_failure_key(station_id: &str, task_type: &str) -> String {
     format!("collector:{station_id}:collector_failed:{task_type}")
-}
-
-fn group_value(group: &GroupState) -> String {
-    json!({
-        "groupName": group.group_name,
-        "status": group.binding_status,
-        "defaultRateMultiplier": group.default_rate_multiplier,
-        "userRateMultiplier": group.user_rate_multiplier,
-        "effectiveRateMultiplier": group.effective_rate_multiplier
-    })
-    .to_string()
 }
 
 #[cfg(test)]
@@ -1282,7 +1291,7 @@ mod tests {
     use crate::{
         application::{error::ApplicationError, stations::StationService},
         models::stations::CreateStationInput,
-        persistence::runtime::PersistenceRuntime,
+        persistence::{runtime::PersistenceRuntime, stores::collector_store::GroupState},
     };
 
     struct FixedClock;
@@ -1305,8 +1314,7 @@ mod tests {
     }
 
     #[test]
-    fn rate_event_persists_group_name_for_stable_presentation() {
-        let ids = SequenceIds::default();
+    fn rate_observation_persists_group_name_for_stable_presentation() {
         let transition = RateTransition {
             group_binding_id: "binding-1".to_string(),
             group_name: "stable-group".to_string(),
@@ -1314,18 +1322,107 @@ mod tests {
             new_effective_rate_multiplier: Some(0.18),
         };
 
-        let event = rate_event(&ids, "station-1", &transition, "1700000000000");
-        let old_value: serde_json::Value =
-            serde_json::from_str(event.old_value_json.as_deref().expect("old rate value"))
-                .expect("valid old rate value");
-        let new_value: serde_json::Value =
-            serde_json::from_str(event.new_value_json.as_deref().expect("new rate value"))
-                .expect("valid new rate value");
+        let observation =
+            rate_change_observation("station-1", &transition, "run-1", "1700000000000");
+        let summary: serde_json::Value =
+            serde_json::from_str(&observation.summary_json).expect("valid summary");
 
-        assert_eq!(event.event_type, "group_rate_changed");
-        assert_eq!(event.object_type, "station_group_binding");
-        assert_eq!(old_value["groupName"], "stable-group");
-        assert_eq!(new_value["groupName"], "stable-group");
+        assert_eq!(observation.event_type, AlertEventType::GroupRateChanged);
+        assert_eq!(observation.object_type, "station_group_binding");
+        assert_eq!(summary["groupName"], "stable-group");
+        assert_eq!(summary["oldEffectiveRateMultiplier"], 0.2);
+        assert_eq!(summary["newEffectiveRateMultiplier"], 0.18);
+    }
+
+    #[test]
+    fn producer_observations_cover_failure_recovery_and_audit_change_contracts() {
+        let request = CollectorApplyRequest {
+            run_key: "failed-run".to_string(),
+            station_id: "station-1".to_string(),
+            endpoint_revision: 1,
+            parent_run_id: None,
+            adapter: "newapi".to_string(),
+            task_type: "balance".to_string(),
+            status: "failed".to_string(),
+            facts: CanonicalCollectorFacts::default(),
+            summary_json: json!({"status": "failed"}),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: Some("timeout".to_string()),
+            error_message: Some("collector timed out".to_string()),
+            endpoint_count: 1,
+            success_count: 0,
+            failure_count: 1,
+            manual_action_required: false,
+            next_due_at: None,
+        };
+        let failure_key = collector_failure_key("station-1", "balance");
+        let abnormal = collector_observation(
+            &request,
+            &failure_key,
+            "failed-run",
+            ObservationKind::Abnormal,
+            "1700000000000",
+        );
+        let mut recovered_request = request.clone();
+        recovered_request.run_key = "healthy-run".to_string();
+        recovered_request.status = "success".to_string();
+        recovered_request.error_code = None;
+        recovered_request.error_message = None;
+        recovered_request.success_count = 1;
+        recovered_request.failure_count = 0;
+        let healthy = collector_observation(
+            &recovered_request,
+            &failure_key,
+            "healthy-run",
+            ObservationKind::Healthy,
+            "1700000060000",
+        );
+
+        assert_eq!(abnormal.event_type, AlertEventType::CollectorFailed);
+        assert_eq!(abnormal.kind, ObservationKind::Abnormal);
+        assert_eq!(healthy.kind, ObservationKind::Healthy);
+        assert_eq!(abnormal.condition_key, healthy.condition_key);
+        assert_ne!(
+            abnormal.source_observation_key,
+            healthy.source_observation_key
+        );
+        assert_eq!(
+            abnormal.source_observation_key,
+            collector_observation(
+                &request,
+                &failure_key,
+                "failed-run",
+                ObservationKind::Abnormal,
+                "1700000000000",
+            )
+            .source_observation_key
+        );
+
+        let transition = GroupTransition {
+            previous: None,
+            current: GroupState {
+                id: "binding-1".to_string(),
+                station_id: "station-1".to_string(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                group_key_hash: "group-hash".to_string(),
+                group_name: "new-group".to_string(),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: None,
+                user_rate_multiplier: None,
+                effective_rate_multiplier: None,
+                source: "collector".to_string(),
+            },
+        };
+        let audit = group_transition_observation(&transition, "1700000000000", "run-1")
+            .expect("new group emits an audit observation");
+        assert_eq!(audit.event_type, AlertEventType::GroupAdded);
+        assert_eq!(audit.kind, ObservationKind::Change);
+        assert_eq!(
+            audit.condition_key.as_str(),
+            "station_group:station-1:group-hash"
+        );
     }
 
     fn capture_request(station_id: &str, endpoint_revision: i64) -> CaptureSnapshotRequest {

@@ -4,7 +4,7 @@ use tauri::State;
 use crate::{
     application::{command_facades::RequestLogsCommandFacade, pagination::PageLimit},
     commands::error,
-    ipc::dto::{change_logs::RequestLogDto, EmptyInputDto},
+    ipc::dto::{request_logs::RequestLogDto, EmptyInputDto},
     observability::correlation,
 };
 

@@ -6,7 +6,7 @@ use crate::{
     application::{
         app_services::AppServices,
         command_facades::{
-            CaptureCommandFacade, ChangeEventsCommandFacade, ChannelMonitoringCommandFacade,
+            AlertingCommandFacade, CaptureCommandFacade, ChannelMonitoringCommandFacade,
             ChannelStatusCommandFacade, CollectorMetadataCommandFacade, CredentialsCommandFacade,
             DashboardMetricsCommandFacade, DataDirectoryCommandFacade, KeyPoolCommandFacade,
             LocalProxyCommandFacade, PricingCommandFacade, ProviderDraftCommandFacade,
@@ -359,10 +359,8 @@ pub(crate) fn compose_provider_draft_command_facade(
     )
 }
 
-pub(crate) fn compose_change_events_command_facade(
-    services: &AppServices,
-) -> ChangeEventsCommandFacade {
-    ChangeEventsCommandFacade::new(Arc::clone(&services.changes))
+pub(crate) fn compose_alerting_command_facade(runtime: PersistenceHandle) -> AlertingCommandFacade {
+    AlertingCommandFacade::new(runtime)
 }
 
 pub(crate) fn compose_credentials_command_facade(

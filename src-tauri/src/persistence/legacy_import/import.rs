@@ -60,7 +60,7 @@ pub(crate) enum ImportPhase {
     MonitorDefinitions,
     Pricing,
     HistoricalEvidence,
-    HealthAndChanges,
+    HealthSnapshots,
     DerivedProjectionsAndIndexes,
 }
 
@@ -75,7 +75,7 @@ impl ImportPhase {
         Self::MonitorDefinitions,
         Self::Pricing,
         Self::HistoricalEvidence,
-        Self::HealthAndChanges,
+        Self::HealthSnapshots,
         Self::DerivedProjectionsAndIndexes,
     ];
 }
@@ -204,8 +204,7 @@ async fn import_additive_v1_with_phase_hook(
     import_historical_evidence(profile_id, source, &mut write, request_lifecycle).await?;
     phase_hook(ImportPhase::HistoricalEvidence)?;
 
-    import_health_and_changes(profile_id, source, &mut write).await?;
-    phase_hook(ImportPhase::HealthAndChanges)?;
+    phase_hook(ImportPhase::HealthSnapshots)?;
 
     rebuild_domain_revision_baseline(&mut write).await?;
 
@@ -424,21 +423,6 @@ async fn import_historical_evidence(
     Ok(())
 }
 
-async fn import_health_and_changes(
-    profile_id: &str,
-    source: &mut LegacyReadSession,
-    write: &mut WriteSession,
-) -> Result<(), UpgradeError> {
-    copy_table(
-        profile_id,
-        source.connection(),
-        write,
-        table_plan("change_events")?,
-    )
-    .await?;
-    Ok(())
-}
-
 async fn rebuild_derived_projections_and_indexes(
     write: &mut WriteSession,
 ) -> Result<(), UpgradeError> {
@@ -578,15 +562,6 @@ async fn normalize_legacy_references(
     if table_name == "request_logs" {
         clear_missing_optional_reference(write, row, "station_key_id", "station_keys").await?;
         clear_missing_optional_reference(write, row, "station_id", "stations").await?;
-    } else if table_name == "change_events" {
-        for (column, target_table) in [
-            ("station_id", "stations"),
-            ("station_key_id", "station_keys"),
-            ("pricing_rule_id", "pricing_rules"),
-            ("request_log_id", "request_logs"),
-        ] {
-            clear_missing_optional_reference(write, row, column, target_table).await?;
-        }
     }
     Ok(())
 }
@@ -1509,32 +1484,6 @@ const TABLE_PLANS: &[TablePlan] = &[
             "updated_at",
         ],
     },
-    TablePlan {
-        name: "change_events",
-        columns: &[
-            "id",
-            "severity",
-            "event_type",
-            "status",
-            "title",
-            "message",
-            "object_type",
-            "object_id",
-            "station_id",
-            "station_key_id",
-            "pricing_rule_id",
-            "request_log_id",
-            "old_value_json",
-            "new_value_json",
-            "impact_json",
-            "dedupe_key",
-            "source",
-            "detected_at",
-            "resolved_at",
-            "created_at",
-            "updated_at",
-        ],
-    },
 ];
 
 const SECRET_SOURCES: &[(&str, &str, &str, &str, &str)] = &[
@@ -1592,12 +1541,8 @@ mod tests {
             ],
         ),
         (
-            ImportPhase::HealthAndChanges,
-            &[
-                "routing_health_snapshot",
-                "endpoint_health_snapshot",
-                "change_events",
-            ],
+            ImportPhase::HealthSnapshots,
+            &["routing_health_snapshot", "endpoint_health_snapshot"],
         ),
         (ImportPhase::DerivedProjectionsAndIndexes, &[]),
     ];

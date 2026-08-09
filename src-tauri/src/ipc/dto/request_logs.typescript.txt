@@ -1,37 +1,3 @@
-export type ChangeSeverityDto = "critical" | "warning" | "info";
-export type ChangeEventStatusDto = "unread" | "read" | "dismissed" | "resolved";
-
-export type ChangeEventIdInputDto = { id: string };
-export type ChangeEventIdsInputDto = { ids: string[] };
-export type ChangeLogStationIdInputDto = { stationId: string };
-
-export type UpsertChangeEventInputDto = {
-  severity: ChangeSeverityDto;
-  eventType: string;
-  title: string;
-  message: string;
-  objectType: string;
-  objectId: string | null;
-  stationId: string | null;
-  stationKeyId: string | null;
-  pricingRuleId: string | null;
-  requestLogId: string | null;
-  oldValueJson: string | null;
-  newValueJson: string | null;
-  impactJson: string | null;
-  dedupeKey: string;
-  source: string;
-};
-
-export type ChangeEventDto = {
-  id: string; severity: ChangeSeverityDto; eventType: string; status: ChangeEventStatusDto; title: string; message: string;
-  objectType: string; objectId: string | null; stationId: string | null; stationName: string | null;
-  stationKeyId: string | null; pricingRuleId: string | null; requestLogId: string | null;
-  oldValueJson: string | null; newValueJson: string | null; impactJson: string | null;
-  dedupeKey: string; source: string; detectedAt: string; resolvedAt: string | null;
-  createdAt: string; updatedAt: string;
-};
-
 export type RequestLogDto = {
   id: string; requestId: string | null; startedAt: string; finishedAt: string | null;
   durationMs: number | null; method: string; path: string; model: string | null; stream: boolean;

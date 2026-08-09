@@ -81,6 +81,7 @@ pub struct CapturedHttpEventInputDto {
     pub response_json: Option<Value>,
     pub response_text: Option<String>,
     pub error_message: Option<String>,
+    pub user_agent: Option<String>,
 }
 
 impl CapturedHttpEventInputDto {
@@ -108,6 +109,7 @@ impl CapturedHttpEventInputDto {
             response_json: self.response_json,
             response_text: self.response_text,
             error_message: self.error_message,
+            user_agent: self.user_agent,
         }
     }
 
@@ -146,6 +148,11 @@ impl CapturedHttpEventInputDto {
             "responseText",
             self.response_text.as_deref(),
             MAX_CAPTURE_RESPONSE_TEXT_BYTES,
+        )?;
+        validate_optional_text(
+            "userAgent",
+            self.user_agent.as_deref(),
+            MAX_CAPTURE_TEXT_BYTES,
         )?;
         validate_optional_text(
             "errorMessage",

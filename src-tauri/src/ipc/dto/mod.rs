@@ -1,4 +1,4 @@
-pub(crate) mod change_logs;
+pub(crate) mod alerting;
 pub(crate) mod channel_monitor_mutations;
 pub(crate) mod channel_monitor_operations;
 pub(crate) mod channel_monitor_reads;
@@ -10,6 +10,7 @@ pub(crate) mod pricing_mutations;
 pub(crate) mod pricing_reads;
 pub(crate) mod provider_drafts;
 pub(crate) mod proxy_workspace_reads;
+pub(crate) mod request_logs;
 pub(crate) mod routing_health_reads;
 pub(crate) mod routing_mutations;
 pub(crate) mod runtime_status;
@@ -95,7 +96,7 @@ pub struct TypeDescriptor {
     )
 )]
 pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
-    change_logs::CHANGE_LOGS_TYPE,
+    alerting::ALERTING_TYPE,
     channel_monitor_mutations::CHANNEL_MONITOR_MUTATIONS_TYPE,
     channel_monitor_operations::CHANNEL_MONITOR_OPERATIONS_TYPE,
     channel_monitor_reads::CHANNEL_MONITOR_READS_TYPE,
@@ -106,6 +107,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     pricing_reads::PRICING_READS_TYPE,
     pricing_mutations::PRICING_MUTATIONS_TYPE,
     proxy_workspace_reads::PROXY_WORKSPACE_READS_TYPE,
+    request_logs::REQUEST_LOGS_TYPE,
     provider_drafts::PROVIDER_DRAFTS_TYPE,
     routing_health_reads::ROUTING_HEALTH_READS_TYPE,
     routing_mutations::ROUTING_MUTATIONS_TYPE,

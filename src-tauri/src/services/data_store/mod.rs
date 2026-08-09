@@ -1,3 +1,4 @@
+pub(crate) mod alerting_upgrade;
 #[allow(
     dead_code,
     reason = "Task 1 extracts the reusable migration file port before later portable migration services depend on every primitive"

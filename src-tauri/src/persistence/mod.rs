@@ -28,9 +28,6 @@ mod write_session;
 pub(crate) use write_session::WriteSession;
 
 #[cfg(test)]
-mod performance_tests;
-
-#[cfg(test)]
 mod differential_tests;
 
 pub(crate) use inspection::{

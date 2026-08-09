@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
+
+use chrono::Utc;
 
 use crate::{
     persistence::{
@@ -8,6 +10,7 @@ use crate::{
     },
     services::{
         data_store::{
+            alerting_upgrade,
             startup_upgrade_plan::StartupUpgradeStep,
             types::{RecoveryReason, StartupUpgradeError},
         },
@@ -72,12 +75,72 @@ pub(crate) fn execute_startup_upgrade_plan(
                     })?;
             }
             StartupUpgradeStep::EnsureLatestSchema => {
+                let target_schema = persistence::current_schema_version()
+                    .min(alerting_upgrade::ALERTING_FOUNDATION_SCHEMA_VERSION);
+                block_on(persistence::upgrade_existing_v2_database_to_schema(
+                    final_path,
+                    target_schema,
+                ))
+                .map_err(|error| {
+                        StartupUpgradeError::new(
+                            RecoveryReason::SchemaMigrationFailed,
+                            format!(
+                                "failed to migrate generation 2 database to alerting foundation schema: {error}"
+                            ),
+                        )
+                    })?;
+            }
+            StartupUpgradeStep::EnsureAlertingUpgrade => {
+                // Schema 29 is writable only inside this bounded upgrade
+                // window. The normal runtime remains writable solely at the
+                // latest schema (30), so opening it with current compatibility
+                // would downgrade to inspection-only and make the durable
+                // backfill fail.
+                let mut upgrade_binary = persistence::migrations::current_binary_compatibility();
+                upgrade_binary.writable_schema =
+                    BTreeSet::from([alerting_upgrade::ALERTING_FOUNDATION_SCHEMA_VERSION]);
+                let upgrade_runtime = block_on(PersistenceRuntime::open_for_schema_upgrade(
+                    final_path,
+                    upgrade_binary,
+                ))
+                .map_err(|error| {
+                    StartupUpgradeError::new(
+                        RecoveryReason::AlertingUpgradeFailed,
+                        format!("failed to open alerting upgrade runtime: {error}"),
+                    )
+                })?;
+                let result = block_on(alerting_upgrade::run_durable_upgrade(
+                    &upgrade_runtime.handle(),
+                    Utc::now().timestamp_millis().max(0),
+                ))
+                .map_err(|error| {
+                    StartupUpgradeError::new(
+                        RecoveryReason::AlertingUpgradeFailed,
+                        format!(
+                            "durable alerting upgrade failed ({}): {error}",
+                            error.code()
+                        ),
+                    )
+                });
+                let close_result = block_on(upgrade_runtime.close()).map_err(|error| {
+                    StartupUpgradeError::new(
+                        RecoveryReason::AlertingUpgradeFailed,
+                        format!("failed to close alerting upgrade runtime: {error}"),
+                    )
+                });
+                if let Err(error) = result {
+                    let _ = close_result;
+                    return Err(error);
+                }
+                close_result?;
+            }
+            StartupUpgradeStep::EnsureLegacyChangeEventsRemoval => {
                 block_on(persistence::upgrade_existing_v2_database(final_path)).map_err(
                     |error| {
                         StartupUpgradeError::new(
                             RecoveryReason::SchemaMigrationFailed,
                             format!(
-                                "failed to migrate generation 2 database to latest schema: {error}"
+                                "failed to apply destructive legacy change-events migration: {error}"
                             ),
                         )
                     },
@@ -153,16 +216,50 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
     let mut opened_runtime = false;
     let mut verified_writable = false;
     let mut verified_secrets = false;
+    let mut alerting_upgrade_seen = false;
+    let mut legacy_removal_seen = false;
     for step in steps {
         match step {
             StartupUpgradeStep::EnsureStructuralPreBaseline
             | StartupUpgradeStep::EnsureSecretBaseline
-            | StartupUpgradeStep::EnsureLatestSchema => {
+            | StartupUpgradeStep::EnsureLatestSchema
+            | StartupUpgradeStep::EnsureAlertingUpgrade => {
                 if opened_runtime {
                     return Err(invalid_step_contract(
                         "startup upgrade plan tried to run migration steps after opening runtime",
                     ));
                 }
+                if matches!(step, StartupUpgradeStep::EnsureLatestSchema) && alerting_upgrade_seen {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to migrate schema after alerting upgrade",
+                    ));
+                }
+                if matches!(step, StartupUpgradeStep::EnsureAlertingUpgrade) {
+                    if alerting_upgrade_seen {
+                        return Err(invalid_step_contract(
+                            "startup upgrade plan tried to run alerting upgrade more than once",
+                        ));
+                    }
+                    alerting_upgrade_seen = true;
+                }
+            }
+            StartupUpgradeStep::EnsureLegacyChangeEventsRemoval => {
+                if opened_runtime {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to run destructive migration after opening runtime",
+                    ));
+                }
+                if !alerting_upgrade_seen {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to remove legacy change events before durable alerting upgrade",
+                    ));
+                }
+                if legacy_removal_seen {
+                    return Err(invalid_step_contract(
+                        "startup upgrade plan tried to run legacy change-events removal more than once",
+                    ));
+                }
+                legacy_removal_seen = true;
             }
             StartupUpgradeStep::OpenRuntime => {
                 if opened_runtime {
@@ -268,6 +365,8 @@ mod tests {
             StartupUpgradeStep::EnsureStructuralPreBaseline,
             StartupUpgradeStep::EnsureSecretBaseline,
             StartupUpgradeStep::EnsureLatestSchema,
+            StartupUpgradeStep::EnsureAlertingUpgrade,
+            StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
             StartupUpgradeStep::OpenRuntime,
             StartupUpgradeStep::VerifyWritableRuntime,
             StartupUpgradeStep::VerifySecrets,

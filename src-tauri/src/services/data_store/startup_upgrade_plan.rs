@@ -1,6 +1,7 @@
 use crate::{
     persistence::schema_registry::MINIMUM_AUTOMATIC_SCHEMA_BASELINE,
     services::data_store::{
+        alerting_upgrade::ALERTING_FOUNDATION_SCHEMA_VERSION,
         startup_probe::{
             SecretFormatProbe, StartupJournalProbe, StartupKeyRequirementProbe, StartupUpgradeProbe,
         },
@@ -26,6 +27,8 @@ pub(crate) enum StartupUpgradeStep {
     EnsureStructuralPreBaseline,
     EnsureSecretBaseline,
     EnsureLatestSchema,
+    EnsureAlertingUpgrade,
+    EnsureLegacyChangeEventsRemoval,
     OpenRuntime,
     VerifyWritableRuntime,
     VerifySecrets,
@@ -105,6 +108,12 @@ pub(crate) fn plan_upgrade(probe: &StartupUpgradeProbe) -> StartupUpgradePlan {
     };
     if schema_after_secret_baseline < latest_schema {
         steps.push(StartupUpgradeStep::EnsureLatestSchema);
+    }
+    if latest_schema >= ALERTING_FOUNDATION_SCHEMA_VERSION {
+        steps.push(StartupUpgradeStep::EnsureAlertingUpgrade);
+        if latest_schema > ALERTING_FOUNDATION_SCHEMA_VERSION {
+            steps.push(StartupUpgradeStep::EnsureLegacyChangeEventsRemoval);
+        }
     }
     steps.extend([
         StartupUpgradeStep::OpenRuntime,
@@ -202,6 +211,8 @@ mod tests {
                 StartupUpgradeStep::EnsureStructuralPreBaseline,
                 StartupUpgradeStep::EnsureSecretBaseline,
                 StartupUpgradeStep::EnsureLatestSchema,
+                StartupUpgradeStep::EnsureAlertingUpgrade,
+                StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,
@@ -218,6 +229,8 @@ mod tests {
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureSecretBaseline,
                 StartupUpgradeStep::EnsureLatestSchema,
+                StartupUpgradeStep::EnsureAlertingUpgrade,
+                StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,

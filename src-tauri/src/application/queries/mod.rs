@@ -1,3 +1,4 @@
+pub(crate) mod change_center_workspace;
 pub(crate) mod channel_status;
 pub(crate) mod dashboard_metrics;
 pub(crate) mod key_pool;

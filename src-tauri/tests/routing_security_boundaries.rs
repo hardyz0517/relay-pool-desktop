@@ -54,6 +54,6 @@ fn sanitizer_lifecycle_is_owned_by_persistence_upgrade_and_runtime_ready_gate() 
     );
 
     let runtime = read_repo_file("src-tauri/src/persistence/runtime.rs");
-    assert!(runtime.contains("if sqlx_version >= 18"));
+    assert!(runtime.contains("enforce_latest_maintenance && sqlx_version >= 18"));
     assert!(runtime.contains("assert_request_log_url_sanitizer_complete_on_connection"));
 }

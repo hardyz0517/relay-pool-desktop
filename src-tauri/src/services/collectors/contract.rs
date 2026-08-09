@@ -140,6 +140,7 @@ pub enum ProviderAuthContext {
     Sub2Api {
         station_keys: Vec<Sub2ApiStationKeyCredential>,
         access_token: Option<OpaqueCredentialHandle>,
+        session_cookie: Option<OpaqueCredentialHandle>,
         login: Option<Sub2ApiLoginCredential>,
         credit_per_cny: f64,
     },
@@ -186,6 +187,7 @@ pub struct CollectorContext<'a> {
     pub endpoints: ProviderEndpoints,
     pub credential: OpaqueCredentialHandle,
     pub auth: Option<ProviderAuthContext>,
+    pub user_agent: Option<String>,
     pub secrets: &'a dyn DriverSecretAccessor,
     pub outbound: &'a AsyncOutboundClient,
     pub proxy: ProxyPolicy,

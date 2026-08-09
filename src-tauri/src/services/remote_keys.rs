@@ -160,6 +160,7 @@ pub(crate) struct PreparedSub2ApiRemoteKeyDriverContext {
     endpoints: ProviderEndpoints,
     credential_handle: OpaqueCredentialHandle,
     auth_context: ProviderAuthContext,
+    user_agent: Option<String>,
     secret_accessor: RemoteKeySecretAccessor,
     proxy: ProxyPolicy,
     local_state: PreparedRemoteKeyLocalState,
@@ -299,11 +300,24 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
         .map(|token| {
             records.push(RemoteKeySecretRecord {
                 handle: login_session_handle.clone(),
-                purpose: CredentialSecretPurpose::SessionCookie,
+                purpose: CredentialSecretPurpose::AuthorizationHeader,
                 secret: token,
             });
             login_session_handle.clone()
         });
+    let session_cookie = session
+        .cookie
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .map(|cookie| {
+            records.push(RemoteKeySecretRecord {
+                handle: login_session_handle.clone(),
+                purpose: CredentialSecretPurpose::SessionCookie,
+                secret: cookie,
+            });
+            login_session_handle.clone()
+        });
+    let access_token = access_token.or_else(|| session_cookie.clone());
 
     let credentials = source
         .get_station_credentials(station.id.clone())
@@ -374,9 +388,11 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
         auth_context: ProviderAuthContext::Sub2Api {
             station_keys: Vec::new(),
             access_token,
+            session_cookie,
             login,
             credit_per_cny: station.credit_per_cny,
         },
+        user_agent: credentials.session_user_agent,
         secret_accessor: RemoteKeySecretAccessor { records },
         proxy,
         local_state,
@@ -693,6 +709,7 @@ fn newapi_remote_key_context<'a>(
         endpoints: prepared.endpoints.clone(),
         credential: prepared.credential_handle.clone(),
         auth: Some(prepared.auth_context.clone()),
+        user_agent: None,
         secrets: &prepared.secret_accessor,
         outbound,
         proxy: prepared.proxy.clone(),
@@ -715,6 +732,7 @@ fn sub2api_remote_key_context<'a>(
         endpoints: prepared.endpoints.clone(),
         credential: prepared.credential_handle.clone(),
         auth: Some(prepared.auth_context.clone()),
+        user_agent: prepared.user_agent.clone(),
         secrets: &prepared.secret_accessor,
         outbound,
         proxy: prepared.proxy.clone(),

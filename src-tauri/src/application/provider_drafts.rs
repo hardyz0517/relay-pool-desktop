@@ -43,6 +43,7 @@ use crate::{
 
 const DRAFT_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
 const DRAFT_SECRET_SCOPE: &str = "provider_draft";
+const DRAFT_SESSION_USER_AGENT_KIND: &str = "session_user_agent";
 
 #[derive(Clone)]
 pub(crate) struct ProviderDraftService {
@@ -268,6 +269,9 @@ impl ProviderDraftService {
         let newapi_user_id = self.secret_text(&draft.id, "newapi_user_id").await?;
         let token_expires_at = self.secret_text(&draft.id, "token_expires_at").await?;
         let session_expires_at = self.secret_text(&draft.id, "session_expires_at").await?;
+        let session_user_agent = self
+            .secret_text(&draft.id, DRAFT_SESSION_USER_AGENT_KIND)
+            .await?;
 
         let mut key_plaintexts = HashMap::new();
         for key in &draft.payload.keys {
@@ -336,6 +340,7 @@ impl ProviderDraftService {
             token_expires_at,
             session_expires_at,
             session_source: "draft_authorization".to_string(),
+            session_user_agent,
             now: now.clone(),
         };
 
@@ -608,6 +613,9 @@ impl ProviderDraftService {
             token_expires_at: self.secret_text(draft_id, "token_expires_at").await?,
             token_refreshed_at: None,
             session_source: "draft".to_string(),
+            session_user_agent: self
+                .secret_text(draft_id, DRAFT_SESSION_USER_AGENT_KIND)
+                .await?,
             updated_at: Some(draft.updated_at),
         })
     }
@@ -659,6 +667,7 @@ impl ProviderDraftService {
             ("newapi_user_id", input.newapi_user_id),
             ("token_expires_at", input.token_expires_at),
             ("session_expires_at", input.session_expires_at),
+            (DRAFT_SESSION_USER_AGENT_KIND, input.session_user_agent),
         ];
         let mut patches = Vec::new();
         for (kind, value) in fields {
@@ -1087,7 +1096,6 @@ mod tests {
 
         assert_eq!(row_count(&runtime, "stations").await, 0);
         assert_eq!(row_count(&runtime, "station_group_bindings").await, 0);
-        assert_eq!(row_count(&runtime, "change_events").await, 0);
         let mut read = runtime.handle().begin_read().await.expect("read payload");
         let payload_json: String =
             sqlx::query_scalar("SELECT payload_json FROM provider_drafts WHERE id = ?1")
@@ -1111,7 +1119,6 @@ mod tests {
         assert_eq!(row_count(&runtime, "stations").await, 1);
         assert_eq!(row_count(&runtime, "station_group_bindings").await, 1);
         assert_eq!(row_count(&runtime, "station_keys").await, 1);
-        assert_eq!(row_count(&runtime, "change_events").await, 0);
         let mut read = runtime.handle().begin_read().await.expect("read secrets");
         let draft_secret_count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM secrets WHERE scope = 'provider_draft' AND owner_id = ?1",
@@ -1143,6 +1150,65 @@ mod tests {
             Err(ApplicationError::StaleRevision)
         ));
 
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn draft_authorization_user_agent_survives_commit() {
+        let (_temp, runtime, service) = test_service().await;
+        let draft = service
+            .create_or_resume(CreateProviderDraftInput {
+                base_station_id: None,
+                payload: payload("UA Provider"),
+            })
+            .await
+            .expect("draft");
+
+        let credentials = service
+            .persist_session(
+                PersistStationSessionInput {
+                    station_id: draft.id.clone(),
+                    access_token: Some("jwt.fake.token".to_string()),
+                    refresh_token: None,
+                    cookie: Some("cf_clearance=fake".to_string()),
+                    newapi_user_id: None,
+                    token_expires_at: None,
+                    session_expires_at: None,
+                    session_source: "webview_capture".to_string(),
+                    session_user_agent: Some(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)".to_string(),
+                    ),
+                },
+                draft.revision,
+            )
+            .await
+            .expect("persist draft session");
+        assert_eq!(
+            credentials.session_user_agent.as_deref(),
+            Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        );
+
+        let station = service
+            .commit(CommitProviderDraftInput {
+                draft_id: draft.id,
+                expected_revision: draft.revision,
+                commit_key: "ua-commit-key".to_string(),
+            })
+            .await
+            .expect("commit");
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        let stored_user_agent: Option<String> = sqlx::query_scalar(
+            "SELECT session_user_agent FROM station_credentials WHERE station_id = ?1",
+        )
+        .bind(station.id)
+        .fetch_one(read.connection())
+        .await
+        .expect("stored user agent");
+        assert_eq!(
+            stored_user_agent.as_deref(),
+            Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        );
+        drop(read);
         runtime.close().await.expect("close runtime");
     }
 

@@ -6,7 +6,6 @@
     "fixture_sha256":  "ad1f159cd6feabbb7d9bb4d6a37bf4fbc979f98eab03a42f402eb6fa863f34c9",
     "table_counts":  {
                          "balance_snapshots":  0,
-                         "change_events":  0,
                          "channel_monitor_request_templates":  4,
                          "channel_monitor_runs":  0,
                          "channel_monitors":  0,

@@ -1562,6 +1562,7 @@ mod tests {
                 user_id: "42".to_string(),
                 secret_purpose: CredentialSecretPurpose::AuthorizationHeader,
             }),
+            user_agent: None,
             secrets,
             outbound,
             proxy: ProxyPolicy::Direct,

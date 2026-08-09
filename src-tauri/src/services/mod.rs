@@ -1,3 +1,4 @@
+pub(crate) mod alerting;
 pub mod capture;
 pub mod collectors;
 pub mod data_store;

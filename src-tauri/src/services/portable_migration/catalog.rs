@@ -93,7 +93,10 @@ pub(crate) enum CatalogError {
     MissingSensitiveFieldRule { table: String, column: String },
 }
 
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 50;
+// The v1 catalog describes the post-alerting-cutover user schema. Historical
+// `change_events` is intentionally absent; the six alerting tables below are
+// the durable replacement and must be recognized by portable migration.
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 55;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -368,6 +371,7 @@ const STATION_CREDENTIALS_COLUMNS: &[&str] = &[
     "token_expires_at",
     "token_refreshed_at",
     "session_source",
+    "session_user_agent",
     "updated_at",
     "login_username",
     "created_at",
@@ -782,28 +786,141 @@ const COLLECTOR_TASK_STATE_COLUMNS: &[&str] = &[
     "next_due_at",
     "updated_at",
 ];
-const CHANGE_EVENTS_COLUMNS: &[&str] = &[
+const ALERT_POLICIES_COLUMNS: &[&str] = &[
     "id",
-    "severity",
+    "name",
+    "enabled",
+    "state",
+    "scope_kind",
     "event_type",
-    "status",
-    "title",
-    "message",
+    "station_id",
+    "station_key_id",
+    "minimum_severity",
+    "severity_offset",
+    "trigger_mode",
+    "trigger_count",
+    "trigger_duration_seconds",
+    "recovery_mode",
+    "recovery_count",
+    "recovery_duration_seconds",
+    "in_app_enabled",
+    "desktop_enabled",
+    "repeat_mode",
+    "repeat_interval_seconds",
+    "cooldown_seconds",
+    "recovery_notification_enabled",
+    "quiet_hours_policy",
+    "priority",
+    "revision",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const CHANGE_INCIDENTS_COLUMNS: &[&str] = &[
+    "id",
+    "condition_key",
+    "event_type",
+    "lifecycle_state",
+    "base_severity",
+    "severity",
+    "object_type",
+    "object_id",
+    "station_id",
+    "station_key_id",
+    "policy_id",
+    "policy_revision",
+    "lifecycle_policy_fingerprint",
+    "episode_number",
+    "first_seen_at_ms",
+    "last_seen_at_ms",
+    "opened_at_ms",
+    "recovering_at_ms",
+    "resolved_at_ms",
+    "occurrence_count",
+    "episode_occurrence_count",
+    "consecutive_abnormal_count",
+    "consecutive_healthy_count",
+    "pending_since_ms",
+    "healthy_since_ms",
+    "last_observation_id",
+    "last_observation_summary_json",
+    "fact_fresh_until_ms",
+    "next_state_evaluation_at_ms",
+    "last_notification_at_ms",
+    "next_notification_at_ms",
+    "version",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const CHANGE_EVENT_OCCURRENCES_COLUMNS: &[&str] = &[
+    "id",
+    "source_observation_key",
+    "event_type",
+    "category",
+    "observation_kind",
+    "severity",
+    "condition_key",
+    "incident_id",
+    "episode_number",
     "object_type",
     "object_id",
     "station_id",
     "station_key_id",
     "pricing_rule_id",
     "request_log_id",
+    "source",
+    "reason_code",
     "old_value_json",
     "new_value_json",
     "impact_json",
-    "dedupe_key",
-    "source",
-    "detected_at",
-    "resolved_at",
-    "created_at",
-    "updated_at",
+    "observed_at_ms",
+    "created_at_ms",
+];
+const INCIDENT_ATTENTION_COLUMNS: &[&str] = &[
+    "incident_id",
+    "episode_number",
+    "seen_at_ms",
+    "acknowledged_at_ms",
+    "acknowledged_reason",
+    "snoozed_until_ms",
+    "updated_at_ms",
+];
+const NOTIFICATION_DELIVERIES_COLUMNS: &[&str] = &[
+    "id",
+    "delivery_key",
+    "incident_id",
+    "episode_number",
+    "delivery_sequence",
+    "policy_id",
+    "policy_revision",
+    "policy_snapshot_json",
+    "channel",
+    "delivery_kind",
+    "status",
+    "scheduled_at_ms",
+    "claim_token",
+    "claimed_at_ms",
+    "lease_expires_at_ms",
+    "attempt_count",
+    "attempted_at_ms",
+    "outcome_unknown_at_ms",
+    "retry_not_before_ms",
+    "delivered_at_ms",
+    "suppressed_reason",
+    "error_code",
+    "created_at_ms",
+    "updated_at_ms",
+];
+const ALERTING_UPGRADE_PROGRESS_COLUMNS: &[&str] = &[
+    "singleton_key",
+    "phase",
+    "source_high_water_cursor",
+    "last_copied_cursor",
+    "copied_count",
+    "rebuild_version",
+    "last_error_code",
+    "started_at_ms",
+    "updated_at_ms",
+    "completed_at_ms",
 ];
 const MODEL_BASE_PRICES_COLUMNS: &[&str] = &[
     "id",
@@ -1235,6 +1352,10 @@ const STATION_CREDENTIALS_RULES: &[FieldRule] = &[
         name: "session_source",
         transform: FieldTransform::ResetText("none"),
     },
+    FieldRule {
+        name: "session_user_agent",
+        transform: FieldTransform::ResetNull,
+    },
 ];
 const REMOTE_KEY_RULES: &[FieldRule] = &[
     FieldRule {
@@ -1358,11 +1479,12 @@ const GROUP_RATE_RECORD_RULES: &[FieldRule] = &[FieldRule {
     name: "raw_json_redacted",
     transform: FieldTransform::RedactJson,
 }];
-const CHANGE_EVENT_RULES: &[FieldRule] = &[
-    FieldRule {
-        name: "message",
-        transform: FieldTransform::RedactText,
-    },
+const ALERT_POLICY_RULES: &[FieldRule] = &[];
+const CHANGE_INCIDENT_RULES: &[FieldRule] = &[FieldRule {
+    name: "last_observation_summary_json",
+    transform: FieldTransform::RedactJson,
+}];
+const CHANGE_EVENT_OCCURRENCE_RULES: &[FieldRule] = &[
     FieldRule {
         name: "old_value_json",
         transform: FieldTransform::RedactJson,
@@ -1376,6 +1498,18 @@ const CHANGE_EVENT_RULES: &[FieldRule] = &[
         transform: FieldTransform::RedactJson,
     },
 ];
+const INCIDENT_ATTENTION_RULES: &[FieldRule] = &[];
+const NOTIFICATION_DELIVERY_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "policy_snapshot_json",
+        transform: FieldTransform::RedactJson,
+    },
+    FieldRule {
+        name: "claim_token",
+        transform: FieldTransform::Exclude,
+    },
+];
+const ALERTING_UPGRADE_PROGRESS_RULES: &[FieldRule] = &[];
 const CHANNEL_TEMPLATE_RULES: &[FieldRule] = &[FieldRule {
     name: "request_body_json",
     transform: FieldTransform::RedactJson,
@@ -1580,6 +1714,15 @@ const TABLES: &[TableCatalog] = &[
         &[],
     ),
     table(
+        "alert_policies",
+        TablePolicy::Include,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        true,
+        ALERT_POLICIES_COLUMNS,
+        ALERT_POLICY_RULES,
+    ),
+    table(
         "balance_snapshots",
         TablePolicy::OptionalHistory,
         DataCategory::History,
@@ -1715,13 +1858,49 @@ const TABLES: &[TableCatalog] = &[
         &[],
     ),
     table(
-        "change_events",
+        "change_incidents",
         TablePolicy::OptionalHistory,
         DataCategory::History,
         DependencyStage::History,
         true,
-        CHANGE_EVENTS_COLUMNS,
-        CHANGE_EVENT_RULES,
+        CHANGE_INCIDENTS_COLUMNS,
+        CHANGE_INCIDENT_RULES,
+    ),
+    table(
+        "change_event_occurrences",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        CHANGE_EVENT_OCCURRENCES_COLUMNS,
+        CHANGE_EVENT_OCCURRENCE_RULES,
+    ),
+    table(
+        "incident_attention",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        INCIDENT_ATTENTION_COLUMNS,
+        INCIDENT_ATTENTION_RULES,
+    ),
+    table(
+        "notification_deliveries",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        NOTIFICATION_DELIVERIES_COLUMNS,
+        NOTIFICATION_DELIVERY_RULES,
+    ),
+    table(
+        "alerting_upgrade_progress",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::Internal,
+        false,
+        ALERTING_UPGRADE_PROGRESS_COLUMNS,
+        ALERTING_UPGRADE_PROGRESS_RULES,
     ),
     table(
         "model_base_prices",

@@ -50,6 +50,7 @@ use crate::{
             write_config_v3_with_faults, DataDirConfigV3, DatabaseGeneration,
         },
         data_store::{
+            alerting_upgrade::ALERTING_FOUNDATION_SCHEMA_VERSION,
             startup_upgrade_executor::execute_startup_upgrade_plan,
             startup_upgrade_plan::StartupUpgradeStep,
             types::{RecoveryReason, StartupUpgradeError},
@@ -407,6 +408,12 @@ fn encrypted_baseline_ready_startup_steps() -> Vec<StartupUpgradeStep> {
         > crate::services::secrets::baseline_conversion::ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION
     {
         steps.push(StartupUpgradeStep::EnsureLatestSchema);
+    }
+    if persistence::current_schema_version() >= ALERTING_FOUNDATION_SCHEMA_VERSION {
+        steps.push(StartupUpgradeStep::EnsureAlertingUpgrade);
+        if persistence::current_schema_version() > ALERTING_FOUNDATION_SCHEMA_VERSION {
+            steps.push(StartupUpgradeStep::EnsureLegacyChangeEventsRemoval);
+        }
     }
     steps.extend([
         StartupUpgradeStep::OpenRuntime,
@@ -1151,7 +1158,10 @@ fn map_import_phase(phase: LegacyImportPhase) -> ImportPhase {
         LegacyImportPhase::MonitorDefinitions => ImportPhase::ChannelMonitors,
         LegacyImportPhase::Pricing => ImportPhase::Pricing,
         LegacyImportPhase::HistoricalEvidence => ImportPhase::EvidenceAndHistory,
-        LegacyImportPhase::HealthAndChanges => ImportPhase::HealthAndChangeEvents,
+        // The legacy importer retains a checkpoint for health snapshots, but
+        // no longer copies the removed change_events table. Keep the stable
+        // fault-injection phase code for recovery journal compatibility.
+        LegacyImportPhase::HealthSnapshots => ImportPhase::HealthAndChangeEvents,
         LegacyImportPhase::DerivedProjectionsAndIndexes => {
             ImportPhase::DerivedProjectionsAndIndexes
         }

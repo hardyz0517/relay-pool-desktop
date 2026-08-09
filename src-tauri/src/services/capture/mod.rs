@@ -222,6 +222,7 @@ pub fn extract_session_credentials(
         ),
         session_expires_at: find_string_field(json, &["session_expires_at", "sessionExpiresAt"]),
         session_source: "webview_capture".to_string(),
+        session_user_agent: input.user_agent.clone(),
     })
 }
 
@@ -234,6 +235,11 @@ fn is_auth_capture_path(input: &CapturedHttpEventInput) -> bool {
     let lower = path.to_lowercase();
     lower.contains("/auth/login")
         || lower.contains("/auth/refresh")
+        || lower.ends_with("/auth/me")
+        || lower.ends_with("/auth/profile")
+        || lower.ends_with("/user/profile")
+        || lower.ends_with("/user/info")
+        || lower.ends_with("/user/self")
         || lower.ends_with("/login")
         || lower.ends_with("/session")
 }
@@ -596,6 +602,7 @@ mod tests {
             })),
             response_text: None,
             error_message: None,
+            user_agent: None,
         });
 
         let redacted = event.response_json_redacted.unwrap();
@@ -626,6 +633,7 @@ mod tests {
             response_json: None,
             response_text: Some(sensitive),
             error_message: Some("very long error".repeat(20)),
+            user_agent: None,
         });
 
         let preview = event.response_text_preview_redacted.unwrap();
@@ -662,6 +670,7 @@ mod tests {
             })),
             response_text: None,
             error_message: None,
+            user_agent: None,
         });
         let (summary, normalized, raw) = summarize_events(&[event]);
 
@@ -752,6 +761,7 @@ mod tests {
             })),
             response_text: None,
             error_message: None,
+            user_agent: None,
         };
 
         let session = super::extract_session_credentials(&input).expect("captured session");
@@ -798,6 +808,7 @@ mod tests {
             })),
             response_text: None,
             error_message: None,
+            user_agent: None,
         };
 
         let session = super::extract_session_credentials(&input).expect("captured session");
@@ -811,6 +822,35 @@ mod tests {
             Some("captured-refresh-token")
         );
         assert_eq!(session.session_source, "webview_capture");
+    }
+
+    #[test]
+    fn extracts_storage_token_from_sub2api_identity_probe() {
+        let input = CapturedHttpEventInput {
+            station_id: "station-1".to_string(),
+            source_window_id: "window-1".to_string(),
+            page_url: "https://relay.example/dashboard".to_string(),
+            request_url: "https://relay.example/api/v1/auth/me".to_string(),
+            request_path: Some("/api/v1/auth/me".to_string()),
+            method: "GET".to_string(),
+            status: Some(200),
+            content_type: Some("application/json".to_string()),
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            response_kind: Some("json".to_string()),
+            response_size: None,
+            response_json: Some(json!({ "access_token": "storage-captured-token" })),
+            response_text: None,
+            error_message: None,
+            user_agent: None,
+        };
+
+        let session = super::extract_session_credentials(&input).expect("captured session");
+        assert_eq!(
+            session.access_token.as_deref(),
+            Some("storage-captured-token")
+        );
     }
 
     #[test]
@@ -834,6 +874,7 @@ mod tests {
             })),
             response_text: None,
             error_message: None,
+            user_agent: None,
         };
 
         assert!(super::extract_session_credentials(&input).is_none());

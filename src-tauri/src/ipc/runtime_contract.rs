@@ -24,7 +24,7 @@ pub enum RuntimeCapability {
     Proxy,
     ChannelMonitoring,
     Pricing,
-    ChangeEvents,
+    Alerting,
     Capture,
     TypedStreaming,
 }
@@ -40,7 +40,7 @@ pub const RUNTIME_CONTRACT_TYPESCRIPT: &str = r#"export type RuntimeCapability =
   | "proxy"
   | "channel_monitoring"
   | "pricing"
-  | "change_events"
+  | "alerting"
   | "capture"
   | "typed_streaming";
 
@@ -67,7 +67,7 @@ pub fn current_runtime_contract() -> RuntimeContractInfo {
             RuntimeCapability::Proxy,
             RuntimeCapability::ChannelMonitoring,
             RuntimeCapability::Pricing,
-            RuntimeCapability::ChangeEvents,
+            RuntimeCapability::Alerting,
             RuntimeCapability::Capture,
             RuntimeCapability::TypedStreaming,
         ],

@@ -156,6 +156,25 @@ impl PersistenceRuntime {
         path: &Path,
         binary: BinaryCompatibility,
     ) -> Result<Self, PersistenceError> {
+        Self::open_with_options(path, binary, true).await
+    }
+
+    /// Opens a schema that is inside a bounded upgrade transaction before all
+    /// latest-schema maintenance gates are available. The caller must keep
+    /// this runtime private to the upgrade executor and run the normal
+    /// readiness checks after the final migration has completed.
+    pub(crate) async fn open_for_schema_upgrade(
+        path: &Path,
+        binary: BinaryCompatibility,
+    ) -> Result<Self, PersistenceError> {
+        Self::open_with_options(path, binary, false).await
+    }
+
+    async fn open_with_options(
+        path: &Path,
+        binary: BinaryCompatibility,
+        enforce_latest_maintenance: bool,
+    ) -> Result<Self, PersistenceError> {
         if !path.is_file() {
             return Err(PersistenceError::MissingDatabase);
         }
@@ -175,7 +194,7 @@ impl PersistenceRuntime {
         )
         .as_code();
         let open_mode = decide_open_mode(&binary, &compatibility, sqlx_version)?;
-        if sqlx_version >= 18 {
+        if enforce_latest_maintenance && sqlx_version >= 18 {
             crate::persistence::maintenance::request_log_url_sanitizer::assert_request_log_url_sanitizer_complete_on_connection(
                 &mut connection,
             )

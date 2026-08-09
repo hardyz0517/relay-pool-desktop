@@ -657,6 +657,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             app.manage(Arc::new(TrayBehaviorState::default()));
             app.manage(ExitCoordinator::new(Duration::from_secs(45)));
@@ -858,6 +859,9 @@ pub fn run() {
                             data_directory_port,
                             blocking_executor.clone(),
                         );
+                        app.manage(app_composition::compose_alerting_command_facade(
+                            runtime.handle(),
+                        ));
                         app.state::<application::data_migration::PortableMigrationCommandFacade>()
                             .configure_ready_services(
                                 app.state::<application::data_maintenance::DataMaintenanceCoordinator>()
@@ -932,8 +936,6 @@ pub fn run() {
                             );
                         let pricing_command_facade =
                             app_composition::compose_pricing_command_facade(&app_services);
-                        let change_events_command_facade =
-                            app_composition::compose_change_events_command_facade(&app_services);
                         let credentials_command_facade =
                             app_composition::compose_credentials_command_facade(&app_services);
                         let data_directory_command_facade =
@@ -1005,6 +1007,24 @@ pub fn run() {
                             .map_err(|error| {
                                 format!("failed to start monitoring maintenance: {error}")
                             })?;
+                        let alerting_runtime_task =
+                            background_tasks::alerting_runner::register_alerting_runtime_task(
+                                &supervisor_handle,
+                                runtime.handle(),
+                                std::sync::Arc::new(
+                                    services::alerting::TauriDesktopNotificationAdapter::new(
+                                        app.handle().clone(),
+                                    ),
+                                ),
+                            )
+                            .map_err(|error| {
+                                format!("failed to register alerting runtime: {error}")
+                            })?;
+                        supervisor_handle
+                            .start(&alerting_runtime_task)
+                            .map_err(|error| {
+                                format!("failed to start alerting runtime: {error}")
+                            })?;
                         let routing_projection_task =
                             background_tasks::routing_projection_runner::register_routing_projection_task(
                                 &supervisor_handle,
@@ -1067,7 +1087,6 @@ pub fn run() {
                                 station_key_connectivity_command_facade,
                                 capture_command_facade,
                                 pricing_command_facade,
-                                change_events_command_facade,
                                 credentials_command_facade,
                                 data_directory_command_facade,
                                 local_proxy_command_facade,

@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::time::Duration;
 use tauri::{Manager, State};
 
 use crate::{
@@ -164,6 +165,7 @@ pub async fn finish_web_authorization_session(
             .map_err(CaptureCommandError::Message)
             .map_err(capture_command_error)?;
         let cookie_header = read_capture_window_cookies(app, &input.station_id, &cookie_url)
+            .await
             .map_err(capture_command_error)?;
         facade
             .finish_web_authorization_session(input.station_id, cookie_header)
@@ -187,6 +189,7 @@ pub async fn finish_provider_draft_authorization_session(
             .map_err(CaptureCommandError::Message)
             .map_err(capture_command_error)?;
         let cookie_header = read_capture_window_cookies(app, &input.draft_id, &cookie_url)
+            .await
             .map_err(capture_command_error)?;
         facade
             .finish_provider_draft_authorization_session(input.draft_id, cookie_header)
@@ -211,6 +214,14 @@ fn open_capture_window(
         window.set_focus().map_err(|error| {
             CaptureCommandError::Message(format!("Failed to focus capture window: {error}"))
         })?;
+        // The initialization script is attached when the WebView is created.
+        // Reusing a failed authorization window would otherwise keep the old
+        // fetch/XHR hooks and their expired timers, so start a fresh document
+        // before the new native capture session is registered.
+        window.eval("window.location.reload()").map_err(|error| {
+            CaptureCommandError::Message(format!("Failed to refresh capture window: {error}"))
+        })?;
+        schedule_capture_script_injection(window, plan.script.clone());
     } else {
         tauri::WebviewWindowBuilder::new(
             &app,
@@ -244,12 +255,26 @@ fn open_capture_window(
                         "Failed to schedule capture window navigation: {error}"
                     ))
                 })?;
+            schedule_capture_script_injection(window, plan.script.clone());
         }
     }
     Ok(())
 }
 
-fn read_capture_window_cookies(
+fn schedule_capture_script_injection(window: tauri::WebviewWindow, script: String) {
+    // WebView2 applies initialization scripts before its first document, which
+    // can be `about:blank` while a remote authorization page is loading. Run a
+    // second, guarded injection after navigation so capture is installed in the
+    // real page as well. The script's own sentinel keeps this idempotent.
+    tauri::async_runtime::spawn(async move {
+        for delay in [700_u64, 2_000, 5_000] {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            let _ = window.eval(&script);
+        }
+    });
+}
+
+async fn read_capture_window_cookies(
     app: tauri::AppHandle,
     owner_id: &str,
     website_url: &str,
@@ -265,21 +290,48 @@ fn read_capture_window_cookies(
             "Station website URL cannot be used for cookie lookup: {error}"
         ))
     })?;
-    let cookies = window.cookies_for_url(target).map_err(|error| {
-        CaptureCommandError::Message(format!(
-            "Reading capture authorization cookies failed: {error}"
-        ))
-    })?;
-    let pairs = cookies
-        .into_iter()
-        .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
-        .collect::<Vec<_>>();
-    service_capture::web_authorization::build_cookie_header_from_pairs(&pairs).ok_or_else(|| {
-        CaptureCommandError::Message(
-            "Capture authorization did not provide usable cookies; finish login in the capture window and retry."
-                .to_string(),
-        )
-    })
+    let mut last_error = None;
+    for attempt in 0..3 {
+        let cookie_result = tauri::async_runtime::spawn_blocking({
+            let window = window.clone();
+            let target = target.clone();
+            move || window.cookies_for_url(target)
+        })
+        .await
+        .map_err(|error| {
+            CaptureCommandError::Message(format!(
+                "Reading capture authorization cookies task failed: {error}"
+            ))
+        })?;
+        let cookies = match cookie_result {
+            Ok(cookies) => cookies,
+            Err(error) => {
+                last_error = Some(format!("cookie lookup failed: {error}"));
+                if attempt < 2 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+                break;
+            }
+        };
+        let pairs = cookies
+            .into_iter()
+            .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
+            .collect::<Vec<_>>();
+        if let Some(header) =
+            service_capture::web_authorization::build_cookie_header_from_pairs(&pairs)
+        {
+            return Ok(header);
+        }
+        last_error = Some("no usable cookies in the capture window".to_string());
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+    Err(CaptureCommandError::Message(format!(
+        "Capture authorization did not provide usable cookies; finish login in the capture window and retry.{}",
+        last_error.map(|error| format!(" ({error})")).unwrap_or_default()
+    )))
 }
 
 #[cfg(test)]
@@ -361,8 +413,31 @@ fn capture_script(
     try {{ return headers && headers.get ? (headers.get("content-type") || "") : ""; }}
     catch (_) {{ return ""; }}
   }};
-  const tryFinishWebAuthorization = (status) => {{
+  const isSub2ApiIdentityProbe = (input) => {{
+    if (!input) return false;
+    const path = String(input.requestPath || pathFromUrl(input.requestUrl || ""))
+      .split("?")[0]
+      .replace(/\/$/, "")
+      .toLowerCase();
+    return [
+      "/api/v1/auth/me",
+      "/api/v1/auth/session",
+      "/api/v1/user/profile",
+      "/api/v1/user/info",
+      "/api/v1/user/self",
+      "/auth/me",
+      "/auth/session",
+      "/user/profile",
+      "/user/info",
+      "/user/self",
+      "/api/user/profile",
+      "/api/user/info",
+      "/api/user/self",
+    ].includes(path);
+  }};
+  const tryFinishWebAuthorization = (status, input) => {{
     if (!invoke || !status || !status.webAuthorizationCandidate) return;
+    if (isSub2ApiIdentityProbe(input) === false && input && String(input.requestPath || "").toLowerCase().includes("/api/v1/")) return;
     if (window.__relayPoolAuthorizationFinishInFlight) return;
     window.__relayPoolAuthorizationFinishInFlight = true;
     invoke("finish_web_authorization_session", {{ stationId }})
@@ -374,13 +449,14 @@ fn capture_script(
   const send = (input) => {{
     if (!invoke) return;
     invoke("record_capture_event", {{ input }})
-      .then(tryFinishWebAuthorization)
+      .then((status) => tryFinishWebAuthorization(status, input))
       .catch(() => undefined);
   }};
   const buildBase = (url, method, startedAt) => ({{
     stationId,
     sourceWindowId,
     pageUrl: window.location.href,
+    userAgent: navigator.userAgent,
     requestUrl: String(new URL(url, window.location.href)),
     requestPath: pathFromUrl(url),
     method,
@@ -585,6 +661,7 @@ mod tests {
             response_json: Some(json!({ "success": true, "data": { "id": 42 } })),
             response_text: None,
             error_message: None,
+            user_agent: None,
         };
 
         assert_eq!(

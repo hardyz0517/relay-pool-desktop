@@ -847,6 +847,7 @@ impl CredentialService {
             session_expires_at: input.token_expires_at.clone(),
             token_expires_at: input.token_expires_at,
             session_source: "manual_token".to_string(),
+            session_user_agent: None,
         })
         .await
     }
@@ -1209,6 +1210,7 @@ impl CredentialService {
             token_expires_at: input.token_expires_at,
             session_expires_at: input.session_expires_at,
             session_source: input.session_source,
+            session_user_agent: input.session_user_agent,
             now,
         })
     }

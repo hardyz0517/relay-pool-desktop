@@ -83,7 +83,6 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     StationKeyConnectivity,
     Capture,
     Pricing,
-    ChangeEvents,
     Credentials,
     DataDirectory,
     LocalProxy,
@@ -106,7 +105,6 @@ pub(crate) struct ReadyServiceBundleWithCommandFacades<
     station_key_connectivity: StationKeyConnectivity,
     capture: Capture,
     pricing: Pricing,
-    change_events: ChangeEvents,
     credentials: Credentials,
     data_directory: DataDirectory,
     local_proxy: LocalProxy,
@@ -131,7 +129,6 @@ impl<
         StationKeyConnectivity,
         Capture,
         Pricing,
-        ChangeEvents,
         Credentials,
         DataDirectory,
         LocalProxy,
@@ -155,7 +152,6 @@ impl<
         StationKeyConnectivity,
         Capture,
         Pricing,
-        ChangeEvents,
         Credentials,
         DataDirectory,
         LocalProxy,
@@ -187,7 +183,6 @@ impl<
         station_key_connectivity: StationKeyConnectivity,
         capture: Capture,
         pricing: Pricing,
-        change_events: ChangeEvents,
         credentials: Credentials,
         data_directory: DataDirectory,
         local_proxy: LocalProxy,
@@ -211,7 +206,6 @@ impl<
             station_key_connectivity,
             capture,
             pricing,
-            change_events,
             credentials,
             data_directory,
             local_proxy,
@@ -424,7 +418,6 @@ pub(crate) fn register_ready_services_with_command_facades<
     StationKeyConnectivity,
     Capture,
     Pricing,
-    ChangeEvents,
     Credentials,
     DataDirectory,
     LocalProxy,
@@ -450,7 +443,6 @@ pub(crate) fn register_ready_services_with_command_facades<
         StationKeyConnectivity,
         Capture,
         Pricing,
-        ChangeEvents,
         Credentials,
         DataDirectory,
         LocalProxy,
@@ -476,7 +468,6 @@ where
     StationKeyConnectivity: Send + Sync + 'static,
     Capture: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
-    ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
     DataDirectory: Send + Sync + 'static,
     LocalProxy: Send + Sync + 'static,
@@ -512,7 +503,6 @@ pub(crate) fn register_ready_services_with_command_facades_in<
     StationKeyConnectivity,
     Capture,
     Pricing,
-    ChangeEvents,
     Credentials,
     DataDirectory,
     LocalProxy,
@@ -538,7 +528,6 @@ pub(crate) fn register_ready_services_with_command_facades_in<
         StationKeyConnectivity,
         Capture,
         Pricing,
-        ChangeEvents,
         Credentials,
         DataDirectory,
         LocalProxy,
@@ -564,7 +553,6 @@ where
     StationKeyConnectivity: Send + Sync + 'static,
     Capture: Send + Sync + 'static,
     Pricing: Send + Sync + 'static,
-    ChangeEvents: Send + Sync + 'static,
     Credentials: Send + Sync + 'static,
     DataDirectory: Send + Sync + 'static,
     LocalProxy: Send + Sync + 'static,
@@ -588,7 +576,6 @@ where
         || registry.contains::<StationKeyConnectivity>()
         || registry.contains::<Capture>()
         || registry.contains::<Pricing>()
-        || registry.contains::<ChangeEvents>()
         || registry.contains::<Credentials>()
         || registry.contains::<DataDirectory>()
         || registry.contains::<LocalProxy>()
@@ -615,7 +602,6 @@ where
         station_key_connectivity,
         capture,
         pricing,
-        change_events,
         credentials,
         data_directory,
         local_proxy,
@@ -668,9 +654,6 @@ where
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(pricing) {
-        return Err(RuntimeCompositionError::ServiceRegistration);
-    }
-    if !registry.manage(change_events) {
         return Err(RuntimeCompositionError::ServiceRegistration);
     }
     if !registry.manage(credentials) {
@@ -761,9 +744,6 @@ mod tests {
     struct SlotTwenty(u8);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct SlotTwentyOne(u8);
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct SlotTwentyTwo(u8);
-
     #[derive(Default)]
     struct TestRegistry {
         states: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
@@ -799,7 +779,7 @@ mod tests {
 
     #[test]
     fn command_facade_ready_services_preflight_every_concrete_slot() {
-        for occupied_slot in 0..22 {
+        for occupied_slot in 0..21 {
             let mut registry = TestRegistry::default();
             match occupied_slot {
                 0 => assert!(registry.manage_direct(SlotOne(99))),
@@ -823,7 +803,6 @@ mod tests {
                 18 => assert!(registry.manage_direct(SlotNineteen(99))),
                 19 => assert!(registry.manage_direct(SlotTwenty(99))),
                 20 => assert!(registry.manage_direct(SlotTwentyOne(99))),
-                21 => assert!(registry.manage_direct(SlotTwentyTwo(99))),
                 _ => unreachable!(),
             }
 
@@ -852,7 +831,6 @@ mod tests {
                     SlotNineteen(1),
                     SlotTwenty(1),
                     SlotTwentyOne(1),
-                    SlotTwentyTwo(1),
                 ),
             )
             .expect_err("occupied slots must fail before publishing any new ready state");
@@ -880,7 +858,6 @@ mod tests {
                 registry.try_state::<SlotNineteen>().map(|state| state.0),
                 registry.try_state::<SlotTwenty>().map(|state| state.0),
                 registry.try_state::<SlotTwentyOne>().map(|state| state.0),
-                registry.try_state::<SlotTwentyTwo>().map(|state| state.0),
             ];
             let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
             assert_eq!(observed, expected);
@@ -916,7 +893,6 @@ mod tests {
                 SlotNineteen(19),
                 SlotTwenty(20),
                 SlotTwentyOne(21),
-                SlotTwentyTwo(22),
             ),
         )
         .expect("vacant registry must publish every ready state");
@@ -947,10 +923,6 @@ mod tests {
         assert_eq!(
             registry.try_state::<SlotTwentyOne>(),
             Some(SlotTwentyOne(21))
-        );
-        assert_eq!(
-            registry.try_state::<SlotTwentyTwo>(),
-            Some(SlotTwentyTwo(22))
         );
     }
 

@@ -42,6 +42,7 @@ uuid = { version = "1", features = ["v7", "rng"] }
 sha2 = "0.10"
 subtle = "2"
 tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2.3.3"
 tauri-plugin-single-instance = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
