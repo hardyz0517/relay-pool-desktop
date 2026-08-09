@@ -14,7 +14,7 @@ describe("alerting frontend contract", () => {
       const policy = defaultAlertPolicy(option.value);
       expect(policy.eventType).toBe(option.value);
       expect(policy.state).toBe("active");
-      expect(policy.recoveryCount).toBeGreaterThan(0);
+      expect(policy.recoveryCount).toBe(1);
       if (policy.triggerMode === "immediate") {
         expect(policy.triggerCount).toBeNull();
         expect(policy.triggerDurationSeconds).toBeNull();
@@ -24,10 +24,33 @@ describe("alerting frontend contract", () => {
 
   it("requires a recovery notification by default", () => {
     expect(defaultAlertPolicy("station_down")).toMatchObject({
-      triggerMode: "immediate",
+      triggerMode: "consecutive_occurrences",
+      triggerCount: 2,
       recoveryMode: "consecutive_healthy",
+      recoveryCount: 1,
       recoveryNotificationEnabled: true,
       inAppEnabled: true,
+    });
+  });
+
+  it("uses stricter defaults for key validity and audit changes", () => {
+    expect(defaultAlertPolicy("key_invalid")).toMatchObject({
+      triggerMode: "immediate",
+      triggerCount: null,
+      recoveryCount: 1,
+    });
+    expect(defaultAlertPolicy("balance_depleted")).toMatchObject({
+      triggerMode: "consecutive_occurrences",
+      triggerCount: 2,
+    });
+    expect(defaultAlertPolicy("collector_failed")).toMatchObject({
+      triggerMode: "consecutive_occurrences",
+      triggerCount: 3,
+    });
+    expect(defaultAlertPolicy("price_changed")).toMatchObject({
+      triggerMode: "immediate",
+      triggerCount: null,
+      recoveryCount: 1,
     });
   });
 

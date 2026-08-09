@@ -25,7 +25,7 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
-import { markAlertingSeen, markAllAlertingSeen, resolveAllAlertingIncidents } from "@/lib/api/alerting";
+import { clearAlertingIncidents, markAlertingSeen, markAllAlertingSeen } from "@/lib/api/alerting";
 
 type ChangeCenterRoutingDeepLink = Extract<
   RoutingDeepLink,
@@ -173,16 +173,22 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
   }
 
   function requestClearAll() {
-    if ((incidentQuery.data?.activeCount ?? 0) === 0) return;
+    if (incidents.length === 0) return;
     setIsClearConfirmOpen(true);
   }
 
   async function confirmClearAll() {
     setIsClearingAll(true);
     try {
-      const clearedCount = await resolveAllAlertingIncidents({ severity: severity === "all" ? null : severity });
+      const clearedCount = await clearAlertingIncidents({
+        severity: severity === "all" ? null : severity,
+        lifecycleState: view === "all" ? null : view,
+      });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
-      toast.success(clearedCount > 0 ? `已清空 ${clearedCount} 条活动告警` : "没有可清空的活动告警");
+      setExpandedIncidentKey(null);
+      setPage(1);
+      setPageCursors({ 1: null });
+      toast.success(clearedCount > 0 ? `已清空 ${clearedCount} 条告警记录` : "没有可清空的告警记录");
     } catch (requestError) {
       toast.error("清空告警失败", readError(requestError));
     } finally {
@@ -223,7 +229,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (incidentQuery.data?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
-                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || (incidentQuery.data?.activeCount ?? 0) === 0}><Trash2 className="h-4 w-4" />一键清空</Button>
+                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || incidents.length === 0}><Trash2 className="h-4 w-4" />一键清空</Button>
                 <Button variant="secondary" onClick={() => void refresh(true)} disabled={incidentQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
               </div>
             </Toolbar>
@@ -247,9 +253,9 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
       </div>
       <ConfirmDialog
         open={isClearConfirmOpen}
-        title="清空活动告警"
-        description="确认清空当前活动告警吗？清空后这些告警会进入已恢复状态。"
-        confirmLabel="清空告警"
+        title="清空告警记录"
+        description="确认永久清空当前标签和严重程度范围内的告警记录吗？仍然异常的对象会在下一次采集后重新生成告警。"
+        confirmLabel="永久清空"
         confirming={isClearingAll}
         onCancel={() => setIsClearConfirmOpen(false)}
         onConfirm={() => void confirmClearAll()}
@@ -265,7 +271,7 @@ function IncidentRow({ incident, stationName, busy, developerModeEnabled, expand
     <div className={`grid min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_auto_minmax(0,1fr)_auto_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}>
     {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起问题" : "展开问题"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
     <StatusBadge className="justify-self-start" tone={incident.severity === "critical" ? "error" : incident.severity === "warning" ? "warning" : "info"}>{severityLabel(incident.severity)}</StatusBadge>
-    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(incident.eventType)}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? incident.stationId ?? incident.conditionKey} · {stateLabel} · 第 {incident.episodeNumber} 次 · {incident.occurrenceCount} 次出现</div></div>
+    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(incident.eventType)}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? incident.stationId ?? incident.conditionKey} · {stateLabel} · 已出现 {incident.occurrenceCount} 次</div></div>
     <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(incident.lastSeenAtMs)}</span><span>{incident.seenAtMs == null ? "未读" : "已读"}</span></div>
     <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" disabled={busy || incident.seenAtMs != null} onClick={onMarkSeen}>标记已读</Button>{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
     </div>

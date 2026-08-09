@@ -36,6 +36,7 @@ export type StationDetailContentProps = {
   sectionError: string | null;
   onBack: () => void;
   onEdit: () => void;
+  onOpenWebsite?: () => void;
   onOpenRoutingDeepLink?: () => void;
   onAuthorize: () => void;
   onRefresh: (action: StationDetailRefreshAction) => void;
@@ -104,6 +105,7 @@ export function StationDetailContent({
   sectionError,
   onBack,
   onEdit,
+  onOpenWebsite,
   onOpenRoutingDeepLink,
   onAuthorize,
   onRefresh,
@@ -190,9 +192,16 @@ export function StationDetailContent({
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               <span>{viewModel.stationTypeLabel}</span>
-              <span className="max-w-full truncate font-mono text-[11px] text-muted-foreground">
+              <button
+                type="button"
+                aria-label={`在浏览器打开 ${station.name}`}
+                title={station.websiteUrl}
+                className="max-w-full truncate font-mono text-[11px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+                onClick={onOpenWebsite}
+                disabled={!onOpenWebsite}
+              >
                 {station.websiteUrl}
-              </span>
+              </button>
               <span className="inline-flex items-center gap-1">
                 <Clock3 className="h-3.5 w-3.5" />
                 最近活动 {viewModel.lastActivityLabel}

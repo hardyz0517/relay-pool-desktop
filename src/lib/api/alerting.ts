@@ -8,6 +8,7 @@ import type {
   AlertingDomainClient,
   AlertingIncident,
   AlertingIncidentInput,
+  AlertingClearInput,
   AlertingMarkAllSeenInput,
   AlertingIncidentPage,
   AlertingSettings,
@@ -85,6 +86,10 @@ export function markAllAlertingSeen(input: AlertingMarkAllSeenInput = {}): Promi
 
 export function resolveAllAlertingIncidents(input: AlertingMarkAllSeenInput = {}): Promise<number> {
   return alertingClient().resolveAllActive(input);
+}
+
+export function clearAlertingIncidents(input: AlertingClearInput = {}): Promise<number> {
+  return alertingClient().clearIncidents(input);
 }
 
 export function snoozeAlertingIncident(incidentId: string, episodeNumber: number, untilMs: number): Promise<void> {

@@ -115,6 +115,10 @@ export type AlertingMarkAllSeenInput = {
   stationId?: string | null;
   severity?: AlertSeverity | null;
 };
+export type AlertingClearScope = "active" | "unread" | "resolved";
+export type AlertingClearInput = AlertingMarkAllSeenInput & {
+  lifecycleState?: AlertingClearScope | null;
+};
 export type AlertingHistoryInput = AlertingIncidentInput & {
   cursor?: AlertingCursor | null;
   limit?: number;
@@ -170,6 +174,7 @@ export type AlertingDomainClient = {
   markSeen(incidentId: string, episodeNumber: number): Promise<void>;
   markAllSeen(input?: AlertingMarkAllSeenInput): Promise<number>;
   resolveAllActive(input?: AlertingMarkAllSeenInput): Promise<number>;
+  clearIncidents(input?: AlertingClearInput): Promise<number>;
   snooze(incidentId: string, episodeNumber: number, untilMs: number): Promise<void>;
   sendTestNotification(channel?: "in_app" | "desktop"): Promise<void>;
   getDesktopNotificationPermission(): Promise<"allowed" | "denied" | "unavailable">;
@@ -199,9 +204,23 @@ export const ALERT_EVENT_OPTIONS: readonly AlertingEventOption[] = [
   { value: "group_rate_changed", label: "分组倍率变化", description: "分组倍率发生变化", defaultSeverity: "info", configurable: true },
   { value: "price_changed", label: "价格变化", description: "模型价格发生变化", defaultSeverity: "info", configurable: true },
   { value: "model_added", label: "新增模型", description: "发现新的模型", defaultSeverity: "info", configurable: true },
-  { value: "model_removed", label: "模型移除", description: "模型不再可用", defaultSeverity: "warning", configurable: true },
+  { value: "model_removed", label: "模型移除", description: "模型不再可用", defaultSeverity: "info", configurable: true },
   { value: "audit_change", label: "配置变化", description: "配置或策略发生变化", defaultSeverity: "info", configurable: true },
 ];
+
+export const AUDIT_ALERT_EVENT_TYPES: readonly AlertEventType[] = [
+  "group_added",
+  "rate_changed",
+  "group_rate_changed",
+  "price_changed",
+  "model_added",
+  "model_removed",
+  "audit_change",
+];
+
+export function isAuditAlertEvent(eventType: AlertEventType | null | undefined): boolean {
+  return eventType != null && AUDIT_ALERT_EVENT_TYPES.includes(eventType);
+}
 
 export const DEFAULT_ALERTING_SETTINGS: AlertingSettings = {
   enabled: true, inAppEnabled: true, desktopEnabled: false, paused: false, globalPauseUntilMs: null,
@@ -212,14 +231,17 @@ export const DEFAULT_ALERTING_SETTINGS: AlertingSettings = {
 
 export function defaultAlertPolicy(eventType: AlertEventType = "collector_failed"): AlertPolicy {
   const option = ALERT_EVENT_OPTIONS.find((item) => item.value === eventType) ?? ALERT_EVENT_OPTIONS[0];
-  const critical = option.defaultSeverity === "critical";
+  const audit = isAuditAlertEvent(eventType);
+  const immediate = audit || eventType === "key_invalid";
   return {
     id: `policy-${eventType}`, name: option.label, enabled: true, state: "active",
     scopeKind: "event_type", eventType, stationId: null, stationKeyId: null,
     minimumSeverity: null, severityOffset: 0,
-    triggerMode: critical ? "immediate" : "consecutive_occurrences",
-    triggerCount: critical ? null : 2, triggerDurationSeconds: null,
-    recoveryMode: "consecutive_healthy", recoveryCount: 2, recoveryDurationSeconds: null,
+    triggerMode: immediate ? "immediate" : "consecutive_occurrences",
+    triggerCount: immediate ? null : eventType === "collector_failed" ? 3 : 2, triggerDurationSeconds: null,
+    // Audit events do not enter the incident state machine; the count is a
+    // schema-compatible placeholder and is not used for recovery.
+    recoveryMode: "consecutive_healthy", recoveryCount: 1, recoveryDurationSeconds: null,
     inAppEnabled: true, desktopEnabled: false, repeatMode: "never",
     repeatIntervalSeconds: null, cooldownSeconds: 1_800, recoveryNotificationEnabled: true,
     quietHoursPolicy: "inherit", priority: 100, revision: 1, createdAtMs: 0, updatedAtMs: 0,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Bell, BellOff, Check, MonitorDot, Save, Trash2 } from "lucide-react";
+import { Bell, BellOff, Check, MonitorDot, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import {
@@ -15,6 +15,7 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   ALERT_EVENT_OPTIONS,
+  isAuditAlertEvent,
   DEFAULT_ALERTING_SETTINGS,
   defaultAlertPolicy,
   toAlertPolicyInput,
@@ -108,6 +109,19 @@ export function AlertingSettings() {
         policy.id === selectedPolicy.id ? { ...policy, ...patch } : policy,
       ),
     }));
+  }
+
+  function resetPolicyToDefaults() {
+    if (!selectedPolicy?.eventType || selectedPolicy.scopeKind !== "event_type") return;
+    const defaults = defaultAlertPolicy(selectedPolicy.eventType);
+    patchPolicy({
+      ...defaults,
+      id: selectedPolicy.id,
+      revision: selectedPolicy.revision,
+      createdAtMs: selectedPolicy.createdAtMs,
+      updatedAtMs: selectedPolicy.updatedAtMs,
+    });
+    toast.info("已恢复推荐默认值，请保存规则");
   }
 
   async function saveSettings() {
@@ -325,6 +339,7 @@ export function AlertingSettings() {
               disabled={savingPolicy || backendUnavailable}
               onChange={patchPolicy}
               onDelete={() => void removePolicy()}
+              onReset={resetPolicyToDefaults}
               onSave={() => void savePolicy()}
             />
           ) : (
@@ -342,12 +357,14 @@ function PolicyEditor({
   disabled,
   onChange,
   onDelete,
+  onReset,
   onSave,
 }: {
   policy: AlertPolicy;
   disabled: boolean;
   onChange: (patch: Partial<AlertPolicy>) => void;
   onDelete: () => void;
+  onReset: () => void;
   onSave: () => void;
 }) {
   const eventOptions = ALERT_EVENT_OPTIONS.map((option) => ({ value: option.value, label: option.label, description: option.description }));
@@ -366,6 +383,7 @@ function PolicyEditor({
     { value: "severity_escalation", label: "仅严重度升级" },
     { value: "interval_and_escalation", label: "间隔或严重度升级" },
   ];
+  const auditEvent = isAuditAlertEvent(policy.eventType);
   return (
     <div className="grid min-w-0 gap-3 rounded-[var(--surface-radius)] border border-border bg-control p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -380,17 +398,26 @@ function PolicyEditor({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid content-start gap-2">
           <EditorRow label="触发条件">
-            <SelectControl ariaLabel="触发条件" className={inputClassName} disabled={disabled} options={triggerOptions} value={policy.triggerMode} onChange={(value) => applyTriggerMode(value as AlertTriggerMode, onChange)} />
+            <SelectControl ariaLabel="触发条件" className={inputClassName} disabled={disabled} options={triggerOptions} value={policy.triggerMode} onChange={(value) => applyTriggerMode(value as AlertTriggerMode, policy.eventType, onChange)} />
           </EditorRow>
           {policy.triggerMode === "consecutive_occurrences" ? <NumberField ariaLabel="触发次数" label="出现次数" min={1} max={100} value={policy.triggerCount ?? 2} disabled={disabled} onChange={(value) => onChange({ triggerCount: value, triggerDurationSeconds: null })} /> : null}
           {policy.triggerMode === "active_duration" ? <NumberField ariaLabel="触发持续分钟" label="持续分钟" min={1} max={43_200} value={Math.max(1, Math.round((policy.triggerDurationSeconds ?? 300) / 60))} disabled={disabled} onChange={(value) => onChange({ triggerDurationSeconds: value * 60, triggerCount: null })} /> : null}
         </div>
         <div className="grid content-start gap-2">
-          <EditorRow label="恢复条件">
-            <SelectControl ariaLabel="恢复条件" className={inputClassName} disabled={disabled} options={recoveryOptions} value={policy.recoveryMode} onChange={(value) => onChange(value === "healthy_duration" ? { recoveryMode: "healthy_duration", recoveryCount: null, recoveryDurationSeconds: 300 } : { recoveryMode: "consecutive_healthy", recoveryCount: 2, recoveryDurationSeconds: null })} />
-          </EditorRow>
-          {policy.recoveryMode === "consecutive_healthy" ? <NumberField ariaLabel="恢复健康次数" label="健康次数" min={1} max={100} value={policy.recoveryCount ?? 2} disabled={disabled} onChange={(value) => onChange({ recoveryCount: value, recoveryDurationSeconds: null })} /> : null}
-          {policy.recoveryMode === "healthy_duration" ? <NumberField ariaLabel="恢复持续分钟" label="健康分钟" min={1} max={43_200} value={Math.max(1, Math.round((policy.recoveryDurationSeconds ?? 300) / 60))} disabled={disabled} onChange={(value) => onChange({ recoveryDurationSeconds: value * 60, recoveryCount: null })} /> : null}
+          {auditEvent ? (
+            <div className="flex min-h-8 items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">恢复条件</span>
+              <span className="text-xs text-muted-foreground">不适用（变更事件只记录一次）</span>
+            </div>
+          ) : (
+            <>
+              <EditorRow label="恢复条件">
+                <SelectControl ariaLabel="恢复条件" className={inputClassName} disabled={disabled} options={recoveryOptions} value={policy.recoveryMode} onChange={(value) => onChange(value === "healthy_duration" ? { recoveryMode: "healthy_duration", recoveryCount: null, recoveryDurationSeconds: 300 } : { recoveryMode: "consecutive_healthy", recoveryCount: 1, recoveryDurationSeconds: null })} />
+              </EditorRow>
+              {policy.recoveryMode === "consecutive_healthy" ? <NumberField ariaLabel="恢复健康次数" label="健康次数" min={1} max={100} value={policy.recoveryCount ?? 1} disabled={disabled} onChange={(value) => onChange({ recoveryCount: value, recoveryDurationSeconds: null })} /> : null}
+              {policy.recoveryMode === "healthy_duration" ? <NumberField ariaLabel="恢复持续分钟" label="健康分钟" min={1} max={43_200} value={Math.max(1, Math.round((policy.recoveryDurationSeconds ?? 300) / 60))} disabled={disabled} onChange={(value) => onChange({ recoveryDurationSeconds: value * 60, recoveryCount: null })} /> : null}
+            </>
+          )}
         </div>
       </div>
       <div className="grid gap-2 border-t border-border pt-3 sm:grid-cols-2">
@@ -410,16 +437,17 @@ function PolicyEditor({
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-3">
         <Button disabled={disabled || policy.id === "system_default" || policy.id.startsWith("policy-")} size="sm" variant="danger" onClick={onDelete}><Trash2 className="h-4 w-4" />删除</Button>
+        {policy.scopeKind === "event_type" && policy.eventType != null ? <Button disabled={disabled} size="sm" variant="outline" onClick={onReset}><RotateCcw className="h-4 w-4" />重置为默认</Button> : null}
         <Button disabled={disabled} size="sm" variant="primary" onClick={onSave}><Check className="h-4 w-4" />保存规则</Button>
       </div>
     </div>
   );
 }
 
-function applyTriggerMode(mode: AlertTriggerMode, onChange: (patch: Partial<AlertPolicy>) => void) {
+function applyTriggerMode(mode: AlertTriggerMode, eventType: AlertPolicy["eventType"], onChange: (patch: Partial<AlertPolicy>) => void) {
   if (mode === "immediate") onChange({ triggerMode: mode, triggerCount: null, triggerDurationSeconds: null });
   else if (mode === "active_duration") onChange({ triggerMode: mode, triggerCount: null, triggerDurationSeconds: 300 });
-  else onChange({ triggerMode: mode, triggerCount: 2, triggerDurationSeconds: null });
+  else onChange({ triggerMode: mode, triggerCount: eventType === "collector_failed" ? 3 : 2, triggerDurationSeconds: null });
 }
 
 function permissionLabel(value: "allowed" | "denied" | "unavailable") {

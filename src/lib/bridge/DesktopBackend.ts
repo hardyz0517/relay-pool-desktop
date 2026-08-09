@@ -58,6 +58,7 @@ import {
   getPortableMigrationOperation as getPortableMigrationOperationBinding,
   getRuntimeContractInfo,
   getAlertingIncident as getAlertingIncidentBinding,
+  clearAlertingIncidents as clearAlertingIncidentsBinding,
   getRuntimeStatus as getRuntimeStatusBinding,
   getSettings as getSettingsBinding,
   getStationCredentials as getStationCredentialsBinding,
@@ -78,6 +79,7 @@ import {
   listGroupRateRecords as listGroupRateRecordsBinding,
   listKeyPoolItems as listKeyPoolItemsBinding,
   listAlertingDeliveries as listAlertingDeliveriesBinding,
+  resolveAllAlertingIncidents as resolveAllAlertingIncidentsBinding,
   getDesktopNotificationPermission as getDesktopNotificationPermissionBinding,
   requestDesktopNotificationPermission as requestDesktopNotificationPermissionBinding,
   listAlertingIncidents as listAlertingIncidentsBinding,
@@ -256,7 +258,9 @@ export class DesktopBackend implements BackendClient {
     markAllSeen: (input = {}) =>
       invokeCommand<number>("mark_all_alerting_seen", { input }),
     resolveAllActive: (input = {}) =>
-      invokeCommand<number>("resolve_all_alerting_incidents", { input }),
+      resolveAllAlertingIncidentsBinding(input),
+    clearIncidents: (input = {}) =>
+      clearAlertingIncidentsBinding(input),
     snooze: (incidentId: string, episodeNumber: number, untilMs: number) =>
       invokeCommand<void>("snooze_alerting_incident", { input: { incidentId, episodeNumber, untilMs } }),
     sendTestNotification: (channel = "in_app") =>

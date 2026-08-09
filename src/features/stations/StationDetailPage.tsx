@@ -8,7 +8,7 @@ import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listBalanceSnapshotsForStation } from "@/lib/api/economics";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import { getStationCredentials, listStationKeys } from "@/lib/api/stationKeys";
-import { listStations } from "@/lib/api/stations";
+import { listStations, openStationWebsite } from "@/lib/api/stations";
 import type { AlertingIncident } from "@/lib/types/alerting";
 import type { CollectorSnapshot, CollectorTaskType } from "@/lib/types/collector";
 import type { CollectorRun } from "@/lib/types/collectorRuns";
@@ -301,6 +301,7 @@ export function StationDetailPage({
       sectionError={sectionError}
       onBack={onBack}
       onEdit={() => onEditProvider(viewModel.station.id)}
+      onOpenWebsite={() => void openStationWebsite(viewModel.station.websiteUrl)}
       onOpenRoutingDeepLink={
         onOpenRoutingDeepLink
           ? () =>

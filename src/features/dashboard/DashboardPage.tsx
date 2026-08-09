@@ -134,6 +134,9 @@ export function DashboardPage() {
   );
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const alertingQuery = useActivityQuery(alertingCurrentQueryOptions({ limit: 50 }));
+  const criticalAlertingQuery = useActivityQuery(
+    alertingCurrentQueryOptions({ severity: "critical", limit: 1 }),
+  );
   const [startingLocalProxy, setStartingLocalProxy] = useState(false);
   const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
@@ -214,13 +217,9 @@ export function DashboardPage() {
       ),
     [alertingIncidents],
   );
-  const unreadRisks = alertingQuery.data?.unseenCount ?? 0;
-  const p9RiskBreakdown = useMemo(() => ({
-    unresolvedCritical: activeRiskEvents.filter((event) => event.severity === "critical").length,
-    groupBindingIssues: activeRiskEvents.filter((event) => event.eventType === "group_missing" || event.eventType === "key_group_unresolved").length,
-    collectorFailures: activeRiskEvents.filter((event) => event.eventType === "collector_failed").length,
-    priceRateIssues: activeRiskEvents.filter((event) => event.eventType === "price_expired" || event.eventType === "price_changed" || event.eventType === "rate_changed").length,
-  }), [activeRiskEvents]);
+  const activeProblems = alertingQuery.data?.activeCount ?? 0;
+  const criticalProblems = criticalAlertingQuery.data?.activeCount ?? 0;
+  const unreadReminders = alertingQuery.data?.unseenCount ?? 0;
   const updateAction = updaterState.phase === "available" ? (
     <IconButton
       label="升级到新版本"
@@ -491,38 +490,31 @@ export function DashboardPage() {
           <h2 className="truncate text-[13px] font-semibold text-foreground">
             当前风险
           </h2>
-          <StatusBadge tone={unreadRisks > 0 ? "warning" : "healthy"}>
-            {unreadRisks > 0 ? `${unreadRisks} 未读` : "无未读风险"}
+          <StatusBadge tone={unreadReminders > 0 ? "warning" : "healthy"}>
+            {unreadReminders > 0 ? `${unreadReminders} 未读` : "无未读提醒"}
           </StatusBadge>
         </header>
-        <div className="grid min-w-0 grid-cols-4 gap-3">
+        <div className="grid min-w-0 grid-cols-3 gap-3">
           <DashboardMetricTile
-            label="严重未解决"
-            value={p9RiskBreakdown.unresolvedCritical}
-            detail="严重变更"
+            label="活动问题"
+            value={activeProblems}
+            detail="未恢复告警"
             icon={AlertTriangle}
-            tone={p9RiskBreakdown.unresolvedCritical > 0 ? "warning" : "good"}
+            tone={activeProblems > 0 ? "warning" : "good"}
           />
           <DashboardMetricTile
-            label="分组 / 密钥"
-            value={p9RiskBreakdown.groupBindingIssues}
-            detail="绑定问题"
-            icon={KeyRound}
-            tone={p9RiskBreakdown.groupBindingIssues > 0 ? "warning" : "good"}
+            label="严重问题"
+            value={criticalProblems}
+            detail="优先处理"
+            icon={AlertTriangle}
+            tone={criticalProblems > 0 ? "danger" : "good"}
           />
           <DashboardMetricTile
-            label="采集失败"
-            value={p9RiskBreakdown.collectorFailures}
-            detail="同步异常"
-            icon={Upload}
-            tone={p9RiskBreakdown.collectorFailures > 0 ? "warning" : "good"}
-          />
-          <DashboardMetricTile
-            label="价格 / 倍率"
-            value={p9RiskBreakdown.priceRateIssues}
-            detail="价格变更"
-            icon={BadgeDollarSign}
-            tone={p9RiskBreakdown.priceRateIssues > 0 ? "warning" : "good"}
+            label="未读提醒"
+            value={unreadReminders}
+            detail="待查看"
+            icon={Inbox}
+            tone={unreadReminders > 0 ? "warning" : "good"}
           />
         </div>
         {activeRiskEvents.length === 0 ? (
