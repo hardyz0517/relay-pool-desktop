@@ -118,60 +118,8 @@ impl CaptureCommandFacade {
         }
     }
 
-    pub(crate) async fn read_capture_window_cookies(
-        &self,
-        window: tauri::WebviewWindow,
-        target: tauri::Url,
-    ) -> Result<String, CaptureCommandError> {
-        let mut last_error = None;
-        for attempt in 0..3 {
-            let window_for_job = window.clone();
-            let target_for_job = target.clone();
-            let cookie_result = self
-                .blocking
-                .submit(
-                    "capture_window_cookie_read",
-                    None,
-                    current_correlation_id(),
-                    None,
-                    move |_| {
-                        Ok(window_for_job
-                            .cookies_for_url(target_for_job)
-                            .map_err(|error| error.to_string()))
-                    },
-                )
-                .map_err(CaptureCommandError::Blocking)?
-                .result()
-                .await
-                .map_err(CaptureCommandError::Blocking)?;
-            let cookies = match cookie_result {
-                Ok(cookies) => cookies,
-                Err(error) => {
-                    last_error = Some(format!("cookie lookup failed: {error}"));
-                    if attempt < 2 {
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                        continue;
-                    }
-                    break;
-                }
-            };
-            let pairs = cookies
-                .into_iter()
-                .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
-                .collect::<Vec<_>>();
-            if let Some(header) = capture::web_authorization::build_cookie_header_from_pairs(&pairs)
-            {
-                return Ok(header);
-            }
-            last_error = Some("no usable cookies in the capture window".to_string());
-            if attempt < 2 {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-        }
-        Err(CaptureCommandError::Message(format!(
-            "Capture authorization did not provide usable cookies; finish login in the capture window and retry.{}",
-            last_error.map(|error| format!(" ({error})")).unwrap_or_default()
-        )))
+    pub(crate) fn blocking_executor(&self) -> BlockingExecutor {
+        self.blocking.clone()
     }
 
     pub(crate) async fn start_capture_session(

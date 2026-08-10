@@ -6,6 +6,7 @@ use crate::{
     application::command_facades::{
         CaptureCommandError, CaptureCommandFacade, CaptureSessionStartPlan,
     },
+    background_tasks::BlockingExecutor,
     commands::error,
     ipc::dto::provider_drafts::{ProviderDraftIdInputDto, ProviderDraftPreviewDto},
     ipc::dto::station_collector_operations::{
@@ -180,10 +181,10 @@ pub async fn finish_web_authorization_session(
                 ))
             })
             .map_err(capture_command_error)?;
-        let cookie_header = facade
-            .read_capture_window_cookies(window, target)
-            .await
-            .map_err(capture_command_error)?;
+        let cookie_header =
+            read_capture_window_cookies(window, target, &facade.blocking_executor())
+                .await
+                .map_err(capture_command_error)?;
         facade
             .finish_web_authorization_session(input.station_id, cookie_header)
             .await
@@ -221,10 +222,10 @@ pub async fn finish_provider_draft_authorization_session(
                 ))
             })
             .map_err(capture_command_error)?;
-        let cookie_header = facade
-            .read_capture_window_cookies(window, target)
-            .await
-            .map_err(capture_command_error)?;
+        let cookie_header =
+            read_capture_window_cookies(window, target, &facade.blocking_executor())
+                .await
+                .map_err(capture_command_error)?;
         facade
             .finish_provider_draft_authorization_session(input.draft_id, cookie_header)
             .await
@@ -293,6 +294,62 @@ fn open_capture_window(
         }
     }
     Ok(())
+}
+
+async fn read_capture_window_cookies(
+    window: tauri::WebviewWindow,
+    target: tauri::Url,
+    blocking: &BlockingExecutor,
+) -> Result<String, CaptureCommandError> {
+    let mut last_error = None;
+    for attempt in 0..3 {
+        let window_for_job = window.clone();
+        let target_for_job = target.clone();
+        let cookie_result = blocking
+            .submit(
+                "capture_window_cookie_read",
+                None,
+                correlation::current_id_string(),
+                None,
+                move |_| {
+                    Ok(window_for_job
+                        .cookies_for_url(target_for_job)
+                        .map_err(|error| error.to_string()))
+                },
+            )
+            .map_err(CaptureCommandError::Blocking)?
+            .result()
+            .await
+            .map_err(CaptureCommandError::Blocking)?;
+        let cookies = match cookie_result {
+            Ok(cookies) => cookies,
+            Err(error) => {
+                last_error = Some(format!("cookie lookup failed: {error}"));
+                if attempt < 2 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+                break;
+            }
+        };
+        let pairs = cookies
+            .into_iter()
+            .map(|cookie| (cookie.name().to_string(), cookie.value().to_string()))
+            .collect::<Vec<_>>();
+        if let Some(header) =
+            service_capture::web_authorization::build_cookie_header_from_pairs(&pairs)
+        {
+            return Ok(header);
+        }
+        last_error = Some("no usable cookies in the capture window".to_string());
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+    Err(CaptureCommandError::Message(format!(
+        "Capture authorization did not provide usable cookies; finish login in the capture window and retry.{}",
+        last_error.map(|error| format!(" ({error})")).unwrap_or_default()
+    )))
 }
 
 fn schedule_capture_script_injection(window: tauri::WebviewWindow, script: String) {
