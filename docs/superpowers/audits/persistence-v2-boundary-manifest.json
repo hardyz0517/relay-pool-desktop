@@ -3577,6 +3577,8 @@
     {"from":"application::command_facades::alerting","to":"models::alerting","temporary":false},
     {"from":"application::command_facades::alerting","to":"persistence::stores::alerting","temporary":false},
     {"from":"application::queries::change_center_workspace","to":"persistence::stores::alerting::workspace","temporary":false},
+    {"from":"application::queries::change_center_workspace","to":"persistence::stores::alerting","temporary":false},
+    {"from":"application::stations","to":"persistence::stores::alerting","temporary":false},
     {"from":"background_tasks::alerting_runner","to":"application::alerting::delivery_worker","temporary":false},
     {"from":"background_tasks::alerting_runner","to":"application::alerting::policy_service","temporary":false},
     {"from":"background_tasks::alerting_runner","to":"application::alerting::reconcile","temporary":false},
