@@ -43,6 +43,7 @@ const manualTauriScript = read("scripts/run-routing-workspace-tauri-manual.ps1")
 const fixtureServer = read("scripts/routing-workspace-fixture-server.mjs");
 const tauriCdpVerifier = read("scripts/verify-routing-workspace-tauri-cdp.mjs");
 
+// Keep the workspace contract checks aligned with the current query-owned surface.
 assertIncludes(routingPage, 'type LocalRoutingTab = "status" | "edit"', "RoutingPage");
 assertIncludes(routingPage, "RoutingStatusDiagnosticsPanel", "RoutingPage");
 assertIncludes(routingPage, "refetchInterval: queryEnabled && activeTab === \"status\" ? 1_000 : false", "RoutingPage");
