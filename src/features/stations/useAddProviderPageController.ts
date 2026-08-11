@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/ui";
+import { remoteKeyRefreshFailure } from "@/lib/collectorEvents";
 import { collectStationTask, startManualAuthorization, testStationLoginInput } from "@/lib/api/collector";
 import { listGroupRateRecords, listStationGroupBindings } from "@/lib/api/groupFacts";
 import {
@@ -768,18 +769,29 @@ export function useAddProviderPageController({
         return;
       }
       const targetStationId = activeStationId;
-      await collectStationTask(targetStationId, "groups");
-      const [groupBindings, groupRates, capability] = await Promise.all([
+      const collectionResult = await collectStationTask(targetStationId, "groups");
+      const [groupBindings, groupRates, localKeys, remoteKeys, capability] = await Promise.all([
         listStationGroupBindings(targetStationId),
         listGroupRateRecords(targetStationId),
+        listStationKeys(targetStationId),
+        listRemoteStationKeys(targetStationId),
         getRemoteKeyCapability(targetStationId).catch(() => null),
       ]);
       const syncedGroupRows = dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates));
       setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates, currentCreditPerCny));
+      setLocalStationKeys(localKeys);
+      setKeyRows(localKeys.length ? localKeys.map(keyToDraft) : []);
+      setRemoteKeys(remoteKeys);
       setRemoteCapability(capability);
-      setRemoteCapabilityError(null);
       setGroupRows(syncedGroupRows);
-      toast.success("远端分组已同步", `发现 ${syncedGroupRows.length} 个分组，已用远端采集结果覆盖本地编辑区`);
+      const refreshFailure = remoteKeyRefreshFailure(collectionResult);
+      setRemoteCapabilityError(null);
+      setRemoteListError(refreshFailure?.message ?? null);
+      if (refreshFailure) {
+        toast.error("倍率已采集，但远端密钥刷新失败", refreshFailure.message);
+      } else {
+        toast.success("远端分组和密钥已同步", `发现 ${syncedGroupRows.length} 个分组、${remoteKeys.length} 把远端密钥`);
+      }
     } catch (requestError) {
       const message = readError(requestError);
       setError(message);

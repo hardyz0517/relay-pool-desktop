@@ -81,6 +81,7 @@ pub(crate) struct SelectedModelBasePriceRow {
 #[derive(Debug, Clone)]
 pub(crate) struct StationKeyPricingResolutionRow {
     pub(crate) station_id: String,
+    pub(crate) credit_per_cny: f64,
     pub(crate) group_binding_id: Option<String>,
     pub(crate) group_rate_multiplier: Option<f64>,
     pub(crate) group_confidence: Option<f64>,
@@ -188,11 +189,13 @@ impl PricingStore {
             r#"
             WITH key_context AS (
                 SELECT k.station_id,
+                       s.credit_per_cny,
                        COALESCE(k.group_binding_id, b.id) AS group_binding_id,
                        COALESCE(k.rate_multiplier, b.effective_rate_multiplier) AS group_rate_multiplier,
                        COALESCE(b.confidence, 0.8) AS group_confidence,
                        COALESCE(k.rate_collected_at, b.last_checked_at) AS group_collected_at
                 FROM station_keys k
+                JOIN stations s ON s.id = k.station_id
                 LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
                 WHERE k.id = ?1
                 LIMIT 1
@@ -235,6 +238,7 @@ impl PricingStore {
                 LIMIT 1
             )
             SELECT k.station_id,
+                   k.credit_per_cny,
                    k.group_binding_id,
                    k.group_rate_multiplier,
                    k.group_confidence,
@@ -298,12 +302,14 @@ impl PricingStore {
             ), key_context AS (
                 SELECT k.id AS station_key_id,
                        k.station_id,
+                       s.credit_per_cny,
                        COALESCE(k.group_binding_id, b.id) AS group_binding_id,
                        COALESCE(k.rate_multiplier, b.effective_rate_multiplier) AS group_rate_multiplier,
                        COALESCE(b.confidence, 0.8) AS group_confidence,
                        COALESCE(k.rate_collected_at, b.last_checked_at) AS group_collected_at
                 FROM station_keys k
                 JOIN requested_keys requested ON requested.station_key_id = k.id
+                JOIN stations s ON s.id = k.station_id
                 LEFT JOIN station_group_bindings b ON b.id = k.group_binding_id
             ), selected_rule_candidates AS (
                 SELECT k.station_key_id,
@@ -380,6 +386,7 @@ impl PricingStore {
             )
             SELECT k.station_key_id AS resolved_station_key_id,
                    k.station_id,
+                   k.credit_per_cny,
                    k.group_binding_id,
                    k.group_rate_multiplier,
                    k.group_confidence,
@@ -841,6 +848,7 @@ fn row_to_station_key_pricing_resolution(
 
     Ok(StationKeyPricingResolutionRow {
         station_id: row.try_get("station_id")?,
+        credit_per_cny: row.try_get("credit_per_cny")?,
         group_binding_id: row.try_get("group_binding_id")?,
         group_rate_multiplier: row.try_get("group_rate_multiplier")?,
         group_confidence: row.try_get("group_confidence")?,

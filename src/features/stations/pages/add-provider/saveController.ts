@@ -60,9 +60,16 @@ export async function saveKeyRows(
 
   for (const [priority, row] of visibleRows.entries()) {
     const rateMultiplier = parseOptionalRateMultiplier(row.rateMultiplier);
-    const rateFields = row.rateMultiplier.trim()
-      ? { rateMultiplier, rateSource: "manual" as const }
-      : {};
+    const hasGroupBinding = Boolean(row.groupBindingId);
+    const rateFields = {
+      rateMultiplier,
+      manualRateMultiplier: hasGroupBinding ? null : rateMultiplier,
+      rateSource: hasGroupBinding
+        ? row.rateSource ?? "group_binding"
+        : rateMultiplier === null
+          ? null
+          : "manual",
+    };
     const input = {
       stationId: targetStationId,
       name: row.name.trim(),

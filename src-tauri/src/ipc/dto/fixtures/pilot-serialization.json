@@ -1166,6 +1166,7 @@
           "finishedAt": "1700000000100",
           "firstTokenMs": 30,
           "groupBindingId": null,
+          "httpStatus": 200,
           "id": "request-log-1",
           "lifecycleStatus": "completed",
           "method": "POST",

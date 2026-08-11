@@ -14,6 +14,7 @@ import type {
 } from "@/lib/types/pricingMonitoring";
 import type { PricingGroupRefInput } from "@/lib/projections/pricingGroupRefs";
 import { normalizePricingGroupDisplayRefs } from "@/lib/projections/pricingGroupRefs";
+import { effectiveRateMultiplierForCredit } from "@/lib/formatters";
 
 export type PricingGroupType = StationGroupCategory;
 
@@ -242,9 +243,11 @@ function createRowFromCandidate(
   if (!groupType) {
     return null;
   }
-  const creditPerCny = safeCreditPerCny(candidate.station.creditPerCny);
-  const effectiveMultiplier =
-    candidate.groupMultiplier === null ? null : candidate.groupMultiplier / creditPerCny;
+  const creditPerCny = candidate.station.creditPerCny;
+  const effectiveMultiplier = effectiveRateMultiplierForCredit(
+    candidate.groupMultiplier,
+    creditPerCny,
+  );
 
   const monitorRef = {
     stationId: candidate.station.id,
@@ -399,10 +402,6 @@ function rowMatchesQuery(row: PricingComparisonRow, query: string, sectionTitle:
 
 function normalizeText(value: string) {
   return value.trim().toLowerCase().replace(/[_\s]+/g, "-");
-}
-
-function safeCreditPerCny(value: number) {
-  return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
 function buildMetrics(sections: PricingGroupSection[]): PricingComparisonMetrics {

@@ -1,0 +1,34 @@
+# 倍率模型
+
+## 当前规范
+
+倍率相关数据分为三层，禁止在展示层或路由策略中重新推导：
+
+| 字段 | 含义 | 允许使用的场景 |
+| --- | --- | --- |
+| 原始倍率 | 中转站返回或用户录入的站点积分倍率 | 采集、编辑、审计 |
+| `creditPerCny` | 中转站积分兑换人民币的比例 | 归一化输入 |
+| 实际倍率 | `原始倍率 / creditPerCny` | 路由、价格比较、日志成本、候选展示 |
+
+无效或缺失的兑换率按 `1` 处理；无效或缺失的原始倍率必须保持未知，不能默认为 `1`。
+
+## 统一入口
+
+- Rust：`application::operational_facts::pricing_projector::effective_rate_multiplier`
+- TypeScript：`src/lib/formatters.ts` 中的 `effectiveRateMultiplierForCredit`
+
+两者都只负责归一化，不负责选择倍率来源。倍率来源优先级由 multiplier projector / pricing context 决定。
+
+## 实际倍率消费者
+
+- 智能路由候选资格与倍率上限
+- 路由成本优先排序和路由预览
+- 价格比较页面
+- 请求日志中的倍率与成本估算
+- 路由候选、密钥和分组的实际倍率展示
+
+采集结果、编辑表单和倍率历史可以展示原始倍率，但必须明确标注其为站点原始值，不能参与实际路由决策。
+
+## 变更要求
+
+新增倍率消费者时，必须直接使用上述统一入口或已归一化的 pricing context；不得在组件、查询或策略中直接执行 `/ creditPerCny`。涉及路由或跨层契约时，应同时补充 Rust 与 Vitest 回归测试。

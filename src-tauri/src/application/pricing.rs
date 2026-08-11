@@ -252,6 +252,7 @@ mod tests {
     fn resolution() -> StationKeyPricingResolutionRow {
         StationKeyPricingResolutionRow {
             station_id: "station-1".to_string(),
+            credit_per_cny: 1.0,
             group_binding_id: None,
             group_rate_multiplier: None,
             group_confidence: None,
@@ -291,6 +292,60 @@ mod tests {
         assert_eq!(context.estimated_output_price, Some(3.0));
         assert_eq!(context.confidence, 0.9);
         assert_eq!(context.rate_collected_at.as_deref(), Some("200"));
+    }
+
+    #[test]
+    fn station_credit_ratio_is_applied_to_group_multiplier_and_builtin_price() {
+        let mut resolution = resolution();
+        resolution.credit_per_cny = 27.0;
+        resolution.group_binding_id = Some("binding-1".to_string());
+        resolution.group_rate_multiplier = Some(2.0);
+
+        let context = pricing_context_from_resolution("key-1", "gpt-5-mini", Some(&resolution));
+
+        let expected_multiplier = 2.0 / 27.0;
+        assert_eq!(context.pricing_status, PricingStatus::Priced);
+        assert_eq!(context.effective_rate_multiplier, Some(expected_multiplier));
+        assert_eq!(
+            context.estimated_input_price,
+            Some(0.25 * expected_multiplier)
+        );
+        assert_eq!(
+            context.estimated_output_price,
+            Some(2.0 * expected_multiplier)
+        );
+    }
+
+    #[test]
+    fn group_rate_only_rule_falls_back_to_key_multiplier_before_credit_conversion() {
+        let mut resolution = resolution();
+        resolution.credit_per_cny = 27.0;
+        resolution.group_binding_id = Some("binding-1".to_string());
+        resolution.group_rate_multiplier = Some(2.0);
+        resolution.pricing_rule = Some(SelectedPricingRuleRow {
+            id: "rate-only".to_string(),
+            model: "*".to_string(),
+            input_price: None,
+            output_price: None,
+            fixed_price: None,
+            currency: "USD".to_string(),
+            source: "collector".to_string(),
+            group_binding_id: Some("binding-1".to_string()),
+            rate_multiplier: None,
+            normalization_status: "group_rate_only".to_string(),
+            confidence: 0.8,
+            collected_at: Some("300".to_string()),
+        });
+
+        let context = pricing_context_from_resolution("key-1", "gpt-5-mini", Some(&resolution));
+
+        let expected_multiplier = 2.0 / 27.0;
+        assert_eq!(context.pricing_status, PricingStatus::Priced);
+        assert_eq!(context.effective_rate_multiplier, Some(expected_multiplier));
+        assert_eq!(
+            context.estimated_output_price,
+            Some(2.0 * expected_multiplier)
+        );
     }
 
     #[test]

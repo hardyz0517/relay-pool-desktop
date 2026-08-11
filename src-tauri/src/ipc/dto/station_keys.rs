@@ -338,7 +338,12 @@ impl UpdateStationKeyInputDto {
                 "note",
             ],
         )?;
-        let input: UpdateStationKeyInput = parse_value(value)?;
+        let clears_manual_rate_multiplier =
+            matches!(value.get("manualRateMultiplier"), Some(Value::Null));
+        let mut input: UpdateStationKeyInput = parse_value(value)?;
+        if clears_manual_rate_multiplier {
+            input.manual_rate_multiplier = Some(None);
+        }
         validate_id("id", &input.id)?;
         validate_station_key_fields(
             &input.station_id,
@@ -1374,6 +1379,45 @@ mod tests {
                 .to_ascii_lowercase()
                 .contains(&sensitive_name.to_ascii_lowercase()));
         }
+    }
+
+    #[test]
+    fn update_station_key_input_distinguishes_omitted_null_and_numeric_manual_rates() {
+        fn update_input() -> Value {
+            serde_json::json!({
+                "id": "key-1",
+                "stationId": "station-1",
+                "name": "Fixture key",
+                "apiKey": null,
+                "enabled": true,
+                "priority": 0,
+                "maxConcurrency": 4,
+                "loadFactor": null,
+                "schedulable": true,
+                "groupName": null,
+                "tierLabel": null,
+                "groupBindingId": null,
+                "groupIdHash": null,
+                "rateMultiplier": null,
+                "rateSource": null,
+                "balanceScope": "station_key",
+                "status": "unchecked",
+                "note": null
+            })
+        }
+
+        let omitted = UpdateStationKeyInputDto::parse(update_input()).expect("omitted field");
+        assert_eq!(omitted.manual_rate_multiplier, None);
+
+        let mut cleared_value = update_input();
+        cleared_value["manualRateMultiplier"] = Value::Null;
+        let cleared = UpdateStationKeyInputDto::parse(cleared_value).expect("explicit null field");
+        assert_eq!(cleared.manual_rate_multiplier, Some(None));
+
+        let mut numeric_value = update_input();
+        numeric_value["manualRateMultiplier"] = serde_json::json!(0.08);
+        let numeric = UpdateStationKeyInputDto::parse(numeric_value).expect("numeric manual rate");
+        assert_eq!(numeric.manual_rate_multiplier, Some(Some(0.08)));
     }
 
     #[test]

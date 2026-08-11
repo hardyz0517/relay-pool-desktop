@@ -1055,6 +1055,7 @@ pub fn run() {
                                     blocking_executor,
                                     outbound_client,
                                     provider_registry,
+                                    Arc::new(remote_keys_command_facade.clone()),
                                 ),
                             )
                             .map_err(|error| {

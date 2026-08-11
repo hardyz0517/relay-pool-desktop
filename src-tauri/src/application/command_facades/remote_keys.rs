@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
+
 use crate::{
     application::{
         collectors::CollectorService, credentials::CredentialService, error::ApplicationError,
@@ -17,6 +19,7 @@ use crate::{
     services::{
         collectors::{orchestration::ProviderRegistry, V2CollectorSourceAdapter},
         remote_keys::{self, RemoteKeyOperationError},
+        station_collectors::StationCollectorRemoteKeyRefreshPort,
     },
 };
 
@@ -53,22 +56,41 @@ impl RemoteKeysCommandFacade {
         &self,
         station_id: String,
     ) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
+        self.scan_remote_station_keys_with_context(
+            station_id,
+            tokio_util::sync::CancellationToken::new(),
+            current_correlation_id(),
+        )
+        .await
+    }
+
+    pub(crate) async fn scan_remote_station_keys_with_context(
+        &self,
+        station_id: String,
+        cancellation_token: tokio_util::sync::CancellationToken,
+        correlation_id: Option<String>,
+    ) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
         let station_id_for_probe = station_id.clone();
         let newapi_prepared = self
-            .prepare_remote_key_context("remote_key_prepare_newapi_scan", move |source| {
-                remote_keys::prepare_newapi_remote_key_driver_context_v2(
-                    &source,
-                    station_id_for_probe,
-                )
-            })
+            .prepare_remote_key_context_with_context(
+                "remote_key_prepare_newapi_scan",
+                cancellation_token.clone(),
+                correlation_id.clone(),
+                move |source| {
+                    remote_keys::prepare_newapi_remote_key_driver_context_v2(
+                        &source,
+                        station_id_for_probe,
+                    )
+                },
+            )
             .await?;
         if let Some(prepared) = newapi_prepared {
             let prepared = remote_keys::prepare_newapi_remote_key_scan_v2(
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
-                tokio_util::sync::CancellationToken::new(),
-                current_correlation_id(),
+                cancellation_token,
+                correlation_id,
             )
             .await?;
             return remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared)
@@ -76,29 +98,39 @@ impl RemoteKeysCommandFacade {
         }
         let station_id_for_probe = station_id.clone();
         let sub2api_prepared = self
-            .prepare_remote_key_context("remote_key_prepare_sub2api_scan", move |source| {
-                remote_keys::prepare_sub2api_remote_key_driver_context_v2(
-                    &source,
-                    station_id_for_probe,
-                )
-            })
+            .prepare_remote_key_context_with_context(
+                "remote_key_prepare_sub2api_scan",
+                cancellation_token.clone(),
+                correlation_id.clone(),
+                move |source| {
+                    remote_keys::prepare_sub2api_remote_key_driver_context_v2(
+                        &source,
+                        station_id_for_probe,
+                    )
+                },
+            )
             .await?;
         if let Some(prepared) = sub2api_prepared {
             let prepared = remote_keys::prepare_sub2api_remote_key_scan_v2(
                 self.providers.as_ref(),
                 &self.outbound,
                 prepared,
-                tokio_util::sync::CancellationToken::new(),
-                current_correlation_id(),
+                cancellation_token,
+                correlation_id,
             )
             .await?;
             return remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared)
                 .await;
         }
         let prepared = self
-            .prepare_remote_key_context("remote_key_prepare_unsupported_scan", move |source| {
-                remote_keys::prepare_unsupported_remote_key_scan_v2(&source, station_id)
-            })
+            .prepare_remote_key_context_with_context(
+                "remote_key_prepare_unsupported_scan",
+                cancellation_token,
+                correlation_id,
+                move |source| {
+                    remote_keys::prepare_unsupported_remote_key_scan_v2(&source, station_id)
+                },
+            )
             .await?;
         remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared).await
     }
@@ -300,15 +332,65 @@ impl RemoteKeysCommandFacade {
         T: Send + 'static,
         F: FnOnce(V2CollectorSourceAdapter) -> Result<T, RemoteKeyOperationError> + Send + 'static,
     {
+        self.prepare_remote_key_context_with_context(
+            kind,
+            tokio_util::sync::CancellationToken::new(),
+            current_correlation_id(),
+            prepare,
+        )
+        .await
+    }
+
+    async fn prepare_remote_key_context_with_context<T, F>(
+        &self,
+        kind: &'static str,
+        cancellation_token: tokio_util::sync::CancellationToken,
+        correlation_id: Option<String>,
+        prepare: F,
+    ) -> Result<T, RemoteKeyOperationError>
+    where
+        T: Send + 'static,
+        F: FnOnce(V2CollectorSourceAdapter) -> Result<T, RemoteKeyOperationError> + Send + 'static,
+    {
         let source = self.source();
-        self.blocking
-            .submit(kind, None, current_correlation_id(), None, move |_| {
+        let job = self
+            .blocking
+            .submit(kind, None, correlation_id, None, move |_| {
                 Ok(prepare(source))
             })
-            .map_err(remote_key_blocking_error)?
-            .result()
-            .await
-            .map_err(remote_key_blocking_error)?
+            .map_err(remote_key_blocking_error)?;
+        let job_cancellation_token = job.cancellation_token();
+        tokio::select! {
+            _ = cancellation_token.cancelled() => {
+                job_cancellation_token.cancel();
+                Err(RemoteKeyOperationError::ExternalUnavailable)
+            }
+            result = job.result() => {
+                result.map_err(remote_key_blocking_error)?
+            }
+        }
+    }
+}
+
+impl StationCollectorRemoteKeyRefreshPort for RemoteKeysCommandFacade {
+    fn refresh_remote_keys(
+        &self,
+        station_id: String,
+        cancellation_token: tokio_util::sync::CancellationToken,
+        correlation_id: Option<String>,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        let facade = self.clone();
+        Box::pin(async move {
+            facade
+                .scan_remote_station_keys_with_context(
+                    station_id,
+                    cancellation_token,
+                    correlation_id,
+                )
+                .await
+                .map(|_| ())
+                .map_err(|_| "Remote key scan failed".to_string())
+        })
     }
 }
 

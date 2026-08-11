@@ -76,6 +76,8 @@ pub(crate) enum PersistenceError {
     BackupVerificationFailed,
     #[error("database operation failed")]
     DatabaseFailed,
+    #[error("database is busy")]
+    DatabaseBusy,
     #[error("migration failed: {0}")]
     MigrationFailed(String),
 }
@@ -84,6 +86,12 @@ impl From<sqlx::Error> for PersistenceError {
     fn from(error: sqlx::Error) -> Self {
         match error {
             sqlx::Error::RowNotFound => Self::NotFound,
+            sqlx::Error::Database(database)
+                if database.message().to_ascii_lowercase().contains("busy")
+                    || database.message().to_ascii_lowercase().contains("locked") =>
+            {
+                Self::DatabaseBusy
+            }
             sqlx::Error::Database(database)
                 if database.is_unique_violation() || database.is_foreign_key_violation() =>
             {

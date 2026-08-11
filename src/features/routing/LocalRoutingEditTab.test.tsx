@@ -105,14 +105,14 @@ describe("LocalRoutingEditTab", () => {
       await mocks.dragEnd?.({ active: { id: "key-1" }, over: { id: "key-3" } });
     });
 
-    expect(mocks.reorderKeyPool).toHaveBeenCalledWith(["key-1", "key-3", "key-2"]);
+    expect(mocks.reorderKeyPool).toHaveBeenCalledWith(["key-2", "key-3", "key-1"]);
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["routing"] });
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 
-  it("keeps the persisted 密钥池 order when status candidates refresh", async () => {
+  it("keeps the edit preview order aligned with refreshed status candidates", async () => {
     const keyPoolItems = [keyPoolItem("key-3"), keyPoolItem("key-2"), keyPoolItem("key-1")];
     const initial = workspace([candidate("key-1"), candidate("key-2")]);
     const refreshed = workspace([candidate("key-2"), candidate("key-1")]);
@@ -140,9 +140,9 @@ describe("LocalRoutingEditTab", () => {
       );
     });
     expect(Array.from(host.querySelectorAll("[data-candidate-id]")).map((node) => node.getAttribute("data-candidate-id"))).toEqual([
-      "key-3",
       "key-2",
       "key-1",
+      "key-3",
     ]);
 
     await act(async () => root.unmount());

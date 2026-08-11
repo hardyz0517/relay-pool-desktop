@@ -752,6 +752,7 @@ mod tests {
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
         let candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot {
+            credit_per_cny: Some(1.0),
             group_binding_id: Some("binding-gpt".to_string()),
             group_key_hash: Some("hash-gpt".to_string()),
             group_id_hash: Some("gid-gpt".to_string()),
@@ -803,6 +804,7 @@ mod tests {
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
         let candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot {
+            credit_per_cny: Some(1.0),
             group_binding_id: Some("binding-claude".to_string()),
             group_name: Some("Claude Group".to_string()),
             group_status: Some("available".to_string()),
@@ -888,6 +890,7 @@ mod tests {
             now_ms,
         );
         let candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot {
+            credit_per_cny: Some(1.0),
             rate_multiplier: Some(0.8),
             rate_source: Some("collector".to_string()),
             rate_collected_at: Some("2026-07-31T00:00:00Z".to_string()),

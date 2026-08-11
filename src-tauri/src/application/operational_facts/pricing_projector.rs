@@ -249,20 +249,27 @@ fn pricing_parts_from_resolution(
                 || rule.fixed_price.is_some();
             if !has_rule_price {
                 if let Some(base_price) = base_price {
-                    if let Some(multiplier) = positive(rule.rate_multiplier) {
+                    let group_binding_id = rule
+                        .group_binding_id
+                        .clone()
+                        .or_else(|| resolution.group_binding_id.clone());
+                    let raw_multiplier = rule.rate_multiplier.or(resolution.group_rate_multiplier);
+                    if let Some(multiplier) =
+                        effective_rate_multiplier(raw_multiplier, resolution.credit_per_cny)
+                    {
                         owned.rate_multiplier = Some(multiplier);
                         owned.normalization_status = Some("base_price_with_group_rate".to_string());
                         owned.estimated_input_price =
                             base_price.input_price.map(|price| price * multiplier);
                         owned.estimated_output_price =
                             base_price.output_price.map(|price| price * multiplier);
-                    } else if rule.group_binding_id.is_some() {
+                    } else if group_binding_id.is_some() {
                         owned.pricing_rule_id = Some(rule.id.clone());
                         owned.normalization_status = Some("missing_rate".to_string());
                     }
                     if owned.rate_multiplier.is_some() || owned.pricing_rule_id.is_some() {
                         owned.pricing_model = Some(base_price.model.clone());
-                        owned.group_binding_id = rule.group_binding_id.clone();
+                        owned.group_binding_id = group_binding_id;
                         owned.price_confidence =
                             Some(rule.confidence.min(base_price_confidence(base_price)));
                         owned.base_input_price = base_price.input_price;
@@ -295,7 +302,10 @@ fn pricing_parts_from_resolution(
                 owned.collected_at = rule.collected_at.clone();
             }
         } else if let Some(base_price) = base_price {
-            if let Some(multiplier) = positive(resolution.group_rate_multiplier) {
+            if let Some(multiplier) = effective_rate_multiplier(
+                resolution.group_rate_multiplier,
+                resolution.credit_per_cny,
+            ) {
                 owned.group_binding_id = resolution.group_binding_id.clone();
                 owned.rate_multiplier = Some(multiplier);
                 owned.normalization_status = Some("base_price_with_group_rate".to_string());
@@ -347,6 +357,18 @@ fn pricing_parts_from_resolution(
 
 fn positive(value: Option<f64>) -> Option<f64> {
     value.filter(|value| value.is_finite() && *value > 0.0)
+}
+
+/// Converts a station/group multiplier expressed in station credits into the
+/// normalized multiplier used by pricing, routing policy, and UI read models.
+/// The station exchange rate is credits per CNY, so normalization divides by it.
+pub(crate) fn effective_rate_multiplier(
+    raw_multiplier: Option<f64>,
+    credit_per_cny: f64,
+) -> Option<f64> {
+    let raw_multiplier = positive(raw_multiplier)?;
+    let credit_per_cny = positive(Some(credit_per_cny)).unwrap_or(1.0);
+    Some(raw_multiplier / credit_per_cny)
 }
 
 fn base_price_confidence(price: &SelectedModelBasePriceRow) -> f64 {
@@ -403,5 +425,28 @@ impl OwnedPricingParts {
             pricing_source: self.pricing_source.as_deref(),
             collected_at: self.collected_at.as_deref(),
         }
+    }
+}
+
+#[cfg(test)]
+mod effective_rate_multiplier_tests {
+    use super::effective_rate_multiplier;
+
+    #[test]
+    fn divides_station_native_multiplier_by_exchange_rate() {
+        assert_eq!(effective_rate_multiplier(Some(2.0), 27.0), Some(2.0 / 27.0));
+    }
+
+    #[test]
+    fn falls_back_to_one_for_invalid_exchange_rate() {
+        assert_eq!(effective_rate_multiplier(Some(0.5), 0.0), Some(0.5));
+        assert_eq!(effective_rate_multiplier(Some(0.5), f64::NAN), Some(0.5));
+    }
+
+    #[test]
+    fn rejects_missing_or_non_positive_raw_multiplier() {
+        assert_eq!(effective_rate_multiplier(None, 1.0), None);
+        assert_eq!(effective_rate_multiplier(Some(0.0), 1.0), None);
+        assert_eq!(effective_rate_multiplier(Some(-1.0), 1.0), None);
     }
 }

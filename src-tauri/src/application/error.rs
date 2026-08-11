@@ -46,6 +46,7 @@ impl From<crate::persistence::error::PersistenceError> for ApplicationError {
             PersistenceError::StaleRevision => Self::StaleRevision,
             PersistenceError::CommitOutcomeUnknown => Self::CommitOutcomeUnknown,
             PersistenceError::BackupVerificationFailed => Self::IntegrityFailed,
+            PersistenceError::DatabaseBusy => Self::Unavailable,
             PersistenceError::DatabaseFailed => Self::Internal,
         }
     }

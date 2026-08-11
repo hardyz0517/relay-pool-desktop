@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "a497d1e4d3202e4629efce466764eff5c902014c287d1eaf431678044884d2e4",
+  "contract_hash": "8e5ca2499b19715d2949b76ff3b774ec08a203094bb9b4e40f13fbf56ceefb00",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -1933,6 +1933,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "fd63c8bb8fa77f126573e943f359442a7755733a82d6fe20df0ae49a0d208075"
+    "serialization_fixture_hash": "12695f927c28d33360afe49edca3cdfffb7d3479648de8746ed94f4fbc383ad4"
   }
 }

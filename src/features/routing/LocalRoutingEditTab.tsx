@@ -92,10 +92,10 @@ export function LocalRoutingEditTab({ workspace, keyPoolItems, loading }: LocalR
       setSyncError(null);
       return;
     }
-    setCandidateIds(keyPoolItems.map((item) => item.id));
+    setCandidateIds(orderedCandidateIds(keyPoolItems, workspace?.candidates ?? []));
     setSyncState("idle");
     setSyncError(null);
-  }, [keyPoolItems]);
+  }, [keyPoolItems, workspace?.candidates]);
 
   async function handleDragEnd(event: DragEndEvent) {
     if (syncState === "saving") {
@@ -207,6 +207,21 @@ export function LocalRoutingEditTab({ workspace, keyPoolItems, loading }: LocalR
       </section>
     </div>
   );
+}
+
+function orderedCandidateIds(
+  keyPoolItems: readonly KeyPoolItem[],
+  workspaceCandidates: readonly LocalRoutingCandidate[],
+) {
+  const keyPoolIds = new Set(keyPoolItems.map((item) => item.id));
+  const previewIds = workspaceCandidates
+    .map((candidate) => candidate.stationKeyId)
+    .filter((id) => keyPoolIds.has(id));
+  const previewIdSet = new Set(previewIds);
+  return [
+    ...previewIds,
+    ...keyPoolItems.map((item) => item.id).filter((id) => !previewIdSet.has(id)),
+  ];
 }
 function SortableLocalRoutingCandidateRow({
   candidate,

@@ -20,6 +20,7 @@ export type StationKeyDraft = {
   groupIdHash: string | null;
   groupName: string;
   rateMultiplier: string;
+  rateSource?: string | null;
   enabled: boolean;
   note: string;
   deleteRequested: boolean;
@@ -51,6 +52,7 @@ export function createEmptyStationKeyDraft(index: number): StationKeyDraft {
     groupIdHash: null,
     groupName: "",
     rateMultiplier: "",
+    rateSource: null,
     enabled: true,
     note: "",
     deleteRequested: false,
@@ -78,7 +80,7 @@ export function StationKeyRowsEditor({
           inferredGroupCategory: "unknown" as const,
           groupCategoryOverride: null,
           effectiveGroupCategory: "unknown" as const,
-          rateSource: "key_draft",
+          rateSource: row.rateSource ?? "key_draft",
           selectableForRemoteKey: Boolean(row.groupBindingId || row.groupIdHash),
         };
         return { ...option, value: stationGroupSelectValue(option) };
@@ -90,7 +92,12 @@ export function StationKeyRowsEditor({
 
   function selectGroup(row: StationKeyDraft, value: string) {
     if (value === noGroupValue) {
-      updateRow(row.clientId, { groupBindingId: null, groupIdHash: null, groupName: "" });
+      updateRow(row.clientId, {
+        groupBindingId: null,
+        groupIdHash: null,
+        groupName: "",
+        rateSource: null,
+      });
       return;
     }
     const selectedGroup =
@@ -102,6 +109,7 @@ export function StationKeyRowsEditor({
       groupBindingId: selectedGroup.groupBindingId,
       groupIdHash: selectedGroup.groupIdHash,
       groupName: selectedGroup.groupName,
+      rateSource: selectedGroup.rateSource,
       rateMultiplier:
         selectedGroup.rateMultiplier === null
           ? row.rateMultiplier

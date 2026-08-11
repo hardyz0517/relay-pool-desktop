@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, Save } from "lucide-react";
-import { Button, SectionCard, StatusBadge, SwitchControl, useToast } from "@/components/ui";
+import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { loadRoutingPolicy, updateRoutingPolicy } from "@/lib/api/routing";
+import { getSettings, updateSettings } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
 import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
-import type { RoutingPolicyConfigV1 } from "@/lib/types/routing";
+import { queryKeys } from "@/lib/query/queryKeys";
+import { appSettingsToUpdateInput, type AppSettings } from "@/lib/types/settings";
+import { groupCategoryDefinitions } from "@/lib/groupCategories";
+import type { PricingGroupType, RoutingGroupFilter, RoutingPolicyConfigV1 } from "@/lib/types/routing";
 import { useQueryClient } from "@tanstack/react-query";
 
 type SaveState = "idle" | "loading" | "dirty" | "saving" | "saved" | "error";
@@ -24,6 +28,8 @@ export function LocalRoutingSettingsEditor() {
   const queryClient = useQueryClient();
   const [config, setConfig] = useState<RoutingPolicyConfigV1 | null>(null);
   const [saved, setSaved] = useState<RoutingPolicyConfigV1 | null>(null);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [savedSettings, setSavedSettings] = useState<AppSettings | null>(null);
   const [revision, setRevision] = useState<number | null>(null);
   const [state, setState] = useState<SaveState>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -32,10 +38,12 @@ export function LocalRoutingSettingsEditor() {
     setState("loading");
     setError(null);
     try {
-      const response = await loadRoutingPolicy();
+      const [response, nextSettings] = await Promise.all([loadRoutingPolicy(), getSettings()]);
       setConfig(response.config);
       setSaved(response.config);
       setRevision(response.revision);
+      setSettings(nextSettings);
+      setSavedSettings(nextSettings);
       setState("idle");
     } catch (requestError) {
       setError(readError(requestError));
@@ -45,7 +53,10 @@ export function LocalRoutingSettingsEditor() {
 
   useEffect(() => { void reload(); }, []);
 
-  const dirty = useMemo(() => JSON.stringify(config) !== JSON.stringify(saved), [config, saved]);
+  const dirty = useMemo(
+    () => JSON.stringify(config) !== JSON.stringify(saved) || JSON.stringify(settings) !== JSON.stringify(savedSettings),
+    [config, saved, savedSettings, settings],
+  );
   const total = config
     ? config.reliabilityWeight + config.responsivenessWeight + config.costWeight + config.preferenceWeight
     : 0;
@@ -55,15 +66,45 @@ export function LocalRoutingSettingsEditor() {
     setState("dirty");
   }
 
+  function updateSettingsField<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
+    setSettings((current) => current ? { ...current, [key]: value } : current);
+    setState("dirty");
+  }
+
+  function parseMaxRateMultiplier(value: string): number | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  function groupFilterValue(filter: RoutingGroupFilter): string {
+    if (filter === "all_groups" || filter === "ungrouped_only") return filter;
+    if ("group_type" in filter) return `group_type:${filter.group_type}`;
+    return "all_groups";
+  }
+
+  function groupFilterFromValue(value: string): RoutingGroupFilter {
+    if (value === "ungrouped_only") return "ungrouped_only";
+    if (value.startsWith("group_type:")) {
+      return { group_type: value.slice("group_type:".length) as PricingGroupType };
+    }
+    return "all_groups";
+  }
+
   async function save() {
-    if (!config || revision == null || total !== 10_000 || state === "saving") return;
+    if (!config || !settings || revision == null || total !== 10_000 || state === "saving") return;
     setState("saving");
     setError(null);
     try {
+      const nextSettings = await updateSettings(appSettingsToUpdateInput(settings));
       const response = await updateRoutingPolicy({ config, expectedRevision: revision });
       setConfig(response.config);
       setSaved(response.config);
       setRevision(response.revision);
+      setSettings(nextSettings);
+      setSavedSettings(nextSettings);
+      queryClient.setQueryData(queryKeys.settings, nextSettings);
       setState("saved");
       const synchronization = await refreshRoutingQueries(queryClient);
       if (synchronization.refreshed) toast.success("路由策略已保存");
@@ -91,6 +132,42 @@ export function LocalRoutingSettingsEditor() {
   return (
     <SectionCard title="智能路由策略">
       <div className="divide-y divide-border">
+        <section className="grid gap-4 pb-5" aria-labelledby="routing-policy-boundaries-title">
+          <div>
+            <h3 id="routing-policy-boundaries-title" className="text-sm font-medium text-foreground">路由边界</h3>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              <span>倍率上限</span>
+              <input
+                aria-label="倍率上限"
+                className={inputClassName}
+                type="number"
+                min={0}
+                step="any"
+                value={settings?.maxRateMultiplier ?? ""}
+                onChange={(event) => updateSettingsField("maxRateMultiplier", parseMaxRateMultiplier(event.target.value))}
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+              <span>默认分组类型</span>
+              <SelectControl
+                ariaLabel="默认分组类型"
+                className={inputClassName}
+                value={settings ? groupFilterValue(settings.defaultRoutingGroupFilter) : "all_groups"}
+                options={[
+                  { value: "all_groups", label: "全部分组" },
+                  ...groupCategoryDefinitions.filter((definition) => definition.value !== "unknown").map((definition) => ({
+                    value: `group_type:${definition.value}`,
+                    label: definition.label,
+                  })),
+                  { value: "ungrouped_only", label: "仅未分组" },
+                ]}
+                onChange={(value) => updateSettingsField("defaultRoutingGroupFilter", groupFilterFromValue(value))}
+              />
+            </label>
+          </div>
+        </section>
         <section className="grid gap-4 pb-5" aria-labelledby="routing-policy-weights-title">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>

@@ -34,6 +34,7 @@ export function keyToDraft(key: StationKey): StationKeyDraft {
     groupIdHash: key.groupIdHash,
     groupName: key.groupName ?? "",
     rateMultiplier: key.rateMultiplier === null ? "" : String(key.rateMultiplier),
+    rateSource: key.rateSource,
     enabled: key.enabled,
     note: key.note ?? "",
     deleteRequested: false,
@@ -193,6 +194,7 @@ export function mergeKeyRowsWithSavedGroupOptions(
       groupBindingId: group.groupBindingId,
       groupIdHash: group.groupIdHash,
       groupName: group.groupName,
+      rateSource: group.rateSource,
       rateMultiplier:
         group.rateMultiplier === null ? row.rateMultiplier : formatMultiplier(group.rateMultiplier),
       inferredGroupCategory: group.inferredGroupCategory,
@@ -578,7 +580,13 @@ export function syncRowsWithGroupRateOptions(
       return row;
     }
     const nextRateMultiplier = formatMultiplier(group.rateMultiplier);
-    if (row.rateMultiplier === nextRateMultiplier && row.groupName === group.groupName) {
+    if (
+      row.groupBindingId === group.groupBindingId &&
+      row.groupIdHash === group.groupIdHash &&
+      row.groupName === group.groupName &&
+      row.rateSource === group.rateSource &&
+      row.rateMultiplier === nextRateMultiplier
+    ) {
       return row;
     }
     changed = true;
@@ -587,6 +595,7 @@ export function syncRowsWithGroupRateOptions(
       groupBindingId: group.groupBindingId,
       groupIdHash: group.groupIdHash,
       groupName: group.groupName,
+      rateSource: group.rateSource,
       rateMultiplier: nextRateMultiplier,
     };
   });

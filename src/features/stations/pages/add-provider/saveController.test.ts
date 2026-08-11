@@ -117,6 +117,7 @@ describe("add provider save controller", () => {
         priority: 0,
         groupName: "paid",
         rateMultiplier: 2,
+        manualRateMultiplier: 2,
         rateSource: "manual",
         note: "keep",
         status: "unchecked",
@@ -131,6 +132,59 @@ describe("add provider save controller", () => {
       }),
     ]);
     expect(createdStationKeyIds).toEqual(["created-key"]);
+  });
+
+  it("clears manual overrides only for keys with a stable group binding", async () => {
+    const updated: UpdateStationKeyInput[] = [];
+    const dependencies: SaveKeyRowsDependencies = {
+      createStationKey: async () => ({ id: "unused" }),
+      updateStationKey: async (input) => {
+        updated.push(input);
+      },
+      deleteStationKey: async () => undefined,
+    };
+
+    await saveKeyRows(
+      "station-1",
+      [
+        keyDraft({
+          id: "bound",
+          groupBindingId: "binding-1",
+          groupIdHash: "group-hash",
+          groupName: "paid",
+          rateMultiplier: "0.05",
+          rateSource: "remote_scan",
+        }),
+        keyDraft({
+          id: "legacy-name-only",
+          groupName: "legacy",
+          rateMultiplier: "0.2",
+        }),
+        keyDraft({ id: "unbound", rateMultiplier: "" }),
+      ],
+      dependencies,
+    );
+
+    expect(updated).toEqual([
+      expect.objectContaining({
+        id: "bound",
+        rateMultiplier: 0.05,
+        manualRateMultiplier: null,
+        rateSource: "remote_scan",
+      }),
+      expect.objectContaining({
+        id: "legacy-name-only",
+        rateMultiplier: 0.2,
+        manualRateMultiplier: 0.2,
+        rateSource: "manual",
+      }),
+      expect.objectContaining({
+        id: "unbound",
+        rateMultiplier: null,
+        manualRateMultiplier: null,
+        rateSource: null,
+      }),
+    ]);
   });
 
   it("disables matching saved groups and upserts editable group rows", async () => {

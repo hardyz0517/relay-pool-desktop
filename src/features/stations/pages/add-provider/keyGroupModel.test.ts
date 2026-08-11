@@ -14,6 +14,7 @@ import {
   remoteLocalKeyNote,
   resolveRemoteCreatedLocalKeyIds,
   stationKeyToUpdateInput,
+  syncRowsWithGroupRateOptions,
   validateGroupRows,
   validateKeyRows,
 } from "./keyGroupModel";
@@ -304,5 +305,36 @@ describe("add provider key/group model", () => {
     expect(input).not.toHaveProperty("apiKeyMasked");
     expect(input).not.toHaveProperty("createdAt");
     expect(input).not.toHaveProperty("updatedAt");
+  });
+
+  it("syncs stable group identity and rate source even when the multiplier is unchanged", () => {
+    const row = keyToDraft(stationKey({
+      groupBindingId: "binding-1",
+      groupIdHash: "old-hash",
+      groupName: "default",
+      rateMultiplier: 0.05,
+      rateSource: "legacy_key_group",
+    }));
+    const group: StationKeyGroupOption = {
+      value: "binding:binding-1",
+      groupBindingId: "binding-1",
+      groupIdHash: "current-hash",
+      groupName: "default",
+      rateMultiplier: 0.05,
+      inferredGroupCategory: "unknown",
+      groupCategoryOverride: null,
+      effectiveGroupCategory: "unknown",
+      rateSource: "sub2api_groups_rates",
+      selectableForRemoteKey: true,
+    };
+
+    expect(syncRowsWithGroupRateOptions([row], [group])).toEqual([
+      expect.objectContaining({
+        groupBindingId: "binding-1",
+        groupIdHash: "current-hash",
+        rateMultiplier: "0.05",
+        rateSource: "sub2api_groups_rates",
+      }),
+    ]);
   });
 });

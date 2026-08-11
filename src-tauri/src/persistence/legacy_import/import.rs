@@ -1401,6 +1401,7 @@ const TABLE_PLANS: &[TablePlan] = &[
             "model",
             "stream",
             "status",
+            "http_status",
             "lifecycle_status",
             "station_key_id",
             "station_id",

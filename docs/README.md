@@ -4,6 +4,7 @@
 
 ## 当前规范
 
+- [`PRICING_MULTIPLIER_MODEL.md`](PRICING_MULTIPLIER_MODEL.md)：原始倍率、兑换率与实际倍率的统一模型及消费边界。
 - [`PROJECT_PLAN.md`](PROJECT_PLAN.md)：项目定位、能力边界与当前阶段方向。
 - [`PRODUCT_MODEL.md`](PRODUCT_MODEL.md)：核心领域术语与对象职责。
 - [`SECURITY_EXPORT_IMPORT.md`](SECURITY_EXPORT_IMPORT.md)：导入、导出与敏感数据边界。

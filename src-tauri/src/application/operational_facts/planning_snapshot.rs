@@ -1,6 +1,7 @@
 use crate::{
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
+        candidate_plan::RoutePlanPricingSnapshot,
         planning_snapshot::{CandidateSnapshot, PlanningSnapshot, RuntimeOverlaySnapshot},
     },
     application::routing_engine::{
@@ -116,6 +117,7 @@ impl PlanningSnapshotBuilder {
                         .get()
                     }),
                 cost_basis_points: None,
+                pricing: RoutePlanPricingSnapshot::unpriced("pricing_context_missing"),
                 preference_basis_points: preference_score(candidate, request),
                 failure_domains: vec![
                     format!("station:{}", candidate.station_id().as_str()),
