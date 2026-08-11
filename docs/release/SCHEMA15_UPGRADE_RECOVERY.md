@@ -11,8 +11,8 @@ The current implementation has automated evidence for the schema `15` route, cle
 | Item | Release Value |
 |---|---|
 | Minimum automatic upgrade baseline | schema `15` |
-| Latest compatibility schema | schema `28` |
-| Latest SQL migration ledger | schema `28` |
+| Latest compatibility schema | schema `32` |
+| Latest SQL migration ledger | schema `32` |
 | Latest secret format | `1` |
 | Fresh-install key behavior | create one active device key before publishing the first generation-2 database |
 | Existing-database key behavior | missing or wrong key enters typed recovery; never create a replacement key automatically |
@@ -34,20 +34,20 @@ schema 15, legacy secrets
   -> structural migration to schema 16
   -> encrypted-secret baseline conversion
   -> schema 17 + secret_format_version 1
-  -> structural migrations to schema 28
+  -> structural migrations to schema 32
   -> final verification
 
 schema 16, legacy secrets
   -> encrypted-secret baseline conversion
   -> schema 17 + secret_format_version 1
-  -> structural migrations to schema 28
+  -> structural migrations to schema 32
   -> final verification
 
-schema 17-27, secret_format_version 1
-  -> structural migrations to schema 28
+schema 17-31, secret_format_version 1
+  -> structural migrations to schema 32
   -> final verification
 
-schema 28, secret_format_version 1
+schema 32, secret_format_version 1
   -> final verification
 ```
 

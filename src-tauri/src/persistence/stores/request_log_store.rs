@@ -40,6 +40,7 @@ impl RequestLogStore {
             SELECT id AS "id!", request_id AS "request_id?", started_at,
                    finished_at AS "finished_at?", duration_ms AS "duration_ms?",
                    method, path, model AS "model?", stream AS "stream!: bool", status,
+                   http_status AS "http_status?",
                    lifecycle_status AS "lifecycle_status?",
                    station_key_id AS "station_key_id?", station_id AS "station_id?",
                    upstream_base_url AS "upstream_base_url?", fallback_count,
@@ -97,8 +98,8 @@ impl RequestLogStore {
         let inserted = sqlx::query(
             "INSERT OR IGNORE INTO request_logs (
                 id, request_id, started_at, received_at_ms, method, path, model, stream, status,
-                lifecycle_status, usage_status, endpoint, fallback_count, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, NULL, 0, 'in_progress', 'admitted', 'in_progress', ?, 0, ?)",
+                lifecycle_status, usage_status, endpoint, fallback_count, reasoning_effort, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', 'admitted', 'in_progress', ?, 0, ?, ?)",
         )
         .bind(&record.request_id)
         .bind(&record.request_id)
@@ -106,7 +107,10 @@ impl RequestLogStore {
         .bind(record.received_at_ms)
         .bind(&record.method)
         .bind(&record.local_path)
+        .bind(record.model.as_deref())
+        .bind(i64::from(record.stream as u8))
         .bind(&record.endpoint)
+        .bind(record.reasoning_effort.as_deref())
         .bind(created_at_ms.to_string())
         .execute(session.connection())
         .await?
@@ -217,12 +221,12 @@ async fn update_request_terminal(
 
     let updated = sqlx::query(
         "UPDATE request_logs SET
-            model = ?, stream = ?, station_key_id = ?, station_id = ?, upstream_base_url = ?,
+            model = ?, stream = ?, http_status = ?, station_key_id = ?, station_id = ?, upstream_base_url = ?,
             route_policy = ?, route_reason = ?, rejected_candidates_json = ?, body_bytes = ?,
             route_wait_ms = ?, upstream_headers_ms = ?, failure_source = ?, attempts_json = ?,
             completion_source = ?, prompt_tokens = ?, completion_tokens = ?, total_tokens = ?,
             cache_creation_tokens = ?, cache_read_tokens = ?, reasoning_effort = ?,
-            first_token_ms = ?, finished_at = ?, duration_ms = ?, status = ?,
+            first_token_ms = ?, billing_mode = ?, finished_at = ?, duration_ms = ?, status = ?,
             lifecycle_status = ?, terminal_kind = ?, terminal_code = ?, terminal_detail = ?,
             usage_status = ?,
             protocol_completed = ?, delivery_terminal = ?, selected_attempt_ordinal = ?,
@@ -231,6 +235,7 @@ async fn update_request_terminal(
     )
     .bind(record.annotations.model.as_deref())
     .bind(stream)
+    .bind(record.annotations.http_status)
     .bind(record.annotations.selected_station_key_id.as_deref())
     .bind(record.annotations.selected_station_id.as_deref())
     .bind(Option::<&str>::None)
@@ -250,6 +255,7 @@ async fn update_request_terminal(
     .bind(record.annotations.cache_read_tokens)
     .bind(record.annotations.reasoning_effort.as_deref())
     .bind(record.annotations.first_token_ms)
+    .bind(record.annotations.billing_mode.as_deref())
     .bind(&finished_at)
     .bind(duration_ms)
     .bind(&record.status)
@@ -291,7 +297,7 @@ async fn request_terminal_by_request_id(
     request_id: &str,
 ) -> Result<Option<RequestTerminalRow>, PersistenceError> {
     let row = sqlx::query(
-        "SELECT request_id, status, lifecycle_status, terminal_kind, terminal_code,
+        "SELECT request_id, status, http_status, lifecycle_status, terminal_kind, terminal_code,
                     terminal_detail, protocol_completed, delivery_terminal,
                     selected_attempt_ordinal, attempt_count, fallback_count, terminal_at_ms
              FROM request_logs WHERE request_id = ?",
@@ -302,16 +308,17 @@ async fn request_terminal_by_request_id(
     Ok(row.map(|row| RequestTerminalRow {
         request_id: row.get(0),
         status: row.get(1),
-        lifecycle_status: row.get(2),
-        terminal_kind: row.get(3),
-        terminal_code: row.get(4),
-        terminal_detail: row.get(5),
-        protocol_completed: row.get(6),
-        delivery_terminal: row.get(7),
-        selected_attempt_ordinal: row.get(8),
-        attempt_count: row.get(9),
-        fallback_count: row.get(10),
-        terminal_at_ms: row.get(11),
+        http_status: row.get(2),
+        lifecycle_status: row.get(3),
+        terminal_kind: row.get(4),
+        terminal_code: row.get(5),
+        terminal_detail: row.get(6),
+        protocol_completed: row.get(7),
+        delivery_terminal: row.get(8),
+        selected_attempt_ordinal: row.get(9),
+        attempt_count: row.get(10),
+        fallback_count: row.get(11),
+        terminal_at_ms: row.get(12),
     }))
 }
 
@@ -319,6 +326,7 @@ async fn request_terminal_by_request_id(
 struct RequestTerminalRow {
     request_id: String,
     status: String,
+    http_status: Option<i64>,
     lifecycle_status: Option<String>,
     terminal_kind: Option<String>,
     terminal_code: Option<String>,
@@ -335,6 +343,7 @@ impl RequestTerminalRow {
     fn matches(&self, record: &RequestTerminalWrite) -> bool {
         self.request_id == record.request_id
             && self.status == record.status
+            && self.http_status == record.annotations.http_status
             && self.lifecycle_status.as_deref() == Some(record.lifecycle_status.as_str())
             && self.terminal_kind.as_deref() == Some(record.terminal_kind.as_str())
             && self.terminal_code == record.terminal_code
@@ -355,6 +364,9 @@ struct RequestStartRow {
     local_path: String,
     endpoint: String,
     received_at_ms: i64,
+    model: Option<String>,
+    stream: i64,
+    reasoning_effort: Option<String>,
 }
 
 impl PartialEq<RequestStartWrite> for RequestStartRow {
@@ -364,6 +376,9 @@ impl PartialEq<RequestStartWrite> for RequestStartRow {
             && self.local_path == other.local_path
             && self.endpoint == other.endpoint
             && self.received_at_ms == other.received_at_ms
+            && self.model == other.model
+            && self.stream == i64::from(other.stream as u8)
+            && self.reasoning_effort == other.reasoning_effort
     }
 }
 
@@ -372,7 +387,8 @@ async fn request_log_start_by_request_id(
     request_id: &str,
 ) -> Result<Option<RequestStartWrite>, PersistenceError> {
     let row = sqlx::query(
-        "SELECT request_id, method, path, endpoint, CAST(started_at AS INTEGER)
+        "SELECT request_id, method, path, endpoint, CAST(started_at AS INTEGER),
+                    model, stream, reasoning_effort
              FROM request_logs WHERE request_id = ?",
     )
     .bind(request_id)
@@ -384,6 +400,9 @@ async fn request_log_start_by_request_id(
         local_path: row.get(2),
         endpoint: row.get(3),
         received_at_ms: row.get(4),
+        model: row.get(5),
+        stream: row.get(6),
+        reasoning_effort: row.get(7),
     });
     Ok(row.map(|row| RequestStartWrite {
         request_id: row.request_id,
@@ -391,6 +410,9 @@ async fn request_log_start_by_request_id(
         local_path: row.local_path,
         endpoint: row.endpoint,
         received_at_ms: row.received_at_ms,
+        model: row.model,
+        stream: row.stream != 0,
+        reasoning_effort: row.reasoning_effort,
     }))
 }
 
@@ -502,6 +524,9 @@ mod v2_tests {
             local_path: "/v1/chat/completions".to_string(),
             endpoint: "chat_completions".to_string(),
             received_at_ms: 1000,
+            model: Some("gpt-test".to_string()),
+            stream: true,
+            reasoning_effort: Some("high".to_string()),
         }
     }
 
@@ -546,6 +571,7 @@ mod v2_tests {
             annotations: RequestLogAnnotationsWrite {
                 model: Some("gpt-test".to_string()),
                 stream: true,
+                http_status: Some(200),
                 selected_station_key_id: Some("key-1".to_string()),
                 selected_station_id: Some("station-1".to_string()),
                 upstream_base_url: Some("https://station.test/v1".to_string()),
@@ -565,6 +591,7 @@ mod v2_tests {
                 cache_read_tokens: Some(5),
                 reasoning_effort: Some("high".to_string()),
                 first_token_ms: Some(17),
+                billing_mode: Some("token".to_string()),
             },
         }
     }
@@ -610,6 +637,10 @@ mod v2_tests {
         let logs = store.list_recent(&mut read, 500).await.expect("list");
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].request_id.as_deref(), Some("req-list"));
+        assert_eq!(logs[0].status, "in_progress");
+        assert_eq!(logs[0].model.as_deref(), Some("gpt-test"));
+        assert!(logs[0].stream);
+        assert_eq!(logs[0].reasoning_effort.as_deref(), Some("high"));
         drop(read);
 
         let mut write = runtime.begin_write().await.expect("write");
@@ -726,7 +757,8 @@ mod v2_tests {
                     cache_creation_tokens, cache_read_tokens, reasoning_effort,
                     first_token_ms, finished_at, duration_ms, status, lifecycle_status,
                     terminal_kind, terminal_code, protocol_completed, delivery_terminal,
-                    selected_attempt_ordinal, attempt_count, fallback_count, terminal_at_ms
+                    selected_attempt_ordinal, attempt_count, fallback_count, terminal_at_ms,
+                    http_status, billing_mode
              FROM request_logs WHERE request_id = ?",
         )
         .bind("req-terminal")
@@ -793,5 +825,7 @@ mod v2_tests {
         assert_eq!(row.get::<Option<i64>, _>(30), Some(1));
         assert_eq!(row.get::<i64, _>(31), 0);
         assert_eq!(row.get::<Option<i64>, _>(32), Some(1100));
+        assert_eq!(row.get::<Option<i64>, _>(33), Some(200));
+        assert_eq!(row.get::<Option<String>, _>(34).as_deref(), Some("token"));
     }
 }

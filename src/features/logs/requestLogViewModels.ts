@@ -1,6 +1,8 @@
 import { parseTimestampLikeDate } from "@/lib/time";
+import { effectiveRateMultiplierForCredit, formatRate } from "@/lib/formatters";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
+import type { Station } from "@/lib/types/stations";
 
 export type RequestLatencyTone = "normal" | "notice" | "warning" | "critical" | "muted";
 export type RequestLatencyMetricKind = "first_token" | "total";
@@ -56,9 +58,13 @@ export function formatLogTime(value: string, includeDate = false) {
 }
 
 export function formatKeyName(log: RequestLog, keyById: Map<string, KeyPoolItem>) {
-  if (!log.stationKeyId) return "未选择";
+  if (!log.stationKeyId) return isRequestInProgress(log) ? "处理中" : "未选择";
   const key = keyById.get(log.stationKeyId);
-  return key ? `${key.name} · ${key.apiKeyMasked}` : log.stationKeyId;
+  return key ? `${key.stationName} · ${key.name}` : log.stationKeyId;
+}
+
+export function isRequestInProgress(log: RequestLog) {
+  return log.status === "in_progress" || log.lifecycleStatus === "admitted";
 }
 
 export function formatStationName(log: RequestLog, keyById: Map<string, KeyPoolItem>) {
@@ -73,6 +79,21 @@ export function formatGroupName(log: RequestLog, keyById: Map<string, KeyPoolIte
   const key = log.stationKeyId ? keyById.get(log.stationKeyId) : undefined;
   if (key?.groupName) return key.groupName;
   return log.groupBindingId ?? "未分组";
+}
+
+export function formatKeyRate(
+  log: RequestLog,
+  keyById: Map<string, KeyPoolItem>,
+  stationById: Map<string, Pick<Station, "creditPerCny">>,
+) {
+  const key = log.stationKeyId ? keyById.get(log.stationKeyId) : undefined;
+  const station = key ? stationById.get(key.stationId) : undefined;
+  return formatRate(effectiveRateMultiplierForCredit(key?.rateMultiplier, station?.creditPerCny));
+}
+
+export function formatEndpoint(path: string) {
+  const pathname = path.split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  return pathname.split("/").pop() || path;
 }
 
 export function reasoningEffortLabel(value: string | null) {
@@ -204,11 +225,18 @@ export function formatTokenTotal(log: RequestLog) {
 }
 
 export function formatRequestCost(log: RequestLog) {
+  if (log.totalTokens === 0 && log.estimatedTotalCost == null) return "$0.000000";
   if (log.estimatedTotalCost == null) return pricingStatusLabel(log.costStatus);
   return `$${log.estimatedTotalCost.toFixed(6)}`;
 }
 
 export function pricingStatusLabel(value: string | null | undefined) {
+  if (value === "complete_single_currency") return "已计价";
+  if (value === "complete_mixed_currency") return "多币种已计价";
+  if (value === "incomplete" || value === "pricing_incomplete") return "计费信息不完整";
+  if (value === "not_applicable") return "不适用";
+  if (value === "no_attempts") return "未产生调用";
+  if (value === "missing_usage" || value === "stream_usage_missing") return "用量未知";
   if (value === "priced") return "已计价";
   if (value === "base_price_only") return "基准价估算";
   if (value === "missing_rate") return "缺倍率";
@@ -221,7 +249,8 @@ export function pricingStatusLabel(value: string | null | undefined) {
 }
 
 export function pricingStatusTone(value: string | null | undefined) {
-  if (value === "priced") return "healthy";
+  if (value === "priced" || value === "complete_single_currency") return "healthy";
+  if (value === "complete_mixed_currency" || value === "incomplete" || value === "pricing_incomplete") return "warning";
   if (value === "base_price_only" || value === "legacy_estimate") return "warning";
   if (
     value === "missing_rate" ||

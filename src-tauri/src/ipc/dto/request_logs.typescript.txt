@@ -1,7 +1,7 @@
 export type RequestLogDto = {
   id: string; requestId: string | null; startedAt: string; finishedAt: string | null;
   durationMs: number | null; method: string; path: string; model: string | null; stream: boolean;
-  status: string; lifecycleStatus: string | null; stationKeyId: string | null; stationId: string | null;
+  status: string; httpStatus: number | null; lifecycleStatus: string | null; stationKeyId: string | null; stationId: string | null;
   upstreamBaseUrl: string | null; fallbackCount: number; errorMessage: string | null;
   routePolicy: string | null; routeReason: string | null; rejectedCandidatesJson: string | null;
   bodyBytes: number | null; attemptCount: number | null; routeWaitMs: number | null;

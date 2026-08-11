@@ -5,6 +5,9 @@ pub(crate) struct RequestStartWrite {
     pub local_path: String,
     pub endpoint: String,
     pub received_at_ms: i64,
+    pub model: Option<String>,
+    pub stream: bool,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +44,7 @@ pub(crate) struct AttemptTerminalWrite {
 pub(crate) struct RequestLogAnnotationsWrite {
     pub model: Option<String>,
     pub stream: bool,
+    pub http_status: Option<i64>,
     pub selected_station_key_id: Option<String>,
     pub selected_station_id: Option<String>,
     pub upstream_base_url: Option<String>,
@@ -60,6 +64,7 @@ pub(crate) struct RequestLogAnnotationsWrite {
     pub cache_read_tokens: Option<i64>,
     pub reasoning_effort: Option<String>,
     pub first_token_ms: Option<i64>,
+    pub billing_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

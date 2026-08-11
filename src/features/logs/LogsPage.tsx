@@ -21,6 +21,7 @@ import {
   proxyStatusQueryOptions,
   requestLogsQueryOptions,
   settingsQueryOptions,
+  stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
@@ -51,9 +52,11 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
     requestLogsQueryOptions(proxyStatusQuery.data?.running ? 2_000 : false),
   );
   const keysQuery = useActivityQuery(keyPoolQueryOptions());
+  const stationsQuery = useActivityQuery(stationsQueryOptions());
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const logs = logsQuery.data ?? [];
   const keys = keysQuery.data ?? [];
+  const stations = stationsQuery.data ?? [];
   const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;
   const loading = logsQuery.isPending && logsQuery.data === undefined;
   const error = logsQuery.error ? readError(logsQuery.error) : null;
@@ -69,6 +72,10 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
   );
   const selected = pageInfo.logs.find((log) => log.id === selectedId) ?? (selectedId ? null : pageInfo.logs[0] ?? null);
   const keyById = useMemo(() => new Map(keys.map((key) => [key.id, key] as const)), [keys]);
+  const stationById = useMemo(
+    () => new Map(stations.map((station) => [station.id, station] as const)),
+    [stations],
+  );
 
   useEffect(() => {
     if (!deepLink || deepLink.kind !== "request-log") {
@@ -154,6 +161,7 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
               <RequestLogTable
                 rows={pageInfo.logs}
                 keyById={keyById}
+                stationById={stationById}
                 selectedId={selected?.id ?? null}
                 onSelect={setSelectedId}
               />

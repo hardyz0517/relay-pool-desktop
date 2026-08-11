@@ -3,14 +3,18 @@ import { ArrowDown, ArrowUp, Database } from "lucide-react";
 import { DataTableLite, Pagination, type DataTableColumn } from "@/components/ui";
 import type { RequestLog } from "@/lib/types/proxy";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
+import type { Station } from "@/lib/types/stations";
 import {
   billingModeLabel,
   formatCompactTokenCount,
+  formatEndpoint,
   formatGroupName,
   formatKeyName,
+  formatKeyRate,
   formatLogTime,
   formatRequestCost,
   formatRequestTokenCount,
+  isRequestInProgress,
   latencyBreakdown,
   reasoningEffortLabel,
   requestLatencyTone,
@@ -20,6 +24,7 @@ import {
 type RequestLogTableProps = {
   rows: RequestLog[];
   keyById: Map<string, KeyPoolItem>;
+  stationById: Map<string, Pick<Station, "creditPerCny">>;
   selectedId: string | null;
   onSelect: (id: string) => void;
 };
@@ -37,13 +42,19 @@ type RequestLogPaginationProps = {
   onPageSizeChange: (pageSize: number) => void;
 };
 
-export function RequestLogTable({ rows, keyById, selectedId, onSelect }: RequestLogTableProps) {
+export function RequestLogTable({ rows, keyById, stationById, selectedId, onSelect }: RequestLogTableProps) {
   const columns = useMemo<DataTableColumn<RequestLog>[]>(() => [
     { key: "key", header: "密钥", render: (row) => formatKeyName(row, keyById) },
     { key: "model", header: "模型", render: (row) => row.model ?? "未识别" },
     { key: "reasoning", header: "推理强度", render: (row) => reasoningEffortLabel(row.reasoningEffort) },
-    { key: "endpoint", header: "端点", render: (row) => row.path },
+    { key: "endpoint", header: "端点", render: (row) => formatEndpoint(row.path) },
+    {
+      key: "httpStatus",
+      header: "状态码",
+      render: (row) => <RequestStatusCode value={row.httpStatus} inProgress={isRequestInProgress(row)} />,
+    },
     { key: "group", header: "分组", render: (row) => <LogMetaTag value={formatGroupName(row, keyById)} /> },
+    { key: "rate", header: "倍率", render: (row) => <LogMetaTag value={formatKeyRate(row, keyById, stationById)} /> },
     { key: "type", header: "类型", render: (row) => <LogMetaTag value={row.stream ? "流式" : "同步"} /> },
     { key: "billing", header: "计费模式", render: (row) => <LogMetaTag value={billingModeLabel(row.billingMode)} /> },
     { key: "tokens", header: "Token", render: (row) => <TokenUsageCell log={row} /> },
@@ -54,11 +65,11 @@ export function RequestLogTable({ rows, keyById, selectedId, onSelect }: Request
     },
     { key: "latency", header: "延迟", render: (row) => <LatencyCell log={row} /> },
     { key: "time", header: "时间", render: (row) => formatLogTime(row.startedAt, true) },
-  ], [keyById]);
+  ], [keyById, stationById]);
 
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[1320px]">
+      <div className="min-w-[1480px]">
         <DataTableLite
           columns={columns}
           rows={rows}
@@ -71,6 +82,32 @@ export function RequestLogTable({ rows, keyById, selectedId, onSelect }: Request
       </div>
     </div>
   );
+}
+
+export function RequestStatusCode({
+  value,
+  inProgress = false,
+}: {
+  value: number | null;
+  inProgress?: boolean;
+}) {
+  const label = inProgress ? "处理中" : (value ?? "—");
+  return (
+    <span
+      className={`text-xs font-semibold tabular-nums ${inProgress ? "text-info-foreground" : `font-mono ${httpStatusToneClass(value)}`}`}
+      title={inProgress ? "请求仍在处理中" : value === null ? "历史记录未保存 HTTP 状态码" : `HTTP ${value}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function httpStatusToneClass(value: number | null) {
+  if (value === null) return "text-muted-foreground";
+  if (value >= 500) return "text-danger-foreground";
+  if (value >= 400) return "text-warning-foreground";
+  if (value >= 300) return "text-info-foreground";
+  return "text-success-foreground";
 }
 
 export function RequestLogPagination({

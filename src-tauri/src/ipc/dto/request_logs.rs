@@ -48,6 +48,7 @@ fn fixture_request_log() -> RequestLog {
         model: Some("fixture-model".into()),
         stream: false,
         status: "success".into(),
+        http_status: Some(200),
         lifecycle_status: Some("completed".into()),
         station_key_id: Some("key-1".into()),
         station_id: Some("station-1".into()),

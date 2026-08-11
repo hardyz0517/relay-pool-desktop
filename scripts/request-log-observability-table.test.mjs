@@ -24,7 +24,9 @@ for (const label of [
   "模型",
   "推理强度",
   "端点",
+  "状态码",
   "分组",
+  "倍率",
   "类型",
   "计费模式",
   "Token",
@@ -36,7 +38,7 @@ for (const label of [
 }
 
 assert.ok(
-  tableSource.includes("overflow-x-auto") && tableSource.includes("min-w-[1320px]"),
+  tableSource.includes("overflow-x-auto") && tableSource.includes("min-w-[1480px]"),
   "wide request log table should scroll instead of compressing columns",
 );
 
@@ -70,6 +72,13 @@ assert.ok(
     viewModelSource.includes("key.groupName") &&
     tableSource.includes("formatGroupName(row, keyById)"),
   "request log group cells should prefer the current key's readable group name",
+);
+
+assert.ok(
+  viewModelSource.includes("formatKeyRate") &&
+    viewModelSource.includes("key?.rateMultiplier") &&
+    tableSource.includes("formatKeyRate(row, keyById)"),
+  "request log rate cells should show the current key's readable multiplier",
 );
 
 assert.ok(
@@ -116,8 +125,8 @@ assert.ok(
 
 assert.equal(
   tableSource.match(/<LogMetaTag value=/g)?.length,
-  3,
-  "request log group, type, and billing cells should use metadata tags",
+  4,
+  "request log group, rate, type, and billing cells should use metadata tags",
 );
 
 assert.ok(
@@ -133,9 +142,11 @@ assert.ok(
 
 assert.ok(
   tableSource.includes('key: "endpoint"') &&
-    tableSource.includes("render: (row) => row.path") &&
+    tableSource.includes("render: (row) => formatEndpoint(row.path)") &&
+    viewModelSource.includes("export function formatEndpoint") &&
+    viewModelSource.includes('pathname.split("/").pop()') &&
     !tableSource.includes("`${row.method} ${row.path}`"),
-  "request log endpoints should omit the HTTP method",
+  "request log endpoints should show only the final path segment",
 );
 
 assert.ok(
