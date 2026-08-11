@@ -416,6 +416,9 @@ impl RuntimeRoutingBalance {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeRoutingEconomicSnapshot {
+    /// Station exchange rate needed to normalize station-native multipliers in
+    /// read models that do not have a model-specific pricing context.
+    pub credit_per_cny: Option<f64>,
     pub group_binding_id: Option<String>,
     pub group_key_hash: Option<String>,
     pub group_id_hash: Option<String>,

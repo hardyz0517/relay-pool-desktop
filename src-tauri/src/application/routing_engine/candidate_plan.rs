@@ -52,6 +52,20 @@ pub struct RoutePlanPricingSnapshot {
     pub status_label: String,
 }
 
+impl RoutePlanPricingSnapshot {
+    pub(crate) fn unpriced(status_label: impl Into<String>) -> Self {
+        Self {
+            basis: RoutingCostBasis::Unpriced,
+            currency: None,
+            unit: None,
+            estimated_input_price: None,
+            estimated_output_price: None,
+            estimated_fixed_price: None,
+            status_label: status_label.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg(test)]
 pub struct RoutePlanStratum {

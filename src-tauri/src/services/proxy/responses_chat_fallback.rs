@@ -134,37 +134,15 @@ fn build_messages(body: &Value) -> Result<Value, ResponsesChatFallbackError> {
         return Err(ResponsesChatFallbackError::InvalidInput);
     };
     match input {
-        Value::String(text) => messages.push(json!({
-            "role": "user",
-            "content": text,
-        })),
+        Value::String(text) => {
+            push_text_message(&mut messages, "user", Value::String(text.clone()))?
+        }
         Value::Array(items) => {
             for item in items {
-                match item {
-                    Value::String(text) => messages.push(json!({
-                        "role": "user",
-                        "content": text,
-                    })),
-                    Value::Object(map) => {
-                        let role = map.get("role").and_then(Value::as_str).unwrap_or("user");
-                        let content = map.get("content").cloned().unwrap_or(Value::Null);
-                        messages.push(json!({
-                            "role": role,
-                            "content": content,
-                        }));
-                    }
-                    _ => return Err(ResponsesChatFallbackError::InvalidInput),
-                }
+                push_input_item(&mut messages, item)?;
             }
         }
-        Value::Object(map) => {
-            let role = map.get("role").and_then(Value::as_str).unwrap_or("user");
-            let content = map.get("content").cloned().unwrap_or(Value::Null);
-            messages.push(json!({
-                "role": role,
-                "content": content,
-            }));
-        }
+        Value::Object(_) => push_input_item(&mut messages, input)?,
         _ => return Err(ResponsesChatFallbackError::InvalidInput),
     }
 
@@ -172,6 +150,143 @@ fn build_messages(body: &Value) -> Result<Value, ResponsesChatFallbackError> {
         return Err(ResponsesChatFallbackError::InvalidInput);
     }
     Ok(Value::Array(messages))
+}
+
+fn push_input_item(
+    messages: &mut Vec<Value>,
+    item: &Value,
+) -> Result<(), ResponsesChatFallbackError> {
+    let Value::Object(map) = item else {
+        if let Value::String(text) = item {
+            return push_text_message(messages, "user", Value::String(text.clone()));
+        }
+        return Err(ResponsesChatFallbackError::InvalidInput);
+    };
+    match map.get("type").and_then(Value::as_str) {
+        Some("function_call") => push_function_call(messages, map),
+        Some("function_call_output") => push_function_call_output(messages, map),
+        Some("reasoning") => Ok(()),
+        Some("message") | None => {
+            let role = map.get("role").and_then(Value::as_str).unwrap_or("user");
+            let content = map.get("content").cloned().unwrap_or(Value::Null);
+            push_text_message(messages, role, content)
+        }
+        _ => Err(ResponsesChatFallbackError::InvalidInput),
+    }
+}
+
+fn push_text_message(
+    messages: &mut Vec<Value>,
+    role: &str,
+    content: Value,
+) -> Result<(), ResponsesChatFallbackError> {
+    let content = response_content_text(&content)?;
+    messages.push(json!({
+        "role": role,
+        "content": content,
+    }));
+    Ok(())
+}
+
+fn push_function_call(
+    messages: &mut Vec<Value>,
+    item: &serde_json::Map<String, Value>,
+) -> Result<(), ResponsesChatFallbackError> {
+    let call_id = item
+        .get("call_id")
+        .and_then(Value::as_str)
+        .ok_or(ResponsesChatFallbackError::InvalidInput)?;
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or(ResponsesChatFallbackError::InvalidInput)?;
+    let arguments = item
+        .get("arguments")
+        .map(value_as_text)
+        .transpose()?
+        .unwrap_or_else(|| "{}".to_string());
+    let tool_call = json!({
+        "id": call_id,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        },
+    });
+    if let Some(last) = messages.last_mut().and_then(Value::as_object_mut) {
+        if last.get("role").and_then(Value::as_str) == Some("assistant")
+            && last.get("content").is_some_and(Value::is_null)
+        {
+            if let Some(tool_calls) = last.get_mut("tool_calls").and_then(Value::as_array_mut) {
+                tool_calls.push(tool_call);
+                return Ok(());
+            }
+        }
+    }
+    messages.push(json!({
+        "role": "assistant",
+        "content": Value::Null,
+        "tool_calls": [tool_call],
+    }));
+    Ok(())
+}
+
+fn push_function_call_output(
+    messages: &mut Vec<Value>,
+    item: &serde_json::Map<String, Value>,
+) -> Result<(), ResponsesChatFallbackError> {
+    let call_id = item
+        .get("call_id")
+        .and_then(Value::as_str)
+        .ok_or(ResponsesChatFallbackError::InvalidInput)?;
+    let output = item
+        .get("output")
+        .map(value_as_text)
+        .transpose()?
+        .ok_or(ResponsesChatFallbackError::InvalidInput)?;
+    messages.push(json!({
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": output,
+    }));
+    Ok(())
+}
+
+fn response_content_text(content: &Value) -> Result<String, ResponsesChatFallbackError> {
+    match content {
+        Value::String(text) => Ok(text.clone()),
+        Value::Array(parts) => {
+            let mut text = String::new();
+            for part in parts {
+                match part {
+                    Value::String(part) => text.push_str(part),
+                    Value::Object(part) => {
+                        let part_type = part.get("type").and_then(Value::as_str);
+                        if matches!(part_type, Some("input_text" | "output_text" | "text")) {
+                            text.push_str(
+                                part.get("text")
+                                    .and_then(Value::as_str)
+                                    .ok_or(ResponsesChatFallbackError::InvalidInput)?,
+                            );
+                        } else {
+                            return Err(ResponsesChatFallbackError::InvalidInput);
+                        }
+                    }
+                    _ => return Err(ResponsesChatFallbackError::InvalidInput),
+                }
+            }
+            Ok(text)
+        }
+        _ => Err(ResponsesChatFallbackError::InvalidInput),
+    }
+}
+
+fn value_as_text(value: &Value) -> Result<String, ResponsesChatFallbackError> {
+    match value {
+        Value::String(text) => Ok(text.clone()),
+        Value::Null => Err(ResponsesChatFallbackError::InvalidInput),
+        value => serde_json::to_string(value).map_err(|_| ResponsesChatFallbackError::InvalidInput),
+    }
 }
 
 fn convert_function_tools(tools: &Value) -> Result<Value, ResponsesChatFallbackError> {
@@ -260,5 +375,48 @@ mod tests {
             normalize_for_chat(&json!({"model":"gpt-5.6","input":"x","stream":true})).unwrap_err(),
             ResponsesChatFallbackError::StreamingUnsupported,
         );
+    }
+
+    #[test]
+    fn responses_chat_fallback_converts_function_call_round_trip() {
+        let chat = normalize_for_chat_streaming(&json!({
+            "model": "gpt-5.6",
+            "stream": true,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Where am I?"}]
+                },
+                {
+                    "type": "reasoning",
+                    "id": "reasoning-1"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_shell",
+                    "name": "shell_command",
+                    "arguments": "{\"command\":\"Get-Location\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_shell",
+                    "output": "E:\\\\Dev\\\\Projects"
+                }
+            ]
+        }))
+        .expect("function-call round trip");
+
+        assert_eq!(chat["messages"][0]["role"], "user");
+        assert_eq!(chat["messages"][0]["content"], "Where am I?");
+        assert_eq!(chat["messages"][1]["role"], "assistant");
+        assert_eq!(chat["messages"][1]["tool_calls"][0]["id"], "call_shell");
+        assert_eq!(
+            chat["messages"][1]["tool_calls"][0]["function"]["name"],
+            "shell_command"
+        );
+        assert_eq!(chat["messages"][2]["role"], "tool");
+        assert_eq!(chat["messages"][2]["tool_call_id"], "call_shell");
+        assert_eq!(chat["messages"][2]["content"], "E:\\\\Dev\\\\Projects");
     }
 }

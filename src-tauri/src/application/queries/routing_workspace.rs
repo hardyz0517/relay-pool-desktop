@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     application::{
-        operational_facts::pricing_projector::{request_cost_comparison_context, PricingRouteKind},
+        operational_facts::pricing_projector::{
+            effective_rate_multiplier, request_cost_comparison_context, PricingRouteKind,
+        },
         routing_engine::request::RouteRequestFacts,
     },
     models::{
@@ -285,14 +287,36 @@ fn candidate_from_canonical(
                 .unwrap_or_else(|| "available".to_string()),
         })
     });
-    let multiplier = candidate
-        .economic_snapshot
-        .as_ref()
-        .and_then(|economics| economics.rate_multiplier);
+    // Pricing resolution is the canonical source for inference routes. The
+    // runtime economic snapshot stores the station-native/raw multiplier and
+    // therefore must not bypass exchange-rate normalization here.
+    let multiplier = match request.route_kind() {
+        crate::application::routing_engine::request::RouteKind::Inference => pricing
+            .as_ref()
+            .and_then(|context| context.effective_rate_multiplier),
+        crate::application::routing_engine::request::RouteKind::ModelCatalog => candidate
+            .economic_snapshot
+            .as_ref()
+            .and_then(|economics| economics.rate_multiplier),
+    };
+    let multiplier = multiplier.or_else(|| {
+        let economics = candidate.economic_snapshot.as_ref()?;
+        effective_rate_multiplier(
+            economics.rate_multiplier,
+            economics.credit_per_cny.unwrap_or(1.0),
+        )
+    });
     let ceiling_rejected = request
         .max_rate_multiplier()
         .zip(multiplier)
         .is_some_and(|(ceiling, value)| value > ceiling);
+    let multiplier_source_is_pricing_context = matches!(
+        request.route_kind(),
+        crate::application::routing_engine::request::RouteKind::Inference
+    ) && pricing
+        .as_ref()
+        .and_then(|context| context.effective_rate_multiplier)
+        .is_some();
     let pricing_context =
         request_cost_comparison_context(PricingRouteKind::Inference, pricing.as_ref());
     let capability = &candidate.capabilities;
@@ -398,6 +422,8 @@ fn candidate_from_canonical(
             ceiling_rejected,
             reason: if ceiling_rejected {
                 "above_policy_ceiling".to_string()
+            } else if multiplier_source_is_pricing_context {
+                "pricing_context_effective_rate".to_string()
             } else {
                 "canonical_economic_snapshot".to_string()
             },

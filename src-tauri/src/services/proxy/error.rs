@@ -77,7 +77,9 @@ pub enum ProxyFailureCode {
     UpstreamRateLimited,
     UpstreamModelUnavailable,
     UpstreamCapabilityMismatch,
+    UpstreamRequestRejected,
     UpstreamUnavailable,
+    UpstreamOverloaded,
     UpstreamMalformedResponse,
     UpstreamUncertain,
     UpstreamStreamFailed,
@@ -130,7 +132,9 @@ impl ProxyFailureCode {
             Self::UpstreamRateLimited => "upstream_rate_limited",
             Self::UpstreamModelUnavailable => "upstream_model_unavailable",
             Self::UpstreamCapabilityMismatch => "upstream_capability_mismatch",
+            Self::UpstreamRequestRejected => "upstream_request_rejected",
             Self::UpstreamUnavailable => "upstream_unavailable",
+            Self::UpstreamOverloaded => "upstream_overloaded",
             Self::UpstreamMalformedResponse => "upstream_malformed_response",
             Self::UpstreamUncertain => "upstream_uncertain",
             Self::UpstreamStreamFailed => "upstream_stream_failed",
@@ -149,6 +153,7 @@ pub struct ProxyFailure {
     pub retry_class: RetryClass,
     pub http_status: StatusCode,
     pub public_message: String,
+    pub retry_after_ms: Option<i64>,
     pub internal_detail: Option<String>,
     context: Option<Box<ProxyFailureContext>>,
 }
@@ -176,6 +181,7 @@ impl ProxyFailure {
             retry_class,
             http_status,
             public_message: public_message.into(),
+            retry_after_ms: None,
             internal_detail: None,
             context: None,
         }
@@ -253,7 +259,9 @@ fn proxy_failure_code_for_public_error(code: PublicErrorCode) -> ProxyFailureCod
         PublicErrorCode::RateLimited => ProxyFailureCode::UpstreamRateLimited,
         PublicErrorCode::ModelUnavailable => ProxyFailureCode::UpstreamModelUnavailable,
         PublicErrorCode::CapabilityMismatch => ProxyFailureCode::UpstreamCapabilityMismatch,
+        PublicErrorCode::UpstreamRequestRejected => ProxyFailureCode::UpstreamRequestRejected,
         PublicErrorCode::UpstreamUnavailable => ProxyFailureCode::UpstreamUnavailable,
+        PublicErrorCode::UpstreamOverloaded => ProxyFailureCode::UpstreamOverloaded,
         PublicErrorCode::UpstreamUncertain => ProxyFailureCode::UpstreamUncertain,
         PublicErrorCode::BadRequest => ProxyFailureCode::RequestBodyInvalid,
         PublicErrorCode::Timeout => ProxyFailureCode::UpstreamFirstByteTimeout,
@@ -278,9 +286,11 @@ fn failure_source_for_public_error(code: PublicErrorCode) -> FailureSource {
         | PublicErrorCode::RateLimited
         | PublicErrorCode::ModelUnavailable
         | PublicErrorCode::CapabilityMismatch
+        | PublicErrorCode::UpstreamRequestRejected
         | PublicErrorCode::Timeout
         | PublicErrorCode::TransportFailure
         | PublicErrorCode::UpstreamUnavailable
+        | PublicErrorCode::UpstreamOverloaded
         | PublicErrorCode::MalformedResponse
         | PublicErrorCode::StreamInterrupted
         | PublicErrorCode::UpstreamUncertain => FailureSource::Upstream,
@@ -306,6 +316,7 @@ fn retry_class_for_public_error(code: PublicErrorCode) -> RetryClass {
         | PublicErrorCode::Timeout
         | PublicErrorCode::TransportFailure
         | PublicErrorCode::UpstreamUnavailable
+        | PublicErrorCode::UpstreamOverloaded
         | PublicErrorCode::StreamInterrupted
         | PublicErrorCode::CapacityExhausted
         | PublicErrorCode::EconomicsUnavailable
@@ -320,6 +331,7 @@ fn retry_class_for_public_error(code: PublicErrorCode) -> RetryClass {
         | PublicErrorCode::InsufficientBalance
         | PublicErrorCode::ModelUnavailable
         | PublicErrorCode::CapabilityMismatch
+        | PublicErrorCode::UpstreamRequestRejected
         | PublicErrorCode::BadRequest
         | PublicErrorCode::MalformedResponse
         | PublicErrorCode::DownstreamDisconnected

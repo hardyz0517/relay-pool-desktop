@@ -24,8 +24,8 @@ use super::{
     lifecycle::{
         delivery::DeliveryTerminal,
         request::{
-            FinalRequestRecord, RequestContextSnapshot, RequestFailure, RequestStartRecord,
-            RequestTerminal, RequestTerminalSnapshot,
+            FinalRequestRecord, RequestContextSnapshot, RequestFailure, RequestLogAnnotations,
+            RequestStartRecord, RequestTerminal, RequestTerminalSnapshot,
         },
         writer::{LifecycleWriter, WriterAdmissionError},
     },
@@ -176,10 +176,7 @@ async fn handle(
         uri.path(),
         route_context_endpoint(&route),
     );
-    let lifecycle_admission = match admit_request_lifecycle(&state, lifecycle_context).await {
-        Ok(admission) => admission,
-        Err(failure) => return with_cors(failure_response(failure), &request_id, cors_origin),
-    };
+    let record_start = !is_balance_query_path(uri.path());
     let content_length = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
@@ -190,7 +187,14 @@ async fn handle(
             StatusCode::PAYLOAD_TOO_LARGE,
             "request body is too large",
         );
-        finalize_ingress_failure(lifecycle_admission, &failure).await;
+        let failure = persist_ingress_failure(
+            &state,
+            lifecycle_context,
+            record_start,
+            RequestLogAnnotations::default(),
+            failure,
+        )
+        .await;
         return with_cors(failure_response(failure), &request_id, cors_origin);
     }
     let body = match timeout(
@@ -206,7 +210,14 @@ async fn handle(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "request body is too large",
             );
-            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            let failure = persist_ingress_failure(
+                &state,
+                lifecycle_context,
+                record_start,
+                RequestLogAnnotations::default(),
+                failure,
+            )
+            .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
         Ok(Err(error)) => {
@@ -216,7 +227,14 @@ async fn handle(
                 "request body is invalid",
             );
             failure.internal_detail = Some(error.to_string());
-            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            let failure = persist_ingress_failure(
+                &state,
+                lifecycle_context,
+                record_start,
+                RequestLogAnnotations::default(),
+                failure,
+            )
+            .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
         Err(_) => {
@@ -225,16 +243,36 @@ async fn handle(
                 StatusCode::REQUEST_TIMEOUT,
                 "request body timed out",
             );
-            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            let failure = persist_ingress_failure(
+                &state,
+                lifecycle_context,
+                record_start,
+                RequestLogAnnotations::default(),
+                failure,
+            )
+            .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
     };
     let metadata = match request_metadata(&body) {
         Ok(metadata) => metadata,
         Err(failure) => {
-            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            let failure = persist_ingress_failure(
+                &state,
+                lifecycle_context,
+                record_start,
+                RequestLogAnnotations::default(),
+                failure,
+            )
+            .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
+    };
+    let start_annotations = RequestLogAnnotations {
+        model: metadata.model.clone(),
+        stream: metadata.stream,
+        reasoning_effort: metadata.reasoning_effort.clone(),
+        ..RequestLogAnnotations::default()
     };
     let endpoint = match route {
         RouteDisposition::Known(endpoint) => endpoint,
@@ -244,7 +282,14 @@ async fn handle(
                 StatusCode::NOT_FOUND,
                 "local proxy endpoint was not found",
             );
-            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            let failure = persist_ingress_failure(
+                &state,
+                lifecycle_context,
+                record_start,
+                start_annotations,
+                failure,
+            )
+            .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
         RouteDisposition::MethodNotAllowed => {
@@ -253,7 +298,14 @@ async fn handle(
                 StatusCode::METHOD_NOT_ALLOWED,
                 "method is not allowed for local proxy endpoint",
             );
-            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            let failure = persist_ingress_failure(
+                &state,
+                lifecycle_context,
+                record_start,
+                start_annotations,
+                failure,
+            )
+            .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
     };
@@ -265,10 +317,26 @@ async fn handle(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "local proxy body budget is exhausted",
             );
-            finalize_ingress_failure(lifecycle_admission, &failure).await;
+            let failure = persist_ingress_failure(
+                &state,
+                lifecycle_context,
+                record_start,
+                start_annotations,
+                failure,
+            )
+            .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
     };
+    let lifecycle_admission =
+        match admit_request_lifecycle(&state, lifecycle_context, record_start, start_annotations)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(failure) => {
+                return with_cors(failure_response(failure), &request_id, cors_origin);
+            }
+        };
     let canonical = CanonicalProxyRequest::new(
         request_id.clone(),
         uri.path().to_string(),
@@ -354,9 +422,15 @@ fn route_disposition(method: &Method, path: &str) -> RouteDisposition {
     }
 }
 
+fn is_balance_query_path(path: &str) -> bool {
+    matches!(path, "/usage" | "/v1/usage")
+}
+
 async fn admit_request_lifecycle(
     state: &IngressState,
     context: RequestContextSnapshot,
+    record_start: bool,
+    annotations: RequestLogAnnotations,
 ) -> Result<Option<RequestLifecycleAdmission>, ProxyFailure> {
     let Some(writer) = state.lifecycle_writer.as_ref() else {
         return Ok(None);
@@ -364,14 +438,40 @@ async fn admit_request_lifecycle(
     let request_reservation = writer
         .try_reserve_request()
         .map_err(lifecycle_admission_failure)?;
-    let (terminal, start_ack) = request_reservation.send_start(RequestStartRecord {
+    if !record_start {
+        return Ok(Some(RequestLifecycleAdmission {
+            context,
+            terminal: request_reservation.into_terminal(),
+        }));
+    }
+    let start_record = RequestStartRecord {
         context: context.clone(),
-    });
+    };
+    let (terminal, start_ack) = if annotations == RequestLogAnnotations::default() {
+        request_reservation.send_start(start_record)
+    } else {
+        request_reservation.send_start_with_annotations(start_record, annotations)
+    };
     start_ack
         .await
         .map_err(|_| lifecycle_unavailable_failure("request-start ack dropped"))?
         .map_err(lifecycle_write_failure)?;
     Ok(Some(RequestLifecycleAdmission { context, terminal }))
+}
+
+async fn persist_ingress_failure(
+    state: &IngressState,
+    context: RequestContextSnapshot,
+    record_start: bool,
+    annotations: RequestLogAnnotations,
+    failure: ProxyFailure,
+) -> ProxyFailure {
+    let admission = match admit_request_lifecycle(state, context, record_start, annotations).await {
+        Ok(admission) => admission,
+        Err(admission_failure) => return admission_failure,
+    };
+    finalize_ingress_failure(admission, &failure).await;
+    failure
 }
 
 async fn finalize_ingress_failure(
@@ -400,17 +500,25 @@ async fn finalize_ingress_failure(
             .unwrap_or(0)
             .saturating_sub(1)
             .clamp(0, u16::MAX as i64) as u16,
-        Default::default(),
+        RequestLogAnnotations {
+            http_status: Some(failure.http_status.as_u16()),
+            ..RequestLogAnnotations::default()
+        },
     );
     let _ = admission.terminal.send(record).await;
 }
 
 fn lifecycle_admission_failure(error: WriterAdmissionError) -> ProxyFailure {
-    lifecycle_unavailable_failure(format!("lifecycle writer admission rejected: {error:?}"))
+    let mut failure = lifecycle_unavailable_failure("local proxy lifecycle writer unavailable");
+    failure.internal_detail = Some(format!("lifecycle writer admission rejected: {error:?}"));
+    failure
 }
 
 fn lifecycle_write_failure(error: super::lifecycle::ports::LifecycleWriteError) -> ProxyFailure {
-    lifecycle_unavailable_failure(format!("lifecycle write failed: {error:?}"))
+    let mut failure =
+        lifecycle_unavailable_failure("local proxy lifecycle persistence unavailable");
+    failure.internal_detail = Some(format!("lifecycle write failed: {error:?}"));
+    failure
 }
 
 fn lifecycle_unavailable_failure(message: impl Into<String>) -> ProxyFailure {
@@ -561,10 +669,30 @@ fn proxy_response(response: ProxyHttpResponse) -> Response<Body> {
 }
 
 fn failure_response(failure: ProxyFailure) -> Response<Body> {
+    let retry_after_ms = failure.retry_after_ms;
     let (status, body) = failure.into_response();
-    Response::builder()
+    let mut builder = Response::builder()
         .status(status)
-        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_TYPE, "application/json");
+    let retry_after = matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    )
+    .then(|| {
+        retry_after_ms
+            .map(|milliseconds| milliseconds.saturating_add(999) / 1_000)
+            .filter(|seconds| *seconds > 0)
+            .map(|seconds| seconds.min(7 * 24 * 60 * 60))
+            .or_else(|| (status == StatusCode::SERVICE_UNAVAILABLE).then_some(1))
+    })
+    .flatten();
+    if let Some(retry_after) = retry_after {
+        builder = builder.header(header::RETRY_AFTER, retry_after.to_string());
+    }
+    builder
         .body(Body::from(body.to_string()))
         .expect("valid response")
 }
@@ -637,6 +765,63 @@ mod tests {
         assert!(segments[1].len() >= 13);
         assert_eq!(segments[2].len(), 8);
         assert_eq!(segments[3].len(), 16);
+    }
+
+    #[test]
+    fn failure_response_preserves_retry_after_and_defaults_service_unavailable() {
+        let mut rate_limited = ProxyFailure::new(
+            ProxyFailureCode::UpstreamRateLimited,
+            FailureSource::Upstream,
+            RetryClass::BeforeOutput,
+            StatusCode::TOO_MANY_REQUESTS,
+            "upstream is rate limited",
+        );
+        rate_limited.retry_after_ms = Some(1_001);
+        let response = failure_response(rate_limited);
+        assert_eq!(response.headers().get(header::RETRY_AFTER).unwrap(), "2");
+
+        let mut bad_gateway = ProxyFailure::new(
+            ProxyFailureCode::UpstreamUnavailable,
+            FailureSource::Upstream,
+            RetryClass::BeforeOutput,
+            StatusCode::BAD_GATEWAY,
+            "upstream is unavailable",
+        );
+        bad_gateway.retry_after_ms = Some(7_000);
+        assert_eq!(
+            failure_response(bad_gateway)
+                .headers()
+                .get(header::RETRY_AFTER)
+                .unwrap(),
+            "7"
+        );
+
+        let mut rejected = ProxyFailure::new(
+            ProxyFailureCode::UpstreamRequestRejected,
+            FailureSource::Upstream,
+            RetryClass::Never,
+            StatusCode::BAD_REQUEST,
+            "upstream rejected the request",
+        );
+        rejected.retry_after_ms = Some(7_000);
+        assert!(!failure_response(rejected)
+            .headers()
+            .contains_key(header::RETRY_AFTER));
+
+        let unavailable = ProxyFailure::new(
+            ProxyFailureCode::UpstreamOverloaded,
+            FailureSource::Upstream,
+            RetryClass::BeforeOutput,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "upstream is overloaded",
+        );
+        assert_eq!(
+            failure_response(unavailable)
+                .headers()
+                .get(header::RETRY_AFTER)
+                .unwrap(),
+            "1"
+        );
     }
 
     #[tokio::test]

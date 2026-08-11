@@ -6,7 +6,6 @@ mod services {
 }
 
 use bytes::Bytes;
-use http::{HeaderMap, StatusCode};
 use services::proxy::protocol::{
     chat_sse::ChatSseMachine, responses_sse::ResponsesSseMachine, CompletionPolicy,
     DownstreamTransform, ProtocolMachine, ProtocolProgress, ProtocolTerminal, ResponsePlan,
@@ -67,9 +66,6 @@ fn response_plan_contract_covers_every_supported_protocol_shape() {
 #[test]
 fn responses_sse_eof_without_terminal_is_explicitly_incomplete() {
     let mut machine = ResponsesSseMachine::new();
-    machine
-        .observe_headers(StatusCode::OK, &HeaderMap::new())
-        .expect("headers");
 
     assert_eq!(
         machine
@@ -89,9 +85,6 @@ fn responses_sse_eof_without_terminal_is_explicitly_incomplete() {
 #[test]
 fn responses_sse_terminal_event_completes_protocol() {
     let mut machine = ResponsesSseMachine::new();
-    machine
-        .observe_headers(StatusCode::OK, &HeaderMap::new())
-        .expect("headers");
     assert_eq!(
         machine
             .observe_chunk(&Bytes::from_static(
@@ -109,9 +102,6 @@ fn responses_sse_terminal_event_completes_protocol() {
 #[test]
 fn responses_sse_failed_terminal_event_is_not_success() {
     let mut machine = ResponsesSseMachine::new();
-    machine
-        .observe_headers(StatusCode::OK, &HeaderMap::new())
-        .expect("headers");
     assert_eq!(
         machine
             .observe_chunk(&Bytes::from_static(
@@ -130,9 +120,6 @@ fn responses_sse_failed_terminal_event_is_not_success() {
 fn chat_sse_done_sentinel_is_the_only_clean_stream_success() {
     let mut missing_done = ChatSseMachine::new();
     missing_done
-        .observe_headers(StatusCode::OK, &HeaderMap::new())
-        .expect("headers");
-    missing_done
         .observe_chunk(&Bytes::from_static(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
         ))
@@ -143,9 +130,6 @@ fn chat_sse_done_sentinel_is_the_only_clean_stream_success() {
     );
 
     let mut with_done = ChatSseMachine::new();
-    with_done
-        .observe_headers(StatusCode::OK, &HeaderMap::new())
-        .expect("headers");
     assert_eq!(
         with_done
             .observe_chunk(&Bytes::from_static(b"data: [DONE]\n\n"))

@@ -83,9 +83,11 @@ pub(crate) enum FailureClass {
     ModelUnavailable,
     CapabilityMismatch,
     BadRequest,
+    ProviderRejectedRequest,
     Timeout,
     Transport,
     Upstream5xx,
+    UpstreamOverloaded,
     MalformedResponse,
     StreamInterrupted,
     DownstreamDrop,
@@ -185,9 +187,11 @@ pub(crate) enum PublicErrorCode {
     ModelUnavailable,
     CapabilityMismatch,
     BadRequest,
+    UpstreamRequestRejected,
     Timeout,
     TransportFailure,
     UpstreamUnavailable,
+    UpstreamOverloaded,
     MalformedResponse,
     StreamInterrupted,
     DownstreamDisconnected,
@@ -214,9 +218,11 @@ impl PublicErrorCode {
             Self::ModelUnavailable => "upstream_model_unavailable",
             Self::CapabilityMismatch => "upstream_capability_mismatch",
             Self::BadRequest => "request_bad_request",
+            Self::UpstreamRequestRejected => "upstream_request_rejected",
             Self::Timeout => "upstream_timeout",
             Self::TransportFailure => "upstream_transport_failure",
             Self::UpstreamUnavailable => "upstream_unavailable",
+            Self::UpstreamOverloaded => "upstream_overloaded",
             Self::MalformedResponse => "upstream_malformed_response",
             Self::StreamInterrupted => "upstream_stream_interrupted",
             Self::DownstreamDisconnected => "downstream_disconnected",
@@ -271,8 +277,8 @@ pub(crate) fn public_error_for_class(class: FailureClass) -> PublicError {
         },
         FailureClass::ModelUnavailable => PublicError {
             code: PublicErrorCode::ModelUnavailable,
-            http_status: StatusCode::BAD_GATEWAY,
-            message: "upstream model is unavailable",
+            http_status: StatusCode::NOT_FOUND,
+            message: "upstream model was not found",
         },
         FailureClass::CapabilityMismatch => PublicError {
             code: PublicErrorCode::CapabilityMismatch,
@@ -283,6 +289,11 @@ pub(crate) fn public_error_for_class(class: FailureClass) -> PublicError {
             code: PublicErrorCode::BadRequest,
             http_status: StatusCode::BAD_REQUEST,
             message: "request body is invalid",
+        },
+        FailureClass::ProviderRejectedRequest => PublicError {
+            code: PublicErrorCode::UpstreamRequestRejected,
+            http_status: StatusCode::BAD_REQUEST,
+            message: "upstream rejected the request",
         },
         FailureClass::Timeout => PublicError {
             code: PublicErrorCode::Timeout,
@@ -298,6 +309,11 @@ pub(crate) fn public_error_for_class(class: FailureClass) -> PublicError {
             code: PublicErrorCode::UpstreamUnavailable,
             http_status: StatusCode::BAD_GATEWAY,
             message: "upstream is unavailable",
+        },
+        FailureClass::UpstreamOverloaded => PublicError {
+            code: PublicErrorCode::UpstreamOverloaded,
+            http_status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "upstream is overloaded",
         },
         FailureClass::MalformedResponse => PublicError {
             code: PublicErrorCode::MalformedResponse,
@@ -384,6 +400,7 @@ pub(crate) enum ProviderErrorSemanticSignal {
         retry_after_ms: Option<i64>,
     },
     BadRequest,
+    Overloaded,
     ServerError {
         station_id: String,
         endpoint_revision: i64,
@@ -457,9 +474,18 @@ pub(crate) fn failure_from_provider_signal(
         ),
         ProviderErrorSemanticSignal::BadRequest => (
             FailureTarget::Request,
-            FailureClass::BadRequest,
+            FailureClass::ProviderRejectedRequest,
             RetryDisposition::StopRequest,
             HealthEffect::Neutral,
+            CapabilityEffect::Neutral,
+        ),
+        ProviderErrorSemanticSignal::Overloaded => (
+            FailureTarget::Uncertain,
+            FailureClass::UpstreamOverloaded,
+            RetryDisposition::TryNextCandidate,
+            HealthEffect::Cooldown {
+                retry_after_ms: None,
+            },
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::ServerError {

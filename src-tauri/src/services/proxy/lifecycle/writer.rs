@@ -3,6 +3,7 @@ use std::sync::{
     Arc,
 };
 
+use std::time::Duration;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -15,12 +16,14 @@ use super::{
         RequestCommitAck, RequestCostAggregateCommitAck, RequestCostAggregateCommitRecord,
         RequestLifecycleStore, RequestStartAck,
     },
-    request::{FinalRequestRecord, RequestStartRecord},
+    request::{FinalRequestRecord, RequestLogAnnotations, RequestStartRecord},
 };
 
 const WRITER_HEALTHY: u8 = 0;
 const WRITER_UNHEALTHY: u8 = 1;
 const WRITER_CLOSED: u8 = 2;
+const MAX_WRITE_ATTEMPTS: usize = 3;
+const RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(25), Duration::from_millis(100)];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WriterAdmissionError {
@@ -82,6 +85,7 @@ impl WriterHealth {
 pub(crate) enum LifecycleWriteCommand {
     StartRequest {
         record: Box<RequestStartRecord>,
+        annotations: RequestLogAnnotations,
         ack: oneshot::Sender<Result<RequestStartAck, LifecycleWriteError>>,
     },
     FinishAttempt {
@@ -159,49 +163,77 @@ impl LifecycleWriter {
                     completion,
                 } = queued;
                 match command {
-                    LifecycleWriteCommand::StartRequest { record, ack } => {
-                        let result = store.start_request(*record).await;
-                        let failed = result.is_err();
-                        if failed {
+                    LifecycleWriteCommand::StartRequest {
+                        record,
+                        annotations,
+                        ack,
+                    } => {
+                        let request_id = record.context.request_id.clone();
+                        let store = Arc::clone(&store);
+                        let result = write_with_retry("start_request", &request_id, || {
+                            store.start_request_with_annotations(
+                                (*record).clone(),
+                                annotations.clone(),
+                            )
+                        })
+                        .await;
+                        if matches!(result, Err(LifecycleWriteError::CommitOutcomeUnknown(_))) {
                             worker_health.mark_unhealthy();
                         }
-                        completion.finish(failed);
+                        completion.finish(result.is_err());
                         let _ = ack.send(result);
                     }
                     LifecycleWriteCommand::FinishAttempt { record, ack } => {
-                        let result = store.finish_attempt(*record).await;
-                        let failed = result.is_err();
-                        if failed {
+                        let request_id = record.context.attempt_id.request_id.clone();
+                        let store = Arc::clone(&store);
+                        let result = write_with_retry("finish_attempt", &request_id, || {
+                            store.finish_attempt((*record).clone())
+                        })
+                        .await;
+                        if matches!(result, Err(LifecycleWriteError::CommitOutcomeUnknown(_))) {
                             worker_health.mark_unhealthy();
                         }
-                        completion.finish(failed);
+                        completion.finish(result.is_err());
                         let _ = ack.send(result);
                     }
                     LifecycleWriteCommand::FinishAttemptCost { record, ack } => {
-                        let result = store.finish_attempt_cost(*record).await;
-                        let failed = result.is_err();
-                        if failed {
+                        let request_id = record.request_id.clone();
+                        let store = Arc::clone(&store);
+                        let result = write_with_retry("finish_attempt_cost", &request_id, || {
+                            store.finish_attempt_cost((*record).clone())
+                        })
+                        .await;
+                        if matches!(result, Err(LifecycleWriteError::CommitOutcomeUnknown(_))) {
                             worker_health.mark_unhealthy();
                         }
-                        completion.finish(failed);
+                        completion.finish(result.is_err());
                         let _ = ack.send(result);
                     }
                     LifecycleWriteCommand::FinishRequest { record, ack } => {
-                        let result = store.finish_request(*record).await;
-                        let failed = result.is_err();
-                        if failed {
+                        let request_id = record.context.request_id.clone();
+                        let store = Arc::clone(&store);
+                        let result = write_with_retry("finish_request", &request_id, || {
+                            store.finish_request((*record).clone())
+                        })
+                        .await;
+                        if matches!(result, Err(LifecycleWriteError::CommitOutcomeUnknown(_))) {
                             worker_health.mark_unhealthy();
                         }
-                        completion.finish(failed);
+                        completion.finish(result.is_err());
                         let _ = ack.send(result);
                     }
                     LifecycleWriteCommand::FinishRequestCostAggregate { record, ack } => {
-                        let result = store.finish_request_cost_aggregate(*record).await;
-                        let failed = result.is_err();
-                        if failed {
+                        let request_id = record.request_id.clone();
+                        let store = Arc::clone(&store);
+                        let result =
+                            write_with_retry("finish_request_cost_aggregate", &request_id, || {
+                                store.finish_request_cost_aggregate((*record).clone())
+                            })
+                            .await;
+                        if matches!(result, Err(LifecycleWriteError::CommitOutcomeUnknown(_))) {
                             worker_health.mark_unhealthy();
                         }
-                        completion.finish(failed);
+                        completion.finish(result.is_err());
                         let _ = ack.send(result);
                     }
                 }
@@ -274,6 +306,12 @@ impl LifecycleWriter {
 }
 
 impl RequestWriteReservation {
+    pub(crate) fn into_terminal(self) -> RequestTerminalReservation {
+        RequestTerminalReservation {
+            terminal: self.terminal,
+        }
+    }
+
     pub(crate) fn send_start(
         self,
         record: RequestStartRecord,
@@ -284,6 +322,29 @@ impl RequestWriteReservation {
         let (ack, receiver) = oneshot::channel();
         self.start.send(LifecycleWriteCommand::StartRequest {
             record: Box::new(record),
+            annotations: RequestLogAnnotations::default(),
+            ack,
+        });
+        (
+            RequestTerminalReservation {
+                terminal: self.terminal,
+            },
+            receiver,
+        )
+    }
+
+    pub(crate) fn send_start_with_annotations(
+        self,
+        record: RequestStartRecord,
+        annotations: RequestLogAnnotations,
+    ) -> (
+        RequestTerminalReservation,
+        oneshot::Receiver<Result<RequestStartAck, LifecycleWriteError>>,
+    ) {
+        let (ack, receiver) = oneshot::channel();
+        self.start.send(LifecycleWriteCommand::StartRequest {
+            record: Box::new(record),
+            annotations,
             ack,
         });
         (
@@ -379,6 +440,53 @@ fn reserve(
         permit: Some(permit),
         metrics: Arc::clone(metrics),
     })
+}
+
+fn retryable_write_error(error: &LifecycleWriteError) -> bool {
+    match error {
+        LifecycleWriteError::DatabaseBusy => true,
+        LifecycleWriteError::Unavailable(detail) => {
+            detail == "runtime is not accepting new persistence work"
+        }
+        LifecycleWriteError::CommitOutcomeUnknown(_) => false,
+    }
+}
+
+async fn write_with_retry<T, F>(
+    operation: &'static str,
+    request_id: &str,
+    mut write: F,
+) -> Result<T, LifecycleWriteError>
+where
+    F: FnMut() -> futures_util::future::BoxFuture<'static, Result<T, LifecycleWriteError>>,
+{
+    for attempt in 1..=MAX_WRITE_ATTEMPTS {
+        match write().await {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < MAX_WRITE_ATTEMPTS && retryable_write_error(&error) => {
+                tracing::warn!(
+                    operation,
+                    request_id,
+                    attempt,
+                    max_attempts = MAX_WRITE_ATTEMPTS,
+                    error = ?error,
+                    "lifecycle writer persistence attempt failed; retrying"
+                );
+                tokio::time::sleep(RETRY_DELAYS[attempt - 1]).await;
+            }
+            Err(error) => {
+                tracing::error!(
+                    operation,
+                    request_id,
+                    attempt,
+                    error = ?error,
+                    "lifecycle writer persistence failed"
+                );
+                return Err(error);
+            }
+        }
+    }
+    unreachable!("lifecycle writer retry loop must return");
 }
 
 impl LifecycleWriterMetrics {
@@ -486,7 +594,10 @@ impl Drop for CommandCompletion {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    };
     use std::time::Duration;
 
     use futures_util::future::BoxFuture;
@@ -630,6 +741,46 @@ mod tests {
         }
     }
 
+    struct BusyThenHealthyStore {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl RequestLifecycleStore for BusyThenHealthyStore {
+        fn start_request(
+            &self,
+            _record: RequestStartRecord,
+        ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
+            let calls = Arc::clone(&self.calls);
+            Box::pin(async move {
+                let call = calls.fetch_add(1, Ordering::Relaxed);
+                if call < 2 {
+                    Err(LifecycleWriteError::DatabaseBusy)
+                } else {
+                    Ok(RequestStartAck { inserted: true })
+                }
+            })
+        }
+
+        fn finish_attempt(
+            &self,
+            _record: AttemptTerminalRecord,
+        ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
+            Box::pin(async {
+                Ok(AttemptCommitAck {
+                    inserted: true,
+                    health_applied: true,
+                })
+            })
+        }
+
+        fn finish_request(
+            &self,
+            _record: FinalRequestRecord,
+        ) -> BoxFuture<'static, Result<RequestCommitAck, LifecycleWriteError>> {
+            Box::pin(async { Ok(RequestCommitAck { finalized: true }) })
+        }
+    }
+
     fn context() -> RequestContextSnapshot {
         RequestContextSnapshot {
             request_id: "req-1".to_string(),
@@ -747,7 +898,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn permanent_store_error_marks_writer_unhealthy_before_new_admission() {
+    async fn non_retryable_store_error_does_not_poison_new_admission() {
         let (writer, worker) = LifecycleWriter::start(2, Arc::new(FailingStore)).expect("writer");
         let request = writer.try_reserve_request().expect("request permits");
         let (terminal_reservation, ack) =
@@ -760,16 +911,40 @@ mod tests {
             Err(LifecycleWriteError::Unavailable(_))
         ));
         drop(terminal_reservation);
-        assert!(!writer.health().is_healthy());
-        assert!(matches!(
-            writer.try_reserve_request(),
-            Err(WriterAdmissionError::Unhealthy)
-        ));
+        assert!(writer.health().is_healthy());
+        let next = writer
+            .try_reserve_request()
+            .expect("new admission remains available");
+        drop(next);
         drop(writer);
         tokio::time::timeout(Duration::from_secs(2), worker.join())
             .await
             .expect("worker join timeout")
             .expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn busy_store_error_retries_and_recovers_without_poisoning_writer() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (writer, worker) = LifecycleWriter::start(
+            2,
+            Arc::new(BusyThenHealthyStore {
+                calls: Arc::clone(&calls),
+            }),
+        )
+        .expect("writer");
+        let request = writer.try_reserve_request().expect("request permits");
+        let (_terminal, ack) = request.send_start(RequestStartRecord { context: context() });
+        assert!(
+            ack.await
+                .expect("ack channel")
+                .expect("busy retry should recover")
+                .inserted
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 3);
+        assert!(writer.health().is_healthy());
+        drop(writer);
+        worker.join().await.expect("worker join");
     }
 
     #[tokio::test]
@@ -812,7 +987,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cost_command_store_error_marks_writer_unhealthy() {
+    async fn cost_command_store_error_does_not_poison_writer() {
         let (writer, worker) = LifecycleWriter::start(2, Arc::new(FailingStore)).expect("writer");
         let attempt_cost = writer.try_reserve_attempt_cost().expect("attempt cost");
         let ack = attempt_cost.send(attempt_cost_record("req-cost-fail", 0));
@@ -823,11 +998,11 @@ mod tests {
                 .expect("ack channel"),
             Err(LifecycleWriteError::Unavailable(_))
         ));
-        assert!(!writer.health().is_healthy());
-        assert!(matches!(
-            writer.try_reserve_attempt_cost(),
-            Err(WriterAdmissionError::Unhealthy)
-        ));
+        assert!(writer.health().is_healthy());
+        let reservation = writer
+            .try_reserve_attempt_cost()
+            .expect("new cost admission remains available");
+        drop(reservation);
         drop(writer);
         tokio::time::timeout(Duration::from_secs(2), worker.join())
             .await

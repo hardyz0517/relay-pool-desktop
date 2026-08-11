@@ -795,6 +795,7 @@ mod tests {
             reliability_basis_points: 5_000,
             responsiveness_basis_points: 5_000,
             cost_basis_points: None,
+            pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot::unpriced("test"),
             preference_basis_points: 5_000,
             failure_domains: domains.iter().map(|value| (*value).to_string()).collect(),
         }

@@ -10,10 +10,7 @@ use crate::{
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
 };
 
-use crate::application::operational_facts::pricing_projector::RoutingCostBasis;
-use crate::application::routing_engine::candidate_plan::{
-    RoutePlanCandidate, RoutePlanPricingSnapshot,
-};
+use crate::application::routing_engine::candidate_plan::RoutePlanCandidate;
 
 pub(crate) type RoutingExecutionSettings = RuntimeRoutingSettings;
 
@@ -185,15 +182,7 @@ impl RoutingRepository for RoutingExecutionRepository {
                         endpoint_revision: candidate.endpoint_revision,
                         priority: 0,
                         tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
-                        pricing: RoutePlanPricingSnapshot {
-                            basis: RoutingCostBasis::Unpriced,
-                            currency: None,
-                            unit: None,
-                            estimated_input_price: None,
-                            estimated_output_price: None,
-                            estimated_fixed_price: None,
-                            status_label: "planner_snapshot".to_string(),
-                        },
+                        pricing: candidate.pricing.clone(),
                         evidence: vec![],
                     }
                 })
@@ -282,28 +271,10 @@ mod tests {
         );
         let repository = RoutingExecutionRepository::new(fixture.services.routing.as_ref().clone());
 
-        let planning_snapshot = PlanningSnapshot {
-            snapshot_id: "repository-planning-snapshot".to_string(),
-            durable_revision: 1,
-            policy: crate::models::routing_policy::RoutingPolicyConfigV1::default(),
-            profile: crate::application::routing_engine::algorithm_profile::DispatchAlgorithmProfile::default(),
-            candidates: vec![crate::application::routing_engine::planning_snapshot::CandidateSnapshot {
-                station_key_id: seeded.station_key_id.clone(),
-                station_id: seeded.station_id.clone(),
-                endpoint_revision: 1,
-                credential_revision: 314,
-                credential_available: true,
-                hard_eligible: true,
-                backup_only: false,
-                depleted: false,
-                capability_basis_points: 10_000,
-                reliability_basis_points: 8_000,
-                responsiveness_basis_points: 8_000,
-                cost_basis_points: Some(8_000),
-                preference_basis_points: 5_000,
-                failure_domains: vec![format!("station:{}", seeded.station_id)],
-            }],
-            runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot {
+        let planning_snapshot = RoutingRepository::load_planning_snapshot(
+            &repository,
+            request.clone(),
+            RuntimeOverlaySnapshot {
                 runtime_instance_id: "repository-runtime".to_string(),
                 runtime_revision: 1,
                 candidate_set_revision: 1,
@@ -311,7 +282,11 @@ mod tests {
                 max_concurrency: 64,
                 affinity_station_key_id: None,
             },
-        };
+        )
+        .await
+        .expect("planning snapshot")
+        .expect("configured routing policy");
+        let expected_credential_revision = planning_snapshot.candidates[0].credential_revision;
         let snapshot = RoutingRepository::load_operational_route_snapshot(
             &repository,
             request,
@@ -323,14 +298,18 @@ mod tests {
         assert_eq!(snapshot.candidates.len(), 1);
         let candidate = &snapshot.candidates[0];
         assert_eq!(candidate.station_key_id, seeded.station_key_id);
-        assert_eq!(candidate.pricing.basis, RoutingCostBasis::Unpriced);
-        assert_eq!(candidate.pricing.status_label, "planner_snapshot");
+        assert_eq!(candidate.pricing.basis, RoutingCostBasis::ExactPrice);
+        assert_eq!(candidate.pricing.status_label, "priced");
+        assert_eq!(candidate.pricing.estimated_fixed_price, Some(0.37));
         let profile = snapshot
             .profiles
             .get(&seeded.station_key_id)
             .expect("candidate admission profile");
         assert_eq!(profile.global_max_concurrency, 64);
-        assert_eq!(profile.expected_credential_revision, 314);
+        assert_eq!(
+            profile.expected_credential_revision,
+            expected_credential_revision
+        );
         assert!(profile.credential_revision > 0);
         assert_eq!(profile.station_account_max_concurrency, 0);
         assert_eq!(profile.station_key_max_concurrency, 0);

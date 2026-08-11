@@ -488,6 +488,8 @@ impl IngressExecutor for ProxyExecutor {
             ));
         };
         let request_context = admission.context;
+        let mut request_terminal = Some(admission.terminal);
+        let mut request_lease = Some(request_lease);
         let request_model = request.model.clone();
         let request_stream = request.stream;
         let request_reasoning_effort = request.reasoning_effort.clone();
@@ -511,6 +513,7 @@ impl IngressExecutor for ProxyExecutor {
                             crate::services::proxy::lifecycle::request::RequestLogAnnotations {
                                 model: request_model.clone(),
                                 stream: request_stream,
+                                http_status: Some(failure.http_status.as_u16()),
                                 selected_station_key_id: failure.candidate_id().map(str::to_owned),
                                 selected_station_id: failure
                                     .candidate_station_id()
@@ -534,6 +537,7 @@ impl IngressExecutor for ProxyExecutor {
                                 cache_read_tokens: None,
                                 reasoning_effort: request_reasoning_effort.clone(),
                                 first_token_ms: None,
+                                billing_mode: None,
                             };
                         let pending_record = PendingFinalRequestRecord::new(
                             request_context.clone(),
@@ -553,8 +557,10 @@ impl IngressExecutor for ProxyExecutor {
                         };
                         let _join = super::attempt::DualTerminalFinalizationLease::new(
                             super::attempt::DownstreamRequestFinalizationLease::new(
-                                admission.terminal,
-                                request_lease,
+                                request_terminal
+                                    .take()
+                                    .expect("request terminal reservation available"),
+                                request_lease.take().expect("request lease available"),
                             ),
                             None,
                             None,
@@ -571,7 +577,8 @@ impl IngressExecutor for ProxyExecutor {
                 };
                 let status = response.status;
                 let headers = response.headers;
-                let lifecycle = response.lifecycle;
+                let mut lifecycle = response.lifecycle;
+                lifecycle.annotations.http_status = Some(status.as_u16());
                 let pending_record = PendingFinalRequestRecord::new(
                     request_context.clone(),
                     lifecycle
@@ -582,25 +589,53 @@ impl IngressExecutor for ProxyExecutor {
                     lifecycle.fallback_count,
                     lifecycle.annotations,
                 );
-                let selected_attempt = dual_selected_attempt_finalization(
+                let selected_attempt = match dual_selected_attempt_finalization(
                     &lifecycle_writer,
                     lifecycle.selected_attempt.as_ref(),
-                )?;
-                let costs = dual_cost_finalization(
+                ) {
+                    Ok(selected_attempt) => selected_attempt,
+                    Err(failure) => {
+                        finalize_lifecycle_admission_failure(
+                            request_terminal
+                                .take()
+                                .expect("request terminal reservation available"),
+                            request_lease.take().expect("request lease available"),
+                            pending_record,
+                            &failure,
+                        );
+                        return Err(failure);
+                    }
+                };
+                let costs = match dual_cost_finalization(
                     &lifecycle_writer,
                     lifecycle.attempt_count,
                     lifecycle.selected_attempt_cost,
-                )?;
+                ) {
+                    Ok(costs) => costs,
+                    Err(failure) => {
+                        finalize_lifecycle_admission_failure(
+                            request_terminal
+                                .take()
+                                .expect("request terminal reservation available"),
+                            request_lease.take().expect("request lease available"),
+                            pending_record,
+                            &failure,
+                        );
+                        return Err(failure);
+                    }
+                };
                 let payload = match response.body {
                     super::execution::ProxyExecutionBody::Buffered(body) => {
                         ProxyResponsePayload::Stream(
                             dual_terminal_buffered_lifecycle_finalizing_stream(
                                 body,
                                 pending_record,
-                                admission.terminal,
+                                request_terminal
+                                    .take()
+                                    .expect("request terminal reservation available"),
                                 selected_attempt,
                                 Some(costs),
-                                request_lease,
+                                request_lease.take().expect("request lease available"),
                             ),
                         )
                     }
@@ -609,10 +644,12 @@ impl IngressExecutor for ProxyExecutor {
                             dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
                                 chunks,
                                 pending_record,
-                                admission.terminal,
+                                request_terminal
+                                    .take()
+                                    .expect("request terminal reservation available"),
                                 selected_attempt,
                                 Some(costs),
-                                request_lease,
+                                request_lease.take().expect("request lease available"),
                                 stream_idle_timeout,
                             ),
                         )
@@ -626,6 +663,27 @@ impl IngressExecutor for ProxyExecutor {
             },
         ))
     }
+}
+
+fn finalize_lifecycle_admission_failure(
+    terminal: crate::services::proxy::lifecycle::writer::RequestTerminalReservation,
+    request_lease: crate::services::proxy::limits::RequestLease,
+    mut record: PendingFinalRequestRecord,
+    failure: &super::error::ProxyFailure,
+) {
+    record.annotations_mut().http_status = Some(failure.http_status.as_u16());
+    record.annotations_mut().failure_source = Some(failure.source.as_str().to_string());
+    record.annotations_mut().completion_source = Some("lifecycle_admission_failure".to_string());
+    let outcome = FinalizationOutcome::Failed {
+        code: failure.code.as_str().to_string(),
+        detail: Some(failure.public_message.clone()),
+    };
+    let _ = super::attempt::DualTerminalFinalizationLease::new(
+        super::attempt::DownstreamRequestFinalizationLease::new(terminal, request_lease),
+        None,
+        None,
+    )
+    .finalize(record, DeliveryTerminal::NotStarted, outcome, None, false);
 }
 
 fn dual_selected_attempt_finalization(
@@ -686,7 +744,9 @@ fn lifecycle_writer_capacity(limits: &ProxyServerLimits) -> usize {
 }
 
 fn lifecycle_admission_failure(error: WriterAdmissionError) -> super::error::ProxyFailure {
-    lifecycle_unavailable_failure(format!("lifecycle writer admission rejected: {error:?}"))
+    let mut failure = lifecycle_unavailable_failure("local proxy lifecycle writer unavailable");
+    failure.internal_detail = Some(format!("lifecycle writer admission rejected: {error:?}"));
+    failure
 }
 
 fn lifecycle_unavailable_failure(message: impl Into<String>) -> super::error::ProxyFailure {
@@ -761,7 +821,7 @@ mod tests {
         application::credentials::{
             ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
         },
-        models::routing::RouteEndpointKind,
+        models::{pricing::UpsertPricingRuleInput, routing::RouteEndpointKind},
         services::proxy::{
             lifecycle::{
                 attempt::AttemptTerminalRecord,
@@ -1057,7 +1117,7 @@ mod tests {
             .expect("start proxy");
 
         let response = reqwest::Client::new()
-            .get(format!("http://127.0.0.1:{}/v1/usage", started.port))
+            .get(format!("http://127.0.0.1:{}/v1/models", started.port))
             .bearer_auth("relay-local-secret")
             .send()
             .await
@@ -1127,7 +1187,37 @@ mod tests {
             br#"{"id":"chatcmpl-v2","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop","index":0}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#.to_vec(),
         )]);
         let fixture = V2ProxyTestFixture::new().await;
-        fixture.seed_candidate(upstream.base_url.as_str()).await;
+        let seeded = fixture.seed_candidate(upstream.base_url.as_str()).await;
+        fixture
+            .services
+            .pricing
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: Some("runtime-token-price".to_string()),
+                station_id: seeded.station_id,
+                station_key_id: Some(seeded.station_key_id),
+                group_binding_id: None,
+                group_name: None,
+                tier_label: None,
+                model: "gpt-test".to_string(),
+                input_price: Some(5.0),
+                output_price: Some(30.0),
+                fixed_price: None,
+                rate_multiplier: None,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                base_price_source: None,
+                normalization_status: Some("complete".to_string()),
+                source: "manual".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: Some("1".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .await
+            .expect("pricing rule");
         let runtime = ProxyRuntimeState::for_tests();
         let started = runtime.start(fixture.config(0)).await.expect("start v2");
 
@@ -1156,7 +1246,16 @@ mod tests {
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].status, "success");
+        assert_eq!(logs[0].http_status, Some(200));
         assert_eq!(logs[0].path, "/v1/chat/completions");
+        assert_eq!(logs[0].billing_mode.as_deref(), Some("token"));
+        assert_eq!(
+            logs[0].cost_status.as_deref(),
+            Some("complete_single_currency")
+        );
+        assert!(
+            (logs[0].estimated_total_cost.expect("priced request") - 0.000035).abs() < f64::EPSILON
+        );
     }
 
     #[tokio::test]
@@ -1193,6 +1292,105 @@ mod tests {
         release.store(true, AtomicOrdering::Relaxed);
         wait_runtime_active_requests(&runtime, started.port, 0).await;
         runtime.stop(started.port).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn v2_completed_stream_persists_attempt_usage_and_cost_projection() {
+        let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Sse(
+            br#"data: {"id":"chatcmpl-stream","choices":[{"delta":{"content":"ok"}}]}
+
+data: {"id":"chatcmpl-stream","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}
+
+data: [DONE]
+
+"#
+            .to_vec(),
+        )]);
+        let fixture = V2ProxyTestFixture::new().await;
+        let seeded = fixture.seed_candidate(upstream.base_url.as_str()).await;
+        fixture
+            .services
+            .pricing
+            .upsert_pricing_rule(UpsertPricingRuleInput {
+                id: Some("runtime-stream-token-price".to_string()),
+                station_id: seeded.station_id,
+                station_key_id: Some(seeded.station_key_id),
+                group_binding_id: None,
+                group_name: None,
+                tier_label: None,
+                model: "gpt-test".to_string(),
+                input_price: Some(5.0),
+                output_price: Some(30.0),
+                fixed_price: None,
+                rate_multiplier: None,
+                currency: "USD".to_string(),
+                unit: "per_1m_tokens".to_string(),
+                price_type: "token".to_string(),
+                base_price_source: None,
+                normalization_status: Some("complete".to_string()),
+                source: "manual".to_string(),
+                confidence: 1.0,
+                enabled: true,
+                note: None,
+                collected_at: Some("1".to_string()),
+                valid_from: None,
+                valid_until: None,
+            })
+            .await
+            .expect("stream pricing rule");
+        let runtime = ProxyRuntimeState::for_tests();
+        let started = runtime.start(fixture.config(0)).await.expect("start v2");
+
+        let response = reqwest::Client::new()
+            .post(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                started.port
+            ))
+            .bearer_auth("relay-local-secret")
+            .json(&serde_json::json!({
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "ping"}],
+                "stream": true,
+            }))
+            .send()
+            .await
+            .expect("send completed stream");
+        assert_eq!(response.status(), StatusCode::OK);
+        response.bytes().await.expect("consume completed stream");
+        runtime.stop(started.port).await.unwrap();
+
+        let logs = fixture.request_logs().await;
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].prompt_tokens, Some(2));
+        assert_eq!(logs[0].completion_tokens, Some(3));
+        assert_eq!(logs[0].total_tokens, Some(5));
+        assert_eq!(
+            logs[0].cost_status.as_deref(),
+            Some("complete_single_currency")
+        );
+        assert!((logs[0].estimated_total_cost.expect("stream cost") - 0.0001).abs() < f64::EPSILON);
+
+        let request_id = logs[0].id.clone();
+        let mut read = fixture
+            .runtime()
+            .handle()
+            .begin_read()
+            .await
+            .expect("begin stream outcome read");
+        let attempt_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM request_attempts WHERE request_id = ?")
+                .bind(&request_id)
+                .fetch_one(read.connection())
+                .await
+                .expect("stream attempt count");
+        let cost_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM routing_attempt_costs WHERE request_id = ?")
+                .bind(&request_id)
+                .fetch_one(read.connection())
+                .await
+                .expect("stream attempt cost count");
+        assert_eq!(attempt_count, 1);
+        assert_eq!(cost_count, 1);
     }
 
     #[tokio::test]
@@ -1258,8 +1456,10 @@ mod tests {
         assert_eq!(body["stations"], 1);
         assert_eq!(upstream.captured_count(), 0);
         let logs = fixture.request_logs().await;
-        assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].path, "/v1/usage");
+        assert!(
+            logs.is_empty(),
+            "balance queries must not create request logs"
+        );
     }
 
     #[tokio::test]
@@ -1533,6 +1733,7 @@ mod tests {
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1, "failed v2 requests must be observable");
         assert_eq!(logs[0].status, "failed");
+        assert_eq!(logs[0].http_status, Some(502));
         assert_eq!(logs[0].failure_source.as_deref(), Some("upstream"));
         assert_eq!(logs[0].attempt_count, Some(1));
         let health = fixture.station_key_health(&seeded.station_key_id).await;

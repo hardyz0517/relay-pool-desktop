@@ -1,8 +1,10 @@
 use crate::models::routing_policy::RoutingPolicyConfigV1;
 
-use super::algorithm_profile::DispatchAlgorithmProfile;
+use super::{
+    algorithm_profile::DispatchAlgorithmProfile, candidate_plan::RoutePlanPricingSnapshot,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CandidateSnapshot {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
@@ -16,6 +18,7 @@ pub(crate) struct CandidateSnapshot {
     pub(crate) reliability_basis_points: u16,
     pub(crate) responsiveness_basis_points: u16,
     pub(crate) cost_basis_points: Option<u16>,
+    pub(crate) pricing: RoutePlanPricingSnapshot,
     pub(crate) preference_basis_points: u16,
     pub(crate) failure_domains: Vec<String>,
 }
@@ -34,7 +37,7 @@ pub(crate) struct RuntimeOverlaySnapshot {
     pub(crate) affinity_station_key_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PlanningSnapshot {
     pub(crate) snapshot_id: String,
     pub(crate) durable_revision: u64,
@@ -69,6 +72,15 @@ impl PlanningSnapshot {
                 || candidate
                     .cost_basis_points
                     .is_some_and(|value| value > 10_000)
+                || candidate.pricing.status_label.is_empty()
+                || [
+                    candidate.pricing.estimated_input_price,
+                    candidate.pricing.estimated_output_price,
+                    candidate.pricing.estimated_fixed_price,
+                ]
+                .into_iter()
+                .flatten()
+                .any(|value| !value.is_finite() || value < 0.0)
                 || candidate.preference_basis_points > 10_000
         }) {
             return Err("planning snapshot contains invalid or unavailable candidate");

@@ -136,15 +136,6 @@ impl SettingsStore {
         pending_data_dir: Option<String>,
     ) -> Result<AppSettings, PersistenceError> {
         validate_settings(&update.input)?;
-        // These legacy routing fields remain in the settings IPC shape for old clients;
-        // canonical routing policy updates use the dedicated policy aggregate.
-        let _legacy_routing_fields = (
-            &update.input.routing_policy_name,
-            &update.input.max_rate_multiplier,
-            &update.input.routing_group_scope,
-            &update.input.scheduler_config,
-            update.input.allow_depleted_fallback,
-        );
         let current =
             settings_from_connection(write.connection(), data_dir, pending_data_dir.clone())
                 .await?;
@@ -161,6 +152,22 @@ impl SettingsStore {
                 .as_deref()
                 .unwrap_or(&current.tray_behavior),
         )?;
+        let max_rate_multiplier = update
+            .input
+            .max_rate_multiplier
+            .flatten()
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let routing_group_filter = serde_json::to_string(&update.input.routing_group_scope)
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
+        let scheduler_config = serde_json::to_string(
+            &update
+                .input
+                .scheduler_config
+                .clone()
+                .unwrap_or(current.scheduler_config.clone()),
+        )
+        .map_err(|_| PersistenceError::ConstraintViolation)?;
 
         let values = [
             (
@@ -172,6 +179,9 @@ impl SettingsStore {
                 "collector_proxy_url",
                 collector_proxy_url.unwrap_or_default(),
             ),
+            ("max_rate_multiplier", max_rate_multiplier),
+            ("default_routing_group_filter", routing_group_filter),
+            ("scheduler_advanced_settings_json", scheduler_config),
             (
                 "low_balance_threshold_cny",
                 update.input.low_balance_threshold_cny.to_string(),
@@ -266,9 +276,18 @@ async fn settings_from_connection(
         collector_proxy_url: normalize_proxy_url(Some(
             read_setting_or_default(&mut *connection, "collector_proxy_url", "").await?,
         )),
-        max_rate_multiplier: None,
-        routing_group_scope: RoutingGroupFilter::AllGroups,
-        scheduler_config: DispatchAlgorithmSettings::default(),
+        max_rate_multiplier: parse_optional_f64_setting(&mut *connection, "max_rate_multiplier")
+            .await?,
+        routing_group_scope: parse_routing_group_filter_setting(
+            &mut *connection,
+            "default_routing_group_filter",
+        )
+        .await?,
+        scheduler_config: parse_scheduler_settings(
+            &mut *connection,
+            "scheduler_advanced_settings_json",
+        )
+        .await?,
         low_balance_threshold_cny: parse_setting(&mut *connection, "low_balance_threshold_cny")
             .await?,
         collector_interval_minutes: parse_setting(&mut *connection, "collector_interval_minutes")
@@ -513,6 +532,48 @@ fn invalid_persisted_setting() -> PersistenceError {
     PersistenceError::InvariantViolation("invalid persisted setting".to_string())
 }
 
+async fn parse_optional_f64_setting(
+    connection: &mut SqliteConnection,
+    key: &str,
+) -> Result<Option<f64>, PersistenceError> {
+    let value = read_setting_or_default(&mut *connection, key, "").await?;
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let parsed = value
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(invalid_persisted_setting)?;
+    Ok(Some(parsed))
+}
+
+async fn parse_routing_group_filter_setting(
+    connection: &mut SqliteConnection,
+    key: &str,
+) -> Result<RoutingGroupFilter, PersistenceError> {
+    let value = read_setting_or_default(&mut *connection, key, "all_groups").await?;
+    serde_json::from_str(&value)
+        .or_else(|_| serde_json::from_str(&format!("\"{value}\"")))
+        .map_err(|_| invalid_persisted_setting())
+}
+
+async fn parse_scheduler_settings(
+    connection: &mut SqliteConnection,
+    key: &str,
+) -> Result<DispatchAlgorithmSettings, PersistenceError> {
+    let value = read_setting_or_default(&mut *connection, key, "").await?;
+    if value.trim().is_empty() {
+        return Ok(DispatchAlgorithmSettings::default());
+    }
+    let settings: DispatchAlgorithmSettings =
+        serde_json::from_str(&value).map_err(|_| invalid_persisted_setting())?;
+    settings
+        .validate()
+        .map_err(|_| invalid_persisted_setting())?;
+    Ok(settings)
+}
+
 #[cfg_attr(
     test,
     allow(
@@ -528,6 +589,9 @@ fn is_supported_setting_key(key: &str) -> bool {
             | "local_key"
             | "collector_proxy_mode"
             | "collector_proxy_url"
+            | "max_rate_multiplier"
+            | "default_routing_group_filter"
+            | "scheduler_advanced_settings_json"
             | "low_balance_threshold_cny"
             | "collector_interval_minutes"
             | "balance_interval_minutes"

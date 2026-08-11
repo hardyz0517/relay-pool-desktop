@@ -625,6 +625,7 @@ impl LoopbackHttpResponse {
 pub struct RequestLogSummary {
     pub id: String,
     pub status: String,
+    pub http_status: Option<i64>,
     pub lifecycle_status: Option<String>,
     pub station_key_id: Option<String>,
     pub fallback_count: i64,
@@ -640,6 +641,7 @@ impl From<RequestLog> for RequestLogSummary {
         Self {
             id: value.id,
             status: value.status,
+            http_status: value.http_status,
             lifecycle_status: value.lifecycle_status,
             station_key_id: value.station_key_id,
             fallback_count: value.fallback_count,

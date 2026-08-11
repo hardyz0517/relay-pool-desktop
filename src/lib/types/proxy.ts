@@ -28,6 +28,8 @@ export type RequestLog = {
   model: string | null;
   stream: boolean;
   status: "success" | "fallback" | "failed" | string;
+  httpStatus: number | null;
+  lifecycleStatus: string | null;
   stationKeyId: string | null;
   stationId: string | null;
   upstreamBaseUrl: string | null;

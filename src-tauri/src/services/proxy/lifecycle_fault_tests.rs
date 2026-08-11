@@ -168,11 +168,22 @@ async fn lifecycle_writer_propagates_each_db_boundary_failure_and_fails_closed()
 
             let error = exercise_boundary(&writer, boundary).await;
             assert_write_error(error, fault, boundary);
-            assert!(!writer.health().is_healthy(), "{boundary:?} {fault:?}");
-            assert!(matches!(
-                writer.try_reserve_request(),
-                Err(WriterAdmissionError::Unhealthy)
-            ));
+            match fault {
+                FaultKind::CommitOutcomeUnknown => {
+                    assert!(!writer.health().is_healthy(), "{boundary:?} {fault:?}");
+                    assert!(matches!(
+                        writer.try_reserve_request(),
+                        Err(WriterAdmissionError::Unhealthy)
+                    ));
+                }
+                FaultKind::Unavailable => {
+                    assert!(writer.health().is_healthy(), "{boundary:?} {fault:?}");
+                    let reservation = writer
+                        .try_reserve_request()
+                        .expect("transient persistence failure must not poison admission");
+                    drop(reservation);
+                }
+            }
 
             drop(writer);
             worker.join().await.expect("worker join");

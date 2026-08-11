@@ -29,6 +29,7 @@ use crate::{
             request_cost_aggregate_commit_record,
         },
     },
+    observability::correlation,
     services::time::now_millis_for_services,
 };
 
@@ -110,22 +111,29 @@ impl DualTerminalFinalizationLease {
                         attempt.reservation,
                     )
                 });
+        let correlation_id = correlation::current_or_new();
         Some(tokio::spawn(async move {
             if let Some((attempt_record, attempt_reservation)) = attempt {
                 let attempt_ack = attempt_reservation.send(attempt_record).await;
                 match attempt_ack {
                     Ok(Ok(_)) => {}
-                    Ok(Err(_)) | Err(_) => {
-                        drop(request.request_lease);
-                        return;
-                    }
+                    Ok(Err(_)) => record_finalization_failure(
+                        "proxy.finalization.attempt_persistence_failed",
+                        &correlation_id,
+                    ),
+                    Err(_) => record_finalization_failure(
+                        "proxy.finalization.attempt_ack_dropped",
+                        &correlation_id,
+                    ),
                 }
             }
 
             if let Some(costs) = costs {
                 if !costs.write(&record).await {
-                    drop(request.request_lease);
-                    return;
+                    record_finalization_failure(
+                        "proxy.finalization.cost_persistence_failed",
+                        &correlation_id,
+                    );
                 }
             }
 
@@ -135,10 +143,24 @@ impl DualTerminalFinalizationLease {
                 FinalizationOutcome::Interrupted { detail } => record.interrupt(delivery, detail),
             };
             let request_ack = request.terminal.send(final_record).await;
-            let _ = request_ack;
+            match request_ack {
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) => record_finalization_failure(
+                    "proxy.finalization.request_persistence_failed",
+                    &correlation_id,
+                ),
+                Err(_) => record_finalization_failure(
+                    "proxy.finalization.request_ack_dropped",
+                    &correlation_id,
+                ),
+            }
             drop(request.request_lease);
         }))
     }
+}
+
+fn record_finalization_failure(code: &'static str, correlation_id: &correlation::CorrelationId) {
+    correlation::with_scope(code, correlation_id.clone(), || ());
 }
 
 pub(crate) struct CostFinalizationReservations {
@@ -395,4 +417,32 @@ fn currency_units_to_micro(value: f64) -> f64 {
 
 fn clamp_f64_to_i64(value: f64) -> i64 {
     value.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_token_pricing_preserves_explicit_zero_usage_as_zero_cost() {
+        let pricing = SelectedAttemptCostSnapshot {
+            ordinal: 0,
+            pricing_basis: "exact_price".to_string(),
+            pricing_status_label: "priced".to_string(),
+            currency: Some("USD".to_string()),
+            unit: Some("per_1m_tokens".to_string()),
+            estimated_input_price: Some(5.0),
+            estimated_output_price: Some(30.0),
+            estimated_fixed_price: None,
+        };
+        let usage = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+        };
+
+        assert_eq!(pricing.total_cost_micro(&usage), Some(0));
+    }
 }

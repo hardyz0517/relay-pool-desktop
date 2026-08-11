@@ -92,6 +92,7 @@ pub(crate) fn openai_error_semantic_signal(
             station_id: station_id.to_string(),
             retry_after_ms: None,
         },
+        529 => ProviderErrorSemanticSignal::Overloaded,
         405 | 501 => ProviderErrorSemanticSignal::ConfirmedCapabilityMismatch {
             protocol: ProviderProtocolKind::Unknown,
         },
@@ -110,4 +111,94 @@ fn openai_error_code(body: &Value) -> Option<&str> {
         .get("code")
         .and_then(Value::as_str)
         .or_else(|| error.get("type").and_then(Value::as_str))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::openai_error_semantic_signal;
+    use crate::application::request_finalization::failure::{
+        CapabilityApplicabilitySet, ProviderErrorSemanticSignal,
+    };
+
+    #[test]
+    fn ordinary_429_remains_rate_limited() {
+        let body = json!({"error": {"message": "Too many requests"}});
+        let signal = openai_error_semantic_signal(
+            429,
+            Some(&body),
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        assert!(matches!(
+            signal,
+            ProviderErrorSemanticSignal::RateLimited { .. }
+        ));
+    }
+
+    #[test]
+    fn overloaded_529_is_not_treated_as_regular_5xx() {
+        let signal = openai_error_semantic_signal(
+            529,
+            None,
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        assert_eq!(signal, ProviderErrorSemanticSignal::Overloaded);
+    }
+
+    #[test]
+    fn trusted_model_not_found_is_typed_but_untrusted_404_is_not() {
+        let body = json!({"error": {"code": "model_not_found"}});
+        let trusted = openai_error_semantic_signal(
+            404,
+            Some(&body),
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::ConfirmedModelCatalog,
+        );
+        assert!(matches!(
+            trusted,
+            ProviderErrorSemanticSignal::ConfirmedModelNotFound { .. }
+        ));
+
+        let untrusted = openai_error_semantic_signal(
+            404,
+            Some(&body),
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        assert_eq!(
+            untrusted,
+            ProviderErrorSemanticSignal::GenericStatus { status: 404 }
+        );
+    }
+
+    #[test]
+    fn upstream_request_rejections_are_typed_separately_from_local_parse_errors() {
+        for status in [400, 409, 422] {
+            let signal = openai_error_semantic_signal(
+                status,
+                None,
+                "key-test",
+                "station-test",
+                1,
+                Some("gpt-test"),
+                CapabilityApplicabilitySet::UnknownModelCatalog,
+            );
+            assert_eq!(signal, ProviderErrorSemanticSignal::BadRequest);
+        }
+    }
 }

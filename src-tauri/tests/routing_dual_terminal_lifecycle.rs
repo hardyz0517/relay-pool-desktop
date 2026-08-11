@@ -8,6 +8,25 @@ use std::sync::{
 use futures_util::future::BoxFuture;
 use tokio::sync::{Notify, Semaphore};
 
+mod observability {
+    pub(crate) mod correlation {
+        #[derive(Clone)]
+        pub(crate) struct CorrelationId;
+
+        pub(crate) fn current_or_new() -> CorrelationId {
+            CorrelationId
+        }
+
+        pub(crate) fn with_scope<T>(
+            _scope: &'static str,
+            _correlation_id: CorrelationId,
+            operation: impl FnOnce() -> T,
+        ) -> T {
+            operation()
+        }
+    }
+}
+
 mod application {
     #[path = "../../src/application/request_lifecycle/mod.rs"]
     pub(crate) mod request_lifecycle;

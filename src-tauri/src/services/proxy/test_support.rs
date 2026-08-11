@@ -298,6 +298,7 @@ impl CapturedRequest {
 #[derive(Debug, Clone)]
 pub(crate) enum ScriptedResponse {
     Json(Vec<u8>),
+    Sse(Vec<u8>),
     Status {
         status: u16,
         reason: &'static str,
@@ -417,6 +418,9 @@ fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
     match response {
         ScriptedResponse::Json(body) => {
             write_response(stream, 200, "OK", "application/json", &body)
+        }
+        ScriptedResponse::Sse(body) => {
+            write_response(stream, 200, "OK", "text/event-stream", &body)
         }
         ScriptedResponse::Status { status, reason } => {
             write_response(stream, status, reason, "application/json", b"{}")

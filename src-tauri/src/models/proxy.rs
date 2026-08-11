@@ -59,6 +59,7 @@ pub struct RequestLog {
     pub model: Option<String>,
     pub stream: bool,
     pub status: String,
+    pub http_status: Option<i64>,
     pub lifecycle_status: Option<String>,
     pub station_key_id: Option<String>,
     pub station_id: Option<String>,

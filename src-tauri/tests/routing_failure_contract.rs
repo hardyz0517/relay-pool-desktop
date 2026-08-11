@@ -201,6 +201,37 @@ fn effect_planner_keeps_retry_health_and_capability_axes_separate() {
 }
 
 #[test]
+fn provider_rejection_and_overload_have_distinct_public_and_retry_semantics() {
+    let rejected = failure_from_provider_signal(
+        ProviderErrorSemanticSignal::BadRequest,
+        CapabilityApplicabilitySet::UnknownModelCatalog,
+    );
+    assert_eq!(rejected.class, FailureClass::ProviderRejectedRequest);
+    assert_eq!(rejected.retry, RetryDisposition::StopRequest);
+    assert_eq!(rejected.health, HealthEffect::Neutral);
+    assert_eq!(rejected.public.http_status, StatusCode::BAD_REQUEST);
+    assert_eq!(rejected.public.code.as_str(), "upstream_request_rejected");
+
+    let overloaded = failure_from_provider_signal(
+        ProviderErrorSemanticSignal::Overloaded,
+        CapabilityApplicabilitySet::UnknownModelCatalog,
+    );
+    assert_eq!(overloaded.class, FailureClass::UpstreamOverloaded);
+    assert_eq!(overloaded.retry, RetryDisposition::TryNextCandidate);
+    assert_eq!(
+        overloaded.health,
+        HealthEffect::Cooldown {
+            retry_after_ms: None
+        }
+    );
+    assert_eq!(
+        overloaded.public.http_status,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(overloaded.public.code.as_str(), "upstream_overloaded");
+}
+
+#[test]
 fn route_planning_failures_have_stable_codes_and_public_proxy_mapping() {
     let failures = [
         (
@@ -265,9 +296,11 @@ fn all_failure_classes() -> Vec<FailureClass> {
         FailureClass::ModelUnavailable,
         FailureClass::CapabilityMismatch,
         FailureClass::BadRequest,
+        FailureClass::ProviderRejectedRequest,
         FailureClass::Timeout,
         FailureClass::Transport,
         FailureClass::Upstream5xx,
+        FailureClass::UpstreamOverloaded,
         FailureClass::MalformedResponse,
         FailureClass::StreamInterrupted,
         FailureClass::DownstreamDrop,

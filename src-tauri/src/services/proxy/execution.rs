@@ -6,6 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use futures_util::{future::BoxFuture, stream, StreamExt};
 use http::{HeaderMap, StatusCode};
 use serde_json::Value;
@@ -27,7 +28,7 @@ use super::{
         writer::{LifecycleWriter, WriterAdmissionError},
     },
     limits::ProxyServerLimits,
-    protocol::DownstreamTransform,
+    protocol::{CompletionPolicy, DownstreamTransform},
     request::{ByteStream, CanonicalProxyRequest},
     responses_chat_stream::chat_sse_to_responses_stream,
     routing_repository::{OperationalRouteSnapshot, RoutingExecutionSettings, RoutingRepository},
@@ -50,7 +51,7 @@ use crate::{
                 RouteAdmissionCoordinator, SelectedRoute,
             },
             affinity::{AffinityKind, AffinityLookup, AffinityRegistry},
-            candidate_plan::RoutePlanCandidate,
+            candidate_plan::{RoutePlanCandidate, RoutePlanPricingSnapshot},
             capacity::CompositeCapacityRegistry,
             model_alias,
             request::{
@@ -1022,6 +1023,9 @@ fn attempt_failure_kind(failure: &ProxyFailure) -> AttemptFailureKind {
         ProxyFailureCode::UpstreamRateLimited => AttemptFailureKind::RateLimit,
         ProxyFailureCode::UpstreamModelUnavailable
         | ProxyFailureCode::UpstreamCapabilityMismatch => AttemptFailureKind::CapabilityMismatch,
+        ProxyFailureCode::UpstreamRequestRejected | ProxyFailureCode::UpstreamOverloaded => {
+            AttemptFailureKind::HttpStatus
+        }
         ProxyFailureCode::UpstreamUnavailable | ProxyFailureCode::UpstreamUncertain => {
             AttemptFailureKind::HttpStatus
         }
@@ -1071,13 +1075,19 @@ fn health_effect(failure: &ProxyFailure) -> HealthEffect {
         | ProxyFailureCode::UpstreamInsufficientBalance => return HealthEffect::HardFail,
         ProxyFailureCode::UpstreamRateLimited => {
             return HealthEffect::Cooldown {
-                retry_after_ms: None,
+                retry_after_ms: failure.retry_after_ms,
             };
         }
         ProxyFailureCode::UpstreamModelUnavailable
         | ProxyFailureCode::UpstreamCapabilityMismatch
+        | ProxyFailureCode::UpstreamRequestRejected
         | ProxyFailureCode::UpstreamMalformedResponse
         | ProxyFailureCode::UpstreamUncertain => return HealthEffect::Neutral,
+        ProxyFailureCode::UpstreamOverloaded => {
+            return HealthEffect::Cooldown {
+                retry_after_ms: failure.retry_after_ms,
+            };
+        }
         ProxyFailureCode::UpstreamUnavailable => return HealthEffect::ObserveFailure,
         _ => {}
     }
@@ -1097,13 +1107,19 @@ fn health_effect(failure: &ProxyFailure) -> HealthEffect {
 }
 
 fn attempt_lifecycle_admission_failure(error: WriterAdmissionError) -> ProxyFailure {
-    attempt_lifecycle_unavailable_failure(format!(
+    let mut failure =
+        attempt_lifecycle_unavailable_failure("local proxy lifecycle writer unavailable");
+    failure.internal_detail = Some(format!(
         "attempt lifecycle writer admission rejected: {error:?}"
-    ))
+    ));
+    failure
 }
 
 fn attempt_lifecycle_write_failure(error: LifecycleWriteError) -> ProxyFailure {
-    attempt_lifecycle_unavailable_failure(format!("attempt lifecycle write failed: {error:?}"))
+    let mut failure =
+        attempt_lifecycle_unavailable_failure("local proxy lifecycle persistence unavailable");
+    failure.internal_detail = Some(format!("attempt lifecycle write failed: {error:?}"));
+    failure
 }
 
 fn attempt_lifecycle_unavailable_failure(message: impl Into<String>) -> ProxyFailure {
@@ -1165,6 +1181,7 @@ impl ProxyExecutionResponse {
                 annotations: RequestLogAnnotations {
                     model: request.model.clone(),
                     stream: request.stream,
+                    http_status: None,
                     selected_station_key_id: Some(candidate.station_key_id.clone()),
                     selected_station_id: Some(candidate.station_id.clone()),
                     upstream_base_url: None,
@@ -1188,6 +1205,7 @@ impl ProxyExecutionResponse {
                     cache_read_tokens: None,
                     reasoning_effort: request.reasoning_effort.clone(),
                     first_token_ms: Some(timings.first_token_ms.max(0)),
+                    billing_mode: billing_mode_for_pricing(&candidate.pricing),
                 },
                 selected_attempt: Some(selected_attempt),
                 selected_attempt_cost: Some(super::attempt::SelectedAttemptCostSnapshot {
@@ -1248,6 +1266,7 @@ impl ProxyExecutionResponse {
                 annotations: RequestLogAnnotations {
                     model: request.model.clone(),
                     stream: request.stream,
+                    http_status: None,
                     selected_station_key_id: None,
                     selected_station_id: None,
                     upstream_base_url: None,
@@ -1267,6 +1286,7 @@ impl ProxyExecutionResponse {
                     cache_read_tokens: None,
                     reasoning_effort: request.reasoning_effort.clone(),
                     first_token_ms: None,
+                    billing_mode: None,
                 },
                 selected_attempt: None,
                 selected_attempt_cost: None,
@@ -1310,8 +1330,15 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
                     body,
                 } => {
                     if !status.is_success() {
-                        return Err(upstream_http_failure(status, Some(&body), request, target));
+                        return Err(upstream_http_failure(
+                            status,
+                            &headers,
+                            Some(&body),
+                            request,
+                            target,
+                        ));
                     }
+                    let body = validate_buffered_body(body, response_plan.completion_policy)?;
                     let body = transform_buffered_body(
                         body,
                         response_plan.downstream_transform,
@@ -1329,7 +1356,9 @@ impl AttemptExecutor for UpstreamAttemptExecutor {
                     chunks,
                 } => {
                     if !status.is_success() {
-                        return Err(upstream_http_failure(status, None, request, target));
+                        return Err(upstream_http_failure(
+                            status, &headers, None, request, target,
+                        ));
                     }
                     let chunks = transform_stream_body(
                         chunks,
@@ -1799,6 +1828,30 @@ fn pricing_basis_label(
     }
 }
 
+fn billing_mode_for_pricing(pricing: &RoutePlanPricingSnapshot) -> Option<String> {
+    if pricing.basis
+        != crate::application::operational_facts::pricing_projector::RoutingCostBasis::ExactPrice
+    {
+        return None;
+    }
+    if pricing.estimated_input_price.is_some() || pricing.estimated_output_price.is_some() {
+        Some("token".to_string())
+    } else if pricing.estimated_fixed_price.is_some() {
+        Some("per_request".to_string())
+    } else {
+        match pricing
+            .unit
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("per_request") => Some("per_request".to_string()),
+            Some("per_1m_tokens" | "per_1k_tokens" | "m") => Some("token".to_string()),
+            _ => None,
+        }
+    }
+}
+
 fn catalog_planning_exhausted(failure: &AdmissionFailure) -> bool {
     matches!(
         failure.kind,
@@ -1849,6 +1902,20 @@ fn transform_buffered_body(
     serde_json::to_vec(&render_responses_response(value, mapped_model))
         .map(Bytes::from)
         .map_err(|error| internal_failure(format!("serialize responses fallback failed: {error}")))
+}
+
+fn validate_buffered_body(
+    body: Bytes,
+    completion_policy: CompletionPolicy,
+) -> Result<Bytes, ProxyFailure> {
+    if completion_policy == CompletionPolicy::ValidatedJsonBody {
+        serde_json::from_slice::<Value>(&body).map_err(|error| {
+            upstream_malformed_response_failure(format!(
+                "upstream buffered response was not JSON: {error}"
+            ))
+        })?;
+    }
+    Ok(body)
 }
 
 fn json_headers() -> HeaderMap {
@@ -1942,6 +2009,7 @@ fn parse_balance_time(value: &str) -> i128 {
 
 fn upstream_http_failure(
     status: StatusCode,
+    headers: &HeaderMap,
     body: Option<&Bytes>,
     request: &CanonicalProxyRequest,
     target: &ExecutionTargetHandle,
@@ -1975,8 +2043,32 @@ fn upstream_http_failure(
     };
     let canonical = failure_from_provider_signal(signal, applicability);
     let mut failure = ProxyFailure::from_public_error(canonical.public);
+    failure.retry_after_ms = parse_retry_after_ms(headers);
     failure.internal_detail = Some(format!("upstream HTTP {}", status.as_u16()));
     failure
+}
+
+fn parse_retry_after_ms(headers: &HeaderMap) -> Option<i64> {
+    const MAX_RETRY_AFTER_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
+    let value = headers
+        .get(http::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Ok(seconds) = value.parse::<i64>() {
+        if seconds <= 0 {
+            return None;
+        }
+        return seconds
+            .checked_mul(1_000)
+            .map(|ms| ms.min(MAX_RETRY_AFTER_MS));
+    }
+    let retry_at = DateTime::parse_from_rfc2822(value).ok()?;
+    let delay_ms = (retry_at.with_timezone(&Utc) - Utc::now()).num_milliseconds();
+    (delay_ms > 0).then_some(delay_ms.min(MAX_RETRY_AFTER_MS))
 }
 
 fn upstream_malformed_response_failure(detail: impl Into<String>) -> ProxyFailure {
@@ -2042,7 +2134,7 @@ mod tests {
 
     use bytes::Bytes;
     use futures_util::{future::BoxFuture, stream, StreamExt};
-    use http::{HeaderMap, StatusCode};
+    use http::{HeaderMap, HeaderValue, StatusCode};
 
     use crate::{
         application::{
@@ -2072,10 +2164,40 @@ mod tests {
     };
 
     use super::{
-        transform_stream_body, AffinityKind, AffinityLookup, AttemptExecutor, ExecutionEngine,
-        PreparedAttempt, RetryDecision, RetryPolicy,
+        transform_stream_body, validate_buffered_body, AffinityKind, AffinityLookup,
+        AttemptExecutor, ExecutionEngine, PreparedAttempt, RetryDecision, RetryPolicy,
     };
-    use crate::services::proxy::protocol::DownstreamTransform;
+    use crate::services::proxy::protocol::{CompletionPolicy, DownstreamTransform};
+
+    #[test]
+    fn validated_buffered_body_rejects_non_json_without_exposing_body() {
+        let failure = validate_buffered_body(
+            Bytes::from_static(b"not-json"),
+            CompletionPolicy::ValidatedJsonBody,
+        )
+        .expect_err("invalid buffered response must fail");
+
+        assert_eq!(failure.code, ProxyFailureCode::UpstreamMalformedResponse);
+        assert!(failure
+            .internal_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("was not JSON")));
+        assert!(!failure
+            .internal_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("not-json")));
+    }
+
+    #[test]
+    fn non_validated_buffered_body_is_preserved() {
+        let body = validate_buffered_body(
+            Bytes::from_static(b"event-stream-payload"),
+            CompletionPolicy::ChatDoneSentinel,
+        )
+        .expect("non-JSON policy must not parse buffered body");
+
+        assert_eq!(body, Bytes::from_static(b"event-stream-payload"));
+    }
 
     #[test]
     fn retry_policy_matches_the_approved_precommit_matrix() {
@@ -2118,6 +2240,31 @@ mod tests {
                 "failure={failure:?} idempotent={idempotent} committed={committed}"
             );
         }
+    }
+
+    #[test]
+    fn retry_after_parser_accepts_bounded_delta_seconds() {
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::RETRY_AFTER, HeaderValue::from_static("12"));
+        assert_eq!(super::parse_retry_after_ms(&headers), Some(12_000));
+
+        headers.insert(
+            http::header::RETRY_AFTER,
+            HeaderValue::from_static("999999999"),
+        );
+        assert_eq!(
+            super::parse_retry_after_ms(&headers),
+            Some(7 * 24 * 60 * 60 * 1_000)
+        );
+    }
+
+    #[test]
+    fn retry_after_parser_rejects_invalid_or_non_positive_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::RETRY_AFTER, HeaderValue::from_static("0"));
+        assert_eq!(super::parse_retry_after_ms(&headers), None);
+        headers.insert(http::header::RETRY_AFTER, HeaderValue::from_static("bad"));
+        assert_eq!(super::parse_retry_after_ms(&headers), None);
     }
 
     #[test]
@@ -2526,6 +2673,7 @@ mod tests {
                     reliability_basis_points: 8_000,
                     responsiveness_basis_points: 8_000,
                     cost_basis_points: Some(5_000),
+                    pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot::unpriced("test"),
                     preference_basis_points: 10_000_u16
                         .saturating_sub((index as u16).saturating_mul(100)),
                     failure_domains: vec![format!("station:{}", candidate.station_id)],
@@ -2686,7 +2834,7 @@ mod tests {
             401 | 403 => ProxyFailureCode::UpstreamAuthenticationFailed,
             402 => ProxyFailureCode::UpstreamInsufficientBalance,
             429 => ProxyFailureCode::UpstreamRateLimited,
-            400 | 409 | 422 => ProxyFailureCode::RequestBodyInvalid,
+            400 | 409 | 422 => ProxyFailureCode::UpstreamRequestRejected,
             500..=599 => ProxyFailureCode::UpstreamUnavailable,
             _ => ProxyFailureCode::UpstreamUncertain,
         };

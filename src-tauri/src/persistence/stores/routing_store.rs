@@ -104,6 +104,7 @@ impl RoutingStore {
                 k.id AS station_key_id,
                 k.station_id,
                 s.station_type,
+                s.credit_per_cny AS station_credit_per_cny,
                 s.endpoint_revision,
                 s.api_base_url,
                 s.upstream_api_format,
@@ -902,6 +903,7 @@ fn row_to_runtime_economic_snapshot(
         row.get::<Option<f64>, _>(runtime_candidate_column::BINDING_EFFECTIVE_RATE_MULTIPLIER);
     let key_rate_multiplier = row.get::<Option<f64>, _>(runtime_candidate_column::RATE_MULTIPLIER);
     RuntimeRoutingEconomicSnapshot {
+        credit_per_cny: row.get(runtime_candidate_column::STATION_CREDIT_PER_CNY),
         group_binding_id,
         group_key_hash,
         group_id_hash,
@@ -969,35 +971,36 @@ mod runtime_candidate_column {
     pub(super) const STATION_KEY_ID: usize = 0;
     pub(super) const STATION_ID: usize = 1;
     pub(super) const STATION_TYPE: usize = 2;
-    pub(super) const ENDPOINT_REVISION: usize = 3;
-    pub(super) const API_BASE_URL: usize = 4;
-    pub(super) const UPSTREAM_API_FORMAT: usize = 5;
-    pub(super) const ROUTING_ORDER: usize = 6;
-    pub(super) const PRIORITY: usize = 7;
-    pub(super) const MAX_CONCURRENCY: usize = 8;
-    pub(super) const LOAD_FACTOR: usize = 9;
-    pub(super) const SCHEDULABLE: usize = 10;
-    pub(super) const COLLECTOR_PROXY_MODE: usize = 11;
-    pub(super) const COLLECTOR_PROXY_URL: usize = 12;
-    pub(super) const STATION_NAME: usize = 13;
-    pub(super) const KEY_NAME: usize = 14;
-    pub(super) const API_KEY: usize = 15;
-    pub(super) const GROUP_NAME: usize = 16;
-    pub(super) const GROUP_BINDING_ID: usize = 17;
-    pub(super) const GROUP_ID_HASH: usize = 18;
-    pub(super) const RATE_MULTIPLIER: usize = 19;
-    pub(super) const MANUAL_RATE_MULTIPLIER: usize = 20;
-    pub(super) const MANUAL_RATE_UPDATED_AT: usize = 21;
-    pub(super) const RATE_SOURCE: usize = 22;
-    pub(super) const RATE_COLLECTED_AT: usize = 23;
-    pub(super) const KEY_UPDATED_AT: usize = 24;
-    pub(super) const BINDING_GROUP_KEY_HASH: usize = 25;
-    pub(super) const BINDING_GROUP_ID_HASH: usize = 26;
-    pub(super) const BINDING_GROUP_NAME: usize = 27;
-    pub(super) const BINDING_STATUS: usize = 28;
-    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 29;
-    pub(super) const BINDING_CONFIDENCE: usize = 30;
-    pub(super) const BINDING_LAST_CHECKED_AT: usize = 31;
+    pub(super) const STATION_CREDIT_PER_CNY: usize = 3;
+    pub(super) const ENDPOINT_REVISION: usize = 4;
+    pub(super) const API_BASE_URL: usize = 5;
+    pub(super) const UPSTREAM_API_FORMAT: usize = 6;
+    pub(super) const ROUTING_ORDER: usize = 7;
+    pub(super) const PRIORITY: usize = 8;
+    pub(super) const MAX_CONCURRENCY: usize = 9;
+    pub(super) const LOAD_FACTOR: usize = 10;
+    pub(super) const SCHEDULABLE: usize = 11;
+    pub(super) const COLLECTOR_PROXY_MODE: usize = 12;
+    pub(super) const COLLECTOR_PROXY_URL: usize = 13;
+    pub(super) const STATION_NAME: usize = 14;
+    pub(super) const KEY_NAME: usize = 15;
+    pub(super) const API_KEY: usize = 16;
+    pub(super) const GROUP_NAME: usize = 17;
+    pub(super) const GROUP_BINDING_ID: usize = 18;
+    pub(super) const GROUP_ID_HASH: usize = 19;
+    pub(super) const RATE_MULTIPLIER: usize = 20;
+    pub(super) const MANUAL_RATE_MULTIPLIER: usize = 21;
+    pub(super) const MANUAL_RATE_UPDATED_AT: usize = 22;
+    pub(super) const RATE_SOURCE: usize = 23;
+    pub(super) const RATE_COLLECTED_AT: usize = 24;
+    pub(super) const KEY_UPDATED_AT: usize = 25;
+    pub(super) const BINDING_GROUP_KEY_HASH: usize = 26;
+    pub(super) const BINDING_GROUP_ID_HASH: usize = 27;
+    pub(super) const BINDING_GROUP_NAME: usize = 28;
+    pub(super) const BINDING_STATUS: usize = 29;
+    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 30;
+    pub(super) const BINDING_CONFIDENCE: usize = 31;
+    pub(super) const BINDING_LAST_CHECKED_AT: usize = 32;
 }
 
 fn default_runtime_capabilities(station_key_id: &str) -> StationKeyCapabilities {

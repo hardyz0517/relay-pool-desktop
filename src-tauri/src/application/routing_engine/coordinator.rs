@@ -202,6 +202,7 @@ mod tests {
                 reliability_basis_points: 8_000,
                 responsiveness_basis_points: 8_000,
                 cost_basis_points: Some(8_000),
+                pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot::unpriced("test"),
                 preference_basis_points: 5_000,
                 failure_domains: vec!["st".into()],
             }],

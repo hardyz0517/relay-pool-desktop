@@ -2,7 +2,7 @@ use futures_util::future::BoxFuture;
 
 use super::{
     attempt::AttemptTerminalRecord,
-    request::{FinalRequestRecord, RequestStartRecord},
+    request::{FinalRequestRecord, RequestLogAnnotations, RequestStartRecord},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +14,7 @@ use super::{
     )
 )]
 pub(crate) enum LifecycleWriteError {
+    DatabaseBusy,
     Unavailable(String),
     CommitOutcomeUnknown(String),
 }
@@ -79,6 +80,15 @@ pub(crate) trait RequestLifecycleStore: Send + Sync + 'static {
         &self,
         record: RequestStartRecord,
     ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>>;
+
+    fn start_request_with_annotations(
+        &self,
+        record: RequestStartRecord,
+        annotations: RequestLogAnnotations,
+    ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
+        let _ = annotations;
+        self.start_request(record)
+    }
 
     fn finish_attempt(
         &self,

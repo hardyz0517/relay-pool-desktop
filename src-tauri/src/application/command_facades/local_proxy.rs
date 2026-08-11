@@ -150,6 +150,9 @@ impl LocalProxyCommandFacade {
 
 fn local_proxy_startup_reconciliation_error(error: LifecycleWriteError) -> LocalProxyCommandError {
     match error {
+        LifecycleWriteError::DatabaseBusy => {
+            LocalProxyCommandError::Application(ApplicationError::Unavailable)
+        }
         LifecycleWriteError::Unavailable(_) => {
             LocalProxyCommandError::Application(ApplicationError::Unavailable)
         }

@@ -90,6 +90,7 @@ pub(crate) struct RequestStartRecord {
 pub(crate) struct RequestLogAnnotations {
     pub model: Option<String>,
     pub stream: bool,
+    pub http_status: Option<u16>,
     pub selected_station_key_id: Option<String>,
     pub selected_station_id: Option<String>,
     pub upstream_base_url: Option<String>,
@@ -109,6 +110,7 @@ pub(crate) struct RequestLogAnnotations {
     pub cache_read_tokens: Option<i64>,
     pub reasoning_effort: Option<String>,
     pub first_token_ms: Option<i64>,
+    pub billing_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

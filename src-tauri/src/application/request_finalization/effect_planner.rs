@@ -91,11 +91,14 @@ fn attempt_kind_for_class(class: FailureClass) -> AttemptFailureKind {
         | FailureClass::EconomicsUnavailable
         | FailureClass::HealthUnavailable
         | FailureClass::CandidateLimit => AttemptFailureKind::CapabilityMismatch,
-        FailureClass::BadRequest | FailureClass::ConfigRequired => AttemptFailureKind::BadRequest,
+        FailureClass::BadRequest
+        | FailureClass::ProviderRejectedRequest
+        | FailureClass::ConfigRequired => AttemptFailureKind::BadRequest,
         FailureClass::MalformedResponse => AttemptFailureKind::MalformedResponse,
         FailureClass::StreamInterrupted => AttemptFailureKind::StreamInterrupted,
         FailureClass::DownstreamDrop => AttemptFailureKind::DownstreamDrop,
         FailureClass::Upstream5xx
+        | FailureClass::UpstreamOverloaded
         | FailureClass::CapacityExhausted
         | FailureClass::FactsUnavailable
         | FailureClass::ConfigUnstable

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
+        candidate_plan::RoutePlanPricingSnapshot,
         intelligent_planner::plan_snapshot_with_budget,
         model_alias::mapped_model,
         planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
@@ -18,7 +19,9 @@ use crate::{
                 route_request_facts_for_read_model, validated_route_settings,
             },
             planning_snapshot::PlanningSnapshotBuilder,
-            pricing_projector::pricing_context_from_resolution,
+            pricing_projector::{
+                pricing_context_from_resolution, request_cost_comparison_context, PricingRouteKind,
+            },
             target_resolver::ExecutionTargetRef,
         },
         queries::{
@@ -230,6 +233,15 @@ impl RoutingService {
                 .map_err(ApplicationError::from)?;
             for candidate in &mut snapshot.candidates {
                 if let Some(resolution) = pricing.get(&candidate.station_key_id) {
+                    let resolved = pricing_context_from_resolution(
+                        &candidate.station_key_id,
+                        model,
+                        Some(resolution),
+                    );
+                    let request_pricing = request_cost_comparison_context(
+                        PricingRouteKind::Inference,
+                        Some(&resolved),
+                    );
                     let value = resolution
                         .pricing_rule
                         .as_ref()
@@ -252,6 +264,15 @@ impl RoutingService {
                     candidate.cost_basis_points = value.and_then(
                         crate::application::routing_engine::factors::cost_efficiency_from_comparable_value,
                     );
+                    candidate.pricing = RoutePlanPricingSnapshot {
+                        basis: request_pricing.basis,
+                        currency: request_pricing.currency,
+                        unit: request_pricing.unit,
+                        estimated_input_price: request_pricing.estimated_input_price,
+                        estimated_output_price: request_pricing.estimated_output_price,
+                        estimated_fixed_price: request_pricing.estimated_fixed_price,
+                        status_label: request_pricing.status_label,
+                    };
                 }
             }
         }

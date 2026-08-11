@@ -85,7 +85,6 @@ pub struct SseUsageObserver {
     pending: Vec<u8>,
     usage: Option<ObservedUsage>,
     response_id: Option<String>,
-    response_completed: bool,
 }
 
 impl SseUsageObserver {
@@ -111,10 +110,6 @@ impl SseUsageObserver {
         self.response_id.as_deref()
     }
 
-    pub fn response_completed(&self) -> bool {
-        self.response_completed
-    }
-
     fn observe_event(&mut self, event: &[u8]) {
         let event = String::from_utf8_lossy(event);
         let data = event
@@ -127,9 +122,6 @@ impl SseUsageObserver {
             return;
         }
         if let Ok(value) = serde_json::from_str::<Value>(&data) {
-            if value.get("type").and_then(Value::as_str) == Some("response.completed") {
-                self.response_completed = true;
-            }
             if let Some(response_id) = value
                 .pointer("/response/id")
                 .and_then(Value::as_str)

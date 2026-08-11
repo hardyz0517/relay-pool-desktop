@@ -225,7 +225,8 @@ fn planned_candidate(
 mod tests {
     use super::*;
     use crate::application::routing_engine::{
-        algorithm_profile::DispatchAlgorithmProfile, planning_snapshot::RuntimeOverlaySnapshot,
+        algorithm_profile::DispatchAlgorithmProfile, candidate_plan::RoutePlanPricingSnapshot,
+        planning_snapshot::RuntimeOverlaySnapshot,
     };
     #[test]
     fn planner_accepts_only_a_snapshot_and_replays_deterministically() {
@@ -247,6 +248,7 @@ mod tests {
                 reliability_basis_points: 8_000,
                 responsiveness_basis_points: 8_000,
                 cost_basis_points: Some(8_000),
+                pricing: RoutePlanPricingSnapshot::unpriced("test"),
                 preference_basis_points: 5_000,
                 failure_domains: vec!["station-a".into()],
             }],
@@ -292,6 +294,7 @@ mod tests {
                     reliability_basis_points: 5_000,
                     responsiveness_basis_points: 5_000,
                     cost_basis_points: None,
+                    pricing: RoutePlanPricingSnapshot::unpriced("test"),
                     preference_basis_points: 9_000,
                     failure_domains: vec![],
                 },
@@ -308,6 +311,7 @@ mod tests {
                     reliability_basis_points: 5_000,
                     responsiveness_basis_points: 5_000,
                     cost_basis_points: None,
+                    pricing: RoutePlanPricingSnapshot::unpriced("test"),
                     preference_basis_points: 1_000,
                     failure_domains: vec![],
                 },
@@ -352,6 +356,7 @@ mod tests {
                     reliability_basis_points: 9_000,
                     responsiveness_basis_points: 9_000,
                     cost_basis_points: Some(8_000),
+                    pricing: RoutePlanPricingSnapshot::unpriced("test"),
                     preference_basis_points: 5_000,
                     failure_domains: vec![],
                 },
@@ -368,6 +373,7 @@ mod tests {
                     reliability_basis_points: 9_000,
                     responsiveness_basis_points: 9_000,
                     cost_basis_points: None,
+                    pricing: RoutePlanPricingSnapshot::unpriced("test"),
                     preference_basis_points: 5_000,
                     failure_domains: vec![],
                 },

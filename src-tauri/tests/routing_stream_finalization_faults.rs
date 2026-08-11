@@ -1,7 +1,6 @@
 #![allow(dead_code, unfulfilled_lint_expectations)]
 
 use bytes::Bytes;
-use http::{HeaderMap, StatusCode};
 
 mod application {
     #[path = "../../src/application/request_lifecycle/mod.rs"]
@@ -33,9 +32,6 @@ use services::proxy::protocol::{
 #[test]
 fn incomplete_stream_eof_is_attempt_failure_and_not_request_success() {
     let mut protocol = ResponsesSseMachine::new();
-    protocol
-        .observe_headers(StatusCode::OK, &HeaderMap::new())
-        .expect("headers");
     assert_eq!(
         protocol
             .observe_chunk(&Bytes::from_static(

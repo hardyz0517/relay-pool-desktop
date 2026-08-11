@@ -22,11 +22,15 @@ use super::{
             FailureBlame, HealthEffect, RetryDisposition,
         },
         delivery::DeliveryTerminal,
-        request::PendingFinalRequestRecord,
+        request::{PendingFinalRequestRecord, RequestLogAnnotations},
         writer::{AttemptWriteReservation, RequestTerminalReservation},
     },
     limits::RequestLease,
-    observability::SseUsageObserver,
+    observability::{ObservedUsage, SseUsageObserver},
+    protocol::{
+        chat_sse::ChatSseMachine, responses_sse::ResponsesSseMachine, ProtocolFailure,
+        ProtocolMachine, ProtocolProgress, ProtocolTerminal,
+    },
     request::ByteStream,
 };
 
@@ -67,13 +71,18 @@ impl FinalizationTarget {
 
 pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
     body: Bytes,
-    record: PendingFinalRequestRecord,
+    mut record: PendingFinalRequestRecord,
     request_terminal: RequestTerminalReservation,
     selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
     costs: Option<CostFinalizationReservations>,
     request_lease: RequestLease,
 ) -> ByteStream {
-    dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+    if let Ok(value) = serde_json::from_slice(&body) {
+        if let Some(usage) = ObservedUsage::from_json(&value) {
+            apply_usage(record.annotations_mut(), &usage);
+        }
+    }
+    dual_terminal_finalizing_stream(
         Box::pin(futures_util::stream::once(async move { Ok(body) })),
         record,
         request_terminal,
@@ -81,6 +90,7 @@ pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
         costs,
         request_lease,
         DEFAULT_STREAM_IDLE_TIMEOUT,
+        false,
     )
 }
 
@@ -92,6 +102,29 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
     costs: Option<CostFinalizationReservations>,
     request_lease: RequestLease,
     idle_timeout: Duration,
+) -> ByteStream {
+    dual_terminal_finalizing_stream(
+        stream,
+        record,
+        request_terminal,
+        selected_attempt,
+        costs,
+        request_lease,
+        idle_timeout,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dual_terminal_finalizing_stream(
+    stream: ByteStream,
+    record: PendingFinalRequestRecord,
+    request_terminal: RequestTerminalReservation,
+    selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    costs: Option<CostFinalizationReservations>,
+    request_lease: RequestLease,
+    idle_timeout: Duration,
+    enforce_stream_protocol: bool,
 ) -> ByteStream {
     let request = DownstreamRequestFinalizationLease::new(request_terminal, request_lease);
     let selected_attempt = selected_attempt
@@ -107,6 +140,7 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
         None,
         idle_timeout,
         correlation::current(),
+        enforce_stream_protocol,
     )
 }
 
@@ -117,17 +151,23 @@ fn finalizing_stream_with_target(
     request_lease: Option<RequestLease>,
     idle_timeout: Duration,
     correlation_id: Option<correlation::CorrelationId>,
+    enforce_stream_protocol: bool,
 ) -> ByteStream {
     let now_ms = now_millis_for_services() as i64;
     let started_at_ms = match &state {
         FinalizationState::Lifecycle(record) => record.context().received_at_ms.min(now_ms),
     };
+    let protocol = enforce_stream_protocol
+        .then(|| protocol_machine(&state))
+        .flatten();
     Box::pin(LifecycleBody {
         stream,
         state: Some(state),
         target: Some(target),
         request_lease,
         observer: SseUsageObserver::default(),
+        protocol,
+        pending_terminal: None,
         idle_timeout,
         sleep: None,
         completed: false,
@@ -144,6 +184,8 @@ struct LifecycleBody {
     target: Option<FinalizationTarget>,
     request_lease: Option<RequestLease>,
     observer: SseUsageObserver,
+    protocol: Option<Box<dyn ProtocolMachine>>,
+    pending_terminal: Option<ProtocolTerminal>,
     idle_timeout: Duration,
     sleep: Option<Pin<Box<Sleep>>>,
     completed: bool,
@@ -172,14 +214,29 @@ impl LifecycleBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Bytes, ProxyFailure>>> {
+        if let Some(terminal) = self.pending_terminal.take() {
+            self.finalize_protocol_terminal(terminal, DeliveryTerminal::BodyCompleted);
+            return Poll::Ready(None);
+        }
         if self.sleep.is_none() {
             self.reset_idle_sleep();
         }
 
         match self.stream.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
-                self.observe_chunk(&bytes);
-                self.reset_idle_sleep();
+                let terminal = match self.observe_chunk(&bytes) {
+                    Ok(terminal) => terminal,
+                    Err(failure) => {
+                        self.finalize_failure(&failure, "body_protocol_error");
+                        return Poll::Ready(Some(Err(failure)));
+                    }
+                };
+                if let Some(terminal) = terminal {
+                    self.pending_terminal = Some(terminal);
+                    self.sleep = None;
+                } else {
+                    self.reset_idle_sleep();
+                }
                 Poll::Ready(Some(Ok(bytes)))
             }
             Poll::Ready(Some(Err(failure))) => {
@@ -187,10 +244,26 @@ impl LifecycleBody {
                 Poll::Ready(Some(Err(failure)))
             }
             Poll::Ready(None) => {
-                if self.responses_stream_ended_incomplete() {
-                    let failure = incomplete_responses_stream_failure();
-                    self.finalize_failure(&failure, "body_incomplete");
-                    return Poll::Ready(Some(Err(failure)));
+                if let Some(protocol) = self.protocol.as_mut() {
+                    match protocol.finish_eof() {
+                        Ok(ProtocolTerminal::Incomplete) => {
+                            let failure = incomplete_stream_failure();
+                            self.finalize_failure(&failure, "body_incomplete");
+                            return Poll::Ready(Some(Err(failure)));
+                        }
+                        Ok(terminal) => {
+                            self.finalize_protocol_terminal(
+                                terminal,
+                                DeliveryTerminal::BodyCompleted,
+                            );
+                            return Poll::Ready(None);
+                        }
+                        Err(protocol_failure) => {
+                            let failure = protocol_stream_failure(protocol_failure);
+                            self.finalize_failure(&failure, "body_protocol_error");
+                            return Poll::Ready(Some(Err(failure)));
+                        }
+                    }
                 }
                 self.completed = true;
                 self.finalize_once(
@@ -216,17 +289,6 @@ impl LifecycleBody {
         }
     }
 
-    fn responses_stream_ended_incomplete(&self) -> bool {
-        match self.state.as_ref() {
-            Some(FinalizationState::Lifecycle(record)) => {
-                record.annotations().stream
-                    && record.context().local_path == "/v1/responses"
-                    && !self.observer.response_completed()
-            }
-            None => false,
-        }
-    }
-
     fn finalize_once(
         &mut self,
         delivery: DeliveryTerminal,
@@ -242,44 +304,67 @@ impl LifecycleBody {
     }
 
     fn finalize_failure(&mut self, failure: &ProxyFailure, completion_source: &str) {
-        match self.state.as_mut() {
-            Some(FinalizationState::Lifecycle(record)) => {
-                record.annotations_mut().failure_source =
-                    Some(failure_source_label(failure.source).to_string());
-                record.annotations_mut().completion_source = Some(completion_source.to_string());
-            }
-            None => {}
-        }
-        self.completed = true;
-        let attempt_terminal = if failure.source == FailureSource::Upstream {
-            Some(AttemptTerminal::Failed(ClassifiedAttemptFailure {
-                kind: AttemptFailureKind::StreamInterrupted,
-                blame: FailureBlame::Upstream,
-                retry: RetryDisposition::StopRequest,
-                health: HealthEffect::ObserveFailure,
-                public_code: failure.code.as_str().to_string(),
-                sanitized_detail: Some(failure.public_message.clone()),
-            }))
-        } else {
-            None
-        };
-        self.finalize_once(
+        self.finalize_failure_with_delivery(
+            failure,
+            completion_source,
             DeliveryTerminal::BodyCompleted,
-            FinalizationOutcome::Failed {
-                code: failure.code.as_str().to_string(),
-                detail: Some(failure.public_message.clone()),
-            },
-            attempt_terminal,
         );
     }
 
-    fn observe_chunk(&mut self, bytes: &Bytes) {
+    fn observe_chunk(&mut self, bytes: &Bytes) -> Result<Option<ProtocolTerminal>, ProxyFailure> {
         self.body_bytes += bytes.len() as i64;
         if self.first_token_ms.is_none() && !bytes.is_empty() {
             self.first_token_ms =
                 Some((now_millis_for_services() as i64 - self.started_at_ms).max(0));
         }
         self.observer.push(bytes);
+        let Some(protocol) = self.protocol.as_mut() else {
+            return Ok(None);
+        };
+        match protocol
+            .observe_chunk(bytes)
+            .map_err(protocol_stream_failure)?
+        {
+            ProtocolProgress::Observed => Ok(None),
+            ProtocolProgress::Terminal(terminal) => Ok(Some(terminal)),
+        }
+    }
+
+    fn finalize_protocol_terminal(
+        &mut self,
+        terminal: ProtocolTerminal,
+        delivery: DeliveryTerminal,
+    ) {
+        self.completed = true;
+        match terminal {
+            ProtocolTerminal::Completed => {
+                if let Some(FinalizationState::Lifecycle(record)) = self.state.as_mut() {
+                    record.annotations_mut().completion_source =
+                        Some("stream_complete".to_string());
+                }
+                self.finalize_once(
+                    delivery,
+                    FinalizationOutcome::Completed,
+                    Some(AttemptTerminal::Succeeded),
+                );
+            }
+            ProtocolTerminal::Failed | ProtocolTerminal::Incomplete => {
+                let (completion_source, failure) = match terminal {
+                    ProtocolTerminal::Failed => (
+                        "protocol_failed",
+                        explicit_terminal_failure("upstream stream reported a failed terminal"),
+                    ),
+                    ProtocolTerminal::Incomplete => (
+                        "protocol_incomplete",
+                        explicit_terminal_failure(
+                            "upstream stream reported an incomplete terminal",
+                        ),
+                    ),
+                    ProtocolTerminal::Completed => unreachable!(),
+                };
+                self.finalize_failure_with_delivery(&failure, completion_source, delivery);
+            }
+        }
     }
 
     fn apply_observations(&mut self) {
@@ -293,15 +378,7 @@ impl LifecycleBody {
                     annotations.first_token_ms = self.first_token_ms;
                 }
                 if let Some(usage) = self.observer.usage() {
-                    annotations.prompt_tokens = usage.input_tokens.or(annotations.prompt_tokens);
-                    annotations.completion_tokens =
-                        usage.output_tokens.or(annotations.completion_tokens);
-                    annotations.total_tokens = usage.total_tokens.or(annotations.total_tokens);
-                    annotations.cache_creation_tokens = usage
-                        .cache_creation_tokens
-                        .or(annotations.cache_creation_tokens);
-                    annotations.cache_read_tokens =
-                        usage.cache_read_tokens.or(annotations.cache_read_tokens);
+                    apply_usage(annotations, usage);
                 }
             }
             None => {}
@@ -337,6 +414,63 @@ impl LifecycleBody {
             })),
         );
     }
+
+    fn finalize_failure_with_delivery(
+        &mut self,
+        failure: &ProxyFailure,
+        completion_source: &str,
+        delivery: DeliveryTerminal,
+    ) {
+        match self.state.as_mut() {
+            Some(FinalizationState::Lifecycle(record)) => {
+                record.annotations_mut().failure_source =
+                    Some(failure_source_label(failure.source).to_string());
+                record.annotations_mut().completion_source = Some(completion_source.to_string());
+            }
+            None => {}
+        }
+        self.completed = true;
+        let attempt_terminal = (failure.source == FailureSource::Upstream).then(|| {
+            AttemptTerminal::Failed(ClassifiedAttemptFailure {
+                kind: AttemptFailureKind::StreamInterrupted,
+                blame: FailureBlame::Upstream,
+                retry: RetryDisposition::StopRequest,
+                health: HealthEffect::ObserveFailure,
+                public_code: failure.code.as_str().to_string(),
+                sanitized_detail: Some(failure.public_message.clone()),
+            })
+        });
+        self.finalize_once(
+            delivery,
+            FinalizationOutcome::Failed {
+                code: failure.code.as_str().to_string(),
+                detail: Some(failure.public_message.clone()),
+            },
+            attempt_terminal,
+        );
+    }
+}
+
+fn protocol_machine(state: &FinalizationState) -> Option<Box<dyn ProtocolMachine>> {
+    let FinalizationState::Lifecycle(record) = state;
+    if !record.annotations().stream {
+        return None;
+    }
+    match record.context().local_path.as_str() {
+        "/v1/responses" => Some(Box::new(ResponsesSseMachine::new())),
+        "/v1/chat/completions" => Some(Box::new(ChatSseMachine::new())),
+        _ => None,
+    }
+}
+
+fn apply_usage(annotations: &mut RequestLogAnnotations, usage: &ObservedUsage) {
+    annotations.prompt_tokens = usage.input_tokens.or(annotations.prompt_tokens);
+    annotations.completion_tokens = usage.output_tokens.or(annotations.completion_tokens);
+    annotations.total_tokens = usage.total_tokens.or(annotations.total_tokens);
+    annotations.cache_creation_tokens = usage
+        .cache_creation_tokens
+        .or(annotations.cache_creation_tokens);
+    annotations.cache_read_tokens = usage.cache_read_tokens.or(annotations.cache_read_tokens);
 }
 
 fn stream_idle_timeout_failure(timeout: Duration) -> ProxyFailure {
@@ -349,20 +483,49 @@ fn stream_idle_timeout_failure(timeout: Duration) -> ProxyFailure {
     )
 }
 
-fn incomplete_responses_stream_failure() -> ProxyFailure {
+fn incomplete_stream_failure() -> ProxyFailure {
     ProxyFailure::new(
         ProxyFailureCode::UpstreamStreamFailed,
         FailureSource::Upstream,
         RetryClass::AfterCommitStop,
         http::StatusCode::BAD_GATEWAY,
-        "upstream responses stream ended before response.completed",
+        "upstream stream ended before its protocol terminal",
     )
+}
+
+fn explicit_terminal_failure(message: &'static str) -> ProxyFailure {
+    ProxyFailure::new(
+        ProxyFailureCode::UpstreamStreamFailed,
+        FailureSource::Upstream,
+        RetryClass::AfterCommitStop,
+        http::StatusCode::BAD_GATEWAY,
+        message,
+    )
+}
+
+fn protocol_stream_failure(protocol_failure: ProtocolFailure) -> ProxyFailure {
+    let mut failure = ProxyFailure::new(
+        ProxyFailureCode::UpstreamStreamFailed,
+        FailureSource::Upstream,
+        RetryClass::AfterCommitStop,
+        http::StatusCode::BAD_GATEWAY,
+        "upstream stream violated the expected protocol",
+    );
+    failure.internal_detail = Some(format!(
+        "{}: {}",
+        protocol_failure.code, protocol_failure.detail
+    ));
+    failure
 }
 
 impl Drop for LifecycleBody {
     fn drop(&mut self) {
         if !self.completed {
-            self.finalize_downstream_drop();
+            if let Some(terminal) = self.pending_terminal.take() {
+                self.finalize_protocol_terminal(terminal, DeliveryTerminal::DownstreamDropped);
+            } else {
+                self.finalize_downstream_drop();
+            }
         }
     }
 }
@@ -394,7 +557,7 @@ pub(crate) fn downstream_disconnected_failure() -> ProxyFailure {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc, Mutex,
     };
 
@@ -482,6 +645,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn buffered_json_usage_is_preserved_in_request_terminal() {
+        let fixture =
+            LifecycleBodyFixture::new("response-body-buffered-usage", "/v1/chat/completions").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(
+                br#"{"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}"#,
+            ),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+        );
+
+        assert!(body.next().await.is_some());
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("request terminal");
+        assert_eq!(record.annotations.prompt_tokens, Some(2));
+        assert_eq!(record.annotations.completion_tokens, Some(3));
+        assert_eq!(record.annotations.total_tokens, Some(5));
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn request_terminal_is_committed_when_attempt_persistence_fails() {
+        let fixture = LifecycleBodyFixture::new_with_selected_attempt(
+            "response-body-attempt-failure",
+            "/v1/chat/completions",
+        )
+        .await;
+        fixture.store.fail_attempts();
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+
+        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
+            Bytes::from_static(b"{}"),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+        );
+        assert!(body.next().await.is_some());
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+        assert!(matches!(
+            store
+                .last_request()
+                .expect("request terminal")
+                .terminal
+                .terminal,
+            RequestTerminal::Completed(_)
+        ));
+        assert_eq!(store.attempt_calls(), 0);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
     async fn correlated_response_body_polls_inner_stream_under_request_scope() {
         let fixture =
             LifecycleBodyFixture::new("response-body-correlated", "/v1/chat/completions").await;
@@ -500,12 +745,14 @@ mod tests {
         );
         let observed = Arc::new(Mutex::new(None));
         let observed_in_stream = Arc::clone(&observed);
+        let terminal = Bytes::from_static(b"data: [DONE]\n\n");
+        let terminal_in_stream = terminal.clone();
         let inner = stream::once(async move {
             *observed_in_stream
                 .lock()
                 .expect("observed correlation lock") =
                 crate::observability::correlation::current_id_string();
-            Ok(Bytes::from_static(b"ok"))
+            Ok(terminal_in_stream)
         });
         let mut body = crate::observability::correlation::with_scope(
             "proxy.request.body",
@@ -523,10 +770,7 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            body.next().await.unwrap().unwrap(),
-            Bytes::from_static(b"ok")
-        );
+        assert_eq!(body.next().await.unwrap().unwrap(), terminal);
         assert_eq!(
             observed
                 .lock()
@@ -799,6 +1043,282 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn responses_terminal_closes_without_polling_a_later_transport_error() {
+        let fixture =
+            LifecycleBodyFixture::new("response-body-terminal-before-error", "/v1/responses").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let completed = Bytes::from_static(
+            br#"data: {"type":"response.completed","response":{"id":"resp_done"}}
+
+"#,
+        );
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(stream::iter(vec![
+                Ok(completed.clone()),
+                Err(stream_failure()),
+            ])),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), completed);
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("request terminal");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Completed(_)
+        ));
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("stream_complete")
+        );
+        assert_eq!(record.annotations.failure_source, None);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn responses_terminal_closes_even_when_upstream_stays_open() {
+        let fixture =
+            LifecycleBodyFixture::new("response-body-terminal-before-pending", "/v1/responses")
+                .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let completed = Bytes::from_static(
+            br#"data: {"type":"response.completed","response":{"id":"resp_done"}}
+
+"#,
+        );
+        let upstream = stream::once({
+            let completed = completed.clone();
+            async move { Ok(completed) }
+        })
+        .chain(stream::pending());
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(upstream),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_millis(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), completed);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), body.next())
+                .await
+                .expect("terminal must close without waiting for upstream")
+                .is_none()
+        );
+        store.wait_for_calls(1).await;
+        assert!(matches!(
+            store
+                .last_request()
+                .expect("request terminal")
+                .terminal
+                .terminal,
+            RequestTerminal::Completed(_)
+        ));
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn responses_failed_terminal_is_forwarded_then_closes_cleanly() {
+        let fixture =
+            LifecycleBodyFixture::new("response-body-explicit-failure", "/v1/responses").await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let failed = Bytes::from_static(
+            br#"data: {"type":"response.failed","response":{"id":"resp_failed"}}
+
+"#,
+        );
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(stream::iter(vec![
+                Ok(failed.clone()),
+                Err(stream_failure()),
+            ])),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), failed);
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("request terminal");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Failed(_)
+        ));
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("protocol_failed")
+        );
+        assert_eq!(
+            record.annotations.failure_source.as_deref(),
+            Some("upstream")
+        );
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn chat_done_closes_without_polling_a_later_transport_error() {
+        let fixture = LifecycleBodyFixture::new(
+            "response-body-chat-terminal-before-error",
+            "/v1/chat/completions",
+        )
+        .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let done = Bytes::from_static(
+            br#"data: {"choices":[{"delta":{"content":"done"}}]}
+
+data: [DONE]
+
+"#,
+        );
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(stream::iter(vec![Ok(done.clone()), Err(stream_failure())])),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), done);
+        assert!(body.next().await.is_none());
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("request terminal");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Completed(_)
+        ));
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("stream_complete")
+        );
+        assert_eq!(record.annotations.failure_source, None);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn chat_eof_without_done_finalizes_failure() {
+        let fixture = LifecycleBodyFixture::new(
+            "response-body-incomplete-chat-stream",
+            "/v1/chat/completions",
+        )
+        .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            ..
+        } = fixture;
+        let event = Bytes::from_static(
+            br#"data: {"choices":[{"delta":{"content":"partial"}}]}
+
+"#,
+        );
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(stream::once({
+                let event = event.clone();
+                async move { Ok(event) }
+            })),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), event);
+        let failure = body
+            .next()
+            .await
+            .expect("incomplete stream failure")
+            .expect_err("chat stream without [DONE] must fail");
+        assert_eq!(failure.code, ProxyFailureCode::UpstreamStreamFailed);
+        store.wait_for_calls(1).await;
+
+        let record = store.last_request().expect("request terminal");
+        assert!(matches!(
+            record.terminal.terminal,
+            RequestTerminal::Failed(_)
+        ));
+        assert_eq!(
+            record.annotations.completion_source.as_deref(),
+            Some("body_incomplete")
+        );
+        assert_eq!(
+            record.annotations.failure_source.as_deref(),
+            Some("upstream")
+        );
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
     async fn response_body_stream_eof_records_sse_usage() {
         let fixture =
             LifecycleBodyFixture::new("response-body-sse-usage", "/v1/chat/completions").await;
@@ -858,17 +1378,20 @@ mod tests {
             ..
         } = fixture;
         record.annotations_mut().stream = true;
-        let mut body = dual_terminal_buffered_lifecycle_finalizing_stream(
-            Bytes::from_static(
-                br#"data: {"type":"response.created","response":{"id":"resp_incomplete"}}
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(stream::once(async {
+                Ok(Bytes::from_static(
+                    br#"data: {"type":"response.created","response":{"id":"resp_incomplete"}}
 
 "#,
-            ),
+                ))
+            })),
             record,
             request_terminal,
             selected_attempt,
             None,
             request_lease,
+            std::time::Duration::from_secs(1),
         );
 
         assert!(body.next().await.unwrap().is_ok());
@@ -1046,6 +1569,7 @@ mod tests {
         start_records: Arc<Mutex<Vec<RequestStartRecord>>>,
         attempt_records: Arc<Mutex<Vec<AttemptTerminalRecord>>>,
         request_records: Arc<Mutex<Vec<FinalRequestRecord>>>,
+        fail_attempt: Arc<AtomicBool>,
     }
 
     struct AckGatedStore {
@@ -1184,7 +1708,12 @@ mod tests {
                 start_records: Arc::new(Mutex::new(Vec::new())),
                 attempt_records: Arc::new(Mutex::new(Vec::new())),
                 request_records: Arc::new(Mutex::new(Vec::new())),
+                fail_attempt: Arc::new(AtomicBool::new(false)),
             }
+        }
+
+        fn fail_attempts(&self) {
+            self.fail_attempt.store(true, Ordering::Relaxed);
         }
 
         fn calls(&self) -> usize {
@@ -1239,7 +1768,13 @@ mod tests {
             record: AttemptTerminalRecord,
         ) -> BoxFuture<'static, Result<AttemptCommitAck, LifecycleWriteError>> {
             let records = Arc::clone(&self.attempt_records);
+            let fail_attempt = Arc::clone(&self.fail_attempt);
             Box::pin(async move {
+                if fail_attempt.load(Ordering::Relaxed) {
+                    return Err(LifecycleWriteError::Unavailable(
+                        "injected attempt failure".to_string(),
+                    ));
+                }
                 records.lock().expect("attempt lock").push(record);
                 Ok(AttemptCommitAck {
                     inserted: true,

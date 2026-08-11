@@ -108,9 +108,20 @@ impl RequestLifecycleStore for RequestFinalizationService {
         &self,
         record: RequestStartRecord,
     ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
+        self.start_request_with_annotations(
+            record,
+            crate::application::request_lifecycle::request::RequestLogAnnotations::default(),
+        )
+    }
+
+    fn start_request_with_annotations(
+        &self,
+        record: RequestStartRecord,
+        annotations: crate::application::request_lifecycle::request::RequestLogAnnotations,
+    ) -> BoxFuture<'static, Result<RequestStartAck, LifecycleWriteError>> {
         let runtime = self.runtime.clone();
         let created_at_ms = self.clock.now_utc().timestamp_millis();
-        let write = map_request_start(record);
+        let write = map_request_start(record, annotations);
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
             let outcome: RequestStartPersistenceResult = RequestLogStore
@@ -293,13 +304,19 @@ fn routing_observation(
     })
 }
 
-fn map_request_start(record: RequestStartRecord) -> RequestStartWrite {
+fn map_request_start(
+    record: RequestStartRecord,
+    annotations: crate::application::request_lifecycle::request::RequestLogAnnotations,
+) -> RequestStartWrite {
     RequestStartWrite {
         request_id: record.context.request_id,
         method: record.context.method,
         local_path: record.context.local_path,
         endpoint: record.context.endpoint,
         received_at_ms: record.context.received_at_ms,
+        model: annotations.model,
+        stream: annotations.stream,
+        reasoning_effort: annotations.reasoning_effort,
     }
 }
 
@@ -447,6 +464,7 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
         annotations: RequestLogAnnotationsWrite {
             model: annotations.model,
             stream: annotations.stream,
+            http_status: annotations.http_status.map(i64::from),
             selected_station_key_id: annotations.selected_station_key_id,
             selected_station_id: annotations.selected_station_id,
             upstream_base_url: None,
@@ -466,6 +484,7 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
             cache_read_tokens: annotations.cache_read_tokens,
             reasoning_effort: annotations.reasoning_effort,
             first_token_ms: annotations.first_token_ms,
+            billing_mode: annotations.billing_mode,
         },
     }
 }
@@ -521,6 +540,7 @@ fn map_request_cost_aggregate(
 
 fn map_persistence_error(error: PersistenceError) -> LifecycleWriteError {
     match error {
+        PersistenceError::DatabaseBusy => LifecycleWriteError::DatabaseBusy,
         PersistenceError::CommitOutcomeUnknown => LifecycleWriteError::CommitOutcomeUnknown(
             "request lifecycle commit outcome is unknown".to_string(),
         ),
@@ -554,16 +574,28 @@ mod tests {
     }
 
     #[test]
-    fn request_start_mapping_preserves_the_canonical_context() {
-        let write = map_request_start(RequestStartRecord {
-            context: context("req-start"),
-        });
+    fn request_start_mapping_preserves_context_and_early_annotations() {
+        let annotations = RequestLogAnnotations {
+            model: Some("gpt-test".to_string()),
+            stream: true,
+            reasoning_effort: Some("high".to_string()),
+            ..RequestLogAnnotations::default()
+        };
+        let write = map_request_start(
+            RequestStartRecord {
+                context: context("req-start"),
+            },
+            annotations,
+        );
 
         assert_eq!(write.request_id, "req-start");
         assert_eq!(write.method, "POST");
         assert_eq!(write.local_path, "/v1/responses");
         assert_eq!(write.endpoint, "responses");
         assert_eq!(write.received_at_ms, 1_000);
+        assert_eq!(write.model.as_deref(), Some("gpt-test"));
+        assert!(write.stream);
+        assert_eq!(write.reasoning_effort.as_deref(), Some("high"));
     }
 
     #[test]
@@ -621,6 +653,7 @@ mod tests {
         let annotations = RequestLogAnnotations {
             model: Some("gpt-test".to_string()),
             stream: true,
+            http_status: Some(200),
             selected_station_key_id: Some("key-1".to_string()),
             selected_station_id: Some("station-1".to_string()),
             upstream_base_url: Some("https://station.test/v1".to_string()),
@@ -640,6 +673,7 @@ mod tests {
             cache_read_tokens: Some(5),
             reasoning_effort: Some("high".to_string()),
             first_token_ms: Some(17),
+            billing_mode: Some("token".to_string()),
         };
         let write = map_request_terminal(
             FinalRequestRecord::new(
@@ -680,12 +714,14 @@ mod tests {
         assert_eq!(write.terminal_at_ms, 1_250);
         assert_eq!(write.annotations.model.as_deref(), Some("gpt-test"));
         assert!(write.annotations.stream);
+        assert_eq!(write.annotations.http_status, Some(200));
         assert_eq!(
             write.annotations.selected_station_key_id.as_deref(),
             Some("key-1")
         );
         assert_eq!(write.annotations.total_tokens, Some(24));
         assert_eq!(write.annotations.first_token_ms, Some(17));
+        assert_eq!(write.annotations.billing_mode.as_deref(), Some("token"));
         assert_eq!(write.annotations.upstream_base_url, None);
     }
 
