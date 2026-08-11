@@ -221,6 +221,20 @@ impl Incident {
                                 since.saturating_add(duration.saturating_mul(1000) as i64)
                             });
                     }
+                    if recovery_satisfied(
+                        recovery_mode,
+                        self.consecutive_healthy_count,
+                        self.healthy_since_ms,
+                        observation.observed_at_ms,
+                        recovery_count,
+                        recovery_duration_seconds,
+                    ) {
+                        self.lifecycle_state = LifecycleState::Resolved;
+                        self.resolved_at_ms = Some(observation.observed_at_ms);
+                        self.recovering_at_ms = None;
+                        self.next_state_evaluation_at_ms = None;
+                        return StateTransition::Resolved;
+                    }
                     return StateTransition::Recovering;
                 }
                 if self.lifecycle_state == LifecycleState::Recovering
@@ -430,6 +444,43 @@ mod tests {
             StateTransition::Opened
         );
         assert_eq!(incident.episode_number, 2);
+    }
+
+    #[test]
+    fn one_healthy_observation_resolves_when_recovery_count_is_one() {
+        let mut incident = Incident::new(
+            "incident-1",
+            ConditionKey::new("station:1").unwrap(),
+            AlertEventType::StationDown,
+            Severity::Critical,
+            0,
+            "p1",
+        );
+        assert_eq!(
+            incident.apply_observation(
+                &observation(ObservationKind::Abnormal, 1),
+                TriggerMode::Immediate,
+                None,
+                None,
+                RecoveryMode::ConsecutiveHealthy,
+                Some(1),
+                None,
+            ),
+            StateTransition::Opened
+        );
+        assert_eq!(
+            incident.apply_observation(
+                &observation(ObservationKind::Healthy, 2),
+                TriggerMode::Immediate,
+                None,
+                None,
+                RecoveryMode::ConsecutiveHealthy,
+                Some(1),
+                None,
+            ),
+            StateTransition::Resolved
+        );
+        assert_eq!(incident.lifecycle_state, LifecycleState::Resolved);
     }
 
     #[test]

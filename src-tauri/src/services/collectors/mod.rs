@@ -932,6 +932,14 @@ pub(crate) async fn apply_prepared_station_task_v2(
         .await
 }
 
+pub(crate) fn should_refresh_remote_keys_after_collection(
+    task: CollectorTask,
+    status: &str,
+) -> bool {
+    matches!(task, CollectorTask::Groups | CollectorTask::Full)
+        && matches!(status, "success" | "partial")
+}
+
 #[derive(Debug)]
 pub(crate) struct PreparedStationCollection {
     station_id: String,

@@ -10,7 +10,8 @@ use crate::{
         group_facts::{GroupRateRecord, StationGroupBinding},
     },
     persistence::{
-        error::PersistenceError, read_session::ReadSession, write_session::WriteSession,
+        error::PersistenceError, read_session::ReadSession,
+        stores::domain_revision_store::DomainRevisionStore, write_session::WriteSession,
     },
 };
 
@@ -807,6 +808,116 @@ impl CollectorStore {
         Ok(GroupTransition { previous, current })
     }
 
+    pub(crate) async fn refresh_station_key_group_projections(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        group_binding_ids: &HashSet<String>,
+        now: &str,
+    ) -> Result<Vec<String>, PersistenceError> {
+        if group_binding_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let now_ms = now.parse::<i64>().map_err(|_| {
+            PersistenceError::InvariantViolation(
+                "station key group projection timestamp is not numeric".to_string(),
+            )
+        })?;
+        let rows = sqlx::query(
+            r#"
+            SELECT keys.id,
+                   keys.group_name AS current_group_name,
+                   keys.rate_multiplier AS current_rate_multiplier,
+                   keys.rate_source AS current_rate_source,
+                   keys.rate_collected_at AS current_rate_collected_at,
+                   bindings.id AS group_binding_id,
+                   bindings.group_name AS projected_group_name,
+                   bindings.binding_status,
+                   bindings.default_rate_multiplier,
+                   bindings.user_rate_multiplier,
+                   bindings.effective_rate_multiplier,
+                   bindings.rate_source AS projected_rate_source
+            FROM station_keys keys
+            JOIN station_group_bindings bindings ON bindings.id = keys.group_binding_id
+            WHERE keys.station_id = ?1
+              AND bindings.station_id = ?1
+              AND bindings.binding_kind = 'station_group'
+            "#,
+        )
+        .bind(station_id)
+        .fetch_all(session.connection())
+        .await?;
+
+        let revisions = DomainRevisionStore;
+        let mut updated_ids = Vec::new();
+        for row in rows {
+            let group_binding_id = row.get::<String, _>("group_binding_id");
+            if !group_binding_ids.contains(&group_binding_id) {
+                continue;
+            }
+            let binding_status = row.get::<String, _>("binding_status");
+            let available = matches!(binding_status.as_str(), "available" | "bound");
+            let projected_rate_multiplier = available
+                .then(|| {
+                    row.get::<Option<f64>, _>("user_rate_multiplier")
+                        .or(row.get::<Option<f64>, _>("effective_rate_multiplier"))
+                        .or(row.get::<Option<f64>, _>("default_rate_multiplier"))
+                })
+                .flatten();
+            let projected_rate_source = row.get::<Option<String>, _>("projected_rate_source");
+            let projected_group_name = row.get::<String, _>("projected_group_name");
+            let current_group_name = row.get::<Option<String>, _>("current_group_name");
+            let current_rate_multiplier = row.get::<Option<f64>, _>("current_rate_multiplier");
+            let current_rate_source = row.get::<Option<String>, _>("current_rate_source");
+            let current_rate_collected_at =
+                row.get::<Option<String>, _>("current_rate_collected_at");
+            if current_group_name.as_deref() == Some(projected_group_name.as_str())
+                && current_rate_multiplier == projected_rate_multiplier
+                && current_rate_source == projected_rate_source
+                && current_rate_collected_at.as_deref() == Some(now)
+            {
+                continue;
+            }
+
+            let station_key_id = row.get::<String, _>("id");
+            sqlx::query(
+                r#"
+                UPDATE station_keys
+                SET group_name = ?1,
+                    rate_multiplier = ?2,
+                    rate_source = ?3,
+                    rate_collected_at = ?4,
+                    updated_at = ?4
+                WHERE id = ?5 AND station_id = ?6 AND group_binding_id = ?7
+                "#,
+            )
+            .bind(&projected_group_name)
+            .bind(projected_rate_multiplier)
+            .bind(&projected_rate_source)
+            .bind(now)
+            .bind(&station_key_id)
+            .bind(station_id)
+            .bind(&group_binding_id)
+            .execute(session.connection())
+            .await?;
+
+            let revision_scope = format!("station_key:{station_key_id}");
+            let revision = revisions
+                .load(session.connection(), &revision_scope)
+                .await?;
+            revisions
+                .advance(
+                    session.connection(),
+                    &revision_scope,
+                    revision.revision,
+                    now_ms,
+                )
+                .await?;
+            updated_ids.push(station_key_id);
+        }
+        Ok(updated_ids)
+    }
+
     pub(crate) async fn mark_missing_groups(
         &self,
         session: &mut WriteSession,
@@ -952,6 +1063,24 @@ impl CollectorStore {
         .execute(session.connection())
         .await?;
         Ok(())
+    }
+
+    pub(crate) async fn failed_task_types(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+    ) -> Result<Vec<String>, PersistenceError> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT task_type
+             FROM collector_task_state
+             WHERE station_id = ?1
+               AND last_status = 'failed'
+               AND task_type IN ('balance', 'groups', 'detect', 'full')",
+        )
+        .bind(station_id)
+        .fetch_all(session.connection())
+        .await?;
+        Ok(rows)
     }
 
     pub(crate) async fn finish_run(

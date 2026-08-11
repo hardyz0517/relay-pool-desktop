@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, EmptyState, InspectorPanel, ObjectRow, SectionCard, SelectControl, StatusBadge, useToast } from "@/components/ui";
+import { remoteKeyRefreshFailure } from "@/lib/collectorEvents";
 import { readError } from "@/lib/errors";
 import {
   collectStationTask,
@@ -167,9 +168,12 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
     }
     await queryClient.invalidateQueries({ queryKey: queryKeys.stationAsset(stationId) });
     await queryClient.invalidateQueries({ queryKey: queryKeys.collectorSnapshots(stationId) });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.keyPool });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.pricing });
     if (options.includeRuns) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.collectorRuns(stationId) });
     }
+    await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
     if (options.includeCapture) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.captureSessionStatus(stationId) });
     }
@@ -184,7 +188,12 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
       cacheCollectorSnapshot(result.snapshot);
       await invalidateCollectorStationQueries(selectedStation.id, { includeStations: true, includeRuns: true });
       setTaskStatus("success");
-      toast.success("采集任务已完成");
+      const refreshFailure = remoteKeyRefreshFailure(result);
+      if (refreshFailure) {
+        toast.error("采集已完成，但远端密钥刷新失败", refreshFailure.message);
+      } else {
+        toast.success("采集任务已完成");
+      }
     } catch (requestError) {
       setTaskStatus("failed");
       toast.error("采集任务失败", shortError(readError(requestError)));

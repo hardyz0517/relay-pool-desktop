@@ -6,6 +6,8 @@ pub(crate) mod policy;
 pub(crate) mod upgrade_progress;
 pub(crate) mod workspace;
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use sqlx::Row;
 
 use crate::{
@@ -212,6 +214,13 @@ pub(crate) struct IncidentSnapshot {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct IncidentStore;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LegacyCollectorFailureGroup {
+    pub station_id: String,
+    pub failed_task_types: Vec<String>,
+    pub last_seen_at_ms: i64,
+}
 
 impl IncidentStore {
     pub(crate) async fn resolve_for_deleted_station(
@@ -452,6 +461,117 @@ impl IncidentStore {
             .await?
             .rows_affected();
             resolved += affected;
+        }
+
+        Ok(resolved)
+    }
+
+    pub(crate) async fn legacy_collector_failure_groups(
+        &self,
+        session: &mut WriteSession,
+    ) -> Result<Vec<LegacyCollectorFailureGroup>, PersistenceError> {
+        let rows = sqlx::query(
+            "SELECT station_id, condition_key, last_seen_at_ms
+             FROM change_incidents
+             WHERE event_type = 'collector_failed'
+               AND lifecycle_state IN ('pending', 'open', 'recovering')
+               AND condition_key LIKE 'collector:%:collector_failed:%'",
+        )
+        .fetch_all(session.connection())
+        .await?;
+
+        let mut groups = BTreeMap::<String, (BTreeSet<String>, i64)>::new();
+        for row in rows {
+            let condition_key = row.try_get::<String, _>("condition_key")?;
+            let Some(station_id) = row
+                .try_get::<Option<String>, _>("station_id")?
+                .or_else(|| station_id_from_condition_key(&condition_key))
+            else {
+                continue;
+            };
+            let Some(task_type) = legacy_collector_task_type(&condition_key) else {
+                continue;
+            };
+            let last_seen_at_ms = row.try_get::<i64, _>("last_seen_at_ms")?;
+            let entry = groups.entry(station_id).or_default();
+            entry.0.insert(task_type.to_string());
+            entry.1 = entry.1.max(last_seen_at_ms);
+        }
+
+        Ok(groups
+            .into_iter()
+            .map(|(station_id, (mut failed_task_types, last_seen_at_ms))| {
+                if failed_task_types.len() > 1 {
+                    failed_task_types.remove("full");
+                }
+                LegacyCollectorFailureGroup {
+                    station_id,
+                    failed_task_types: ["balance", "groups", "detect", "full"]
+                        .into_iter()
+                        .filter(|task_type| failed_task_types.contains(*task_type))
+                        .map(str::to_string)
+                        .collect(),
+                    last_seen_at_ms,
+                }
+            })
+            .collect())
+    }
+
+    pub(crate) async fn resolve_legacy_collector_child_incidents(
+        &self,
+        session: &mut WriteSession,
+        station_id: &str,
+        now_ms: i64,
+    ) -> Result<u64, PersistenceError> {
+        if station_id.trim().is_empty() || now_ms < 0 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+
+        let rows = sqlx::query(
+            "SELECT id, episode_number
+             FROM change_incidents
+             WHERE event_type = 'collector_failed'
+               AND lifecycle_state IN ('pending', 'open', 'recovering')
+               AND condition_key LIKE 'collector:' || ?1 || ':collector_failed:%'",
+        )
+        .bind(station_id)
+        .fetch_all(session.connection())
+        .await?;
+
+        let mut resolved = 0;
+        for row in rows {
+            let incident_id: String = row.try_get("id")?;
+            let episode_number: i64 = row.try_get("episode_number")?;
+            sqlx::query(
+                "UPDATE notification_deliveries
+                 SET status = 'suppressed', suppressed_reason = 'stale_episode',
+                     claim_token = NULL, lease_expires_at_ms = NULL,
+                     retry_not_before_ms = NULL, updated_at_ms = ?3
+                 WHERE incident_id = ?1 AND episode_number = ?2
+                   AND status IN ('scheduled', 'claimed', 'outcome_unknown')",
+            )
+            .bind(&incident_id)
+            .bind(episode_number)
+            .bind(now_ms)
+            .execute(session.connection())
+            .await?;
+            resolved += sqlx::query(
+                "UPDATE change_incidents
+                 SET lifecycle_state = 'resolved', resolved_at_ms = ?3,
+                     recovering_at_ms = NULL, consecutive_abnormal_count = 0,
+                     consecutive_healthy_count = 0, pending_since_ms = NULL,
+                     healthy_since_ms = NULL, next_state_evaluation_at_ms = NULL,
+                     next_notification_at_ms = NULL, version = version + 1,
+                     updated_at_ms = ?3
+                 WHERE id = ?1 AND episode_number = ?2
+                   AND lifecycle_state IN ('pending', 'open', 'recovering')",
+            )
+            .bind(&incident_id)
+            .bind(episode_number)
+            .bind(now_ms)
+            .execute(session.connection())
+            .await?
+            .rows_affected();
         }
 
         Ok(resolved)
@@ -715,6 +835,41 @@ fn station_key_id_from_condition_key(condition_key: &str) -> Option<String> {
         .find_map(|prefix| condition_key.strip_prefix(prefix))?;
     let station_key_id = rest.split(':').next()?.trim();
     (!station_key_id.is_empty()).then(|| station_key_id.to_string())
+}
+
+fn legacy_collector_task_type(condition_key: &str) -> Option<&str> {
+    let (_, task_type) = condition_key.rsplit_once(":collector_failed:")?;
+    matches!(task_type, "balance" | "groups" | "detect" | "full").then_some(task_type)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        legacy_collector_task_type, station_id_from_condition_key,
+        station_key_id_from_condition_key,
+    };
+
+    #[test]
+    fn condition_key_parsers_extract_scoped_ids() {
+        assert_eq!(
+            station_id_from_condition_key("collector:station-1:collector_failed:balance"),
+            Some("station-1".to_string())
+        );
+        assert_eq!(
+            station_key_id_from_condition_key("station_key:key-1:auth_failed"),
+            Some("key-1".to_string())
+        );
+        assert_eq!(station_id_from_condition_key("collector:"), None);
+        assert_eq!(station_key_id_from_condition_key("unknown:key-1"), None);
+        assert_eq!(
+            legacy_collector_task_type("collector:station-1:collector_failed:groups"),
+            Some("groups")
+        );
+        assert_eq!(
+            legacy_collector_task_type("collector:station-1:collector_failed"),
+            None
+        );
+    }
 }
 
 fn row_to_snapshot(row: sqlx::sqlite::SqliteRow) -> Result<IncidentSnapshot, PersistenceError> {

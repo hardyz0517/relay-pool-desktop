@@ -26,6 +26,7 @@ import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { clearAlertingIncidents, markAlertingSeen, markAllAlertingSeen } from "@/lib/api/alerting";
+import { collectorFailureTaskLabel } from "./collectorIncidentLabels";
 
 type ChangeCenterRoutingDeepLink = Extract<
   RoutingDeepLink,
@@ -266,12 +267,13 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
 
 function IncidentRow({ incident, stationName, busy, developerModeEnabled, expanded, onToggle, onMarkSeen, onOpenRoutingDeepLink }: { incident: AlertingIncident; stationName: string | null | undefined; busy: boolean; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onMarkSeen: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
   const routingLink = createChangeCenterRoutingLink(incident);
+  const taskLabel = collectorFailureTaskLabel(incident);
   const stateLabel = incident.lifecycleState === "resolved" ? "已恢复" : incident.lifecycleState === "recovering" ? "恢复中" : incident.lifecycleState === "pending" ? "检测中" : "未处理";
   return <div className="bg-surface">
     <div className={`grid min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_auto_minmax(0,1fr)_auto_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}>
     {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起问题" : "展开问题"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
     <StatusBadge className="justify-self-start" tone={incident.severity === "critical" ? "error" : incident.severity === "warning" ? "warning" : "info"}>{severityLabel(incident.severity)}</StatusBadge>
-    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(incident.eventType)}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? incident.stationId ?? incident.conditionKey} · {stateLabel} · 已出现 {incident.occurrenceCount} 次</div></div>
+    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(incident.eventType)}{taskLabel ? ` · ${taskLabel}` : ""}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? incident.stationId ?? incident.conditionKey} · {stateLabel} · 已出现 {incident.occurrenceCount} 次</div></div>
     <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(incident.lastSeenAtMs)}</span><span>{incident.seenAtMs == null ? "未读" : "已读"}</span></div>
     <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" disabled={busy || incident.seenAtMs != null} onClick={onMarkSeen}>标记已读</Button>{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
     </div>

@@ -37,6 +37,7 @@ pub(crate) fn v2_runner_port(
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
+    remote_keys: Arc<dyn StationCollectorRemoteKeyRefreshPort>,
 ) -> Arc<dyn StationCollectorRunnerPort> {
     let source: Arc<dyn CollectorSourcePort> = Arc::new(V2CollectorSourceAdapter::new(
         services.collectors.clone(),
@@ -52,7 +53,22 @@ pub(crate) fn v2_runner_port(
         services.collectors.clone(),
         services.settings.clone(),
         tasks,
+        remote_keys,
     ))
+}
+
+pub(crate) trait StationCollectorRemoteKeyRefreshPort: Send + Sync + 'static {
+    fn refresh_remote_keys(
+        &self,
+        station_id: String,
+        cancellation_token: tokio_util::sync::CancellationToken,
+        correlation_id: Option<String>,
+    ) -> BoxFuture<'static, Result<(), String>>;
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StationCollectorTaskOutcome {
+    refresh_remote_keys: bool,
 }
 
 pub(crate) trait StationCollectorTaskPort: Send + Sync + 'static {
@@ -61,7 +77,7 @@ pub(crate) trait StationCollectorTaskPort: Send + Sync + 'static {
         station_id: String,
         task: CollectorTask,
         context: StationCollectorTaskContext,
-    ) -> BoxFuture<'static, Result<(), String>>;
+    ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>>;
 }
 
 #[derive(Clone)]
@@ -104,7 +120,7 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
         station_id: String,
         task: CollectorTask,
         context: StationCollectorTaskContext,
-    ) -> BoxFuture<'static, Result<(), String>> {
+    ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>> {
         let source = self.source.clone();
         let finish_source = self.source.clone();
         let apply = self.apply.clone();
@@ -164,6 +180,10 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                     .map_err(|error| error.to_string())?
                 }
             };
+            let refresh_remote_keys = collectors::should_refresh_remote_keys_after_collection(
+                task,
+                prepared.2.status.as_str(),
+            );
             collectors::apply_prepared_station_task_v2(
                 apply.as_ref(),
                 prepared.0,
@@ -171,7 +191,9 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                 prepared.2,
             )
             .await
-            .map(|_| ())
+            .map(|_| StationCollectorTaskOutcome {
+                refresh_remote_keys,
+            })
             .map_err(|error| error.to_string())
         })
     }
@@ -188,6 +210,12 @@ pub(crate) trait StationCollectorRunnerPort: Send + Sync + 'static {
         station_id: String,
         task: CollectorTask,
         context: StationCollectorTaskContext,
+    ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>>;
+
+    fn refresh_remote_keys(
+        &self,
+        station_id: String,
+        context: StationCollectorTaskContext,
     ) -> BoxFuture<'static, Result<(), String>>;
 }
 
@@ -201,6 +229,7 @@ pub(crate) struct V2StationCollectorRunnerAdapter {
     collectors: Arc<CollectorService>,
     settings: Arc<SettingsService>,
     tasks: Arc<dyn StationCollectorTaskPort>,
+    remote_keys: Arc<dyn StationCollectorRemoteKeyRefreshPort>,
 }
 
 impl V2StationCollectorRunnerAdapter {
@@ -208,11 +237,13 @@ impl V2StationCollectorRunnerAdapter {
         collectors: Arc<CollectorService>,
         settings: Arc<SettingsService>,
         tasks: Arc<dyn StationCollectorTaskPort>,
+        remote_keys: Arc<dyn StationCollectorRemoteKeyRefreshPort>,
     ) -> Self {
         Self {
             collectors,
             settings,
             tasks,
+            remote_keys,
         }
     }
 }
@@ -259,8 +290,20 @@ impl StationCollectorRunnerPort for V2StationCollectorRunnerAdapter {
         station_id: String,
         task: CollectorTask,
         context: StationCollectorTaskContext,
-    ) -> BoxFuture<'static, Result<(), String>> {
+    ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>> {
         self.tasks.collect_task(station_id, task, context)
+    }
+
+    fn refresh_remote_keys(
+        &self,
+        station_id: String,
+        context: StationCollectorTaskContext,
+    ) -> BoxFuture<'static, Result<(), String>> {
+        self.remote_keys.refresh_remote_keys(
+            station_id,
+            context.cancellation_token,
+            Some(context.correlation_id),
+        )
     }
 }
 
@@ -369,12 +412,19 @@ async fn run_station_collection_guarded_v2(
             context,
             task_correlation_id.as_str().to_string(),
         );
-        let result = correlation::in_scope(
-            "station.collector.task",
-            task_correlation_id,
-            port.collect_task(collection.station_id.clone(), *task, task_context),
-        )
-        .await;
+        let result: Result<(), String> =
+            correlation::in_scope("station.collector.task", task_correlation_id, async {
+                let outcome = port
+                    .collect_task(collection.station_id.clone(), *task, task_context.clone())
+                    .await?;
+                if outcome.refresh_remote_keys {
+                    port.refresh_remote_keys(collection.station_id.clone(), task_context)
+                        .await
+                        .map_err(|error| format!("remote key refresh failed: {error}"))?;
+                }
+                Ok(())
+            })
+            .await;
         if let Err(error) = result {
             failures.push(format!("{} collection failed: {error}", task.as_str()));
         }
@@ -516,7 +566,7 @@ mod tests {
 
     #[tokio::test]
     async fn guarded_collection_runs_balance_then_groups_for_due_station() {
-        let port = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
+        let port = RecordingRunnerPort::new(vec![Ok(task_outcome(false)), Ok(task_outcome(true))]);
         let context = test_run_context();
 
         run_station_collection_guarded_v2(
@@ -543,11 +593,18 @@ mod tests {
         assert!(correlation_ids
             .iter()
             .all(|correlation_id| correlation_id != "test-correlation"));
+        assert_eq!(
+            port.remote_key_refreshes(),
+            vec![("station-1".to_string(), correlation_ids[1].clone())]
+        );
     }
 
     #[tokio::test]
     async fn guarded_collection_keeps_group_side_effect_after_balance_failure() {
-        let port = RecordingRunnerPort::new(vec![Err("balance failed".to_string()), Ok(())]);
+        let port = RecordingRunnerPort::new(vec![
+            Err("balance failed".to_string()),
+            Ok(task_outcome(true)),
+        ]);
         let context = test_run_context();
 
         let result = run_station_collection_guarded_v2(
@@ -571,6 +628,48 @@ mod tests {
                 ("station-2".to_string(), CollectorTask::Groups),
             ]
         );
+        assert_eq!(port.remote_key_refreshes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn guarded_collection_does_not_refresh_remote_keys_after_group_failure() {
+        let port = RecordingRunnerPort::new(vec![Err("groups failed".to_string())]);
+
+        let result = run_station_collection_guarded_v2(
+            &port,
+            &scheduled_collection("station-3", &[CollectorTask::Groups]),
+            &test_run_context(),
+        )
+        .await;
+
+        assert_eq!(
+            result,
+            Err("groups collection failed: groups failed".to_string())
+        );
+        assert!(port.remote_key_refreshes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn guarded_collection_reports_remote_key_refresh_failure() {
+        let port = RecordingRunnerPort::with_refresh_results(
+            vec![Ok(task_outcome(true))],
+            vec![Err("scan unavailable".to_string())],
+        );
+
+        let result = run_station_collection_guarded_v2(
+            &port,
+            &scheduled_collection("station-4", &[CollectorTask::Groups]),
+            &test_run_context(),
+        )
+        .await;
+
+        assert_eq!(
+            result,
+            Err(
+                "groups collection failed: remote key refresh failed: scan unavailable".to_string()
+            )
+        );
+        assert_eq!(port.remote_key_refreshes().len(), 1);
     }
 
     #[tokio::test]
@@ -592,7 +691,8 @@ mod tests {
         });
         notify_started.notified().await;
 
-        let duplicate = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
+        let duplicate =
+            RecordingRunnerPort::new(vec![Ok(task_outcome(false)), Ok(task_outcome(false))]);
         let duplicate_context = test_run_context();
         let duplicate_result = run_station_collection_guarded_v2(
             &duplicate,
@@ -612,7 +712,8 @@ mod tests {
             .expect("first run joins")
             .expect("first run succeeds");
 
-        let after_release = RecordingRunnerPort::new(vec![Ok(()), Ok(())]);
+        let after_release =
+            RecordingRunnerPort::new(vec![Ok(task_outcome(false)), Ok(task_outcome(false))]);
         let after_release_context = test_run_context();
         run_station_collection_guarded_v2(
             &after_release,
@@ -634,18 +735,35 @@ mod tests {
         }
     }
 
+    fn task_outcome(refresh_remote_keys: bool) -> StationCollectorTaskOutcome {
+        StationCollectorTaskOutcome {
+            refresh_remote_keys,
+        }
+    }
+
     struct RecordingRunnerPort {
         calls: Arc<Mutex<Vec<(String, CollectorTask)>>>,
         correlation_ids: Arc<Mutex<Vec<String>>>,
-        results: Arc<Mutex<Vec<Result<(), String>>>>,
+        results: Arc<Mutex<Vec<Result<StationCollectorTaskOutcome, String>>>>,
+        remote_key_refreshes: Arc<Mutex<Vec<(String, String)>>>,
+        refresh_results: Arc<Mutex<Vec<Result<(), String>>>>,
     }
 
     impl RecordingRunnerPort {
-        fn new(results: Vec<Result<(), String>>) -> Self {
+        fn new(results: Vec<Result<StationCollectorTaskOutcome, String>>) -> Self {
+            Self::with_refresh_results(results, Vec::new())
+        }
+
+        fn with_refresh_results(
+            results: Vec<Result<StationCollectorTaskOutcome, String>>,
+            refresh_results: Vec<Result<(), String>>,
+        ) -> Self {
             Self {
                 calls: Arc::new(Mutex::new(Vec::new())),
                 correlation_ids: Arc::new(Mutex::new(Vec::new())),
                 results: Arc::new(Mutex::new(results)),
+                remote_key_refreshes: Arc::new(Mutex::new(Vec::new())),
+                refresh_results: Arc::new(Mutex::new(refresh_results)),
             }
         }
 
@@ -657,6 +775,13 @@ mod tests {
             self.correlation_ids
                 .lock()
                 .expect("correlation ids")
+                .clone()
+        }
+
+        fn remote_key_refreshes(&self) -> Vec<(String, String)> {
+            self.remote_key_refreshes
+                .lock()
+                .expect("remote key refreshes")
                 .clone()
         }
     }
@@ -674,13 +799,33 @@ mod tests {
             station_id: String,
             task: CollectorTask,
             context: StationCollectorTaskContext,
-        ) -> BoxFuture<'static, Result<(), String>> {
+        ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>> {
             self.calls.lock().expect("calls").push((station_id, task));
             self.correlation_ids
                 .lock()
                 .expect("correlation ids")
                 .push(context.correlation_id);
             let result = self.results.lock().expect("results").remove(0);
+            Box::pin(async move { result })
+        }
+
+        fn refresh_remote_keys(
+            &self,
+            station_id: String,
+            context: StationCollectorTaskContext,
+        ) -> BoxFuture<'static, Result<(), String>> {
+            self.remote_key_refreshes
+                .lock()
+                .expect("remote key refreshes")
+                .push((station_id, context.correlation_id));
+            let result = {
+                let mut results = self.refresh_results.lock().expect("refresh results");
+                if results.is_empty() {
+                    Ok(())
+                } else {
+                    results.remove(0)
+                }
+            };
             Box::pin(async move { result })
         }
     }
@@ -717,7 +862,7 @@ mod tests {
             _station_id: String,
             _task: CollectorTask,
             _context: StationCollectorTaskContext,
-        ) -> BoxFuture<'static, Result<(), String>> {
+        ) -> BoxFuture<'static, Result<StationCollectorTaskOutcome, String>> {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             if call == 0 {
                 let notify_started = Arc::clone(&self.notify_started);
@@ -729,11 +874,22 @@ mod tests {
                     .expect("first call has release receiver");
                 Box::pin(async move {
                     notify_started.notify_waiters();
-                    receiver.await.map_err(|_| "release dropped".to_string())
+                    receiver
+                        .await
+                        .map(|_| task_outcome(false))
+                        .map_err(|_| "release dropped".to_string())
                 })
             } else {
-                Box::pin(async { Ok(()) })
+                Box::pin(async { Ok(task_outcome(false)) })
             }
+        }
+
+        fn refresh_remote_keys(
+            &self,
+            _station_id: String,
+            _context: StationCollectorTaskContext,
+        ) -> BoxFuture<'static, Result<(), String>> {
+            Box::pin(async { Ok(()) })
         }
     }
 

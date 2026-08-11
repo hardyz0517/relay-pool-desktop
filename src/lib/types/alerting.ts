@@ -97,6 +97,7 @@ export type AlertingIncident = {
   episodeNumber: number;
   occurrenceCount: number;
   lastSeenAtMs: number;
+  collectorFailedTaskTypes: string[];
   resolvedAtMs: number | null;
   updatedAtMs: number;
   seenAtMs: number | null;

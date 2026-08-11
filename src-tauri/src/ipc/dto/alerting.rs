@@ -384,6 +384,7 @@ pub(crate) struct AlertingIncidentSummaryDto {
     pub episode_number: i64,
     pub occurrence_count: i64,
     pub last_seen_at_ms: i64,
+    pub collector_failed_task_types: Vec<String>,
     pub resolved_at_ms: Option<i64>,
     pub updated_at_ms: i64,
     pub seen_at_ms: Option<i64>,
@@ -566,6 +567,7 @@ impl From<IncidentSummary> for AlertingIncidentSummaryDto {
             episode_number: item.episode_number,
             occurrence_count: item.occurrence_count,
             last_seen_at_ms: item.last_seen_at_ms,
+            collector_failed_task_types: item.collector_failed_task_types,
             resolved_at_ms: item.resolved_at_ms,
             updated_at_ms: item.updated_at_ms,
             seen_at_ms: item.seen_at_ms,
@@ -723,7 +725,8 @@ export type AlertingObservationInputDto = {
 export type AlertingIncidentSummaryDto = {
   id: string; conditionKey: string; eventType: string; lifecycleState: string;
   severity: string; stationId: string | null; episodeNumber: number;
-  occurrenceCount: number; lastSeenAtMs: number; resolvedAtMs: number | null;
+  occurrenceCount: number; lastSeenAtMs: number; collectorFailedTaskTypes: string[];
+  resolvedAtMs: number | null;
   updatedAtMs: number; seenAtMs: number | null; snoozedUntilMs: number | null;
 };
 export type AlertingCursorDto = { updatedAtMs: number; id: string };

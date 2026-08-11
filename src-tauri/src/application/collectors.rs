@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -798,6 +798,22 @@ impl CollectorService {
                         }
                     }
 
+                    let changed_group_binding_ids = group_transitions
+                        .values()
+                        .filter(|transition| {
+                            transition.current.binding_kind == BINDING_KIND_STATION_GROUP
+                        })
+                        .map(|transition| transition.current.id.clone())
+                        .collect::<HashSet<_>>();
+                    collectors
+                        .refresh_station_key_group_projections(
+                            write,
+                            &request.station_id,
+                            &changed_group_binding_ids,
+                            &now,
+                        )
+                        .await?;
+
                     for transition in group_transitions.values() {
                         if let Some(observation) =
                             group_transition_observation(transition, &now, &run_id)
@@ -822,30 +838,30 @@ impl CollectorService {
                             .await?;
                     }
 
-                    let failure_key =
-                        collector_failure_key(&request.station_id, &request.task_type);
-                    if matches!(request.status.as_str(), "success" | "partial") {
+                    // A full collection owns the lifecycle of its child tasks. Child
+                    // runs still persist facts and run history, but must not create a
+                    // second incident for the same collection operation.
+                    let emit_collector_observation =
+                        should_emit_collector_observation(request.parent_run_id.as_deref());
+                    if emit_collector_observation
+                        && matches!(request.status.as_str(), "success" | "partial" | "failed")
+                    {
+                        let failed_task_types =
+                            collector_failed_task_types(&collectors, write, &request).await?;
+                        let kind = if failed_task_types.is_empty() {
+                            ObservationKind::Healthy
+                        } else {
+                            ObservationKind::Abnormal
+                        };
                         alerting
                             .record_in_session(
                                 write,
                                 collector_observation(
                                     &request,
-                                    &failure_key,
+                                    &collector_failure_key(&request.station_id),
                                     &run_id,
-                                    ObservationKind::Healthy,
-                                    &now,
-                                ),
-                            )
-                            .await?;
-                    } else if request.status == "failed" {
-                        alerting
-                            .record_in_session(
-                                write,
-                                collector_observation(
-                                    &request,
-                                    &failure_key,
-                                    &run_id,
-                                    ObservationKind::Abnormal,
+                                    kind,
+                                    &failed_task_types,
                                     &now,
                                 ),
                             )
@@ -1232,6 +1248,7 @@ fn collector_observation(
     failure_key: &str,
     source_run_key: &str,
     kind: ObservationKind,
+    failed_task_types: &[String],
     now: &str,
 ) -> ObservationIngress {
     let observed_at_ms = parse_now_ms(now);
@@ -1262,6 +1279,7 @@ fn collector_observation(
             "taskType": request.task_type,
             "status": request.status,
             "errorCode": request.error_code,
+            "failedTaskTypes": failed_task_types,
         })
         .to_string(),
         observed_at_ms,
@@ -1272,8 +1290,73 @@ fn collector_observation(
 fn parse_now_ms(value: &str) -> i64 {
     value.parse::<i64>().unwrap_or_default().max(0)
 }
-fn collector_failure_key(station_id: &str, task_type: &str) -> String {
-    format!("collector:{station_id}:collector_failed:{task_type}")
+fn collector_failure_key(station_id: &str) -> String {
+    format!("collector:{station_id}:collector_failed")
+}
+
+fn should_emit_collector_observation(parent_run_id: Option<&str>) -> bool {
+    parent_run_id.is_none()
+}
+
+async fn collector_failed_task_types(
+    collectors: &CollectorStore,
+    write: &mut crate::persistence::WriteSession,
+    request: &CollectorApplyRequest,
+) -> Result<Vec<String>, crate::persistence::error::PersistenceError> {
+    let failed = collectors
+        .failed_task_types(write, &request.station_id)
+        .await?;
+    Ok(merge_collector_failed_task_types(failed, request))
+}
+
+fn merge_collector_failed_task_types(
+    current: impl IntoIterator<Item = String>,
+    request: &CollectorApplyRequest,
+) -> Vec<String> {
+    let mut failed = current.into_iter().collect::<BTreeSet<_>>();
+
+    if request.task_type == "full" {
+        let mut applied_child_status = false;
+        if let Some(children) = request
+            .summary_json
+            .get("childRuns")
+            .and_then(Value::as_array)
+        {
+            for child in children {
+                let Some(task_type) = child.get("task").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(status) = child.get("status").and_then(Value::as_str) else {
+                    continue;
+                };
+                if matches!(task_type, "balance" | "groups" | "detect") {
+                    apply_collector_task_status(&mut failed, task_type, status);
+                    applied_child_status = true;
+                }
+            }
+        }
+        if applied_child_status {
+            failed.remove("full");
+        } else {
+            apply_collector_task_status(&mut failed, "full", &request.status);
+        }
+    } else {
+        apply_collector_task_status(&mut failed, &request.task_type, &request.status);
+    }
+
+    ["balance", "groups", "detect", "full"]
+        .into_iter()
+        .filter(|task_type| failed.contains(*task_type))
+        .map(str::to_string)
+        .collect()
+}
+
+fn apply_collector_task_status(failed: &mut BTreeSet<String>, task_type: &str, status: &str) {
+    if status == "failed" {
+        failed.insert(task_type.to_string());
+    } else if matches!(status, "success" | "partial" | "manual_required") {
+        failed.remove(task_type);
+    }
 }
 
 #[cfg(test)]
@@ -1289,9 +1372,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        application::{error::ApplicationError, stations::StationService},
-        models::stations::CreateStationInput,
+        application::{
+            credentials::CredentialService, error::ApplicationError, stations::StationService,
+        },
+        models::{station_keys::CreateStationKeyInput, stations::CreateStationInput},
         persistence::{runtime::PersistenceRuntime, stores::collector_store::GroupState},
+        services::secrets::vault::DataKeyVault,
     };
 
     struct FixedClock;
@@ -1356,12 +1442,13 @@ mod tests {
             manual_action_required: false,
             next_due_at: None,
         };
-        let failure_key = collector_failure_key("station-1", "balance");
+        let failure_key = collector_failure_key("station-1");
         let abnormal = collector_observation(
             &request,
             &failure_key,
             "failed-run",
             ObservationKind::Abnormal,
+            &["balance".to_string()],
             "1700000000000",
         );
         let mut recovered_request = request.clone();
@@ -1376,6 +1463,7 @@ mod tests {
             &failure_key,
             "healthy-run",
             ObservationKind::Healthy,
+            &[],
             "1700000060000",
         );
 
@@ -1394,9 +1482,16 @@ mod tests {
                 &failure_key,
                 "failed-run",
                 ObservationKind::Abnormal,
+                &["balance".to_string()],
                 "1700000000000",
             )
             .source_observation_key
+        );
+        assert_eq!(failure_key, "collector:station-1:collector_failed");
+        assert_eq!(
+            serde_json::from_str::<Value>(&abnormal.summary_json).expect("collector summary")
+                ["failedTaskTypes"],
+            json!(["balance"])
         );
 
         let transition = GroupTransition {
@@ -1422,6 +1517,66 @@ mod tests {
         assert_eq!(
             audit.condition_key.as_str(),
             "station_group:station-1:group-hash"
+        );
+    }
+
+    #[test]
+    fn child_collection_runs_do_not_create_duplicate_collector_incidents() {
+        assert!(should_emit_collector_observation(None));
+        assert!(!should_emit_collector_observation(Some("full-run-1")));
+    }
+
+    #[test]
+    fn collector_failure_summary_tracks_all_current_failed_tasks() {
+        let mut request = CollectorApplyRequest {
+            run_key: "groups-failed".to_string(),
+            station_id: "station-1".to_string(),
+            endpoint_revision: 1,
+            parent_run_id: None,
+            adapter: "newapi".to_string(),
+            task_type: "groups".to_string(),
+            status: "failed".to_string(),
+            facts: CanonicalCollectorFacts::default(),
+            summary_json: json!({}),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: Some("timeout".to_string()),
+            error_message: Some("collector timed out".to_string()),
+            endpoint_count: 1,
+            success_count: 0,
+            failure_count: 1,
+            manual_action_required: false,
+            next_due_at: None,
+        };
+
+        assert_eq!(
+            merge_collector_failed_task_types(vec!["balance".to_string()], &request),
+            vec!["balance".to_string(), "groups".to_string()]
+        );
+
+        request.status = "success".to_string();
+        assert_eq!(
+            merge_collector_failed_task_types(
+                vec!["balance".to_string(), "groups".to_string()],
+                &request,
+            ),
+            vec!["balance".to_string()]
+        );
+
+        request.task_type = "full".to_string();
+        request.status = "partial".to_string();
+        request.summary_json = json!({
+            "childRuns": [
+                { "task": "balance", "status": "success" },
+                { "task": "groups", "status": "failed" },
+            ],
+        });
+        assert_eq!(
+            merge_collector_failed_task_types(
+                vec!["balance".to_string(), "full".to_string()],
+                &request,
+            ),
+            vec!["groups".to_string()]
         );
     }
 
@@ -1988,6 +2143,170 @@ mod tests {
             .await
             .expect("station group bindings");
         assert_eq!(bindings.len(), 2);
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
+    async fn collected_group_rate_refreshes_bound_key_projection_and_preserves_manual_override() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp.path().join("bound-key-rate-projection.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock.clone(), ids.clone());
+        let credentials = CredentialService::new(
+            runtime.handle(),
+            Arc::new(DataKeyVault::for_test([37; 32])),
+            clock,
+            ids,
+        );
+        let station = stations
+            .create(CreateStationInput {
+                name: "Bound key rate projection".to_string(),
+                station_type: "sub2api".to_string(),
+                website_url: "https://projection.example.test".to_string(),
+                api_base_url: "https://projection.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+        let initial_binding = collectors
+            .upsert_station_group_binding(group_binding_input(&station.id))
+            .await
+            .expect("initial group binding");
+
+        for (name, manual_rate_multiplier) in [("automatic", None), ("manual override", Some(0.08))]
+        {
+            credentials
+                .create_station_key(CreateStationKeyInput {
+                    station_id: station.id.clone(),
+                    name: name.to_string(),
+                    api_key: format!("sk-fixture-{name}"),
+                    enabled: true,
+                    priority: None,
+                    max_concurrency: None,
+                    load_factor: None,
+                    schedulable: None,
+                    group_name: Some(initial_binding.group_name.clone()),
+                    tier_label: None,
+                    group_binding_id: Some(initial_binding.id.clone()),
+                    group_id_hash: initial_binding.group_id_hash.clone(),
+                    rate_multiplier: Some(0.1),
+                    manual_rate_multiplier,
+                    rate_source: Some("manual_legacy".to_string()),
+                    balance_scope: Some("station_key".to_string()),
+                    note: None,
+                })
+                .await
+                .expect("bound station key");
+        }
+        credentials
+            .create_station_key(CreateStationKeyInput {
+                station_id: station.id.clone(),
+                name: "unbound".to_string(),
+                api_key: "sk-fixture-unbound".to_string(),
+                enabled: true,
+                priority: None,
+                max_concurrency: None,
+                load_factor: None,
+                schedulable: None,
+                group_name: None,
+                tier_label: None,
+                group_binding_id: None,
+                group_id_hash: None,
+                rate_multiplier: Some(0.7),
+                manual_rate_multiplier: Some(0.7),
+                rate_source: Some("manual".to_string()),
+                balance_scope: Some("station_key".to_string()),
+                note: None,
+            })
+            .await
+            .expect("unbound station key");
+
+        collectors
+            .apply_result(CollectorApplyRequest {
+                run_key: "bound-key-rate-refresh".to_string(),
+                station_id: station.id.clone(),
+                endpoint_revision: station.endpoint_revision,
+                parent_run_id: None,
+                adapter: "sub2api".to_string(),
+                task_type: "groups".to_string(),
+                status: "success".to_string(),
+                facts: CanonicalCollectorFacts {
+                    rates: vec![CanonicalRateFact {
+                        station_id: station.id.clone(),
+                        station_key_id: None,
+                        group_id: initial_binding.group_id_hash.clone(),
+                        group_key_hash: initial_binding.group_key_hash.clone(),
+                        group_name: initial_binding.group_name.clone(),
+                        default_rate_multiplier: Some(0.05),
+                        user_rate_multiplier: Some(0.05),
+                        effective_rate_multiplier: Some(0.05),
+                        inferred_group_category: Some("gpt".to_string()),
+                        source: "sub2api_groups_rates".to_string(),
+                        confidence: 0.95,
+                        checked_at: Some("1700000000000".to_string()),
+                        raw_json_redacted: None,
+                    }],
+                    ..CanonicalCollectorFacts::default()
+                },
+                summary_json: json!({"groups": 1}),
+                normalized_json: json!({"groups": ["Manual Group"]}),
+                raw_json_redacted: None,
+                error_code: None,
+                error_message: None,
+                endpoint_count: 2,
+                success_count: 2,
+                failure_count: 0,
+                manual_action_required: false,
+                next_due_at: None,
+            })
+            .await
+            .expect("collector apply");
+
+        let keys = credentials
+            .list_station_keys(station.id)
+            .await
+            .expect("station keys");
+        let automatic = keys
+            .iter()
+            .find(|key| key.name == "automatic")
+            .expect("automatic key");
+        assert_eq!(automatic.rate_multiplier, Some(0.05));
+        assert_eq!(automatic.manual_rate_multiplier, None);
+        assert_eq!(
+            automatic.rate_source.as_deref(),
+            Some("sub2api_groups_rates")
+        );
+        assert_eq!(
+            automatic.rate_collected_at.as_deref(),
+            Some("1700000000000")
+        );
+
+        let manual = keys
+            .iter()
+            .find(|key| key.name == "manual override")
+            .expect("manual key");
+        assert_eq!(manual.rate_multiplier, Some(0.05));
+        assert_eq!(manual.manual_rate_multiplier, Some(0.08));
+
+        let unbound = keys
+            .iter()
+            .find(|key| key.name == "unbound")
+            .expect("unbound key");
+        assert_eq!(unbound.rate_multiplier, Some(0.7));
+        assert_eq!(unbound.rate_source.as_deref(), Some("manual"));
         runtime.close().await.expect("close persistence runtime");
     }
 }

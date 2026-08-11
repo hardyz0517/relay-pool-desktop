@@ -19,7 +19,7 @@ async fn alerting_foundation_creates_contract_and_indexes() {
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    assert_eq!(schema_version, 31);
+    assert_eq!(schema_version, 32);
 
     let legacy_table_exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_events'",

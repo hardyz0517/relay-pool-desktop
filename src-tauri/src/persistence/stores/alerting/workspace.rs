@@ -13,6 +13,7 @@ pub(crate) struct WorkspaceIncidentRow {
     pub episode_number: i64,
     pub occurrence_count: i64,
     pub last_seen_at_ms: i64,
+    pub last_observation_summary_json: String,
     pub resolved_at_ms: Option<i64>,
     pub updated_at_ms: i64,
     pub seen_at_ms: Option<i64>,
@@ -68,7 +69,8 @@ impl WorkspaceStore {
         let rows = sqlx::query(
             "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state, i.severity,
                     i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
-                    i.resolved_at_ms, i.updated_at_ms, a.seen_at_ms, a.snoozed_until_ms
+                    i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
+                    a.seen_at_ms, a.snoozed_until_ms
              FROM change_incidents i
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
@@ -133,7 +135,8 @@ impl WorkspaceStore {
         let row = sqlx::query(
             "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state, i.severity,
                     i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
-                    i.resolved_at_ms, i.updated_at_ms, a.seen_at_ms, a.snoozed_until_ms
+                    i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
+                    a.seen_at_ms, a.snoozed_until_ms
              FROM change_incidents i
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
@@ -216,6 +219,7 @@ fn row_to_incident(row: sqlx::sqlite::SqliteRow) -> Result<WorkspaceIncidentRow,
         episode_number: row.try_get("episode_number")?,
         occurrence_count: row.try_get("occurrence_count")?,
         last_seen_at_ms: row.try_get("last_seen_at_ms")?,
+        last_observation_summary_json: row.try_get("last_observation_summary_json")?,
         resolved_at_ms: row.try_get("resolved_at_ms")?,
         updated_at_ms: row.try_get("updated_at_ms")?,
         seen_at_ms: row.try_get("seen_at_ms")?,
