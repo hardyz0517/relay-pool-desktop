@@ -167,7 +167,7 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
               />
             )}
           </div>
-          {logs.length > 0 && (
+          {pageInfo.totalCount >= 20 && (
             <RequestLogPagination
               pageInfo={pageInfo}
               pageSize={pageSize}
