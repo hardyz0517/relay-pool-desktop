@@ -14,7 +14,8 @@
 智能路由升级已进入批准设计与实施阶段：
 
 - [`proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md)：目标架构与验收合同。
-- [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：唯一当前实施计划。
+- [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：唯一总体实施计划。
+- [`superpowers/plans/2026-08-12-upstream-error-classification-retry-upgrade.md`](superpowers/plans/2026-08-12-upstream-error-classification-retry-upgrade.md)：从属于智能路由总计划的上游错误分类、capacity 同目标重试、SSE 提交边界与客户端错误兼容专项计划。
 - 智能路由本地产品边界已完成：[`superpowers/audits/intelligent-routing-acceptance-matrix.md`](superpowers/audits/intelligent-routing-acceptance-matrix.md)、[`superpowers/audits/intelligent-routing-qualification.md`](superpowers/audits/intelligent-routing-qualification.md)、[`superpowers/audits/intelligent-routing-deletion-ledger.md`](superpowers/audits/intelligent-routing-deletion-ledger.md) 和 [`superpowers/audits/intelligent-routing-boundary-manifest.json`](superpowers/audits/intelligent-routing-boundary-manifest.json) 是同一 revision 的证据闭环。真实 provider、外部监控和发布机 soak 仍属于独立发布门禁。
 
 价格 / 倍率页与渠道状态页的只读联动已进入当前实现基线：
@@ -58,6 +59,7 @@
 ## 参考资料
 
 - [`research/`](research/)：外部项目调研、源码审阅和 UI 参考，只提供背景与可借鉴结论。
+- [`research/SUB2API_RESPONSE_CASES.md`](research/SUB2API_RESPONSE_CASES.md)：基于 Sub2API 源码整理的客户端响应场景及 `状态码/type/code/message` 对照表。
 - [`archive/early-phase-plans/`](archive/early-phase-plans/)：P1-P8 早期阶段计划。它们记录当时范围和实现状态，已不再是当前开发入口。
 
 ## 维护约定
