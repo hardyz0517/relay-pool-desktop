@@ -6,6 +6,18 @@ export type UpsertModelBasePriceInputDto = {
   model: string;
   inputPrice: number | null;
   outputPrice: number | null;
+  inputPricePriority: number | null;
+  outputPricePriority: number | null;
+  cacheCreationPrice: number | null;
+  cacheCreationPricePriority: number | null;
+  cacheCreationPriceAbove1Hr: number | null;
+  cacheReadPrice: number | null;
+  cacheReadPricePriority: number | null;
+  longContextInputTokenThreshold: number | null;
+  longContextInputCostMultiplier: number | null;
+  longContextOutputCostMultiplier: number | null;
+  supportsServiceTier: boolean;
+  supportsPromptCaching: boolean;
   currency: string;
   unit: string;
   sourceUrl: string;

@@ -39,6 +39,7 @@ export const queryKeys = {
   alertingSettings: ["alertingSettings"] as const,
   alertPolicies: ["alertPolicies"] as const,
   alertingCurrent: (input: unknown = {}) => ["alertingCurrent", input] as const,
+  alertingActivity: (input: unknown = {}) => ["alertingActivity", input] as const,
   alertingIncident: (incidentId: string, episodeNumber: number) =>
     ["alertingIncident", incidentId, episodeNumber] as const,
   alertingOccurrences: (input: unknown) => ["alertingOccurrences", input] as const,

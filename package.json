@@ -26,6 +26,7 @@
     "architecture:dependencies": "node scripts/architecture/check-dependency-lifecycle.mjs",
     "architecture:scale-baseline": "node scripts/architecture/scale-baseline/run.mjs",
     "generate:bindings": "node scripts/generate-bindings.mjs",
+    "update:model-pricing": "node scripts/update-model-pricing-catalog.mjs",
     "verify:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile fast",
     "verify:full": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile full",
     "verify:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify.ps1 -Profile release",

@@ -23,6 +23,21 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('<th className="h-7 px-2 text-right">缓存写入价</th>') &&
+    source.includes('<th className="h-7 px-2 text-right">缓存读取价</th>') &&
+    source.includes('updatePrice(row, "cacheCreationPrice"') &&
+    source.includes('updatePrice(row, "cacheReadPrice"'),
+  "standard cache creation and cache read prices should be editable from the table",
+);
+
+assert.ok(
+  createDialogSource.includes('label="优先级缓存写入价"') &&
+    createDialogSource.includes('label="优先级缓存读取价"') &&
+    createDialogSource.includes('label="超过 1 小时缓存写入价"'),
+  "the create dialog should retain the extended Sub2API cache rates",
+);
+
+assert.ok(
   source.includes("numberText = formatPrice(value)") && source.includes("{saving ? \"保存中\" : numberText}") && source.includes("$/M"),
   "editable price cells should render compact prices with the currency/unit outside the editable number",
 );

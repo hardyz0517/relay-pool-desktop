@@ -1217,6 +1217,10 @@ impl ProxyExecutionResponse {
                     estimated_input_price: candidate.pricing.estimated_input_price,
                     estimated_output_price: candidate.pricing.estimated_output_price,
                     estimated_fixed_price: candidate.pricing.estimated_fixed_price,
+                    estimated_cache_creation_price: candidate
+                        .pricing
+                        .estimated_cache_creation_price,
+                    estimated_cache_read_price: candidate.pricing.estimated_cache_read_price,
                 }),
                 attempt_count: (fallback_count + 1).max(1) as u16,
                 fallback_count: fallback_count.max(0) as u16,
@@ -2379,6 +2383,8 @@ mod tests {
                 estimated_input_price: None,
                 estimated_output_price: None,
                 estimated_fixed_price: None,
+                estimated_cache_creation_price: None,
+                estimated_cache_read_price: None,
                 status_label: "test".to_string(),
             },
             evidence: Vec::new(),
@@ -2732,6 +2738,8 @@ mod tests {
                             estimated_input_price: None,
                             estimated_output_price: None,
                             estimated_fixed_price: None,
+                            estimated_cache_creation_price: None,
+                            estimated_cache_read_price: None,
                             status_label: "test".to_string(),
                         },
                         evidence: vec![],

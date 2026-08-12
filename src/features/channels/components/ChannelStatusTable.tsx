@@ -6,6 +6,7 @@ import { groupVisualClassNames } from "@/lib/groupVisualStyles";
 import { cn } from "@/lib/utils";
 import {
   availabilityHue,
+  statusLabel,
   type ChannelStatusRowView,
   type StatusTone,
 } from "../channelStatusViewModel";
@@ -125,8 +126,20 @@ export function ChannelStatusTable({
                     </div>
                   </BodyCell>
                   <BodyCell>
-                    <div className="font-medium text-foreground">{row.latencyLabel}</div>
-                    <div className="text-xs text-muted-foreground">{row.lastCheckedLabel}</div>
+                    <div
+                      className="flex items-center gap-2"
+                      title={`最近探测：${statusLabel(row.latestProbeTone)}`}
+                    >
+                      <span
+                        role="img"
+                        aria-label={`最近探测：${statusLabel(row.latestProbeTone)}`}
+                        className={cn("h-2 w-2 shrink-0 rounded-full", probeDotClassName[row.latestProbeTone])}
+                      />
+                      <div>
+                        <div className="font-medium text-foreground">{row.latencyLabel}</div>
+                        <div className="whitespace-nowrap text-[11px] text-muted-foreground">{row.lastCheckedLabel}</div>
+                      </div>
+                    </div>
                   </BodyCell>
                   <BodyCell className="pr-5">
                     <StatusTrend cells={row.trend} />
@@ -172,6 +185,16 @@ export function ChannelStatusTable({
 function HeaderCell({ children, className }: { children: string; className?: string }) {
   return <th className={cn("h-8 whitespace-nowrap px-3", className)}>{children}</th>;
 }
+
+const probeDotClassName: Record<StatusTone, string> = {
+  available: "bg-channel-health-bar",
+  degraded: "bg-channel-health-degraded-bar",
+  unavailable: "bg-channel-health-danger-bar",
+  skipped: "bg-channel-health-empty-bar",
+  missing: "bg-channel-health-empty-bar",
+  running: "bg-channel-health-empty-bar",
+  disabled: "bg-channel-health-empty-bar",
+};
 
 function BodyCell({
   children,

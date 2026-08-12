@@ -833,11 +833,16 @@ async fn collect_current_facts(
         };
         let key =
             condition_key("group", &id).ok_or_else(|| PersistenceError::ConstraintViolation)?;
+        let severity = if event_type == AlertEventType::GroupMissing {
+            Severity::Info
+        } else {
+            Severity::Warning
+        };
         facts.push(fact(
             event_type,
             key,
             status == "missing",
-            Severity::Warning,
+            severity,
             "group_binding",
             Some(id),
             Some(station_id),

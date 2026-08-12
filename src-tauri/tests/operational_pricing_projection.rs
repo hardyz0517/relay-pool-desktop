@@ -40,6 +40,8 @@ mod persistence {
                 pub(crate) model: String,
                 pub(crate) input_price: Option<f64>,
                 pub(crate) output_price: Option<f64>,
+                pub(crate) cache_creation_price: Option<f64>,
+                pub(crate) cache_read_price: Option<f64>,
                 pub(crate) currency: String,
                 pub(crate) source_checked_at: Option<String>,
                 pub(crate) built_in: bool,
@@ -48,6 +50,7 @@ mod persistence {
             #[derive(Debug, Clone)]
             pub(crate) struct StationKeyPricingResolutionRow {
                 pub(crate) station_id: String,
+                pub(crate) credit_per_cny: f64,
                 pub(crate) group_binding_id: Option<String>,
                 pub(crate) group_rate_multiplier: Option<f64>,
                 pub(crate) group_confidence: Option<f64>,
@@ -78,6 +81,8 @@ fn base_price() -> SelectedModelBasePriceRow {
         model: "gpt-5-mini".to_string(),
         input_price: Some(0.25),
         output_price: Some(2.0),
+        cache_creation_price: Some(0.3125),
+        cache_read_price: Some(0.025),
         currency: "USD".to_string(),
         source_checked_at: Some("100".to_string()),
         built_in: true,
@@ -87,6 +92,7 @@ fn base_price() -> SelectedModelBasePriceRow {
 fn resolution() -> StationKeyPricingResolutionRow {
     StationKeyPricingResolutionRow {
         station_id: "station-1".to_string(),
+        credit_per_cny: 1.0,
         group_binding_id: None,
         group_rate_multiplier: None,
         group_confidence: None,
@@ -146,6 +152,18 @@ fn pricing_mutation_inputs_keep_stable_camel_case_contract() {
         model: "gpt-5-mini".to_string(),
         input_price: Some(0.25),
         output_price: Some(2.0),
+        input_price_priority: None,
+        output_price_priority: None,
+        cache_creation_price: Some(0.3125),
+        cache_creation_price_priority: None,
+        cache_creation_price_above_1hr: None,
+        cache_read_price: Some(0.025),
+        cache_read_price_priority: None,
+        long_context_input_token_threshold: None,
+        long_context_input_cost_multiplier: None,
+        long_context_output_cost_multiplier: None,
+        supports_service_tier: false,
+        supports_prompt_caching: true,
         currency: "USD".to_string(),
         unit: "per_1m_tokens".to_string(),
         source_url: "https://example.invalid/pricing".to_string(),
@@ -194,6 +212,8 @@ fn pricing_mutation_inputs_keep_stable_camel_case_contract() {
     assert_eq!(json["pricingRule"]["stationKeyId"], "key-1");
     assert_eq!(json["pricingRule"]["basePriceSource"], "builtin");
     assert_eq!(json["basePrice"]["sourceCheckedAt"], "100");
+    assert_eq!(json["basePrice"]["cacheCreationPrice"], 0.3125);
+    assert_eq!(json["basePrice"]["cacheReadPrice"], 0.025);
     assert_eq!(json["balance"]["accountConcurrencyLimit"], 8);
     assert_eq!(json["balance"]["todayInputTokenCount"], 40);
 }
@@ -225,6 +245,11 @@ fn base_price_and_group_multiplier_project_to_the_same_resolved_context_shape() 
     assert_eq!(context.effective_rate_multiplier, Some(1.5));
     assert_eq!(context.estimated_input_price, Some(0.375));
     assert_eq!(context.estimated_output_price, Some(3.0));
+    assert_eq!(context.estimated_cache_creation_price, Some(0.46875));
+    assert_eq!(
+        context.estimated_cache_read_price,
+        Some(0.037500000000000006)
+    );
     assert_eq!(context.confidence, 0.9);
     assert_eq!(context.rate_collected_at.as_deref(), Some("200"));
 }

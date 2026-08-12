@@ -268,7 +268,7 @@ pub fn event_registry() -> &'static [EventDefinition] {
     static REGISTRY: [EventDefinition; 16] = [
         EventDefinition::state(
             AlertEventType::GroupMissing,
-            Severity::Warning,
+            Severity::Info,
             RecoveryOwner::GroupBinding,
             900,
         ),
@@ -381,6 +381,16 @@ mod tests {
             .iter()
             .filter(|entry| entry.category == EventCategory::AuditChange)
             .all(|entry| entry.observation_kind == ObservationKind::Change));
+    }
+
+    #[test]
+    fn group_missing_is_informational() {
+        assert_eq!(
+            event_definition(AlertEventType::GroupMissing)
+                .expect("group missing definition")
+                .base_severity,
+            Severity::Info
+        );
     }
 
     #[test]

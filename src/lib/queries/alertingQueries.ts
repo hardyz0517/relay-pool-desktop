@@ -3,12 +3,13 @@ import {
   getAlertingIncident,
   listAlertingDeliveries,
   getAlertingSettings,
+  listAlertingActivity,
   listCurrentAlertingIncidents,
   listAlertingOccurrences,
   listAlertPolicies,
   loadAlertingWorkspace,
 } from "@/lib/api/alerting";
-import type { AlertingCurrentInput, AlertingHistoryInput, AlertingIncidentInput } from "@/lib/types/alerting";
+import type { AlertingActivityInput, AlertingCurrentInput, AlertingHistoryInput, AlertingIncidentInput } from "@/lib/types/alerting";
 import { queryKeys } from "@/lib/query/queryKeys";
 
 export const alertingWorkspaceQueryOptions = () =>
@@ -36,6 +37,13 @@ export const alertingCurrentQueryOptions = (input: AlertingCurrentInput = {}) =>
   queryOptions({
     queryKey: queryKeys.alertingCurrent(input),
     queryFn: () => listCurrentAlertingIncidents(input),
+    staleTime: 2_000,
+  });
+
+export const alertingActivityQueryOptions = (input: AlertingActivityInput = {}) =>
+  queryOptions({
+    queryKey: queryKeys.alertingActivity(input),
+    queryFn: () => listAlertingActivity(input),
     staleTime: 2_000,
   });
 

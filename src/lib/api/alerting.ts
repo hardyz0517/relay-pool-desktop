@@ -3,6 +3,8 @@ import type { BackendClient } from "@/lib/bridge/BackendClient";
 import type {
   AlertPolicy,
   AlertPolicyInput,
+  AlertingActivityInput,
+  AlertingActivityPage,
   AlertingCurrentInput,
   AlertingHistoryInput,
   AlertingDomainClient,
@@ -62,6 +64,10 @@ export function requestDesktopNotificationPermission(): Promise<"allowed" | "den
 
 export function listCurrentAlertingIncidents(input: AlertingCurrentInput = {}): Promise<AlertingIncidentPage> {
   return alertingClient().listCurrentIncidents(input);
+}
+
+export function listAlertingActivity(input: AlertingActivityInput = {}): Promise<AlertingActivityPage> {
+  return alertingClient().listActivity(input);
 }
 
 export function getAlertingIncident(input: AlertingIncidentInput): Promise<AlertingIncident> {

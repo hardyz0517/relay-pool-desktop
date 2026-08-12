@@ -10,12 +10,13 @@ use crate::{
     application::command_facades::{parse_observation, AlertingCommandFacade},
     commands::error,
     ipc::dto::alerting::{
-        AlertPolicyDeleteInputDto, AlertPolicyDto, AlertPolicyInputDto, AlertingAttentionInputDto,
-        AlertingClearInputDto, AlertingClearScope, AlertingCurrentInputDto,
-        AlertingDeliveryPageDto, AlertingHistoryInputDto, AlertingIncidentInputDto,
-        AlertingIncidentPageDto, AlertingIncidentSummaryDto, AlertingMarkAllSeenInputDto,
-        AlertingNotificationTestInputDto, AlertingObservationInputDto, AlertingOccurrencePageDto,
-        AlertingSettingsDto, AlertingSettingsInputDto, AlertingSnoozeInputDto,
+        AlertPolicyDeleteInputDto, AlertPolicyDto, AlertPolicyInputDto, AlertingActivityInputDto,
+        AlertingActivityPageDto, AlertingAttentionInputDto, AlertingClearInputDto,
+        AlertingClearScope, AlertingCurrentInputDto, AlertingDeliveryPageDto,
+        AlertingHistoryInputDto, AlertingIncidentInputDto, AlertingIncidentPageDto,
+        AlertingIncidentSummaryDto, AlertingMarkAllSeenInputDto, AlertingNotificationTestInputDto,
+        AlertingObservationInputDto, AlertingOccurrencePageDto, AlertingSettingsDto,
+        AlertingSettingsInputDto, AlertingSnoozeInputDto,
     },
     observability::correlation,
 };
@@ -135,6 +136,33 @@ pub async fn list_alerting_incidents(
                 input.station_id.as_deref(),
                 input.severity.as_deref(),
                 input.lifecycle_state.as_deref(),
+                cursor.as_ref(),
+                input.limit.unwrap_or(50),
+            )
+            .await
+            .map(Into::into)
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn list_alerting_activity(
+    facade: State<'_, AlertingCommandFacade>,
+    input: Value,
+) -> Result<AlertingActivityPageDto, error::CommandError> {
+    correlation::in_command_scope("list_alerting_activity", async {
+        let input = AlertingActivityInputDto::parse(input)?;
+        let cursor = input.cursor.map(|value| {
+            crate::application::queries::change_center_workspace::ActivityCursor {
+                activity_at_ms: value.updated_at_ms,
+                id: value.id,
+            }
+        });
+        facade
+            .list_activity(
+                input.station_id.as_deref(),
+                input.severity.as_deref(),
                 cursor.as_ref(),
                 input.limit.unwrap_or(50),
             )

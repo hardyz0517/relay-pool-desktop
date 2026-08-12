@@ -136,6 +136,7 @@ commands.allow = [
   "get_desktop_notification_permission",
   "list_alert_policies",
   "list_alerting_deliveries",
+  "list_alerting_activity",
   "list_alerting_incidents",
   "list_alerting_occurrences",
   "mark_alerting_seen",

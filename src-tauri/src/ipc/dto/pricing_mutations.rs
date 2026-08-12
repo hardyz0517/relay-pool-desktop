@@ -36,6 +36,18 @@ pub struct UpsertModelBasePriceInputDto {
     pub model: String,
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
+    pub input_price_priority: Option<f64>,
+    pub output_price_priority: Option<f64>,
+    pub cache_creation_price: Option<f64>,
+    pub cache_creation_price_priority: Option<f64>,
+    pub cache_creation_price_above_1hr: Option<f64>,
+    pub cache_read_price: Option<f64>,
+    pub cache_read_price_priority: Option<f64>,
+    pub long_context_input_token_threshold: Option<i64>,
+    pub long_context_input_cost_multiplier: Option<f64>,
+    pub long_context_output_cost_multiplier: Option<f64>,
+    pub supports_service_tier: bool,
+    pub supports_prompt_caching: bool,
     pub currency: String,
     pub unit: String,
     pub source_url: String,
@@ -54,6 +66,37 @@ impl UpsertModelBasePriceInputDto {
         validate_text("model", &input.model, MAX_MODEL_BYTES, false)?;
         validate_price("inputPrice", input.input_price)?;
         validate_price("outputPrice", input.output_price)?;
+        validate_price("inputPricePriority", input.input_price_priority)?;
+        validate_price("outputPricePriority", input.output_price_priority)?;
+        validate_price("cacheCreationPrice", input.cache_creation_price)?;
+        validate_price(
+            "cacheCreationPricePriority",
+            input.cache_creation_price_priority,
+        )?;
+        validate_price(
+            "cacheCreationPriceAbove1Hr",
+            input.cache_creation_price_above_1hr,
+        )?;
+        validate_price("cacheReadPrice", input.cache_read_price)?;
+        validate_price("cacheReadPricePriority", input.cache_read_price_priority)?;
+        if input
+            .long_context_input_token_threshold
+            .is_some_and(|value| value <= 0)
+        {
+            return Err(invalid_input(
+                "longContextInputTokenThreshold",
+                "invalid_range",
+                "The long-context token threshold must be positive.",
+            ));
+        }
+        validate_positive_number(
+            "longContextInputCostMultiplier",
+            input.long_context_input_cost_multiplier,
+        )?;
+        validate_positive_number(
+            "longContextOutputCostMultiplier",
+            input.long_context_output_cost_multiplier,
+        )?;
         validate_text("currency", &input.currency, 16, false)?;
         validate_text("unit", &input.unit, 32, false)?;
         validate_optional_http_url("sourceUrl", &input.source_url)?;
@@ -70,6 +113,18 @@ impl UpsertModelBasePriceInputDto {
             model: self.model,
             input_price: self.input_price,
             output_price: self.output_price,
+            input_price_priority: self.input_price_priority,
+            output_price_priority: self.output_price_priority,
+            cache_creation_price: self.cache_creation_price,
+            cache_creation_price_priority: self.cache_creation_price_priority,
+            cache_creation_price_above_1hr: self.cache_creation_price_above_1hr,
+            cache_read_price: self.cache_read_price,
+            cache_read_price_priority: self.cache_read_price_priority,
+            long_context_input_token_threshold: self.long_context_input_token_threshold,
+            long_context_input_cost_multiplier: self.long_context_input_cost_multiplier,
+            long_context_output_cost_multiplier: self.long_context_output_cost_multiplier,
+            supports_service_tier: self.supports_service_tier,
+            supports_prompt_caching: self.supports_prompt_caching,
             currency: self.currency,
             unit: self.unit,
             source_url: self.source_url,
@@ -253,6 +308,20 @@ fn validate_price(
     value: Option<f64>,
 ) -> Result<(), crate::commands::error::CommandError> {
     validate_bounded_number(field, value, MAX_PRICE)
+}
+
+fn validate_positive_number(
+    field: &'static str,
+    value: Option<f64>,
+) -> Result<(), crate::commands::error::CommandError> {
+    if value.is_some_and(|value| !value.is_finite() || value <= 0.0 || value > MAX_MULTIPLIER) {
+        return Err(invalid_input(
+            field,
+            "invalid_range",
+            "The numeric value must be positive and within the allowed range.",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_bounded_number(

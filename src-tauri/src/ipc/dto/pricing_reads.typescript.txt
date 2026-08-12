@@ -19,6 +19,12 @@ export type PricingRuleDto = {
 
 export type ModelBasePriceDto = {
   id: string; provider: string; model: string; inputPrice: number | null; outputPrice: number | null;
+  inputPricePriority: number | null; outputPricePriority: number | null;
+  cacheCreationPrice: number | null; cacheCreationPricePriority: number | null;
+  cacheCreationPriceAbove1Hr: number | null; cacheReadPrice: number | null;
+  cacheReadPricePriority: number | null; longContextInputTokenThreshold: number | null;
+  longContextInputCostMultiplier: number | null; longContextOutputCostMultiplier: number | null;
+  supportsServiceTier: boolean; supportsPromptCaching: boolean;
   currency: string; unit: string; sourceUrl: string; sourceLabel: string; sourceCheckedAt: string | null;
   enabled: boolean; builtIn: boolean; note: string | null; createdAt: string; updatedAt: string;
 };
@@ -26,10 +32,12 @@ export type ModelBasePriceDto = {
 export type ResolvedPricingContextDto = {
   stationKeyId: string; stationId: string; requestedModel: string; resolvedModel: string;
   requestKind: RequestKindDto; groupBindingId: string | null; baseInputPrice: number | null;
-  baseOutputPrice: number | null; baseFixedPrice: number | null; currency: string; unit: string;
+  baseOutputPrice: number | null; baseFixedPrice: number | null;
+  baseCacheCreationPrice: number | null; baseCacheReadPrice: number | null; currency: string; unit: string;
   basePriceSource: string | null; effectiveRateMultiplier: number | null; rateSource: string | null;
   rateCollectedAt: string | null; estimatedInputPrice: number | null; estimatedOutputPrice: number | null;
-  estimatedFixedPrice: number | null; pricingStatus: PricingStatusDto; confidence: number;
+  estimatedFixedPrice: number | null; estimatedCacheCreationPrice: number | null;
+  estimatedCacheReadPrice: number | null; pricingStatus: PricingStatusDto; confidence: number;
   sourceChain: string[]; reason: string | null; resolvedAt: string;
 };
 

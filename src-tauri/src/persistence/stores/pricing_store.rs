@@ -73,6 +73,8 @@ pub(crate) struct SelectedModelBasePriceRow {
     pub(crate) model: String,
     pub(crate) input_price: Option<f64>,
     pub(crate) output_price: Option<f64>,
+    pub(crate) cache_creation_price: Option<f64>,
+    pub(crate) cache_read_price: Option<f64>,
     pub(crate) currency: String,
     pub(crate) source_checked_at: Option<String>,
     pub(crate) built_in: bool,
@@ -230,7 +232,8 @@ impl PricingStore {
                     r.id DESC
                 LIMIT 1
             ), selected_base_price AS (
-                SELECT p.model, p.input_price, p.output_price, p.currency,
+                SELECT p.model, p.input_price, p.output_price,
+                       p.cache_creation_price, p.cache_read_price, p.currency,
                        p.source_checked_at, p.built_in
                 FROM model_base_prices p
                 WHERE p.enabled = 1 AND lower(p.model) = lower(?2)
@@ -258,6 +261,8 @@ impl PricingStore {
                    p.model AS base_model,
                    p.input_price AS base_input_price,
                    p.output_price AS base_output_price,
+                   p.cache_creation_price AS base_cache_creation_price,
+                   p.cache_read_price AS base_cache_read_price,
                    p.currency AS base_currency,
                    p.source_checked_at AS base_source_checked_at,
                    p.built_in AS base_built_in
@@ -371,7 +376,8 @@ impl PricingStore {
             ), selected_rule AS (
                 SELECT * FROM selected_rule_candidates WHERE row_number = 1
             ), selected_base_price AS (
-                SELECT p.model, p.input_price, p.output_price, p.currency,
+                SELECT p.model, p.input_price, p.output_price,
+                       p.cache_creation_price, p.cache_read_price, p.currency,
                        p.source_checked_at, p.built_in
                 FROM model_base_prices p
                 WHERE p.enabled = 1 AND lower(p.model) = lower(
@@ -406,6 +412,8 @@ impl PricingStore {
                    p.model AS base_model,
                    p.input_price AS base_input_price,
                    p.output_price AS base_output_price,
+                   p.cache_creation_price AS base_cache_creation_price,
+                   p.cache_read_price AS base_cache_read_price,
                    p.currency AS base_currency,
                    p.source_checked_at AS base_source_checked_at,
                    p.built_in AS base_built_in
@@ -532,15 +540,37 @@ impl PricingStore {
         sqlx::query(
             r#"
             INSERT INTO model_base_prices (
-                id, provider, model, input_price, output_price, currency, unit,
+                id, provider, model, input_price, output_price,
+                input_price_priority, output_price_priority,
+                cache_creation_price, cache_creation_price_priority,
+                cache_creation_price_above_1hr, cache_read_price,
+                cache_read_price_priority, long_context_input_token_threshold,
+                long_context_input_cost_multiplier, long_context_output_cost_multiplier,
+                supports_service_tier, supports_prompt_caching, currency, unit,
                 source_url, source_label, source_checked_at, enabled, built_in,
                 note, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24,
+                ?25, ?26, ?27
+            )
             ON CONFLICT(id) DO UPDATE SET
                 provider = excluded.provider,
                 model = excluded.model,
                 input_price = excluded.input_price,
                 output_price = excluded.output_price,
+                input_price_priority = excluded.input_price_priority,
+                output_price_priority = excluded.output_price_priority,
+                cache_creation_price = excluded.cache_creation_price,
+                cache_creation_price_priority = excluded.cache_creation_price_priority,
+                cache_creation_price_above_1hr = excluded.cache_creation_price_above_1hr,
+                cache_read_price = excluded.cache_read_price,
+                cache_read_price_priority = excluded.cache_read_price_priority,
+                long_context_input_token_threshold = excluded.long_context_input_token_threshold,
+                long_context_input_cost_multiplier = excluded.long_context_input_cost_multiplier,
+                long_context_output_cost_multiplier = excluded.long_context_output_cost_multiplier,
+                supports_service_tier = excluded.supports_service_tier,
+                supports_prompt_caching = excluded.supports_prompt_caching,
                 currency = excluded.currency,
                 unit = excluded.unit,
                 source_url = excluded.source_url,
@@ -557,6 +587,18 @@ impl PricingStore {
         .bind(row.input.model.trim())
         .bind(row.input.input_price)
         .bind(row.input.output_price)
+        .bind(row.input.input_price_priority)
+        .bind(row.input.output_price_priority)
+        .bind(row.input.cache_creation_price)
+        .bind(row.input.cache_creation_price_priority)
+        .bind(row.input.cache_creation_price_above_1hr)
+        .bind(row.input.cache_read_price)
+        .bind(row.input.cache_read_price_priority)
+        .bind(row.input.long_context_input_token_threshold)
+        .bind(row.input.long_context_input_cost_multiplier)
+        .bind(row.input.long_context_output_cost_multiplier)
+        .bind(bool_to_i64(row.input.supports_service_tier))
+        .bind(bool_to_i64(row.input.supports_prompt_caching))
         .bind(row.input.currency.trim().to_uppercase())
         .bind(row.input.unit.trim())
         .bind(row.input.source_url.trim())
@@ -742,7 +784,13 @@ async fn insert_builtin_model_base_price_rows(
     let mut query = QueryBuilder::<Sqlite>::new(
         r#"
         INSERT INTO model_base_prices (
-            id, provider, model, input_price, output_price, currency, unit,
+            id, provider, model, input_price, output_price,
+            input_price_priority, output_price_priority,
+            cache_creation_price, cache_creation_price_priority,
+            cache_creation_price_above_1hr, cache_read_price,
+            cache_read_price_priority, long_context_input_token_threshold,
+            long_context_input_cost_multiplier, long_context_output_cost_multiplier,
+            supports_service_tier, supports_prompt_caching, currency, unit,
             source_url, source_label, source_checked_at, enabled, built_in,
             note, created_at, updated_at
         )
@@ -755,6 +803,18 @@ async fn insert_builtin_model_base_price_rows(
             .push_bind(row.input.model.trim())
             .push_bind(row.input.input_price)
             .push_bind(row.input.output_price)
+            .push_bind(row.input.input_price_priority)
+            .push_bind(row.input.output_price_priority)
+            .push_bind(row.input.cache_creation_price)
+            .push_bind(row.input.cache_creation_price_priority)
+            .push_bind(row.input.cache_creation_price_above_1hr)
+            .push_bind(row.input.cache_read_price)
+            .push_bind(row.input.cache_read_price_priority)
+            .push_bind(row.input.long_context_input_token_threshold)
+            .push_bind(row.input.long_context_input_cost_multiplier)
+            .push_bind(row.input.long_context_output_cost_multiplier)
+            .push_bind(bool_to_i64(row.input.supports_service_tier))
+            .push_bind(bool_to_i64(row.input.supports_prompt_caching))
             .push_bind(row.input.currency.trim().to_uppercase())
             .push_bind(row.input.unit.trim())
             .push_bind(row.input.source_url.trim())
@@ -774,6 +834,18 @@ async fn insert_builtin_model_base_price_rows(
                 model = excluded.model,
                 input_price = excluded.input_price,
                 output_price = excluded.output_price,
+                input_price_priority = excluded.input_price_priority,
+                output_price_priority = excluded.output_price_priority,
+                cache_creation_price = excluded.cache_creation_price,
+                cache_creation_price_priority = excluded.cache_creation_price_priority,
+                cache_creation_price_above_1hr = excluded.cache_creation_price_above_1hr,
+                cache_read_price = excluded.cache_read_price,
+                cache_read_price_priority = excluded.cache_read_price_priority,
+                long_context_input_token_threshold = excluded.long_context_input_token_threshold,
+                long_context_input_cost_multiplier = excluded.long_context_input_cost_multiplier,
+                long_context_output_cost_multiplier = excluded.long_context_output_cost_multiplier,
+                supports_service_tier = excluded.supports_service_tier,
+                supports_prompt_caching = excluded.supports_prompt_caching,
                 currency = excluded.currency,
                 unit = excluded.unit,
                 source_url = excluded.source_url,
@@ -796,7 +868,13 @@ async fn list_model_base_prices_from_connection(
 ) -> Result<Vec<ModelBasePrice>, PersistenceError> {
     let rows = sqlx::query(
         r#"
-        SELECT id, provider, model, input_price, output_price, currency, unit,
+        SELECT id, provider, model, input_price, output_price,
+               input_price_priority, output_price_priority,
+               cache_creation_price, cache_creation_price_priority,
+               cache_creation_price_above_1hr, cache_read_price,
+               cache_read_price_priority, long_context_input_token_threshold,
+               long_context_input_cost_multiplier, long_context_output_cost_multiplier,
+               supports_service_tier, supports_prompt_caching, currency, unit,
                source_url, source_label, source_checked_at, enabled, built_in,
                note, created_at, updated_at
         FROM model_base_prices
@@ -839,6 +917,8 @@ fn row_to_station_key_pricing_resolution(
                 model,
                 input_price: row.try_get("base_input_price")?,
                 output_price: row.try_get("base_output_price")?,
+                cache_creation_price: row.try_get("base_cache_creation_price")?,
+                cache_read_price: row.try_get("base_cache_read_price")?,
                 currency: row.try_get("base_currency")?,
                 source_checked_at: row.try_get("base_source_checked_at")?,
                 built_in: i64_to_bool(row.try_get("base_built_in")?),
@@ -1013,7 +1093,13 @@ async fn model_base_price_by_id(
 ) -> Result<ModelBasePrice, PersistenceError> {
     let row = sqlx::query(
         r#"
-        SELECT id, provider, model, input_price, output_price, currency, unit,
+        SELECT id, provider, model, input_price, output_price,
+               input_price_priority, output_price_priority,
+               cache_creation_price, cache_creation_price_priority,
+               cache_creation_price_above_1hr, cache_read_price,
+               cache_read_price_priority, long_context_input_token_threshold,
+               long_context_input_cost_multiplier, long_context_output_cost_multiplier,
+               supports_service_tier, supports_prompt_caching, currency, unit,
                source_url, source_label, source_checked_at, enabled, built_in,
                note, created_at, updated_at
         FROM model_base_prices WHERE id = ?1
@@ -1122,6 +1208,18 @@ fn validate_model_base_price(input: &UpsertModelBasePriceInput) -> Result<(), Pe
         || input.source_label.trim().is_empty()
         || !non_negative_optional(input.input_price)
         || !non_negative_optional(input.output_price)
+        || !non_negative_optional(input.input_price_priority)
+        || !non_negative_optional(input.output_price_priority)
+        || !non_negative_optional(input.cache_creation_price)
+        || !non_negative_optional(input.cache_creation_price_priority)
+        || !non_negative_optional(input.cache_creation_price_above_1hr)
+        || !non_negative_optional(input.cache_read_price)
+        || !non_negative_optional(input.cache_read_price_priority)
+        || input
+            .long_context_input_token_threshold
+            .is_some_and(|value| value <= 0)
+        || !positive_optional(input.long_context_input_cost_multiplier)
+        || !positive_optional(input.long_context_output_cost_multiplier)
     {
         return Err(PersistenceError::ConstraintViolation);
     }
@@ -1147,6 +1245,10 @@ fn valid_confidence(value: f64) -> bool {
 
 fn non_negative_optional(value: Option<f64>) -> bool {
     value.is_none_or(|value| value.is_finite() && value >= 0.0)
+}
+
+fn positive_optional(value: Option<f64>) -> bool {
+    value.is_none_or(|value| value.is_finite() && value > 0.0)
 }
 
 fn row_to_station(row: sqlx::sqlite::SqliteRow) -> Result<Station, PersistenceError> {
@@ -1307,6 +1409,18 @@ fn row_to_model_base_price(row: sqlx::sqlite::SqliteRow) -> ModelBasePrice {
         model: row.get("model"),
         input_price: row.get("input_price"),
         output_price: row.get("output_price"),
+        input_price_priority: row.get("input_price_priority"),
+        output_price_priority: row.get("output_price_priority"),
+        cache_creation_price: row.get("cache_creation_price"),
+        cache_creation_price_priority: row.get("cache_creation_price_priority"),
+        cache_creation_price_above_1hr: row.get("cache_creation_price_above_1hr"),
+        cache_read_price: row.get("cache_read_price"),
+        cache_read_price_priority: row.get("cache_read_price_priority"),
+        long_context_input_token_threshold: row.get("long_context_input_token_threshold"),
+        long_context_input_cost_multiplier: row.get("long_context_input_cost_multiplier"),
+        long_context_output_cost_multiplier: row.get("long_context_output_cost_multiplier"),
+        supports_service_tier: i64_to_bool(row.get("supports_service_tier")),
+        supports_prompt_caching: i64_to_bool(row.get("supports_prompt_caching")),
         currency: row.get("currency"),
         unit: row.get("unit"),
         source_url: row.get("source_url"),
@@ -1396,6 +1510,18 @@ mod tests {
                 model: "gpt-test".to_string(),
                 input_price: Some(1.0),
                 output_price: Some(2.0),
+                input_price_priority: Some(1.5),
+                output_price_priority: Some(3.0),
+                cache_creation_price: Some(1.25),
+                cache_creation_price_priority: Some(1.75),
+                cache_creation_price_above_1hr: Some(2.25),
+                cache_read_price: Some(0.1),
+                cache_read_price_priority: Some(0.2),
+                long_context_input_token_threshold: Some(200_000),
+                long_context_input_cost_multiplier: Some(2.0),
+                long_context_output_cost_multiplier: Some(1.5),
+                supports_service_tier: true,
+                supports_prompt_caching: true,
                 currency: "USD".to_string(),
                 unit: "M".to_string(),
                 source_url: "https://example.test/catalog".to_string(),
@@ -1475,6 +1601,26 @@ mod tests {
         .await
         .expect("custom provider");
         assert_eq!(custom_provider, "custom");
+        let prices = store
+            .list_model_base_prices(&mut read, 10)
+            .await
+            .expect("list model base prices");
+        let builtin = prices
+            .iter()
+            .find(|price| price.id == "builtin-1")
+            .expect("builtin price");
+        assert_eq!(builtin.input_price_priority, Some(1.5));
+        assert_eq!(builtin.output_price_priority, Some(3.0));
+        assert_eq!(builtin.cache_creation_price, Some(1.25));
+        assert_eq!(builtin.cache_creation_price_priority, Some(1.75));
+        assert_eq!(builtin.cache_creation_price_above_1hr, Some(2.25));
+        assert_eq!(builtin.cache_read_price, Some(0.1));
+        assert_eq!(builtin.cache_read_price_priority, Some(0.2));
+        assert_eq!(builtin.long_context_input_token_threshold, Some(200_000));
+        assert_eq!(builtin.long_context_input_cost_multiplier, Some(2.0));
+        assert_eq!(builtin.long_context_output_cost_multiplier, Some(1.5));
+        assert!(builtin.supports_service_tier);
+        assert!(builtin.supports_prompt_caching);
         drop(read);
 
         let conflict_temp = tempfile::tempdir().expect("conflict tempdir");

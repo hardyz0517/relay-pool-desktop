@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::application::alerting::policy_service::AlertingSettings;
 use crate::application::queries::change_center_workspace::{
-    DeliveryCursor, DeliveryHistoryPage, DeliverySummary, IncidentCursor, IncidentSummary,
-    IncidentWorkspacePage, OccurrenceCursor, OccurrenceHistoryPage, OccurrenceSummary,
+    ActivityCursor, ActivitySummary, ActivityWorkspacePage, DeliveryCursor, DeliveryHistoryPage,
+    DeliverySummary, IncidentCursor, IncidentSummary, IncidentWorkspacePage, OccurrenceCursor,
+    OccurrenceHistoryPage, OccurrenceSummary,
 };
 use crate::models::alerting::{
     AlertEventType, AlertPolicy, PolicyState, QuietHoursPolicy, RecoveryMode, RepeatMode,
@@ -272,6 +273,15 @@ pub(crate) struct AlertingCurrentInputDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AlertingActivityInputDto {
+    pub station_id: Option<String>,
+    pub severity: Option<String>,
+    pub cursor: Option<AlertingCursorDto>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AlertingCursorDto {
     pub updated_at_ms: i64,
     pub id: String,
@@ -409,6 +419,42 @@ pub(crate) struct AlertingIncidentPageDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct AlertingActivityDto {
+    pub record_type: String,
+    pub id: String,
+    pub event_type: String,
+    pub severity: String,
+    pub station_id: Option<String>,
+    pub object_type: Option<String>,
+    pub object_id: Option<String>,
+    pub station_key_id: Option<String>,
+    pub source: Option<String>,
+    pub reason_code: Option<String>,
+    pub condition_key: Option<String>,
+    pub lifecycle_state: Option<String>,
+    pub episode_number: Option<i64>,
+    pub occurrence_count: Option<i64>,
+    pub activity_at_ms: i64,
+    pub old_value_json: Option<String>,
+    pub new_value_json: Option<String>,
+    pub impact_json: Option<String>,
+    pub collector_failed_task_types: Vec<String>,
+    pub resolved_at_ms: Option<i64>,
+    pub seen_at_ms: Option<i64>,
+    pub snoozed_until_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AlertingActivityPageDto {
+    pub items: Vec<AlertingActivityDto>,
+    pub next_cursor: Option<AlertingCursorOutputDto>,
+    pub active_count: i64,
+    pub unseen_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AlertingOccurrenceDto {
     pub id: String,
     pub source_observation_key: String,
@@ -467,6 +513,21 @@ impl AlertingCurrentInputDto {
             )
             .expect("bounded alerting validation error")
         })
+    }
+}
+
+impl AlertingActivityInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| invalid())?;
+        if input.limit.is_some_and(|value| value == 0 || value > 200)
+            || input
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.id.trim().is_empty() || cursor.id.len() > 240)
+        {
+            return Err(invalid());
+        }
+        Ok(input)
     }
 }
 
@@ -555,6 +616,46 @@ impl From<IncidentWorkspacePage> for AlertingIncidentPageDto {
     }
 }
 
+impl From<ActivityWorkspacePage> for AlertingActivityPageDto {
+    fn from(page: ActivityWorkspacePage) -> Self {
+        Self {
+            items: page.items.into_iter().map(Into::into).collect(),
+            next_cursor: page.next_cursor.map(Into::into),
+            active_count: page.active_count,
+            unseen_count: page.unseen_count,
+        }
+    }
+}
+
+impl From<ActivitySummary> for AlertingActivityDto {
+    fn from(item: ActivitySummary) -> Self {
+        Self {
+            record_type: item.record_type,
+            id: item.id,
+            event_type: item.event_type,
+            severity: item.severity,
+            station_id: item.station_id,
+            object_type: item.object_type,
+            object_id: item.object_id,
+            station_key_id: item.station_key_id,
+            source: item.source,
+            reason_code: item.reason_code,
+            condition_key: item.condition_key,
+            lifecycle_state: item.lifecycle_state,
+            episode_number: item.episode_number,
+            occurrence_count: item.occurrence_count,
+            activity_at_ms: item.activity_at_ms,
+            old_value_json: item.old_value_json,
+            new_value_json: item.new_value_json,
+            impact_json: item.impact_json,
+            collector_failed_task_types: item.collector_failed_task_types,
+            resolved_at_ms: item.resolved_at_ms,
+            seen_at_ms: item.seen_at_ms,
+            snoozed_until_ms: item.snoozed_until_ms,
+        }
+    }
+}
+
 impl From<IncidentSummary> for AlertingIncidentSummaryDto {
     fn from(item: IncidentSummary) -> Self {
         Self {
@@ -580,6 +681,15 @@ impl From<IncidentCursor> for AlertingCursorOutputDto {
     fn from(cursor: IncidentCursor) -> Self {
         Self {
             updated_at_ms: cursor.updated_at_ms,
+            id: cursor.id,
+        }
+    }
+}
+
+impl From<ActivityCursor> for AlertingCursorOutputDto {
+    fn from(cursor: ActivityCursor) -> Self {
+        Self {
+            updated_at_ms: cursor.activity_at_ms,
             id: cursor.id,
         }
     }
@@ -707,6 +817,10 @@ export type AlertingCurrentInputDto = {
   stationId?: string | null; severity?: AlertSeverity | null;
   lifecycleState?: string | null; cursor?: AlertingCursorDto | null; limit?: number;
 };
+export type AlertingActivityInputDto = {
+  stationId?: string | null; severity?: AlertSeverity | null;
+  cursor?: AlertingCursorDto | null; limit?: number;
+};
 export type AlertingAttentionInputDto = { incidentId: string; episodeNumber: number };
 export type AlertingMarkAllSeenInputDto = { stationId?: string | null; severity?: AlertSeverity | null };
 export type AlertingClearScope = "active" | "unread" | "resolved";
@@ -732,6 +846,20 @@ export type AlertingIncidentSummaryDto = {
 export type AlertingCursorDto = { updatedAtMs: number; id: string };
 export type AlertingIncidentPageDto = {
   items: AlertingIncidentSummaryDto[]; nextCursor: AlertingCursorDto | null;
+  activeCount: number; unseenCount: number;
+};
+export type AlertingActivityDto = {
+  recordType: "incident" | "change"; id: string; eventType: string; severity: string;
+  stationId: string | null; objectType: string | null; objectId: string | null;
+  stationKeyId: string | null; source: string | null; reasonCode: string | null;
+  conditionKey: string | null; lifecycleState: string | null;
+  episodeNumber: number | null; occurrenceCount: number | null; activityAtMs: number;
+  oldValueJson: string | null; newValueJson: string | null; impactJson: string | null;
+  collectorFailedTaskTypes: string[]; resolvedAtMs: number | null;
+  seenAtMs: number | null; snoozedUntilMs: number | null;
+};
+export type AlertingActivityPageDto = {
+  items: AlertingActivityDto[]; nextCursor: AlertingCursorDto | null;
   activeCount: number; unseenCount: number;
 };
 export type AlertingIncidentInputDto = { incidentId: string; episodeNumber: number };

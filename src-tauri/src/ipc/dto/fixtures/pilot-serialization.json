@@ -2674,18 +2674,30 @@
       "output": [
         {
           "builtIn": false,
+          "cacheCreationPrice": 1.25,
+          "cacheCreationPriceAbove1hr": null,
+          "cacheCreationPricePriority": null,
+          "cacheReadPrice": 0.1,
+          "cacheReadPricePriority": null,
           "createdAt": "1700000000000",
           "currency": "USD",
           "enabled": true,
           "id": "base-price-1",
           "inputPrice": 1.0,
+          "inputPricePriority": null,
+          "longContextInputCostMultiplier": null,
+          "longContextInputTokenThreshold": null,
+          "longContextOutputCostMultiplier": null,
           "model": "fixture-model",
           "note": null,
           "outputPrice": 2.0,
+          "outputPricePriority": null,
           "provider": "fixture",
           "sourceCheckedAt": "2026-07-24",
           "sourceLabel": "Fixture pricing",
           "sourceUrl": "https://provider.invalid/pricing",
+          "supportsPromptCaching": true,
+          "supportsServiceTier": false,
           "unit": "M",
           "updatedAt": "1700000000000"
         }
@@ -2699,6 +2711,8 @@
         "stationKeyId": "key-1"
       },
       "output": {
+        "baseCacheCreationPrice": 1.25,
+        "baseCacheReadPrice": 0.1,
         "baseFixedPrice": null,
         "baseInputPrice": 1.0,
         "baseOutputPrice": 2.0,
@@ -2706,6 +2720,8 @@
         "confidence": 1.0,
         "currency": "USD",
         "effectiveRateMultiplier": 0.8,
+        "estimatedCacheCreationPrice": 1.0,
+        "estimatedCacheReadPrice": 0.08,
         "estimatedFixedPrice": null,
         "estimatedInputPrice": 0.8,
         "estimatedOutputPrice": 1.6,

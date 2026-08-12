@@ -1102,7 +1102,7 @@ fn group_transition_observation(
                 (
                     AlertEventType::GroupMissing,
                     ObservationKind::Abnormal,
-                    Severity::Warning,
+                    Severity::Info,
                     "group_missing",
                 )
             } else if current.binding_status == BINDING_STATUS_AVAILABLE
@@ -1111,7 +1111,7 @@ fn group_transition_observation(
                 (
                     AlertEventType::GroupMissing,
                     ObservationKind::Healthy,
-                    Severity::Warning,
+                    Severity::Info,
                     "group_available",
                 )
             } else if current.binding_status == BINDING_STATUS_AVAILABLE
@@ -1225,7 +1225,7 @@ fn rate_change_observation(
         ))
         .expect("collector rate condition key is bounded"),
         kind: ObservationKind::Change,
-        severity: Severity::Warning,
+        severity: Severity::Info,
         object_type: "station_group_binding".to_string(),
         object_id: Some(transition.group_binding_id.clone()),
         station_id: Some(station_id.to_string()),
@@ -1414,6 +1414,7 @@ mod tests {
             serde_json::from_str(&observation.summary_json).expect("valid summary");
 
         assert_eq!(observation.event_type, AlertEventType::GroupRateChanged);
+        assert_eq!(observation.severity, Severity::Info);
         assert_eq!(observation.object_type, "station_group_binding");
         assert_eq!(summary["groupName"], "stable-group");
         assert_eq!(summary["oldEffectiveRateMultiplier"], 0.2);
@@ -1518,6 +1519,20 @@ mod tests {
             audit.condition_key.as_str(),
             "station_group:station-1:group-hash"
         );
+
+        let mut missing_current = transition.current.clone();
+        missing_current.binding_status = BINDING_STATUS_MISSING.to_string();
+        let missing = group_transition_observation(
+            &GroupTransition {
+                previous: Some(transition.current),
+                current: missing_current,
+            },
+            "1700000000000",
+            "run-2",
+        )
+        .expect("missing group emits an informational observation");
+        assert_eq!(missing.event_type, AlertEventType::GroupMissing);
+        assert_eq!(missing.severity, Severity::Info);
     }
 
     #[test]

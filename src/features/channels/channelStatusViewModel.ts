@@ -66,6 +66,7 @@ export type ChannelStatusRowView = {
   balancePaused: boolean;
   modelLabel: string;
   currentTone: StatusTone;
+  latestProbeTone: StatusTone;
   currentLabel: string;
   currentReason: string | null;
   runningExecutionId: string | null;
@@ -143,6 +144,7 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
   const selected = row.selectedWindow;
   const runningExecutionId = row.running?.executionId ?? null;
   const currentOutcome = latest?.outcome ?? selected.latestOutcome;
+  const latestProbeTone = outcomeToStatusTone(currentOutcome);
   const currentTone: StatusTone = row.monitor.enabled && !row.monitor.balancePaused
     ? runningExecutionId
       ? "running"
@@ -176,6 +178,7 @@ export function buildRowView(row: ChannelStatusRow, window: ChannelWindow): Chan
     balancePaused: row.monitor.balancePaused,
     modelLabel: formatModelLabel(row.monitor.primaryModel, row.monitor.fallbackModels),
     currentTone,
+    latestProbeTone,
     currentLabel: !row.monitor.enabled
       ? "停用"
       : row.monitor.balancePaused
@@ -363,6 +366,14 @@ function bucketStateToTrendTone(bucket: ChannelStatusBucket): TrendCellTone {
 }
 
 function outcomeToTrendTone(outcome: ChannelStatusOutcome): TrendCellTone {
+  if (outcome === "available") return "available";
+  if (outcome === "degraded") return "degraded";
+  if (outcome === "unavailable") return "unavailable";
+  if (outcome === "skipped") return "skipped";
+  return "missing";
+}
+
+function outcomeToStatusTone(outcome: ChannelStatusOutcome): StatusTone {
   if (outcome === "available") return "available";
   if (outcome === "degraded") return "degraded";
   if (outcome === "unavailable") return "unavailable";

@@ -4,6 +4,8 @@ import type { RuntimeContractInfo } from "./contract";
 import type {
   AlertPolicy,
   AlertPolicyInput,
+  AlertingActivityInput,
+  AlertingActivityPage,
   AlertingCurrentInput,
   AlertingHistoryInput,
   AlertingDomainClient,
@@ -81,6 +83,12 @@ export class DemoBackend implements BackendClient {
       this.alertingPolicies = this.alertingPolicies.filter((policy) => policy.id !== id);
     },
     listCurrentIncidents: async (_input: AlertingCurrentInput = {}): Promise<AlertingIncidentPage> => ({
+      items: [],
+      nextCursor: null,
+      activeCount: 0,
+      unseenCount: 0,
+    }),
+    listActivity: async (_input: AlertingActivityInput = {}): Promise<AlertingActivityPage> => ({
       items: [],
       nextCursor: null,
       activeCount: 0,

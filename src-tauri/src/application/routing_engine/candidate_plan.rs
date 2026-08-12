@@ -49,6 +49,8 @@ pub struct RoutePlanPricingSnapshot {
     pub estimated_input_price: Option<f64>,
     pub estimated_output_price: Option<f64>,
     pub estimated_fixed_price: Option<f64>,
+    pub estimated_cache_creation_price: Option<f64>,
+    pub estimated_cache_read_price: Option<f64>,
     pub status_label: String,
 }
 
@@ -61,6 +63,8 @@ impl RoutePlanPricingSnapshot {
             estimated_input_price: None,
             estimated_output_price: None,
             estimated_fixed_price: None,
+            estimated_cache_creation_price: None,
+            estimated_cache_read_price: None,
             status_label: status_label.into(),
         }
     }
@@ -350,6 +354,8 @@ fn plan_candidate(
             estimated_input_price: candidate.pricing.estimated_input_price,
             estimated_output_price: candidate.pricing.estimated_output_price,
             estimated_fixed_price: candidate.pricing.estimated_fixed_price,
+            estimated_cache_creation_price: candidate.pricing.estimated_cache_creation_price,
+            estimated_cache_read_price: candidate.pricing.estimated_cache_read_price,
             status_label: candidate.pricing.status_label.clone(),
         },
         evidence: bounded_evidence(candidate, context),

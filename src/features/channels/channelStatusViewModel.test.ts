@@ -119,6 +119,7 @@ describe("channel status V2 view model", () => {
     expect(view.availabilityPercent).toBe(92.5);
     expect(view.latencyLabel).toBe("321 ms");
     expect(view.endpointPingLabel).toBe("48 ms");
+    expect(view.latestProbeTone).toBe("degraded");
   });
 
   it("renders model latency and endpoint ping as the two card metrics", () => {

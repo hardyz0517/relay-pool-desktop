@@ -243,6 +243,8 @@ mod tests {
             model: "gpt-5-mini".to_string(),
             input_price: Some(0.25),
             output_price: Some(2.0),
+            cache_creation_price: Some(0.3125),
+            cache_read_price: Some(0.025),
             currency: "USD".to_string(),
             source_checked_at: Some("100".to_string()),
             built_in: true,
@@ -290,6 +292,13 @@ mod tests {
         assert_eq!(context.effective_rate_multiplier, Some(1.5));
         assert_eq!(context.estimated_input_price, Some(0.375));
         assert_eq!(context.estimated_output_price, Some(3.0));
+        assert_eq!(context.base_cache_creation_price, Some(0.3125));
+        assert_eq!(context.base_cache_read_price, Some(0.025));
+        assert_eq!(context.estimated_cache_creation_price, Some(0.46875));
+        assert_eq!(
+            context.estimated_cache_read_price,
+            Some(0.037500000000000006)
+        );
         assert_eq!(context.confidence, 0.9);
         assert_eq!(context.rate_collected_at.as_deref(), Some("200"));
     }

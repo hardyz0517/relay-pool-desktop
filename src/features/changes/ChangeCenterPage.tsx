@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import {
+  alertingActivityQueryOptions,
   alertingCurrentQueryOptions,
   alertingDeliveriesQueryOptions,
   alertingOccurrencesQueryOptions,
@@ -23,7 +24,7 @@ import {
 import { settingsQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
-import type { AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
+import type { AlertingActivity, AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { clearAlertingIncidents, markAlertingSeen, markAllAlertingSeen } from "@/lib/api/alerting";
 import { collectorFailureTaskLabel } from "./collectorIncidentLabels";
@@ -38,7 +39,7 @@ type ChangeCenterPageProps = {
   onOpenSettings?: () => void;
 };
 
-type ChangeCenterLinkEvent = AlertingIncident & {
+type ChangeCenterLinkEvent = Pick<AlertingIncident, "stationId"> & Partial<Pick<AlertingActivity, "objectType" | "objectId" | "stationKeyId">> & {
   requestLogId?: string | null;
   objectType?: string | null;
   objectId?: string | null;
@@ -63,6 +64,22 @@ type Severity = "all" | "critical" | "warning" | "info";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
+function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
+  return {
+    ...incident,
+    recordType: "incident",
+    objectType: null,
+    objectId: null,
+    stationKeyId: null,
+    source: null,
+    reasonCode: null,
+    activityAtMs: incident.updatedAtMs,
+    oldValueJson: null,
+    newValueJson: null,
+    impactJson: null,
+  };
+}
+
 export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: ChangeCenterPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -81,46 +98,68 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;
   const incidentQuery = useActivityQuery(
-    alertingCurrentQueryOptions({
+    {
+      ...alertingCurrentQueryOptions({
       severity: severity === "all" ? null : severity,
       lifecycleState: view === "active" || view === "unread" ? view : view === "resolved" ? "resolved" : null,
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
-    }),
+      }),
+      enabled: view !== "all",
+    },
   );
+  const activityQuery = useActivityQuery({
+    ...alertingActivityQueryOptions({
+      severity: severity === "all" ? null : severity,
+      cursor: pageCursors[page] ?? null,
+      limit: pageSize,
+    }),
+    enabled: view === "all",
+  });
   const incidents = incidentQuery.data?.items ?? [];
+  const activities = useMemo<AlertingActivity[]>(
+    () => view === "all" ? (activityQuery.data?.items ?? []) : incidents.map(toIncidentActivity),
+    [activityQuery.data?.items, incidents, view],
+  );
+  const pageData = view === "all" ? activityQuery.data : incidentQuery.data;
+  const activeQuery = view === "all" ? activityQuery : incidentQuery;
   const stationNames = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
   );
-  const filteredIncidents = useMemo(() => {
+  const filteredActivities = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return incidents.filter((incident) => {
-      const active = incident.lifecycleState !== "resolved";
-      if (view === "active" && !active) return false;
-      if (view === "resolved" && active) return false;
-      if (view === "unread" && incident.seenAtMs != null) return false;
+    return activities.filter((activity) => {
+      if (activity.recordType === "incident") {
+        const active = activity.lifecycleState !== "resolved";
+        if (view === "active" && !active) return false;
+        if (view === "resolved" && active) return false;
+        if (view === "unread" && activity.seenAtMs != null) return false;
+      }
       if (!needle) return true;
-      return [incident.eventType, incident.conditionKey, incident.stationId, incident.lifecycleState]
+      return [activity.eventType, activity.conditionKey, activity.stationId, activity.lifecycleState, activity.reasonCode, activity.objectId]
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(needle));
     });
-  }, [incidents, query, view]);
+  }, [activities, query, view]);
   const pageInfo = useMemo(() => {
     return {
       currentPage: page,
-      totalPages: incidentQuery.data?.nextCursor ? page + 1 : page,
-      startIndex: filteredIncidents.length === 0 ? 0 : 1,
-      endIndex: filteredIncidents.length,
-      total: filteredIncidents.length,
-      items: filteredIncidents,
+      totalPages: pageData?.nextCursor ? page + 1 : page,
+      startIndex: filteredActivities.length === 0 ? 0 : 1,
+      endIndex: filteredActivities.length,
+      total: filteredActivities.length,
+      items: filteredActivities,
     };
-  }, [filteredIncidents, incidentQuery.data?.nextCursor, page]);
+  }, [filteredActivities, pageData?.nextCursor, page]);
+  const shouldShowPagination =
+    pageInfo.currentPage > 1 || pageInfo.total >= 20 || Boolean(pageData?.nextCursor);
 
   async function refresh(showSuccess = false) {
     try {
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ["alertingCurrent"], type: "active" }),
+        queryClient.refetchQueries({ queryKey: ["alertingActivity"], type: "active" }),
         queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" }),
       ]);
       if (showSuccess) toast.success("变更中心已刷新");
@@ -142,8 +181,8 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
   }
 
   function changePage(nextPage: number) {
-    if (nextPage > page && incidentQuery.data?.nextCursor) {
-      setPageCursors((current) => ({ ...current, [nextPage]: incidentQuery.data?.nextCursor ?? null }));
+    if (nextPage > page && pageData?.nextCursor) {
+      setPageCursors((current) => ({ ...current, [nextPage]: pageData.nextCursor }));
     }
     setPage(nextPage);
   }
@@ -153,6 +192,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
     try {
       await markAlertingSeen(incident.id, incident.episodeNumber);
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
+      await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
     } catch (requestError) {
       toast.error("标记提醒已读失败", readError(requestError));
     } finally {
@@ -174,7 +214,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
   }
 
   function requestClearAll() {
-    if (incidents.length === 0) return;
+    if (!activities.some((activity) => activity.recordType === "incident")) return;
     setIsClearConfirmOpen(true);
   }
 
@@ -186,6 +226,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
         lifecycleState: view === "all" ? null : view,
       });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
+      await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
       setExpandedIncidentKey(null);
       setPage(1);
       setPageCursors({ 1: null });
@@ -213,9 +254,9 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
     >
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="grid gap-3 md:grid-cols-3">
-          <SummaryTile label="活动问题" value={incidentQuery.data?.activeCount ?? 0} />
-          <SummaryTile label="未读提醒" value={incidentQuery.data?.unseenCount ?? 0} />
-          <SummaryTile label="当前加载" value={incidents.length} />
+          <SummaryTile label="活动问题" value={pageData?.activeCount ?? 0} />
+          <SummaryTile label="未读提醒" value={pageData?.unseenCount ?? 0} />
+          <SummaryTile label="当前加载" value={activities.length} />
         </div>
         <div className="min-w-0">
           <div data-testid="change-center-toolbar-surface" className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
@@ -229,24 +270,27 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (incidentQuery.data?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
-                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || incidents.length === 0}><Trash2 className="h-4 w-4" />一键清空</Button>
-                <Button variant="secondary" onClick={() => void refresh(true)} disabled={incidentQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
+                <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (pageData?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
+                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || !activities.some((activity) => activity.recordType === "incident")}><Trash2 className="h-4 w-4" />清空告警</Button>
+                <Button variant="secondary" onClick={() => void refresh(true)} disabled={activeQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
               </div>
             </Toolbar>
           </div>
           <div data-testid="change-center-list-surface" className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
-            {incidentQuery.error ? <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{readError(incidentQuery.error)}</div> : null}
-            {pageInfo.items.length === 0 ? <EmptyState title={incidentQuery.isPending ? "正在加载问题" : "暂无问题"} description="当前事实、恢复状态和待处理提醒会显示在这里。" /> : (
+            {activeQuery.error ? <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{readError(activeQuery.error)}</div> : null}
+            {pageInfo.items.length === 0 ? <EmptyState title={activeQuery.isPending ? (view === "all" ? "正在加载活动" : "正在加载问题") : (view === "all" ? "暂无活动" : "暂无问题")} description={view === "all" ? "告警、恢复状态和信息类变更会按时间显示在这里。" : "当前事实、恢复状态和待处理提醒会显示在这里。"} /> : (
               <div className="divide-y divide-border bg-surface">
-                {pageInfo.items.map((incident) => {
-                  const key = `${incident.id}:${incident.episodeNumber}`;
-                  return <IncidentRow key={key} incident={incident} stationName={incident.stationId ? stationNames.get(incident.stationId) : null} busy={busyIncidentId === incident.id} developerModeEnabled={developerModeEnabled} expanded={expandedIncidentKey === key} onToggle={() => setExpandedIncidentKey((current) => current === key ? null : key)} onMarkSeen={() => void markSeen(incident)} onOpenRoutingDeepLink={onOpenRoutingDeepLink} />;
+                {pageInfo.items.map((activity) => {
+                  const key = `${activity.recordType}:${activity.id}:${activity.episodeNumber ?? 0}`;
+                  const common = { stationName: activity.stationId ? stationNames.get(activity.stationId) : null, developerModeEnabled, expanded: expandedIncidentKey === key, onToggle: () => setExpandedIncidentKey((current) => current === key ? null : key), onOpenRoutingDeepLink };
+                  return activity.recordType === "change"
+                    ? <ChangeRow key={key} activity={activity} {...common} />
+                    : <IncidentRow key={key} incident={activity} busy={busyIncidentId === activity.id} onMarkSeen={() => void markSeen(activity)} {...common} />;
                 })}
               </div>
             )}
           </div>
-          {pageInfo.total > 0 ? <div data-testid="change-center-pagination-surface" className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
+          {shouldShowPagination ? <div data-testid="change-center-pagination-surface" className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
             <div className="flex flex-wrap items-center gap-3"><span>第 {pageInfo.currentPage} 页：{pageInfo.startIndex}-{pageInfo.endIndex}</span><label className="flex items-center gap-2"><span>每页数量</span><select aria-label="每页数量" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); setPageCursors({ 1: null }); }} className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-ring">{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label></div>
             <Pagination ariaLabel="变更中心分页" page={pageInfo.currentPage} totalPages={pageInfo.totalPages} disabled={incidentQuery.isFetching} onPageChange={changePage} />
           </div> : null}
@@ -255,7 +299,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
       <ConfirmDialog
         open={isClearConfirmOpen}
         title="清空告警记录"
-        description="确认永久清空当前标签和严重程度范围内的告警记录吗？仍然异常的对象会在下一次采集后重新生成告警。"
+        description="确认永久清空当前标签和严重程度范围内的告警记录吗？信息类变更会保留；仍然异常的对象会在下一次采集后重新生成告警。"
         confirmLabel="永久清空"
         confirming={isClearingAll}
         onCancel={() => setIsClearConfirmOpen(false)}
@@ -278,6 +322,27 @@ function IncidentRow({ incident, stationName, busy, developerModeEnabled, expand
     <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" disabled={busy || incident.seenAtMs != null} onClick={onMarkSeen}>标记已读</Button>{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
     </div>
     {developerModeEnabled && expanded ? <IncidentDetail incident={incident} /> : null}
+  </div>;
+}
+
+function ChangeRow({ activity, stationName, developerModeEnabled, expanded, onToggle, onOpenRoutingDeepLink }: { activity: Extract<AlertingActivity, { recordType: "change" }>; stationName: string | null | undefined; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
+  const routingLink = createChangeCenterRoutingLink(activity);
+  return <div className="bg-surface">
+    <div className={`grid min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_auto_minmax(0,1fr)_auto_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}>
+      {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起变更" : "展开变更"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
+      <StatusBadge className="justify-self-start" tone="info">信息</StatusBadge>
+      <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(activity.eventType)}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? activity.stationId ?? "全局"} · {changeSummary(activity)}</div></div>
+      <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(activity.activityAtMs)}</span><span>变更记录</span></div>
+      <div className="flex items-center justify-end gap-1">{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
+    </div>
+    {developerModeEnabled && expanded ? <ChangeDetail activity={activity} /> : null}
+  </div>;
+}
+
+function ChangeDetail({ activity }: { activity: Extract<AlertingActivity, { recordType: "change" }> }) {
+  return <div className="grid gap-3 border-t border-border bg-muted/20 px-12 py-3 text-xs md:grid-cols-2">
+    <section><div className="mb-2 font-semibold text-foreground">来源</div><div className="space-y-1 text-muted-foreground"><div>{sourceLabel(activity.source)} · {reasonLabel(activity.reasonCode)}</div><div className="break-all">{activity.objectType ?? "对象"}{activity.objectId ? ` · ${activity.objectId}` : ""}</div></div></section>
+    <section><div className="mb-2 font-semibold text-foreground">变更内容</div><div className="space-y-1 text-muted-foreground">{activity.oldValueJson ? <div>原值：{formatAuditValue(activity.oldValueJson)}</div> : null}{activity.newValueJson ? <div>新值：{formatAuditValue(activity.newValueJson)}</div> : null}{activity.impactJson ? <div>影响：{formatAuditValue(activity.impactJson)}</div> : null}{!activity.oldValueJson && !activity.newValueJson && !activity.impactJson ? <div>未记录结构化详情</div> : null}</div></section>
   </div>;
 }
 
@@ -310,6 +375,55 @@ function eventLabel(eventType: string) {
     audit_change: "配置发生变化",
   };
   return labels[eventType] ?? eventType;
+}
+
+export function changeSummary(activity: Extract<AlertingActivity, { recordType: "change" }>) {
+  const details = parseAuditObject(activity.newValueJson);
+  const groupName = stringValue(details?.groupName);
+  if (activity.eventType === "group_rate_changed") {
+    const oldRate = scalarValue(details?.oldEffectiveRateMultiplier);
+    const newRate = scalarValue(details?.newEffectiveRateMultiplier);
+    if (oldRate && newRate) return `${groupName ? `${groupName} · ` : ""}倍率 ${oldRate} → ${newRate}`;
+  }
+  if (activity.eventType === "group_added" && groupName) return `${groupName} · 新增分组`;
+  if (groupName) return `${groupName} · ${reasonLabel(activity.reasonCode)}`;
+  return reasonLabel(activity.reasonCode);
+}
+
+function parseAuditObject(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed != null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function scalarValue(value: unknown) {
+  return typeof value === "number" || typeof value === "string" ? String(value) : null;
+}
+
+function formatAuditValue(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (parsed == null || typeof parsed !== "object") return String(parsed);
+    return JSON.stringify(parsed);
+  } catch {
+    return value;
+  }
+}
+
+function reasonLabel(value: string | null) {
+  return ({ group_added: "新增分组", group_rate_changed: "分组倍率变化", key_group_bound: "密钥已绑定分组", price_changed: "价格变化", model_added: "新增模型", model_removed: "模型移除" } as Record<string, string>)[value ?? ""] ?? value ?? "配置发生变化";
+}
+
+function sourceLabel(value: string | null) {
+  return ({ collector: "采集器", migration: "数据迁移", user: "用户操作" } as Record<string, string>)[value ?? ""] ?? value ?? "系统";
 }
 
 function severityLabel(value: string) {

@@ -21,7 +21,7 @@ const pricingPage = read("src/features/pricing/PricingPage.tsx");
 const settingsPage = read("src/features/settings/SettingsPage.tsx");
 const economicsApi = read("src/lib/api/economics.ts");
 const economicsTypes = read("src/lib/types/economics.ts");
-const commands = read("src-tauri/src/commands/mod.rs");
+const commands = read("src-tauri/src/commands/pricing.rs");
 const ipcRegistry = read("src-tauri/src/ipc/registry.rs");
 
 function readRouteLabel(routeId) {
@@ -121,7 +121,7 @@ assertIncludes(
 );
 assertIncludes(
   ipcRegistry,
-  "list_model_base_prices => $crate::commands::list_model_base_prices",
+  "list_model_base_prices => $crate::commands::pricing::list_model_base_prices",
   "Tauri generated IPC registry should register list_model_base_prices.",
 );
 

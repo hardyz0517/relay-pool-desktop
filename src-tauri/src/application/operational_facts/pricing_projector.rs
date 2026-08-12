@@ -115,6 +115,8 @@ pub(crate) struct RequestCostComparisonContext {
     pub(crate) estimated_input_price: Option<f64>,
     pub(crate) estimated_output_price: Option<f64>,
     pub(crate) estimated_fixed_price: Option<f64>,
+    pub(crate) estimated_cache_creation_price: Option<f64>,
+    pub(crate) estimated_cache_read_price: Option<f64>,
     pub(crate) status_label: String,
     pub(crate) source_chain: Vec<String>,
     pub(crate) observed_at: Option<String>,
@@ -136,6 +138,8 @@ pub(crate) fn request_cost_comparison_context(
             estimated_input_price: None,
             estimated_output_price: None,
             estimated_fixed_price: None,
+            estimated_cache_creation_price: None,
+            estimated_cache_read_price: None,
             status_label: "not_applicable".to_string(),
             source_chain: Vec::new(),
             observed_at: None,
@@ -153,6 +157,8 @@ pub(crate) fn request_cost_comparison_context(
             estimated_input_price: None,
             estimated_output_price: None,
             estimated_fixed_price: None,
+            estimated_cache_creation_price: None,
+            estimated_cache_read_price: None,
             status_label: "unpriced".to_string(),
             source_chain: Vec::new(),
             observed_at: None,
@@ -192,6 +198,8 @@ pub(crate) fn request_cost_comparison_context(
         estimated_input_price: pricing.estimated_input_price,
         estimated_output_price: pricing.estimated_output_price,
         estimated_fixed_price: pricing.estimated_fixed_price,
+        estimated_cache_creation_price: pricing.estimated_cache_creation_price,
+        estimated_cache_read_price: pricing.estimated_cache_read_price,
         status_label: pricing.pricing_status.as_str().to_string(),
         source_chain: pricing.source_chain.clone(),
         observed_at: pricing
@@ -263,6 +271,11 @@ fn pricing_parts_from_resolution(
                             base_price.input_price.map(|price| price * multiplier);
                         owned.estimated_output_price =
                             base_price.output_price.map(|price| price * multiplier);
+                        owned.estimated_cache_creation_price = base_price
+                            .cache_creation_price
+                            .map(|price| price * multiplier);
+                        owned.estimated_cache_read_price =
+                            base_price.cache_read_price.map(|price| price * multiplier);
                     } else if group_binding_id.is_some() {
                         owned.pricing_rule_id = Some(rule.id.clone());
                         owned.normalization_status = Some("missing_rate".to_string());
@@ -274,6 +287,8 @@ fn pricing_parts_from_resolution(
                             Some(rule.confidence.min(base_price_confidence(base_price)));
                         owned.base_input_price = base_price.input_price;
                         owned.base_output_price = base_price.output_price;
+                        owned.base_cache_creation_price = base_price.cache_creation_price;
+                        owned.base_cache_read_price = base_price.cache_read_price;
                         owned.price_currency = Some(base_price.currency.clone());
                         owned.pricing_source = Some("model_base_price".to_string());
                         owned.collected_at = rule
@@ -319,6 +334,11 @@ fn pricing_parts_from_resolution(
                     base_price.input_price.map(|price| price * multiplier);
                 owned.estimated_output_price =
                     base_price.output_price.map(|price| price * multiplier);
+                owned.estimated_cache_creation_price = base_price
+                    .cache_creation_price
+                    .map(|price| price * multiplier);
+                owned.estimated_cache_read_price =
+                    base_price.cache_read_price.map(|price| price * multiplier);
                 owned.collected_at = resolution
                     .group_collected_at
                     .clone()
@@ -342,11 +362,15 @@ fn pricing_parts_from_resolution(
                 owned.price_confidence = Some(base_price_confidence(base_price));
                 owned.estimated_input_price = base_price.input_price;
                 owned.estimated_output_price = base_price.output_price;
+                owned.estimated_cache_creation_price = base_price.cache_creation_price;
+                owned.estimated_cache_read_price = base_price.cache_read_price;
                 owned.collected_at = base_price.source_checked_at.clone();
             }
             owned.pricing_model = Some(base_price.model.clone());
             owned.base_input_price = base_price.input_price;
             owned.base_output_price = base_price.output_price;
+            owned.base_cache_creation_price = base_price.cache_creation_price;
+            owned.base_cache_read_price = base_price.cache_read_price;
             owned.price_currency = Some(base_price.currency.clone());
             owned.pricing_source = Some("model_base_price".to_string());
         }
@@ -390,9 +414,13 @@ struct OwnedPricingParts {
     base_input_price: Option<f64>,
     base_output_price: Option<f64>,
     base_fixed_price: Option<f64>,
+    base_cache_creation_price: Option<f64>,
+    base_cache_read_price: Option<f64>,
     estimated_input_price: Option<f64>,
     estimated_output_price: Option<f64>,
     fixed_price: Option<f64>,
+    estimated_cache_creation_price: Option<f64>,
+    estimated_cache_read_price: Option<f64>,
     price_currency: Option<String>,
     pricing_source: Option<String>,
     collected_at: Option<String>,
@@ -418,9 +446,13 @@ impl OwnedPricingParts {
             base_input_price: self.base_input_price,
             base_output_price: self.base_output_price,
             base_fixed_price: self.base_fixed_price,
+            base_cache_creation_price: self.base_cache_creation_price,
+            base_cache_read_price: self.base_cache_read_price,
             estimated_input_price: self.estimated_input_price,
             estimated_output_price: self.estimated_output_price,
             fixed_price: self.fixed_price,
+            estimated_cache_creation_price: self.estimated_cache_creation_price,
+            estimated_cache_read_price: self.estimated_cache_read_price,
             price_currency: self.price_currency.as_deref(),
             pricing_source: self.pricing_source.as_deref(),
             collected_at: self.collected_at.as_deref(),

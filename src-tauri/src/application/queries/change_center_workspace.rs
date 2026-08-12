@@ -42,6 +42,46 @@ pub(crate) struct IncidentWorkspacePage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActivityCursor {
+    pub activity_at_ms: i64,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActivitySummary {
+    pub record_type: String,
+    pub id: String,
+    pub event_type: String,
+    pub severity: String,
+    pub station_id: Option<String>,
+    pub object_type: Option<String>,
+    pub object_id: Option<String>,
+    pub station_key_id: Option<String>,
+    pub source: Option<String>,
+    pub reason_code: Option<String>,
+    pub condition_key: Option<String>,
+    pub lifecycle_state: Option<String>,
+    pub episode_number: Option<i64>,
+    pub occurrence_count: Option<i64>,
+    pub activity_at_ms: i64,
+    pub old_value_json: Option<String>,
+    pub new_value_json: Option<String>,
+    pub impact_json: Option<String>,
+    pub collector_failed_task_types: Vec<String>,
+    pub resolved_at_ms: Option<i64>,
+    pub seen_at_ms: Option<i64>,
+    pub snoozed_until_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ActivityWorkspacePage {
+    pub items: Vec<ActivitySummary>,
+    pub next_cursor: Option<ActivityCursor>,
+    pub active_count: i64,
+    pub unseen_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OccurrenceCursor {
     pub observed_at_ms: i64,
     pub id: String,
@@ -115,6 +155,81 @@ impl ChangeCenterWorkspaceQuery {
         cursor: Option<&IncidentCursor>,
         limit: u32,
     ) -> Result<IncidentWorkspacePage, PersistenceError> {
+        self.prepare_workspace().await?;
+        let mut read = self.runtime.begin_read().await?;
+        let (rows, active_count, unseen_count) = WorkspaceStore
+            .list_current(
+                &mut read,
+                station_id,
+                severity,
+                lifecycle_state,
+                cursor.map(|value| (value.updated_at_ms, value.id.as_str())),
+                limit,
+            )
+            .await?;
+        let page_limit = limit.clamp(1, 200) as usize;
+        let has_more = rows.len() > page_limit;
+        let items = rows
+            .into_iter()
+            .take(page_limit)
+            .map(incident_summary_from_row)
+            .collect::<Vec<_>>();
+        let next_cursor = has_more.then(|| {
+            let last = items.last().expect("overflow page must contain an item");
+            IncidentCursor {
+                updated_at_ms: last.updated_at_ms,
+                id: last.id.clone(),
+            }
+        });
+        Ok(IncidentWorkspacePage {
+            items,
+            next_cursor,
+            active_count,
+            unseen_count,
+        })
+    }
+
+    pub(crate) async fn list_activity(
+        &self,
+        station_id: Option<&str>,
+        severity: Option<&str>,
+        cursor: Option<&ActivityCursor>,
+        limit: u32,
+    ) -> Result<ActivityWorkspacePage, PersistenceError> {
+        self.prepare_workspace().await?;
+        let mut read = self.runtime.begin_read().await?;
+        let (rows, active_count, unseen_count) = WorkspaceStore
+            .list_activity(
+                &mut read,
+                station_id,
+                severity,
+                cursor.map(|value| (value.activity_at_ms, value.id.as_str())),
+                limit,
+            )
+            .await?;
+        let page_limit = limit.clamp(1, 200) as usize;
+        let has_more = rows.len() > page_limit;
+        let items = rows
+            .into_iter()
+            .take(page_limit)
+            .map(activity_summary_from_row)
+            .collect::<Vec<_>>();
+        let next_cursor = has_more.then(|| {
+            let last = items.last().expect("overflow page must contain an item");
+            ActivityCursor {
+                activity_at_ms: last.activity_at_ms,
+                id: format!("{}:{}", last.record_type, last.id),
+            }
+        });
+        Ok(ActivityWorkspacePage {
+            items,
+            next_cursor,
+            active_count,
+            unseen_count,
+        })
+    }
+
+    async fn prepare_workspace(&self) -> Result<(), PersistenceError> {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| PersistenceError::ConstraintViolation)?
@@ -151,37 +266,7 @@ impl ChangeCenterWorkspaceQuery {
                 })
             })
             .await?;
-        let mut read = self.runtime.begin_read().await?;
-        let (rows, active_count, unseen_count) = WorkspaceStore
-            .list_current(
-                &mut read,
-                station_id,
-                severity,
-                lifecycle_state,
-                cursor.map(|value| (value.updated_at_ms, value.id.as_str())),
-                limit,
-            )
-            .await?;
-        let page_limit = limit.clamp(1, 200) as usize;
-        let has_more = rows.len() > page_limit;
-        let items = rows
-            .into_iter()
-            .take(page_limit)
-            .map(incident_summary_from_row)
-            .collect::<Vec<_>>();
-        let next_cursor = has_more.then(|| {
-            let last = items.last().expect("overflow page must contain an item");
-            IncidentCursor {
-                updated_at_ms: last.updated_at_ms,
-                id: last.id.clone(),
-            }
-        });
-        Ok(IncidentWorkspacePage {
-            items,
-            next_cursor,
-            active_count,
-            unseen_count,
-        })
+        Ok(())
     }
 
     pub(crate) async fn get_incident_detail(
@@ -288,6 +373,104 @@ fn incident_summary_from_row(
         updated_at_ms: row.updated_at_ms,
         seen_at_ms: row.seen_at_ms,
         snoozed_until_ms: row.snoozed_until_ms,
+    }
+}
+
+fn activity_summary_from_row(
+    row: crate::persistence::stores::alerting::workspace::WorkspaceActivityRow,
+) -> ActivitySummary {
+    let collector_failed_task_types = collector_failed_task_types_from_summary(
+        &row.event_type,
+        row.condition_key.as_deref().unwrap_or_default(),
+        row.last_observation_summary_json.as_deref().unwrap_or("{}"),
+    );
+    let old_value_json = sanitized_activity_json(&row.event_type, row.old_value_json.as_deref());
+    let new_value_json = sanitized_activity_json(&row.event_type, row.new_value_json.as_deref());
+    let impact_json = sanitized_activity_json(&row.event_type, row.impact_json.as_deref());
+    ActivitySummary {
+        record_type: row.record_type,
+        id: row.id,
+        event_type: row.event_type,
+        severity: row.severity,
+        station_id: row.station_id,
+        object_type: row.object_type,
+        object_id: row.object_id,
+        station_key_id: row.station_key_id,
+        source: row.source,
+        reason_code: row.reason_code,
+        condition_key: row.condition_key,
+        lifecycle_state: row.lifecycle_state,
+        episode_number: row.episode_number,
+        occurrence_count: row.occurrence_count,
+        activity_at_ms: row.activity_at_ms,
+        old_value_json,
+        new_value_json,
+        impact_json,
+        collector_failed_task_types,
+        resolved_at_ms: row.resolved_at_ms,
+        seen_at_ms: row.seen_at_ms,
+        snoozed_until_ms: row.snoozed_until_ms,
+    }
+}
+
+fn sanitized_activity_json(event_type: &str, encoded: Option<&str>) -> Option<String> {
+    const SAFE_KEYS: &[&str] = &[
+        "groupName",
+        "status",
+        "groupKeyHash",
+        "oldEffectiveRateMultiplier",
+        "newEffectiveRateMultiplier",
+        "model",
+        "modelName",
+        "modelId",
+        "price",
+        "oldPrice",
+        "newPrice",
+        "rate",
+        "oldRate",
+        "newRate",
+        "currency",
+        "affectedKeyCount",
+        "affectedRouteCount",
+    ];
+    let value = serde_json::from_str::<serde_json::Value>(encoded?).ok()?;
+    let sanitized = match value {
+        serde_json::Value::Object(values) => {
+            let values = values
+                .into_iter()
+                .filter(|(key, _)| SAFE_KEYS.contains(&key.as_str()))
+                .filter_map(|(key, value)| {
+                    sanitized_activity_scalar(value).map(|value| (key, value))
+                })
+                .collect::<serde_json::Map<_, _>>();
+            (!values.is_empty()).then_some(serde_json::Value::Object(values))?
+        }
+        value
+            if matches!(
+                event_type,
+                "group_rate_changed"
+                    | "rate_changed"
+                    | "price_changed"
+                    | "model_added"
+                    | "model_removed"
+            ) =>
+        {
+            sanitized_activity_scalar(value)?
+        }
+        _ => return None,
+    };
+    serde_json::to_string(&sanitized).ok()
+}
+
+fn sanitized_activity_scalar(value: serde_json::Value) -> Option<serde_json::Value> {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            Some(value)
+        }
+        serde_json::Value::String(value) if value.len() <= 160 => {
+            Some(serde_json::Value::String(value))
+        }
+        _ => None,
     }
 }
 
@@ -405,6 +588,91 @@ mod tests {
         models::stations::CreateStationInput,
         persistence::{error::PersistenceError, runtime::PersistenceRuntime},
     };
+
+    #[tokio::test]
+    async fn activity_feed_combines_incidents_and_informational_changes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("activity-feed.sqlite3"))
+                .await
+                .expect("runtime");
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT INTO change_incidents (
+                            id, condition_key, event_type, lifecycle_state,
+                            base_severity, severity, object_type,
+                            lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
+                            last_seen_at_ms, occurrence_count, episode_occurrence_count,
+                            last_observation_summary_json, created_at_ms, updated_at_ms
+                         ) VALUES ('incident-1', 'fixture:station_down', 'station_down', 'open',
+                                   'warning', 'warning', 'station', 'fixture', 1, 200, 200,
+                                   1, 1, '{}', 200, 200)",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    for (id, event_type, observed_at_ms, summary) in [
+                        (
+                            "change-1",
+                            "group_added",
+                            100_i64,
+                            r#"{"groupName":"default","status":"available"}"#,
+                        ),
+                        (
+                            "change-2",
+                            "group_rate_changed",
+                            300_i64,
+                            r#"{"groupName":"default","oldEffectiveRateMultiplier":1.0,"newEffectiveRateMultiplier":0.8}"#,
+                        ),
+                    ] {
+                        sqlx::query(
+                            "INSERT INTO change_event_occurrences (
+                                id, source_observation_key, event_type, category,
+                                observation_kind, severity, object_type, source,
+                                reason_code, new_value_json, observed_at_ms, created_at_ms
+                             ) VALUES (?1, ?2, ?3, 'audit_change', 'change', 'warning',
+                                       'station_group_binding', 'collector', ?3, ?4, ?5, ?5)",
+                        )
+                        .bind(id)
+                        .bind(format!("fixture:{id}"))
+                        .bind(event_type)
+                        .bind(summary)
+                        .bind(observed_at_ms)
+                        .execute(write.connection())
+                        .await?;
+                    }
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("activity fixtures");
+
+        let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
+        let first_page = query
+            .list_activity(None, None, None, 2)
+            .await
+            .expect("first activity page");
+        assert_eq!(first_page.active_count, 1);
+        assert_eq!(first_page.unseen_count, 1);
+        assert_eq!(first_page.items.len(), 2);
+        assert_eq!(first_page.items[0].record_type, "change");
+        assert_eq!(first_page.items[0].event_type, "group_rate_changed");
+        assert_eq!(first_page.items[0].severity, "info");
+        assert_eq!(first_page.items[1].record_type, "incident");
+
+        let second_page = query
+            .list_activity(None, None, first_page.next_cursor.as_ref(), 2)
+            .await
+            .expect("second activity page");
+        assert_eq!(second_page.items.len(), 1);
+        assert_eq!(second_page.items[0].event_type, "group_added");
+        assert!(second_page.next_cursor.is_none());
+
+        runtime.close().await.expect("close runtime");
+    }
 
     #[tokio::test]
     async fn listing_active_alerts_merges_legacy_collector_failures_by_station() {

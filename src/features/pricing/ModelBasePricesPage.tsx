@@ -29,6 +29,18 @@ type DraftRow = {
   model: string;
   inputPrice: string;
   outputPrice: string;
+  inputPricePriority: string;
+  outputPricePriority: string;
+  cacheCreationPrice: string;
+  cacheCreationPricePriority: string;
+  cacheCreationPriceAbove1Hr: string;
+  cacheReadPrice: string;
+  cacheReadPricePriority: string;
+  longContextInputTokenThreshold: string;
+  longContextInputCostMultiplier: string;
+  longContextOutputCostMultiplier: string;
+  supportsServiceTier: boolean;
+  supportsPromptCaching: boolean;
   currency: string;
   unit: string;
   sourceUrl: string;
@@ -40,7 +52,7 @@ type DraftRow = {
 };
 
 type ProviderFilter = "all" | "openai" | "google" | "anthropic" | "xai" | "custom";
-type PriceField = "inputPrice" | "outputPrice";
+type PriceField = "inputPrice" | "outputPrice" | "cacheCreationPrice" | "cacheReadPrice";
 type DatePickerPosition = {
   left: number;
   top: number;
@@ -77,6 +89,18 @@ function createEmptyDraft(): DraftRow {
     model: "",
     inputPrice: "",
     outputPrice: "",
+    inputPricePriority: "",
+    outputPricePriority: "",
+    cacheCreationPrice: "",
+    cacheCreationPricePriority: "",
+    cacheCreationPriceAbove1Hr: "",
+    cacheReadPrice: "",
+    cacheReadPricePriority: "",
+    longContextInputTokenThreshold: "",
+    longContextInputCostMultiplier: "",
+    longContextOutputCostMultiplier: "",
+    supportsServiceTier: false,
+    supportsPromptCaching: false,
     currency: "USD",
     unit: "M",
     sourceUrl: "",
@@ -299,7 +323,7 @@ export function ModelBasePricesPage({
                   </div>
 
                   <div className="overflow-x-auto border-y border-border">
-                    <table className="w-full min-w-[900px] table-fixed text-left text-[13px]">
+                    <table className="w-full min-w-[1120px] table-fixed text-left text-[13px]">
                       <TableColumnHeaderRow />
                       <tbody className="divide-y divide-border">
                         {group.rows.map((row) => (
@@ -320,6 +344,22 @@ export function ModelBasePricesPage({
                                 saving={savingKeys.has(`${row.id}:outputPrice`)}
                                 value={row.outputPrice}
                                 onCommit={(nextValue) => updatePrice(row, "outputPrice", nextValue)}
+                              />
+                            </td>
+                            <td className="px-2 text-right">
+                              <EditablePriceCell
+                                label={`${row.model} 缓存写入价`}
+                                saving={savingKeys.has(`${row.id}:cacheCreationPrice`)}
+                                value={row.cacheCreationPrice}
+                                onCommit={(nextValue) => updatePrice(row, "cacheCreationPrice", nextValue)}
+                              />
+                            </td>
+                            <td className="px-2 text-right">
+                              <EditablePriceCell
+                                label={`${row.model} 缓存读取价`}
+                                saving={savingKeys.has(`${row.id}:cacheReadPrice`)}
+                                value={row.cacheReadPrice}
+                                onCommit={(nextValue) => updatePrice(row, "cacheReadPrice", nextValue)}
                               />
                             </td>
                             <td className="px-2">
@@ -392,6 +432,13 @@ export function ModelBasePricesPage({
           <Field label="模型" value={createDraft.model} onChange={(model) => setCreateDraft({ ...createDraft, model })} />
           <Field label="输入价" numeric value={createDraft.inputPrice} onChange={(inputPrice) => setCreateDraft({ ...createDraft, inputPrice })} />
           <Field label="输出价" numeric value={createDraft.outputPrice} onChange={(outputPrice) => setCreateDraft({ ...createDraft, outputPrice })} />
+          <Field label="缓存写入价" numeric value={createDraft.cacheCreationPrice} onChange={(cacheCreationPrice) => setCreateDraft({ ...createDraft, cacheCreationPrice })} />
+          <Field label="缓存读取价" numeric value={createDraft.cacheReadPrice} onChange={(cacheReadPrice) => setCreateDraft({ ...createDraft, cacheReadPrice })} />
+          <Field label="优先级输入价" numeric value={createDraft.inputPricePriority} onChange={(inputPricePriority) => setCreateDraft({ ...createDraft, inputPricePriority })} />
+          <Field label="优先级输出价" numeric value={createDraft.outputPricePriority} onChange={(outputPricePriority) => setCreateDraft({ ...createDraft, outputPricePriority })} />
+          <Field label="优先级缓存写入价" numeric value={createDraft.cacheCreationPricePriority} onChange={(cacheCreationPricePriority) => setCreateDraft({ ...createDraft, cacheCreationPricePriority })} />
+          <Field label="优先级缓存读取价" numeric value={createDraft.cacheReadPricePriority} onChange={(cacheReadPricePriority) => setCreateDraft({ ...createDraft, cacheReadPricePriority })} />
+          <Field label="超过 1 小时缓存写入价" numeric value={createDraft.cacheCreationPriceAbove1Hr} onChange={(cacheCreationPriceAbove1Hr) => setCreateDraft({ ...createDraft, cacheCreationPriceAbove1Hr })} />
           <SelectField label="币种" options={currencyOptions} value={createDraft.currency} onChange={(currency) => setCreateDraft({ ...createDraft, currency })} />
           <SelectField label="单位" options={unitOptions} value={createDraft.unit} onChange={(unit) => setCreateDraft({ ...createDraft, unit })} />
           <Field label="来源名称" value={createDraft.sourceLabel} onChange={(sourceLabel) => setCreateDraft({ ...createDraft, sourceLabel })} />
@@ -416,6 +463,8 @@ function TableColumnHeaderRow() {
         <th className="h-7 px-2">供应商</th>
         <th className="h-7 px-2 text-right">输入价</th>
         <th className="h-7 px-2 text-right">输出价</th>
+        <th className="h-7 px-2 text-right">缓存写入价</th>
+        <th className="h-7 px-2 text-right">缓存读取价</th>
         <th className="h-7 px-2">状态</th>
         <th className="h-7 px-2 text-right">路由</th>
       </tr>
@@ -766,6 +815,18 @@ function draftToInput(draft: DraftRow) {
     model: draft.model.trim(),
     inputPrice: draft.inputPrice.trim() === "" ? null : Number(draft.inputPrice),
     outputPrice: draft.outputPrice.trim() === "" ? null : Number(draft.outputPrice),
+    inputPricePriority: nullableNumber(draft.inputPricePriority),
+    outputPricePriority: nullableNumber(draft.outputPricePriority),
+    cacheCreationPrice: nullableNumber(draft.cacheCreationPrice),
+    cacheCreationPricePriority: nullableNumber(draft.cacheCreationPricePriority),
+    cacheCreationPriceAbove1Hr: nullableNumber(draft.cacheCreationPriceAbove1Hr),
+    cacheReadPrice: nullableNumber(draft.cacheReadPrice),
+    cacheReadPricePriority: nullableNumber(draft.cacheReadPricePriority),
+    longContextInputTokenThreshold: nullableInteger(draft.longContextInputTokenThreshold),
+    longContextInputCostMultiplier: nullableNumber(draft.longContextInputCostMultiplier),
+    longContextOutputCostMultiplier: nullableNumber(draft.longContextOutputCostMultiplier),
+    supportsServiceTier: draft.supportsServiceTier,
+    supportsPromptCaching: draft.supportsPromptCaching,
     currency: draft.currency.trim() || "USD",
     unit: draft.unit.trim() || "M",
     sourceUrl: draft.sourceUrl.trim(),
@@ -784,6 +845,18 @@ function rowToInput(row: ModelBasePrice, patch: Partial<DraftRow>) {
     model: patch.model ?? row.model,
     inputPrice: patch.inputPrice ?? formatPriceInput(row.inputPrice),
     outputPrice: patch.outputPrice ?? formatPriceInput(row.outputPrice),
+    inputPricePriority: patch.inputPricePriority ?? formatPriceInput(row.inputPricePriority),
+    outputPricePriority: patch.outputPricePriority ?? formatPriceInput(row.outputPricePriority),
+    cacheCreationPrice: patch.cacheCreationPrice ?? formatPriceInput(row.cacheCreationPrice),
+    cacheCreationPricePriority: patch.cacheCreationPricePriority ?? formatPriceInput(row.cacheCreationPricePriority),
+    cacheCreationPriceAbove1Hr: patch.cacheCreationPriceAbove1Hr ?? formatPriceInput(row.cacheCreationPriceAbove1Hr),
+    cacheReadPrice: patch.cacheReadPrice ?? formatPriceInput(row.cacheReadPrice),
+    cacheReadPricePriority: patch.cacheReadPricePriority ?? formatPriceInput(row.cacheReadPricePriority),
+    longContextInputTokenThreshold: patch.longContextInputTokenThreshold ?? (row.longContextInputTokenThreshold?.toString() ?? ""),
+    longContextInputCostMultiplier: patch.longContextInputCostMultiplier ?? formatPriceInput(row.longContextInputCostMultiplier),
+    longContextOutputCostMultiplier: patch.longContextOutputCostMultiplier ?? formatPriceInput(row.longContextOutputCostMultiplier),
+    supportsServiceTier: patch.supportsServiceTier ?? row.supportsServiceTier,
+    supportsPromptCaching: patch.supportsPromptCaching ?? row.supportsPromptCaching,
     currency: patch.currency ?? row.currency,
     unit: patch.unit ?? row.unit,
     sourceUrl: patch.sourceUrl ?? row.sourceUrl,
@@ -805,6 +878,14 @@ function parseDraftPrice(value: string): { value: number | null; invalid: false 
     return { invalid: true };
   }
   return { value: parsed, invalid: false };
+}
+
+function nullableNumber(value: string) {
+  return value.trim() === "" ? null : Number(value);
+}
+
+function nullableInteger(value: string) {
+  return value.trim() === "" ? null : Math.trunc(Number(value));
 }
 
 function upsertRow(rows: ModelBasePrice[], row: ModelBasePrice) {

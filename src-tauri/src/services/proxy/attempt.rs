@@ -255,6 +255,8 @@ pub(crate) struct SelectedAttemptCostSnapshot {
     pub(crate) estimated_input_price: Option<f64>,
     pub(crate) estimated_output_price: Option<f64>,
     pub(crate) estimated_fixed_price: Option<f64>,
+    pub(crate) estimated_cache_creation_price: Option<f64>,
+    pub(crate) estimated_cache_read_price: Option<f64>,
 }
 
 impl SelectedAttemptCostSnapshot {
@@ -343,11 +345,9 @@ impl SelectedAttemptCostSnapshot {
         if self.pricing_basis != "exact_price" {
             return None;
         }
-        if self
-            .unit
-            .as_deref()
-            .is_some_and(|unit| !unit.eq_ignore_ascii_case("per_1m_tokens"))
-            && self.estimated_fixed_price.is_none()
+        if self.unit.as_deref().is_some_and(|unit| {
+            !unit.eq_ignore_ascii_case("M") && !unit.eq_ignore_ascii_case("per_1m_tokens")
+        }) && self.estimated_fixed_price.is_none()
         {
             return None;
         }
@@ -355,8 +355,37 @@ impl SelectedAttemptCostSnapshot {
         let mut total = 0.0_f64;
         let mut has_component = false;
         if let Some(price) = self.estimated_input_price.filter(|value| value.is_finite()) {
-            total +=
-                currency_units_to_micro(price) * usage.input_tokens.max(0) as f64 / 1_000_000.0;
+            let input_tokens = usage.input_tokens.max(0);
+            let cache_creation_tokens = usage
+                .cache_creation_tokens
+                .unwrap_or(0)
+                .max(0)
+                .min(input_tokens);
+            let cache_read_tokens = usage
+                .cache_read_tokens
+                .unwrap_or(0)
+                .max(0)
+                .min(input_tokens.saturating_sub(cache_creation_tokens));
+            let separately_priced_cache_tokens =
+                cache_creation_tokens.saturating_add(cache_read_tokens);
+            let regular_input_tokens = input_tokens.saturating_sub(separately_priced_cache_tokens);
+            total += currency_units_to_micro(price) * regular_input_tokens as f64 / 1_000_000.0;
+            if cache_creation_tokens > 0 {
+                let cache_price = self
+                    .estimated_cache_creation_price
+                    .filter(|value| value.is_finite())
+                    .unwrap_or(price);
+                total += currency_units_to_micro(cache_price) * cache_creation_tokens as f64
+                    / 1_000_000.0;
+            }
+            if cache_read_tokens > 0 {
+                let cache_price = self
+                    .estimated_cache_read_price
+                    .filter(|value| value.is_finite())
+                    .unwrap_or(price);
+                total +=
+                    currency_units_to_micro(cache_price) * cache_read_tokens as f64 / 1_000_000.0;
+            }
             has_component = true;
         }
         if let Some(price) = self
@@ -434,6 +463,8 @@ mod tests {
             estimated_input_price: Some(5.0),
             estimated_output_price: Some(30.0),
             estimated_fixed_price: None,
+            estimated_cache_creation_price: None,
+            estimated_cache_read_price: None,
         };
         let usage = TokenUsage {
             input_tokens: 0,
@@ -444,5 +475,63 @@ mod tests {
         };
 
         assert_eq!(pricing.total_cost_micro(&usage), Some(0));
+    }
+
+    fn exact_token_pricing_with_cache_rates() -> SelectedAttemptCostSnapshot {
+        SelectedAttemptCostSnapshot {
+            ordinal: 0,
+            pricing_basis: "exact_price".to_string(),
+            pricing_status_label: "priced".to_string(),
+            currency: Some("USD".to_string()),
+            unit: Some("M".to_string()),
+            estimated_input_price: Some(1.0),
+            estimated_output_price: Some(10.0),
+            estimated_fixed_price: None,
+            estimated_cache_creation_price: Some(1.25),
+            estimated_cache_read_price: Some(0.1),
+        }
+    }
+
+    #[test]
+    fn short_m_unit_prices_cache_read_tokens_separately() {
+        let pricing = exact_token_pricing_with_cache_rates();
+        let usage = TokenUsage {
+            input_tokens: 10_000,
+            output_tokens: 0,
+            total_tokens: 10_000,
+            cache_creation_tokens: None,
+            cache_read_tokens: Some(9_000),
+        };
+
+        assert_eq!(pricing.total_cost_micro(&usage), Some(1_900));
+    }
+
+    #[test]
+    fn cache_creation_tokens_use_the_cache_creation_rate() {
+        let pricing = exact_token_pricing_with_cache_rates();
+        let usage = TokenUsage {
+            input_tokens: 10_000,
+            output_tokens: 0,
+            total_tokens: 10_000,
+            cache_creation_tokens: Some(8_000),
+            cache_read_tokens: None,
+        };
+
+        assert_eq!(pricing.total_cost_micro(&usage), Some(12_000));
+    }
+
+    #[test]
+    fn missing_cache_rate_falls_back_to_the_input_rate() {
+        let mut pricing = exact_token_pricing_with_cache_rates();
+        pricing.estimated_cache_read_price = None;
+        let usage = TokenUsage {
+            input_tokens: 10_000,
+            output_tokens: 0,
+            total_tokens: 10_000,
+            cache_creation_tokens: None,
+            cache_read_tokens: Some(9_000),
+        };
+
+        assert_eq!(pricing.total_cost_micro(&usage), Some(10_000));
     }
 }

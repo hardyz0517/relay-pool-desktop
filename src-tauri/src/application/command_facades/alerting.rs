@@ -4,8 +4,9 @@ use crate::{
         alerting::{AlertingIngress, ObservationIngress},
         error::ApplicationError,
         queries::change_center_workspace::{
-            ChangeCenterWorkspaceQuery, DeliveryCursor, DeliveryHistoryPage, IncidentCursor,
-            IncidentSummary, IncidentWorkspacePage, OccurrenceCursor, OccurrenceHistoryPage,
+            ActivityCursor, ActivityWorkspacePage, ChangeCenterWorkspaceQuery, DeliveryCursor,
+            DeliveryHistoryPage, IncidentCursor, IncidentSummary, IncidentWorkspacePage,
+            OccurrenceCursor, OccurrenceHistoryPage,
         },
     },
     models::alerting::{AlertEventType, ConditionKey, ObservationKind, Severity},
@@ -101,6 +102,19 @@ impl AlertingCommandFacade {
     ) -> Result<IncidentWorkspacePage, ApplicationError> {
         self.workspace
             .list_current(station_id, severity, lifecycle_state, cursor, limit)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn list_activity(
+        &self,
+        station_id: Option<&str>,
+        severity: Option<&str>,
+        cursor: Option<&ActivityCursor>,
+        limit: u32,
+    ) -> Result<ActivityWorkspacePage, ApplicationError> {
+        self.workspace
+            .list_activity(station_id, severity, cursor, limit)
             .await
             .map_err(Into::into)
     }

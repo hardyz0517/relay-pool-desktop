@@ -85,6 +85,13 @@ export type AlertingCurrentInput = {
   limit?: number;
 };
 
+export type AlertingActivityInput = {
+  stationId?: string | null;
+  severity?: AlertSeverity | null;
+  cursor?: AlertingCursor | null;
+  limit?: number;
+};
+
 export type AlertingCursor = { updatedAtMs: number; id: string };
 
 export type AlertingIncident = {
@@ -106,6 +113,47 @@ export type AlertingIncident = {
 
 export type AlertingIncidentPage = {
   items: AlertingIncident[];
+  nextCursor: AlertingCursor | null;
+  activeCount: number;
+  unseenCount: number;
+};
+
+type AlertingActivityBase = {
+  id: string;
+  eventType: string;
+  severity: AlertSeverity;
+  stationId: string | null;
+  objectType: string | null;
+  objectId: string | null;
+  stationKeyId: string | null;
+  source: string | null;
+  reasonCode: string | null;
+  activityAtMs: number;
+  oldValueJson: string | null;
+  newValueJson: string | null;
+  impactJson: string | null;
+};
+
+export type AlertingIncidentActivity = AlertingActivityBase & AlertingIncident & {
+  recordType: "incident";
+};
+
+export type AlertingChangeActivity = AlertingActivityBase & {
+  recordType: "change";
+  conditionKey: string | null;
+  lifecycleState: null;
+  episodeNumber: null;
+  occurrenceCount: null;
+  collectorFailedTaskTypes: string[];
+  resolvedAtMs: null;
+  seenAtMs: null;
+  snoozedUntilMs: null;
+};
+
+export type AlertingActivity = AlertingIncidentActivity | AlertingChangeActivity;
+
+export type AlertingActivityPage = {
+  items: AlertingActivity[];
   nextCursor: AlertingCursor | null;
   activeCount: number;
   unseenCount: number;
@@ -169,6 +217,7 @@ export type AlertingDomainClient = {
   upsertPolicy(input: AlertPolicyInput): Promise<AlertPolicy>;
   deletePolicy(id: string, expectedRevision?: number): Promise<void>;
   listCurrentIncidents(input?: AlertingCurrentInput): Promise<AlertingIncidentPage>;
+  listActivity(input?: AlertingActivityInput): Promise<AlertingActivityPage>;
   getIncident(input: AlertingIncidentInput): Promise<AlertingIncident>;
   listOccurrences(input: AlertingHistoryInput): Promise<AlertingOccurrencePage>;
   listDeliveries(input: AlertingHistoryInput): Promise<AlertingDeliveryPage>;

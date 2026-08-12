@@ -1,6 +1,7 @@
 use crate::{
     models::alerting::{
-        AlertPolicy, Incident, LifecycleState, PolicyMatchContext, SuppressionReason,
+        AlertEventType, AlertPolicy, Incident, LifecycleState, PolicyMatchContext, Severity,
+        SuppressionReason,
     },
     persistence::{
         error::PersistenceError,
@@ -97,19 +98,22 @@ impl AlertingReconciler {
         let mut last_cursor = None;
         for snapshot in snapshots {
             let incident = snapshot.incident;
+            let base_severity =
+                canonical_base_severity(incident.event_type, incident.base_severity);
             last_cursor = Some(ReconcileCursor {
                 updated_at_ms: incident.updated_at_ms,
                 id: incident.id.clone(),
             });
             let context = PolicyMatchContext {
                 event_type: incident.event_type,
-                base_severity: incident.base_severity,
+                base_severity,
                 station_id: incident.station_id.as_deref(),
                 station_key_id: incident.station_key_id.as_deref(),
             };
             let resolved = self.resolver.resolve(policies, &context);
             let fingerprint_changed = incident.lifecycle_policy_fingerprint != resolved.fingerprint;
             let mut next = incident.clone();
+            next.base_severity = base_severity;
             next.policy_id = Some(resolved.policy.id.clone());
             next.policy_revision = Some(resolved.policy.revision);
             next.severity = resolved.effective_severity;
@@ -120,6 +124,7 @@ impl AlertingReconciler {
             let should_update = fingerprint_changed
                 || next.policy_id != incident.policy_id
                 || next.policy_revision != incident.policy_revision
+                || next.base_severity != incident.base_severity
                 || next.severity != incident.severity;
             if !should_update {
                 continue;
@@ -204,6 +209,13 @@ fn reset_evaluation_epoch(incident: &mut Incident, now_ms: i64) {
     }
 }
 
+fn canonical_base_severity(event_type: AlertEventType, persisted: Severity) -> Severity {
+    match event_type {
+        AlertEventType::GroupMissing => Severity::Info,
+        _ => persisted,
+    }
+}
+
 fn suppression_reason(
     settings: &AlertingSettings,
     policy: &AlertPolicy,
@@ -249,6 +261,18 @@ mod tests {
         assert_eq!(
             suppression_reason(&settings, &policy, 0),
             Some(SuppressionReason::GlobalDisabled)
+        );
+    }
+
+    #[test]
+    fn group_missing_reconciles_legacy_warning_to_info() {
+        assert_eq!(
+            canonical_base_severity(AlertEventType::GroupMissing, Severity::Warning),
+            Severity::Info
+        );
+        assert_eq!(
+            canonical_base_severity(AlertEventType::StationDown, Severity::Critical),
+            Severity::Critical
         );
     }
 }

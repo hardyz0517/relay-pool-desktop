@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "8e5ca2499b19715d2949b76ff3b774ec08a203094bb9b4e40f13fbf56ceefb00";
+    "32c8a0601dfc1869a4ce27b953f41eb1bd520e7c422771c215323a0e9a27ba9d";
 
 #[cfg_attr(
     not(test),
@@ -201,6 +201,7 @@ macro_rules! ipc_command_registry {
             upsert_station_group_binding => $crate::commands::collector_metadata::upsert_station_group_binding,
             list_group_rate_records => $crate::commands::collector_metadata::list_group_rate_records,
             list_collector_runs => $crate::commands::collector_metadata::list_collector_runs,
+            list_alerting_activity => $crate::commands::alerting::list_alerting_activity,
             list_alerting_incidents => $crate::commands::alerting::list_alerting_incidents,
             get_alerting_incident => $crate::commands::alerting::get_alerting_incident,
             list_alerting_occurrences => $crate::commands::alerting::list_alerting_occurrences,
@@ -511,6 +512,9 @@ fn command_contract(name: &str) -> CommandContract {
             "EmptyInputDto",
             "DashboardCumulativeRequestMetricsSnapshotDto",
         ),
+        "list_alerting_activity" => {
+            migrated_read("AlertingActivityInputDto", "AlertingActivityPageDto")
+        }
         "list_alerting_incidents" => {
             migrated_read("AlertingCurrentInputDto", "AlertingIncidentPageDto")
         }
@@ -1721,6 +1725,10 @@ export function updateAlertingSettings(input: AlertingSettingsInputDto): Promise
 
 export function listAlertingIncidents(input: AlertingCurrentInputDto = {}): Promise<AlertingIncidentPageDto> {
   return invokeCommand<AlertingIncidentPageDto>("list_alerting_incidents", { input });
+}
+
+export function listAlertingActivity(input: AlertingActivityInputDto = {}): Promise<AlertingActivityPageDto> {
+  return invokeCommand<AlertingActivityPageDto>("list_alerting_activity", { input });
 }
 
 export function getAlertingIncident(input: AlertingIncidentInputDto): Promise<AlertingIncidentSummaryDto> {

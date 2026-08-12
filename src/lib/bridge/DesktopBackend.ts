@@ -79,6 +79,7 @@ import {
   listGroupRateRecords as listGroupRateRecordsBinding,
   listKeyPoolItems as listKeyPoolItemsBinding,
   listAlertingDeliveries as listAlertingDeliveriesBinding,
+  listAlertingActivity as listAlertingActivityBinding,
   resolveAllAlertingIncidents as resolveAllAlertingIncidentsBinding,
   getDesktopNotificationPermission as getDesktopNotificationPermissionBinding,
   requestDesktopNotificationPermission as requestDesktopNotificationPermissionBinding,
@@ -166,6 +167,9 @@ import type { RuntimeContractInfo } from "./contract";
 import type {
   AlertPolicy,
   AlertPolicyInput,
+  AlertingActivity,
+  AlertingActivityInput,
+  AlertingActivityPage,
   AlertingCurrentInput,
   AlertingHistoryInput,
   AlertingDomainClient,
@@ -247,6 +251,8 @@ export class DesktopBackend implements BackendClient {
       invokeCommand<void>("delete_alert_policy", { input: { id, expectedRevision } }),
     listCurrentIncidents: (input: AlertingCurrentInput = {}) =>
       listAlertingIncidentsBinding(input).then(normalizeAlertingIncidentPage),
+    listActivity: (input: AlertingActivityInput = {}) =>
+      listAlertingActivityBinding(input).then(normalizeAlertingActivityPage),
     getIncident: (input: AlertingIncidentInput) =>
       getAlertingIncidentBinding(input).then(normalizeAlertingIncident),
     listOccurrences: (input: AlertingHistoryInput) =>
@@ -620,6 +626,45 @@ function normalizeAlertingIncidentPage(
   return {
     ...page,
     items: page.items.map(normalizeAlertingIncident),
+  };
+}
+
+function normalizeAlertingActivityPage(
+  page: Awaited<ReturnType<typeof listAlertingActivityBinding>>,
+): AlertingActivityPage {
+  return {
+    ...page,
+    items: page.items.map(normalizeAlertingActivity),
+  };
+}
+
+function normalizeAlertingActivity(
+  item: Awaited<ReturnType<typeof listAlertingActivityBinding>>["items"][number],
+): AlertingActivity {
+  const severity = item.severity === "critical" || item.severity === "warning" ? item.severity : "info";
+  if (item.recordType === "change") {
+    return {
+      ...item,
+      recordType: "change",
+      severity,
+      lifecycleState: null,
+      episodeNumber: null,
+      occurrenceCount: null,
+      resolvedAtMs: null,
+      seenAtMs: null,
+      snoozedUntilMs: null,
+    };
+  }
+  return {
+    ...item,
+    recordType: "incident",
+    severity,
+    conditionKey: item.conditionKey ?? "",
+    lifecycleState: item.lifecycleState ?? "open",
+    episodeNumber: item.episodeNumber ?? 1,
+    occurrenceCount: item.occurrenceCount ?? 0,
+    lastSeenAtMs: item.activityAtMs,
+    updatedAtMs: item.activityAtMs,
   };
 }
 

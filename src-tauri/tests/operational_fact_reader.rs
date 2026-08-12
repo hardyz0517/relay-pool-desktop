@@ -182,6 +182,8 @@ mod persistence {
                 pub(crate) model: String,
                 pub(crate) input_price: Option<f64>,
                 pub(crate) output_price: Option<f64>,
+                pub(crate) cache_creation_price: Option<f64>,
+                pub(crate) cache_read_price: Option<f64>,
                 pub(crate) currency: String,
                 pub(crate) source_checked_at: Option<String>,
                 pub(crate) built_in: bool,
@@ -190,6 +192,7 @@ mod persistence {
             #[derive(Debug, Clone)]
             pub(crate) struct StationKeyPricingResolutionRow {
                 pub(crate) station_id: String,
+                pub(crate) credit_per_cny: f64,
                 pub(crate) group_binding_id: Option<String>,
                 pub(crate) group_rate_multiplier: Option<f64>,
                 pub(crate) group_confidence: Option<f64>,

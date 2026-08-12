@@ -271,6 +271,9 @@ impl RoutingService {
                         estimated_input_price: request_pricing.estimated_input_price,
                         estimated_output_price: request_pricing.estimated_output_price,
                         estimated_fixed_price: request_pricing.estimated_fixed_price,
+                        estimated_cache_creation_price: request_pricing
+                            .estimated_cache_creation_price,
+                        estimated_cache_read_price: request_pricing.estimated_cache_read_price,
                         status_label: request_pricing.status_label,
                     };
                 }
@@ -1283,6 +1286,8 @@ mod tests {
             base_input_price: None,
             base_output_price: None,
             base_fixed_price: Some(0.42),
+            base_cache_creation_price: None,
+            base_cache_read_price: None,
             currency: "USD".to_string(),
             unit: "request".to_string(),
             base_price_source: Some("fixture".to_string()),
@@ -1292,6 +1297,8 @@ mod tests {
             estimated_input_price: None,
             estimated_output_price: None,
             estimated_fixed_price: Some(0.42),
+            estimated_cache_creation_price: None,
+            estimated_cache_read_price: None,
             pricing_status: PricingStatus::Priced,
             confidence: 0.99,
             source_chain: vec!["pricing_rule:rule-local".to_string()],
