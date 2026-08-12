@@ -708,5 +708,6 @@ pnpm.cmd verify:full
 5. committed 后把 capacity terminal 映射为 `server_error` 可能促使客户端重放已产生部分输出的请求；本地代理自身不重放，Decision Trace 必须标记 partial/committed，由客户端决定是否重试。
 6. 真实 capacity 难以稳定制造；缺少真实 provider 授权或无法复现时只能阻止 release qualification，不能放宽为“测试通过即发布”。
 7. 对非 capacity 的 possibly-accepted 5xx/transport 关闭透明 fallback 会降低局部可用性，但避免代理静默重复执行或重复计费；只有后续获得权威 idempotency contract 才能放宽，不能以“未向客户端输出”代替证明。
+8. 本次 plan-only 审计执行 `node scripts/intelligent-routing-architecture.test.mjs` 时，当前工作区因 `src/features/routing/LocalRoutingSettingsEditor.tsx` 出现 `updateSettings` 而触发既有 owner 门禁；该文件不属于本计划文档改动，Task 0 必须先确认是用户并行改动还是架构合同需要同步，并在 Task 9 前以正确 owner 设计消除，禁止删除断言或用 suppression 掩盖。
 
 本计划评审通过的判定不是“覆盖了所有 Sub2API 文案”，而是：新增或变化的响应能够经有界 evidence parser 和版本化 rule set进入同一个 CanonicalOutcome；已知情况得到精确副作用，未知/矛盾情况安全降级，且任何 consumer 都不重新解释原始 status/type/code/message。
