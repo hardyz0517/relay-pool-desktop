@@ -1,6 +1,6 @@
 {
-  "status": "task18_local_and_release_mixed_soak_qualification_passed_external_release_gates_pending",
-  "date": "2026-07-29",
+  "status": "legacy_monitor_run_compatibility_removed_schema34_external_release_gates_pending",
+  "date": "2026-08-12",
   "branch": "codex/status-monitoring-refactor",
   "baseline_commit": "87280a4e1ac836870cbb1b69b7d5d4cfb613cad4",
   "target_architecture": {
@@ -34,26 +34,7 @@
       "ui -> request_logs to synthesize monitor trends"
     ]
   },
-  "current_exceptions": [
-    {
-      "path": "src-tauri/src/persistence/stores/monitoring_store.rs",
-      "imports": [
-        "channel_monitor_runs read queries"
-      ],
-      "risk": "legacy run table is retained for one release observation cycle as read-only compatibility and migration/backfill evidence; it is no longer a production write authority or status/bucket/current-health input",
-      "target_owner": "src-tauri/src/persistence/stores/monitoring/status_queries.rs for V2 status, plus a future dedicated legacy-run reader until table deletion",
-      "removal_task": 18
-    },
-    {
-      "path": "src-tauri/src/ipc/dto/channel_monitor_reads.rs and list_channel_monitor_runs IPC",
-      "imports": [
-        "ChannelMonitorRunDto"
-      ],
-      "risk": "old run history remains visible for compatibility, but must not drive ChannelStatusWorkspaceV2, health observations or availability rollups",
-      "target_owner": "application/monitoring/queries.rs execution/attempt history",
-      "removal_task": 18
-    }
-  ],
+  "current_exceptions": [],
   "generated_files": [
     "src-tauri/generated/command-registry.json",
     "src-tauri/gen/schemas/acl-manifests.json",
@@ -592,7 +573,7 @@
       "cargo check --manifest-path src-tauri/Cargo.toml => passed with existing/future-task dead-code warnings"
     ],
     "deferred_to_task17_plus": [
-      "channel_monitor_runs table and list_channel_monitor_runs IPC remain as read-only compatibility for one release observation cycle; no production writer remains",
+      "schema 34 removes channel_monitor_runs and its IPC/DTO/reader compatibility chain after the V2 backfill",
       "live cancellation token registration is wired through MonitoringRunner::cancel_live, but full background Run Now admission/queued row semantics should be hardened by Task 17 fault/concurrency tests"
     ]
   },
@@ -717,7 +698,7 @@
       "product model names Status Monitoring V2 as MonitorExecution -> MonitorTargetResult -> ProbeAttempt and keeps station_key_health as shared health state",
       "project plan documents the V2 implementation cutover and release qualification gates",
       "docs README is valid UTF-8 navigation and links the V2 qualification artifacts",
-      "legacy channel_monitor_runs removal is tracked as an explicit follow-up after one release observation cycle"
+      "legacy channel_monitor_runs removal completed in schema 34; production history uses only V2 execution, target and attempt facts"
     ],
     "verification": [
       "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check => passed",

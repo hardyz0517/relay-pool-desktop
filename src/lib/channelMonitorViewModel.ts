@@ -6,7 +6,6 @@ import type {
   ChannelMonitorHealthWritebackMode,
   ChannelMonitorProtocolKind,
   ChannelMonitorRequestTemplate,
-  ChannelMonitorRunStatus,
   ChannelMonitorTargetType,
   CreateChannelMonitorInput,
   MonitoringCapabilityCatalog,
@@ -505,22 +504,6 @@ export function formatRunTimestamp(value: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-export function getRunStatusView(status: ChannelMonitorRunStatus | null): RunStatusView {
-  if (status === "success") {
-    return { label: "成功", tone: "healthy" };
-  }
-  if (status === "warning") {
-    return { label: "警告", tone: "warning" };
-  }
-  if (status === "failed") {
-    return { label: "失败", tone: "error" };
-  }
-  if (status === "skipped") {
-    return { label: "跳过", tone: "disabled" };
-  }
-  return { label: "未运行", tone: "info" };
 }
 
 function formatDuration(seconds: number) {

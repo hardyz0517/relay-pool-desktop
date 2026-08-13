@@ -1,4 +1,3 @@
-export type ChannelMonitorIdInputDto = { monitorId: string };
 export type ChannelStatusWorkspaceWindowDto = "recent" | "last24h" | "last7d" | "last30d";
 export type ChannelStatusSortFieldDto = "monitor_name" | "latest_checked_at" | "availability" | "latency" | "status";
 export type ChannelStatusSortDirectionDto = "asc" | "desc";
@@ -76,8 +75,6 @@ export type MonitoringCapabilityCatalogDto = {
   protocols: MonitoringProtocolCapabilityDto[]; profiles: MonitoringClientProfileCapabilityDto[];
 };
 export type ChannelMonitorTargetTypeDto = "station_key" | "station";
-export type ChannelMonitorRunStatusDto = "success" | "warning" | "failed" | "skipped";
-
 export type ChannelMonitorDto = {
   id: string; name: string; targetType: ChannelMonitorTargetTypeDto; stationId: string;
   stationKeyId: string | null; templateId: string; enabled: boolean;
@@ -90,13 +87,6 @@ export type ChannelMonitorDto = {
   jitterSeconds: number; timeoutSeconds: number; maxConcurrency: number;
   consecutiveFailureThreshold: number; fallbackModels: string[]; note: string | null;
   createdAt: string; updatedAt: string;
-};
-
-export type ChannelMonitorRunDto = {
-  id: string; monitorId: string; templateId: string; stationId: string; stationKeyId: string | null;
-  status: ChannelMonitorRunStatusDto; startedAt: string; finishedAt: string | null;
-  durationMs: number | null; httpStatus: number | null; latencyMs: number | null;
-  responseModel: string | null; fallbackModel: string | null; errorMessage: string | null; createdAt: string;
 };
 
 export type ChannelMonitorRequestTemplateDto = {

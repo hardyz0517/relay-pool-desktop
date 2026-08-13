@@ -197,7 +197,7 @@ async fn orchestrator_buffer_commits_v2_facts_without_legacy_run_writes_and_repl
         count(&mut connection, "channel_monitor_rollup_dirty_ranges").await,
         1
     );
-    assert_eq!(count(&mut connection, "channel_monitor_runs").await, 0);
+    assert!(!table_exists(&mut connection, "channel_monitor_runs").await);
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT next_due_at_ms FROM channel_monitors WHERE id = 'monitor-1'"
@@ -304,7 +304,7 @@ async fn endpoint_revision_stale_health_writeback_rolls_back_v2_target_when_wrap
         count(&mut connection, "channel_monitor_rollup_dirty_ranges").await,
         0
     );
-    assert_eq!(count(&mut connection, "channel_monitor_runs").await, 0);
+    assert!(!table_exists(&mut connection, "channel_monitor_runs").await);
 }
 
 async fn ready_connection() -> SqliteConnection {
@@ -466,4 +466,15 @@ async fn count(connection: &mut SqliteConnection, table: &str) -> i64 {
         .await
         .expect("count")
         .get("count")
+}
+
+async fn table_exists(connection: &mut SqliteConnection, table: &str) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+    )
+    .bind(table)
+    .fetch_one(connection)
+    .await
+    .expect("table existence")
+        != 0
 }

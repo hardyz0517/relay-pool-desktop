@@ -1,6 +1,6 @@
 # Status Monitoring Legacy Table Removal Follow-up
 
-Status: queued follow-up after one release observation cycle.
+Status: completed on 2026-08-12 by schema 34 and the command/DTO/reader cutover.
 
 Scope: remove the read-only compatibility surface for `channel_monitor_runs` after Status Monitoring V2 has shipped and one observation cycle confirms no production dependency remains.
 
@@ -34,3 +34,11 @@ cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 Exit condition: no production or compatibility reader code references `channel_monitor_runs`; historical status is available only through V2 execution/target/attempt facts and rollups.
+
+## Completion
+
+- schema `34` drops `channel_monitor_runs` after schema `10` backfilled its history;
+- the Tauri command, registry contract, generated binding source, DTO, model, facade, service method, and persistence reader were removed;
+- generation-1 import no longer copies the obsolete table;
+- portable migration accepts the table only as ignored legacy package input and never exports or restores it;
+- architecture checks forbid reintroducing the production command or reader chain.

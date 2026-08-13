@@ -13,15 +13,14 @@ use crate::{
     },
     models::{
         channel_monitors::{
-            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRunCursor,
-            ChannelMonitorRunPage, CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
-            UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
+            ChannelMonitor, ChannelMonitorRequestTemplate, CreateChannelMonitorInput,
+            CreateChannelMonitorTemplateInput, UpdateChannelMonitorInput,
+            UpdateChannelMonitorTemplateInput,
         },
         monitoring::CancelChannelMonitorExecutionReceipt,
     },
     persistence::{
         runtime::PersistenceHandle,
-        stores::legacy_monitor_run_store::LegacyMonitorRunReader,
         stores::monitoring::{
             budgets::MonitoringBudgetRepository,
             definitions::{MonitorDefinitionConfigRow, MonitoringDefinitionRepository},
@@ -43,7 +42,6 @@ pub(crate) struct MonitoringService {
     store: MonitoringStore,
     definition_store: MonitoringDefinitionRepository,
     budget_store: MonitoringBudgetRepository,
-    legacy_run_reader: LegacyMonitorRunReader,
 }
 
 impl MonitoringService {
@@ -59,7 +57,6 @@ impl MonitoringService {
             store: MonitoringStore,
             definition_store: MonitoringDefinitionRepository,
             budget_store: MonitoringBudgetRepository,
-            legacy_run_reader: LegacyMonitorRunReader,
         }
     }
 
@@ -490,22 +487,6 @@ impl MonitoringService {
                         .await
                 })
             })
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn list_legacy_run_page(
-        &self,
-        monitor_id: &str,
-        cursor: Option<&ChannelMonitorRunCursor>,
-        limit: PageLimit,
-    ) -> Result<ChannelMonitorRunPage, ApplicationError> {
-        if monitor_id.trim().is_empty() {
-            return Err(ApplicationError::ConstraintViolation);
-        }
-        let mut read = self.runtime.begin_read().await?;
-        self.legacy_run_reader
-            .list_page(&mut read, monitor_id, cursor, limit.get())
             .await
             .map_err(Into::into)
     }

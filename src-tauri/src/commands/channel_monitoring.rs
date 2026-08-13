@@ -14,8 +14,8 @@ use crate::{
             CancelChannelMonitorExecutionInputDto, CancelChannelMonitorExecutionReceiptDto,
         },
         channel_monitor_reads::{
-            ChannelMonitorDto, ChannelMonitorIdInputDto, ChannelMonitorRequestTemplateDto,
-            ChannelMonitorRunDto, RunChannelMonitorNowInputDto, RunChannelMonitorReceiptDto,
+            ChannelMonitorDto, ChannelMonitorRequestTemplateDto, RunChannelMonitorNowInputDto,
+            RunChannelMonitorReceiptDto,
         },
         EmptyInputDto,
     },
@@ -76,24 +76,6 @@ pub async fn delete_channel_monitor(
         let input = ChannelMonitorMutationIdInputDto::parse(input)?;
         facade
             .delete_channel_monitor(input.id)
-            .await
-            .map_err(super::public_command_application_error)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn list_channel_monitor_runs(
-    facade: State<'_, ChannelMonitoringCommandFacade>,
-    input: Value,
-) -> Result<Vec<ChannelMonitorRunDto>, error::CommandError> {
-    correlation::in_command_scope("list_channel_monitor_runs", async {
-        let input = ChannelMonitorIdInputDto::parse(input)?;
-        facade
-            .list_channel_monitor_runs(
-                &input.monitor_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
             .await
             .map_err(super::public_command_application_error)
     })

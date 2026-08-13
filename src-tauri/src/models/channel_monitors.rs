@@ -142,37 +142,3 @@ pub struct UpdateChannelMonitorInput {
     pub fallback_models: Vec<String>,
     pub note: Option<String>,
 }
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChannelMonitorRun {
-    pub id: String,
-    pub monitor_id: String,
-    pub template_id: String,
-    pub station_id: String,
-    pub station_key_id: Option<String>,
-    pub status: String,
-    pub started_at: String,
-    pub finished_at: Option<String>,
-    pub duration_ms: Option<i64>,
-    pub http_status: Option<i64>,
-    pub latency_ms: Option<i64>,
-    pub response_model: Option<String>,
-    pub fallback_model: Option<String>,
-    pub error_message: Option<String>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ChannelMonitorRunCursor {
-    pub started_at_ms: i64,
-    pub id: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChannelMonitorRunPage {
-    pub items: Vec<ChannelMonitorRun>,
-    pub next_cursor: Option<ChannelMonitorRunCursor>,
-}

@@ -31,25 +31,6 @@ async fn schema_eight_supports_bounded_deterministic_growth_queries() {
     .await
     .expect("monitor");
 
-    for id in ["run-a", "run-c", "run-b"] {
-        sqlx::query(
-            r#"
-            INSERT INTO channel_monitor_runs (
-                id, monitor_id, template_id, station_id, status, started_at, created_at
-            ) VALUES (?1, 'monitor-1', 'template-1', 'station-1', 'success', '2000', '2000')
-            "#,
-        )
-        .bind(id)
-        .execute(&mut connection)
-        .await
-        .expect("monitor run");
-    }
-
-    let first = monitor_run_ids(&mut connection, None, 2).await;
-    let second = monitor_run_ids(&mut connection, Some((2_000, "run-b")), 2).await;
-    assert_eq!(first, vec!["run-c", "run-b"]);
-    assert_eq!(second, vec!["run-a"]);
-
     for id in ["event-a", "event-c", "event-b"] {
         sqlx::query(
             r#"
@@ -160,10 +141,6 @@ async fn latest_pricing_evidence_has_explicit_tie_breakers() {
 async fn schema_eight_query_plans_use_growth_indexes() {
     let mut connection = migrated_connection().await;
     let cases = [
-        (
-            "EXPLAIN QUERY PLAN SELECT id FROM channel_monitor_runs WHERE monitor_id = 'm' ORDER BY CAST(started_at AS INTEGER) DESC, id DESC LIMIT 20",
-            "idx_channel_monitor_runs_monitor_started",
-        ),
         (
             "EXPLAIN QUERY PLAN SELECT id FROM channel_monitors WHERE enabled = 1 AND (next_run_at IS NULL OR CAST(next_run_at AS INTEGER) <= 1000) ORDER BY COALESCE(CAST(next_run_at AS INTEGER), 0) ASC, id ASC LIMIT 20",
             "idx_channel_monitors_due",
@@ -298,45 +275,4 @@ async fn seed_station(connection: &mut SqliteConnection) {
     .execute(connection)
     .await
     .expect("station");
-}
-
-async fn monitor_run_ids(
-    connection: &mut SqliteConnection,
-    cursor: Option<(i64, &str)>,
-    limit: i64,
-) -> Vec<String> {
-    let rows = if let Some((started_at, id)) = cursor {
-        sqlx::query(
-            r#"
-            SELECT id FROM channel_monitor_runs
-            WHERE monitor_id = 'monitor-1'
-              AND (CAST(started_at AS INTEGER) < ?1
-                   OR (CAST(started_at AS INTEGER) = ?1 AND id < ?2))
-            ORDER BY CAST(started_at AS INTEGER) DESC, id DESC
-            LIMIT ?3
-            "#,
-        )
-        .bind(started_at)
-        .bind(id)
-        .bind(limit)
-        .fetch_all(&mut *connection)
-        .await
-        .expect("next monitor page")
-    } else {
-        sqlx::query(
-            r#"
-            SELECT id FROM channel_monitor_runs
-            WHERE monitor_id = 'monitor-1'
-            ORDER BY CAST(started_at AS INTEGER) DESC, id DESC
-            LIMIT ?1
-            "#,
-        )
-        .bind(limit)
-        .fetch_all(&mut *connection)
-        .await
-        .expect("first monitor page")
-    };
-    rows.into_iter()
-        .map(|row| row.get::<String, _>("id"))
-        .collect()
 }

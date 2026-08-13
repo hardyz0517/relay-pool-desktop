@@ -44,7 +44,7 @@ foreach ($table in $requiredTables) {
 
 $cutoffMs = [DateTimeOffset]::UtcNow.AddMinutes(-1 * $MaxRunningAgeMinutes).ToUnixTimeMilliseconds()
 $staleRunning = Invoke-SqliteScalar "SELECT COUNT(*) FROM channel_monitor_executions WHERE status IN ('queued','running') AND COALESCE(started_at_ms, planned_at_ms, created_at_ms) < $cutoffMs;"
-$legacyWrites = Invoke-SqliteScalar "SELECT COUNT(*) FROM channel_monitor_runs;"
+$legacyTableExists = Invoke-SqliteScalar "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'channel_monitor_runs');"
 $httpOnlyAuthoritative = Invoke-SqliteScalar "SELECT COUNT(*) FROM channel_monitor_target_results WHERE semantic_confidence = 'legacy_http_only' AND health_writeback_decision = 'write';"
 
 $result = [ordered]@{
@@ -54,10 +54,10 @@ $result = [ordered]@{
     maxRunningAgeMinutes = $MaxRunningAgeMinutes
     tables = $tableResults
     staleRunningExecutions = [int64]$staleRunning
-    legacyChannelMonitorRunsRows = [int64]$legacyWrites
+    legacyChannelMonitorRunsTableExists = [bool]([int64]$legacyTableExists)
     legacyHttpOnlyAuthoritativeWritebacks = [int64]$httpOnlyAuthoritative
-    status = if ([int64]$staleRunning -eq 0 -and [int64]$httpOnlyAuthoritative -eq 0) { "pass" } else { "fail" }
-    note = "channel_monitor_runs may exist for one read-only observation cycle, but production code must not write it."
+    status = if ([int64]$legacyTableExists -eq 0 -and [int64]$staleRunning -eq 0 -and [int64]$httpOnlyAuthoritative -eq 0) { "pass" } else { "fail" }
+    note = "schema 34 and later must not contain channel_monitor_runs; historical rows were backfilled into V2 monitoring facts by schema 10."
 }
 
 $outputDirectory = Split-Path -Parent $OutputPath

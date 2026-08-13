@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::models::{
-    channel_monitors::{ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun},
+    channel_monitors::{ChannelMonitor, ChannelMonitorRequestTemplate},
     monitoring::{
         ChannelMonitorAttemptHistoryInput, ChannelMonitorAttemptPage,
         ChannelMonitorExecutionDetail, ChannelMonitorExecutionIdInput,
@@ -17,7 +17,6 @@ const MAX_ID_BYTES: usize = 128;
 
 pub type ChannelMonitorDto = ChannelMonitor;
 pub type ChannelMonitorRequestTemplateDto = ChannelMonitorRequestTemplate;
-pub type ChannelMonitorRunDto = ChannelMonitorRun;
 pub type ChannelStatusWorkspaceInputDto = ChannelStatusWorkspaceInput;
 pub type ChannelMonitorExecutionIdInputDto = ChannelMonitorExecutionIdInput;
 pub type ChannelMonitorExecutionListInputDto = ChannelMonitorExecutionListInput;
@@ -28,20 +27,6 @@ pub type ChannelMonitorAttemptPageDto = ChannelMonitorAttemptPage;
 pub type MonitoringCapabilityCatalogDto = MonitoringCapabilityCatalog;
 pub type RunChannelMonitorNowInputDto = RunChannelMonitorNowInputV2;
 pub type RunChannelMonitorReceiptDto = RunChannelMonitorReceipt;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ChannelMonitorIdInputDto {
-    pub monitor_id: String,
-}
-
-impl ChannelMonitorIdInputDto {
-    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
-        let input: Self = parse_value(value)?;
-        validate_id("monitorId", &input.monitor_id)?;
-        Ok(input)
-    }
-}
 
 impl ChannelStatusWorkspaceInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
@@ -240,11 +225,9 @@ pub const CHANNEL_MONITOR_READS_TYPE: TypeDescriptor = TypeDescriptor {
 #[cfg(test)]
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
     let monitor = fixture_monitor();
-    let run = fixture_run();
     vec![
         serde_json::json!({"command":"list_channel_monitors","input":{},"output":[monitor]}),
         serde_json::json!({"command":"load_channel_status_workspace","input":{"window":"last24h","timezoneId":"UTC","limit":50},"output":fixture_workspace_v2()}),
-        serde_json::json!({"command":"list_channel_monitor_runs","input":{"monitorId":"monitor-1"},"output":[run]}),
         serde_json::json!({"command":"list_channel_monitor_templates","input":{},"output":[fixture_template()]}),
     ]
 }
@@ -326,27 +309,6 @@ fn fixture_monitor() -> ChannelMonitor {
 }
 
 #[cfg(test)]
-fn fixture_run() -> ChannelMonitorRun {
-    ChannelMonitorRun {
-        id: "monitor-run-1".into(),
-        monitor_id: "monitor-1".into(),
-        template_id: "template-1".into(),
-        station_id: "station-1".into(),
-        station_key_id: Some("key-1".into()),
-        status: "success".into(),
-        started_at: "1700000000000".into(),
-        finished_at: Some("1700000000100".into()),
-        duration_ms: Some(100),
-        http_status: Some(200),
-        latency_ms: Some(80),
-        response_model: Some("fixture-model".into()),
-        fallback_model: None,
-        error_message: None,
-        created_at: "1700000000000".into(),
-    }
-}
-
-#[cfg(test)]
 fn fixture_template() -> ChannelMonitorRequestTemplate {
     ChannelMonitorRequestTemplate {
         id: "template-1".into(),
@@ -370,17 +332,6 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields_and_invalid_ids() {
-        for value in [
-            serde_json::json!({"monitorId":"bad id"}),
-            serde_json::json!({"monitorId":"monitor-1","unexpected":true}),
-        ] {
-            assert_eq!(
-                ChannelMonitorIdInputDto::parse(value)
-                    .expect_err("invalid monitor input")
-                    .code,
-                CommandErrorCode::InvalidInput
-            );
-        }
         assert!(ChannelStatusWorkspaceInputDto::parse(serde_json::json!({
             "window": "last24h",
             "timezoneId": "Asia/Shanghai",

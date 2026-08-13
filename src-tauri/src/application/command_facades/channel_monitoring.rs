@@ -4,9 +4,9 @@ use crate::{
     application::{error::ApplicationError, monitoring::MonitoringService, pagination::PageLimit},
     models::{
         channel_monitors::{
-            ChannelMonitor, ChannelMonitorRequestTemplate, ChannelMonitorRun,
-            CreateChannelMonitorInput, CreateChannelMonitorTemplateInput,
-            UpdateChannelMonitorInput, UpdateChannelMonitorTemplateInput,
+            ChannelMonitor, ChannelMonitorRequestTemplate, CreateChannelMonitorInput,
+            CreateChannelMonitorTemplateInput, UpdateChannelMonitorInput,
+            UpdateChannelMonitorTemplateInput,
         },
         monitoring::{CancelChannelMonitorExecutionReceipt, RunChannelMonitorReceipt},
     },
@@ -47,17 +47,6 @@ impl ChannelMonitoringCommandFacade {
 
     pub(crate) async fn delete_channel_monitor(&self, id: String) -> Result<(), ApplicationError> {
         self.monitoring.delete_monitor(id).await
-    }
-
-    pub(crate) async fn list_channel_monitor_runs(
-        &self,
-        monitor_id: &str,
-        limit: PageLimit,
-    ) -> Result<Vec<ChannelMonitorRun>, ApplicationError> {
-        self.monitoring
-            .list_legacy_run_page(monitor_id, None, limit)
-            .await
-            .map(|page| page.items)
     }
 
     pub(crate) async fn list_channel_monitor_templates(

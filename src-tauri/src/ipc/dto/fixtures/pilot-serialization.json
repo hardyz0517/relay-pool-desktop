@@ -1685,31 +1685,6 @@
       }
     },
     {
-      "command": "list_channel_monitor_runs",
-      "input": {
-        "monitorId": "monitor-1"
-      },
-      "output": [
-        {
-          "createdAt": "1700000000000",
-          "durationMs": 100,
-          "errorMessage": null,
-          "fallbackModel": null,
-          "finishedAt": "1700000000100",
-          "httpStatus": 200,
-          "id": "monitor-run-1",
-          "latencyMs": 80,
-          "monitorId": "monitor-1",
-          "responseModel": "fixture-model",
-          "startedAt": "1700000000000",
-          "stationId": "station-1",
-          "stationKeyId": "key-1",
-          "status": "success",
-          "templateId": "template-1"
-        }
-      ]
-    },
-    {
       "command": "list_channel_monitor_templates",
       "input": {},
       "output": [

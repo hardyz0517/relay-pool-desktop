@@ -3,8 +3,6 @@ export type ChannelMonitorProtocolKind = "open_ai_chat" | "open_ai_responses" | 
 export type ChannelMonitorClientProfileId = "standard_api" | "codex_cli_compat" | "claude_code_compat" | "gemini_cli_compat" | "grok_cli_compat";
 export type ChannelMonitorHealthWritebackMode = "disabled" | "observe_only" | "authoritative";
 
-export type ChannelMonitorRunStatus = "success" | "warning" | "failed" | "skipped";
-
 export type ChannelMonitorRequestTemplate = {
   id: string;
   name: string;

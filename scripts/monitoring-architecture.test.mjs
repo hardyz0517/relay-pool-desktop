@@ -36,7 +36,8 @@ checkFiles(listExistingRustFiles(adapterRoot), serviceBoundaryForbidden);
 checkFiles(listExistingRustFiles(profileRoot), serviceBoundaryForbidden);
 checkProductionMonitorRunnerCutover(monitoringRunnerService);
 checkProductionStatusQueriesCutover();
-checkLegacyRunFrontendIsolation();
+checkLegacyRunRemoval();
+checkLegacyRunSchemaRemoval();
 checkLegacyRustFixtureIsolation();
 
 if (failures.length > 0) {
@@ -103,26 +104,29 @@ function checkProductionMonitorRunnerCutover(file) {
   }
 }
 
-function checkLegacyRunFrontendIsolation() {
+function checkLegacyRunRemoval() {
   const roots = [
+    join(root, "src-tauri", "src", "application"),
+    join(root, "src-tauri", "src", "commands"),
+    join(root, "src-tauri", "src", "ipc"),
+    join(root, "src-tauri", "src", "models"),
+    join(root, "src-tauri", "src", "persistence", "stores"),
     join(root, "src", "features"),
     join(root, "src", "lib", "api"),
     join(root, "src", "lib", "bridge"),
     join(root, "src", "lib", "queries"),
     join(root, "src", "lib", "query"),
   ];
-  const allowed = new Set([
-    join(root, "src", "lib", "bridge", "generated.ts"),
-    join(root, "src", "lib", "bridge", "generated.test.ts"),
-  ]);
   for (const dir of roots) {
-    for (const file of listSourceFiles(dir)) {
-      if (allowed.has(file) || file.endsWith(".test.ts") || file.endsWith(".test.tsx")) continue;
+    for (const file of listProductionSourceFiles(dir)) {
       const source = readFileSync(file, "utf8");
-      if (source.includes("listChannelMonitorRuns") || source.includes("list_channel_monitor_runs")) {
-        failures.push(`${file}: product frontend must use Monitoring V2 execution history`);
+      if (/listChannelMonitorRuns|list_channel_monitor_runs|ChannelMonitorRunDto|LegacyMonitorRunReader/u.test(source)) {
+        failures.push(`${file}: removed legacy monitor-run contract must not be reintroduced`);
       }
     }
+  }
+  if (existsSync(join(root, "src-tauri", "src", "persistence", "stores", "legacy_monitor_run_store.rs"))) {
+    failures.push("legacy_monitor_run_store.rs must not exist after schema 34 cutover");
   }
 }
 
@@ -188,5 +192,38 @@ function listSourceFiles(dir) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return listSourceFiles(path);
     return entry.isFile() && /\.(?:ts|tsx)$/u.test(entry.name) ? [path] : [];
+  });
+}
+
+function checkLegacyRunSchemaRemoval() {
+  const migration = join(
+    root,
+    "src-tauri",
+    "src",
+    "persistence",
+    "migrations",
+    "0034_remove_legacy_channel_monitor_runs.sql",
+  );
+  if (!existsSync(migration)) {
+    failures.push(`${migration}: schema 34 legacy monitor-run removal migration is missing`);
+    return;
+  }
+  const source = readFileSync(migration, "utf8");
+  if (!/DROP TABLE IF EXISTS channel_monitor_runs/u.test(source)) {
+    failures.push(`${migration}: schema 34 must drop channel_monitor_runs`);
+  }
+  if (!/schema_version\s*=\s*34/u.test(source) || !/updated_by_migration\s*=\s*34/u.test(source)) {
+    failures.push(`${migration}: schema 34 compatibility metadata is incomplete`);
+  }
+}
+
+function listProductionSourceFiles(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return listProductionSourceFiles(path);
+    if (!entry.isFile() || !/\.(?:rs|ts|tsx)$/u.test(entry.name)) return [];
+    if (entry.name.includes(".test.") || entry.name.includes(".spec.")) return [];
+    return [path];
   });
 }
