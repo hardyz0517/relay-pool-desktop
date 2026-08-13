@@ -11,12 +11,12 @@ use crate::{
     commands::error,
     ipc::dto::alerting::{
         AlertPolicyDeleteInputDto, AlertPolicyDto, AlertPolicyInputDto, AlertingActivityInputDto,
-        AlertingActivityPageDto, AlertingAttentionInputDto, AlertingClearInputDto,
+        AlertingActivityPageDto, AlertingClearInputDto, AlertingClearRecordScope,
         AlertingClearScope, AlertingCurrentInputDto, AlertingDeliveryPageDto,
         AlertingHistoryInputDto, AlertingIncidentInputDto, AlertingIncidentPageDto,
-        AlertingIncidentSummaryDto, AlertingMarkAllSeenInputDto, AlertingNotificationTestInputDto,
-        AlertingObservationInputDto, AlertingOccurrencePageDto, AlertingSettingsDto,
-        AlertingSettingsInputDto, AlertingSnoozeInputDto,
+        AlertingIncidentSummaryDto, AlertingMarkAllSeenInputDto, AlertingMarkSeenInputDto,
+        AlertingNotificationTestInputDto, AlertingObservationInputDto, AlertingOccurrencePageDto,
+        AlertingSettingsDto, AlertingSettingsInputDto, AlertingSnoozeInputDto,
     },
     observability::correlation,
 };
@@ -163,6 +163,8 @@ pub async fn list_alerting_activity(
             .list_activity(
                 input.station_id.as_deref(),
                 input.severity.as_deref(),
+                input.record_type.map(|value| value.as_str()),
+                input.unread_only,
                 cursor.as_ref(),
                 input.limit.unwrap_or(50),
             )
@@ -291,11 +293,30 @@ pub async fn mark_alerting_seen(
     input: Value,
 ) -> Result<(), error::CommandError> {
     correlation::in_command_scope("mark_alerting_seen", async {
-        let input = AlertingAttentionInputDto::parse(input)?;
-        facade
-            .mark_seen(&input.incident_id, input.episode_number, now_ms())
-            .await
-            .map_err(super::public_command_application_error)
+        let input = AlertingMarkSeenInputDto::parse(input)?;
+        match input
+            .record_type
+            .unwrap_or(crate::ipc::dto::alerting::AlertingActivityRecordType::Incident)
+        {
+            crate::ipc::dto::alerting::AlertingActivityRecordType::Incident => {
+                facade
+                    .mark_seen(
+                        input.incident_id.as_deref().expect("validated incident id"),
+                        input.episode_number.expect("validated episode"),
+                        now_ms(),
+                    )
+                    .await
+            }
+            crate::ipc::dto::alerting::AlertingActivityRecordType::Change => {
+                facade
+                    .mark_information_seen(
+                        input.activity_id.as_deref().expect("validated activity id"),
+                        now_ms(),
+                    )
+                    .await
+            }
+        }
+        .map_err(super::public_command_application_error)
     })
     .await
 }
@@ -307,8 +328,23 @@ pub async fn mark_all_alerting_seen(
 ) -> Result<u64, error::CommandError> {
     correlation::in_command_scope("mark_all_alerting_seen", async {
         let input = AlertingMarkAllSeenInputDto::parse(input)?;
+        let record_scope = input
+            .record_scope
+            .unwrap_or(AlertingClearRecordScope::Incidents);
         facade
-            .mark_all_seen(input.station_id, input.severity, now_ms())
+            .mark_all_seen(
+                input.station_id,
+                input.severity,
+                matches!(
+                    record_scope,
+                    AlertingClearRecordScope::Incidents | AlertingClearRecordScope::All
+                ),
+                matches!(
+                    record_scope,
+                    AlertingClearRecordScope::Information | AlertingClearRecordScope::All
+                ),
+                now_ms(),
+            )
             .await
             .map_err(super::public_command_application_error)
     })
@@ -337,11 +373,22 @@ pub async fn clear_alerting_incidents(
 ) -> Result<u64, error::CommandError> {
     correlation::in_command_scope("clear_alerting_incidents", async {
         let input = AlertingClearInputDto::parse(input)?;
+        let record_scope = input
+            .record_scope
+            .unwrap_or(AlertingClearRecordScope::Incidents);
         facade
-            .clear_incidents(
+            .clear_activity(
                 input.station_id,
                 input.severity,
                 input.lifecycle_state.map(AlertingClearScope::as_str),
+                matches!(
+                    record_scope,
+                    AlertingClearRecordScope::Incidents | AlertingClearRecordScope::All
+                ),
+                matches!(
+                    record_scope,
+                    AlertingClearRecordScope::Information | AlertingClearRecordScope::All
+                ),
             )
             .await
             .map_err(super::public_command_application_error)

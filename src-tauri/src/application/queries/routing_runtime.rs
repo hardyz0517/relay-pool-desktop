@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::proxy::UpstreamApiFormat;
 
-pub(crate) const ROUTING_RUNTIME_OVERLAY_VERSION: &str = "routing_runtime_overlay_v1";
+pub(crate) const ROUTING_RUNTIME_OVERLAY_VERSION: &str = "routing_runtime_overlay_v2";
 
 pub(crate) trait RoutingRuntimeActivity: Send + Sync {
     fn active_for_station<'a>(
@@ -12,6 +12,8 @@ pub(crate) trait RoutingRuntimeActivity: Send + Sync {
         station_id: &'a str,
         station_key_id: &'a str,
     ) -> BoxFuture<'a, Option<i64>>;
+
+    fn active_for_station_key<'a>(&'a self, station_key_id: &'a str) -> BoxFuture<'a, Option<i64>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -30,6 +32,7 @@ pub(crate) struct RoutingRuntimeCandidateOverlay {
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
     pub(crate) in_flight: Option<i64>,
+    pub(crate) station_key_in_flight: Option<i64>,
     pub(crate) health_state: String,
     pub(crate) cooldown_until: Option<String>,
 }
@@ -43,6 +46,7 @@ pub struct RoutingRuntimeCandidateFact {
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
     pub(crate) in_flight: Option<i64>,
+    pub(crate) station_key_in_flight: Option<i64>,
     pub(crate) health_state: String,
     pub(crate) cooldown_until: Option<String>,
 }
@@ -88,6 +92,7 @@ pub(crate) fn runtime_overlay_from_candidates(
                 station_id: candidate.station_id,
                 endpoint_revision: candidate.endpoint_revision,
                 in_flight: candidate.in_flight,
+                station_key_in_flight: candidate.station_key_in_flight,
                 health_state: candidate.health_state,
                 cooldown_until: candidate.cooldown_until,
             })

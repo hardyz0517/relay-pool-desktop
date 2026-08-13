@@ -12,12 +12,15 @@ mod services;
 #[cfg(debug_assertions)]
 pub mod test_support;
 
-use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
+use std::{
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+};
 
 pub use models::secrets::{canonical_secret_aad, SecretRecordSelector, VersionedEncryptedSecret};
 pub use services::data_store::installation_lease::{InstallationLease, LeaseError};
@@ -859,6 +862,15 @@ pub fn run() {
                             data_directory_port,
                             blocking_executor.clone(),
                         );
+                        let settings = tauri::async_runtime::block_on(app_services.settings.load())
+                            .map_err(|error| {
+                                format!("failed to load application settings: {error}")
+                            })?;
+                        let station_collection_coordinator =
+                            services::station_collection_coordinator::StationCollectionCoordinator::new(
+                                NonZeroUsize::new(usize::from(settings.collector_max_concurrency))
+                                    .expect("settings store validates collector concurrency as non-zero"),
+                            );
                         app.manage(app_composition::compose_alerting_command_facade(
                             runtime.handle(),
                         ));
@@ -876,6 +888,7 @@ pub fn run() {
                             app_composition::compose_settings_stations_command_facade(
                                 &app_services,
                                 Arc::clone(app.state::<Arc<TrayBehaviorState>>().inner()),
+                                station_collection_coordinator.clone(),
                             );
                         let key_pool_command_facade =
                             app_composition::compose_key_pool_command_facade(&app_services);
@@ -922,6 +935,7 @@ pub fn run() {
                                 blocking_executor.clone(),
                                 outbound_client.clone(),
                                 Arc::clone(&provider_registry),
+                                station_collection_coordinator.clone(),
                             );
                         let station_key_connectivity_command_facade =
                             app_composition::compose_station_key_connectivity_command_facade(
@@ -963,10 +977,6 @@ pub fn run() {
                         .map_err(|error| {
                             format!("failed to recover interrupted monitor executions: {error}")
                         })?;
-                        let settings = tauri::async_runtime::block_on(app_services.settings.load())
-                            .map_err(|error| {
-                                format!("failed to load application settings: {error}")
-                            })?;
                         app.state::<Arc<TrayBehaviorState>>()
                             .set(TrayBehavior::from_setting(&settings.tray_behavior));
                         if let Some((operation_id, outcome)) =
@@ -1057,6 +1067,7 @@ pub fn run() {
                                     provider_registry,
                                     Arc::new(remote_keys_command_facade.clone()),
                                 ),
+                                station_collection_coordinator,
                             )
                             .map_err(|error| {
                                 format!("failed to start station collector runner: {error}")

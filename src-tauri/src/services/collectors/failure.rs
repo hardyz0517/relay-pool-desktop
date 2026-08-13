@@ -72,6 +72,17 @@ impl DriverFailure {
         }
     }
 
+    pub fn reauthorization_required(endpoint: FailedEndpoint, detail: impl Into<String>) -> Self {
+        Self {
+            kind: DriverFailureKind::AuthRejected,
+            retry: RetryDisposition::Never,
+            auth_effect: AuthEffect::Reauthorize,
+            endpoint: Some(endpoint),
+            evidence: EvidenceSet::empty(),
+            sanitized_detail: Some(redact_text(&detail.into())),
+        }
+    }
+
     pub fn with_evidence(mut self, evidence: EvidenceSet) -> Self {
         self.evidence = evidence;
         self
@@ -117,5 +128,20 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("sk-p8-secret-plaintext-canary"));
+    }
+
+    #[test]
+    fn reauthorization_failure_is_an_auth_failure_with_a_recovery_action() {
+        let failure = DriverFailure::reauthorization_required(
+            FailedEndpoint {
+                role: EndpointRole::Authorization,
+                status_code: Some(401),
+            },
+            "saved session expired",
+        );
+
+        assert_eq!(failure.kind, DriverFailureKind::AuthRejected);
+        assert_eq!(failure.retry, RetryDisposition::Never);
+        assert_eq!(failure.auth_effect, AuthEffect::Reauthorize);
     }
 }

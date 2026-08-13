@@ -19,10 +19,8 @@ async fn alerting_foundation_creates_contract_and_indexes() {
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    // Schema 34 removed the legacy channel_monitor_runs table; 35 added the
-    // scoped routing health projector; 36 folded routing settings into the
-    // versioned policy aggregate; and 39 added the terminal outbox.
-    assert_eq!(schema_version, 39);
+    // Schema 40 adds persistent attention state for informational changes.
+    assert_eq!(schema_version, 40);
 
     let legacy_table_exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_events'",
@@ -56,6 +54,7 @@ async fn alerting_foundation_creates_contract_and_indexes() {
     for index in [
         "idx_change_incidents_lifecycle_severity_updated",
         "idx_change_event_occurrences_incident_episode_observed",
+        "idx_change_event_occurrences_audit_unseen_observed",
         "idx_alert_policies_enabled_scope_priority",
         "idx_notification_deliveries_status_scheduled",
         "idx_notification_deliveries_delivery_key",
@@ -80,6 +79,14 @@ async fn alerting_foundation_creates_contract_and_indexes() {
     assert!(columns
         .iter()
         .any(|row| row.get::<String, _>("name") == "fact_fresh_until_ms"));
+
+    let occurrence_columns = sqlx::query("PRAGMA table_info('change_event_occurrences')")
+        .fetch_all(&mut connection)
+        .await
+        .expect("occurrence columns");
+    assert!(occurrence_columns
+        .iter()
+        .any(|row| row.get::<String, _>("name") == "seen_at_ms"));
 
     let progress_phase = sqlx::query_scalar::<_, String>(
         "SELECT phase FROM alerting_upgrade_progress WHERE singleton_key = 1",

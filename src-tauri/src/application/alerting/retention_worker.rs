@@ -1,11 +1,12 @@
 use crate::persistence::{
     error::PersistenceError,
     runtime::PersistenceHandle,
-    stores::alerting::{DeliveryStore, OccurrenceStore},
+    stores::alerting::{DeliveryStore, IncidentStore, OccurrenceStore},
 };
 
-/// Bounded, restart-safe retention pass. Current incidents are never deleted;
-/// only resolved episodes and append-only history/delivery rows are eligible.
+/// Bounded, restart-safe retention pass. Active incidents are never deleted;
+/// resolved incidents are eligible only when the global delete-on-recovery
+/// setting is enabled.
 #[derive(Clone)]
 pub(crate) struct AlertingRetentionWorker {
     runtime: PersistenceHandle,
@@ -21,6 +22,7 @@ impl AlertingRetentionWorker {
         now_ms: i64,
         occurrence_retention_days: u32,
         delivery_retention_days: u32,
+        delete_resolved_incidents: bool,
         batch_size: u32,
     ) -> Result<RetentionReport, PersistenceError> {
         if now_ms < 0 || occurrence_retention_days == 0 || delivery_retention_days == 0 {
@@ -40,9 +42,15 @@ impl AlertingRetentionWorker {
                     let occurrences = OccurrenceStore
                         .delete_retained_before(write, occurrence_cutoff, batch as u32)
                         .await?;
+                    let resolved_incidents = if delete_resolved_incidents {
+                        IncidentStore.delete_resolved(write, batch as u32).await?
+                    } else {
+                        0
+                    };
                     Ok(RetentionReport {
                         occurrences_deleted: occurrences,
                         deliveries_deleted: deliveries,
+                        resolved_incidents_deleted: resolved_incidents,
                     })
                 })
             })
@@ -54,4 +62,5 @@ impl AlertingRetentionWorker {
 pub(crate) struct RetentionReport {
     pub occurrences_deleted: u64,
     pub deliveries_deleted: u64,
+    pub resolved_incidents_deleted: u64,
 }

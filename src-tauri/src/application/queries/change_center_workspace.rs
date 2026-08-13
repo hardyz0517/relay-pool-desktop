@@ -193,6 +193,8 @@ impl ChangeCenterWorkspaceQuery {
         &self,
         station_id: Option<&str>,
         severity: Option<&str>,
+        record_type: Option<&str>,
+        unread_only: bool,
         cursor: Option<&ActivityCursor>,
         limit: u32,
     ) -> Result<ActivityWorkspacePage, PersistenceError> {
@@ -203,6 +205,8 @@ impl ChangeCenterWorkspaceQuery {
                 &mut read,
                 station_id,
                 severity,
+                record_type,
+                unread_only,
                 cursor.map(|value| (value.activity_at_ms, value.id.as_str())),
                 limit,
             )
@@ -652,11 +656,11 @@ mod tests {
 
         let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
         let first_page = query
-            .list_activity(None, None, None, 2)
+            .list_activity(None, None, None, false, None, 2)
             .await
             .expect("first activity page");
         assert_eq!(first_page.active_count, 1);
-        assert_eq!(first_page.unseen_count, 1);
+        assert_eq!(first_page.unseen_count, 3);
         assert_eq!(first_page.items.len(), 2);
         assert_eq!(first_page.items[0].record_type, "change");
         assert_eq!(first_page.items[0].event_type, "group_rate_changed");
@@ -664,12 +668,53 @@ mod tests {
         assert_eq!(first_page.items[1].record_type, "incident");
 
         let second_page = query
-            .list_activity(None, None, first_page.next_cursor.as_ref(), 2)
+            .list_activity(None, None, None, false, first_page.next_cursor.as_ref(), 2)
             .await
             .expect("second activity page");
         assert_eq!(second_page.items.len(), 1);
         assert_eq!(second_page.items[0].event_type, "group_added");
         assert!(second_page.next_cursor.is_none());
+
+        let information_page = query
+            .list_activity(None, None, Some("change"), false, None, 10)
+            .await
+            .expect("informational activity page");
+        assert_eq!(information_page.items.len(), 2);
+        assert!(information_page
+            .items
+            .iter()
+            .all(|item| item.record_type == "change"));
+        assert_eq!(information_page.unseen_count, 2);
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE change_event_occurrences SET seen_at_ms = 400 WHERE id = 'change-2'",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("mark informational fixture read");
+        let unread_page = query
+            .list_activity(None, None, None, true, None, 10)
+            .await
+            .expect("unread activity page");
+        assert_eq!(unread_page.items.len(), 2);
+        assert_eq!(unread_page.unseen_count, 2);
+        assert!(unread_page
+            .items
+            .iter()
+            .all(|item| item.seen_at_ms.is_none()));
+        assert!(unread_page
+            .items
+            .iter()
+            .any(|item| item.record_type == "incident"));
+        assert!(unread_page.items.iter().any(|item| item.id == "change-1"));
 
         runtime.close().await.expect("close runtime");
     }

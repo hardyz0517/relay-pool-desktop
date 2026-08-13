@@ -33,6 +33,7 @@ use crate::{
             failure::{
                 AuthEffect, DriverFailure, DriverFailureKind, FailedEndpoint, RetryDisposition,
             },
+            manual_authorization::response_requires_manual_authorization,
         },
         station_endpoints::build_management_url,
     },
@@ -1234,6 +1235,23 @@ async fn execute_json_with_method(
         Some(response.status.as_u16()),
         None,
     );
+    let manual_authorization_required = authenticated
+        && response_requires_manual_authorization(
+            response.status.as_u16(),
+            &response.headers,
+            &response.evidence.final_url,
+            &response.body,
+        );
+    if manual_authorization_required {
+        return Err(DriverFailure::reauthorization_required(
+            FailedEndpoint {
+                role,
+                status_code: Some(response.status.as_u16()),
+            },
+            crate::services::collectors::manual_authorization::MESSAGE,
+        )
+        .with_evidence(EvidenceSet::new([endpoint])));
+    }
     let payload = if response.body.is_empty() {
         Value::Null
     } else {
@@ -1241,7 +1259,13 @@ async fn execute_json_with_method(
             .map_err(|error| malformed(role, Some(endpoint.clone()), error.to_string()))?
     };
     if !response.status.is_success() {
-        return Err(http_failure(role, response.status, payload, endpoint));
+        return Err(http_failure(
+            role,
+            response.status,
+            payload,
+            endpoint,
+            authenticated && response.status == StatusCode::UNAUTHORIZED,
+        ));
     }
     Ok((payload, endpoint))
 }
@@ -1426,6 +1450,7 @@ fn http_failure(
     status: StatusCode,
     payload: Value,
     endpoint: EndpointEvidence,
+    reauthorization_required: bool,
 ) -> DriverFailure {
     let retry =
         if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
@@ -1433,16 +1458,20 @@ fn http_failure(
         } else {
             RetryDisposition::Never
         };
-    let (kind, auth_effect) = match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (
-            DriverFailureKind::AuthRejected,
-            AuthEffect::InvalidateCredential,
-        ),
-        StatusCode::TOO_MANY_REQUESTS => (DriverFailureKind::RateLimited, AuthEffect::None),
-        status if status.is_server_error() => {
-            (DriverFailureKind::ProviderUnavailable, AuthEffect::None)
+    let (kind, auth_effect) = if reauthorization_required {
+        (DriverFailureKind::AuthRejected, AuthEffect::Reauthorize)
+    } else {
+        match status {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (
+                DriverFailureKind::AuthRejected,
+                AuthEffect::InvalidateCredential,
+            ),
+            StatusCode::TOO_MANY_REQUESTS => (DriverFailureKind::RateLimited, AuthEffect::None),
+            status if status.is_server_error() => {
+                (DriverFailureKind::ProviderUnavailable, AuthEffect::None)
+            }
+            _ => (DriverFailureKind::Transport, AuthEffect::None),
         }
-        _ => (DriverFailureKind::Transport, AuthEffect::None),
     };
     DriverFailure {
         kind,
@@ -1627,6 +1656,7 @@ mod tests {
             StatusCode::UNAUTHORIZED,
             json!({"message": "bad cookie session=sk-p8-secret-plaintext-canary"}),
             EndpointEvidence::new(EndpointRole::Balance, "GET", None, Some(401), None),
+            false,
         );
         assert_eq!(unauthorized.kind, DriverFailureKind::AuthRejected);
         assert_eq!(unauthorized.auth_effect, AuthEffect::InvalidateCredential);
@@ -1641,6 +1671,7 @@ mod tests {
             StatusCode::TOO_MANY_REQUESTS,
             json!({"message": "rate"}),
             EndpointEvidence::new(EndpointRole::Groups, "GET", None, Some(429), None),
+            false,
         );
         assert_eq!(rate_limited.kind, DriverFailureKind::RateLimited);
         assert_eq!(rate_limited.retry, RetryDisposition::WithinBudget);
@@ -1650,8 +1681,19 @@ mod tests {
             StatusCode::BAD_GATEWAY,
             json!({"message": "upstream"}),
             EndpointEvidence::new(EndpointRole::Models, "GET", None, Some(502), None),
+            false,
         );
         assert_eq!(server.kind, DriverFailureKind::ProviderUnavailable);
+
+        let interactive = http_failure(
+            EndpointRole::Balance,
+            StatusCode::FORBIDDEN,
+            json!({"message": "verification required"}),
+            EndpointEvidence::new(EndpointRole::Balance, "GET", None, Some(403), None),
+            true,
+        );
+        assert_eq!(interactive.kind, DriverFailureKind::AuthRejected);
+        assert_eq!(interactive.auth_effect, AuthEffect::Reauthorize);
     }
 
     #[test]

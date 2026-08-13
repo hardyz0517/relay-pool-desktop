@@ -17,6 +17,7 @@ pub mod facts;
 )]
 pub mod failure;
 mod login_probe;
+mod manual_authorization;
 #[allow(
     dead_code,
     reason = "Stage 19.A freezes provider registry contracts before production driver cutover"
@@ -584,12 +585,7 @@ fn prepare_newapi_collection_v2(
                     let outputs = driver_tasks
                         .into_iter()
                         .map(|child_task| {
-                            manual_required_output_for_adapter(
-                                "newapi",
-                                child_task,
-                                "manual_session_required",
-                                &message,
-                            )
+                            manual_required_output_for_adapter("newapi", child_task, &message)
                         })
                         .collect();
                     return Ok(PreparedNewApiCollection::Immediate(
@@ -878,14 +874,7 @@ fn newapi_manual_required_collection(
     let outputs = prepared
         .driver_tasks
         .into_iter()
-        .map(|child_task| {
-            manual_required_output_for_adapter(
-                "newapi",
-                child_task,
-                "manual_session_required",
-                &message,
-            )
-        })
+        .map(|child_task| manual_required_output_for_adapter("newapi", child_task, &message))
         .collect();
     PreparedStationCollection {
         station_id: prepared.station_id,
@@ -1278,13 +1267,20 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
             json!({
                 "task": output.task.as_str(),
                 "status": output.status,
+                "errorCode": output.error_code,
             })
         })
         .collect::<Vec<_>>();
     let business =
         full_business_summary_from_outputs(&prepared.outputs, prepared.enabled_key_count);
-    let error_message =
-        (status == "failed").then(|| "all full collector child tasks failed".to_string());
+    let manual_authorization_required = status == "manual_required";
+    let error_message = if manual_authorization_required {
+        Some(manual_authorization::MESSAGE.to_string())
+    } else if status == "failed" {
+        Some("all full collector child tasks failed".to_string())
+    } else {
+        None
+    };
 
     AdapterOutput {
         adapter: prepared.adapter.clone(),
@@ -1296,6 +1292,9 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
             "task": "full",
             "conclusion": conclusion_for_full_status(&status),
             "message": full_summary_message(&business),
+            "manualActionRequired": manual_authorization_required,
+            "recommendedAction": manual_authorization_required
+                .then_some(manual_authorization::RECOMMENDED_ACTION),
             "childRuns": child_runs,
             "endpointResults": endpoint_results,
             "recognized": {
@@ -1314,7 +1313,13 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
             "childRuns": child_runs,
         }),
         raw_json_redacted: None,
-        error_code: (status == "failed").then(|| "all_child_tasks_failed".to_string()),
+        error_code: if manual_authorization_required {
+            Some(manual_authorization::ERROR_CODE.to_string())
+        } else if status == "failed" {
+            Some("all_child_tasks_failed".to_string())
+        } else {
+            None
+        },
         error_message,
     }
 }
@@ -1336,7 +1341,7 @@ fn aggregate_full_output_status(outputs: &[AdapterOutput]) -> String {
         "success".to_string()
     } else if success > 0 || partial > 0 {
         "partial".to_string()
-    } else if manual == outputs.len() {
+    } else if manual > 0 {
         "manual_required".to_string()
     } else {
         "failed".to_string()
@@ -1457,7 +1462,6 @@ fn format_balance_label(value: f64, currency: &str) -> String {
 fn manual_required_output_for_adapter(
     adapter: &str,
     task: CollectorTask,
-    code: &str,
     message: &str,
 ) -> AdapterOutput {
     AdapterOutput {
@@ -1469,10 +1473,12 @@ fn manual_required_output_for_adapter(
             "adapter": adapter,
             "task": task.as_str(),
             "message": message,
+            "manualActionRequired": true,
+            "recommendedAction": manual_authorization::RECOMMENDED_ACTION,
         }),
         normalized_json: json!({ "models": [] }),
         raw_json_redacted: None,
-        error_code: Some(code.to_string()),
+        error_code: Some(manual_authorization::ERROR_CODE.to_string()),
         error_message: Some(message.to_string()),
     }
 }
@@ -1558,10 +1564,16 @@ fn driver_failure_to_adapter_output(
     task: CollectorTask,
     failure: failure::DriverFailure,
 ) -> AdapterOutput {
-    let message = failure
+    let manual_authorization_required = failure.auth_effect == failure::AuthEffect::Reauthorize;
+    let diagnostic_message = failure
         .sanitized_detail
         .clone()
         .unwrap_or_else(|| format!("{:?}", failure.kind));
+    let message = if manual_authorization_required {
+        manual_authorization::MESSAGE.to_string()
+    } else {
+        diagnostic_message.clone()
+    };
     let endpoint_results = failure
         .evidence
         .entries()
@@ -1571,9 +1583,10 @@ fn driver_failure_to_adapter_output(
     AdapterOutput {
         adapter: adapter.to_string(),
         task,
-        status: match failure.kind {
-            failure::DriverFailureKind::Unsupported => "manual_required",
-            _ => "failed",
+        status: if manual_authorization_required {
+            "manual_required"
+        } else {
+            "failed"
         }
         .to_string(),
         facts: facts::CollectorFacts::default(),
@@ -1582,10 +1595,18 @@ fn driver_failure_to_adapter_output(
             "task": task.as_str(),
             "endpointResults": endpoint_results,
             "message": message,
+            "diagnosticMessage": manual_authorization_required.then_some(diagnostic_message),
+            "manualActionRequired": manual_authorization_required,
+            "recommendedAction": manual_authorization_required
+                .then_some(manual_authorization::RECOMMENDED_ACTION),
         }),
         normalized_json: json!({ "models": [] }),
         raw_json_redacted: None,
-        error_code: Some(driver_failure_code(failure.kind).to_string()),
+        error_code: Some(if manual_authorization_required {
+            manual_authorization::ERROR_CODE.to_string()
+        } else {
+            driver_failure_code(failure.kind).to_string()
+        }),
         error_message: Some(message),
     }
 }
@@ -1767,6 +1788,84 @@ mod tests {
         assert!(full.facts.balances.is_empty());
         assert!(full.facts.groups.is_empty());
         assert!(full.facts.rates.is_empty());
+    }
+
+    #[test]
+    fn reauthorization_effect_maps_to_stable_manual_required_output() {
+        let failure = failure::DriverFailure::reauthorization_required(
+            failure::FailedEndpoint {
+                role: evidence::EndpointRole::Authorization,
+                status_code: Some(403),
+            },
+            "interactive authorization is required",
+        );
+
+        let output = driver_failure_to_adapter_output("sub2api", CollectorTask::Groups, failure);
+
+        assert_eq!(output.status, "manual_required");
+        assert_eq!(
+            output.error_code.as_deref(),
+            Some("manual_authorization_required")
+        );
+        assert_eq!(output.summary_json["manualActionRequired"], json!(true));
+        assert_eq!(
+            output.summary_json["recommendedAction"],
+            json!("reauthorize")
+        );
+    }
+
+    #[test]
+    fn unsupported_capability_is_not_misreported_as_manual_authorization() {
+        let output = driver_failure_to_adapter_output(
+            "sub2api",
+            CollectorTask::Groups,
+            failure::DriverFailure::unsupported("groups are unsupported"),
+        );
+
+        assert_eq!(output.status, "failed");
+        assert_eq!(output.error_code.as_deref(), Some("unsupported_task"));
+        assert_eq!(output.summary_json["manualActionRequired"], json!(false));
+    }
+
+    #[test]
+    fn full_parent_preserves_manual_authorization_when_other_children_fail() {
+        let prepared = PreparedStationCollection {
+            station_id: "station-1".to_string(),
+            endpoint_revision: 7,
+            adapter: "sub2api".to_string(),
+            task: CollectorTask::Full,
+            outputs: vec![
+                manual_required_output_for_adapter(
+                    "sub2api",
+                    CollectorTask::Groups,
+                    "interactive authorization detected",
+                ),
+                AdapterOutput {
+                    adapter: "sub2api".to_string(),
+                    task: CollectorTask::Balance,
+                    status: "failed".to_string(),
+                    facts: facts::CollectorFacts::default(),
+                    summary_json: json!({"endpointResults": []}),
+                    normalized_json: json!({}),
+                    raw_json_redacted: None,
+                    error_code: Some("provider_unavailable".to_string()),
+                    error_message: Some("provider unavailable".to_string()),
+                },
+            ],
+            enabled_key_count: 1,
+        };
+
+        let output = aggregate_full_output_v2(&prepared);
+
+        assert_eq!(output.status, "manual_required");
+        assert_eq!(
+            output.error_code.as_deref(),
+            Some(manual_authorization::ERROR_CODE)
+        );
+        assert_eq!(
+            output.summary_json["recommendedAction"],
+            json!("reauthorize")
+        );
     }
 
     #[test]

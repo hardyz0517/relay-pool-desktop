@@ -16,6 +16,7 @@ pub mod remote_keys;
 pub mod routing;
 pub mod secrets;
 pub mod shared_capabilities;
+pub(crate) mod station_collection_coordinator;
 pub mod station_collectors;
 pub mod station_endpoints;
 pub mod stations;

@@ -194,6 +194,10 @@ impl RoutingStore {
                 b.group_id_hash AS binding_group_id_hash,
                 b.group_name AS binding_group_name,
                 b.binding_status,
+                COALESCE(
+                    NULLIF(TRIM(b.group_category_override), ''),
+                    NULLIF(TRIM(b.inferred_group_category), '')
+                ) AS binding_group_category,
                 b.effective_rate_multiplier AS binding_effective_rate_multiplier,
                 b.confidence AS binding_confidence,
                 b.last_checked_at AS binding_last_checked_at
@@ -932,6 +936,7 @@ fn row_to_runtime_economic_snapshot(
         group_key_hash,
         group_id_hash,
         group_name,
+        group_category: row.get(runtime_candidate_column::BINDING_GROUP_CATEGORY),
         group_status: row.get(runtime_candidate_column::BINDING_STATUS),
         group_confidence: row.get(runtime_candidate_column::BINDING_CONFIDENCE),
         group_checked_at: row.get(runtime_candidate_column::BINDING_LAST_CHECKED_AT),
@@ -1031,9 +1036,10 @@ mod runtime_candidate_column {
     pub(super) const BINDING_GROUP_ID_HASH: usize = 31;
     pub(super) const BINDING_GROUP_NAME: usize = 32;
     pub(super) const BINDING_STATUS: usize = 33;
-    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 34;
-    pub(super) const BINDING_CONFIDENCE: usize = 35;
-    pub(super) const BINDING_LAST_CHECKED_AT: usize = 36;
+    pub(super) const BINDING_GROUP_CATEGORY: usize = 34;
+    pub(super) const BINDING_EFFECTIVE_RATE_MULTIPLIER: usize = 35;
+    pub(super) const BINDING_CONFIDENCE: usize = 36;
+    pub(super) const BINDING_LAST_CHECKED_AT: usize = 37;
 }
 
 fn default_runtime_capabilities(station_key_id: &str) -> StationKeyCapabilities {

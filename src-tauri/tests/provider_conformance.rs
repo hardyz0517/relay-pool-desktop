@@ -918,7 +918,7 @@ fn assert_fixture_case_is_structured(case: &FixtureCase) {
 }
 
 fn read_matrix(root: &Path) -> CapabilityMatrix {
-    read_json(&root.join("docs/superpowers/audits/provider-capability-matrix.json"))
+    read_json(&root.join("docs/audits/provider-capability-matrix.json"))
 }
 
 fn read_fixture_manifest(root: &Path) -> FixtureManifest {

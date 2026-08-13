@@ -99,6 +99,7 @@ pub(crate) fn register_alerting_runtime_task(
                                 now_ms,
                                 settings.history_retention_days,
                                 settings.delivery_retention_days,
+                                settings.delete_resolved_incidents,
                                 100,
                             )
                             .await

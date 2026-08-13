@@ -239,12 +239,60 @@ fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::depleted_rank;
+    use super::{candidate_matches_group_scope, depleted_rank, RoutingCandidateGroupSnapshot};
+    use crate::application::routing_engine::request::{
+        CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind, RouteRequestClassifier,
+        ValidatedLocalRouteSettings,
+    };
 
     #[test]
     fn negative_balance_is_always_in_the_depleted_display_tier() {
         assert_eq!(depleted_rank(Some(-0.05), Some("normal")), 1);
         assert_eq!(depleted_rank(Some(0.06), Some("normal")), 0);
+    }
+
+    #[test]
+    fn group_type_matches_canonical_category_instead_of_binding_id() {
+        let request = RouteRequestClassifier::classify(
+            CanonicalRouteRequest {
+                route_kind: RouteKind::Inference,
+                requested_model: None,
+                stream: false,
+                uses_tools: false,
+                uses_vision: false,
+                uses_reasoning: false,
+                untrusted_headers: Vec::new(),
+            },
+            ValidatedLocalRouteSettings {
+                ordering_profile: OrderingProfile::PriorityFirst,
+                max_rate_multiplier: None,
+                group_filter_mode: GroupFilterMode::Required,
+                required_group_stable_key: Some("group-type:gpt".to_string()),
+                preferred_models: Vec::new(),
+                required_tags: Vec::new(),
+                allow_depleted_fallback: false,
+                affinity_enabled: false,
+            },
+            1_800_000_000_000,
+        );
+        let group = RoutingCandidateGroupSnapshot {
+            stable_key: "binding:opaque-id".to_string(),
+            display_name: "Plus".to_string(),
+            available: true,
+            reason: "bound".to_string(),
+        };
+
+        assert!(candidate_matches_group_scope(
+            &request,
+            Some(&group),
+            Some("GPT")
+        ));
+        assert!(!candidate_matches_group_scope(
+            &request,
+            Some(&group),
+            Some("claude")
+        ));
+        assert!(!candidate_matches_group_scope(&request, Some(&group), None));
     }
 }
 
@@ -332,11 +380,14 @@ fn candidate_from_canonical(
                     .any(|allowed| allowed.eq_ignore_ascii_case(model)))
     });
     let protocol_allowed = capability.supports_chat_completions || capability.supports_responses;
-    let group_matches = request.required_group_stable_key().is_none_or(|required| {
-        group
+    let group_matches = candidate_matches_group_scope(
+        request,
+        group.as_ref(),
+        candidate
+            .economic_snapshot
             .as_ref()
-            .is_some_and(|candidate_group| candidate_group.stable_key == required)
-    });
+            .and_then(|economics| economics.group_category.as_deref()),
+    );
     let mut hard_rejection_codes = Vec::new();
     if !candidate.schedulable {
         hard_rejection_codes.push("candidate_unschedulable".to_string());
@@ -407,7 +458,9 @@ fn candidate_from_canonical(
         key_name: candidate.key_name,
         endpoint_revision: candidate.station_endpoint_revision,
         priority: candidate.routing_order.unwrap_or(candidate.priority),
-        schedulable: hard_rejection_codes.is_empty(),
+        // Keep the administrative switch separate from request-specific
+        // eligibility. `hard_rejection_codes` owns the latter.
+        schedulable: candidate.schedulable,
         health_state,
         group,
         multiplier: RoutingCandidateMultiplierSnapshot {
@@ -526,5 +579,29 @@ fn candidate_from_canonical(
             projector_version: "routing_workspace_canonical_v1".to_string(),
         },
         hard_rejection_codes,
+    }
+}
+
+fn candidate_matches_group_scope(
+    request: &RouteRequestFacts,
+    group: Option<&RoutingCandidateGroupSnapshot>,
+    group_category: Option<&str>,
+) -> bool {
+    use crate::application::routing_engine::request::GroupFilterMode;
+
+    match request.group_filter_mode() {
+        GroupFilterMode::Any => true,
+        GroupFilterMode::UngroupedOnly => group.is_none(),
+        GroupFilterMode::Required => {
+            let Some(required) = request.required_group_stable_key() else {
+                return false;
+            };
+            group.is_some_and(|candidate_group| candidate_group.stable_key == required)
+                || required
+                    .strip_prefix("group-type:")
+                    .is_some_and(|category| {
+                        group_category.is_some_and(|actual| actual.eq_ignore_ascii_case(category))
+                    })
+        }
     }
 }

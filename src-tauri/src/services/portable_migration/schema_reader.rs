@@ -37,6 +37,7 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_alert_policies_enabled_scope_priority",
     "idx_change_event_occurrences_incident_episode_observed",
     "idx_change_event_occurrences_type_observed",
+    "idx_change_event_occurrences_audit_unseen_observed",
     "idx_change_incidents_lifecycle_severity_updated",
     "idx_change_incidents_station_key_lifecycle_updated",
     "idx_change_incidents_station_lifecycle_updated",
@@ -548,7 +549,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
-        assert_eq!(fingerprint.index_count, 63);
+        assert_eq!(fingerprint.index_count, 64);
     }
 
     #[tokio::test]

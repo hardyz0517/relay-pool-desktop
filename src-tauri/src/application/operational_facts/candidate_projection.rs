@@ -211,6 +211,7 @@ fn group_projection(
         group_key_hash: economics.group_key_hash.clone(),
         group_id_hash: economics.group_id_hash.clone(),
         group_name: economics.group_name.clone(),
+        group_category: economics.group_category.clone(),
         status: group_status(economics),
         trace: ProjectionTrace::new(
             vec!["runtime_candidate_projection", "station_key_group"],
@@ -763,6 +764,7 @@ mod tests {
             group_key_hash: Some("hash-gpt".to_string()),
             group_id_hash: Some("gid-gpt".to_string()),
             group_name: Some("GPT Group".to_string()),
+            group_category: Some("gpt".to_string()),
             group_status: Some("bound".to_string()),
             group_confidence: Some(0.91),
             group_checked_at: Some("2026-07-31T00:00:00Z".to_string()),
@@ -796,6 +798,40 @@ mod tests {
         assert_eq!(projection.pricing.unit, None);
         assert!(projection.pricing.source_chain.is_empty());
         assert_eq!(projection.pricing.observed_at, None);
+    }
+
+    #[test]
+    fn runtime_candidate_projection_matches_group_type_independently_of_binding_identity() {
+        let now_ms = 1_800_000_000_000;
+        let settings = RuntimeRoutingSettings {
+            policy: RoutingPolicy::PriorityFallback,
+            max_rate_multiplier: None,
+            routing_group_scope: RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
+            scheduler_config: Default::default(),
+            allow_depleted_fallback: false,
+        };
+        let request = route_request_facts_for_read_model(&settings, now_ms);
+        let candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot {
+            group_binding_id: Some("opaque-binding-id".to_string()),
+            group_id_hash: Some("opaque-group-id".to_string()),
+            group_name: Some("Plus".to_string()),
+            group_category: Some("gpt".to_string()),
+            group_status: Some("bound".to_string()),
+            ..RuntimeRoutingEconomicSnapshot::default()
+        });
+
+        let projection =
+            route_projection_from_runtime_candidate(&request, candidate).expect("projection");
+
+        assert_eq!(
+            projection
+                .group
+                .as_ref()
+                .and_then(|group| group.category.as_deref()),
+            Some("gpt")
+        );
+        assert!(projection.policy.group_matches);
+        assert!(!projection.hard_rejection_codes.contains(&"group_mismatch"));
     }
 
     #[test]

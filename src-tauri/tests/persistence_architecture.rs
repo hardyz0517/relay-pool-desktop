@@ -126,9 +126,8 @@ fn settings_service_does_not_import_legacy_local_key_plaintext() {
 #[test]
 fn persistence_v2_dependency_edges_match_the_boundary_manifest() {
     let graph = ParsedModuleGraph::load("src").expect("parse Rust module graph");
-    let manifest =
-        BoundaryManifest::load("../docs/superpowers/audits/persistence-v2-boundary-manifest.json")
-            .expect("load boundary manifest");
+    let manifest = BoundaryManifest::load("../docs/audits/persistence-v2-boundary-manifest.json")
+        .expect("load boundary manifest");
 
     graph.assert_no_dependency_cycles(&manifest);
     graph.assert_forbidden_prefix_absent("application", "tauri");
@@ -148,9 +147,8 @@ fn persistence_v2_dependency_edges_match_the_boundary_manifest() {
 #[test]
 fn legacy_persistence_is_absent_from_release_source() {
     let source_root = Path::new("src");
-    let manifest =
-        BoundaryManifest::load("../docs/superpowers/audits/persistence-v2-boundary-manifest.json")
-            .expect("load boundary manifest");
+    let manifest = BoundaryManifest::load("../docs/audits/persistence-v2-boundary-manifest.json")
+        .expect("load boundary manifest");
 
     assert!(
         !source_root.join("services/database.rs").exists(),
@@ -743,9 +741,8 @@ fn boundary_manifest_rejects_unknown_versions() {
 }
 
 fn write_manifest_fixture(mutate: impl FnOnce(&mut serde_json::Value)) -> PathBuf {
-    let source =
-        fs::read_to_string("../docs/superpowers/audits/persistence-v2-boundary-manifest.json")
-            .expect("read boundary manifest fixture source");
+    let source = fs::read_to_string("../docs/audits/persistence-v2-boundary-manifest.json")
+        .expect("read boundary manifest fixture source");
     let mut value: serde_json::Value = serde_json::from_str(&source).expect("parse manifest");
     mutate(&mut value);
     let path = std::env::temp_dir().join(format!(

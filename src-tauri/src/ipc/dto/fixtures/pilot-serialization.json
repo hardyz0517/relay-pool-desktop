@@ -2453,10 +2453,11 @@
             "healthState": "ready",
             "inFlight": 1,
             "stationId": "station-1",
-            "stationKeyId": "key-1"
+            "stationKeyId": "key-1",
+            "stationKeyInFlight": 1
           }
         ],
-        "overlayVersion": "routing_runtime_overlay_v1",
+        "overlayVersion": "routing_runtime_overlay_v2",
         "revision": 1,
         "sampledAtMs": 1700000000000
       }

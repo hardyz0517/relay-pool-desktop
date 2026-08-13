@@ -835,8 +835,7 @@ fn production_boundaries_match_manifest() {
         .expect("library target must have a source parent");
     let graph = analyze_crate(src_root).expect("production crate must parse");
 
-    let manifest_path =
-        root.join("docs/superpowers/audits/architecture-scale-boundary-manifest.json");
+    let manifest_path = root.join("docs/audits/architecture-scale-boundary-manifest.json");
     let manifest: Value = serde_json::from_str(
         &fs::read_to_string(&manifest_path).expect("boundary manifest is required"),
     )
@@ -958,7 +957,8 @@ fn production_boundaries_match_manifest() {
             "crate::observability::correlation::in_command_scope::tracing::info_span".to_string(),
             "crate::observability::correlation::in_scope::tracing::info_span".to_string(),
             "crate::observability::correlation::with_scope::tracing::info_span".to_string(),
+            "crate::services::station_collectors::run_due_station_collections_once_v2::tracing::warn".to_string(),
         ]),
-        "structured tracing must flow through the stable redacted correlation/event contract"
+        "structured tracing must flow through the stable correlation contract or an explicitly redacted runtime warning"
     );
 }

@@ -87,6 +87,8 @@ impl WorkspaceStore {
         session: &mut ReadSession,
         station_id: Option<&str>,
         severity: Option<&str>,
+        record_type: Option<&str>,
+        unread_only: bool,
         cursor: Option<(i64, &str)>,
         limit: u32,
     ) -> Result<(Vec<WorkspaceActivityRow>, i64, i64), PersistenceError> {
@@ -128,7 +130,7 @@ impl WorkspaceStore {
                        o.old_value_json AS old_value_json,
                        o.new_value_json AS new_value_json,
                        o.impact_json AS impact_json,
-                       NULL AS resolved_at_ms, NULL AS seen_at_ms,
+                       NULL AS resolved_at_ms, o.seen_at_ms AS seen_at_ms,
                        NULL AS snoozed_until_ms
                 FROM change_event_occurrences o
                 WHERE o.incident_id IS NULL AND o.category = 'audit_change'
@@ -142,13 +144,20 @@ impl WorkspaceStore {
             FROM activity
             WHERE (?1 IS NULL OR station_id = ?1)
               AND (?2 IS NULL OR severity = ?2)
-              AND (?3 IS NULL OR activity_at_ms < ?3
-                   OR (activity_at_ms = ?3 AND activity_key < ?4))
+              AND (?3 IS NULL OR record_type = ?3)
+              AND (?4 = 0 OR (seen_at_ms IS NULL AND (
+                    record_type = 'change'
+                    OR lifecycle_state IN ('pending', 'open', 'recovering')
+                  )))
+              AND (?5 IS NULL OR activity_at_ms < ?5
+                   OR (activity_at_ms = ?5 AND activity_key < ?6))
             ORDER BY activity_at_ms DESC, activity_key DESC
-            LIMIT ?5",
+            LIMIT ?7",
         )
         .bind(station_id)
         .bind(severity)
+        .bind(record_type)
+        .bind(unread_only)
         .bind(cursor.map(|value| value.0))
         .bind(cursor.map(|value| value.1))
         .bind(limit + 1)
@@ -169,17 +178,27 @@ impl WorkspaceStore {
         .fetch_one(session.connection())
         .await?;
         let unseen_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM change_incidents i
-             LEFT JOIN incident_attention a
-               ON a.incident_id = i.id AND a.episode_number = i.episode_number
-             WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
-               AND i.severity IN ('warning', 'critical')
-               AND a.seen_at_ms IS NULL
-               AND (?1 IS NULL OR i.station_id = ?1)
-               AND (?2 IS NULL OR i.severity = ?2)",
+            "SELECT
+                (SELECT COUNT(*) FROM change_incidents i
+                 LEFT JOIN incident_attention a
+                   ON a.incident_id = i.id AND a.episode_number = i.episode_number
+                 WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
+                   AND i.severity IN ('warning', 'critical')
+                   AND a.seen_at_ms IS NULL
+                   AND (?1 IS NULL OR i.station_id = ?1)
+                   AND (?2 IS NULL OR i.severity = ?2)
+                   AND (?3 IS NULL OR ?3 = 'incident'))
+                +
+                (SELECT COUNT(*) FROM change_event_occurrences o
+                 WHERE o.incident_id IS NULL AND o.category = 'audit_change'
+                   AND o.seen_at_ms IS NULL
+                   AND (?1 IS NULL OR o.station_id = ?1)
+                   AND (?2 IS NULL OR ?2 = 'info')
+                   AND (?3 IS NULL OR ?3 = 'change'))",
         )
         .bind(station_id)
         .bind(severity)
+        .bind(record_type)
         .fetch_one(session.connection())
         .await?;
         Ok((rows, active_count, unseen_count))

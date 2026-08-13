@@ -16,9 +16,7 @@ fn policy_compiler_has_no_legacy_settings_lookup() {
 #[test]
 fn all_six_legacy_values_are_classified_in_adr_and_code() {
     let source = read_source("src/application/routing_policy.rs");
-    let adr = read_source(
-        "../docs/superpowers/adrs/routing-operational/0005-routing-policy-legacy-mapping.md",
-    );
+    let adr = read_source("../docs/adrs/routing-operational/0005-routing-policy-legacy-mapping.md");
     for value in [
         "AutomaticBalanced",
         "PriorityFallback",

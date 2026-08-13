@@ -130,6 +130,29 @@ impl AlertingIngress {
         write: &mut WriteSession,
         input: ObservationIngress,
     ) -> Result<IngressResult, PersistenceError> {
+        self.record_in_session_with_cleanup(write, input, true)
+            .await
+    }
+
+    /// Replay historical observations without applying current cleanup
+    /// preferences. Startup upgrade needs the complete lifecycle projection;
+    /// delete-on-recovery is a runtime presentation preference, not a replay
+    /// rule.
+    pub(crate) async fn record_replay_in_session(
+        &self,
+        write: &mut WriteSession,
+        input: ObservationIngress,
+    ) -> Result<IngressResult, PersistenceError> {
+        self.record_in_session_with_cleanup(write, input, false)
+            .await
+    }
+
+    async fn record_in_session_with_cleanup(
+        &self,
+        write: &mut WriteSession,
+        input: ObservationIngress,
+        apply_recovery_cleanup: bool,
+    ) -> Result<IngressResult, PersistenceError> {
         input.validate()?;
         let store = OccurrenceStore;
         let id = format!("occurrence-{}", input.source_observation_key);
@@ -292,6 +315,19 @@ impl AlertingIngress {
                     DeliveryStore.schedule(write, &delivery).await?;
                 }
             }
+            if apply_recovery_cleanup
+                && transition == StateTransition::Resolved
+                && settings.delete_resolved_incidents
+            {
+                let deleted = incident_store
+                    .delete_resolved_by_id(write, &snapshot.incident.id)
+                    .await?;
+                if deleted != 1 {
+                    return Err(PersistenceError::RevisionConflict(
+                        snapshot.incident.id.clone(),
+                    ));
+                }
+            }
         }
         Ok(IngressResult { inserted: true })
     }
@@ -313,6 +349,7 @@ async fn load_settings_for_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::runtime::PersistenceRuntime;
 
     #[test]
     fn ingress_rejects_unbounded_or_stale_payloads() {
@@ -338,5 +375,116 @@ mod tests {
         input.fact_fresh_until_ms = 20;
         input.summary_json = r#"{"authorization":"Bearer secret"}"#.to_string();
         assert!(input.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn resolved_incidents_are_deleted_atomically_by_default() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("delete-resolved.sqlite3"))
+                .await
+                .expect("runtime");
+        let alerting = AlertingIngress::new(runtime.handle());
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    alerting
+                        .record_in_session(
+                            write,
+                            observation("abnormal-1", ObservationKind::Abnormal, 100),
+                        )
+                        .await?;
+                    alerting
+                        .record_in_session(
+                            write,
+                            observation("healthy-1", ObservationKind::Healthy, 200),
+                        )
+                        .await?;
+                    let remaining =
+                        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM change_incidents")
+                            .fetch_one(write.connection())
+                            .await?;
+                    assert_eq!(remaining, 0);
+                    let occurrences = sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM change_event_occurrences",
+                    )
+                    .fetch_one(write.connection())
+                    .await?;
+                    assert_eq!(
+                        occurrences, 2,
+                        "deleting the alert must preserve observation history"
+                    );
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("record and recover");
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn disabling_delete_on_recovery_keeps_resolved_incident() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&root.path().join("keep-resolved.sqlite3"))
+                .await
+                .expect("runtime");
+        let alerting = AlertingIngress::new(runtime.handle());
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    let mut settings = AlertingSettings::default();
+                    settings.delete_resolved_incidents = false;
+                    let encoded = serde_json::to_string(&settings).expect("settings json");
+                    AlertingSettingsStore
+                        .insert_json_if_absent(write, &encoded, 1)
+                        .await?;
+                    alerting
+                        .record_in_session(
+                            write,
+                            observation("abnormal-2", ObservationKind::Abnormal, 100),
+                        )
+                        .await?;
+                    alerting
+                        .record_in_session(
+                            write,
+                            observation("healthy-2", ObservationKind::Healthy, 200),
+                        )
+                        .await?;
+                    let lifecycle = sqlx::query_scalar::<_, String>(
+                        "SELECT lifecycle_state FROM change_incidents",
+                    )
+                    .fetch_one(write.connection())
+                    .await?;
+                    assert_eq!(lifecycle, "resolved");
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("record and retain recovery");
+        runtime.close().await.expect("close runtime");
+    }
+
+    fn observation(key: &str, kind: ObservationKind, at_ms: i64) -> ObservationIngress {
+        ObservationIngress {
+            source_observation_key: key.to_string(),
+            event_type: AlertEventType::StationDown,
+            condition_key: ConditionKey::new("station:delete-on-recovery").unwrap(),
+            kind,
+            severity: Severity::Critical,
+            object_type: "station".to_string(),
+            object_id: Some("station-1".to_string()),
+            station_id: None,
+            station_key_id: None,
+            source: "fixture".to_string(),
+            reason_code: None,
+            summary_json: "{}".to_string(),
+            observed_at_ms: at_ms,
+            fact_fresh_until_ms: at_ms + 1_000,
+        }
     }
 }

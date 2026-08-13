@@ -307,6 +307,7 @@ export type RoutingRuntimeCandidateOverlayDto = {
   stationId: string;
   endpointRevision: number;
   inFlight: number | null;
+  stationKeyInFlight: number | null;
   healthState: string;
   cooldownUntil: string | null;
 };

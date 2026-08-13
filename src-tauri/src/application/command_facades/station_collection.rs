@@ -12,6 +12,9 @@ use crate::{
     services::{
         collectors::{self, output::CollectorTask, V2CollectorSourceAdapter},
         remote_keys::RemoteKeyOperationError,
+        station_collection_coordinator::{
+            StationCollectionAdmissionError, StationCollectionCoordinator,
+        },
     },
 };
 
@@ -21,6 +24,7 @@ const REMOTE_KEY_REFRESH_EVENT: &str = "remote_keys";
 
 #[derive(Debug)]
 pub(crate) enum StationCollectionCommandError {
+    Admission(StationCollectionAdmissionError),
     Prepare(ApplicationError),
     Apply(ApplicationError),
     Blocking(BlockingExecutorError),
@@ -35,6 +39,7 @@ pub(crate) struct StationCollectionCommandFacade {
     outbound: AsyncOutboundClient,
     providers: Arc<collectors::orchestration::ProviderRegistry>,
     remote_keys: RemoteKeysCommandFacade,
+    station_collection_coordinator: StationCollectionCoordinator,
 }
 
 impl StationCollectionCommandFacade {
@@ -45,6 +50,7 @@ impl StationCollectionCommandFacade {
         blocking: BlockingExecutor,
         outbound: AsyncOutboundClient,
         providers: Arc<collectors::orchestration::ProviderRegistry>,
+        station_collection_coordinator: StationCollectionCoordinator,
     ) -> Self {
         let remote_keys = RemoteKeysCommandFacade::new(
             Arc::clone(&collectors),
@@ -62,10 +68,25 @@ impl StationCollectionCommandFacade {
             outbound,
             providers,
             remote_keys,
+            station_collection_coordinator,
         }
     }
 
     pub(crate) async fn run_station_collection(
+        &self,
+        station_id: String,
+        task: CollectorTask,
+    ) -> Result<CollectorRunResult, StationCollectionCommandError> {
+        let station_id_for_lease = station_id.clone();
+        run_with_station_collection_lease(
+            &self.station_collection_coordinator,
+            &station_id_for_lease,
+            || self.run_station_collection_inner(station_id, task),
+        )
+        .await
+    }
+
+    async fn run_station_collection_inner(
         &self,
         station_id: String,
         task: CollectorTask,
@@ -130,6 +151,19 @@ impl StationCollectionCommandFacade {
         &self,
         station_id: String,
     ) -> Result<CollectorRunResult, StationCollectionCommandError> {
+        let station_id_for_lease = station_id.clone();
+        run_with_station_collection_lease(
+            &self.station_collection_coordinator,
+            &station_id_for_lease,
+            || self.test_station_login_inner(station_id),
+        )
+        .await
+    }
+
+    async fn test_station_login_inner(
+        &self,
+        station_id: String,
+    ) -> Result<CollectorRunResult, StationCollectionCommandError> {
         let source = self.source();
         let prepared = self
             .blocking
@@ -179,6 +213,21 @@ impl StationCollectionCommandFacade {
             .await
             .map_err(StationCollectionCommandError::Apply)
     }
+}
+
+async fn run_with_station_collection_lease<T, F, Fut>(
+    coordinator: &StationCollectionCoordinator,
+    station_id: &str,
+    operation: F,
+) -> Result<T, StationCollectionCommandError>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T, StationCollectionCommandError>>,
+{
+    let _lease = coordinator
+        .try_acquire(station_id)
+        .map_err(StationCollectionCommandError::Admission)?;
+    operation().await
 }
 
 async fn append_remote_key_refresh_event<F>(
@@ -234,11 +283,18 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+    use std::{future::pending, num::NonZeroUsize};
 
     use serde_json::json;
+    use tokio::sync::oneshot;
 
     use super::*;
-    use crate::models::collector::CollectorSnapshot;
+    use crate::{
+        models::collector::CollectorSnapshot,
+        services::station_collection_coordinator::{
+            StationCollectionAdmissionError, StationCollectionCoordinator,
+        },
+    };
 
     fn result(status: &str) -> CollectorRunResult {
         CollectorRunResult {
@@ -308,5 +364,114 @@ mod tests {
         assert_eq!(result.events[0].event_type, REMOTE_KEY_REFRESH_EVENT);
         assert_eq!(result.events[0].status, "failed");
         assert_eq!(result.events[0].message, "远端密钥接口暂时不可用。");
+    }
+
+    #[tokio::test]
+    async fn admission_failure_does_not_poll_manual_operation() {
+        let coordinator =
+            StationCollectionCoordinator::new(NonZeroUsize::new(1).expect("non-zero limit"));
+        let _held = coordinator.try_acquire("station-1").expect("station held");
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_by_operation = Arc::clone(&ran);
+
+        let result = run_with_station_collection_lease(&coordinator, "station-1", || async move {
+            ran_by_operation.store(true, Ordering::SeqCst);
+            Ok::<_, StationCollectionCommandError>(())
+        })
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(StationCollectionCommandError::Admission(
+                StationCollectionAdmissionError::AlreadyRunning
+            ))
+        ));
+        assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn manual_lease_releases_after_failure_and_rejects_capacity_without_polling() {
+        let coordinator =
+            StationCollectionCoordinator::new(NonZeroUsize::new(1).expect("non-zero limit"));
+        let failed = run_with_station_collection_lease(&coordinator, "station-1", || async {
+            Err::<(), _>(StationCollectionCommandError::Prepare(
+                ApplicationError::Internal,
+            ))
+        })
+        .await;
+        assert!(matches!(
+            failed,
+            Err(StationCollectionCommandError::Prepare(
+                ApplicationError::Internal
+            ))
+        ));
+        assert!(coordinator.try_acquire("station-1").is_ok());
+
+        let _held = coordinator.try_acquire("station-1").expect("station held");
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_by_operation = Arc::clone(&ran);
+        let rejected =
+            run_with_station_collection_lease(&coordinator, "station-2", || async move {
+                ran_by_operation.store(true, Ordering::SeqCst);
+                Ok::<_, StationCollectionCommandError>(())
+            })
+            .await;
+
+        assert!(matches!(
+            rejected,
+            Err(StationCollectionCommandError::Admission(
+                StationCollectionAdmissionError::AtCapacity
+            ))
+        ));
+        assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn manual_lease_excludes_same_station_until_operation_completes_or_is_aborted() {
+        let coordinator = Arc::new(StationCollectionCoordinator::new(
+            NonZeroUsize::new(1).expect("non-zero limit"),
+        ));
+        let (started_sender, started_receiver) = oneshot::channel();
+        let (release_sender, release_receiver) = oneshot::channel();
+        let running_coordinator = Arc::clone(&coordinator);
+        let running = tokio::spawn(async move {
+            run_with_station_collection_lease(&running_coordinator, "station-1", || async move {
+                started_sender
+                    .send(())
+                    .expect("operation start is observed");
+                release_receiver.await.expect("operation is released");
+                Ok::<_, StationCollectionCommandError>(())
+            })
+            .await
+        });
+        started_receiver.await.expect("operation starts");
+        assert!(matches!(
+            coordinator.try_acquire("station-1"),
+            Err(StationCollectionAdmissionError::AlreadyRunning)
+        ));
+        release_sender.send(()).expect("release operation");
+        running
+            .await
+            .expect("operation joins")
+            .expect("operation succeeds");
+        assert!(coordinator.try_acquire("station-1").is_ok());
+
+        let (abort_started_sender, abort_started_receiver) = oneshot::channel();
+        let abort_coordinator = Arc::clone(&coordinator);
+        let aborted = tokio::spawn(async move {
+            run_with_station_collection_lease(&abort_coordinator, "station-2", || async move {
+                abort_started_sender
+                    .send(())
+                    .expect("abort operation start is observed");
+                pending::<Result<(), StationCollectionCommandError>>().await
+            })
+            .await
+        });
+        abort_started_receiver
+            .await
+            .expect("abort operation starts");
+        aborted.abort();
+        assert!(aborted.await.expect_err("operation aborts").is_cancelled());
+        assert!(coordinator.try_acquire("station-2").is_ok());
     }
 }

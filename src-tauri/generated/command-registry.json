@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "8252023595121d55e51650a4907453b95a8bd0ffc0531c44f3984f16770385f0",
+  "contract_hash": "c699f70c58a959fabd790673a693439c36feddee5b36d0688639bf1d652161da",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -1305,7 +1305,7 @@
     {
       "name": "mark_alerting_seen",
       "transport": "ordinary",
-      "input_schema_hash": "50f3b593cbe1e7ed5bdeaec67f7faaf668b493038655a44c01703bbfe68f673a",
+      "input_schema_hash": "b851b75af33fff97ce00d14f7181103d0718dfdd4a51c754701386812dee92de",
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
@@ -1966,6 +1966,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "a0f63f55fc4ba53c6fa22a839412ab4844980cdf6ea7c8ec20a8fb00181c0549"
+    "serialization_fixture_hash": "0ea7ab67812b0fb626f24f175d584301b791280c0f5d68506fad11a75dfaf7e7"
   }
 }

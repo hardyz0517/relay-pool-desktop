@@ -94,6 +94,7 @@ pub(crate) struct GroupProjectionInput {
     pub(crate) group_key_hash: Option<String>,
     pub(crate) group_id_hash: Option<String>,
     pub(crate) group_name: Option<String>,
+    pub(crate) group_category: Option<String>,
     pub(crate) status: GroupStatus,
     pub(crate) trace: ProjectionTrace,
 }
@@ -102,6 +103,7 @@ pub(crate) struct GroupProjectionInput {
 pub(crate) struct GroupProjection {
     pub(crate) identity: GroupIdentity,
     pub(crate) display_name: String,
+    pub(crate) category: Option<String>,
     pub(crate) available: bool,
     pub(crate) trace: ProjectionTrace,
 }
@@ -171,6 +173,7 @@ pub(crate) fn reduce_group(input: GroupProjectionInput) -> GroupProjectionOutcom
     let projection = GroupProjection {
         identity,
         display_name,
+        category: first_non_empty(input.group_category),
         available,
         trace: trace.clone(),
     };

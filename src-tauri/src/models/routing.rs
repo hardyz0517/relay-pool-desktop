@@ -329,6 +329,9 @@ pub struct RuntimeRoutingEconomicSnapshot {
     pub group_key_hash: Option<String>,
     pub group_id_hash: Option<String>,
     pub group_name: Option<String>,
+    /// Canonical coarse category resolved by persistence. A manual override
+    /// takes precedence over collector inference before this snapshot is built.
+    pub group_category: Option<String>,
     pub group_status: Option<String>,
     pub group_confidence: Option<f64>,
     pub group_checked_at: Option<String>,

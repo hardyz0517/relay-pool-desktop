@@ -46,6 +46,8 @@ pub(crate) struct AlertingSettings {
     pub quiet_hours_time_zone: String,
     #[serde(default = "default_true")]
     pub critical_bypasses_quiet_hours: bool,
+    #[serde(default = "default_true")]
+    pub delete_resolved_incidents: bool,
     #[serde(default = "default_history_retention")]
     pub history_retention_days: u32,
     #[serde(default = "default_delivery_retention")]
@@ -88,6 +90,7 @@ impl Default for AlertingSettings {
             quiet_hours_end_local: Some("08:00".to_string()),
             quiet_hours_time_zone: "local".to_string(),
             critical_bypasses_quiet_hours: true,
+            delete_resolved_incidents: true,
             history_retention_days: 90,
             delivery_retention_days: 30,
             updated_at_ms: 0,
@@ -381,6 +384,7 @@ mod tests {
         .expect("frontend settings contract");
         assert!(!settings.alerting_enabled);
         assert!(settings.paused);
+        assert!(settings.delete_resolved_incidents);
         assert!(settings.validate().is_ok());
         let encoded = serde_json::to_value(settings).expect("encode settings");
         assert_eq!(encoded["enabled"], false);

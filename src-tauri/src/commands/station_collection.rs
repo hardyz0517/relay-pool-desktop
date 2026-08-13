@@ -140,6 +140,25 @@ fn public_station_login_probe_error(_: String) -> error::CommandError {
 
 fn public_station_collection_error(error: StationCollectionCommandError) -> error::CommandError {
     match error {
+        StationCollectionCommandError::Admission(admission) => match admission {
+            crate::services::station_collection_coordinator::StationCollectionAdmissionError::AlreadyRunning => {
+                error::CommandError::try_new(
+                    error::CommandErrorCode::Conflict,
+                    "A collection for this station is already running.",
+                    true,
+                    None,
+                    None,
+                )
+                .unwrap_or_else(|_| error::CommandError::internal(None))
+            }
+            crate::services::station_collection_coordinator::StationCollectionAdmissionError::AtCapacity => {
+                error::CommandError::from_work(error::WorkFailure::Overloaded)
+            }
+            crate::services::station_collection_coordinator::StationCollectionAdmissionError::Cancelled
+            | crate::services::station_collection_coordinator::StationCollectionAdmissionError::InvalidStationId => {
+                error::CommandError::internal(None)
+            }
+        },
         StationCollectionCommandError::Prepare(error) => {
             super::public_command_application_error(error)
         }
@@ -147,5 +166,34 @@ fn public_station_collection_error(error: StationCollectionCommandError) -> erro
         StationCollectionCommandError::Blocking(error) => {
             super::public_blocking_executor_error(error)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        commands::error::CommandErrorCode,
+        services::station_collection_coordinator::StationCollectionAdmissionError,
+    };
+
+    #[test]
+    fn station_collection_admission_errors_have_stable_public_contracts() {
+        let conflict = public_station_collection_error(StationCollectionCommandError::Admission(
+            StationCollectionAdmissionError::AlreadyRunning,
+        ));
+        assert_eq!(conflict.code, CommandErrorCode::Conflict);
+        assert!(conflict.retryable);
+        assert_eq!(
+            conflict.message,
+            "A collection for this station is already running."
+        );
+        assert!(conflict.details.is_none());
+
+        let overloaded = public_station_collection_error(StationCollectionCommandError::Admission(
+            StationCollectionAdmissionError::AtCapacity,
+        ));
+        assert_eq!(overloaded.code, CommandErrorCode::Overloaded);
+        assert!(overloaded.retryable);
     }
 }

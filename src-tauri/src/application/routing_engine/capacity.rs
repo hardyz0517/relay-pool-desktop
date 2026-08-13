@@ -78,6 +78,12 @@ impl CompositeCapacityRegistry {
             .unwrap_or_default()
     }
 
+    pub(crate) fn active_for_station_key(&self, station_key_id: &str) -> u32 {
+        self.active_for(&CapacityConstraintKey::StationKey(
+            station_key_id.to_string(),
+        ))
+    }
+
     pub(crate) fn try_acquire(
         &self,
         request: CompositeCapacityRequest,

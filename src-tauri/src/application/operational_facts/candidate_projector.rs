@@ -66,6 +66,7 @@ pub(crate) struct CandidatePolicyProjection {
 pub(crate) struct CandidateGroupProjection {
     pub(crate) stable_key: String,
     pub(crate) display_name: String,
+    pub(crate) category: Option<String>,
     pub(crate) available: bool,
     pub(crate) reason: &'static str,
 }
@@ -198,6 +199,7 @@ pub(crate) fn project_route_candidate(
         .map(|group| CandidateGroupProjection {
             stable_key: group.identity.stable_key(),
             display_name: group.display_name.clone(),
+            category: group.category.clone(),
             available: group.available,
             reason: group.trace.reason,
         });
@@ -209,7 +211,17 @@ pub(crate) fn project_route_candidate(
         (GroupFilterMode::Any, _, _) => true,
         (GroupFilterMode::UngroupedOnly, _, None) => true,
         (GroupFilterMode::UngroupedOnly, _, Some(_)) => false,
-        (GroupFilterMode::Required, Some(required), Some(group)) => group.stable_key == required,
+        (GroupFilterMode::Required, Some(required), Some(group)) => {
+            group.stable_key == required
+                || required
+                    .strip_prefix("group-type:")
+                    .is_some_and(|category| {
+                        group
+                            .category
+                            .as_deref()
+                            .is_some_and(|actual| actual.eq_ignore_ascii_case(category))
+                    })
+        }
         (GroupFilterMode::Required, _, _) => false,
     };
     let resolved_model = candidate

@@ -838,7 +838,7 @@ async fn rewrite_stations_id_declaration(path: &Path, replacement: &str) {
 
 fn released_profile_ids_from_manifest() -> BTreeSet<String> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../docs/superpowers/audits/persistence-v2-released-schema-manifest.json");
+        .join("../docs/audits/persistence-v2-released-schema-manifest.json");
     let raw = fs::read(path).expect("released schema manifest");
     serde_json::from_slice::<serde_json::Value>(&raw).expect("valid released schema manifest")
         ["profiles"]

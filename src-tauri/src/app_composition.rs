@@ -32,6 +32,7 @@ use crate::{
         pricing_catalog::StaticBuiltinModelBasePriceCatalog,
         proxy::runtime::ProxyRuntimeState,
         secrets::{vault::DataKeyVault, DeviceKeyResolver},
+        station_collection_coordinator::StationCollectionCoordinator,
     },
     TrayBehaviorState,
 };
@@ -119,6 +120,7 @@ pub(crate) fn compose_app_services(
 pub(crate) fn compose_settings_stations_command_facade(
     services: &AppServices,
     tray_behavior: Arc<TrayBehaviorState>,
+    station_collection_coordinator: StationCollectionCoordinator,
 ) -> SettingsStationsCommandFacade {
     SettingsStationsCommandFacade::new(
         Arc::clone(&services.stations),
@@ -126,6 +128,7 @@ pub(crate) fn compose_settings_stations_command_facade(
         Arc::clone(&services.station_assets),
         Arc::clone(&services.station_capacity_domains),
         tray_behavior,
+        station_collection_coordinator,
     )
 }
 
@@ -196,6 +199,7 @@ pub(crate) fn compose_station_collection_command_facade(
     blocking: BlockingExecutor,
     outbound: AsyncOutboundClient,
     providers: Arc<ProviderRegistry>,
+    station_collection_coordinator: StationCollectionCoordinator,
 ) -> StationCollectionCommandFacade {
     StationCollectionCommandFacade::new(
         Arc::clone(&services.collectors),
@@ -204,6 +208,7 @@ pub(crate) fn compose_station_collection_command_facade(
         blocking,
         outbound,
         providers,
+        station_collection_coordinator,
     )
 }
 

@@ -84,6 +84,15 @@ impl RoutingRuntimeActivity for ProxyRuntimeState {
                 .await
         })
     }
+
+    fn active_for_station_key<'a>(
+        &'a self,
+        station_key_id: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Option<i64>> {
+        Box::pin(
+            async move { ProxyRuntimeState::active_for_station_key(self, station_key_id).await },
+        )
+    }
 }
 
 impl Default for ProxyRuntimeState {
@@ -109,6 +118,17 @@ impl ProxyRuntimeState {
                 .routing_runtime
                 .as_ref()
                 .map(|runtime| runtime.active_for_station(station_type, station_id, station_key_id))
+                .unwrap_or(0),
+        )
+    }
+
+    pub(crate) async fn active_for_station_key(&self, station_key_id: &str) -> Option<i64> {
+        let inner = self.v2.lock().await;
+        Some(
+            inner
+                .routing_runtime
+                .as_ref()
+                .map(|runtime| runtime.active_for_station_key(station_key_id))
                 .unwrap_or(0),
         )
     }

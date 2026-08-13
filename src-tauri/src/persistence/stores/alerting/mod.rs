@@ -185,6 +185,76 @@ impl OccurrenceStore {
         .rows_affected();
         Ok(affected)
     }
+
+    pub(crate) async fn clear_informational_changes(
+        &self,
+        session: &mut WriteSession,
+        station_id: Option<&str>,
+        severity: Option<Severity>,
+        unread_only: bool,
+    ) -> Result<u64, PersistenceError> {
+        if severity.is_some_and(|value| value != Severity::Info) {
+            return Ok(0);
+        }
+        let affected = sqlx::query(
+            "DELETE FROM change_event_occurrences
+             WHERE incident_id IS NULL
+               AND category = 'audit_change'
+               AND (?1 IS NULL OR station_id = ?1)
+               AND (?2 = 0 OR seen_at_ms IS NULL)",
+        )
+        .bind(station_id)
+        .bind(unread_only)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        Ok(affected)
+    }
+
+    pub(crate) async fn mark_informational_change_seen(
+        &self,
+        session: &mut WriteSession,
+        activity_id: &str,
+        now_ms: i64,
+    ) -> Result<u64, PersistenceError> {
+        let affected = sqlx::query(
+            "UPDATE change_event_occurrences
+             SET seen_at_ms = COALESCE(seen_at_ms, ?2)
+             WHERE id = ?1 AND incident_id IS NULL AND category = 'audit_change'",
+        )
+        .bind(activity_id)
+        .bind(now_ms)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        Ok(affected)
+    }
+
+    pub(crate) async fn mark_all_informational_changes_seen(
+        &self,
+        session: &mut WriteSession,
+        station_id: Option<&str>,
+        severity: Option<Severity>,
+        now_ms: i64,
+    ) -> Result<u64, PersistenceError> {
+        if severity.is_some_and(|value| value != Severity::Info) {
+            return Ok(0);
+        }
+        let affected = sqlx::query(
+            "UPDATE change_event_occurrences
+             SET seen_at_ms = ?2
+             WHERE incident_id IS NULL
+               AND category = 'audit_change'
+               AND seen_at_ms IS NULL
+               AND (?1 IS NULL OR station_id = ?1)",
+        )
+        .bind(station_id)
+        .bind(now_ms)
+        .execute(session.connection())
+        .await?
+        .rows_affected();
+        Ok(affected)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +293,40 @@ pub(crate) struct LegacyCollectorFailureGroup {
 }
 
 impl IncidentStore {
+    pub(crate) async fn delete_resolved_by_id(
+        &self,
+        session: &mut WriteSession,
+        incident_id: &str,
+    ) -> Result<u64, PersistenceError> {
+        Ok(sqlx::query(
+            "DELETE FROM change_incidents WHERE id = ?1 AND lifecycle_state = 'resolved'",
+        )
+        .bind(incident_id)
+        .execute(session.connection())
+        .await?
+        .rows_affected())
+    }
+
+    pub(crate) async fn delete_resolved(
+        &self,
+        session: &mut WriteSession,
+        limit: u32,
+    ) -> Result<u64, PersistenceError> {
+        Ok(sqlx::query(
+            "DELETE FROM change_incidents
+             WHERE id IN (
+                 SELECT id FROM change_incidents
+                 WHERE lifecycle_state = 'resolved'
+                 ORDER BY updated_at_ms ASC, id ASC
+                 LIMIT ?1
+             )",
+        )
+        .bind(i64::from(limit.clamp(1, 10_000)))
+        .execute(session.connection())
+        .await?
+        .rows_affected())
+    }
+
     pub(crate) async fn resolve_for_deleted_station(
         &self,
         session: &mut WriteSession,
@@ -846,7 +950,11 @@ fn legacy_collector_task_type(condition_key: &str) -> Option<&str> {
 mod tests {
     use super::{
         legacy_collector_task_type, station_id_from_condition_key,
-        station_key_id_from_condition_key,
+        station_key_id_from_condition_key, IncidentSnapshot, IncidentStore, OccurrenceStore,
+    };
+    use crate::{
+        models::alerting::{AlertEventType, ConditionKey, Incident, LifecycleState, Severity},
+        persistence::runtime::PersistenceRuntime,
     };
 
     #[test]
@@ -869,6 +977,149 @@ mod tests {
             legacy_collector_task_type("collector:station-1:collector_failed"),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn clearing_information_preserves_condition_observations() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("clear-information.sqlite3"))
+                .await
+                .expect("runtime");
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    for (id, category, kind) in [
+                        ("audit-1", "audit_change", "change"),
+                        ("condition-1", "condition_observation", "abnormal"),
+                    ] {
+                        sqlx::query(
+                            "INSERT INTO change_event_occurrences (
+                                id, source_observation_key, event_type, category,
+                                observation_kind, severity, object_type, source,
+                                observed_at_ms, created_at_ms
+                             ) VALUES (?1, ?2, 'audit_change', ?3, ?4, 'info',
+                                       'global', 'fixture', 100, 100)",
+                        )
+                        .bind(id)
+                        .bind(format!("fixture:{id}"))
+                        .bind(category)
+                        .bind(kind)
+                        .execute(write.connection())
+                        .await?;
+                    }
+                    let cleared = OccurrenceStore
+                        .clear_informational_changes(write, None, Some(Severity::Info), false)
+                        .await?;
+                    assert_eq!(cleared, 1);
+                    let remaining = sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM change_event_occurrences",
+                    )
+                    .fetch_one(write.connection())
+                    .await?;
+                    assert_eq!(remaining, 1);
+                    Ok::<(), crate::persistence::error::PersistenceError>(())
+                })
+            })
+            .await
+            .expect("clear information");
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn informational_changes_support_single_and_bulk_seen_state() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("information-seen.sqlite3"))
+                .await
+                .expect("runtime");
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    for id in ["audit-1", "audit-2"] {
+                        sqlx::query(
+                            "INSERT INTO change_event_occurrences (
+                                id, source_observation_key, event_type, category,
+                                observation_kind, severity, object_type, source,
+                                observed_at_ms, created_at_ms
+                             ) VALUES (?1, ?2, 'audit_change', 'audit_change', 'change',
+                                       'info', 'global', 'fixture', 100, 100)",
+                        )
+                        .bind(id)
+                        .bind(format!("fixture:{id}"))
+                        .execute(write.connection())
+                        .await?;
+                    }
+                    let single = OccurrenceStore
+                        .mark_informational_change_seen(write, "audit-1", 200)
+                        .await?;
+                    assert_eq!(single, 1);
+                    let bulk = OccurrenceStore
+                        .mark_all_informational_changes_seen(write, None, None, 300)
+                        .await?;
+                    assert_eq!(bulk, 1);
+                    let unseen = sqlx::query_scalar::<_, i64>(
+                        "SELECT COUNT(*) FROM change_event_occurrences WHERE seen_at_ms IS NULL",
+                    )
+                    .fetch_one(write.connection())
+                    .await?;
+                    assert_eq!(unseen, 0);
+                    Ok::<(), crate::persistence::error::PersistenceError>(())
+                })
+            })
+            .await
+            .expect("information seen state");
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn resolved_cleanup_never_deletes_active_incidents() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("resolved-cleanup.sqlite3"))
+                .await
+                .expect("runtime");
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    for (id, state) in [
+                        ("active-1", LifecycleState::Open),
+                        ("resolved-1", LifecycleState::Resolved),
+                    ] {
+                        let mut incident = Incident::new(
+                            id,
+                            ConditionKey::new(format!("fixture:{id}")).unwrap(),
+                            AlertEventType::StationDown,
+                            Severity::Warning,
+                            100,
+                            "fixture-policy",
+                        );
+                        incident.lifecycle_state = state;
+                        incident.version = 1;
+                        incident.resolved_at_ms =
+                            (state == LifecycleState::Resolved).then_some(100);
+                        IncidentStore
+                            .insert_snapshot(write, &IncidentSnapshot { incident })
+                            .await?;
+                    }
+                    let deleted = IncidentStore.delete_resolved(write, 100).await?;
+                    assert_eq!(deleted, 1);
+                    let remaining =
+                        sqlx::query_scalar::<_, String>("SELECT id FROM change_incidents")
+                            .fetch_one(write.connection())
+                            .await?;
+                    assert_eq!(remaining, "active-1");
+                    Ok::<(), crate::persistence::error::PersistenceError>(())
+                })
+            })
+            .await
+            .expect("cleanup resolved incidents");
+        runtime.close().await.expect("close runtime");
     }
 }
 

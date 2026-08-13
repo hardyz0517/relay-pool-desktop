@@ -520,7 +520,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
             "command":"load_routing_runtime_overlay",
             "input":{},
             "output":{
-                "overlayVersion":"routing_runtime_overlay_v1",
+                "overlayVersion":"routing_runtime_overlay_v2",
                 "sampledAtMs":1700000000000_i64,
                 "revision":1,
                 "candidates":[{
@@ -528,6 +528,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
                     "stationId":"station-1",
                     "endpointRevision":1,
                     "inFlight":1,
+                    "stationKeyInFlight":1,
                     "healthState":"ready",
                     "cooldownUntil":null
                 }]

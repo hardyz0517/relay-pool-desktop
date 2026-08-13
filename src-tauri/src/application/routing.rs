@@ -511,11 +511,15 @@ impl RoutingService {
                 )
                 .await
                 .or(candidate.load_factor);
+            let station_key_in_flight = proxy
+                .active_for_station_key(&candidate.station_key_id)
+                .await;
             facts.push(RoutingRuntimeCandidateFact {
                 station_key_id: candidate.station_key_id,
                 station_id: candidate.station_id,
                 endpoint_revision: candidate.station_endpoint_revision,
                 in_flight,
+                station_key_in_flight,
                 health_state,
                 cooldown_until,
             });

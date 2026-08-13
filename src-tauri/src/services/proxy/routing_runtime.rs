@@ -581,6 +581,10 @@ impl RoutingRuntimeState {
         i64::from(self.capacity.active_for(&constraint))
     }
 
+    pub(crate) fn active_for_station_key(&self, station_key_id: &str) -> i64 {
+        i64::from(self.capacity.active_for_station_key(station_key_id))
+    }
+
     #[cfg(test)]
     pub(crate) fn acquire(
         &self,
@@ -655,6 +659,24 @@ mod tests {
         assert_ne!(first_id, second.instance_id());
         lease.release();
         assert_eq!(second.snapshot().in_flight, 0);
+    }
+
+    #[test]
+    fn station_key_activity_is_not_confused_with_shared_station_account_activity() {
+        let runtime = RoutingRuntimeState::new(10, 1);
+        let mut first_request = request("key-1");
+        first_request.global_max_concurrency = 10;
+        first_request.station_account_max_concurrency = 10;
+        let mut second_request = request("key-2");
+        second_request.global_max_concurrency = 10;
+        second_request.station_account_max_concurrency = 10;
+
+        let _first = runtime.acquire(first_request).expect("first key lease");
+        let _second = runtime.acquire(second_request).expect("second key lease");
+
+        assert_eq!(runtime.active_for_station("sub2api", "station", "key-1"), 2);
+        assert_eq!(runtime.active_for_station_key("key-1"), 1);
+        assert_eq!(runtime.active_for_station_key("key-2"), 1);
     }
 
     #[test]

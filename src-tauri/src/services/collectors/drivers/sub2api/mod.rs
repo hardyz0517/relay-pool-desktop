@@ -27,6 +27,7 @@ use crate::{
             failure::{
                 AuthEffect, DriverFailure, DriverFailureKind, FailedEndpoint, RetryDisposition,
             },
+            manual_authorization::response_requires_manual_authorization,
         },
         station_endpoints::{build_api_url, build_management_url},
     },
@@ -89,8 +90,8 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             let execution =
                 fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
             if !execution.ok {
-                return Err(failed(
-                    failure_kind_from_endpoint_results(&[execution.redacted.clone()]),
+                return Err(failed_from_endpoint_results(
+                    &[execution.redacted.clone()],
                     EndpointRole::RemoteKeys,
                     Some(execution.evidence),
                     "Sub2API remote-key list returned no canonical keys",
@@ -123,8 +124,8 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             let execution =
                 fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
             if !execution.ok {
-                return Err(failed(
-                    failure_kind_from_endpoint_results(&[execution.redacted.clone()]),
+                return Err(failed_from_endpoint_results(
+                    &[execution.redacted.clone()],
                     EndpointRole::RemoteKeys,
                     Some(execution.evidence),
                     "Sub2API remote-key reveal list request failed",
@@ -242,8 +243,8 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             let initial =
                 fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
             if !initial.ok {
-                return Err(failed(
-                    failure_kind_from_endpoint_results(&[initial.redacted.clone()]),
+                return Err(failed_from_endpoint_results(
+                    &[initial.redacted.clone()],
                     EndpointRole::RemoteKeys,
                     Some(initial.evidence),
                     "Sub2API remote-key delete could not read the current key list",
@@ -307,11 +308,11 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                 None
             } else {
                 fatal_attempt_failure(&deletion, EndpointRole::RemoteKeys).or_else(|| {
-                    Some(failed(
-                        failure_kind_from_endpoint_results(&[json!({
+                    Some(failed_from_endpoint_results(
+                        &[json!({
                             "status": deletion.status,
                             "ok": false,
-                        })]),
+                        })],
                         EndpointRole::RemoteKeys,
                         Some(vec![deletion.evidence.clone()]),
                         deletion
@@ -614,8 +615,8 @@ async fn create_remote_key_once(
             "Sub2API remote-key create outcome is unknown; reconcile before retrying",
         ));
     }
-    Err(failed(
-        failure_kind_from_endpoint_results(&[redacted]),
+    Err(failed_from_endpoint_results(
+        &[redacted],
         EndpointRole::RemoteKeys,
         Some(vec![result.evidence]),
         result
@@ -789,8 +790,8 @@ async fn collect_groups(context: &CollectorContext<'_>) -> Result<DriverOutput, 
         1 if !facts.groups.is_empty() => DriverOutputStatus::Partial,
         _ if !facts.groups.is_empty() || !facts.rates.is_empty() => DriverOutputStatus::Partial,
         _ => {
-            return Err(failed(
-                failure_kind_from_endpoint_results(&endpoint_results),
+            return Err(failed_from_endpoint_results(
+                &endpoint_results,
                 EndpointRole::Groups,
                 Some(evidence),
                 "Sub2API groups/rates returned no canonical facts",
@@ -963,8 +964,8 @@ async fn collect_balance(context: &CollectorContext<'_>) -> Result<DriverOutput,
     }
 
     if facts.balances.is_empty() {
-        return Err(failed(
-            failure_kind_from_endpoint_results(&endpoint_results),
+        return Err(failed_from_endpoint_results(
+            &endpoint_results,
             EndpointRole::Balance,
             Some(evidence),
             "Sub2API usage/profile returned no balance facts",
@@ -1354,7 +1355,14 @@ async fn execute_bearer_json_with_recovery(
         break;
     }
 
-    let result = latest.unwrap_or_else(|| JsonAttemptResult::budget_exhausted(path, role));
+    let mut result = latest.unwrap_or_else(|| JsonAttemptResult::budget_exhausted(path, role));
+    let automated_session_recovery_exhausted = result.status == Some(401)
+        && (auth.access_token.is_some() || auth.session_cookie.is_some() || auth.login.is_some());
+    if automated_session_recovery_exhausted {
+        result.manual_authorization_required = true;
+        recovery_actions
+            .push(crate::services::collectors::manual_authorization::RECOMMENDED_ACTION);
+    }
     let mut redacted = json!({
         "url": result.url,
         "status": result.status,
@@ -1368,9 +1376,10 @@ async fn execute_bearer_json_with_recovery(
     if !recovery_actions.is_empty() {
         redacted["recoveryActions"] = json!(recovery_actions);
     }
+    let ok = result.ok && classify_json_result(&result).is_none();
     Ok(JsonExecution {
         payload: result.payload,
-        ok: result.ok,
+        ok,
         redacted,
         evidence: result.evidence,
     })
@@ -1387,6 +1396,7 @@ struct JsonAttemptResult {
     retry_after: Option<Duration>,
     duration_ms: i64,
     evidence: EndpointEvidence,
+    manual_authorization_required: bool,
 }
 
 impl JsonAttemptResult {
@@ -1407,6 +1417,7 @@ impl JsonAttemptResult {
                 None,
                 Some("task budget exhausted".to_string()),
             ),
+            manual_authorization_required: false,
         }
     }
 
@@ -1452,6 +1463,7 @@ async fn execute_bearer_json_once(
                     None,
                     None,
                 ),
+                manual_authorization_required: false,
             };
         }
     };
@@ -1462,6 +1474,12 @@ async fn execute_bearer_json_once(
     {
         Ok(response) => {
             let status = response.status.as_u16();
+            let manual_authorization_required = response_requires_manual_authorization(
+                status,
+                &response.headers,
+                &response.evidence.final_url,
+                &response.body,
+            );
             let payload = serde_json::from_slice::<Value>(&response.body).unwrap_or(Value::Null);
             let ok = response.status.is_success() && !payload.is_null();
             let error_message =
@@ -1482,6 +1500,7 @@ async fn execute_bearer_json_once(
                     Some(status),
                     None,
                 ),
+                manual_authorization_required,
             }
         }
         Err(error) => JsonAttemptResult {
@@ -1500,6 +1519,7 @@ async fn execute_bearer_json_once(
                 None,
                 Some(error.to_string()),
             ),
+            manual_authorization_required: false,
         },
     }
 }
@@ -1714,6 +1734,9 @@ fn is_manual_login_required(value: &Value, status: u16) -> bool {
 }
 
 fn classify_json_result(result: &JsonAttemptResult) -> Option<&'static str> {
+    if result.manual_authorization_required {
+        return Some("manual_authorization_required");
+    }
     match result.failure_kind {
         Some(DriverFailureKind::Cancelled) => return Some("cancelled"),
         Some(DriverFailureKind::BudgetExhausted) => return Some("budget_exhausted"),
@@ -1813,6 +1836,32 @@ fn failure_kind_from_endpoint_results(results: &[Value]) -> DriverFailureKind {
     }
 }
 
+fn recovery_action_from_endpoint_results(results: &[Value]) -> AuthEffect {
+    let has_manual_authorization_signal = results.iter().any(|result| {
+        result
+            .get("failureKind")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "manual_authorization_required")
+            || result
+                .get("attempts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|attempt| {
+                    attempt
+                        .get("failureKind")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value == "manual_authorization_required")
+                })
+    });
+
+    if has_manual_authorization_signal {
+        AuthEffect::Reauthorize
+    } else {
+        AuthEffect::None
+    }
+}
+
 fn balance_endpoint_json(
     result: &JsonAttemptResult,
     endpoint: &str,
@@ -1825,6 +1874,7 @@ fn balance_endpoint_json(
         "status": result.status,
         "durationMs": result.duration_ms,
         "ok": result.ok,
+        "failureKind": classify_json_result(result),
         "errorMessage": result.error_message,
     })
 }
@@ -1835,6 +1885,7 @@ fn append_balance_endpoint_attempt(endpoint: &mut Value, result: &JsonAttemptRes
         "status": result.status,
         "durationMs": result.duration_ms,
         "ok": result.ok,
+        "failureKind": classify_json_result(result),
         "errorMessage": result.error_message,
     });
     if endpoint.get("attempts").is_none() {
@@ -1843,6 +1894,7 @@ fn append_balance_endpoint_attempt(endpoint: &mut Value, result: &JsonAttemptRes
             "status": endpoint.get("status").cloned().unwrap_or(Value::Null),
             "durationMs": endpoint.get("durationMs").cloned().unwrap_or(Value::Null),
             "ok": endpoint.get("ok").cloned().unwrap_or(Value::Null),
+            "failureKind": endpoint.get("failureKind").cloned().unwrap_or(Value::Null),
             "errorMessage": endpoint.get("errorMessage").cloned().unwrap_or(Value::Null),
         });
         endpoint["attempts"] = json!([first_attempt]);
@@ -1855,6 +1907,7 @@ fn append_balance_endpoint_attempt(endpoint: &mut Value, result: &JsonAttemptRes
     endpoint["status"] = json!(result.status);
     endpoint["durationMs"] = json!(result.duration_ms);
     endpoint["ok"] = json!(result.ok);
+    endpoint["failureKind"] = json!(classify_json_result(result));
     endpoint["errorMessage"] = json!(result.error_message);
     endpoint["recoveryActions"] = json!(["transient_retry"]);
 }
@@ -1940,6 +1993,23 @@ fn failed(
             .unwrap_or_else(EvidenceSet::empty),
         sanitized_detail: Some(redact_text(&detail.into())),
     }
+}
+
+fn failed_from_endpoint_results(
+    results: &[Value],
+    role: EndpointRole,
+    evidence: Option<Vec<EndpointEvidence>>,
+    detail: impl Into<String>,
+) -> DriverFailure {
+    let auth_effect = recovery_action_from_endpoint_results(results);
+    let kind = if auth_effect == AuthEffect::Reauthorize {
+        DriverFailureKind::AuthRejected
+    } else {
+        failure_kind_from_endpoint_results(results)
+    };
+    let mut failure = failed(kind, role, evidence, detail);
+    failure.auth_effect = auth_effect;
+    failure
 }
 
 fn result_unknown(
@@ -2234,6 +2304,64 @@ mod tests {
         assert!(first_request.contains("cookie: cf_clearance=clearance; session=browser"));
         assert!(!second_request.contains("authorization: bearer captured-jwt"));
         assert!(second_request.contains("cookie: cf_clearance=clearance; session=browser"));
+    }
+
+    #[tokio::test]
+    async fn exhausted_saved_session_is_classified_for_manual_authorization() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(401, json!({"error": "expired token"}))),
+            Some(json_response(401, json!({"error": "expired session"}))),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = HybridSessionSecretAccessor;
+        let credential = test_credential();
+        let context = CollectorContext {
+            station: test_station_identity(),
+            endpoints: test_endpoints(&server.base_url),
+            credential: credential.clone(),
+            auth: Some(ProviderAuthContext::Sub2Api {
+                station_keys: Vec::new(),
+                access_token: Some(credential.clone()),
+                session_cookie: Some(credential),
+                login: None,
+                credit_per_cny: 1.0,
+            }),
+            user_agent: None,
+            secrets: &secrets,
+            outbound: &outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        };
+        let auth = sub2api_auth(&context).expect("auth context should resolve");
+        let mut token = "captured-jwt".to_string();
+
+        let execution = execute_bearer_json_with_recovery(
+            &context,
+            EndpointRole::Groups,
+            &server.base_url,
+            "/api/v1/groups/available",
+            &mut token,
+            &auth,
+        )
+        .await
+        .expect("authorization failure should remain a typed result");
+        server.finish();
+
+        assert!(!execution.ok);
+        assert_eq!(
+            execution.redacted["failureKind"],
+            json!("manual_authorization_required")
+        );
+        let failure = failed_from_endpoint_results(
+            &[execution.redacted],
+            EndpointRole::Groups,
+            Some(vec![execution.evidence]),
+            "saved session is no longer usable",
+        );
+        assert_eq!(failure.kind, DriverFailureKind::AuthRejected);
+        assert_eq!(failure.auth_effect, AuthEffect::Reauthorize);
     }
 
     fn test_context<'a>(

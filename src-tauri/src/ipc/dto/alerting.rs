@@ -95,6 +95,7 @@ pub(crate) struct AlertingSettingsDto {
     pub quiet_hours_end: Option<String>,
     pub quiet_hours_timezone: String,
     pub critical_bypasses_quiet_hours: bool,
+    pub delete_resolved_incidents: bool,
     pub history_retention_days: u32,
     pub delivery_retention_days: u32,
     pub revision: u64,
@@ -115,6 +116,7 @@ pub(crate) struct AlertingSettingsInputDto {
     pub quiet_hours_end: Option<String>,
     pub quiet_hours_timezone: String,
     pub critical_bypasses_quiet_hours: bool,
+    pub delete_resolved_incidents: bool,
     pub history_retention_days: u32,
     pub delivery_retention_days: u32,
     #[serde(default)]
@@ -223,6 +225,7 @@ impl From<AlertingSettings> for AlertingSettingsDto {
             quiet_hours_end: value.quiet_hours_end_local,
             quiet_hours_timezone: value.quiet_hours_time_zone,
             critical_bypasses_quiet_hours: value.critical_bypasses_quiet_hours,
+            delete_resolved_incidents: value.delete_resolved_incidents,
             history_retention_days: value.history_retention_days,
             delivery_retention_days: value.delivery_retention_days,
             revision: value.revision,
@@ -254,6 +257,7 @@ impl AlertingSettingsInputDto {
             quiet_hours_end_local: self.quiet_hours_end,
             quiet_hours_time_zone: self.quiet_hours_timezone,
             critical_bypasses_quiet_hours: self.critical_bypasses_quiet_hours,
+            delete_resolved_incidents: self.delete_resolved_incidents,
             history_retention_days: self.history_retention_days,
             delivery_retention_days: self.delivery_retention_days,
             updated_at_ms: 0,
@@ -276,8 +280,27 @@ pub(crate) struct AlertingCurrentInputDto {
 pub(crate) struct AlertingActivityInputDto {
     pub station_id: Option<String>,
     pub severity: Option<String>,
+    pub record_type: Option<AlertingActivityRecordType>,
+    #[serde(default)]
+    pub unread_only: bool,
     pub cursor: Option<AlertingCursorDto>,
     pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AlertingActivityRecordType {
+    Incident,
+    Change,
+}
+
+impl AlertingActivityRecordType {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Incident => "incident",
+            Self::Change => "change",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -305,9 +328,11 @@ pub(crate) struct AlertingHistoryInputDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct AlertingAttentionInputDto {
-    pub incident_id: String,
-    pub episode_number: i64,
+pub(crate) struct AlertingMarkSeenInputDto {
+    pub record_type: Option<AlertingActivityRecordType>,
+    pub incident_id: Option<String>,
+    pub episode_number: Option<i64>,
+    pub activity_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -315,6 +340,7 @@ pub(crate) struct AlertingAttentionInputDto {
 pub(crate) struct AlertingMarkAllSeenInputDto {
     pub station_id: Option<String>,
     pub severity: Option<Severity>,
+    pub record_scope: Option<AlertingClearRecordScope>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -323,6 +349,14 @@ pub(crate) enum AlertingClearScope {
     Active,
     Unread,
     Resolved,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AlertingClearRecordScope {
+    Incidents,
+    Information,
+    All,
 }
 
 impl AlertingClearScope {
@@ -341,6 +375,7 @@ pub(crate) struct AlertingClearInputDto {
     pub station_id: Option<String>,
     pub severity: Option<Severity>,
     pub lifecycle_state: Option<AlertingClearScope>,
+    pub record_scope: Option<AlertingClearRecordScope>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -531,15 +566,37 @@ impl AlertingActivityInputDto {
     }
 }
 
-impl AlertingAttentionInputDto {
+impl AlertingMarkAllSeenInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
         serde_json::from_value(value).map_err(|_| invalid())
     }
 }
 
-impl AlertingMarkAllSeenInputDto {
+impl AlertingMarkSeenInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
-        serde_json::from_value(value).map_err(|_| invalid())
+        let input: Self = serde_json::from_value(value).map_err(|_| invalid())?;
+        let valid = match input
+            .record_type
+            .unwrap_or(AlertingActivityRecordType::Incident)
+        {
+            AlertingActivityRecordType::Incident => {
+                input
+                    .incident_id
+                    .as_ref()
+                    .is_some_and(|id| !id.trim().is_empty())
+                    && input.episode_number.is_some_and(|episode| episode > 0)
+                    && input.activity_id.is_none()
+            }
+            AlertingActivityRecordType::Change => {
+                input
+                    .activity_id
+                    .as_ref()
+                    .is_some_and(|id| !id.trim().is_empty())
+                    && input.incident_id.is_none()
+                    && input.episode_number.is_none()
+            }
+        };
+        valid.then_some(input).ok_or_else(invalid)
     }
 }
 
@@ -807,6 +864,7 @@ export type AlertingSettingsDto = {
   globalPauseUntilMs: number | null; quietHoursEnabled: boolean;
   quietHoursStart: string | null; quietHoursEnd: string | null;
   quietHoursTimezone: string; criticalBypassesQuietHours: boolean;
+  deleteResolvedIncidents: boolean;
   historyRetentionDays: number; deliveryRetentionDays: number;
   revision: number; updatedAtMs: number;
 };
@@ -819,16 +877,25 @@ export type AlertingCurrentInputDto = {
 };
 export type AlertingActivityInputDto = {
   stationId?: string | null; severity?: AlertSeverity | null;
+  recordType?: "incident" | "change" | null;
+  unreadOnly?: boolean;
   cursor?: AlertingCursorDto | null; limit?: number;
 };
-export type AlertingAttentionInputDto = { incidentId: string; episodeNumber: number };
-export type AlertingMarkAllSeenInputDto = { stationId?: string | null; severity?: AlertSeverity | null };
+export type AlertingMarkSeenInputDto =
+  | { recordType?: "incident"; incidentId: string; episodeNumber: number; activityId?: never }
+  | { recordType: "change"; activityId: string; incidentId?: never; episodeNumber?: never };
+export type AlertingMarkAllSeenInputDto = {
+  stationId?: string | null; severity?: AlertSeverity | null;
+  recordScope?: AlertingClearRecordScope;
+};
 export type AlertingClearScope = "active" | "unread" | "resolved";
+export type AlertingClearRecordScope = "incidents" | "information" | "all";
 export type AlertingClearInputDto = {
   stationId?: string | null; severity?: AlertSeverity | null;
   lifecycleState?: AlertingClearScope | null;
+  recordScope?: AlertingClearRecordScope;
 };
-export type AlertingSnoozeInputDto = AlertingAttentionInputDto & { untilMs: number };
+export type AlertingSnoozeInputDto = { incidentId: string; episodeNumber: number; untilMs: number };
 export type AlertingObservationInputDto = {
   sourceObservationKey: string; eventType: string; conditionKey: string;
   kind: string; severity: string; objectType: string; objectId?: string | null;
@@ -900,5 +967,38 @@ mod tests {
             "incidentId": "incident-1", "episodeNumber": 1, "limit": 20
         }))
         .is_ok());
+    }
+
+    #[test]
+    fn activity_and_clear_inputs_accept_record_scopes() {
+        assert!(AlertingActivityInputDto::parse(serde_json::json!({
+            "recordType": "change", "unreadOnly": true, "limit": 20
+        }))
+        .is_ok());
+        assert!(AlertingMarkSeenInputDto::parse(serde_json::json!({
+            "incidentId": "incident-1", "episodeNumber": 1
+        }))
+        .is_ok());
+        assert!(AlertingMarkSeenInputDto::parse(serde_json::json!({
+            "recordType": "change", "activityId": "change-1"
+        }))
+        .is_ok());
+        assert!(AlertingMarkSeenInputDto::parse(serde_json::json!({
+            "recordType": "change", "activityId": "change-1",
+            "incidentId": "incident-1", "episodeNumber": 1
+        }))
+        .is_err());
+        assert!(AlertingMarkAllSeenInputDto::parse(serde_json::json!({
+            "recordScope": "information"
+        }))
+        .is_ok());
+        assert!(AlertingClearInputDto::parse(serde_json::json!({
+            "recordScope": "information"
+        }))
+        .is_ok());
+        assert!(AlertingClearInputDto::parse(serde_json::json!({
+            "recordScope": "unknown"
+        }))
+        .is_err());
     }
 }

@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "8252023595121d55e51650a4907453b95a8bd0ffc0531c44f3984f16770385f0";
+    "c699f70c58a959fabd790673a693439c36feddee5b36d0688639bf1d652161da";
 
 #[cfg_attr(
     not(test),
@@ -563,7 +563,7 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_mutation("AlertingObservationInputDto", "bool", "idempotent", false)
         }
         "mark_alerting_seen" => {
-            migrated_mutation("AlertingAttentionInputDto", "unit", "idempotent", false)
+            migrated_mutation("AlertingMarkSeenInputDto", "unit", "idempotent", false)
         }
         "mark_all_alerting_seen" => {
             migrated_mutation("AlertingMarkAllSeenInputDto", "u64", "idempotent", false)
@@ -1770,7 +1770,7 @@ export function listAlertingDeliveries(input: AlertingHistoryInputDto): Promise<
   return invokeCommand<AlertingDeliveryPageDto>("list_alerting_deliveries", { input });
 }
 
-export function markAlertingSeen(input: AlertingAttentionInputDto): Promise<void> {
+export function markAlertingSeen(input: AlertingMarkSeenInputDto): Promise<void> {
   return invokeCommand<void>("mark_alerting_seen", { input });
 }
 

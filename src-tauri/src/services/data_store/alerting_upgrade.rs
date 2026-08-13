@@ -693,7 +693,7 @@ async fn rebuild_current_facts(
     let mut write = handle.begin_write().await?;
     for current in facts.iter().cloned() {
         ingress
-            .record_in_session(&mut write, current.into_ingress(now_ms))
+            .record_replay_in_session(&mut write, current.into_ingress(now_ms))
             .await?;
     }
     write.commit().await?;

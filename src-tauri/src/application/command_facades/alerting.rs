@@ -110,11 +110,20 @@ impl AlertingCommandFacade {
         &self,
         station_id: Option<&str>,
         severity: Option<&str>,
+        record_type: Option<&str>,
+        unread_only: bool,
         cursor: Option<&ActivityCursor>,
         limit: u32,
     ) -> Result<ActivityWorkspacePage, ApplicationError> {
         self.workspace
-            .list_activity(station_id, severity, cursor, limit)
+            .list_activity(
+                station_id,
+                severity,
+                record_type,
+                unread_only,
+                cursor,
+                limit,
+            )
             .await
             .map_err(Into::into)
     }
@@ -199,18 +208,60 @@ impl AlertingCommandFacade {
             .map_err(ApplicationError::from)
     }
 
+    pub(crate) async fn mark_information_seen(
+        &self,
+        activity_id: &str,
+        now_ms: i64,
+    ) -> Result<(), ApplicationError> {
+        let activity_id = activity_id.to_string();
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    let affected = crate::persistence::stores::alerting::OccurrenceStore
+                        .mark_informational_change_seen(write, &activity_id, now_ms)
+                        .await?;
+                    if affected == 1 {
+                        Ok(())
+                    } else {
+                        Err(crate::persistence::error::PersistenceError::NotFound)
+                    }
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)
+    }
+
     pub(crate) async fn mark_all_seen(
         &self,
         station_id: Option<String>,
         severity: Option<Severity>,
+        mark_incidents: bool,
+        mark_information: bool,
         now_ms: i64,
     ) -> Result<u64, ApplicationError> {
         self.runtime
             .write(|write| {
                 Box::pin(async move {
-                    crate::persistence::stores::alerting::AttentionStore
-                        .mark_all_seen(write, station_id.as_deref(), severity, now_ms)
-                        .await
+                    let incidents = if mark_incidents {
+                        crate::persistence::stores::alerting::AttentionStore
+                            .mark_all_seen(write, station_id.as_deref(), severity, now_ms)
+                            .await?
+                    } else {
+                        0
+                    };
+                    let information = if mark_information {
+                        crate::persistence::stores::alerting::OccurrenceStore
+                            .mark_all_informational_changes_seen(
+                                write,
+                                station_id.as_deref(),
+                                severity,
+                                now_ms,
+                            )
+                            .await?
+                    } else {
+                        0
+                    };
+                    Ok(incidents + information)
                 })
             })
             .await
@@ -236,25 +287,45 @@ impl AlertingCommandFacade {
             .map_err(ApplicationError::from)
     }
 
-    pub(crate) async fn clear_incidents(
+    pub(crate) async fn clear_activity(
         &self,
         station_id: Option<String>,
         severity: Option<Severity>,
         lifecycle_state: Option<&str>,
+        clear_incidents: bool,
+        clear_information: bool,
     ) -> Result<u64, ApplicationError> {
         let incident_store = crate::persistence::stores::alerting::IncidentStore;
+        let occurrence_store = crate::persistence::stores::alerting::OccurrenceStore;
         let lifecycle_state = lifecycle_state.map(str::to_owned);
         self.runtime
             .write(|write| {
                 Box::pin(async move {
-                    incident_store
-                        .clear(
-                            write,
-                            station_id.as_deref(),
-                            severity,
-                            lifecycle_state.as_deref(),
-                        )
-                        .await
+                    let cleared_incidents = if clear_incidents {
+                        incident_store
+                            .clear(
+                                write,
+                                station_id.as_deref(),
+                                severity,
+                                lifecycle_state.as_deref(),
+                            )
+                            .await?
+                    } else {
+                        0
+                    };
+                    let cleared_information = if clear_information {
+                        occurrence_store
+                            .clear_informational_changes(
+                                write,
+                                station_id.as_deref(),
+                                severity,
+                                lifecycle_state.as_deref() == Some("unread"),
+                            )
+                            .await?
+                    } else {
+                        0
+                    };
+                    Ok(cleared_incidents + cleared_information)
                 })
             })
             .await

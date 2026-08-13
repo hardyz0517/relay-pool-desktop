@@ -929,6 +929,7 @@ const CHANGE_EVENT_OCCURRENCES_COLUMNS: &[&str] = &[
     "impact_json",
     "observed_at_ms",
     "created_at_ms",
+    "seen_at_ms",
 ];
 const INCIDENT_ATTENTION_COLUMNS: &[&str] = &[
     "incident_id",
