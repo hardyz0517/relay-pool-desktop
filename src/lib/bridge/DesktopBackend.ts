@@ -265,13 +265,17 @@ export class DesktopBackend implements BackendClient {
       listAlertingOccurrencesBinding(input),
     listDeliveries: (input: AlertingHistoryInput) =>
       listAlertingDeliveriesBinding(input),
-    markSeen: (incidentId: string, episodeNumber: number) =>
-      invokeCommand<void>("mark_alerting_seen", { input: { incidentId, episodeNumber } }),
+    markSeen: (activity) =>
+      invokeCommand<void>("mark_alerting_seen", {
+        input: activity.recordType === "change"
+          ? { recordType: "change", activityId: activity.id }
+          : { recordType: "incident", incidentId: activity.id, episodeNumber: activity.episodeNumber },
+      }),
     markAllSeen: (input = {}) =>
       invokeCommand<number>("mark_all_alerting_seen", { input }),
     resolveAllActive: (input = {}) =>
       resolveAllAlertingIncidentsBinding(input),
-    clearIncidents: (input = {}) =>
+    clearActivity: (input = {}) =>
       clearAlertingIncidentsBinding(input),
     snooze: (incidentId: string, episodeNumber: number, untilMs: number) =>
       invokeCommand<void>("snooze_alerting_incident", { input: { incidentId, episodeNumber, untilMs } }),
@@ -657,7 +661,6 @@ function normalizeAlertingActivity(
       episodeNumber: null,
       occurrenceCount: null,
       resolvedAtMs: null,
-      seenAtMs: null,
       snoozedUntilMs: null,
     };
   }

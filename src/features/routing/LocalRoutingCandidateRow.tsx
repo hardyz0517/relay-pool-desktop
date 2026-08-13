@@ -134,9 +134,6 @@ export function LocalRoutingCandidateRow({
             {displayFacts.rejectReasonLabel}
           </div>
         ) : null}
-        {!candidate.routingGroupMatch ? (
-          <div className="mt-1 text-xs text-warning-foreground">分组不匹配</div>
-        ) : null}
       </MetricCell>
       <MetricCell label="健康状态">
         <StatusBadge tone={health.tone}>{health.label}</StatusBadge>

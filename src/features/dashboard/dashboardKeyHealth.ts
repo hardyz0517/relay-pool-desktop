@@ -2,6 +2,9 @@ import type { ChannelMonitor, ChannelStatusRow } from "@/lib/types/channelMonito
 import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
 import { findStationKeyMonitor } from "@/lib/channelMonitorViewModel";
 
+export type DashboardKeyHealthStatus = Exclude<StationKeyStatus, "disabled">;
+export type DashboardKeyHealthSummary = Record<DashboardKeyHealthStatus, number>;
+
 const outcomeTone = {
   available: "healthy",
   degraded: "warning",
@@ -14,23 +17,21 @@ export function summarizeDashboardKeyHealth(
   keys: Array<Pick<KeyPoolItem, "id" | "enabled">>,
   monitors: ChannelMonitor[],
   statusRows: ChannelStatusRow[],
-): Record<StationKeyStatus, number> {
-  const summary: Record<StationKeyStatus, number> = {
+): DashboardKeyHealthSummary {
+  const summary: DashboardKeyHealthSummary = {
     unchecked: 0,
     healthy: 0,
     warning: 0,
     error: 0,
-    disabled: 0,
   };
 
   for (const key of keys) {
     if (!key.enabled) {
-      summary.disabled += 1;
       continue;
     }
     const monitor = findStationKeyMonitor(monitors, key.id);
     const monitorStatus = dashboardMonitorStatus(monitor, statusRows);
-    const status: StationKeyStatus =
+    const status: DashboardKeyHealthStatus =
       monitorStatus?.tone === "healthy"
         ? "healthy"
         : monitorStatus?.tone === "warning"

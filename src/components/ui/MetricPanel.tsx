@@ -29,7 +29,14 @@ type MetricPanelProps = {
   title?: string;
   description?: string;
   metrics: MetricItem[];
+  columns?: 3 | 4 | 5;
   className?: string;
+};
+
+const columnClassName: Record<NonNullable<MetricPanelProps["columns"]>, string> = {
+  3: "md:grid-cols-3",
+  4: "md:grid-cols-4",
+  5: "md:grid-cols-3 lg:grid-cols-5",
 };
 
 const toneClassName: Record<MetricTone, string> = {
@@ -89,6 +96,7 @@ export function MetricPanel({
   title,
   description,
   metrics,
+  columns = 4,
   className,
 }: MetricPanelProps) {
   return (
@@ -107,7 +115,7 @@ export function MetricPanel({
           )}
         </header>
       )}
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+      <div className={cn("grid gap-3 sm:grid-cols-2", columnClassName[columns])}>
         {metrics.map(({ label, action, value, detail, icon: Icon, tone = "neutral", accent, valueClassName }) => {
           const metricAccent = accent ?? toneAccent[tone];
           const shouldUseToneValue = tone === "warning" || tone === "danger";

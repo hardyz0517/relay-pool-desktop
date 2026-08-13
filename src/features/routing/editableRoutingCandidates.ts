@@ -25,6 +25,7 @@ function fallbackCandidate(
       : item.consecutiveFailures > 0
         ? "degraded"
         : "unknown",
+    currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,
     cooldownUntil: item.cooldownUntil,

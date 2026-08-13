@@ -90,7 +90,7 @@ export function collectorTaskTypeLabel(value: string) {
 export function collectorRunStatusLabel(status: string) {
   if (status === "success") return "成功";
   if (status === "failed") return "失败";
-  if (status === "manual_required") return "需要登录";
+  if (status === "manual_required") return "需重新授权";
   if (status === "running") return "运行中";
   if (status === "partial") return "部分完成";
   return status;

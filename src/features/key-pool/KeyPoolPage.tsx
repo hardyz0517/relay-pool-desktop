@@ -17,7 +17,13 @@ import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import { KeyConnectivityTestDialog } from "./KeyConnectivityTestDialog";
 import { KeyEditDialog } from "./KeyEditDialog";
-import { KeyRowContent, SortableKeyRow, TableHeadCell, keyPoolGridClassName } from "./KeyPoolRows";
+import {
+  KeyRowContent,
+  SortableKeyRow,
+  TableHeadCell,
+  keyPoolGridClassName,
+  keyPoolTableClassName,
+} from "./KeyPoolRows";
 import { useKeyPoolPageController, type KeyPoolPageControllerOptions } from "./useKeyPoolPageController";
 
 type KeyPoolPageProps = KeyPoolPageControllerOptions;
@@ -157,42 +163,44 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
           >
             <SortableContext items={filteredItems.map((item) => item.id)} strategy={verticalListSortingStrategy}>
               <div className="overflow-x-auto">
-                <div className={cn(keyPoolGridClassName, "border-b border-border px-3 pb-2 text-[11px] font-medium text-muted-foreground")}>
-                  <div aria-hidden />
-                  <TableHeadCell>名称</TableHeadCell>
-                  <TableHeadCell align="center">状态</TableHeadCell>
-                  <TableHeadCell align="center">调度</TableHeadCell>
-                  <TableHeadCell align="center">监控</TableHeadCell>
-                  <TableHeadCell align="center">分组</TableHeadCell>
-                  <div className="text-right">操作</div>
-                </div>
-                <div className="divide-y divide-border">
-                  {filteredItems.map((item) => (
-                    <SortableKeyRow
-                      key={item.id}
-                      item={item}
-                      dragEnabled={dragEnabled}
-                      onEdit={handleEdit}
-                      onDelete={handleDelete}
-                      onTestConnectivity={handleTestConnectivity}
-                      testing={testingKeyId === item.id}
-                      onToggleEnabled={handleToggleEnabled}
-                      monitor={monitorByKey.get(item.id) ?? null}
-                      monitorStatus={monitorStatusByKey.get(item.id) ?? null}
-                      monitoring={monitoringKeyId === item.id}
-                      onToggleMonitoring={handleToggleMonitoring}
-                      onOpenRoutingImpact={
-                        onOpenRoutingDeepLink
-                          ? (candidate) =>
-                              onOpenRoutingDeepLink({
-                                kind: "station-key",
-                                stationKeyId: candidate.id,
-                                source: "key_pool",
-                              })
-                          : undefined
-                      }
-                    />
-                  ))}
+                <div className={keyPoolTableClassName}>
+                  <div className={cn(keyPoolGridClassName, "border-b border-border px-3 pb-2 text-[11px] font-medium text-muted-foreground")}>
+                    <div aria-hidden />
+                    <TableHeadCell>名称</TableHeadCell>
+                    <TableHeadCell align="center">状态</TableHeadCell>
+                    <TableHeadCell align="center">调度</TableHeadCell>
+                    <TableHeadCell align="center">监控</TableHeadCell>
+                    <TableHeadCell align="center">分组</TableHeadCell>
+                    <div className="text-right">操作</div>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {filteredItems.map((item) => (
+                      <SortableKeyRow
+                        key={item.id}
+                        item={item}
+                        dragEnabled={dragEnabled}
+                        onEdit={handleEdit}
+                        onDelete={handleDelete}
+                        onTestConnectivity={handleTestConnectivity}
+                        testing={testingKeyId === item.id}
+                        onToggleEnabled={handleToggleEnabled}
+                        monitor={monitorByKey.get(item.id) ?? null}
+                        monitorStatus={monitorStatusByKey.get(item.id) ?? null}
+                        monitoring={monitoringKeyId === item.id}
+                        onToggleMonitoring={handleToggleMonitoring}
+                        onOpenRoutingImpact={
+                          onOpenRoutingDeepLink
+                            ? (candidate) =>
+                                onOpenRoutingDeepLink({
+                                  kind: "station-key",
+                                  stationKeyId: candidate.id,
+                                  source: "key_pool",
+                                })
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
             </SortableContext>

@@ -82,7 +82,7 @@ export function RequestLogTable({ rows, keyById, stationById, selectedId, onSele
           selectedKey={selectedId ?? undefined}
           onRowClick={(row) => onSelect(row.id)}
           headerVariant="plain"
-          className="rounded-none border-0 shadow-none [&_table]:table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td:last-child]:overflow-visible [&_td:last-child]:text-clip"
+          className="rounded-none border-0 shadow-none [&_table]:table-fixed [&_td]:align-middle [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td:last-child]:overflow-visible [&_td:last-child]:text-clip"
         />
       </div>
     </div>

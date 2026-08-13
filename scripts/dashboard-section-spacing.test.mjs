@@ -6,14 +6,14 @@ const metricPanelSource = await readFile("src/components/ui/MetricPanel.tsx", "u
 
 assert.ok(
   metricPanelSource.includes('<section className={cn("grid gap-3", className)}>') &&
-    metricPanelSource.includes('<div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">'),
+    metricPanelSource.includes('className={cn("grid gap-3 sm:grid-cols-2", columnClassName[columns])}'),
   "metric panels should keep a 12px title-to-card and card-grid rhythm",
 );
 
 assert.match(
   dashboardSource,
-  /<section className="grid min-w-0 gap-3">\s*<header className="flex flex-wrap items-center justify-between gap-3">[\s\S]*?<StatusBadge[\s\S]*?<div className="grid min-w-0 grid-cols-4 gap-3">/,
-  "current risk should keep four shrinkable columns without widening the page",
+  /<section className="grid min-w-0 gap-3">\s*<header className="flex flex-wrap items-center justify-between gap-3">[\s\S]*?当前风险[\s\S]*?<div className="grid min-w-0 grid-cols-3 gap-3">/,
+  "current risk should keep three shrinkable cards without a duplicate header badge",
 );
 
 assert.match(
@@ -30,7 +30,7 @@ assert.match(
 
 assert.ok(
   dashboardSource.includes(
-    'className="flex min-h-[96px] min-w-0 items-center gap-3 rounded-[12px] border border-slate-200 bg-white px-4 py-3 shadow-[0_2px_8px_rgba(15,23,42,0.08)]"',
+    'className="flex min-h-[96px] min-w-0 items-center gap-3 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface"',
   ),
   "dashboard metric tiles should allow grid tracks to shrink instead of forcing horizontal overflow",
 );
@@ -44,8 +44,8 @@ assert.ok(
 
 assert.match(
   dashboardSource,
-  /<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*密钥健康\s*<\/h2>\s*<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">[\s\S]*?stationKeyStatusLabels/,
-  "key health cards should use the requested title and desktop five-column rhythm",
+  /<section className="grid min-w-0 gap-3">\s*<h2 className="truncate text-\[13px\] font-semibold text-foreground">\s*密钥健康\s*<\/h2>\s*<div className="flex min-w-0 flex-wrap items-center[^"]*">[\s\S]*?dashboardKeyHealthStatuses\.map[\s\S]*?查看详情/,
+  "key health should place its section title above the compact summary bar",
 );
 
 assert.doesNotMatch(

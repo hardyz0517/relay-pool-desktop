@@ -6,6 +6,7 @@ import {
   ArrowUp,
   BadgeDollarSign,
   BarChart3,
+  ChevronRight,
   Clock3,
   Copy,
   FlaskConical,
@@ -33,8 +34,7 @@ import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { getLocalAccessKey, importRelayPoolToCCSwitch } from "@/lib/api/settings";
-import type { KeyPoolItem, StationKeyStatus } from "@/lib/types/stationKeys";
-import { stationKeyStatusLabels } from "@/lib/types/stationKeys";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
   currentStationBalanceSnapshotsQueryOptions,
@@ -48,6 +48,10 @@ import {
   stationsQueryOptions,
 } from "@/lib/query/resourceQueries";
 import { alertingCurrentQueryOptions } from "@/lib/queries/alertingQueries";
+import {
+  loadRoutingRuntimeOverlayQuery,
+  routingQueryKeys,
+} from "@/lib/queries/routingQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import type { AlertingIncident } from "@/lib/types/alerting";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
@@ -60,23 +64,24 @@ import {
   msUntilNextLocalDay,
 } from "@/features/dashboard/dashboardRequestMetricsViewModel";
 import type { DashboardCostMetrics, DashboardCostTotal, DashboardPeriodMetrics } from "@/lib/types/dashboardMetrics";
-import { summarizeDashboardKeyHealth } from "@/features/dashboard/dashboardKeyHealth";
+import {
+  summarizeDashboardKeyHealth,
+  type DashboardKeyHealthStatus,
+} from "@/features/dashboard/dashboardKeyHealth";
 
-const healthTone = {
-  healthy: "healthy",
-  warning: "warning",
-  error: "error",
-  disabled: "disabled",
-  unchecked: "info",
-} as const;
-
-const dashboardKeyHealthLabels: Record<StationKeyStatus, string> = {
+const dashboardKeyHealthLabels: Record<DashboardKeyHealthStatus, string> = {
   unchecked: "未检测",
   healthy: "正常",
   warning: "降级",
   error: "错误",
-  disabled: "禁用",
 };
+
+const dashboardKeyHealthStatuses: DashboardKeyHealthStatus[] = [
+  "unchecked",
+  "healthy",
+  "warning",
+  "error",
+];
 
 const dashboardMetricToneClassName: Record<MetricTone, string> = {
   neutral: "text-foreground",
@@ -106,7 +111,15 @@ type DashboardMetricsQueryLike = {
   isLoading: boolean;
 };
 
-export function DashboardPage() {
+export function DashboardPage({
+  onOpenKeyPool,
+  onOpenLocalRouting,
+  onOpenRequestLogs,
+}: {
+  onOpenKeyPool?: () => void;
+  onOpenLocalRouting?: () => void;
+  onOpenRequestLogs?: () => void;
+}) {
   const toast = useToast();
   const { state: updaterState, showUpdateDialog } = useUpdater();
   const queryClient = useQueryClient();
@@ -128,6 +141,12 @@ export function DashboardPage() {
   );
   const keyPoolQuery = useActivityQuery(keyPoolQueryOptions());
   const channelMonitoringQuery = useActivityQuery(channelMonitoringQueryOptions(5_000));
+  const routingRuntimeQuery = useActivityQuery({
+    queryKey: routingQueryKeys.runtimeOverlay(),
+    queryFn: loadRoutingRuntimeOverlayQuery,
+    staleTime: 1_000,
+    refetchInterval: proxyRunning ? 1_000 : false,
+  });
   const stationsQuery = useActivityQuery(stationsQueryOptions());
   const balancesQuery = useActivityQuery(
     currentStationBalanceSnapshotsQueryOptions(),
@@ -155,6 +174,17 @@ export function DashboardPage() {
     channelMonitoringQuery.data?.monitors ?? [],
     channelMonitoringQuery.data?.statusWorkspace.rows ?? [],
   ), [channelMonitoringQuery.data, keyPoolItems]);
+  const currentConcurrencyByKeyId = useMemo(
+    () => new Map(
+      (routingRuntimeQuery.data?.candidates ?? []).map((candidate) => [
+        candidate.stationKeyId,
+        candidate.stationKeyInFlight == null
+          ? null
+          : Math.max(0, Math.trunc(candidate.stationKeyInFlight)),
+      ]),
+    ),
+    [routingRuntimeQuery.data],
+  );
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
   const settings = settingsQuery.data ?? null;
@@ -186,8 +216,9 @@ export function DashboardPage() {
   const proxyBaseUrl = proxyStatus ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1` : `http://127.0.0.1:${settings?.localProxyPort ?? 8787}/v1`;
   const localKeyMasked = settings?.localKeyMasked ?? "未读取";
   const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
-  const requestKeyNameById = useMemo(
-    () => new Map(keyPoolItems.map((key) => [key.id, key.name])),
+  const disabledKeyCount = keyPoolItems.length - enabledKeyCount;
+  const requestKeyById = useMemo(
+    () => new Map(keyPoolItems.map((key) => [key.id, key])),
     [keyPoolItems],
   );
   const stationNamesById = useMemo(
@@ -199,8 +230,6 @@ export function DashboardPage() {
   const todayPromptTokens = todayMetrics?.promptTokens ?? null;
   const todayCompletionTokens = todayMetrics?.completionTokens ?? null;
   const totalTokens = lifetimeMetrics?.totalTokens ?? null;
-  const totalPromptTokens = lifetimeMetrics?.promptTokens ?? null;
-  const totalCompletionTokens = lifetimeMetrics?.completionTokens ?? null;
   const averageTotalDurationMs = todayMetrics?.avgTotalDurationMs ?? null;
   const activeRequests = proxyStatus?.activeRequests ?? 0;
   const balanceSummary = useMemo(
@@ -326,28 +355,12 @@ export function DashboardPage() {
 
         <MetricPanel
           title="本地路由指标"
+          columns={3}
           metrics={[
-            {
-              label: "总余额",
-              value: formatBalance(totalBalance, primaryBalanceCurrency),
-              detail: `${lowBalanceStations} 个余额告警`,
-              icon: Wallet,
-              tone: lowBalanceStations > 0 ? "warning" : "good",
-              valueClassName: "text-success-foreground",
-              accent: "emerald",
-            },
-            {
-              label: "可用密钥",
-              value: `${enabledKeyCount}`,
-              detail: "启用中",
-              icon: KeyRound,
-              tone: enabledKeyCount > 0 ? "good" : "warning",
-              accent: "blue",
-            },
             {
               label: "今日请求",
               value: todayRequests === null ? liveMetricsState.value : formatCompactNumber(todayRequests),
-              detail: `总计：${cumulativeRequestMetrics ? formatCompactNumber(proxyRequestCount) : cumulativeMetricsState.value}`,
+              detail: `累计 ${cumulativeRequestMetrics ? formatCompactNumber(proxyRequestCount) : cumulativeMetricsState.value}`,
               icon: Activity,
               tone: todayRequests !== null && todayRequests > 0 ? "good" : liveMetricsState.tone,
               valueClassName: "text-foreground",
@@ -372,7 +385,7 @@ export function DashboardPage() {
               label: "今日 Token",
               value: todayTokens === null ? liveMetricsState.value : formatCompactNumber(todayTokens),
               detail: todayMetrics
-                ? `输入 ${formatCompactNumber(todayPromptTokens ?? 0)} / 输出 ${formatCompactNumber(todayCompletionTokens ?? 0)}`
+                ? `输入 ${formatCompactNumber(todayPromptTokens ?? 0)} / 输出 ${formatCompactNumber(todayCompletionTokens ?? 0)} · 累计 ${totalTokens === null ? cumulativeMetricsState.value : formatCompactNumber(totalTokens)}`
                 : liveMetricsState.detail,
               icon: BarChart3,
               tone: todayTokens !== null && todayTokens > 0 ? "good" : liveMetricsState.tone,
@@ -380,18 +393,17 @@ export function DashboardPage() {
               accent: "amber",
             },
             {
-              label: "累计 Token",
-              value: totalTokens === null ? cumulativeMetricsState.value : formatCompactNumber(totalTokens),
-              detail: lifetimeMetrics
-                ? `输入 ${formatCompactNumber(totalPromptTokens ?? 0)} / 输出 ${formatCompactNumber(totalCompletionTokens ?? 0)}`
-                : cumulativeMetricsState.detail,
-              icon: Server,
-              tone: totalTokens !== null && totalTokens > 0 ? "good" : cumulativeMetricsState.tone,
-              valueClassName: "text-foreground",
-              accent: "indigo",
+              label: "可用密钥",
+              value: `${enabledKeyCount}`,
+              detail: disabledKeyCount > 0
+                ? `${enabledKeyCount} 启用 · ${disabledKeyCount} 禁用`
+                : `${enabledKeyCount} / ${keyPoolItems.length} 启用`,
+              icon: KeyRound,
+              tone: enabledKeyCount > 0 ? "good" : "warning",
+              accent: "blue",
             },
             {
-              label: "平均总耗时",
+              label: "平均耗时",
               value: todayMetrics ? formatDuration(averageTotalDurationMs) : liveMetricsState.value,
               detail: todayMetrics ? formatAverageDurationDetail(todayMetrics) : liveMetricsState.detail,
               icon: Clock3,
@@ -400,7 +412,7 @@ export function DashboardPage() {
               accent: "rose",
             },
             {
-              label: "性能概览",
+              label: "实时流量",
               value: recentPerformance ? (
                 <>
                   <span className="text-foreground">{formatCompactNumber(recentPerformance.rpm)}</span>
@@ -411,7 +423,7 @@ export function DashboardPage() {
                 <>
                   <span className="font-semibold text-foreground">{formatCompactNumber(recentPerformance.tpm)}</span>
                   <span className="ml-1 text-muted-foreground">TPM</span>
-                  <span className="text-muted-foreground">· {activeRequests} 活跃</span>
+                  <span className="text-muted-foreground">· {activeRequests} 活跃请求</span>
                 </>
               ) : liveMetricsState.detail,
               icon: Gauge,
@@ -423,7 +435,17 @@ export function DashboardPage() {
         />
         <MetricPanel
           title="中转站指标统计"
+          columns={4}
           metrics={[
+            {
+              label: "总余额",
+              value: formatBalance(totalBalance, primaryBalanceCurrency),
+              detail: `${lowBalanceStations} 个余额告警`,
+              icon: Wallet,
+              tone: lowBalanceStations > 0 ? "warning" : "good",
+              valueClassName: "text-success-foreground",
+              accent: "emerald",
+            },
             {
               label: "站点今日请求",
               value: formatCompactNumber(stationUsage.todayRequestCount),
@@ -466,20 +488,11 @@ export function DashboardPage() {
             {
               label: "站点今日 Token",
               value: formatCompactNumber(stationUsage.todayTokenCount),
-              detail: `输入: ${formatCompactNumber(stationUsage.todayInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.todayOutputTokenCount)}`,
+              detail: `累计 ${formatCompactNumber(stationUsage.totalTokenCount)}`,
               icon: BarChart3,
               tone: stationUsage.todayTokenCount > 0 ? "good" : "neutral",
               valueClassName: "text-foreground",
               accent: "amber",
-            },
-            {
-              label: "站点累计 Token",
-              value: formatCompactNumber(stationUsage.totalTokenCount),
-              detail: `输入: ${formatCompactNumber(stationUsage.totalInputTokenCount)} / 输出: ${formatCompactNumber(stationUsage.totalOutputTokenCount)}`,
-              icon: Server,
-              tone: stationUsage.totalTokenCount > 0 ? "good" : "neutral",
-              valueClassName: "text-foreground",
-              accent: "indigo",
             },
           ]}
         />
@@ -490,9 +503,6 @@ export function DashboardPage() {
           <h2 className="truncate text-[13px] font-semibold text-foreground">
             当前风险
           </h2>
-          <StatusBadge tone={unreadReminders > 0 ? "warning" : "healthy"}>
-            {unreadReminders > 0 ? `${unreadReminders} 未读` : "无未读提醒"}
-          </StatusBadge>
         </header>
         <div className="grid min-w-0 grid-cols-3 gap-3">
           <DashboardMetricTile
@@ -540,13 +550,55 @@ export function DashboardPage() {
         )}
       </section>
 
-      <section className="grid gap-3">
+      <section className="grid min-w-0 gap-3">
         <h2 className="truncate text-[13px] font-semibold text-foreground">
-          路由队列
+          密钥健康
         </h2>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-[12px] border border-border bg-surface px-4 py-3 shadow-surface">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            {dashboardKeyHealthStatuses.map((status, index) => (
+              <span key={status} className="whitespace-nowrap">
+                {index > 0 ? <span className="mr-2 text-border-strong">·</span> : null}
+                {dashboardKeyHealthLabels[status]}{" "}
+                <span className="font-semibold text-foreground">{keyHealthSummary[status]}</span>
+              </span>
+            ))}
+          </div>
+          {onOpenKeyPool ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto shrink-0 text-muted-foreground"
+              onClick={onOpenKeyPool}
+            >
+              查看详情
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
+        </div>
+      </section>
+
+      <div className="grid min-w-0 items-start gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <section className="grid min-w-0 gap-3">
+          <header className="flex items-center justify-between gap-3">
+            <h2 className="truncate text-[13px] font-semibold text-foreground">
+              路由队列
+            </h2>
+            {onOpenLocalRouting ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="shrink-0 text-muted-foreground"
+                onClick={onOpenLocalRouting}
+              >
+                查看全部
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
+          </header>
         <div className="grid gap-3">
           {dashboardLoaded && keyPoolItems.length === 0 ? (
-            <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-8 text-center shadow-[var(--surface-shadow)]">
+            <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-8 text-center shadow-surface">
               <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-muted text-muted-foreground/45">
                 <Inbox className="h-7 w-7" strokeWidth={1.75} />
               </div>
@@ -556,7 +608,7 @@ export function DashboardPage() {
               </p>
             </div>
           ) : (
-            keyPoolItems.slice(0, 6).map((key, index) => (
+            keyPoolItems.slice(0, 5).map((key) => (
               <ObjectRow
                 key={key.id}
                 icon={<KeyRound className="h-4 w-4" />}
@@ -568,7 +620,15 @@ export function DashboardPage() {
                   </StatusBadge>
                 }
                 metrics={[
-                  { label: "顺位", value: `${index + 1}` },
+                  {
+                    label: "当前并发",
+                    value: (
+                      <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-[6px] bg-muted px-2 text-center text-foreground">
+                        {currentConcurrencyByKeyId.get(key.id) ?? "—"}
+                      </span>
+                    ),
+                    align: "center",
+                  },
                   {
                     label: "成功率",
                     value: key.successRate === null ? "-" : `${Math.round(key.successRate * 100)}%`,
@@ -579,58 +639,70 @@ export function DashboardPage() {
             ))
           )}
         </div>
-      </section>
+        </section>
 
-      <div className="grid min-h-0 gap-3">
-        <section className="grid gap-3">
-          <h2 className="truncate text-[13px] font-semibold text-foreground">
-            最近使用
-          </h2>
+        <section className="grid min-w-0 gap-3">
+          <header className="flex items-center justify-between gap-3">
+            <h2 className="truncate text-[13px] font-semibold text-foreground">
+              最近使用
+            </h2>
+            {onOpenRequestLogs ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="shrink-0 text-muted-foreground"
+                onClick={onOpenRequestLogs}
+              >
+                查看全部
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            ) : null}
+          </header>
           <div className="grid gap-3">
             {dashboardLoaded && requestLogs.length === 0 ? (
-              <div className="flex min-h-[260px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-10 text-center shadow-[var(--surface-shadow)]">
-                <div className="flex h-20 w-20 items-center justify-center rounded-[16px] bg-muted text-muted-foreground/45">
-                  <Inbox className="h-8 w-8" strokeWidth={1.75} />
+              <div className="flex min-h-[164px] flex-col items-center justify-center rounded-[8px] border border-border bg-surface px-4 py-8 text-center shadow-surface">
+                <div className="flex h-16 w-16 items-center justify-center rounded-[16px] bg-muted text-muted-foreground/45">
+                  <Inbox className="h-7 w-7" strokeWidth={1.75} />
                 </div>
-                <div className="mt-5 text-base font-medium text-foreground">暂无使用记录</div>
+                <div className="mt-4 text-sm font-medium text-foreground">暂无使用记录</div>
                 <p className="mt-2 text-sm text-muted-foreground">
                   开始使用 API 后，您的使用历史将显示在这里。
                 </p>
               </div>
             ) : (
               requestLogs.slice(0, 5).map((request) => {
-                const requestKeyName =
-                  (request.stationKeyId && requestKeyNameById.get(request.stationKeyId)) ||
-                  request.stationKeyId ||
-                  "未知";
+                const requestKey = request.stationKeyId
+                  ? requestKeyById.get(request.stationKeyId)
+                  : null;
+                const requestStationName =
+                  (request.stationId && stationNamesById.get(request.stationId)) ||
+                  requestKey?.stationName ||
+                  "未知站点";
+                const requestKeyName = requestKey?.name || "未知密钥";
                 return (
               <div
                 key={request.id}
-                className="grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] border border-border bg-surface px-4 py-3 shadow-surface transition-colors hover:bg-surface-subtle"
+                className="grid min-h-[84px] min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] border border-border bg-surface px-3 py-3 shadow-surface transition-colors hover:bg-surface-subtle"
               >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-info-surface text-info-foreground">
-                  <FlaskConical className="h-5 w-5" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] bg-info-surface text-info-foreground">
+                  <FlaskConical className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <div className="flex min-w-0 items-baseline gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                      {request.model ?? request.path}
-                    </span>
-                    <span className="max-w-[45%] shrink truncate text-xs text-muted-foreground">
-                      密钥：{requestKeyName}
-                    </span>
+                  <div className="truncate text-sm font-medium text-foreground">
+                    {request.model ?? request.path}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted-foreground">
                     {formatDateTime(request.startedAt)}
                   </div>
-                </div>
-                <div className="min-w-[118px] text-right">
-                  <div className="whitespace-nowrap text-sm font-semibold text-muted-foreground/70">
-                    <span className="text-success-foreground">
-                      {formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
-                    </span>
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {requestStationName} · {requestKeyName}
                   </div>
-                  <div className="mt-0.5 whitespace-nowrap text-xs text-muted-foreground">
+                </div>
+                <div className="min-w-[88px] text-right text-xs">
+                  <div className="whitespace-nowrap font-semibold text-success-foreground">
+                    {formatRecentRequestCost(request.estimatedTotalCost, request.costCurrency, request.costStatus)}
+                  </div>
+                  <div className="mt-1 whitespace-nowrap text-muted-foreground">
                     {formatTokenCount(request.totalTokens)} tokens
                   </div>
                 </div>
@@ -640,35 +712,9 @@ export function DashboardPage() {
             )}
           </div>
         </section>
-
-        <section className="grid gap-3">
-          <h2 className="truncate text-[13px] font-semibold text-foreground">
-            密钥健康
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {(Object.keys(stationKeyStatusLabels) as StationKeyStatus[]).map((key) => (
-              <DashboardMetricTile
-                key={key}
-                label={dashboardKeyHealthLabels[key]}
-                value={keyHealthSummary[key]}
-                detail="密钥"
-                icon={Server}
-                tone={metricToneForHealth(key)}
-              />
-            ))}
-          </div>
-        </section>
       </div>
     </PageScaffold>
   );
-}
-
-function metricToneForHealth(status: StationKeyStatus): MetricTone {
-  const tone = healthTone[status];
-  if (tone === "healthy") return "good";
-  if (tone === "warning") return "warning";
-  if (tone === "error") return "danger";
-  return "neutral";
 }
 
 function DashboardMetricTile({
@@ -774,7 +820,7 @@ function DashboardCostMetricDetail({
   }
   return (
     <>
-      <span>总计: </span>
+      <span>累计 </span>
       {cumulative ? (
         <DashboardCostTotals totals={cumulative.totals} compact />
       ) : (

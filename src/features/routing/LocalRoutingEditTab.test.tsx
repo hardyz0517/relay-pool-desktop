@@ -175,6 +175,7 @@ function candidate(stationKeyId: string): RoutingCandidateView {
     enabled: true,
     schedulable: true,
     healthState: "ready",
+    currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,
     cooldownUntil: null,

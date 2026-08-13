@@ -16,13 +16,8 @@ function assert(condition, message) {
 assert(
   dashboardSource.includes('title="中转站指标统计"') &&
     dashboardSource.includes('title="本地路由指标"') &&
-    dashboardSource.includes("stationUsage.todayInputTokenCount") &&
-    dashboardSource.includes("stationUsage.todayOutputTokenCount") &&
-    dashboardSource.includes("stationUsage.totalInputTokenCount") &&
-    dashboardSource.includes("stationUsage.totalOutputTokenCount") &&
-    dashboardSource.includes("输入:") &&
-    dashboardSource.includes("输出:"),
-  "dashboard station usage token cards should show input/output token breakdowns",
+    dashboardSource.includes("stationUsage.totalTokenCount"),
+  "dashboard station usage token card should keep the cumulative total",
 );
 
 assert(
@@ -33,9 +28,14 @@ assert(
 assert(
     /label:\s*"站点今日请求"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"green"/.test(dashboardSource) &&
     /label:\s*"站点今日消费"[\s\S]*?valueClassName:\s*"[^"]*text-platform-image-foreground[^"]*"[\s\S]*?accent:\s*"purple"/.test(dashboardSource) &&
-    /label:\s*"站点今日 Token"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"amber"/.test(dashboardSource) &&
-    /label:\s*"站点累计 Token"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"indigo"/.test(dashboardSource),
+    /label:\s*"站点今日 Token"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"amber"/.test(dashboardSource),
   "dashboard station usage metric cards should align their primary value colors with the matching local routing metric cards",
+);
+
+assert(
+  /label:\s*"站点今日 Token"[\s\S]*?detail:\s*`累计 \$\{formatCompactNumber\(stationUsage\.totalTokenCount\)\}`/.test(dashboardSource) &&
+    !/label:\s*"站点累计 Token"/.test(dashboardSource),
+  "dashboard should show only cumulative station tokens in the today Token detail instead of using a separate card",
 );
 
 assert(

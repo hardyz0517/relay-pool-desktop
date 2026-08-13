@@ -67,9 +67,6 @@ export function RoutingPage({
   const latestDecision = routeDecisionsQuery.data?.decisions[0] ?? null;
   const workspace = useMemo(() => {
     if (!routingSnapshotQuery.data || !proxyStatusQuery.data) return null;
-    const cooldownByKey = new Map(
-      (routingRuntimeQuery.data?.candidates ?? []).map((candidate) => [candidate.stationKeyId, candidate.cooldownUntil]),
-    );
     const decision = latestDecision
       ? {
           id: latestDecision.requestLogId,
@@ -92,7 +89,12 @@ export function RoutingPage({
           fallbackCount: latestDecision.fallbackCount,
         }
       : null;
-    return toRoutingWorkspaceView(routingSnapshotQuery.data, proxyStatusQuery.data, cooldownByKey, decision);
+    return toRoutingWorkspaceView(
+      routingSnapshotQuery.data,
+      proxyStatusQuery.data,
+      routingRuntimeQuery.data ?? null,
+      decision,
+    );
   }, [latestDecision, proxyStatusQuery.data, routingRuntimeQuery.data, routingSnapshotQuery.data]);
   const loading = routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined;
   const error = routingSnapshotQuery.error ? readError(routingSnapshotQuery.error) : null;

@@ -13,7 +13,11 @@ import {
 } from "@/app/pageTransitionPolicy";
 import { AddKeyPage, EditKeyPage } from "@/features/key-pool";
 import { ModelBasePricesPage } from "@/features/pricing";
-import { ChangeCenterSettingsPage } from "@/features/changes";
+import {
+  CHANGE_CENTER_DEFAULT_VIEW,
+  ChangeCenterSettingsPage,
+  type ChangeCenterView,
+} from "@/features/changes";
 import type { RequestLogDeepLink, VersionedRequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import type { RoutingDeepLink, VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { AddProviderPage, StationDetailPage } from "@/features/stations";
@@ -47,6 +51,7 @@ export function App() {
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const [routingDeepLink, setRoutingDeepLink] = useState<VersionedRoutingDeepLink | null>(null);
   const [requestLogDeepLink, setRequestLogDeepLink] = useState<VersionedRequestLogDeepLink | null>(null);
+  const [changeCenterView, setChangeCenterView] = useState<ChangeCenterView>(CHANGE_CENTER_DEFAULT_VIEW);
   const routingDeepLinkSequenceRef = useRef(0);
   const requestLogDeepLinkSequenceRef = useRef(0);
   const lastShellFocusTargetRef = useRef<HTMLElement | null>(null);
@@ -195,6 +200,18 @@ export function App() {
     navigateTo("modelBasePrices");
   }, [navigateTo]);
 
+  const openKeyPool = useCallback(() => {
+    navigateTo("keyPool");
+  }, [navigateTo]);
+
+  const openLocalRouting = useCallback(() => {
+    navigateTo("routing");
+  }, [navigateTo]);
+
+  const openRequestLogs = useCallback(() => {
+    navigateTo("logs");
+  }, [navigateTo]);
+
   const openChangeCenterSettings = useCallback(() => {
     navigateTo("changeSettings");
   }, [navigateTo]);
@@ -218,8 +235,13 @@ export function App() {
       openStation: openStationDetail,
       addKey: openAddKey,
       editKey: openEditKey,
+      openKeyPool,
+      openLocalRouting,
+      openRequestLogs,
       openModelBasePrices,
       openChangeCenterSettings,
+      changeCenterView,
+      setChangeCenterView,
       openRoutingDeepLink,
       routingDeepLink,
       openRequestLogDeepLink,
@@ -231,8 +253,12 @@ export function App() {
       openStationDetail,
       openAddKey,
       openEditKey,
+      openKeyPool,
+      openLocalRouting,
+      openRequestLogs,
       openModelBasePrices,
       openChangeCenterSettings,
+      changeCenterView,
       openRoutingDeepLink,
       routingDeepLink,
       openRequestLogDeepLink,

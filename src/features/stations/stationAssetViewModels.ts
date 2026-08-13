@@ -62,7 +62,7 @@ const STATION_ISSUE_TAG_DEFINITIONS: Record<StationIssueTagKind, StationIssueTag
   disabled: { label: "已禁用", tone: "disabled" },
   no_enabled_key: { label: "无可用 密钥", tone: "warning" },
   key_warning: { label: "密钥异常", tone: "warning" },
-  login_required: { label: "需登录", tone: "warning" },
+  login_required: { label: "需重新授权", tone: "warning" },
   collection_failed: { label: "采集失败", tone: "error" },
   not_collected: { label: "未采集", tone: "info" },
   balance_missing: { label: "余额未采集", tone: "info" },
@@ -268,7 +268,7 @@ function stationCollectionIssueTag(row: StationAssetRow): StationIssueTag | null
     snapshotSummary.loginStatus === "manual_required";
 
   if (loginRequired) {
-    return createStationIssueTag("login_required", row.latestSnapshot?.errorMessage ?? "采集需要登录或人工处理");
+    return createStationIssueTag("login_required", row.latestSnapshot?.errorMessage ?? "当前登录状态需要重新进行窗口授权");
   }
 
   if (snapshotStatus === "failed" || snapshotStatus === "error" || row.station.status === "error") {

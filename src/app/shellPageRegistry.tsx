@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { ChannelStatusPage } from "@/features/channels";
-import { ChangeCenterPage, ChangeCenterSettingsPage } from "@/features/changes";
+import { ChangeCenterPage, ChangeCenterSettingsPage, type ChangeCenterView } from "@/features/changes";
 import { CollectorsPage } from "@/features/collectors";
 import { DashboardPage } from "@/features/dashboard";
 import { KeyPoolPage } from "@/features/key-pool";
@@ -22,8 +22,13 @@ export type ShellPageActions = {
   openStation: (station: Station) => void;
   addKey: (stationId: string | null) => void;
   editKey: (stationKeyId: string) => void;
+  openKeyPool: () => void;
+  openLocalRouting: () => void;
+  openRequestLogs: () => void;
   openModelBasePrices: () => void;
   openChangeCenterSettings: () => void;
+  changeCenterView: ChangeCenterView;
+  setChangeCenterView: (view: ChangeCenterView) => void;
   openRoutingDeepLink: (link: RoutingDeepLink) => void;
   routingDeepLink: VersionedRoutingDeepLink | null;
   openRequestLogDeepLink: (link: RequestLogDeepLink) => void;
@@ -69,6 +74,8 @@ export const ShellPageContent = memo(function ShellPageContent({
         <ChangeCenterPage
           onOpenRoutingDeepLink={routingDeepLinkHandler}
           onOpenSettings={actions.openChangeCenterSettings}
+          selectedView={actions.changeCenterView}
+          onSelectedViewChange={actions.setChangeCenterView}
         />
       );
     case "pricing":
@@ -103,6 +110,12 @@ export const ShellPageContent = memo(function ShellPageContent({
       return <SettingsPage />;
     case "dashboard":
     default:
-      return <DashboardPage />;
+      return (
+        <DashboardPage
+          onOpenKeyPool={actions.openKeyPool}
+          onOpenLocalRouting={actions.openLocalRouting}
+          onOpenRequestLogs={actions.openRequestLogs}
+        />
+      );
   }
 });

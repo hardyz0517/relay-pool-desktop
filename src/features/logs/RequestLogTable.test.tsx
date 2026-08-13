@@ -16,6 +16,7 @@ describe("RequestLogTable", () => {
     );
 
     expect(markup).toContain("w-[176px] min-w-[176px] tabular-nums");
+    expect(markup).toContain("[&amp;_td]:align-middle");
     expect(markup).toContain("[&amp;_td:last-child]:overflow-visible");
     expect(markup).toContain("[&amp;_td:last-child]:text-clip");
     expect(markup).toContain("2026/08/11 12:34:56");

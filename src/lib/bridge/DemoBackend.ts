@@ -102,7 +102,7 @@ export class DemoBackend implements BackendClient {
     markSeen: async () => undefined,
     markAllSeen: async () => 0,
     resolveAllActive: async () => 0,
-    clearIncidents: async () => 0,
+    clearActivity: async () => 0,
     snooze: async () => undefined,
     sendTestNotification: async () => undefined,
     getDesktopNotificationPermission: async () => "unavailable",

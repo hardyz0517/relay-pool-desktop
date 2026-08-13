@@ -89,7 +89,7 @@ const collectorStatusLabels: Record<string, string> = {
   success: "成功",
   partial: "部分成功",
   failed: "失败",
-  manual_required: "需要人工处理",
+  manual_required: "需重新授权",
 };
 
 const balanceSourceLabels: Record<string, string> = {

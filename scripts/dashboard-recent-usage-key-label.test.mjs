@@ -9,15 +9,21 @@ function assert(condition, message) {
 }
 
 assert(
-  dashboardSource.includes("requestKeyNameById") &&
+    dashboardSource.includes("requestKeyById") &&
     dashboardSource.includes("request.stationKeyId") &&
-    dashboardSource.includes("Key："),
-  "dashboard recent usage rows should name the station key that handled each request",
+    dashboardSource.includes("requestStationName") &&
+    dashboardSource.includes("stationNamesById"),
+  "dashboard recent usage rows should resolve both station and key names",
 );
 
 assert(
-  /<div className="flex min-w-0 items-baseline gap-2">[\s\S]*?\{request\.model \?\? request\.path\}[\s\S]*?Key：\{requestKeyName\}[\s\S]*?<\/div>\s*<div className="mt-0\.5 truncate text-xs text-muted-foreground">\s*\{formatDateTime\(request\.startedAt\)\}/.test(
+  /\{request\.model \?\? request\.path\}[\s\S]*?\{formatDateTime\(request\.startedAt\)\}[\s\S]*?\{requestStationName\} · \{requestKeyName\}/.test(
     dashboardSource,
   ),
-  "dashboard recent usage rows should show the key inline after the model and keep time on the next line",
+  "dashboard recent usage rows should show station and key names below the usage time",
+);
+
+assert(
+  /min-w-\[88px\] text-right text-xs[\s\S]*?formatRecentRequestCost[\s\S]*?formatTokenCount\(request\.totalTokens\)/.test(dashboardSource),
+  "dashboard recent usage rows should place cost above tokens on the right",
 );

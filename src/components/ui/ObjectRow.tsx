@@ -7,6 +7,7 @@ export type ObjectRowMetric = {
   label: string;
   value: ReactNode;
   tone?: "neutral" | "good" | "warning" | "danger";
+  align?: "right" | "center";
 };
 
 export type ObjectRowDragHandleProps = {
@@ -94,8 +95,14 @@ function RowContent({
       </div>
       {metrics && metrics.length > 0 && (
         <div className="hidden shrink-0 items-center gap-4 sm:flex">
-          {metrics.map(({ label, value, tone = "neutral" }) => (
-            <div key={label} className="min-w-[72px] text-right">
+          {metrics.map(({ label, value, tone = "neutral", align = "right" }) => (
+            <div
+              key={label}
+              className={cn(
+                "min-w-[72px]",
+                align === "center" ? "text-center" : "text-right",
+              )}
+            >
               <div className="truncate text-[11px] text-muted-foreground">
                 {label}
               </div>

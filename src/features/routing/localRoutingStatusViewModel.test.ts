@@ -16,6 +16,7 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     enabled: true,
     schedulable: true,
     healthState: "ready",
+    currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,
     cooldownUntil: null,
@@ -83,5 +84,26 @@ describe("local routing status view model", () => {
     expect(display.rejectReasonLabel).toBe("超过倍率上限");
     expect(display.multiplierLabel).toBe("后端未提供");
     expect(display.balanceLabel).toBe("后端未提供");
+  });
+
+  it("maps canonical backend rejection codes without falling back to a generic message", () => {
+    expect(
+      buildCandidateDisplayFacts(
+        candidate({
+          schedulable: true,
+          previewEligible: false,
+          previewRejectReasons: ["group_mismatch"],
+        }),
+      ).rejectReasonLabel,
+    ).toBe("分组不匹配");
+    expect(
+      buildCandidateDisplayFacts(
+        candidate({
+          schedulable: false,
+          previewEligible: false,
+          previewRejectReasons: ["candidate_unschedulable"],
+        }),
+      ).rejectReasonLabel,
+    ).toBe("密钥已暂停路由");
   });
 });

@@ -242,6 +242,15 @@ export function AlertingSettings() {
               showLabel={false}
             />
           </SettingLine>
+          <SettingLine label="告警恢复后即删除" description="恢复确认后立即删除对应告警；后台会自动清理意外残留的已恢复记录。">
+            <SwitchControl
+              ariaLabel="告警恢复后即删除"
+              checked={draft.settings.deleteResolvedIncidents}
+              disabled={savingSettings || backendUnavailable}
+              onCheckedChange={() => patchSettings({ deleteResolvedIncidents: !draft.settings.deleteResolvedIncidents })}
+              showLabel={false}
+            />
+          </SettingLine>
           <SettingLine className="justify-start" label="免打扰时间" description="应用内记录仍会保留；严重告警可由规则选择绕过。">
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               <SwitchControl

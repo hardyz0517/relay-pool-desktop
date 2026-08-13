@@ -23,6 +23,7 @@ describe("alerting frontend contract", () => {
   });
 
   it("requires a recovery notification by default", () => {
+    expect(DEFAULT_ALERTING_SETTINGS.deleteResolvedIncidents).toBe(true);
     expect(defaultAlertPolicy("station_down")).toMatchObject({
       triggerMode: "consecutive_occurrences",
       triggerCount: 2,

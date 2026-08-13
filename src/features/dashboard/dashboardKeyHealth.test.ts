@@ -25,6 +25,6 @@ describe("dashboard key health summary", () => {
       [statusRow("healthy", "available"), statusRow("error", "unavailable")],
     );
 
-    expect(result).toEqual({ unchecked: 1, healthy: 1, warning: 0, error: 1, disabled: 1 });
+    expect(result).toEqual({ unchecked: 1, healthy: 1, warning: 0, error: 1 });
   });
 });

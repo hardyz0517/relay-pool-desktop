@@ -855,7 +855,7 @@ function conclusionLabel(summary: CollectorSummary, snapshot: CollectorSnapshot 
 function statusLabel(status: string | undefined) {
   if (!status) return undefined;
   if (status === "success") return "已采集";
-  if (status === "manual_required") return "需要登录";
+  if (status === "manual_required") return "需重新授权";
   if (status === "partial") return "未识别";
   if (status === "failed") return "失败";
   if (status === "missing_credentials") return "缺少账号";
@@ -865,7 +865,7 @@ function statusLabel(status: string | undefined) {
 function loginStateLabel(status: string | undefined) {
   if (!status) return "未识别";
   if (status === "success") return "已登录";
-  if (status === "manual_required") return "需要登录";
+  if (status === "manual_required") return "需重新授权";
   if (status === "missing_credentials") return "缺少账号密码";
   return statusLabel(status) ?? "未识别";
 }
@@ -972,7 +972,7 @@ function taskTypeLabel(value: string) {
 function runStatusLabel(status: string) {
   if (status === "success") return "成功";
   if (status === "failed") return "失败";
-  if (status === "manual_required") return "需要登录";
+  if (status === "manual_required") return "需重新授权";
   if (status === "running") return "运行中";
   if (status === "partial") return "部分完成";
   return status;

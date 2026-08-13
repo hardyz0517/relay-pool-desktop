@@ -110,4 +110,55 @@ describe("StationAssetRows", () => {
 
     await act(async () => root.unmount());
   });
+
+  it("keeps actions on other station rows available while one row is collecting", async () => {
+    const busyHost = document.createElement("div");
+    const idleHost = document.createElement("div");
+    const busyRoot = createRoot(busyHost);
+    const idleRoot = createRoot(idleHost);
+
+    await act(async () =>
+      busyRoot.render(
+        <StationAssetListRow
+          actionDisabled
+          active={false}
+          loadingAction="collect"
+          row={stationAssetRow()}
+          onAuthorize={vi.fn()}
+          onCollect={vi.fn()}
+          onDelete={vi.fn()}
+          onEdit={vi.fn()}
+          onOpen={vi.fn()}
+          onOpenWebsite={vi.fn()}
+          onRefreshBalance={vi.fn()}
+        />,
+      ),
+    );
+    await act(async () =>
+      idleRoot.render(
+        <StationAssetListRow
+          actionDisabled={false}
+          active={false}
+          loadingAction={null}
+          row={stationAssetRow({ station: station({ id: "station-2", name: "Relay Two" }) })}
+          onAuthorize={vi.fn()}
+          onCollect={vi.fn()}
+          onDelete={vi.fn()}
+          onEdit={vi.fn()}
+          onOpen={vi.fn()}
+          onOpenWebsite={vi.fn()}
+          onRefreshBalance={vi.fn()}
+        />,
+      ),
+    );
+
+    const busyCollectButton = busyHost.querySelector<HTMLButtonElement>('button[aria-label="采集信息 Relay"]');
+    const idleCollectButton = idleHost.querySelector<HTMLButtonElement>('button[aria-label="采集信息 Relay Two"]');
+
+    expect(busyCollectButton?.disabled).toBe(true);
+    expect(idleCollectButton?.disabled).toBe(false);
+
+    await act(async () => busyRoot.unmount());
+    await act(async () => idleRoot.unmount());
+  });
 });

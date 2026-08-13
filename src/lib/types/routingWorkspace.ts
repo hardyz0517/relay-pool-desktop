@@ -2,6 +2,7 @@ import type { ProxyStatus } from "./proxy";
 import type {
   RouteEndpointKind,
   RoutingGroupFilter,
+  RoutingRuntimeOverlay,
   RoutingWorkspaceCandidate,
   RoutingWorkspaceSnapshot,
 } from "./routing";
@@ -37,6 +38,7 @@ export type RoutingCandidateView = {
   enabled: boolean;
   schedulable: boolean;
   healthState: RouteHealthState;
+  currentConcurrency: number | null;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   cooldownUntil: string | null;
@@ -104,12 +106,21 @@ function candidateFacts(candidate: RoutingWorkspaceCandidate): DecisionFact[] {
 export function toRoutingWorkspaceView(
   snapshot: RoutingWorkspaceSnapshot,
   proxyStatus: ProxyStatus,
-  cooldownByKey: ReadonlyMap<string, string | null> = new Map(),
+  runtimeOverlay: RoutingRuntimeOverlay | null = null,
   latestDecision: RoutingLatestDecisionView | null = null,
 ): RoutingWorkspaceView {
+  const runtimeByKey = new Map(
+    (runtimeOverlay?.candidates ?? []).map((candidate) => [candidate.stationKeyId, candidate]),
+  );
   const candidates = snapshot.candidates.map((candidate, index) => {
     const health = healthState(candidate.healthState);
     const hardRejectionCodes = [...candidate.hardRejectionCodes];
+    const runtime = runtimeByKey.get(candidate.stationKeyId);
+    const matchingRuntime =
+      runtime?.stationId === candidate.stationId &&
+      runtime.endpointRevision === candidate.endpointRevision
+        ? runtime
+        : null;
     return {
       stationKeyId: candidate.stationKeyId,
       stationId: candidate.stationId,
@@ -117,14 +128,20 @@ export function toRoutingWorkspaceView(
       keyName: candidate.keyName,
       endpoint: "chat_completions" as const,
       priority: candidate.priority || index,
-      enabled: candidate.schedulable,
+      // Disabled stations/keys are excluded by the backend query. Do not
+      // conflate that administrative state with request eligibility.
+      enabled: true,
       schedulable: candidate.schedulable,
       healthState: health,
+      currentConcurrency:
+        matchingRuntime?.stationKeyInFlight == null
+          ? null
+          : Math.max(0, Math.trunc(matchingRuntime.stationKeyInFlight)),
       lastSuccessAt: null,
       lastFailureAt: null,
-      cooldownUntil: cooldownByKey.get(candidate.stationKeyId) ?? null,
+      cooldownUntil: matchingRuntime?.cooldownUntil ?? null,
       routingGroupScope: snapshot.routingGroupFilter,
-      routingGroupMatch: candidate.group?.available ?? true,
+      routingGroupMatch: !hardRejectionCodes.includes("group_mismatch"),
       previewEligible: hardRejectionCodes.length === 0,
       previewRejectReasons: hardRejectionCodes,
       facts: candidateFacts(candidate),

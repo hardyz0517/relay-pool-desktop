@@ -35,4 +35,20 @@ describe("MetricPanel theme accents", () => {
 
     await act(async () => root.unmount());
   });
+
+  it("supports an explicit three-column desktop layout", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () => root.render(
+      <MetricPanel
+        columns={3}
+        metrics={[{ label: "Requests", value: "0" }]}
+      />,
+    ));
+
+    expect(host.querySelector<HTMLElement>("section > div")!.className).toContain("md:grid-cols-3");
+
+    await act(async () => root.unmount());
+  });
 });

@@ -16,13 +16,14 @@ type LocalRoutingStatusCandidateRowProps = {
 
 export function LocalRoutingStatusCandidateHeader() {
   return (
-    <div className="hidden min-h-9 grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)] items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
+    <div className="hidden min-h-9 grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)_minmax(72px,.45fr)] items-center gap-3 border-b border-border bg-surface-subtle px-3 py-2 text-[11px] font-medium text-muted-foreground md:grid">
       <span>候选密钥</span>
-      <span>参与状态</span>
-      <span>健康状态</span>
-      <span>有效倍率</span>
-      <span>余额</span>
-      <span>冷却</span>
+      <span className="text-center">参与状态</span>
+      <span className="text-center">健康状态</span>
+      <span className="text-center">有效倍率</span>
+      <span className="text-center">余额</span>
+      <span className="text-center">冷却</span>
+      <span className="text-center" title="每秒刷新">当前并发</span>
     </div>
   );
 }
@@ -49,7 +50,7 @@ export function LocalRoutingStatusCandidateRow({
       : "不参与";
 
   return (
-    <div className="grid min-h-[68px] gap-3 px-3 py-2.5 lg:grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)] lg:items-center">
+    <div className="grid min-h-[68px] gap-3 px-3 py-2.5 md:grid-cols-[minmax(220px,1.6fr)_minmax(110px,.75fr)_minmax(88px,.55fr)_minmax(96px,.6fr)_minmax(80px,.5fr)_minmax(76px,.45fr)_minmax(72px,.45fr)] md:items-center">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-muted-foreground">#{order}</span>
@@ -92,6 +93,11 @@ export function LocalRoutingStatusCandidateRow({
         value={cooldown.label}
         tone={cooldown.active ? "warning" : "neutral"}
       />
+      <MetricCell label="当前并发">
+        <StatusBadge tone="disabled">
+          {candidate.currentConcurrency == null ? "—" : String(candidate.currentConcurrency)}
+        </StatusBadge>
+      </MetricCell>
     </div>
   );
 }
@@ -110,8 +116,8 @@ function MetricCell({
   children?: ReactNode;
 }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[11px] text-muted-foreground lg:hidden">{label}</div>
+    <div className="min-w-0 md:flex md:flex-col md:items-center md:text-center">
+      <div className="text-[11px] text-muted-foreground md:hidden">{label}</div>
       {children ?? (
         <div
           className={

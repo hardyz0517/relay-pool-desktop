@@ -99,7 +99,7 @@ export function StationsPage({
     setPendingDeleteStation,
     snapshot,
     snapshots,
-    stationAction,
+    stationActions,
     stationKeys,
     stations,
   } = useStationsPageController(controllerOptions);
@@ -168,23 +168,27 @@ export function StationsPage({
             >
               <SortableContext items={filteredStationIds} strategy={verticalListSortingStrategy}>
                 <div className="space-y-2">
-                  {filteredStationAssetRows.map((row) => (
-                    <SortableStationAssetListRow
-                      key={row.station.id}
-                      actionDisabled={stationAction !== null}
-                      active={row.station.id === selectedStationId}
-                      loadingAction={stationAction?.stationId === row.station.id ? stationAction.action : null}
-                      row={row}
-                      onAuthorize={(station) => void handleManualAuthorization(station)}
-                      onCollect={(station) => void handleRunCollect(station)}
-                      onDelete={handleDelete}
-                      onEdit={openEdit}
-                      onOpenRoutingDeepLink={onOpenRoutingDeepLink}
-                      onOpen={openDetail}
-                      onOpenWebsite={handleOpenWebsite}
-                      onRefreshBalance={(station) => void handleRefreshBalance(station)}
-                    />
-                  ))}
+                  {filteredStationAssetRows.map((row) => {
+                    const loadingAction = stationActions.get(row.station.id) ?? null;
+
+                    return (
+                      <SortableStationAssetListRow
+                        key={row.station.id}
+                        actionDisabled={loadingAction !== null}
+                        active={row.station.id === selectedStationId}
+                        loadingAction={loadingAction}
+                        row={row}
+                        onAuthorize={(station) => void handleManualAuthorization(station)}
+                        onCollect={(station) => void handleRunCollect(station)}
+                        onDelete={handleDelete}
+                        onEdit={openEdit}
+                        onOpenRoutingDeepLink={onOpenRoutingDeepLink}
+                        onOpen={openDetail}
+                        onOpenWebsite={handleOpenWebsite}
+                        onRefreshBalance={(station) => void handleRefreshBalance(station)}
+                      />
+                    );
+                  })}
                 </div>
               </SortableContext>
               <DragOverlay dropAnimation={null}>
@@ -192,7 +196,7 @@ export function StationsPage({
                   <StationAssetListRow
                     actionDisabled
                     active
-                    loadingAction={stationAction?.stationId === activeDragRow.station.id ? stationAction.action : null}
+                    loadingAction={stationActions.get(activeDragRow.station.id) ?? null}
                     overlay
                     row={activeDragRow}
                     onCollect={() => undefined}

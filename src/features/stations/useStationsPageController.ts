@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/ui";
@@ -91,10 +91,8 @@ export function useStationsPageController({
   const [keyForm, setKeyForm] = useState<StationKeyFormState>(emptyKeyForm);
   const [saving, setSaving] = useState(false);
   const [actionSaving, setActionSaving] = useState(false);
-  const [stationAction, setStationAction] = useState<{
-    stationId: string;
-    action: StationAction;
-  } | null>(null);
+  const stationActionsRef = useRef(new Map<string, StationAction>());
+  const [stationActions, setStationActions] = useState<ReadonlyMap<string, StationAction>>(() => new Map());
   const [issueFilter, setIssueFilter] = useState<StationIssueFilterValue>("all");
   const [error, setError] = useState<string | null>(null);
 
@@ -110,6 +108,21 @@ export function useStationsPageController({
   const loading = stationsQuery.isPending && stationsQuery.data === undefined;
   const queryError = stationsQuery.error ? readError(stationsQuery.error) : null;
   const loadError = queryError ?? error;
+
+  function startStationAction(stationId: string, action: StationAction) {
+    if (stationActionsRef.current.has(stationId)) {
+      return false;
+    }
+
+    stationActionsRef.current.set(stationId, action);
+    setStationActions(new Map(stationActionsRef.current));
+    return true;
+  }
+
+  function finishStationAction(stationId: string) {
+    stationActionsRef.current.delete(stationId);
+    setStationActions(new Map(stationActionsRef.current));
+  }
 
   async function autoDiscoverCreatedKeyModels(stationKeyId: string) {
     const summary = await discoverCreatedStationKeyModels([stationKeyId]);
@@ -538,32 +551,42 @@ export function useStationsPageController({
   }
 
   async function handleRunCollect(station = selectedStation) {
-    if (!station || stationAction !== null) {
+    if (!station || !startStationAction(station.id, "collect")) {
       return;
     }
-    setStationAction({ stationId: station.id, action: "collect" });
     setError(null);
     try {
       await cancelStationSharedQueries();
-      await collectSub2apiStation(station.id);
+      const result = await collectSub2apiStation(station.id);
       await invalidateStationSharedQueries();
       if (station.id === selectedStationId || station.id === drawerStationId) {
         await refreshExtras(station.id);
       }
       await refreshStationFacts(station.id);
-      toast.success("已保存采集快照");
+      if (result.snapshot.status === "manual_required") {
+        toast.info(
+          `「${station.name}」需重新授权`,
+          result.snapshot.errorMessage ?? "当前登录状态已失效，请重新进行窗口授权。",
+        );
+      } else if (result.snapshot.status === "failed") {
+        toast.error(
+          `「${station.name}」采集失败`,
+          result.snapshot.errorMessage ?? "采集任务未能完成。",
+        );
+      } else {
+        toast.success(`已保存「${station.name}」采集快照`);
+      }
     } catch (requestError) {
-      toast.error("保存采集快照失败", readError(requestError));
+      toast.error(`保存「${station.name}」采集快照失败`, readError(requestError));
     } finally {
-      setStationAction(null);
+      finishStationAction(station.id);
     }
   }
 
   async function handleManualAuthorization(station: Station) {
-    if (stationAction !== null) {
+    if (!startStationAction(station.id, "authorize")) {
       return;
     }
-    setStationAction({ stationId: station.id, action: "authorize" });
     setError(null);
     try {
       await startManualAuthorization(station.id);
@@ -571,15 +594,14 @@ export function useStationsPageController({
     } catch (requestError) {
       toast.error("打开授权窗口失败", readError(requestError));
     } finally {
-      setStationAction(null);
+      finishStationAction(station.id);
     }
   }
 
   async function handleRefreshBalance(station: Station) {
-    if (stationAction !== null) {
+    if (!startStationAction(station.id, "balance")) {
       return;
     }
-    setStationAction({ stationId: station.id, action: "balance" });
     setError(null);
     try {
       await cancelStationSharedQueries();
@@ -600,7 +622,7 @@ export function useStationsPageController({
     } catch (requestError) {
       toast.error("刷新余额失败", readError(requestError));
     } finally {
-      setStationAction(null);
+      finishStationAction(station.id);
     }
   }
 
@@ -731,7 +753,7 @@ export function useStationsPageController({
     setPendingDeleteStation,
     snapshot,
     snapshots,
-    stationAction,
+    stationActions,
     stationKeys,
     stations,
   };

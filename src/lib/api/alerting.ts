@@ -82,8 +82,8 @@ export function listAlertingDeliveries(input: AlertingHistoryInput) {
   return alertingClient().listDeliveries(input);
 }
 
-export function markAlertingSeen(incidentId: string, episodeNumber: number): Promise<void> {
-  return alertingClient().markSeen(incidentId, episodeNumber);
+export function markAlertingSeen(activity: { recordType: "incident"; id: string; episodeNumber: number } | { recordType: "change"; id: string }): Promise<void> {
+  return alertingClient().markSeen(activity);
 }
 
 export function markAllAlertingSeen(input: AlertingMarkAllSeenInput = {}): Promise<number> {
@@ -94,8 +94,8 @@ export function resolveAllAlertingIncidents(input: AlertingMarkAllSeenInput = {}
   return alertingClient().resolveAllActive(input);
 }
 
-export function clearAlertingIncidents(input: AlertingClearInput = {}): Promise<number> {
-  return alertingClient().clearIncidents(input);
+export function clearAlertingActivity(input: AlertingClearInput = {}): Promise<number> {
+  return alertingClient().clearActivity(input);
 }
 
 export function snoozeAlertingIncident(incidentId: string, episodeNumber: number, untilMs: number): Promise<void> {

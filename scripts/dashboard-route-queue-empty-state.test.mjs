@@ -9,7 +9,7 @@ function assert(condition, message) {
 }
 
 assert(
-  /<section className="grid gap-3">\s*<h2 className="truncate text-\[13px\] font-semibold text-slate-800">\s*路由队列\s*<\/h2>/.test(dashboardSource),
+  /<section className="grid min-w-0 gap-3">\s*<header[^>]*>[\s\S]*?路由队列[\s\S]*?查看全部/.test(dashboardSource),
   "dashboard should keep the route queue section on the home page",
 );
 
@@ -20,32 +20,34 @@ assert(
 
 assert(
   dashboardSource.includes("暂无路由队列") &&
-    dashboardSource.includes("添加或导入 Key 后，可用路由将显示在这里。"),
+    dashboardSource.includes("添加或导入密钥后，可用路由将显示在这里。"),
   "dashboard route queue empty state should explain why the queue is empty",
 );
 
 assert(
-  /keyPoolItems\.slice\(0,\s*6\)\.map/.test(dashboardSource),
-  "dashboard route queue should keep rendering existing key rows when keys are available",
+  /keyPoolItems\.slice\(0,\s*5\)\.map/.test(dashboardSource),
+  "dashboard route queue should render at most five key rows",
 );
 
 assert(
-  dashboardSource.includes('label: "顺位"'),
-  "dashboard route queue should call the visible order 顺位 instead of exposing internal priority",
+  dashboardSource.includes('label: "当前并发"'),
+  "dashboard route queue should show current concurrency instead of the visible row order",
 );
 
 assert(
-  /keyPoolItems\.slice\(0,\s*6\)\.map\(\(\s*key\s*,\s*index\s*\)\s*=>/.test(dashboardSource),
-  "dashboard route queue should derive the visible order from the rendered queue index",
+  dashboardSource.includes("routingQueryKeys.runtimeOverlay()") &&
+    dashboardSource.includes("loadRoutingRuntimeOverlayQuery") &&
+    dashboardSource.includes("candidate.stationKeyInFlight"),
+  "dashboard route queue should read canonical per-key runtime concurrency",
 );
 
 assert(
-  dashboardSource.includes('label: "顺位", value: `${index + 1}`') &&
-    !dashboardSource.includes("`${key.priority + 1}`"),
-  "dashboard route queue should not expose duplicate per-station priority values as global order",
+  /label:\s*"当前并发"[\s\S]*?inline-flex h-7 min-w-7 items-center justify-center rounded-\[6px\] bg-muted[\s\S]*?currentConcurrencyByKeyId\.get\(key\.id\) \?\? "—"[\s\S]*?align:\s*"center"/.test(dashboardSource),
+  "dashboard route queue should center runtime concurrency in a compact muted box",
 );
 
 assert(
-  !dashboardSource.includes('label: "优先级"'),
-  "dashboard route queue should not label the rendered order as 优先级",
+  !dashboardSource.includes('label: "顺位"') &&
+    !dashboardSource.includes('label: "优先级"'),
+  "dashboard route queue should not expose row order as an operational metric",
 );

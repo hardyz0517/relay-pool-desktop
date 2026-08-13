@@ -45,7 +45,7 @@ describe("routing query owner", () => {
       readModelStatus: "available" as const,
     })),
     loadRoutingRuntimeOverlay: vi.fn(async () => ({
-      overlayVersion: "routing_runtime_overlay_v1",
+      overlayVersion: "routing_runtime_overlay_v2",
       sampledAtMs: 2,
       revision: 1,
       candidates: [],

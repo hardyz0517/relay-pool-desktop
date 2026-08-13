@@ -40,6 +40,12 @@ const candidateHealthDisplays: Record<
 };
 
 const previewRejectReasonLabels: Record<string, string> = {
+  candidate_disabled: "密钥已停用",
+  candidate_unschedulable: "密钥已暂停路由",
+  credential_missing: "缺少可用凭据",
+  group_mismatch: "分组不匹配",
+  capability_rejected: "接口或模型能力不匹配",
+  multiplier_ceiling: "超过倍率上限",
   asset_unavailable: "候选不可用",
   routing_group_mismatch: "分组不匹配",
   capability_mismatch: "接口能力不匹配",

@@ -62,7 +62,7 @@ describe("stations page display model", () => {
     expect(formatMultiplier(null)).toBe("-");
     expect(collectorTaskTypeLabel("groups")).toBe("分组");
     expect(collectorTaskTypeLabel("custom")).toBe("custom");
-    expect(collectorRunStatusLabel("manual_required")).toBe("需要登录");
+    expect(collectorRunStatusLabel("manual_required")).toBe("需重新授权");
     expect(groupBindingStatusLabel("available")).toBe("可用");
     expect(stationIssueTagClassName("error")).toContain("text-danger-foreground");
   });

@@ -8,8 +8,10 @@ import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 import type { KeyPoolMonitorStatus } from "./keyPoolMonitorStatus";
 
+export const keyPoolTableClassName = "min-w-[62rem]";
+
 export const keyPoolGridClassName =
-  "grid min-w-[780px] grid-cols-[2rem_minmax(18rem,1fr)_7rem_5rem_5rem_12rem_5.5rem] items-center gap-3";
+  "grid w-full grid-cols-[2rem_minmax(14rem,1fr)_7rem_5rem_5rem_12rem_10.5rem] items-center gap-3";
 
 export function SortableKeyRow({
   item,
@@ -40,7 +42,7 @@ export function SortableKeyRow({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: !dragEnabled });
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("will-change-transform", isDragging && "opacity-35")}>
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn("w-full will-change-transform", isDragging && "opacity-35")}>
       <KeyRowContent item={item} testing={testing} monitor={monitor} monitorStatus={monitorStatus} monitoring={monitoring} dragAttributes={dragEnabled ? attributes : undefined} dragListeners={dragEnabled ? listeners : undefined} dragDisabled={!dragEnabled} onEdit={onEdit} onTestConnectivity={onTestConnectivity} onToggleEnabled={onToggleEnabled} onToggleMonitoring={onToggleMonitoring} onOpenRoutingImpact={onOpenRoutingImpact} onDelete={onDelete} />
     </div>
   );

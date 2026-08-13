@@ -231,7 +231,7 @@ export function StationDetailPage({
     setLoadingAction(action);
     setSectionError(null);
     try {
-      await collectStationTask(stationId, refreshTaskByAction[action]);
+      const result = await collectStationTask(stationId, refreshTaskByAction[action]);
       if (!isRefreshCurrent(stationId, requestId)) {
         return;
       }
@@ -239,7 +239,19 @@ export function StationDetailPage({
       if (!nextData || !isRefreshCurrent(stationId, requestId)) {
         return;
       }
-      toast.success(refreshSuccessLabel[action]);
+      if (result.snapshot.status === "manual_required") {
+        toast.info(
+          `「${nextData.station.name}」需重新授权`,
+          result.snapshot.errorMessage ?? "当前登录状态已失效，请重新进行窗口授权。",
+        );
+      } else if (result.snapshot.status === "failed") {
+        toast.error(
+          `「${nextData.station.name}」采集失败`,
+          result.snapshot.errorMessage ?? "采集任务未能完成。",
+        );
+      } else {
+        toast.success(refreshSuccessLabel[action]);
+      }
     } catch (requestError) {
       const message = readError(requestError);
       if (isRefreshCurrent(stationId, requestId)) {

@@ -26,7 +26,7 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { AlertingActivity, AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
-import { clearAlertingIncidents, markAlertingSeen, markAllAlertingSeen } from "@/lib/api/alerting";
+import { clearAlertingActivity, markAlertingSeen, markAllAlertingSeen } from "@/lib/api/alerting";
 import { collectorFailureTaskLabel } from "./collectorIncidentLabels";
 
 type ChangeCenterRoutingDeepLink = Extract<
@@ -37,6 +37,8 @@ type ChangeCenterRoutingDeepLink = Extract<
 type ChangeCenterPageProps = {
   onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void;
   onOpenSettings?: () => void;
+  selectedView?: ChangeCenterView;
+  onSelectedViewChange?: (view: ChangeCenterView) => void;
 };
 
 type ChangeCenterLinkEvent = Pick<AlertingIncident, "stationId"> & Partial<Pick<AlertingActivity, "objectType" | "objectId" | "stationKeyId">> & {
@@ -59,16 +61,24 @@ function createChangeCenterRoutingLink(event: ChangeCenterLinkEvent): ChangeCent
   return event.stationId ? { kind: "station", stationId: event.stationId, source: "change_center" } : null;
 }
 
-type View = "all" | "unread" | "active" | "info";
+export type ChangeCenterView = "all" | "unread" | "active" | "info";
 type Severity = "all" | "critical" | "warning" | "info";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
-export const CHANGE_CENTER_VIEW_OPTIONS: Array<{ value: View; label: string }> = [
+export const CHANGE_CENTER_DEFAULT_VIEW: ChangeCenterView = "active";
+export const CHANGE_CENTER_VIEW_OPTIONS: Array<{ value: ChangeCenterView; label: string }> = [
   { value: "all", label: "全部" },
   { value: "unread", label: "未读" },
   { value: "active", label: "活动" },
   { value: "info", label: "信息" },
 ];
+export const CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW = {
+  all: "all",
+  unread: "all",
+  active: "incidents",
+  info: "information",
+} as const satisfies Record<ChangeCenterView, "incidents" | "information" | "all">;
+export const CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW = CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW;
 
 function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
   return {
@@ -86,10 +96,16 @@ function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
   };
 }
 
-export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: ChangeCenterPageProps = {}) {
+export function ChangeCenterPage({
+  onOpenRoutingDeepLink,
+  onOpenSettings,
+  selectedView,
+  onSelectedViewChange,
+}: ChangeCenterPageProps = {}) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [view, setView] = useState<View>("active");
+  const [internalView, setInternalView] = useState<ChangeCenterView>(CHANGE_CENTER_DEFAULT_VIEW);
+  const view = selectedView ?? internalView;
   const [severity, setSeverity] = useState<Severity>("all");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -107,28 +123,30 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
     {
       ...alertingCurrentQueryOptions({
       severity: severity === "all" ? null : severity,
-      lifecycleState: view === "active" || view === "unread" ? view : null,
+      lifecycleState: view === "active" ? view : null,
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
       }),
-      enabled: view === "active" || view === "unread",
+      enabled: view === "active",
     },
   );
   const activityQuery = useActivityQuery({
     ...alertingActivityQueryOptions({
       severity: severity === "all" ? null : severity,
+      recordType: view === "info" ? "change" : null,
+      unreadOnly: view === "unread",
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
     }),
-    enabled: view === "all" || view === "info",
+    enabled: view === "all" || view === "info" || view === "unread",
   });
   const incidents = incidentQuery.data?.items ?? [];
   const activities = useMemo<AlertingActivity[]>(
-    () => view === "all" || view === "info" ? (activityQuery.data?.items ?? []) : incidents.map(toIncidentActivity),
+    () => view === "active" ? incidents.map(toIncidentActivity) : (activityQuery.data?.items ?? []),
     [activityQuery.data?.items, incidents, view],
   );
-  const pageData = view === "all" || view === "info" ? activityQuery.data : incidentQuery.data;
-  const activeQuery = view === "all" || view === "info" ? activityQuery : incidentQuery;
+  const pageData = view === "active" ? incidentQuery.data : activityQuery.data;
+  const activeQuery = view === "active" ? incidentQuery : activityQuery;
   const stationNames = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
@@ -174,8 +192,11 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
     }
   }
 
-  function changeView(next: View) {
-    setView(next);
+  function changeView(next: ChangeCenterView) {
+    if (selectedView == null) {
+      setInternalView(next);
+    }
+    onSelectedViewChange?.(next);
     setPage(1);
     setPageCursors({ 1: null });
   }
@@ -193,14 +214,16 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
     setPage(nextPage);
   }
 
-  async function markSeen(incident: AlertingIncident) {
-    setBusyIncidentId(incident.id);
+  async function markSeen(activity: AlertingActivity) {
+    setBusyIncidentId(activity.id);
     try {
-      await markAlertingSeen(incident.id, incident.episodeNumber);
+      await markAlertingSeen(activity.recordType === "change"
+        ? { recordType: "change", id: activity.id }
+        : { recordType: "incident", id: activity.id, episodeNumber: activity.episodeNumber });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
       await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
     } catch (requestError) {
-      toast.error("标记提醒已读失败", readError(requestError));
+      toast.error("标记变更已读失败", readError(requestError));
     } finally {
       setBusyIncidentId(null);
     }
@@ -209,9 +232,13 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
   async function markAllSeen() {
     setIsMarkingAllSeen(true);
     try {
-      const markedCount = await markAllAlertingSeen({ severity: severity === "all" ? null : severity });
+      const markedCount = await markAllAlertingSeen({
+        severity: severity === "all" ? null : severity,
+        recordScope: CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW[view],
+      });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
-      toast.success(markedCount > 0 ? `已将 ${markedCount} 条提醒标记为已读` : "没有需要标记的未读提醒");
+      await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
+      toast.success(markedCount > 0 ? `已将 ${markedCount} 条变更标记为已读` : "没有需要标记的未读变更");
     } catch (requestError) {
       toast.error("一键标记已读失败", readError(requestError));
     } finally {
@@ -220,26 +247,26 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
   }
 
   function requestClearAll() {
-    if (view === "info") return;
-    if (!activities.some((activity) => activity.recordType === "incident")) return;
+    if (activities.length === 0) return;
     setIsClearConfirmOpen(true);
   }
 
   async function confirmClearAll() {
     setIsClearingAll(true);
     try {
-      const clearedCount = await clearAlertingIncidents({
+      const clearedCount = await clearAlertingActivity({
         severity: severity === "all" ? null : severity,
         lifecycleState: view === "active" || view === "unread" ? view : null,
+        recordScope: CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW[view],
       });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
       await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
       setExpandedIncidentKey(null);
       setPage(1);
       setPageCursors({ 1: null });
-      toast.success(clearedCount > 0 ? `已清空 ${clearedCount} 条告警记录` : "没有可清空的告警记录");
+      toast.success(clearedCount > 0 ? `已清空 ${clearedCount} 条变更记录` : "没有可清空的变更记录");
     } catch (requestError) {
-      toast.error("清空告警失败", readError(requestError));
+      toast.error("清空变更失败", readError(requestError));
     } finally {
       setIsClearingAll(false);
       setIsClearConfirmOpen(false);
@@ -270,15 +297,15 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
             <Toolbar className="flex-wrap">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <SegmentedControl value={view} options={CHANGE_CENTER_VIEW_OPTIONS} onChange={changeView} />
-                <SelectControl ariaLabel="严重度" className={inputClassName} value={severity} options={[{ value: "all", label: "全部严重度" }, { value: "critical", label: "严重" }, { value: "warning", label: "警告" }, { value: "info", label: "信息" }]} onChange={changeSeverity} />
+                <SelectControl ariaLabel="严重度" className={inputClassName} value={severity} options={[{ value: "all", label: "全部类型" }, { value: "critical", label: "严重" }, { value: "warning", label: "警告" }, { value: "info", label: "信息" }]} onChange={changeSeverity} />
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
                   <input aria-label="搜索问题" className={`${inputClassName} pl-8`} value={query} placeholder="搜索事件或站点" onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Button variant="secondary" onClick={() => void markAllSeen()} disabled={view === "info" || isMarkingAllSeen || (pageData?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
-                <Button variant="secondary" onClick={requestClearAll} disabled={view === "info" || isClearingAll || !activities.some((activity) => activity.recordType === "incident")}><Trash2 className="h-4 w-4" />清空告警</Button>
+                <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (pageData?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
+                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || activities.length === 0}><Trash2 className="h-4 w-4" />清空变更</Button>
                 <Button variant="secondary" onClick={() => void refresh(true)} disabled={activeQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
               </div>
             </Toolbar>
@@ -291,7 +318,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
                   const key = `${activity.recordType}:${activity.id}:${activity.episodeNumber ?? 0}`;
                   const common = { stationName: activity.stationId ? stationNames.get(activity.stationId) : null, developerModeEnabled, expanded: expandedIncidentKey === key, onToggle: () => setExpandedIncidentKey((current) => current === key ? null : key), onOpenRoutingDeepLink };
                   return activity.recordType === "change"
-                    ? <ChangeRow key={key} activity={activity} {...common} />
+                    ? <ChangeRow key={key} activity={activity} busy={busyIncidentId === activity.id} onMarkSeen={() => void markSeen(activity)} {...common} />
                     : <IncidentRow key={key} incident={activity} busy={busyIncidentId === activity.id} onMarkSeen={() => void markSeen(activity)} {...common} />;
                 })}
               </div>
@@ -305,8 +332,8 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
       </div>
       <ConfirmDialog
         open={isClearConfirmOpen}
-        title="清空告警记录"
-        description="确认永久清空当前标签和严重程度范围内的告警记录吗？信息类变更会保留；仍然异常的对象会在下一次采集后重新生成告警。"
+        title="清空变更记录"
+        description="确认永久清空当前标签和严重程度范围内的变更记录吗？活动告警对应的异常仍存在时，会在下一次采集后重新生成。"
         confirmLabel="永久清空"
         confirming={isClearingAll}
         onCancel={() => setIsClearConfirmOpen(false)}
@@ -332,15 +359,15 @@ function IncidentRow({ incident, stationName, busy, developerModeEnabled, expand
   </div>;
 }
 
-function ChangeRow({ activity, stationName, developerModeEnabled, expanded, onToggle, onOpenRoutingDeepLink }: { activity: Extract<AlertingActivity, { recordType: "change" }>; stationName: string | null | undefined; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
+function ChangeRow({ activity, stationName, busy, developerModeEnabled, expanded, onToggle, onMarkSeen, onOpenRoutingDeepLink }: { activity: Extract<AlertingActivity, { recordType: "change" }>; stationName: string | null | undefined; busy: boolean; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onMarkSeen: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
   const routingLink = createChangeCenterRoutingLink(activity);
   return <div className="bg-surface">
     <div className={`grid min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_auto_minmax(0,1fr)_auto_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}>
       {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起变更" : "展开变更"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
       <StatusBadge className="justify-self-start" tone="info">信息</StatusBadge>
       <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(activity.eventType)}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? activity.stationId ?? "全局"} · {changeSummary(activity)}</div></div>
-      <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(activity.activityAtMs)}</span><span>变更记录</span></div>
-      <div className="flex items-center justify-end gap-1">{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
+      <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(activity.activityAtMs)}</span><span>{activity.seenAtMs == null ? "未读" : "已读"}</span></div>
+      <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" disabled={busy || activity.seenAtMs != null} onClick={onMarkSeen}>标记已读</Button>{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
     </div>
     {developerModeEnabled && expanded ? <ChangeDetail activity={activity} /> : null}
   </div>;

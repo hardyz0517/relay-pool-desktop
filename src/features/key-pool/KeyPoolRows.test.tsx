@@ -3,7 +3,12 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
-import { formatStationBaseUrl, KeyRowContent } from "./KeyPoolRows";
+import {
+  formatStationBaseUrl,
+  KeyRowContent,
+  keyPoolGridClassName,
+  keyPoolTableClassName,
+} from "./KeyPoolRows";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +62,13 @@ function keyPoolItem(overrides: Partial<KeyPoolItem> = {}): KeyPoolItem {
 }
 
 describe("KeyPoolRows", () => {
+  it("reserves one full-width table canvas and enough room for row actions", () => {
+    expect(keyPoolTableClassName).toContain("min-w-[62rem]");
+    expect(keyPoolGridClassName).toContain("w-full");
+    expect(keyPoolGridClassName).toContain("10.5rem");
+    expect(keyPoolGridClassName).not.toContain("min-w-[780px]");
+  });
+
   it("formats row base URLs", () => {
     expect(formatStationBaseUrl("https://api.example/v1/chat")).toBe("https://api.example");
     expect(formatStationBaseUrl("not-a-url///")).toBe("not-a-url");

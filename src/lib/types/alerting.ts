@@ -59,6 +59,7 @@ export type AlertingSettings = {
   quietHoursEnd: string;
   quietHoursTimezone: string;
   criticalBypassesQuietHours: boolean;
+  deleteResolvedIncidents: boolean;
   historyRetentionDays: number;
   deliveryRetentionDays: number;
   revision: number;
@@ -88,6 +89,8 @@ export type AlertingCurrentInput = {
 export type AlertingActivityInput = {
   stationId?: string | null;
   severity?: AlertSeverity | null;
+  recordType?: "incident" | "change" | null;
+  unreadOnly?: boolean;
   cursor?: AlertingCursor | null;
   limit?: number;
 };
@@ -146,7 +149,7 @@ export type AlertingChangeActivity = AlertingActivityBase & {
   occurrenceCount: null;
   collectorFailedTaskTypes: string[];
   resolvedAtMs: null;
-  seenAtMs: null;
+  seenAtMs: number | null;
   snoozedUntilMs: null;
 };
 
@@ -163,10 +166,13 @@ export type AlertingIncidentInput = { incidentId: string; episodeNumber: number 
 export type AlertingMarkAllSeenInput = {
   stationId?: string | null;
   severity?: AlertSeverity | null;
+  recordScope?: AlertingClearRecordScope;
 };
 export type AlertingClearScope = "active" | "unread" | "resolved";
+export type AlertingClearRecordScope = "incidents" | "information" | "all";
 export type AlertingClearInput = AlertingMarkAllSeenInput & {
   lifecycleState?: AlertingClearScope | null;
+  recordScope?: AlertingClearRecordScope;
 };
 export type AlertingHistoryInput = AlertingIncidentInput & {
   cursor?: AlertingCursor | null;
@@ -221,10 +227,10 @@ export type AlertingDomainClient = {
   getIncident(input: AlertingIncidentInput): Promise<AlertingIncident>;
   listOccurrences(input: AlertingHistoryInput): Promise<AlertingOccurrencePage>;
   listDeliveries(input: AlertingHistoryInput): Promise<AlertingDeliveryPage>;
-  markSeen(incidentId: string, episodeNumber: number): Promise<void>;
+  markSeen(activity: { recordType: "incident"; id: string; episodeNumber: number } | { recordType: "change"; id: string }): Promise<void>;
   markAllSeen(input?: AlertingMarkAllSeenInput): Promise<number>;
   resolveAllActive(input?: AlertingMarkAllSeenInput): Promise<number>;
-  clearIncidents(input?: AlertingClearInput): Promise<number>;
+  clearActivity(input?: AlertingClearInput): Promise<number>;
   snooze(incidentId: string, episodeNumber: number, untilMs: number): Promise<void>;
   sendTestNotification(channel?: "in_app" | "desktop"): Promise<void>;
   getDesktopNotificationPermission(): Promise<"allowed" | "denied" | "unavailable">;
@@ -275,7 +281,8 @@ export function isAuditAlertEvent(eventType: AlertEventType | null | undefined):
 export const DEFAULT_ALERTING_SETTINGS: AlertingSettings = {
   enabled: true, inAppEnabled: true, desktopEnabled: false, paused: false, globalPauseUntilMs: null,
   quietHoursEnabled: false, quietHoursStart: "22:00", quietHoursEnd: "08:00", quietHoursTimezone: "local",
-  criticalBypassesQuietHours: true, historyRetentionDays: 90, deliveryRetentionDays: 30,
+  criticalBypassesQuietHours: true, deleteResolvedIncidents: true,
+  historyRetentionDays: 90, deliveryRetentionDays: 30,
   revision: 1, updatedAtMs: 0,
 };
 

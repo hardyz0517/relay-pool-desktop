@@ -8,7 +8,7 @@ import {
   proxyStatusQueryOptions,
   settingsQueryOptions,
 } from "@/lib/query/resourceQueries";
-import { alertingCurrentQueryOptions as currentAlertingQueryOptions } from "@/lib/queries/alertingQueries";
+import { alertingActivityQueryOptions } from "@/lib/queries/alertingQueries";
 import { cn } from "@/lib/utils";
 import type { AppRouteId } from "@/lib/types/navigation";
 
@@ -25,7 +25,7 @@ export function AppShell({
   navigationSequence,
   onRouteChange,
 }: AppShellProps) {
-  const { data: alertingPage } = useQuery(currentAlertingQueryOptions({ limit: 200 }));
+  const { data: alertingPage } = useQuery(alertingActivityQueryOptions({ limit: 1 }));
   const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
   const { data: settings = null } = useQuery(settingsQueryOptions());
 
@@ -76,7 +76,10 @@ export function AppShell({
               >
                 <Icon className="h-4.5 w-4.5" />
                 {route.id === "changes" && changeUnreadCount > 0 && (
-                  <span className="absolute right-1 top-1 min-w-4 rounded-full bg-danger-solid px-1 text-[10px] font-semibold leading-4 text-on-solid">
+                  <span
+                    aria-label={`${changeUnreadCount} 条未读变更`}
+                    className="absolute right-1 top-1 min-w-4 rounded-full bg-danger-solid px-1 text-[10px] font-semibold leading-4 text-on-solid"
+                  >
                     {changeUnreadCount > 99 ? "99+" : changeUnreadCount}
                   </span>
                 )}

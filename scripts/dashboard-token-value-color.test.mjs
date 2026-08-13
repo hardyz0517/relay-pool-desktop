@@ -30,7 +30,7 @@ assert.match(
 
 assert.match(
   metricBlock("今日请求"),
-  /detail:\s*`总计：\$\{cumulativeRequestMetrics \? formatCompactNumber\(proxyRequestCount\) : cumulativeMetricsState\.value\}`[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"green"/,
+  /detail:\s*`累计 \$\{cumulativeRequestMetrics \? formatCompactNumber\(proxyRequestCount\) : cumulativeMetricsState\.value\}`[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"green"/,
   "dashboard today request card should render the primary request count in neutral text while keeping the green icon accent",
 );
 
@@ -42,24 +42,18 @@ assert.match(
 
 assert.match(
   dashboardSource,
-  /label:\s*"累计 Token"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"indigo"/,
-  "dashboard total Token card should render the primary value in neutral text while keeping the indigo icon accent",
-);
-
-assert.match(
-  dashboardSource,
-  /label:\s*"平均总耗时"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"rose"/,
+  /label:\s*"平均耗时"[\s\S]*?valueClassName:\s*"text-foreground"[\s\S]*?accent:\s*"rose"/,
   "dashboard average total duration card should render the primary value and unit in neutral text while keeping the rose icon accent",
 );
 
 assert.match(
   dashboardSource,
-  /label:\s*"性能概览"[\s\S]*?<span className="text-foreground">\{formatCompactNumber\(recentPerformance\.rpm\)\}<\/span>[\s\S]*?<span className="ml-1 text-sm font-medium text-muted-foreground">RPM<\/span>[\s\S]*?valueClassName:\s*"inline-flex items-baseline text-foreground"[\s\S]*?accent:\s*"violet"/,
-  "dashboard performance overview should render the RPM number in neutral text with a smaller unit label while keeping the violet icon accent",
+  /label:\s*"实时流量"[\s\S]*?<span className="text-foreground">\{formatCompactNumber\(recentPerformance\.rpm\)\}<\/span>[\s\S]*?<span className="ml-1 text-sm font-medium text-muted-foreground">RPM<\/span>[\s\S]*?valueClassName:\s*"inline-flex items-baseline text-foreground"[\s\S]*?accent:\s*"violet"/,
+  "dashboard realtime traffic should render the RPM number in neutral text with a smaller unit label while keeping the violet icon accent",
 );
 
 assert.match(
   dashboardSource,
-  /<span className="font-semibold text-foreground">\{formatCompactNumber\(recentPerformance\.tpm\)\}<\/span>[\s\S]*?<span className="ml-1 text-muted-foreground">TPM<\/span>[\s\S]*?<span className="text-muted-foreground">· \{activeRequests\} 活跃<\/span>/,
-  "dashboard performance overview detail should render TPM with a separate unit label and keep the active request text muted",
+  /<span className="font-semibold text-foreground">\{formatCompactNumber\(recentPerformance\.tpm\)\}<\/span>[\s\S]*?<span className="ml-1 text-muted-foreground">TPM<\/span>[\s\S]*?<span className="text-muted-foreground">· \{activeRequests\} 活跃请求<\/span>/,
+  "dashboard realtime traffic detail should render TPM with a separate unit label and keep the active request text muted",
 );
