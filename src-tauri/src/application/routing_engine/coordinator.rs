@@ -187,6 +187,7 @@ mod tests {
         PlanningSnapshot {
             snapshot_id: "s".into(),
             durable_revision: 1,
+            routing_policy_revision: 1,
             policy: RoutingPolicyConfigV1::default(),
             profile: DispatchAlgorithmProfile::default(),
             candidates: vec![CandidateSnapshot {
@@ -194,6 +195,13 @@ mod tests {
                 station_id: "st".into(),
                 endpoint_revision: 1,
                 credential_revision: 1,
+                account_revision: 1,
+                group_binding_id: None,
+                group_revision: None,
+                resolved_upstream_model: Some("gpt-test".into()),
+                model_alias_revision: 1,
+                capacity_domain: None,
+                capacity_domain_revision: None,
                 credential_available: true,
                 hard_eligible: true,
                 backup_only: false,

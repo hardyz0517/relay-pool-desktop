@@ -2,7 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use std::collections::HashSet;
 
-use crate::models::stations::{CreateStationInput, Station, UpdateStationInput};
+use crate::models::{
+    station_capacity_domains::{
+        ClearStationCapacityDomainInput, StationCapacityDomain, UpsertStationCapacityDomainInput,
+    },
+    stations::{CreateStationInput, Station, UpdateStationInput},
+};
 
 use super::{invalid_input, TypeDescriptor};
 
@@ -15,6 +20,9 @@ const MAX_REORDER_STATIONS: usize = 1_000;
 const MAX_CREDIT_PER_CNY: f64 = 1_000_000.0;
 const MAX_BALANCE_THRESHOLD_CNY: f64 = 1_000_000_000.0;
 const MAX_COLLECTION_INTERVAL_MINUTES: u16 = 10_080;
+const MAX_CAPACITY_PROVIDER_FAMILY_BYTES: usize = 128;
+const MAX_CAPACITY_DEPLOYMENT_BYTES: usize = 256;
+const MAX_CAPACITY_REGION_BYTES: usize = 128;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -189,6 +197,130 @@ impl DeleteStationInputDto {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReorderStationsInputDto {
     pub station_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StationCapacityDomainDto {
+    pub station_id: String,
+    pub provider_family: String,
+    pub deployment_identity: Option<String>,
+    pub region_identity: Option<String>,
+    pub revision: i64,
+    pub updated_at: String,
+}
+
+impl From<StationCapacityDomain> for StationCapacityDomainDto {
+    fn from(value: StationCapacityDomain) -> Self {
+        Self {
+            station_id: value.station_id,
+            provider_family: value.provider_family,
+            deployment_identity: value.deployment_identity,
+            region_identity: value.region_identity,
+            revision: value.revision,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StationCapacityDomainQueryInputDto {
+    pub station_id: String,
+}
+
+impl StationCapacityDomainQueryInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value, "The capacity-domain query payload is invalid.")?;
+        validate_station_id(&input.station_id)?;
+        Ok(input)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpsertStationCapacityDomainInputDto {
+    pub station_id: String,
+    pub expected_revision: i64,
+    pub provider_family: String,
+    pub deployment_identity: Option<String>,
+    pub region_identity: Option<String>,
+}
+
+impl UpsertStationCapacityDomainInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value, "The capacity-domain update payload is invalid.")?;
+        input.validate()?;
+        Ok(input)
+    }
+    pub fn into_domain(
+        self,
+    ) -> Result<UpsertStationCapacityDomainInput, crate::commands::error::CommandError> {
+        self.validate()?;
+        Ok(UpsertStationCapacityDomainInput {
+            station_id: self.station_id,
+            expected_revision: self.expected_revision,
+            provider_family: self.provider_family.trim().to_owned(),
+            deployment_identity: normalize_optional(self.deployment_identity),
+            region_identity: normalize_optional(self.region_identity),
+        })
+    }
+    fn validate(&self) -> Result<(), crate::commands::error::CommandError> {
+        validate_station_id(&self.station_id)?;
+        if self.expected_revision < 0 {
+            return Err(invalid_input(
+                "expectedRevision",
+                "out_of_range",
+                "The expected revision is invalid.",
+            ));
+        }
+        validate_bounded_text(
+            "providerFamily",
+            &self.provider_family,
+            MAX_CAPACITY_PROVIDER_FAMILY_BYTES,
+            false,
+        )?;
+        if let Some(value) = &self.deployment_identity {
+            validate_bounded_text(
+                "deploymentIdentity",
+                value,
+                MAX_CAPACITY_DEPLOYMENT_BYTES,
+                false,
+            )?;
+        }
+        if let Some(value) = &self.region_identity {
+            validate_bounded_text("regionIdentity", value, MAX_CAPACITY_REGION_BYTES, false)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClearStationCapacityDomainInputDto {
+    pub station_id: String,
+    pub expected_revision: i64,
+}
+
+impl ClearStationCapacityDomainInputDto {
+    pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value, "The capacity-domain clear payload is invalid.")?;
+        validate_station_id(&input.station_id)?;
+        if input.expected_revision <= 0 {
+            return Err(invalid_input(
+                "expectedRevision",
+                "out_of_range",
+                "The expected revision is invalid.",
+            ));
+        }
+        Ok(input)
+    }
+    pub fn into_domain(self) -> ClearStationCapacityDomainInput {
+        ClearStationCapacityDomainInput {
+            station_id: self.station_id,
+            expected_revision: self.expected_revision,
+        }
+    }
 }
 
 impl ReorderStationsInputDto {
@@ -473,6 +605,27 @@ export type DeleteStationInputDto = { id: string };
 
 export type ReorderStationsInputDto = { stationIds: string[] };
 
+export type StationCapacityDomainQueryInputDto = { stationId: string };
+
+export type UpsertStationCapacityDomainInputDto = {
+  stationId: string;
+  expectedRevision: number;
+  providerFamily: string;
+  deploymentIdentity: string | null;
+  regionIdentity: string | null;
+};
+
+export type ClearStationCapacityDomainInputDto = { stationId: string; expectedRevision: number };
+
+export type StationCapacityDomainDto = {
+  stationId: string;
+  providerFamily: string;
+  deploymentIdentity: string | null;
+  regionIdentity: string | null;
+  revision: number;
+  updatedAt: string;
+};
+
 export type StationDto = {
   id: string;
   name: string;
@@ -632,5 +785,70 @@ mod input_contract_tests {
         let domain = create.into_domain().expect("domain create");
         assert_eq!(domain.station_type, "newapi");
         assert_eq!(domain.name, "Provider");
+    }
+
+    #[test]
+    fn capacity_domain_inputs_reject_unknown_invalid_and_oversized_fields() {
+        let valid = serde_json::json!({
+            "stationId": "station-1",
+            "expectedRevision": 0,
+            "providerFamily": "openai-compatible",
+            "deploymentIdentity": "deployment-a",
+            "regionIdentity": "region-a"
+        });
+        assert_eq!(
+            UpsertStationCapacityDomainInputDto::parse(valid.clone())
+                .expect("valid capacity domain")
+                .into_domain()
+                .expect("valid domain input")
+                .provider_family,
+            "openai-compatible"
+        );
+
+        let mut unknown = valid.clone();
+        unknown["unexpected"] = serde_json::json!(true);
+        assert_eq!(
+            UpsertStationCapacityDomainInputDto::parse(unknown)
+                .expect_err("unknown field")
+                .code,
+            CommandErrorCode::InvalidInput
+        );
+
+        let mut invalid_revision = valid.clone();
+        invalid_revision["expectedRevision"] = serde_json::json!(-1);
+        assert_eq!(
+            UpsertStationCapacityDomainInputDto::parse(invalid_revision)
+                .expect_err("negative revision")
+                .code,
+            CommandErrorCode::InvalidInput
+        );
+
+        let mut empty_family = valid.clone();
+        empty_family["providerFamily"] = serde_json::json!("   ");
+        assert_eq!(
+            UpsertStationCapacityDomainInputDto::parse(empty_family)
+                .expect_err("empty family")
+                .code,
+            CommandErrorCode::InvalidInput
+        );
+
+        let mut oversized_region = valid;
+        oversized_region["regionIdentity"] =
+            serde_json::json!("x".repeat(MAX_CAPACITY_REGION_BYTES + 1));
+        assert_eq!(
+            UpsertStationCapacityDomainInputDto::parse(oversized_region)
+                .expect_err("oversized region")
+                .code,
+            CommandErrorCode::InvalidInput
+        );
+        assert_eq!(
+            ClearStationCapacityDomainInputDto::parse(serde_json::json!({
+                "stationId": "station-1",
+                "expectedRevision": 0
+            }))
+            .expect_err("clear requires an existing revision")
+            .code,
+            CommandErrorCode::InvalidInput
+        );
     }
 }

@@ -22,7 +22,7 @@ import {
   updateStationCredentials,
   updateStationKey,
 } from "@/lib/api/stationKeys";
-import { listStations, updateStation } from "@/lib/api/stations";
+import { clearStationCapacityDomain, getStationCapacityDomain, listStations, updateStation, upsertStationCapacityDomain } from "@/lib/api/stations";
 import {
   collectProviderDraftPreview,
   commitProviderDraft,
@@ -38,7 +38,7 @@ import { normalizeStationGroupOptions } from "@/lib/groupOptionViewModels";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { discoverCreatedStationKeyModels } from "@/lib/stationKeyModelDiscovery";
 import type { RemoteKeyCapability, RemoteStationKey, StationKey } from "@/lib/types/stationKeys";
-import type { StationType } from "@/lib/types/stations";
+import type { StationCapacityDomain, StationType } from "@/lib/types/stations";
 import type { CommonLoginOptions } from "@/lib/types/settings";
 import type { ProviderDraft } from "@/lib/types/providerDrafts";
 import {
@@ -150,6 +150,8 @@ export function useAddProviderPageController({
   });
   const [passwordProfileLoading, setPasswordProfileLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [capacityDomain, setCapacityDomain] = useState<StationCapacityDomain | null>(null);
+  const [capacityDomainSaving, setCapacityDomainSaving] = useState(false);
   const [initialDraftSnapshot, setInitialDraftSnapshot] = useState(() =>
     serializeProviderDraft(createDefaultProviderForm(), [], [createEmptyStationKeyDraft(0)]),
   );
@@ -346,6 +348,7 @@ export function useAddProviderPageController({
       setRemoteCapabilityError(null);
       setRemoteListError(null);
       setRemoteKeys([]);
+      setCapacityDomain(null);
       setCreateRemoteOpen(false);
       setRemoteKeyPendingDelete(null);
       setProviderDraftId(null);
@@ -395,6 +398,7 @@ export function useAddProviderPageController({
     setError(null);
     void Promise.all([
       listStations(),
+      getStationCapacityDomain(stationId),
       getStationCredentials(stationId),
       listStationKeys(stationId),
       listStationGroupBindings(stationId),
@@ -406,7 +410,7 @@ export function useAddProviderPageController({
         .then((keys) => ({ keys, error: null }))
         .catch((requestError) => ({ keys: [], error: readError(requestError) })),
     ])
-      .then(([stations, credentials, keys, groupBindings, groupRates, capabilityResult, discoveredRemoteKeysResult]) => {
+      .then(([stations, domain, credentials, keys, groupBindings, groupRates, capabilityResult, discoveredRemoteKeysResult]) => {
         if (!alive) {
           return;
         }
@@ -418,6 +422,7 @@ export function useAddProviderPageController({
         const nextGroupRows = dedupeGroupRows(groupBindingsToDrafts(groupBindings, groupRates));
         const nextKeyRows = keys.length ? keys.map(keyToDraft) : [];
         setForm(nextForm);
+        setCapacityDomain(domain);
         setLocalStationKeys(keys);
         setCurrentGroupOptions(groupBindingsToCurrentOptions(groupBindings, groupRates, station.creditPerCny));
         setGroupRows(nextGroupRows);
@@ -1055,6 +1060,36 @@ export function useAddProviderPageController({
     }
   }
 
+  async function handleSaveCapacityDomain(input: { providerFamily: string; deploymentIdentity: string; regionIdentity: string }) {
+    if (!activeStationId) return;
+    setCapacityDomainSaving(true);
+    try {
+      const saved = await upsertStationCapacityDomain({
+        stationId: activeStationId,
+        expectedRevision: capacityDomain?.revision ?? 0,
+        providerFamily: input.providerFamily.trim(),
+        deploymentIdentity: input.deploymentIdentity.trim() || null,
+        regionIdentity: input.regionIdentity.trim() || null,
+      });
+      setCapacityDomain(saved);
+      toast.success("容量域身份已保存");
+    } catch (requestError) {
+      toast.error("保存容量域身份失败", readError(requestError));
+    } finally { setCapacityDomainSaving(false); }
+  }
+
+  async function handleClearCapacityDomain() {
+    if (!activeStationId || !capacityDomain) return;
+    setCapacityDomainSaving(true);
+    try {
+      await clearStationCapacityDomain(activeStationId, capacityDomain.revision);
+      setCapacityDomain(null);
+      toast.success("容量域身份已清除");
+    } catch (requestError) {
+      toast.error("清除容量域身份失败", readError(requestError));
+    } finally { setCapacityDomainSaving(false); }
+  }
+
   function confirmDiscardChanges() {
     setDiscardConfirmOpen(false);
     void exitAndDiscardDraft();
@@ -1070,6 +1105,8 @@ export function useAddProviderPageController({
 
   return {
     activeStationId,
+    capacityDomain,
+    capacityDomainSaving,
     applyPreset,
     cancelDeleteImportedLocalKey,
     cancelDeleteRemoteKey,
@@ -1102,6 +1139,8 @@ export function useAddProviderPageController({
     handleScanRemoteKeys,
     handleStartManualAuthorization,
     handleStationTypeChange,
+    handleSaveCapacityDomain,
+    handleClearCapacityDomain,
     handleSubmit,
     handleSyncRemoteGroups,
     handleTestConnection,

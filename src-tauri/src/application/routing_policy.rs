@@ -34,7 +34,7 @@ impl RoutingPolicyStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RoutingPolicyAggregate {
     pub(crate) config: RoutingPolicyConfigV1,
     pub(crate) revision: u64,
@@ -170,7 +170,7 @@ pub(crate) fn compile_json(
     compile_config(&typed, source_revision, policy_version, system_version)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LegacyPolicyMapping {
     pub(crate) legacy: LegacyRoutingPolicy,
     pub(crate) preset: RoutingPolicyConfigV1,

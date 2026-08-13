@@ -77,6 +77,20 @@ pub(crate) trait RoutingRepository: Send + Sync {
         request: RouteRequestFacts,
         planning_snapshot: PlanningSnapshot,
     ) -> futures_util::future::BoxFuture<'static, Result<OperationalRouteSnapshot, String>>;
+
+    /// Reloads the authoritative execution row for a retry. The immutable
+    /// planning snapshot remains the expected commitment; this fresh read is
+    /// the current side of the resolver fence.
+    fn load_current_execution_target(
+        &self,
+        station_key_id: String,
+    ) -> futures_util::future::BoxFuture<'static, Result<Option<ExecutionTargetRef>, String>> {
+        Box::pin(async move {
+            Err(format!(
+                "current execution target reload is unavailable for {station_key_id}"
+            ))
+        })
+    }
 }
 
 impl RoutingRepository for RoutingExecutionRepository {
@@ -180,6 +194,14 @@ impl RoutingRepository for RoutingExecutionRepository {
                         station_key_id: candidate.station_key_id.clone(),
                         station_id: candidate.station_id.clone(),
                         endpoint_revision: candidate.endpoint_revision,
+                        credential_revision: candidate.credential_revision,
+                        account_revision: candidate.account_revision,
+                        group_binding_id: candidate.group_binding_id.clone(),
+                        group_revision: candidate.group_revision,
+                        resolved_upstream_model: candidate.resolved_upstream_model.clone(),
+                        model_alias_revision: candidate.model_alias_revision,
+                        capacity_domain: candidate.capacity_domain.clone(),
+                        capacity_domain_revision: candidate.capacity_domain_revision,
                         priority: 0,
                         tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
                         pricing: candidate.pricing.clone(),
@@ -194,6 +216,20 @@ impl RoutingRepository for RoutingExecutionRepository {
                 #[cfg(test)]
                 legacy_candidates: Vec::new(),
             })
+        })
+    }
+
+    fn load_current_execution_target(
+        &self,
+        station_key_id: String,
+    ) -> futures_util::future::BoxFuture<'static, Result<Option<ExecutionTargetRef>, String>> {
+        let routing = self.routing.clone();
+        Box::pin(async move {
+            routing
+                .load_operational_execution_target_refs(vec![station_key_id])
+                .await
+                .map_err(|error| format!("reload operational target ref failed: {error}"))
+                .map(|mut targets| targets.pop())
         })
     }
 }

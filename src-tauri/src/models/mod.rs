@@ -21,6 +21,7 @@ pub(crate) mod routing_read_models;
 pub mod secrets;
 pub mod settings;
 pub mod shared_capabilities;
+pub mod station_capacity_domains;
 pub mod station_endpoints;
 pub mod station_keys;
 pub mod stations;

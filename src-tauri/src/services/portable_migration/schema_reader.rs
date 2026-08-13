@@ -40,8 +40,6 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_change_incidents_lifecycle_severity_updated",
     "idx_change_incidents_station_key_lifecycle_updated",
     "idx_change_incidents_station_lifecycle_updated",
-    "idx_channel_monitor_runs_monitor_started",
-    "idx_channel_monitor_runs_station_started",
     "idx_channel_monitor_templates_list",
     "idx_channel_monitor_attempts_execution",
     "idx_channel_monitor_executions_monitor_started",
@@ -79,6 +77,8 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_route_decisions_cursor",
     "idx_request_attempts_station_key_terminal",
     "idx_request_logs_created",
+    "idx_request_routing_outcome_summaries_terminal",
+    "idx_request_terminal_outbox_replay",
     "idx_routing_attempt_costs_request",
     "idx_routing_observations_ingestion_order",
     "idx_routing_observations_scope_order",
@@ -88,6 +88,11 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_station_keys_routing_order",
     "idx_station_keys_station_id",
     "idx_stations_order",
+    "idx_routing_health_one_active_generation",
+    "idx_routing_health_observations_cursor",
+    "idx_routing_health_observations_scope_cursor",
+    "idx_routing_health_verdicts_planner",
+    "idx_routing_capability_model_planner",
 ];
 
 const IGNORED_DERIVED_TABLES_V1: &[&str] = &[
@@ -98,6 +103,9 @@ const IGNORED_DERIVED_TABLES_V1: &[&str] = &[
     // portable migration; accepting it keeps released databases importable.
     "station_endpoint_health",
     "station_key_health",
+    // Status Monitoring V2 backfilled these rows into execution/target/attempt
+    // facts before schema 34 removed the read-only compatibility table.
+    "channel_monitor_runs",
 ];
 
 const IGNORED_DERIVED_INDEXES_V1: &[&str] = &[
@@ -107,6 +115,21 @@ const IGNORED_DERIVED_INDEXES_V1: &[&str] = &[
     "idx_dashboard_request_metric_rollups_range",
     "idx_dashboard_request_cost_rollups_range",
     "idx_dashboard_request_cost_totals_rollups_range",
+    "idx_channel_monitor_runs_monitor_started",
+    "idx_channel_monitor_runs_station_started",
+];
+
+// Schema 35 introduced revision-fence triggers that keep `domain_revisions`
+// monotonically advanced when credentials, groups, keys, or model aliases
+// change. They are first-party schema objects; portable validation accepts
+// exactly these names and only when they target trusted user tables.
+const TRUSTED_TRIGGERS_V1: &[&str] = &[
+    "routing_health_station_account_revision",
+    "routing_health_station_group_revision",
+    "routing_health_station_group_revision_insert",
+    "routing_health_credential_revision",
+    "routing_health_model_alias_revision",
+    "station_capacity_domains_revision_after_update",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -388,7 +411,14 @@ async fn validate_schema_objects(
                     return Err(PortableMigrationValidationError::UnsupportedSchemaObject);
                 }
             }
-            "view" | "trigger" => {
+            "trigger" => {
+                if !TRUSTED_TRIGGERS_V1.contains(&name.as_str())
+                    || !trusted_tables.contains(table_name.as_str())
+                {
+                    return Err(PortableMigrationValidationError::UnsupportedSchemaObject);
+                }
+            }
+            "view" => {
                 return Err(PortableMigrationValidationError::UnsupportedSchemaObject);
             }
             _ => return Err(PortableMigrationValidationError::UnsupportedSchemaObject),
@@ -517,8 +547,8 @@ mod tests {
         let fingerprint = trusted_schema_fingerprint_v1();
 
         assert_eq!(fingerprint.sha256, fixture);
-        assert_eq!(fingerprint.table_count, 55);
-        assert_eq!(fingerprint.index_count, 58);
+        assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
+        assert_eq!(fingerprint.index_count, 63);
     }
 
     #[tokio::test]

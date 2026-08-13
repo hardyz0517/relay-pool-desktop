@@ -10,6 +10,7 @@ use crate::models::{
     stations::EndpointPingResult,
 };
 
+use crate::models::routing::RoutingGroupFilter;
 use crate::models::routing_policy::RoutingPolicyConfigV1;
 
 use super::{invalid_input, TypeDescriptor};
@@ -34,6 +35,9 @@ pub struct RoutingPolicyConfigV1Dto {
     pub allow_depleted_fallback: bool,
     pub affinity_enabled: bool,
     pub affinity_ttl_seconds: u32,
+    pub max_rate_multiplier: Option<f64>,
+    #[serde(default)]
+    pub routing_group_filter: RoutingGroupFilter,
 }
 
 impl From<RoutingPolicyConfigV1> for RoutingPolicyConfigV1Dto {
@@ -49,6 +53,8 @@ impl From<RoutingPolicyConfigV1> for RoutingPolicyConfigV1Dto {
             allow_depleted_fallback: value.allow_depleted_fallback,
             affinity_enabled: value.affinity_enabled,
             affinity_ttl_seconds: value.affinity_ttl_seconds,
+            max_rate_multiplier: value.max_rate_multiplier,
+            routing_group_filter: value.routing_group_filter,
         }
     }
 }
@@ -68,6 +74,8 @@ impl RoutingPolicyConfigV1Dto {
             allow_depleted_fallback: self.allow_depleted_fallback,
             affinity_enabled: self.affinity_enabled,
             affinity_ttl_seconds: self.affinity_ttl_seconds,
+            max_rate_multiplier: self.max_rate_multiplier,
+            routing_group_filter: self.routing_group_filter,
         };
         config.validate().map_err(|_| {
             invalid_input("config", "invalid_policy", "The routing policy is invalid.")

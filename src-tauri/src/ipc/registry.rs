@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "32c8a0601dfc1869a4ce27b953f41eb1bd520e7c422771c215323a0e9a27ba9d";
+    "8252023595121d55e51650a4907453b95a8bd0ffc0531c44f3984f16770385f0";
 
 #[cfg_attr(
     not(test),
@@ -99,6 +99,9 @@ macro_rules! ipc_command_registry {
             update_station => $crate::commands::stations::update_station,
             delete_station => $crate::commands::stations::delete_station,
             reorder_stations => $crate::commands::stations::reorder_stations,
+            get_station_capacity_domain => $crate::commands::stations::get_station_capacity_domain,
+            upsert_station_capacity_domain => $crate::commands::stations::upsert_station_capacity_domain,
+            clear_station_capacity_domain => $crate::commands::stations::clear_station_capacity_domain,
             create_or_resume_provider_draft => $crate::commands::provider_drafts::create_or_resume_provider_draft,
             get_provider_draft => $crate::commands::provider_drafts::get_provider_draft,
             patch_provider_draft => $crate::commands::provider_drafts::patch_provider_draft,
@@ -168,7 +171,6 @@ macro_rules! ipc_command_registry {
             create_channel_monitor => $crate::commands::channel_monitoring::create_channel_monitor,
             update_channel_monitor => $crate::commands::channel_monitoring::update_channel_monitor,
             delete_channel_monitor => $crate::commands::channel_monitoring::delete_channel_monitor,
-            list_channel_monitor_runs => $crate::commands::channel_monitoring::list_channel_monitor_runs,
             list_channel_monitor_templates => $crate::commands::channel_monitoring::list_channel_monitor_templates,
             create_channel_monitor_template => $crate::commands::channel_monitoring::create_channel_monitor_template,
             update_channel_monitor_template => $crate::commands::channel_monitoring::update_channel_monitor_template,
@@ -348,6 +350,22 @@ fn command_contract(name: &str) -> CommandContract {
         "reorder_stations" => migrated_mutation(
             "ReorderStationsInputDto",
             "Vec<StationDto>",
+            "idempotent",
+            false,
+        ),
+        "get_station_capacity_domain" => migrated_read(
+            "StationCapacityDomainQueryInputDto",
+            "Option<StationCapacityDomainDto>",
+        ),
+        "upsert_station_capacity_domain" => migrated_mutation(
+            "UpsertStationCapacityDomainInputDto",
+            "StationCapacityDomainDto",
+            "idempotent",
+            false,
+        ),
+        "clear_station_capacity_domain" => migrated_mutation(
+            "ClearStationCapacityDomainInputDto",
+            "()",
             "idempotent",
             false,
         ),
@@ -609,9 +627,6 @@ fn command_contract(name: &str) -> CommandContract {
             migrated_read("CollectorStationIdsInputDto", "Vec<CollectorSnapshotDto>")
         }
         "list_channel_monitors" => migrated_read("EmptyInputDto", "Vec<ChannelMonitorDto>"),
-        "list_channel_monitor_runs" => {
-            migrated_read("ChannelMonitorIdInputDto", "Vec<ChannelMonitorRunDto>")
-        }
         "list_channel_monitor_templates" => {
             migrated_read("EmptyInputDto", "Vec<ChannelMonitorRequestTemplateDto>")
         }
@@ -1167,6 +1182,22 @@ fn render_typescript(contract_hash: &str) -> String {
         )
         .replace(
             r#"export function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {"#,
+            r#"export function getStationCapacityDomain(input: StationCapacityDomainQueryInputDto): Promise<StationCapacityDomainDto | null> {
+  return invokeCommand<StationCapacityDomainDto | null>("get_station_capacity_domain", { input });
+}
+
+export function upsertStationCapacityDomain(input: UpsertStationCapacityDomainInputDto): Promise<StationCapacityDomainDto> {
+  return invokeCommand<StationCapacityDomainDto>("upsert_station_capacity_domain", { input });
+}
+
+export function clearStationCapacityDomain(input: ClearStationCapacityDomainInputDto): Promise<void> {
+  return invokeCommand<void>("clear_station_capacity_domain", { input });
+}
+
+export function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {"#,
+        )
+        .replace(
+            r#"export function listStationKeys(input: StationIdInputDto): Promise<StationKeyDto[]> {"#,
             r#"export function createOrResumeProviderDraft(input: CreateProviderDraftInputDto): Promise<ProviderDraftDto> {
   return invokeCommand<ProviderDraftDto>("create_or_resume_provider_draft", { input });
 }
@@ -1321,10 +1352,6 @@ export function listLatestCollectorSnapshots(input: CollectorStationIdsInputDto)
 
 export function listChannelMonitors(input: EmptyInputDto = {}): Promise<ChannelMonitorDto[]> {
   return invokeCommand<ChannelMonitorDto[]>("list_channel_monitors", { input });
-}
-
-export function listChannelMonitorRuns(input: ChannelMonitorIdInputDto): Promise<ChannelMonitorRunDto[]> {
-  return invokeCommand<ChannelMonitorRunDto[]>("list_channel_monitor_runs", { input });
 }
 
 export function listChannelMonitorTemplates(input: EmptyInputDto = {}): Promise<ChannelMonitorRequestTemplateDto[]> {
@@ -1987,7 +2014,6 @@ mod tests {
             "get_channel_monitor_execution",
             "list_channel_monitor_attempts",
             "list_channel_monitor_executions",
-            "list_channel_monitor_runs",
             "list_channel_monitor_templates",
             "list_channel_monitors",
             "list_monitoring_capabilities",
@@ -2497,7 +2523,6 @@ mod tests {
             );
         }
         for wrapper in [
-            "listChannelMonitorRuns",
             "listChannelMonitorTemplates",
             "listChannelMonitors",
             "listChannelMonitorExecutions",

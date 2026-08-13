@@ -42,6 +42,7 @@ function Invoke-Checked {
 function Invoke-ArchitectureGates {
     Invoke-Checked "Architecture bypass fixtures" node @("scripts/architecture/check-fixtures.mjs")
     Invoke-Checked "TypeScript boundaries" node @("scripts/architecture/check-typescript-boundaries.mjs")
+    Invoke-Checked "Rust test topology" node @("scripts/architecture/check-rust-test-topology.mjs")
     Invoke-Checked "Generated IPC bindings" $pnpm @("generate:bindings", "--check")
     Invoke-Checked "Command registry" node @("scripts/architecture/check-command-registry.mjs")
     Invoke-Checked "Tauri security" node @("scripts/architecture/check-tauri-security.mjs")

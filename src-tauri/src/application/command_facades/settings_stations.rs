@@ -3,10 +3,15 @@ use std::sync::Arc;
 use crate::{
     application::{
         error::ApplicationError, queries::station_assets::StationAssetsQuery,
-        settings::SettingsService, stations::StationService,
+        settings::SettingsService, station_capacity_domains::StationCapacityDomainService,
+        stations::StationService,
     },
     models::{
         settings::{AppSettings, UpdateSettingsInput},
+        station_capacity_domains::{
+            ClearStationCapacityDomainInput, StationCapacityDomain,
+            UpsertStationCapacityDomainInput,
+        },
         stations::{CreateStationInput, Station, UpdateStationInput},
     },
     TrayBehavior, TrayBehaviorState,
@@ -18,6 +23,7 @@ pub(crate) struct SettingsStationsCommandFacade {
     settings: Arc<SettingsService>,
     tray_behavior: Arc<TrayBehaviorState>,
     station_assets: Arc<StationAssetsQuery>,
+    station_capacity_domains: Arc<StationCapacityDomainService>,
 }
 
 impl SettingsStationsCommandFacade {
@@ -25,6 +31,7 @@ impl SettingsStationsCommandFacade {
         stations: Arc<StationService>,
         settings: Arc<SettingsService>,
         station_assets: Arc<StationAssetsQuery>,
+        station_capacity_domains: Arc<StationCapacityDomainService>,
         tray_behavior: Arc<TrayBehaviorState>,
     ) -> Self {
         Self {
@@ -32,6 +39,7 @@ impl SettingsStationsCommandFacade {
             settings,
             tray_behavior,
             station_assets,
+            station_capacity_domains,
         }
     }
 
@@ -71,6 +79,27 @@ impl SettingsStationsCommandFacade {
         station_ids: Vec<String>,
     ) -> Result<Vec<Station>, ApplicationError> {
         self.stations.reorder(station_ids).await
+    }
+
+    pub(crate) async fn get_station_capacity_domain(
+        &self,
+        station_id: String,
+    ) -> Result<Option<StationCapacityDomain>, ApplicationError> {
+        self.station_capacity_domains.get(station_id).await
+    }
+
+    pub(crate) async fn upsert_station_capacity_domain(
+        &self,
+        input: UpsertStationCapacityDomainInput,
+    ) -> Result<StationCapacityDomain, ApplicationError> {
+        self.station_capacity_domains.upsert(input).await
+    }
+
+    pub(crate) async fn clear_station_capacity_domain(
+        &self,
+        input: ClearStationCapacityDomainInput,
+    ) -> Result<(), ApplicationError> {
+        self.station_capacity_domains.clear(input).await
     }
 
     pub(crate) async fn get_settings(&self) -> Result<AppSettings, ApplicationError> {

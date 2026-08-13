@@ -5,6 +5,7 @@ use crate::persistence::error::PersistenceError;
 #[cfg(not(test))]
 use super::dashboard_metrics_rollup::record_cost_aggregate_rollup;
 pub(crate) use super::request_cost_write::RequestCostAggregateWrite;
+use super::request_log_write::RequestRoutingOutcomeSummaryWrite;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct RequestOutcomeStore;
@@ -33,7 +34,143 @@ pub(crate) struct InsertAck {
     pub(crate) inserted: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutingOutcomeSummaryRow {
+    pub(crate) request_id: String,
+    pub(crate) profile_version: String,
+    pub(crate) terminal_kind: String,
+    pub(crate) terminal_code: String,
+    pub(crate) classification: String,
+    pub(crate) confidence: String,
+    pub(crate) evidence_source: String,
+    pub(crate) request_accepted: String,
+    pub(crate) send_phase: String,
+    pub(crate) replay_disposition: String,
+    pub(crate) billing_state: String,
+    pub(crate) retry_disposition: String,
+    pub(crate) effect_summary: String,
+    pub(crate) failure_domain_commitment_version: Option<i64>,
+    pub(crate) failure_domain_commitment_digest: Option<String>,
+    pub(crate) attempt_count: i64,
+    pub(crate) fallback_count: i64,
+    pub(crate) terminal_at_ms: i64,
+}
+
 impl RequestOutcomeStore {
+    pub(crate) async fn routing_outcome_summary(
+        &self,
+        connection: &mut SqliteConnection,
+        request_id: &str,
+    ) -> Result<Option<RoutingOutcomeSummaryRow>, PersistenceError> {
+        let row = sqlx::query(
+            "SELECT request_id, profile_version, terminal_kind, terminal_code, classification,
+                    confidence, evidence_source, request_accepted, send_phase, replay_disposition,
+                    billing_state, retry_disposition, effect_summary, failure_domain_commitment_version,
+                    failure_domain_commitment_digest, attempt_count, fallback_count, terminal_at_ms
+             FROM request_routing_outcome_summaries WHERE request_id = ?",
+        )
+        .bind(request_id)
+        .fetch_optional(&mut *connection)
+        .await?;
+        Ok(row.map(|row| RoutingOutcomeSummaryRow {
+            request_id: row.get(0),
+            profile_version: row.get(1),
+            terminal_kind: row.get(2),
+            terminal_code: row.get(3),
+            classification: row.get(4),
+            confidence: row.get(5),
+            evidence_source: row.get(6),
+            request_accepted: row.get(7),
+            send_phase: row.get(8),
+            replay_disposition: row.get(9),
+            billing_state: row.get(10),
+            retry_disposition: row.get(11),
+            effect_summary: row.get(12),
+            failure_domain_commitment_version: row.get(13),
+            failure_domain_commitment_digest: row.get(14),
+            attempt_count: row.get(15),
+            fallback_count: row.get(16),
+            terminal_at_ms: row.get(17),
+        }))
+    }
+
+    pub(crate) async fn insert_routing_outcome_summary(
+        &self,
+        connection: &mut SqliteConnection,
+        request_id: &str,
+        record: &RequestRoutingOutcomeSummaryWrite,
+    ) -> Result<InsertAck, PersistenceError> {
+        let inserted = sqlx::query(
+            "INSERT OR IGNORE INTO request_routing_outcome_summaries (
+                request_id, profile_version, terminal_kind, terminal_code, classification,
+                confidence, evidence_source, request_accepted, send_phase, replay_disposition,
+                billing_state, retry_disposition, effect_summary, failure_domain_commitment_version,
+                failure_domain_commitment_digest, attempt_count, fallback_count, terminal_at_ms
+             ) VALUES (?, 'routing_outcome_v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(request_id)
+        .bind(&record.terminal_kind)
+        .bind(&record.terminal_code)
+        .bind(&record.classification)
+        .bind(&record.confidence)
+        .bind(&record.evidence_source)
+        .bind(&record.request_accepted)
+        .bind(&record.send_phase)
+        .bind(&record.replay_disposition)
+        .bind(&record.billing_state)
+        .bind(&record.retry_disposition)
+        .bind(&record.effect_summary)
+        .bind(record.failure_domain_commitment_version)
+        .bind(record.failure_domain_commitment_digest.as_deref())
+        .bind(i64::from(record.attempt_count))
+        .bind(i64::from(record.fallback_count))
+        .bind(record.terminal_at_ms)
+        .execute(&mut *connection)
+        .await?
+        .rows_affected();
+        if inserted > 0 {
+            return Ok(InsertAck { inserted: true });
+        }
+        let existing = sqlx::query(
+            "SELECT terminal_kind, terminal_code, classification, confidence, evidence_source,
+                    request_accepted, send_phase, replay_disposition, billing_state, retry_disposition,
+                    effect_summary, failure_domain_commitment_version, failure_domain_commitment_digest,
+                    attempt_count, fallback_count, terminal_at_ms
+             FROM request_routing_outcome_summaries WHERE request_id = ?",
+        )
+        .bind(request_id)
+        .fetch_optional(&mut *connection)
+        .await?
+        .ok_or_else(|| {
+            PersistenceError::InvariantViolation(
+                "duplicate routing outcome missing canonical row".to_string(),
+            )
+        })?;
+        let matches = existing.get::<String, _>(0) == record.terminal_kind
+            && existing.get::<String, _>(1) == record.terminal_code
+            && existing.get::<String, _>(2) == record.classification
+            && existing.get::<String, _>(3) == record.confidence
+            && existing.get::<String, _>(4) == record.evidence_source
+            && existing.get::<String, _>(5) == record.request_accepted
+            && existing.get::<String, _>(6) == record.send_phase
+            && existing.get::<String, _>(7) == record.replay_disposition
+            && existing.get::<String, _>(8) == record.billing_state
+            && existing.get::<String, _>(9) == record.retry_disposition
+            && existing.get::<String, _>(10) == record.effect_summary
+            && existing.get::<Option<i64>, _>(11) == record.failure_domain_commitment_version
+            && existing.get::<Option<String>, _>(12) == record.failure_domain_commitment_digest
+            && existing.get::<i64, _>(13) == i64::from(record.attempt_count)
+            && existing.get::<i64, _>(14) == i64::from(record.fallback_count);
+        // The first projection fixes `terminal_at_ms`; it is audit metadata,
+        // not part of the terminal's idempotency identity.
+        if !matches {
+            return Err(PersistenceError::InvariantViolation(
+                "duplicate routing outcome does not match canonical record".to_string(),
+            ));
+        }
+        Ok(InsertAck { inserted: false })
+    }
+
     pub(crate) async fn insert_attempt_cost(
         &self,
         connection: &mut SqliteConnection,

@@ -150,6 +150,15 @@ impl StationCatalogStore {
         })?)
         .execute(write.connection())
         .await?;
+        sqlx::query(
+            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
+        )
+        .bind(format!("station_account:{}", station.id))
+        .bind(station.now.parse::<i64>().map_err(|_| {
+            PersistenceError::InvariantViolation("station timestamp is not numeric".into())
+        })?)
+        .execute(write.connection())
+        .await?;
 
         station_by_id(write.connection(), &station.id).await
     }
@@ -217,7 +226,7 @@ async fn update_station(
 ) -> Result<Station, PersistenceError> {
     let existing = sqlx::query(
         r#"
-        SELECT api_key, api_key_secret_id, website_url, api_base_url, endpoint_revision
+        SELECT api_key, api_key_secret_id, station_type, website_url, api_base_url, endpoint_revision
         FROM stations
         WHERE id = ?1
         "#,
@@ -232,6 +241,7 @@ async fn update_station(
     let existing_secret_id: Option<String> = existing.get("api_key_secret_id");
     let existing_website_url: String = existing.get("website_url");
     let existing_api_base_url: String = existing.get("api_base_url");
+    let existing_station_type: String = existing.get("station_type");
     let existing_endpoint_revision: i64 = existing.get("endpoint_revision");
 
     let new_api_key = change
@@ -255,7 +265,10 @@ async fn update_station(
     let api_origin_changed = endpoints_changed
         && !same_origin(&existing_api_base_url, &endpoints.api_base_url)
             .map_err(|_| invalid_persisted_station_endpoint())?;
-    let endpoint_revision = if endpoints_changed {
+    // Station type selects provider rule and capacity semantics. Treat it as
+    // execution configuration so an update fences already planned attempts.
+    let station_type_changed = existing_station_type != change.input.station_type;
+    let endpoint_revision = if endpoints_changed || station_type_changed {
         existing_endpoint_revision.max(1) + 1
     } else {
         existing_endpoint_revision.max(1)

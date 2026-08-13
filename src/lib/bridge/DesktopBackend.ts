@@ -25,6 +25,7 @@ import {
   createNewDataStore as createNewDataStoreBinding,
   createRemoteStationKey as createRemoteStationKeyBinding,
   createStation as createStationBinding,
+  clearStationCapacityDomain as clearStationCapacityDomainBinding,
   createStationKey as createStationKeyBinding,
   collectStationInfo as collectStationInfoBinding,
   collectStationTask as collectStationTaskBinding,
@@ -62,6 +63,7 @@ import {
   getRuntimeStatus as getRuntimeStatusBinding,
   getSettings as getSettingsBinding,
   getStationCredentials as getStationCredentialsBinding,
+  getStationCapacityDomain as getStationCapacityDomainBinding,
   getStationKeyCapabilities as getStationKeyCapabilitiesBinding,
   getStationKeyHealth as getStationKeyHealthBinding,
   importRelayPoolToCcswitch as importRelayPoolToCcswitchBinding,
@@ -141,6 +143,7 @@ import {
   upsertStationGroupBinding as upsertStationGroupBindingBinding,
   updateSettings as updateSettingsBinding,
   updateStation as updateStationBinding,
+  upsertStationCapacityDomain as upsertStationCapacityDomainBinding,
   updateChannelMonitor as updateChannelMonitorBinding,
   updateChannelMonitorTemplate as updateChannelMonitorTemplateBinding,
   updateStationCredentials as updateStationCredentialsBinding,
@@ -228,6 +231,9 @@ export class DesktopBackend implements BackendClient {
     openStationWebsite: (url: string) => openExternalUrlBinding({ url }),
     reorderStations: (stationIds: string[]) =>
       reorderStationsBinding({ stationIds }).then((stations) => stations.map(normalizeStation)),
+    getStationCapacityDomain: (stationId: string) => getStationCapacityDomainBinding({ stationId }),
+    upsertStationCapacityDomain: (input: Parameters<BackendClient["stations"]["upsertStationCapacityDomain"]>[0]) => upsertStationCapacityDomainBinding(input),
+    clearStationCapacityDomain: (stationId: string, expectedRevision: number) => clearStationCapacityDomainBinding({ stationId, expectedRevision }),
     listStationEndpointHealth: () =>
       listStationEndpointHealthBinding().then((health) => health.map(normalizeStationEndpointHealth)),
     pingStationEndpoint: (stationId: string) =>

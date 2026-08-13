@@ -237,7 +237,7 @@ target_tables = {
     "remote_station_keys", "station_key_capabilities", "model_aliases", "collector_runs",
     "collector_snapshots", "station_group_bindings", "group_rate_records", "pricing_rules",
     "model_base_prices", "balance_snapshots", "channel_monitor_request_templates",
-    "channel_monitors", "channel_monitor_runs", "request_logs", "request_attempts", "change_events",
+    "channel_monitors", "request_logs", "request_attempts", "change_events",
 }
 tables = [row[0] for row in connection.execute(
     "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"

@@ -183,6 +183,12 @@ fn attempt_record(request_id: &str) -> AttemptTerminalRecord {
             station_id: "station-concurrent".to_string(),
             station_key_id: "key-concurrent".to_string(),
             endpoint_revision: 1,
+            credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: None,
+            group_revision: None,
+            resolved_upstream_model: None,
+            model_alias_revision: 1,
             started_at_ms: 2,
         },
         terminal: AttemptTerminal::Succeeded,
@@ -205,6 +211,7 @@ fn final_record(request_id: &str) -> FinalRequestRecord {
         attempt_count: 1,
         fallback_count: 0,
         annotations: RequestLogAnnotations::default(),
+        routing_outcome: None,
     }
 }
 

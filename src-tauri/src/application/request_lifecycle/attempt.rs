@@ -6,10 +6,16 @@ pub(crate) struct AttemptContext {
     pub station_id: String,
     pub station_key_id: String,
     pub endpoint_revision: i64,
+    pub credential_revision: i64,
+    pub account_revision: i64,
+    pub group_binding_id: Option<String>,
+    pub group_revision: Option<i64>,
+    pub resolved_upstream_model: Option<String>,
+    pub model_alias_revision: i64,
     pub started_at_ms: i64,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttemptPhase {
     Started,
@@ -19,7 +25,7 @@ pub(crate) enum AttemptPhase {
     Terminal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     test,
     allow(
@@ -35,7 +41,7 @@ pub(crate) enum FailureBlame {
     Persistence,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     test,
     allow(
@@ -73,7 +79,7 @@ pub(crate) enum RetryDisposition {
     StopRequest,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(
     test,
     allow(
@@ -93,6 +99,63 @@ pub(crate) enum HealthEffect {
     },
     HardFail,
     Neutral,
+    Scoped(DurableHealthEffect),
+    Capability(DurableCapabilityEffect),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DurableHealthScope {
+    Credential {
+        station_key_id: String,
+    },
+    Account {
+        station_id: String,
+    },
+    Group {
+        station_id: String,
+        group_binding_id: String,
+    },
+    Endpoint {
+        station_id: String,
+        endpoint_revision: i64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DurableFailureDimension {
+    Credential,
+    AccountLifecycle,
+    GroupSubscription,
+    Balance,
+    Quota,
+    RateLimit,
+    EndpointAvailability,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DurableVerdict {
+    Degraded,
+    Cooldown { retry_after_ms: Option<i64> },
+    Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DurableHealthEffect {
+    pub scope: DurableHealthScope,
+    pub dimension: DurableFailureDimension,
+    pub verdict: DurableVerdict,
+    pub evidence_code: String,
+    pub classifier_profile_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DurableCapabilityEffect {
+    ConfirmUnsupportedModel {
+        station_key_id: String,
+        model: String,
+        evidence_code: String,
+        classifier_profile_version: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,7 +189,7 @@ pub(crate) struct AttemptTerminalRecord {
     pub terminal_at_ms: i64,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AttemptInvariantError {
     InvalidTransition {
@@ -136,7 +199,7 @@ pub(crate) enum AttemptInvariantError {
     AlreadyTerminal,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[derive(Debug)]
 pub(crate) struct AttemptLifecycle {
     context: AttemptContext,
@@ -144,7 +207,7 @@ pub(crate) struct AttemptLifecycle {
     terminal: Option<AttemptTerminal>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 impl AttemptLifecycle {
     pub(crate) fn new(context: AttemptContext) -> Self {
         Self {
@@ -218,7 +281,7 @@ impl AttemptLifecycle {
 
     fn invalid(&self, event: &'static str) -> AttemptInvariantError {
         AttemptInvariantError::InvalidTransition {
-            phase: self.phase,
+            phase: self.phase.clone(),
             event,
         }
     }
@@ -234,6 +297,12 @@ mod tests {
             station_id: "station-1".to_string(),
             station_key_id: "key-1".to_string(),
             endpoint_revision: 1,
+            credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: None,
+            group_revision: None,
+            resolved_upstream_model: None,
+            model_alias_revision: 1,
             started_at_ms: 1,
         })
     }

@@ -6,8 +6,9 @@ use crate::{
     commands::error,
     ipc::dto::{
         stations::{
-            CreateStationInputDto, DeleteStationInputDto, ReorderStationsInputDto,
-            UpdateStationInputDto,
+            ClearStationCapacityDomainInputDto, CreateStationInputDto, DeleteStationInputDto,
+            ReorderStationsInputDto, StationCapacityDomainDto, StationCapacityDomainQueryInputDto,
+            UpdateStationInputDto, UpsertStationCapacityDomainInputDto,
         },
         EmptyInputDto, StationDto,
     },
@@ -25,6 +26,53 @@ pub async fn list_stations(
             .list_stations()
             .await
             .map(|stations| stations.into_iter().map(StationDto::from).collect())
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn get_station_capacity_domain(
+    facade: State<'_, SettingsStationsCommandFacade>,
+    input: Value,
+) -> Result<Option<StationCapacityDomainDto>, error::CommandError> {
+    correlation::in_command_scope("get_station_capacity_domain", async {
+        let input = StationCapacityDomainQueryInputDto::parse(input)?;
+        facade
+            .get_station_capacity_domain(input.station_id)
+            .await
+            .map(|value| value.map(StationCapacityDomainDto::from))
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn upsert_station_capacity_domain(
+    facade: State<'_, SettingsStationsCommandFacade>,
+    input: Value,
+) -> Result<StationCapacityDomainDto, error::CommandError> {
+    correlation::in_command_scope("upsert_station_capacity_domain", async {
+        let input = UpsertStationCapacityDomainInputDto::parse(input)?.into_domain()?;
+        facade
+            .upsert_station_capacity_domain(input)
+            .await
+            .map(StationCapacityDomainDto::from)
+            .map_err(super::public_command_application_error)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn clear_station_capacity_domain(
+    facade: State<'_, SettingsStationsCommandFacade>,
+    input: Value,
+) -> Result<(), error::CommandError> {
+    correlation::in_command_scope("clear_station_capacity_domain", async {
+        let input = ClearStationCapacityDomainInputDto::parse(input)?.into_domain();
+        facade
+            .clear_station_capacity_domain(input)
+            .await
             .map_err(super::public_command_application_error)
     })
     .await

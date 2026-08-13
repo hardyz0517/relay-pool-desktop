@@ -4,6 +4,7 @@ import { Button, ConfirmDialog, IconButton, PageForm } from "@/components/ui";
 import { CreateRemoteKeyDialog } from "./components/CreateRemoteKeyDialog";
 import {
   ProviderConnectionSection,
+  CapacityDomainSection,
   ProviderGroupsSection,
   ProviderKeysSection,
   ProviderOptionsSection,
@@ -19,6 +20,8 @@ type AddProviderPageProps = AddProviderPageControllerOptions;
 export function AddProviderPage(props: AddProviderPageProps) {
   const {
     activeStationId,
+    capacityDomain,
+    capacityDomainSaving,
     applyPreset,
     cancelDeleteImportedLocalKey,
     cancelDeleteRemoteKey,
@@ -44,6 +47,8 @@ export function AddProviderPage(props: AddProviderPageProps) {
     handleCommonEmailSelect,
     handleCommonPasswordSelect,
     handleCopyWebsiteUrl,
+    handleSaveCapacityDomain,
+    handleClearCapacityDomain,
     handleCreateRemoteKey,
     handleGroupRowsChange,
     handleImportRemoteKey,
@@ -180,6 +185,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
 
           <aside className="grid content-start gap-[var(--shell-page-gap)]">
             <ProviderOptionsSection form={form} onFormChange={setForm} />
+            {activeStationId && <CapacityDomainSection domain={capacityDomain} disabled={saving || loading || capacityDomainSaving} onSave={(input) => void handleSaveCapacityDomain(input)} onClear={() => void handleClearCapacityDomain()} />}
           </aside>
         </section>
       </PageForm>

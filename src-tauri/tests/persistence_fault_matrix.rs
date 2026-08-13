@@ -54,13 +54,6 @@ mod persistence {
     }
 }
 
-mod runtime_composition {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/runtime_composition.rs"
-    ));
-}
-
 use persistence::{
     upgrade_fault::{
         AtomicStep, NoUpgradeFaults, TombstoneStep, UpgradeFailpoint, UpgradeFaultInjector,
@@ -84,19 +77,9 @@ use persistence::{
         V2CandidateState,
     },
 };
-use runtime_composition::{
-    drain_finalization, register_ready_services_in, ReadyServiceBundle, ReadyServiceRegistry,
-    RuntimeCompositionError,
-};
+use relay_pool_desktop_lib::test_support::runtime_composition_scenarios;
 use sha2::{Digest, Sha256};
-use std::{
-    any::{Any, TypeId},
-    cell::Cell,
-    collections::HashMap,
-    fs,
-    path::Path,
-    sync::Mutex,
-};
+use std::{cell::Cell, fs, path::Path};
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const HASH_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -262,33 +245,7 @@ fn service_registration_fault_preserves_ready_generation_and_protected_artifacts
     let before = protected_evidence(&source, &backup);
     let authoritative = ready_generation_two();
     let recovery = RecoveryPlanner::plan(authoritative.clone());
-    let fault = OneShotUpgradeFault::new(UpgradeFailpoint::ServiceRegistration);
-    let mut state = EquivalentTauriStateManager::default();
-
-    let error = register_ready_services_in(
-        &fault,
-        &mut state,
-        ReadyServiceBundle::new(
-            ManagedSlotOne(1),
-            ManagedSlotTwo(1),
-            ManagedSlotThree(1),
-            ManagedSlotFour(1),
-            ManagedSlotFive(1),
-        ),
-    )
-    .expect_err("service registration injection must fail closed");
-
-    assert_eq!(
-        error,
-        RuntimeCompositionError::Injected(UpgradeInjectedFailure::new(
-            UpgradeFailpoint::ServiceRegistration,
-        ))
-    );
-    assert!(state.try_state::<ManagedSlotOne>().is_none());
-    assert!(state.try_state::<ManagedSlotTwo>().is_none());
-    assert!(state.try_state::<ManagedSlotThree>().is_none());
-    assert!(state.try_state::<ManagedSlotFour>().is_none());
-    assert!(state.try_state::<ManagedSlotFive>().is_none());
+    runtime_composition_scenarios::registration_fault_publishes_nothing();
     assert_eq!(
         authoritative.config_generation,
         ConfigGeneration::Generation2
@@ -298,137 +255,16 @@ fn service_registration_fault_preserves_ready_generation_and_protected_artifacts
         RecoveryPlan::Halt(RecoveryHaltReason::NoUpgradeInProgress)
     );
     assert_eq!(protected_evidence(&source, &backup), before);
-    assert_composition_redacted(&error, root.path());
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ManagedSlotOne(u8);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ManagedSlotTwo(u8);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ManagedSlotThree(u8);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ManagedSlotFour(u8);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ManagedSlotFive(u8);
-
-#[derive(Default)]
-struct EquivalentTauriStateManager {
-    states: Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>,
-}
-
-impl EquivalentTauriStateManager {
-    fn manage<T: Send + Sync + 'static>(&self, state: T) -> bool {
-        let mut states = self.states.lock().expect("state manager poisoned");
-        let type_id = TypeId::of::<T>();
-        if states.contains_key(&type_id) {
-            return false;
-        }
-        states.insert(type_id, Box::new(state));
-        true
-    }
-
-    fn try_state<T: Copy + Send + Sync + 'static>(&self) -> Option<T> {
-        self.states
-            .lock()
-            .expect("state manager poisoned")
-            .get(&TypeId::of::<T>())
-            .and_then(|state| state.downcast_ref::<T>())
-            .copied()
-    }
-}
-
-impl ReadyServiceRegistry for EquivalentTauriStateManager {
-    fn contains<T: Send + Sync + 'static>(&self) -> bool {
-        self.states
-            .lock()
-            .expect("state manager poisoned")
-            .contains_key(&TypeId::of::<T>())
-    }
-
-    fn manage<T: Send + Sync + 'static>(&mut self, state: T) -> bool {
-        EquivalentTauriStateManager::manage(self, state)
-    }
 }
 
 #[test]
 fn tauri_equivalent_state_manager_never_observes_partial_ready_services() {
-    for occupied_slot in 0..5 {
-        let mut state = EquivalentTauriStateManager::default();
-
-        match occupied_slot {
-            0 => assert!(state.manage(ManagedSlotOne(99))),
-            1 => assert!(state.manage(ManagedSlotTwo(99))),
-            2 => assert!(state.manage(ManagedSlotThree(99))),
-            3 => assert!(state.manage(ManagedSlotFour(99))),
-            4 => assert!(state.manage(ManagedSlotFive(99))),
-            _ => unreachable!(),
-        }
-
-        let error = register_ready_services_in(
-            &NoUpgradeFaults,
-            &mut state,
-            ReadyServiceBundle::new(
-                ManagedSlotOne(1),
-                ManagedSlotTwo(1),
-                ManagedSlotThree(1),
-                ManagedSlotFour(1),
-                ManagedSlotFive(1),
-            ),
-        )
-        .expect_err("an occupied state slot must fail closed");
-
-        assert_eq!(error, RuntimeCompositionError::StateSlotOccupied);
-        let observed = [
-            state.try_state::<ManagedSlotOne>().map(|state| state.0),
-            state.try_state::<ManagedSlotTwo>().map(|state| state.0),
-            state.try_state::<ManagedSlotThree>().map(|state| state.0),
-            state.try_state::<ManagedSlotFour>().map(|state| state.0),
-            state.try_state::<ManagedSlotFive>().map(|state| state.0),
-        ];
-        let expected = std::array::from_fn(|index| (index == occupied_slot).then_some(99));
-        assert_eq!(
-            observed, expected,
-            "slot {occupied_slot} collision must not publish any other ready service"
-        );
-    }
+    runtime_composition_scenarios::occupied_slot_never_causes_partial_publication();
 }
 
 #[test]
 fn tauri_equivalent_state_manager_publishes_the_complete_ready_bundle() {
-    let mut state = EquivalentTauriStateManager::default();
-
-    register_ready_services_in(
-        &NoUpgradeFaults,
-        &mut state,
-        ReadyServiceBundle::new(
-            ManagedSlotOne(1),
-            ManagedSlotTwo(2),
-            ManagedSlotThree(3),
-            ManagedSlotFour(4),
-            ManagedSlotFive(5),
-        ),
-    )
-    .expect("a vacant registry must publish the complete ready bundle");
-
-    assert_eq!(state.try_state::<ManagedSlotOne>(), Some(ManagedSlotOne(1)));
-    assert_eq!(state.try_state::<ManagedSlotTwo>(), Some(ManagedSlotTwo(2)));
-    assert_eq!(
-        state.try_state::<ManagedSlotThree>(),
-        Some(ManagedSlotThree(3))
-    );
-    assert_eq!(
-        state.try_state::<ManagedSlotFour>(),
-        Some(ManagedSlotFour(4))
-    );
-    assert_eq!(
-        state.try_state::<ManagedSlotFive>(),
-        Some(ManagedSlotFive(5))
-    );
+    runtime_composition_scenarios::vacant_registry_publishes_complete_bundle();
 }
 
 #[tokio::test]
@@ -441,23 +277,7 @@ async fn finalization_drain_fault_preserves_ready_generation_and_protected_artif
     let before = protected_evidence(&source, &backup);
     let authoritative = ready_generation_two();
     let recovery = RecoveryPlanner::plan(authoritative.clone());
-    let drains = Cell::new(0);
-    let fault = OneShotUpgradeFault::new(UpgradeFailpoint::FinalizationDrain);
-
-    let error = drain_finalization(&fault, async {
-        drains.set(drains.get() + 1);
-        Ok(())
-    })
-    .await
-    .expect_err("finalization drain injection must fail closed");
-
-    assert_eq!(
-        error,
-        RuntimeCompositionError::Injected(UpgradeInjectedFailure::new(
-            UpgradeFailpoint::FinalizationDrain,
-        ))
-    );
-    assert_eq!(drains.get(), 0, "injected drain must not be acknowledged");
+    runtime_composition_scenarios::finalization_drain_fault_does_not_poll_work().await;
     assert_eq!(
         authoritative.config_generation,
         ConfigGeneration::Generation2
@@ -467,20 +287,6 @@ async fn finalization_drain_fault_preserves_ready_generation_and_protected_artif
         RecoveryPlan::Halt(RecoveryHaltReason::NoUpgradeInProgress)
     );
     assert_eq!(protected_evidence(&source, &backup), before);
-    assert_composition_redacted(&error, root.path());
-}
-
-fn assert_composition_redacted(error: &RuntimeCompositionError, root: &Path) {
-    let diagnostic = error.to_string();
-    assert!(!diagnostic.contains(SECRET_CANARY), "secret leaked");
-    assert!(
-        !diagnostic.contains(&root.display().to_string()),
-        "absolute path leaked"
-    );
-    assert!(
-        diagnostic.starts_with("persistence_upgrade_fault_injected at runtime."),
-        "diagnostic must use a bounded typed category: {diagnostic}"
-    );
 }
 
 fn assert_injected_at(error: UpgradeExecutionError, expected: UpgradeFailpoint) {

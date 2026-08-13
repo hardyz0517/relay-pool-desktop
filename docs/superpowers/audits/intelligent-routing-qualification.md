@@ -2,6 +2,38 @@
 
 Status: locally qualified; live-provider and release-machine qualification are separate.
 
+## 上游错误分类与重试范围修订（2026-08-13）
+
+本资格记录同时承认
+`superpowers/plans/2026-08-13-upstream-error-classification-retry-closure.md`
+的当前范围：生产 transport 维持 reqwest 的三态
+`NotConnected | ResponseStarted | Unknown`。中间 socket write phase 不能由 body poll、HTTP
+状态或 downstream commit 推断；`Unknown` 的非幂等请求继续 fail-closed。该结论已由
+`superpowers/specs/2026-08-13-reliable-transport-send-phase-spike.md` 正式接受，并不表示将
+headers/body 中间阶段实现为生产信号。
+
+本执行环境对单条同步命令施加约 124 秒上限，因此 `pnpm.cmd verify:full` 无法在一次调用中
+保留最终退出码；后台启动以保留日志被执行策略拒绝。资格验证改为按
+`scripts/verify.ps1 -Profile full` 的同一顺序运行每个独立步骤并记录退出码。RustSec 网络恢复后，
+等价的 cargo-deny advisory/license/source gate 已通过；完整聚合命令仍应在不受该时限约束的
+Windows release 环境复跑。真实 provider/Codex smoke 不属于此次范围，仍需隔离凭据与显式授权。
+
+本次分解运行的 exit-0 证据为：
+
+- architecture fixture、TypeScript boundary、Rust test topology、generated bindings、command
+  registry、Tauri security、build entry、artifact policy 与 dependency lifecycle gates；
+- ESLint、`tsc --noEmit`、`architecture_scale_boundaries`、tracked persistence artifacts、
+  frontend scale baseline、contract tests 与 routing operational preflight；
+- `cargo-deny 0.20.2` 的 `advisories bans licenses sources`（Windows target）；
+- `cargo fmt --check`、clippy all-targets、check all-targets、release-lib check；
+- Rust library 959/959，及 `src-tauri/tests/*.rs` 列出的所有 integration binary 的显式
+  `cargo test --test <name>` 成功结果；
+- 前端 unit tests、production build 与 `verify:fast`。
+
+因此，当前环境已证明 full profile 的每个实现子 gate 可通过；唯一未获得的是聚合
+`pnpm.cmd verify:full` 本身的单一退出码，原因仅为该宿主的命令时限而非已知代码或 advisory
+失败。该区别必须保留到不受时限约束的 release-machine 复跑为止。
+
 The local qualification runner is `scripts/intelligent-routing-qualification.mjs`. It verifies the
 architecture boundary, deterministic seed commitment, planner/coordinator contracts, source
 redaction, portable schema compatibility, projection lifecycle, policy CAS, and the full local

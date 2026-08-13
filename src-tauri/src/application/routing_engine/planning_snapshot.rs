@@ -2,6 +2,7 @@ use crate::models::routing_policy::RoutingPolicyConfigV1;
 
 use super::{
     algorithm_profile::DispatchAlgorithmProfile, candidate_plan::RoutePlanPricingSnapshot,
+    failure_domains::CapacityDomainCommitment,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -10,6 +11,15 @@ pub(crate) struct CandidateSnapshot {
     pub(crate) station_id: String,
     pub(crate) endpoint_revision: i64,
     pub(crate) credential_revision: i64,
+    pub(crate) account_revision: i64,
+    pub(crate) group_binding_id: Option<String>,
+    pub(crate) group_revision: Option<i64>,
+    pub(crate) resolved_upstream_model: Option<String>,
+    pub(crate) model_alias_revision: i64,
+    /// Opaque commitment from explicit station_capacity_domains facts. A
+    /// missing value prohibits cross-domain capacity fallback.
+    pub(crate) capacity_domain: Option<CapacityDomainCommitment>,
+    pub(crate) capacity_domain_revision: Option<i64>,
     pub(crate) credential_available: bool,
     pub(crate) hard_eligible: bool,
     pub(crate) backup_only: bool,
@@ -41,6 +51,7 @@ pub(crate) struct RuntimeOverlaySnapshot {
 pub(crate) struct PlanningSnapshot {
     pub(crate) snapshot_id: String,
     pub(crate) durable_revision: u64,
+    pub(crate) routing_policy_revision: u64,
     pub(crate) policy: RoutingPolicyConfigV1,
     pub(crate) profile: DispatchAlgorithmProfile,
     pub(crate) candidates: Vec<CandidateSnapshot>,
@@ -51,6 +62,7 @@ impl PlanningSnapshot {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if self.snapshot_id.is_empty()
             || self.durable_revision == 0
+            || self.routing_policy_revision == 0
             || self.candidates.len() > usize::from(self.policy.max_candidates)
             || self.runtime.runtime_instance_id.is_empty()
             || self.runtime.runtime_revision == 0
@@ -66,6 +78,17 @@ impl PlanningSnapshot {
                 || candidate.station_id.is_empty()
                 || candidate.endpoint_revision <= 0
                 || candidate.credential_revision <= 0
+                || candidate.account_revision <= 0
+                || candidate
+                    .group_revision
+                    .is_some_and(|revision| revision <= 0)
+                || candidate.group_binding_id.is_some() != candidate.group_revision.is_some()
+                || candidate.model_alias_revision <= 0
+                || candidate
+                    .capacity_domain_revision
+                    .is_some_and(|revision| revision <= 0)
+                || candidate.capacity_domain.is_some()
+                    != candidate.capacity_domain_revision.is_some()
                 || candidate.capability_basis_points > 10_000
                 || candidate.reliability_basis_points > 10_000
                 || candidate.responsiveness_basis_points > 10_000

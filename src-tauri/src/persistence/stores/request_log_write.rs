@@ -20,12 +20,62 @@ pub(crate) enum AttemptHealthUpdate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AttemptDurableEffectWrite {
+    Credential {
+        station_key_id: String,
+        dimension: String,
+        verdict: String,
+        retry_after_ms: Option<i64>,
+        evidence_code: String,
+        classifier_profile_version: String,
+    },
+    Account {
+        station_id: String,
+        dimension: String,
+        verdict: String,
+        retry_after_ms: Option<i64>,
+        evidence_code: String,
+        classifier_profile_version: String,
+    },
+    Group {
+        station_id: String,
+        group_binding_id: String,
+        dimension: String,
+        verdict: String,
+        retry_after_ms: Option<i64>,
+        evidence_code: String,
+        classifier_profile_version: String,
+    },
+    Endpoint {
+        station_id: String,
+        endpoint_revision: i64,
+        dimension: String,
+        verdict: String,
+        retry_after_ms: Option<i64>,
+        evidence_code: String,
+        classifier_profile_version: String,
+    },
+    UnsupportedModel {
+        station_key_id: String,
+        model: String,
+        evidence_code: String,
+        classifier_profile_version: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttemptTerminalWrite {
     pub request_id: String,
     pub ordinal: u16,
     pub station_id: String,
     pub station_key_id: String,
     pub endpoint_revision: i64,
+    pub credential_revision: i64,
+    pub account_revision: i64,
+    pub group_binding_id: Option<String>,
+    pub group_revision: Option<i64>,
+    pub resolved_upstream_model: Option<String>,
+    pub model_alias_revision: i64,
     pub started_at_ms: i64,
     pub terminal_kind: String,
     pub failure_kind: Option<String>,
@@ -34,13 +84,14 @@ pub(crate) struct AttemptTerminalWrite {
     pub health_effect: String,
     pub health_cooldown_until_ms: Option<i64>,
     pub health_update: AttemptHealthUpdate,
+    pub durable_effect: Option<AttemptDurableEffectWrite>,
     pub public_code: Option<String>,
     pub sanitized_detail: Option<String>,
     pub output_committed: bool,
     pub terminal_at_ms: i64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RequestLogAnnotationsWrite {
     pub model: Option<String>,
     pub stream: bool,
@@ -67,7 +118,7 @@ pub(crate) struct RequestLogAnnotationsWrite {
     pub billing_mode: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RequestTerminalWrite {
     pub request_id: String,
     pub received_at_ms: i64,
@@ -83,5 +134,28 @@ pub(crate) struct RequestTerminalWrite {
     pub attempt_count: u16,
     pub fallback_count: u16,
     pub terminal_at_ms: i64,
+    pub routing_outcome: RequestRoutingOutcomeSummaryWrite,
     pub annotations: RequestLogAnnotationsWrite,
+}
+
+/// Closed, versioned terminal facts safe to retain after the process-local
+/// trace ring has been evicted. Do not add dynamic text or identities here.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct RequestRoutingOutcomeSummaryWrite {
+    pub terminal_kind: String,
+    pub terminal_code: String,
+    pub classification: String,
+    pub confidence: String,
+    pub evidence_source: String,
+    pub request_accepted: String,
+    pub send_phase: String,
+    pub replay_disposition: String,
+    pub billing_state: String,
+    pub retry_disposition: String,
+    pub effect_summary: String,
+    pub failure_domain_commitment_version: Option<i64>,
+    pub failure_domain_commitment_digest: Option<String>,
+    pub attempt_count: u16,
+    pub fallback_count: u16,
+    pub terminal_at_ms: i64,
 }

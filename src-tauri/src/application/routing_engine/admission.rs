@@ -9,6 +9,7 @@ use crate::application::routing_engine::{
         RetryBudgetRegistry, RetryPermit, RetryPermitDecision,
     },
     exploration::ExplorationBudgetRegistry,
+    failure_domains::CapacityDomainCommitment,
     intelligent_planner::{plan_snapshot_with_budget, PlannedCandidate, PlannerError, RoutePlan},
     planning_snapshot::PlanningSnapshot,
     request::{RouteProgress, RouteRequestFacts},
@@ -25,7 +26,7 @@ use crate::application::routing_engine::{
 };
 
 const MAX_RUNTIME_ONLY_REPLANS: u32 = 8;
-const DEFAULT_MAX_ATTEMPTS: u32 = 3;
+const DEFAULT_MAX_ATTEMPTS: u32 = 4;
 
 fn ordered_planned_candidates(plan: &RoutePlan) -> Vec<&PlannedCandidate> {
     let Some(best_tier) = plan.candidates.iter().map(|candidate| candidate.tier).min() else {
@@ -66,6 +67,14 @@ fn route_plan_candidate_from_projection(
         station_key_id: projected.identity.station_key_id.clone(),
         station_id: projected.identity.station_id.clone(),
         endpoint_revision: projected.identity.endpoint_revision,
+        credential_revision: 1,
+        account_revision: 1,
+        group_binding_id: None,
+        group_revision: None,
+        resolved_upstream_model: None,
+        model_alias_revision: 1,
+        capacity_domain: None,
+        capacity_domain_revision: None,
         priority: projected.priority,
         tier,
         pricing: RoutePlanPricingSnapshot {
@@ -157,6 +166,8 @@ pub struct RouteAdmissionCoordinator {
     max_attempts: Option<u32>,
     candidate_failure_domains: BTreeMap<String, Vec<String>>,
     excluded_failure_domains: BTreeSet<String>,
+    excluded_capacity_domains: BTreeSet<CapacityDomainCommitment>,
+    capacity_cross_domain_consumed: bool,
     trace: Vec<AdmissionTraceEvent>,
 }
 
@@ -195,6 +206,8 @@ impl RouteAdmissionCoordinator {
             max_attempts: None,
             candidate_failure_domains: BTreeMap::new(),
             excluded_failure_domains: BTreeSet::new(),
+            excluded_capacity_domains: BTreeSet::new(),
+            capacity_cross_domain_consumed: false,
             trace: Vec::new(),
         }
     }
@@ -254,6 +267,12 @@ impl RouteAdmissionCoordinator {
                     candidate,
                     &self.excluded_failure_domains,
                 )
+                && !candidate_uses_excluded_capacity_domain(
+                    candidate,
+                    &self.excluded_capacity_domains,
+                )
+                && (self.excluded_capacity_domains.is_empty()
+                    || candidate.capacity_domain.is_some())
         });
         let plan = plan_snapshot_with_budget(
             &working_snapshot,
@@ -267,9 +286,7 @@ impl RouteAdmissionCoordinator {
         if eligible_count == 0 {
             return Err(self.failure(AdmissionFailureKind::NoEligible, "no_eligible_candidate"));
         }
-        let max_attempts = *self
-            .max_attempts
-            .get_or_insert_with(|| DEFAULT_MAX_ATTEMPTS.min(eligible_count as u32).max(1));
+        let max_attempts = *self.max_attempts.get_or_insert(DEFAULT_MAX_ATTEMPTS);
         if self.progress.view().attempt_count >= max_attempts {
             return Err(self.failure(AdmissionFailureKind::AttemptLimit, "attempt_limit_reached"));
         }
@@ -299,6 +316,16 @@ impl RouteAdmissionCoordinator {
                         detail: planned.utility.value().to_string(),
                     },
                 ];
+                candidate.capacity_domain = planning_snapshot
+                    .candidates
+                    .iter()
+                    .find(|raw| raw.station_key_id == candidate.station_key_id)
+                    .and_then(|raw| raw.capacity_domain.clone());
+                candidate.capacity_domain_revision = planning_snapshot
+                    .candidates
+                    .iter()
+                    .find(|raw| raw.station_key_id == candidate.station_key_id)
+                    .and_then(|raw| raw.capacity_domain_revision);
                 candidate
             } else {
                 return Err(self.failure(
@@ -325,6 +352,14 @@ impl RouteAdmissionCoordinator {
                 .try_acquire(profile.capacity_request(&candidate))
             {
                 Ok(mut lease) => {
+                    let is_capacity_cross_domain_fallback =
+                        !self.excluded_capacity_domains.is_empty();
+                    if is_capacity_cross_domain_fallback {
+                        // All candidates sharing an exhausted trusted domain were
+                        // removed above. The only remaining route is therefore the
+                        // one allowed cross-domain terminal fallback.
+                        self.capacity_cross_domain_consumed = true;
+                    }
                     let retry_permit = self.acquire_retry_permit_after_capacity(&mut lease)?;
                     let selected_station_key_id = candidate.station_key_id.clone();
                     self.trace_event(
@@ -336,6 +371,7 @@ impl RouteAdmissionCoordinator {
                         lease,
                         retry_permit,
                         evidence: vec![AdmissionEvidence::new("selected", selected_station_key_id)],
+                        is_capacity_cross_domain_fallback,
                     }));
                 }
                 Err(failure) => {
@@ -437,6 +473,7 @@ impl RouteAdmissionCoordinator {
                             "selected",
                             candidate.station_key_id.clone(),
                         )],
+                        is_capacity_cross_domain_fallback: false,
                     }));
                 }
                 Err(failure) => {
@@ -482,6 +519,9 @@ impl RouteAdmissionCoordinator {
         self.progress.record_actual_attempt(station_key_id);
         self.pass_capacity.clear();
         self.trace_event(AdmissionTransition::AttemptTerminal, outcome.as_code());
+        if self.capacity_cross_domain_consumed {
+            self.fallback_blocked = Some(AdmissionFailureKind::AttemptLimit);
+        }
         if !self.fallback_policy.retry_safe(outcome) {
             self.fallback_blocked = Some(AdmissionFailureKind::CommitUncertain);
             return Err(self.failure(
@@ -490,6 +530,17 @@ impl RouteAdmissionCoordinator {
             ));
         }
         Ok(())
+    }
+
+    /// Removes all snapshot candidates in one authoritative capacity domain.
+    /// The next selection, if any, can only be a different domain and its
+    /// terminal result closes this coordinator's retry chain.
+    pub fn exclude_exhausted_capacity_domain(&mut self, domain: CapacityDomainCommitment) -> bool {
+        if self.capacity_cross_domain_consumed {
+            return false;
+        }
+        self.excluded_capacity_domains.insert(domain);
+        true
     }
 
     #[cfg(test)]
@@ -657,6 +708,16 @@ fn candidate_uses_excluded_failure_domain(
         .any(|domain| excluded_failure_domains.contains(domain))
 }
 
+fn candidate_uses_excluded_capacity_domain(
+    candidate: &crate::application::routing_engine::planning_snapshot::CandidateSnapshot,
+    excluded_capacity_domains: &BTreeSet<CapacityDomainCommitment>,
+) -> bool {
+    candidate
+        .capacity_domain
+        .as_ref()
+        .is_some_and(|domain| excluded_capacity_domains.contains(domain))
+}
+
 #[derive(Debug)]
 pub struct AdmissionPlanningInput<'a> {
     pub execution_candidates: &'a [RoutePlanCandidate],
@@ -692,11 +753,18 @@ pub struct SelectedRoute {
     pub lease: CapacityLease,
     pub retry_permit: Option<RetryPermit>,
     pub evidence: Vec<AdmissionEvidence>,
+    /// This route was selected only after a trusted capacity-domain exclusion.
+    /// It is not set when a domain is merely excluded but no alternative exists.
+    pub is_capacity_cross_domain_fallback: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActualAttemptTerminal {
     FailedBeforeCommit,
+    /// A provider-capacity rejection that is eligible for a bounded retry of
+    /// the exact same resolved target. It consumes an outbound attempt but
+    /// must not exclude the target or its credential failure domains.
+    RetrySameTargetCapacity,
     PossiblyAccepted,
     Succeeded,
 }
@@ -705,6 +773,7 @@ impl ActualAttemptTerminal {
     fn as_code(self) -> &'static str {
         match self {
             Self::FailedBeforeCommit => "failed_before_commit",
+            Self::RetrySameTargetCapacity => "retry_same_target_capacity",
             Self::PossiblyAccepted => "possibly_accepted",
             Self::Succeeded => "succeeded",
         }
@@ -789,6 +858,13 @@ mod tests {
             station_id: "station".to_string(),
             endpoint_revision: 1,
             credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: None,
+            group_revision: None,
+            resolved_upstream_model: Some("test-model".to_string()),
+            model_alias_revision: 1,
+            capacity_domain: None,
+            capacity_domain_revision: None,
             credential_available: true,
             hard_eligible: true,
             backup_only: false,

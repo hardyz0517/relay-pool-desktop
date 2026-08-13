@@ -19,6 +19,7 @@
     "test:dead-code-policy": "node scripts/dead-code-inventory-policy.test.mjs",
     "architecture:fixtures": "node scripts/architecture/check-fixtures.mjs",
     "architecture:typescript": "node scripts/architecture/check-typescript-boundaries.mjs",
+    "architecture:rust-tests": "node scripts/architecture/check-rust-test-topology.mjs",
     "architecture:commands": "node scripts/architecture/check-command-registry.mjs && node scripts/architecture/check-command-state-boundaries.mjs",
     "architecture:alerting": "node scripts/change-center-alerting-architecture.test.mjs",
     "architecture:security": "node scripts/architecture/check-tauri-security.mjs && node scripts/architecture/check-build-entries.mjs",

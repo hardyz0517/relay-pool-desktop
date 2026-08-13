@@ -16,6 +16,9 @@
 - [`proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md)：目标架构与验收合同。
 - [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：唯一总体实施计划。
 - [`superpowers/plans/2026-08-12-upstream-error-classification-retry-upgrade.md`](superpowers/plans/2026-08-12-upstream-error-classification-retry-upgrade.md)：从属于智能路由总计划的上游错误分类、capacity 同目标重试、SSE 提交边界与客户端错误兼容专项计划。
+- [`superpowers/audits/upstream-error-classification-baseline.md`](superpowers/audits/upstream-error-classification-baseline.md)：上述专项 Task 0 的生产调用链、公开端点范围、fixture catalog、RED 证据和删除边界基线。
+- [`superpowers/plans/2026-08-13-upstream-error-classification-retry-closure.md`](superpowers/plans/2026-08-13-upstream-error-classification-retry-closure.md)：上述专项的当前收口范围；已正式接受 reqwest 三态 send phase 边界，当前只收口 full verifier 运行证据与资格文档。
+- [`superpowers/specs/2026-08-13-reliable-transport-send-phase-spike.md`](superpowers/specs/2026-08-13-reliable-transport-send-phase-spike.md)：三态 `NotConnected | ResponseStarted | Unknown` 的证据、非幂等 `Unknown` fail-closed 约束，以及将来独立 transport 替换所需前置条件。
 - 智能路由本地产品边界已完成：[`superpowers/audits/intelligent-routing-acceptance-matrix.md`](superpowers/audits/intelligent-routing-acceptance-matrix.md)、[`superpowers/audits/intelligent-routing-qualification.md`](superpowers/audits/intelligent-routing-qualification.md)、[`superpowers/audits/intelligent-routing-deletion-ledger.md`](superpowers/audits/intelligent-routing-deletion-ledger.md) 和 [`superpowers/audits/intelligent-routing-boundary-manifest.json`](superpowers/audits/intelligent-routing-boundary-manifest.json) 是同一 revision 的证据闭环。真实 provider、外部监控和发布机 soak 仍属于独立发布门禁。
 
 价格 / 倍率页与渠道状态页的只读联动已进入当前实现基线：
@@ -47,7 +50,7 @@
 - [`superpowers/plans/2026-07-29-status-monitoring-refactor.md`](superpowers/plans/2026-07-29-status-monitoring-refactor.md)：状态监控 V2 全流程重构计划。
 - [`superpowers/audits/status-monitoring-qualification.md`](superpowers/audits/status-monitoring-qualification.md)：确定性验证、真实 provider 授权门禁与发布资格清单。
 - [`release/status-monitoring-v2-qualification.md`](release/status-monitoring-v2-qualification.md)：发布侧资格说明。
-- [`superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md`](superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md)：一个发布观察周期后删除只读 `channel_monitor_runs` 兼容层的后续票据。
+- [`superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md`](superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md)：已完成的 `channel_monitor_runs` 兼容层删除记录；当前 schema 仅保留 V2 execution / target / attempt 历史。
 
 ## 工程记录
 

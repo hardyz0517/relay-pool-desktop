@@ -326,6 +326,13 @@ async fn create_schema(pool: &SqlitePool) {
             group_category_override TEXT,
             inferred_group_category TEXT
         );
+        CREATE TABLE station_capacity_domains (
+            station_id TEXT PRIMARY KEY,
+            provider_family TEXT NOT NULL,
+            deployment_identity TEXT,
+            region_identity TEXT,
+            revision INTEGER NOT NULL CHECK (revision > 0)
+        );
         CREATE TABLE station_endpoint_health (
             station_id TEXT PRIMARY KEY,
             endpoint_revision INTEGER NOT NULL
@@ -444,6 +451,15 @@ async fn insert_candidate(pool: &SqlitePool, index: usize) {
     .execute(pool)
     .await
     .expect("insert station revision");
+    // Migration 0035 seeds typed account revision baselines for every station.
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES ('station_account:' || ?1, 1, 0, 'baseline_snapshot')",
+    )
+    .bind(&station_id)
+    .execute(pool)
+    .await
+    .expect("insert station account revision");
     sqlx::query(
         "INSERT INTO station_keys
          (id, station_id, api_key, api_key_secret_id, enabled, priority, routing_order, created_at, updated_at)

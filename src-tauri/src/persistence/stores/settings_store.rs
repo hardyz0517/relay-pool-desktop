@@ -152,14 +152,6 @@ impl SettingsStore {
                 .as_deref()
                 .unwrap_or(&current.tray_behavior),
         )?;
-        let max_rate_multiplier = update
-            .input
-            .max_rate_multiplier
-            .flatten()
-            .map(|value| value.to_string())
-            .unwrap_or_default();
-        let routing_group_filter = serde_json::to_string(&update.input.routing_group_scope)
-            .map_err(|_| PersistenceError::ConstraintViolation)?;
         let scheduler_config = serde_json::to_string(
             &update
                 .input
@@ -179,8 +171,6 @@ impl SettingsStore {
                 "collector_proxy_url",
                 collector_proxy_url.unwrap_or_default(),
             ),
-            ("max_rate_multiplier", max_rate_multiplier),
-            ("default_routing_group_filter", routing_group_filter),
             ("scheduler_advanced_settings_json", scheduler_config),
             (
                 "low_balance_threshold_cny",
@@ -276,13 +266,8 @@ async fn settings_from_connection(
         collector_proxy_url: normalize_proxy_url(Some(
             read_setting_or_default(&mut *connection, "collector_proxy_url", "").await?,
         )),
-        max_rate_multiplier: parse_optional_f64_setting(&mut *connection, "max_rate_multiplier")
-            .await?,
-        routing_group_scope: parse_routing_group_filter_setting(
-            &mut *connection,
-            "default_routing_group_filter",
-        )
-        .await?,
+        max_rate_multiplier: canonical_policy.max_rate_multiplier,
+        routing_group_scope: canonical_policy.routing_group_filter,
         scheduler_config: parse_scheduler_settings(
             &mut *connection,
             "scheduler_advanced_settings_json",
@@ -467,9 +452,11 @@ where
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct CanonicalPolicyProjection {
     allow_depleted_fallback: bool,
+    max_rate_multiplier: Option<f64>,
+    routing_group_filter: RoutingGroupFilter,
 }
 
 async fn canonical_policy_projection(
@@ -483,6 +470,8 @@ async fn canonical_policy_projection(
     let Some(config_json) = config_json else {
         return Ok(CanonicalPolicyProjection {
             allow_depleted_fallback: false,
+            max_rate_multiplier: None,
+            routing_group_filter: RoutingGroupFilter::AllGroups,
         });
     };
     let config = serde_json::from_str::<RoutingPolicyConfigV1>(&config_json)
@@ -490,6 +479,8 @@ async fn canonical_policy_projection(
     config.validate().map_err(|_| invalid_persisted_setting())?;
     Ok(CanonicalPolicyProjection {
         allow_depleted_fallback: config.allow_depleted_fallback,
+        max_rate_multiplier: config.max_rate_multiplier,
+        routing_group_filter: config.routing_group_filter,
     })
 }
 
@@ -530,32 +521,6 @@ fn validate_tray_behavior_setting(value: &str) -> Result<String, PersistenceErro
 
 fn invalid_persisted_setting() -> PersistenceError {
     PersistenceError::InvariantViolation("invalid persisted setting".to_string())
-}
-
-async fn parse_optional_f64_setting(
-    connection: &mut SqliteConnection,
-    key: &str,
-) -> Result<Option<f64>, PersistenceError> {
-    let value = read_setting_or_default(&mut *connection, key, "").await?;
-    if value.trim().is_empty() {
-        return Ok(None);
-    }
-    let parsed = value
-        .parse::<f64>()
-        .ok()
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .ok_or_else(invalid_persisted_setting)?;
-    Ok(Some(parsed))
-}
-
-async fn parse_routing_group_filter_setting(
-    connection: &mut SqliteConnection,
-    key: &str,
-) -> Result<RoutingGroupFilter, PersistenceError> {
-    let value = read_setting_or_default(&mut *connection, key, "all_groups").await?;
-    serde_json::from_str(&value)
-        .or_else(|_| serde_json::from_str(&format!("\"{value}\"")))
-        .map_err(|_| invalid_persisted_setting())
 }
 
 async fn parse_scheduler_settings(

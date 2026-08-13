@@ -300,7 +300,7 @@ async fn request_terminal_waits_for_selected_attempt_durable_ack() {
 }
 
 #[tokio::test]
-async fn attempt_ack_failure_releases_request_lease_without_request_terminal() {
+async fn attempt_ack_failure_records_interrupted_request_terminal_and_releases_request_lease() {
     let store = Arc::new(AckGatedStore::with_attempt_failure());
     let (writer, worker) = LifecycleWriter::start(4, store.clone()).expect("writer");
     let active_requests = Arc::new(AtomicU32::new(0));
@@ -338,7 +338,12 @@ async fn attempt_ack_failure_releases_request_lease_without_request_terminal() {
     join.await.expect("finalization job join");
     store.wait_for_attempt_calls(1).await;
 
-    assert_eq!(store.request_calls(), 0);
+    store.wait_for_request_calls(1).await;
+    let request = store.last_request().expect("interrupted request terminal");
+    assert!(matches!(
+        request.terminal.terminal,
+        RequestTerminal::Interrupted(_)
+    ));
     assert_eq!(
         active_requests.load(Ordering::SeqCst),
         0,
@@ -346,8 +351,8 @@ async fn attempt_ack_failure_releases_request_lease_without_request_terminal() {
     );
     assert_eq!(
         writer.snapshot().submitted,
-        2,
-        "attempt ack failure must not submit a request success terminal"
+        3,
+        "attempt ack failure must record a fail-closed request terminal"
     );
 
     drop(writer);
@@ -375,13 +380,20 @@ fn production_constructor_has_deleted_old_request_coupled_finalizer() {
 
     let dual_constructor = function_body(
         &source,
-        "pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout",
+        "pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory",
     );
-    assert!(dual_constructor.contains("FinalizationTarget::DualTerminal"));
-    assert!(dual_constructor.contains("None"));
     assert!(
-        !source.contains("#[cfg(test)]\r\npub(crate) fn dual_terminal")
-            && !source.contains("#[cfg(test)]\npub(crate) fn dual_terminal"),
+        dual_constructor.contains("dual_terminal_finalizing_stream("),
+        "the production constructor must delegate into the shared dual-terminal finalizer"
+    );
+    let delegate = function_body(&source, "fn dual_terminal_finalizing_stream");
+    assert!(delegate.contains("FinalizationTarget::DualTerminal"));
+    assert!(
+        !source.contains(
+            "#[cfg(test)]\r\npub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory"
+        ) && !source.contains(
+            "#[cfg(test)]\npub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory"
+        ),
         "dual-terminal path must be a real composition option, not a cfg(test)-hidden adapter"
     );
 }
@@ -410,6 +422,12 @@ fn attempt_context(context: &RequestContextSnapshot) -> AttemptContext {
         station_id: "station-test".to_string(),
         station_key_id: "key-test".to_string(),
         endpoint_revision: 1,
+        credential_revision: 1,
+        account_revision: 1,
+        group_binding_id: None,
+        group_revision: None,
+        resolved_upstream_model: None,
+        model_alias_revision: 1,
         started_at_ms: context.received_at_ms,
     }
 }

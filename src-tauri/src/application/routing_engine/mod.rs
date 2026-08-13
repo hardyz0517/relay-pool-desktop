@@ -10,6 +10,7 @@ pub(crate) mod dispatch;
 pub(crate) mod eligibility;
 pub(crate) mod exploration;
 pub(crate) mod factors;
+pub(crate) mod failure_domains;
 pub(crate) mod fixed_point;
 #[cfg(test)]
 pub mod hierarchical_preview;

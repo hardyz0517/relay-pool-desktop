@@ -14,6 +14,7 @@ use super::{
         CostFinalizationReservations, DownstreamRequestFinalizationLease,
         DualTerminalFinalizationLease, UpstreamAttemptFinalizationLease,
     },
+    diagnostic_memory::DiagnosticMemoryPermit,
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
     finalization::FinalizationOutcome,
     lifecycle::{
@@ -29,7 +30,7 @@ use super::{
     observability::{ObservedUsage, SseUsageObserver},
     protocol::{
         chat_sse::ChatSseMachine, responses_sse::ResponsesSseMachine, ProtocolFailure,
-        ProtocolMachine, ProtocolProgress, ProtocolTerminal,
+        ProtocolMachine, ProtocolTerminal,
     },
     request::ByteStream,
 };
@@ -90,10 +91,12 @@ pub(crate) fn dual_terminal_buffered_lifecycle_finalizing_stream(
         costs,
         request_lease,
         DEFAULT_STREAM_IDLE_TIMEOUT,
+        None,
         false,
     )
 }
 
+#[cfg(test)]
 pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
     stream: ByteStream,
     record: PendingFinalRequestRecord,
@@ -103,6 +106,29 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
     request_lease: RequestLease,
     idle_timeout: Duration,
 ) -> ByteStream {
+    dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory(
+        stream,
+        record,
+        request_terminal,
+        selected_attempt,
+        costs,
+        request_lease,
+        idle_timeout,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory(
+    stream: ByteStream,
+    record: PendingFinalRequestRecord,
+    request_terminal: RequestTerminalReservation,
+    selected_attempt: Option<(AttemptWriteReservation, AttemptContext)>,
+    costs: Option<CostFinalizationReservations>,
+    request_lease: RequestLease,
+    idle_timeout: Duration,
+    diagnostic_memory: Option<DiagnosticMemoryPermit>,
+) -> ByteStream {
     dual_terminal_finalizing_stream(
         stream,
         record,
@@ -111,6 +137,7 @@ pub(crate) fn dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
         costs,
         request_lease,
         idle_timeout,
+        diagnostic_memory,
         true,
     )
 }
@@ -124,6 +151,7 @@ fn dual_terminal_finalizing_stream(
     costs: Option<CostFinalizationReservations>,
     request_lease: RequestLease,
     idle_timeout: Duration,
+    diagnostic_memory: Option<DiagnosticMemoryPermit>,
     enforce_stream_protocol: bool,
 ) -> ByteStream {
     let request = DownstreamRequestFinalizationLease::new(request_terminal, request_lease);
@@ -139,6 +167,7 @@ fn dual_terminal_finalizing_stream(
         )),
         None,
         idle_timeout,
+        diagnostic_memory,
         correlation::current(),
         enforce_stream_protocol,
     )
@@ -150,6 +179,7 @@ fn finalizing_stream_with_target(
     target: FinalizationTarget,
     request_lease: Option<RequestLease>,
     idle_timeout: Duration,
+    mut diagnostic_memory: Option<DiagnosticMemoryPermit>,
     correlation_id: Option<correlation::CorrelationId>,
     enforce_stream_protocol: bool,
 ) -> ByteStream {
@@ -158,7 +188,7 @@ fn finalizing_stream_with_target(
         FinalizationState::Lifecycle(record) => record.context().received_at_ms.min(now_ms),
     };
     let protocol = enforce_stream_protocol
-        .then(|| protocol_machine(&state))
+        .then(|| protocol_machine(&state, diagnostic_memory.take()))
         .flatten();
     Box::pin(LifecycleBody {
         stream,
@@ -175,6 +205,7 @@ fn finalizing_stream_with_target(
         first_token_ms: None,
         started_at_ms,
         correlation_id,
+        _diagnostic_memory: diagnostic_memory,
     })
 }
 
@@ -193,6 +224,7 @@ struct LifecycleBody {
     first_token_ms: Option<i64>,
     started_at_ms: i64,
     correlation_id: Option<correlation::CorrelationId>,
+    _diagnostic_memory: Option<DiagnosticMemoryPermit>,
 }
 
 impl Stream for LifecycleBody {
@@ -321,13 +353,12 @@ impl LifecycleBody {
         let Some(protocol) = self.protocol.as_mut() else {
             return Ok(None);
         };
-        match protocol
+        // Delivery has already committed this chunk. Preserve per-event ordering only to
+        // determine its terminal; precommit buffering is owned by SseBootstrapMachine.
+        Ok(protocol
             .observe_chunk(bytes)
             .map_err(protocol_stream_failure)?
-        {
-            ProtocolProgress::Observed => Ok(None),
-            ProtocolProgress::Terminal(terminal) => Ok(Some(terminal)),
-        }
+            .terminal())
     }
 
     fn finalize_protocol_terminal(
@@ -426,6 +457,9 @@ impl LifecycleBody {
                 record.annotations_mut().failure_source =
                     Some(failure_source_label(failure.source).to_string());
                 record.annotations_mut().completion_source = Some(completion_source.to_string());
+                if let Some(outcome) = failure.routing_outcome_facts() {
+                    record.set_routing_outcome(outcome);
+                }
             }
             None => {}
         }
@@ -451,14 +485,23 @@ impl LifecycleBody {
     }
 }
 
-fn protocol_machine(state: &FinalizationState) -> Option<Box<dyn ProtocolMachine>> {
+fn protocol_machine(
+    state: &FinalizationState,
+    diagnostic_memory: Option<DiagnosticMemoryPermit>,
+) -> Option<Box<dyn ProtocolMachine>> {
     let FinalizationState::Lifecycle(record) = state;
     if !record.annotations().stream {
         return None;
     }
     match record.context().local_path.as_str() {
-        "/v1/responses" => Some(Box::new(ResponsesSseMachine::new())),
-        "/v1/chat/completions" => Some(Box::new(ChatSseMachine::new())),
+        "/v1/responses" => Some(match diagnostic_memory {
+            Some(permit) => Box::new(ResponsesSseMachine::from_retained_memory(permit)),
+            None => Box::new(ResponsesSseMachine::new()),
+        }),
+        "/v1/chat/completions" => Some(match diagnostic_memory {
+            Some(permit) => Box::new(ChatSseMachine::from_retained_memory(permit)),
+            None => Box::new(ChatSseMachine::new()),
+        }),
         _ => None,
     }
 }
@@ -718,7 +761,7 @@ mod tests {
                 .expect("request terminal")
                 .terminal
                 .terminal,
-            RequestTerminal::Completed(_)
+            RequestTerminal::Interrupted(_)
         ));
         assert_eq!(store.attempt_calls(), 0);
 
@@ -894,6 +937,76 @@ mod tests {
                     && failure.blame == FailureBlame::Downstream
                     && failure.retry == RetryDisposition::StopRequest
                     && failure.health == HealthEffect::Neutral
+        ));
+        assert!(attempt.output_committed);
+        assert_eq!(active_requests.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        worker.join().await.expect("worker join");
+    }
+
+    #[tokio::test]
+    async fn slow_downstream_after_commit_does_not_poll_or_retry_and_drop_finalizes_once() {
+        let fixture = LifecycleBodyFixture::new_with_selected_attempt(
+            "response-body-slow-downstream",
+            "/v1/responses",
+        )
+        .await;
+        let LifecycleBodyFixture {
+            store,
+            writer,
+            worker,
+            request_terminal,
+            selected_attempt,
+            request_lease,
+            record,
+            active_requests,
+        } = fixture;
+        let first = Bytes::from_static(
+            b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+        );
+        let upstream = stream::once({
+            let first = first.clone();
+            async move { Ok(first) }
+        })
+        .chain(stream::pending());
+        let mut body = dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+            Box::pin(upstream),
+            record,
+            request_terminal,
+            selected_attempt,
+            None,
+            request_lease,
+            std::time::Duration::from_secs(1),
+        );
+
+        assert_eq!(body.next().await.unwrap().unwrap(), first);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert_eq!(
+            store.calls(),
+            0,
+            "a slow downstream must not poll upstream or terminalize before it resumes or drops"
+        );
+
+        drop(body);
+        store.wait_for_calls(1).await;
+        assert_eq!(store.calls(), 1);
+        assert_eq!(store.attempt_calls(), 1);
+        let request = store.last_request().expect("request terminal");
+        assert!(matches!(
+            request.terminal.terminal,
+            RequestTerminal::Interrupted(_)
+        ));
+        assert_eq!(
+            request.terminal.delivery,
+            DeliveryTerminal::DownstreamDropped
+        );
+        let attempt = store.last_attempt().expect("attempt terminal");
+        assert!(matches!(
+            attempt.terminal,
+            AttemptTerminal::Failed(ref failure)
+                if failure.kind == AttemptFailureKind::DownstreamDrop
+                    && failure.retry == RetryDisposition::StopRequest
         ));
         assert!(attempt.output_committed);
         assert_eq!(active_requests.load(Ordering::SeqCst), 0);
@@ -1881,6 +1994,12 @@ data: [DONE]
                     station_id: "station-test".to_string(),
                     station_key_id: "key-test".to_string(),
                     endpoint_revision: 1,
+                    credential_revision: 1,
+                    account_revision: 1,
+                    group_binding_id: None,
+                    group_revision: None,
+                    resolved_upstream_model: None,
+                    model_alias_revision: 1,
                     started_at_ms: received_at_ms,
                 };
                 Some((reservation, context))
@@ -1937,6 +2056,12 @@ data: [DONE]
             station_id: "station-test".to_string(),
             station_key_id: "key-test".to_string(),
             endpoint_revision: 1,
+            credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: None,
+            group_revision: None,
+            resolved_upstream_model: None,
+            model_alias_revision: 1,
             started_at_ms,
         }
     }

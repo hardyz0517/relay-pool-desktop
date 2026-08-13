@@ -30,8 +30,9 @@ use crate::{
                 StationKeyOperationalDetail,
             },
             request_decision_trace::{
-                decision_cursor, decision_trace_from_decision, recent_route_decisions_from_page,
-                RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
+                decision_cursor, decision_trace_from_decision, decision_trace_from_durable_outcome,
+                recent_route_decisions_from_page, RecentRouteDecisionsInput,
+                RecentRouteDecisionsPage, RequestDecisionTrace,
             },
             routing_runtime::{
                 monitoring_target_snapshots_from_facts, runtime_overlay_from_candidates,
@@ -61,6 +62,7 @@ use crate::{
     persistence::{
         runtime::PersistenceHandle,
         stores::pricing_store::PricingStore,
+        stores::request_outcome_store::RequestOutcomeStore,
         stores::routing_decisions::queries::RoutingDecisionQueries,
         stores::routing_policy_store::RoutingPolicyStore,
         stores::routing_store::{RoutingStore, StationEndpointProbeTarget},
@@ -100,6 +102,13 @@ impl RoutingService {
         decision_id: String,
     ) -> Result<RequestDecisionTrace, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
+        if let Some(summary) = RequestOutcomeStore
+            .routing_outcome_summary(read.connection(), &decision_id)
+            .await
+            .map_err(ApplicationError::from)?
+        {
+            return Ok(decision_trace_from_durable_outcome(summary));
+        }
         let queries = RoutingDecisionQueries;
         let summary = queries
             .get_decision(read.connection(), &decision_id)
@@ -192,6 +201,7 @@ impl RoutingService {
         let Some(stored) = stored else {
             return Ok(None);
         };
+        let routing_policy_revision = stored.revision;
         let aggregate = RoutingPolicyAggregate::from_stored(stored)
             .map_err(|_| ApplicationError::ConstraintViolation)?;
         let compiled = aggregate
@@ -210,12 +220,18 @@ impl RoutingService {
                 &mut read,
                 &options,
                 policy,
+                routing_policy_revision,
                 DispatchAlgorithmProfile::default(),
                 runtime,
                 request,
             )
             .await
-            .map_err(|_| ApplicationError::ConstraintViolation)?;
+            .map_err(|error| {
+                #[cfg(test)]
+                eprintln!("planning snapshot build failed: {error:?}");
+                let _ = error;
+                ApplicationError::ConstraintViolation
+            })?;
         if let Some(model) = request.requested_model() {
             let ids = snapshot
                 .candidates
@@ -404,8 +420,16 @@ impl RoutingService {
                 Ok(ExecutionTargetRef {
                     station_key_id: row.station_key_id,
                     station_id: row.station_id,
+                    station_type: row.station_type,
+                    capacity_provider_family: row.capacity_provider_family,
+                    capacity_deployment_identity: row.capacity_deployment_identity,
+                    capacity_region_identity: row.capacity_region_identity,
+                    capacity_domain_revision: row.capacity_domain_revision,
+                    group_binding_id: row.group_binding_id,
                     endpoint_revision: row.endpoint_revision,
                     credential_revision: row.credential_revision,
+                    account_revision: row.account_revision,
+                    group_revision: row.group_revision,
                     api_base_url: row.api_base_url,
                     upstream_api_format: row.upstream_api_format,
                     collector_proxy_mode: row.collector_proxy_mode,

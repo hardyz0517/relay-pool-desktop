@@ -5,7 +5,7 @@
 
 use sha2::{Digest, Sha256};
 
-const MAX_STABLE_CODE_BYTES: usize = 64;
+pub(crate) const MAX_STABLE_CODE_BYTES: usize = 64;
 const REDACTED_RESOURCE_HASH_BYTES: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,7 +105,7 @@ pub(crate) enum StructuredEventError {
     InvalidStableCode,
 }
 
-fn is_stable_token(value: &str) -> bool {
+pub(crate) fn is_stable_token(value: &str) -> bool {
     if value.is_empty() || value.len() > MAX_STABLE_CODE_BYTES {
         return false;
     }

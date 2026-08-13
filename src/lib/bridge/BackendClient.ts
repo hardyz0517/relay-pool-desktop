@@ -151,6 +151,9 @@ export type StationsDomainClient = {
   deleteStation(id: string): Promise<void>;
   openStationWebsite(url: string): Promise<void>;
   reorderStations(stationIds: string[]): Promise<Station[]>;
+  getStationCapacityDomain(stationId: string): Promise<import("@/lib/types/stations").StationCapacityDomain | null>;
+  upsertStationCapacityDomain(input: import("@/lib/types/stations").UpsertStationCapacityDomainInput): Promise<import("@/lib/types/stations").StationCapacityDomain>;
+  clearStationCapacityDomain(stationId: string, expectedRevision: number): Promise<void>;
   listStationEndpointHealth(): Promise<StationEndpointHealth[]>;
   pingStationEndpoint(stationId: string): Promise<EndpointPingResult>;
 };

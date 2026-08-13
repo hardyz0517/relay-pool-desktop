@@ -290,7 +290,7 @@ pub(crate) struct UpgradeInjectedFailure {
 }
 
 impl UpgradeInjectedFailure {
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     pub(crate) const fn new(failpoint: UpgradeFailpoint) -> Self {
         Self { failpoint }
     }

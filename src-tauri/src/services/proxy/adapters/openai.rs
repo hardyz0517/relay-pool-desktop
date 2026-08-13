@@ -1,7 +1,20 @@
+use std::time::SystemTime;
+
 use serde_json::{json, Value};
 
 use crate::application::request_finalization::failure::{
-    CapabilityApplicabilitySet, ProviderErrorSemanticSignal, ProviderProtocolKind,
+    CapabilityApplicabilitySet, EvidenceConfidence as CanonicalEvidenceConfidence,
+    ProviderErrorSemanticSignal, ProviderProtocolKind,
+};
+
+use super::{
+    error_envelope::{
+        BodyCapture, EnvelopeShape, ErrorEnvelopeInput, ErrorTypeKey, FailureTransport,
+    },
+    error_rules::{
+        collect_upstream_failure_evidence_for_profile, EvidenceConfidence, ProviderRuleProfile,
+        SemanticCandidate, UpstreamFailureEvidence,
+    },
 };
 
 pub fn generate_response_id(prefix: &str) -> String {
@@ -63,63 +76,322 @@ pub(crate) fn openai_error_semantic_signal(
     model: Option<&str>,
     applicability: CapabilityApplicabilitySet,
 ) -> ProviderErrorSemanticSignal {
-    let code = body.and_then(openai_error_code).unwrap_or_default();
-    match status {
-        401 => ProviderErrorSemanticSignal::ConfirmedAuthentication {
+    let encoded = body.and_then(|body| serde_json::to_vec(body).ok());
+    openai_error_semantic_signal_from_capture(
+        status,
+        encoded.as_deref().map(BodyCapture::Complete),
+        encoded.as_ref().map(|_| "application/json"),
+        None,
+        station_key_id,
+        station_id,
+        endpoint_revision,
+        model,
+        applicability,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn openai_error_semantic_signal_from_capture(
+    status: u16,
+    body: Option<BodyCapture<'_>>,
+    content_type: Option<&str>,
+    retry_after: Option<&str>,
+    station_key_id: &str,
+    station_id: &str,
+    endpoint_revision: i64,
+    model: Option<&str>,
+    applicability: CapabilityApplicabilitySet,
+    capacity_domain_commitment: Option<&str>,
+) -> ProviderErrorSemanticSignal {
+    let rule_profile = if capacity_domain_commitment.is_some() {
+        ProviderRuleProfile::NativeOpenAiV1
+    } else {
+        ProviderRuleProfile::GenericOpenAiCompatibleV1
+    };
+    openai_error_semantic_signal_from_capture_for_profile(
+        status,
+        body,
+        content_type,
+        retry_after,
+        station_key_id,
+        station_id,
+        endpoint_revision,
+        model,
+        applicability,
+        capacity_domain_commitment,
+        rule_profile,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn openai_error_semantic_signal_from_capture_for_profile(
+    status: u16,
+    body: Option<BodyCapture<'_>>,
+    content_type: Option<&str>,
+    retry_after: Option<&str>,
+    station_key_id: &str,
+    station_id: &str,
+    endpoint_revision: i64,
+    model: Option<&str>,
+    applicability: CapabilityApplicabilitySet,
+    capacity_domain_commitment: Option<&str>,
+    rule_profile: ProviderRuleProfile,
+    group_binding_id: Option<&str>,
+) -> ProviderErrorSemanticSignal {
+    let evidence = collect_upstream_failure_evidence_for_profile(
+        ErrorEnvelopeInput {
+            status,
+            transport: FailureTransport::Http,
+            content_type,
+            body: body.unwrap_or(BodyCapture::Complete(&[])),
+            retry_after,
+            received_at: SystemTime::now(),
+        },
+        rule_profile,
+    );
+    openai_semantic_signal_from_evidence(
+        &evidence,
+        station_key_id,
+        station_id,
+        endpoint_revision,
+        model,
+        applicability,
+        capacity_domain_commitment,
+        group_binding_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+pub(crate) fn openai_sse_error_semantic_signal_from_capture(
+    transport: FailureTransport,
+    body: BodyCapture<'_>,
+    retry_after: Option<&str>,
+    station_key_id: &str,
+    station_id: &str,
+    endpoint_revision: i64,
+    model: Option<&str>,
+    applicability: CapabilityApplicabilitySet,
+    capacity_domain_commitment: Option<&str>,
+) -> ProviderErrorSemanticSignal {
+    let rule_profile = if capacity_domain_commitment.is_some() {
+        ProviderRuleProfile::NativeOpenAiV1
+    } else {
+        ProviderRuleProfile::GenericOpenAiCompatibleV1
+    };
+    openai_sse_error_semantic_signal_from_capture_for_profile(
+        transport,
+        body,
+        retry_after,
+        station_key_id,
+        station_id,
+        endpoint_revision,
+        model,
+        applicability,
+        capacity_domain_commitment,
+        rule_profile,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn openai_sse_error_semantic_signal_from_capture_for_profile(
+    transport: FailureTransport,
+    body: BodyCapture<'_>,
+    retry_after: Option<&str>,
+    station_key_id: &str,
+    station_id: &str,
+    endpoint_revision: i64,
+    model: Option<&str>,
+    applicability: CapabilityApplicabilitySet,
+    capacity_domain_commitment: Option<&str>,
+    rule_profile: ProviderRuleProfile,
+    group_binding_id: Option<&str>,
+) -> ProviderErrorSemanticSignal {
+    debug_assert!(transport.is_sse_failure());
+    let evidence = collect_upstream_failure_evidence_for_profile(
+        ErrorEnvelopeInput {
+            // SSE failures arrive after a successful HTTP handshake. The typed
+            // transport plus the envelope, rather than a fabricated HTTP status,
+            // is the authoritative protocol evidence.
+            status: 200,
+            transport,
+            content_type: Some("application/json"),
+            body,
+            retry_after,
+            received_at: SystemTime::now(),
+        },
+        rule_profile,
+    );
+    openai_semantic_signal_from_evidence(
+        &evidence,
+        station_key_id,
+        station_id,
+        endpoint_revision,
+        model,
+        applicability,
+        capacity_domain_commitment,
+        group_binding_id,
+    )
+}
+
+/// The sole adapter from normalized HTTP/SSE evidence into the application
+/// semantic vocabulary. Consumers must not re-read status/code/message after
+/// this boundary.
+pub(crate) fn openai_semantic_signal_from_evidence(
+    evidence: &UpstreamFailureEvidence,
+    station_key_id: &str,
+    station_id: &str,
+    endpoint_revision: i64,
+    model: Option<&str>,
+    applicability: CapabilityApplicabilitySet,
+    capacity_domain_commitment: Option<&str>,
+    group_binding_id: Option<&str>,
+) -> ProviderErrorSemanticSignal {
+    let confirmed = evidence.confidence == EvidenceConfidence::Confirmed;
+
+    if confirmed
+        && evidence
+            .semantic_candidates
+            .contains(&SemanticCandidate::GroupSubscriptionInvalid)
+    {
+        return group_binding_id.map_or(
+            ProviderErrorSemanticSignal::GenericStatus {
+                status: evidence.status,
+                confidence: canonical_confidence(evidence.confidence),
+            },
+            |group_binding_id| ProviderErrorSemanticSignal::ConfirmedGroupSubscriptionInvalid {
+                station_id: station_id.to_string(),
+                group_binding_id: group_binding_id.to_string(),
+            },
+        );
+    }
+    if confirmed
+        && evidence
+            .semantic_candidates
+            .contains(&SemanticCandidate::Authentication)
+    {
+        return ProviderErrorSemanticSignal::ConfirmedAuthentication {
             station_key_id: station_key_id.to_string(),
-        },
-        403 if matches!(
-            code,
-            "invalid_api_key" | "invalid_api_key_format" | "authentication_error"
-        ) =>
-        {
-            ProviderErrorSemanticSignal::ConfirmedAuthentication {
-                station_key_id: station_key_id.to_string(),
-            }
-        }
-        402 => ProviderErrorSemanticSignal::ConfirmedInsufficientBalance {
+        };
+    }
+    if confirmed
+        && evidence
+            .semantic_candidates
+            .contains(&SemanticCandidate::InsufficientQuota)
+    {
+        // The current application vocabulary has no quota target. RateLimited
+        // is intentionally the non-destructive fallback until Task 3 adds the
+        // typed quota signal; it must never become a credential hard-fail.
+        return ProviderErrorSemanticSignal::RateLimited {
             station_id: station_id.to_string(),
-        },
-        404 if applicability.permits_model_not_found_learning()
-            && matches!(code, "model_not_found" | "model_not_available") =>
-        {
-            ProviderErrorSemanticSignal::ConfirmedModelNotFound {
-                station_key_id: station_key_id.to_string(),
-                model: model.unwrap_or("unknown").to_string(),
+            retry_after_ms: evidence.retry_after_ms,
+        };
+    }
+    if confirmed
+        && evidence
+            .semantic_candidates
+            .contains(&SemanticCandidate::ModelUnavailable)
+        && applicability.permits_model_not_found_learning()
+    {
+        return ProviderErrorSemanticSignal::ConfirmedModelNotFound {
+            station_key_id: station_key_id.to_string(),
+            model: model.unwrap_or("unknown").to_string(),
+        };
+    }
+    if confirmed
+        && evidence
+            .semantic_candidates
+            .contains(&SemanticCandidate::ProviderCapacity)
+    {
+        return capacity_domain_commitment.map_or(ProviderErrorSemanticSignal::Overloaded, |id| {
+            ProviderErrorSemanticSignal::ProviderCapacity {
+                domain_commitment: id.to_string(),
+                retry_after_ms: evidence.retry_after_ms,
             }
-        }
-        429 => ProviderErrorSemanticSignal::RateLimited {
+        });
+    }
+    if evidence
+        .semantic_candidates
+        .contains(&SemanticCandidate::RelayAuthenticationOverloaded)
+    {
+        return ProviderErrorSemanticSignal::Overloaded;
+    }
+    if evidence
+        .semantic_candidates
+        .contains(&SemanticCandidate::RuntimeConcurrencyLimited)
+        || evidence
+            .semantic_candidates
+            .contains(&SemanticCandidate::RateLimited)
+    {
+        return ProviderErrorSemanticSignal::RateLimited {
             station_id: station_id.to_string(),
-            retry_after_ms: None,
-        },
-        529 => ProviderErrorSemanticSignal::Overloaded,
-        405 | 501 => ProviderErrorSemanticSignal::ConfirmedCapabilityMismatch {
+            retry_after_ms: evidence.retry_after_ms,
+        };
+    }
+    if matches!(evidence.status, 405 | 501)
+        && !matches!(evidence.envelope, EnvelopeShape::None)
+        && matches!(evidence.error_type, ErrorTypeKey::InvalidRequestError)
+    {
+        return ProviderErrorSemanticSignal::ConfirmedCapabilityMismatch {
             protocol: ProviderProtocolKind::Unknown,
-        },
-        400 | 409 | 422 => ProviderErrorSemanticSignal::BadRequest,
-        500..=599 => ProviderErrorSemanticSignal::ServerError {
+        };
+    }
+    if evidence
+        .semantic_candidates
+        .contains(&SemanticCandidate::PayloadTooLarge)
+        || evidence
+            .semantic_candidates
+            .contains(&SemanticCandidate::ProviderRequestRejected)
+    {
+        return ProviderErrorSemanticSignal::BadRequest;
+    }
+    if evidence
+        .semantic_candidates
+        .contains(&SemanticCandidate::ProviderServerFailure)
+        || (500..=599).contains(&evidence.status)
+    {
+        return ProviderErrorSemanticSignal::ServerError {
             station_id: station_id.to_string(),
             endpoint_revision,
-        },
-        _ => ProviderErrorSemanticSignal::GenericStatus { status },
+        };
+    }
+    ProviderErrorSemanticSignal::GenericStatus {
+        status: evidence.status,
+        confidence: canonical_confidence(evidence.confidence),
     }
 }
 
-fn openai_error_code(body: &Value) -> Option<&str> {
-    let error = body.get("error").unwrap_or(body);
-    error
-        .get("code")
-        .and_then(Value::as_str)
-        .or_else(|| error.get("type").and_then(Value::as_str))
+fn canonical_confidence(confidence: EvidenceConfidence) -> CanonicalEvidenceConfidence {
+    match confidence {
+        EvidenceConfidence::Confirmed => CanonicalEvidenceConfidence::Confirmed,
+        EvidenceConfidence::Probable => CanonicalEvidenceConfidence::Probable,
+        EvidenceConfidence::Unknown => CanonicalEvidenceConfidence::Unknown,
+        EvidenceConfidence::Conflicting => CanonicalEvidenceConfidence::Conflicting,
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::UNIX_EPOCH;
+
     use serde_json::json;
 
-    use super::openai_error_semantic_signal;
+    use super::{
+        openai_error_semantic_signal, openai_error_semantic_signal_from_capture,
+        openai_error_semantic_signal_from_capture_for_profile,
+        openai_semantic_signal_from_evidence, openai_sse_error_semantic_signal_from_capture,
+        openai_sse_error_semantic_signal_from_capture_for_profile,
+    };
     use crate::application::request_finalization::failure::{
-        CapabilityApplicabilitySet, ProviderErrorSemanticSignal,
+        CapabilityApplicabilitySet, EvidenceConfidence as CanonicalEvidenceConfidence,
+        ProviderErrorSemanticSignal,
+    };
+    use crate::services::proxy::adapters::{
+        error_envelope::{BodyCapture, ErrorEnvelopeInput, FailureTransport},
+        error_rules::{collect_upstream_failure_evidence_for_profile, ProviderRuleProfile},
     };
 
     #[test]
@@ -141,7 +413,7 @@ mod tests {
     }
 
     #[test]
-    fn overloaded_529_is_not_treated_as_regular_5xx() {
+    fn generic_529_is_not_globally_treated_as_capacity() {
         let signal = openai_error_semantic_signal(
             529,
             None,
@@ -151,7 +423,13 @@ mod tests {
             Some("gpt-test"),
             CapabilityApplicabilitySet::UnknownModelCatalog,
         );
-        assert_eq!(signal, ProviderErrorSemanticSignal::Overloaded);
+        assert_eq!(
+            signal,
+            ProviderErrorSemanticSignal::ServerError {
+                station_id: "station-test".to_string(),
+                endpoint_revision: 1,
+            }
+        );
     }
 
     #[test]
@@ -182,7 +460,10 @@ mod tests {
         );
         assert_eq!(
             untrusted,
-            ProviderErrorSemanticSignal::GenericStatus { status: 404 }
+            ProviderErrorSemanticSignal::GenericStatus {
+                status: 404,
+                confidence: CanonicalEvidenceConfidence::Confirmed,
+            }
         );
     }
 
@@ -200,5 +481,235 @@ mod tests {
             );
             assert_eq!(signal, ProviderErrorSemanticSignal::BadRequest);
         }
+    }
+
+    #[test]
+    fn capability_status_requires_a_protocol_error_envelope() {
+        let trusted = openai_error_semantic_signal(
+            405,
+            Some(&json!({"error": {"type": "invalid_request_error"}})),
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        assert!(matches!(
+            trusted,
+            ProviderErrorSemanticSignal::ConfirmedCapabilityMismatch { .. }
+        ));
+
+        let unknown = openai_error_semantic_signal(
+            405,
+            None,
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        assert_eq!(
+            unknown,
+            ProviderErrorSemanticSignal::GenericStatus {
+                status: 405,
+                confidence: CanonicalEvidenceConfidence::Unknown,
+            }
+        );
+    }
+
+    #[test]
+    fn confirmed_capacity_requires_a_trusted_domain_before_same_target_retry_signal() {
+        let evidence = collect_upstream_failure_evidence_for_profile(
+            ErrorEnvelopeInput {
+                status: 400,
+                transport: FailureTransport::Http,
+                content_type: Some("application/json"),
+                body: BodyCapture::Complete(
+                    br#"{"error":{"message":"Selected model is at capacity. Please try again later."}}"#,
+                ),
+                retry_after: Some("2"),
+                received_at: UNIX_EPOCH,
+            },
+            ProviderRuleProfile::NativeOpenAiV1,
+        );
+        let signal = openai_semantic_signal_from_evidence(
+            &evidence,
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+            Some("capacity-domain-v1:fixture"),
+            None,
+        );
+        assert_eq!(
+            signal,
+            ProviderErrorSemanticSignal::ProviderCapacity {
+                domain_commitment: "capacity-domain-v1:fixture".to_string(),
+                retry_after_ms: Some(2_000),
+            }
+        );
+
+        let without_domain = openai_semantic_signal_from_evidence(
+            &evidence,
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+            None,
+            None,
+        );
+        assert_eq!(without_domain, ProviderErrorSemanticSignal::Overloaded);
+    }
+
+    #[test]
+    fn conflicting_server_status_and_credential_code_never_blocks_the_key() {
+        let signal = openai_error_semantic_signal(
+            500,
+            Some(&json!({"error": {"code": "invalid_api_key"}})),
+            "key-test",
+            "station-test",
+            7,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        );
+        assert_eq!(
+            signal,
+            ProviderErrorSemanticSignal::ServerError {
+                station_id: "station-test".to_string(),
+                endpoint_revision: 7,
+            }
+        );
+    }
+
+    #[test]
+    fn bounded_raw_capture_preserves_retry_after_without_reparsing_headers_downstream() {
+        let signal = openai_error_semantic_signal_from_capture(
+            429,
+            Some(BodyCapture::Complete(
+                br#"{"error":{"type":"rate_limit_error","message":"retry"}}"#,
+            )),
+            Some("application/json"),
+            Some("17"),
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+            None,
+        );
+        assert_eq!(
+            signal,
+            ProviderErrorSemanticSignal::RateLimited {
+                station_id: "station-test".to_string(),
+                retry_after_ms: Some(17_000),
+            }
+        );
+    }
+
+    #[test]
+    fn sse_capacity_and_rate_limit_use_the_same_evidence_adapter_as_http() {
+        let capacity = openai_sse_error_semantic_signal_from_capture_for_profile(
+            FailureTransport::ResponsesSseFailure,
+            BodyCapture::Complete(
+                br#"{"type":"response.failed","response":{"error":{"code":"slow_down","message":"Please retry later."}}}"#,
+            ),
+            None,
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::ConfirmedModelCatalog,
+            Some("capacity-domain-v1:fixture"),
+            ProviderRuleProfile::Sub2ApiV1,
+            None,
+        );
+        assert_eq!(
+            capacity,
+            ProviderErrorSemanticSignal::ProviderCapacity {
+                domain_commitment: "capacity-domain-v1:fixture".to_string(),
+                retry_after_ms: None,
+            }
+        );
+
+        let rate = openai_sse_error_semantic_signal_from_capture(
+            FailureTransport::ChatSseError,
+            BodyCapture::Complete(
+                br#"{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded","message":"retry"}}"#,
+            ),
+            Some("3"),
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::ConfirmedModelCatalog,
+            None,
+        );
+        assert_eq!(
+            rate,
+            ProviderErrorSemanticSignal::RateLimited {
+                station_id: "station-test".to_string(),
+                retry_after_ms: Some(3_000),
+            }
+        );
+    }
+
+    #[test]
+    fn sub2api_group_subscription_error_requires_binding_identity() {
+        for code in [
+            "GROUP_DELETED",
+            "GROUP_DISABLED",
+            "GROUP_NOT_ALLOWED",
+            "SUBSCRIPTION_NOT_FOUND",
+        ] {
+            let encoded = format!(r#"{{"error":{{"code":"{code}"}}}}"#);
+            let typed = openai_error_semantic_signal_from_capture_for_profile(
+                403,
+                Some(BodyCapture::Complete(encoded.as_bytes())),
+                Some("application/json"),
+                None,
+                "key-test",
+                "station-test",
+                1,
+                Some("gpt-test"),
+                CapabilityApplicabilitySet::ConfirmedModelCatalog,
+                None,
+                ProviderRuleProfile::Sub2ApiV1,
+                Some("group-binding-test"),
+            );
+            assert_eq!(
+                typed,
+                ProviderErrorSemanticSignal::ConfirmedGroupSubscriptionInvalid {
+                    station_id: "station-test".to_string(),
+                    group_binding_id: "group-binding-test".to_string(),
+                }
+            );
+        }
+
+        let body = BodyCapture::Complete(
+            br#"{"error":{"code":"SUBSCRIPTION_NOT_FOUND","message":"No active subscription found for this group"}}"#,
+        );
+        let neutral = openai_error_semantic_signal_from_capture_for_profile(
+            403,
+            Some(body),
+            Some("application/json"),
+            None,
+            "key-test",
+            "station-test",
+            1,
+            Some("gpt-test"),
+            CapabilityApplicabilitySet::ConfirmedModelCatalog,
+            None,
+            ProviderRuleProfile::Sub2ApiV1,
+            None,
+        );
+        assert_eq!(
+            neutral,
+            ProviderErrorSemanticSignal::GenericStatus {
+                status: 403,
+                confidence: CanonicalEvidenceConfidence::Confirmed,
+            }
+        );
     }
 }

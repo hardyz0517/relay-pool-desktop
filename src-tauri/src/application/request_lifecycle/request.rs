@@ -24,7 +24,7 @@ pub(crate) struct RequestContextSnapshot {
     pub received_at_ms: i64,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RequestPhase {
     Accepted,
@@ -121,6 +121,24 @@ pub(crate) struct FinalRequestRecord {
     pub attempt_count: u16,
     pub fallback_count: u16,
     pub(crate) annotations: RequestLogAnnotations,
+    /// Terminal facts created by the canonical proxy path. These are deliberately
+    /// closed values, never projected from public response fields during storage.
+    pub(crate) routing_outcome: Option<RequestRoutingOutcomeFacts>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestRoutingOutcomeFacts {
+    pub(crate) classification: String,
+    pub(crate) confidence: String,
+    pub(crate) evidence_source: String,
+    pub(crate) request_accepted: String,
+    pub(crate) send_phase: String,
+    pub(crate) replay_disposition: String,
+    pub(crate) billing_state: String,
+    pub(crate) retry_disposition: String,
+    pub(crate) effect_summary: String,
+    pub(crate) failure_domain_commitment_version: Option<i64>,
+    pub(crate) failure_domain_commitment_digest: Option<String>,
 }
 
 impl FinalRequestRecord {
@@ -139,7 +157,13 @@ impl FinalRequestRecord {
             attempt_count,
             fallback_count,
             annotations,
+            routing_outcome: None,
         }
+    }
+
+    pub(crate) fn with_routing_outcome(mut self, outcome: RequestRoutingOutcomeFacts) -> Self {
+        self.routing_outcome = Some(outcome);
+        self
     }
 }
 
@@ -157,6 +181,7 @@ pub(crate) struct PendingFinalRequestRecord {
     attempt_count: u16,
     fallback_count: u16,
     annotations: RequestLogAnnotations,
+    routing_outcome: Option<RequestRoutingOutcomeFacts>,
 }
 
 #[cfg_attr(
@@ -180,7 +205,12 @@ impl PendingFinalRequestRecord {
             attempt_count,
             fallback_count,
             annotations,
+            routing_outcome: None,
         }
+    }
+
+    pub(crate) fn set_routing_outcome(&mut self, outcome: RequestRoutingOutcomeFacts) {
+        self.routing_outcome = Some(outcome);
     }
 
     pub(crate) fn context(&self) -> &RequestContextSnapshot {
@@ -242,18 +272,37 @@ impl PendingFinalRequestRecord {
         terminal: RequestTerminal,
         delivery: DeliveryTerminal,
     ) -> FinalRequestRecord {
+        let Self {
+            context,
+            selected_attempt_id,
+            attempt_count,
+            fallback_count,
+            annotations,
+            routing_outcome,
+        } = self;
         FinalRequestRecord::new(
-            self.context,
+            context,
             RequestTerminalSnapshot { terminal, delivery },
-            self.selected_attempt_id,
-            self.attempt_count,
-            self.fallback_count,
-            self.annotations,
+            selected_attempt_id,
+            attempt_count,
+            fallback_count,
+            annotations,
         )
+        .with_optional_routing_outcome(routing_outcome)
     }
 }
 
-#[cfg(test)]
+impl FinalRequestRecord {
+    fn with_optional_routing_outcome(
+        mut self,
+        outcome: Option<RequestRoutingOutcomeFacts>,
+    ) -> Self {
+        self.routing_outcome = outcome;
+        self
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RequestInvariantError {
     InvalidTransition {
@@ -263,7 +312,7 @@ pub(crate) enum RequestInvariantError {
     AlreadyTerminal,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[derive(Debug)]
 pub(crate) struct RequestLifecycle {
     context: RequestContextSnapshot,
@@ -274,7 +323,7 @@ pub(crate) struct RequestLifecycle {
     terminal_record: Option<FinalRequestRecord>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 impl RequestLifecycle {
     pub(crate) fn new(context: RequestContextSnapshot) -> Self {
         Self {
@@ -329,6 +378,7 @@ impl RequestLifecycle {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn note_fallback(&mut self) -> Result<(), RequestInvariantError> {
         match &self.phase {
             RequestPhase::Attempting { .. } => {

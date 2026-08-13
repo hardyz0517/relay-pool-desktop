@@ -26,7 +26,7 @@ use crate::{
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
                 dual_terminal_buffered_lifecycle_finalizing_stream,
-                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout,
+                dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory,
             },
             routing_repository::RoutingRepository,
             server::{self, RunningServer},
@@ -115,6 +115,31 @@ impl ProxyRuntimeState {
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
         Self::default()
+    }
+
+    pub(crate) async fn decision_trace_for_request(
+        &self,
+        request_id: &str,
+    ) -> Option<crate::observability::decision_trace::RequestDecisionTraceV1> {
+        let inner = self.v2.lock().await;
+        inner.routing_runtime.as_ref().and_then(|runtime| {
+            runtime
+                .decision_trace_snapshot()
+                .into_iter()
+                .find(|trace| trace.request_id == request_id)
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn decision_traces(
+        &self,
+    ) -> Vec<crate::observability::decision_trace::RequestDecisionTraceV1> {
+        let inner = self.v2.lock().await;
+        inner
+            .routing_runtime
+            .as_ref()
+            .map(|runtime| runtime.decision_trace_snapshot())
+            .unwrap_or_default()
     }
 
     pub fn status(&self, default_port: u16) -> ProxyStatus {
@@ -232,7 +257,11 @@ impl ProxyRuntimeState {
         let request_count = Arc::new(AtomicU64::new(0));
         let repository = Arc::clone(&config.routing_repository);
         let credential_resolver = Arc::clone(&config.credential_resolver);
-        let upstream_pool = UpstreamClientPool::new(config.limits.clone()).map_err(|failure| {
+        let upstream_pool = UpstreamClientPool::new(
+            config.limits.clone(),
+            routing_runtime.diagnostic_memory_budget(),
+        )
+        .map_err(|failure| {
             let message = failure.public_message.clone();
             let failed = failed_status(config.port, message.clone());
             self.publish_status(failed);
@@ -539,7 +568,7 @@ impl IngressExecutor for ProxyExecutor {
                                 first_token_ms: None,
                                 billing_mode: None,
                             };
-                        let pending_record = PendingFinalRequestRecord::new(
+                        let mut pending_record = PendingFinalRequestRecord::new(
                             request_context.clone(),
                             failure.candidate_id().map(|_| {
                                 crate::services::proxy::lifecycle::request::AttemptId::new(
@@ -551,6 +580,9 @@ impl IngressExecutor for ProxyExecutor {
                             fallback_count,
                             annotations,
                         );
+                        if let Some(outcome) = failure.routing_outcome_facts() {
+                            pending_record.set_routing_outcome(outcome);
+                        }
                         let outcome = FinalizationOutcome::Failed {
                             code: failure.code.as_str().to_string(),
                             detail: Some(failure.public_message.clone()),
@@ -639,9 +671,12 @@ impl IngressExecutor for ProxyExecutor {
                             ),
                         )
                     }
-                    super::execution::ProxyExecutionBody::Stream(chunks) => {
+                    super::execution::ProxyExecutionBody::Stream {
+                        chunks,
+                        diagnostic_memory,
+                    } => {
                         ProxyResponsePayload::Stream(
-                            dual_terminal_lifecycle_finalizing_stream_with_idle_timeout(
+                            dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory(
                                 chunks,
                                 pending_record,
                                 request_terminal
@@ -651,6 +686,7 @@ impl IngressExecutor for ProxyExecutor {
                                 Some(costs),
                                 request_lease.take().expect("request lease available"),
                                 stream_idle_timeout,
+                                diagnostic_memory,
                             ),
                         )
                     }
@@ -920,6 +956,7 @@ mod tests {
                 Ok(Some(crate::application::routing_engine::planning_snapshot::PlanningSnapshot {
                 snapshot_id: "correlation-test-planning-snapshot".to_string(),
                 durable_revision: 1,
+                routing_policy_revision: 1,
                 policy: crate::models::routing_policy::RoutingPolicyConfigV1::default(),
                 profile: crate::application::routing_engine::algorithm_profile::DispatchAlgorithmProfile::default(),
                 candidates: Vec::new(),
@@ -966,7 +1003,13 @@ mod tests {
             captured: Arc::clone(&captured),
         });
         let limits = ProxyServerLimits::default();
-        let upstream_pool = UpstreamClientPool::new(limits.clone()).expect("upstream pool");
+        let upstream_pool = UpstreamClientPool::new(
+            limits.clone(),
+            crate::services::proxy::diagnostic_memory::DiagnosticMemoryBudget::new(
+                32 * 1024 * 1024,
+            ),
+        )
+        .expect("upstream pool");
         let dropped = Arc::new(AtomicBool::new(false));
         let (writer, worker) = LifecycleWriter::start(
             8,
@@ -1589,21 +1632,12 @@ data: [DONE]
             .write(|write| {
                 Box::pin(async move {
                     sqlx::query(
-                        "INSERT INTO routing_health_snapshot (
-                            station_key_id, consecutive_failures, success_count, failure_count,
-                            total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
-                         ) VALUES (?1, 2, 1, 2, 16000, 8000, '1000', 1)",
+                        "INSERT INTO routing_health_axes (
+                            scope, axis, health_revision, value_basis_points, updated_at_ms
+                         ) VALUES (?1, 'reliability', 1, 2000, 1000), (?2, 'reliability', 1, 9000, 1000)",
                     )
-                    .bind(flaky_id)
-                    .execute(write.connection())
-                    .await?;
-                    sqlx::query(
-                        "INSERT INTO routing_health_snapshot (
-                            station_key_id, consecutive_failures, success_count, failure_count,
-                            total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
-                         ) VALUES (?1, 0, 100, 0, 8000, 80, '1000', 1)",
-                    )
-                    .bind(stable_id)
+                    .bind(format!("station_key:{flaky_id}"))
+                    .bind(format!("station_key:{stable_id}"))
                     .execute(write.connection())
                     .await?;
                     Ok(())
@@ -1661,21 +1695,12 @@ data: [DONE]
             .write(|write| {
                 Box::pin(async move {
                     sqlx::query(
-                        "INSERT INTO routing_health_snapshot (
-                            station_key_id, consecutive_failures, success_count, failure_count,
-                            total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
-                         ) VALUES (?1, 0, 100, 0, 1000, 10, '1000', 1)",
+                        "INSERT INTO routing_health_axes (
+                            scope, axis, health_revision, value_basis_points, updated_at_ms
+                         ) VALUES (?1, 'reliability', 1, 9000, 1000), (?2, 'reliability', 1, 2000, 1000)",
                     )
-                    .bind(offline_id)
-                    .execute(write.connection())
-                    .await?;
-                    sqlx::query(
-                        "INSERT INTO routing_health_snapshot (
-                            station_key_id, consecutive_failures, success_count, failure_count,
-                            total_duration_ms, avg_latency_ms, updated_at, endpoint_revision
-                         ) VALUES (?1, 5, 0, 10, 1_000_000, 10000, '1000', 1)",
-                    )
-                    .bind(ready_id)
+                    .bind(format!("station_key:{offline_id}"))
+                    .bind(format!("station_key:{ready_id}"))
                     .execute(write.connection())
                     .await?;
                     Ok(())
@@ -1695,6 +1720,7 @@ data: [DONE]
             .expect("send responses");
         let status = response.status();
         let body: serde_json::Value = response.json().await.expect("responses json");
+        let traces = runtime.decision_traces().await;
         runtime.stop(started.port).await.unwrap();
 
         assert_eq!(status, StatusCode::OK);
@@ -1703,6 +1729,38 @@ data: [DONE]
         let logs = fixture.request_logs().await;
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].fallback_count, 1);
+
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].profile_version, "DecisionTraceProfileV1");
+        let kinds = traces[0]
+            .events
+            .iter()
+            .map(|event| event.kind.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                "attempt_start",
+                "canonical_failure",
+                "attempt_start",
+                "request_terminal",
+            ]
+        );
+        let codes = traces[0]
+            .events
+            .iter()
+            .map(|event| event.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            codes,
+            vec![
+                "attempt_start",
+                "upstream_transport_failure",
+                "attempt_start",
+                "request_completed",
+            ],
+            "the connect failure must be recorded from the canonical classifier"
+        );
     }
 
     #[tokio::test]
@@ -1726,7 +1784,7 @@ data: [DONE]
         let status = response.status();
         let failure_body: serde_json::Value = response.json().await.expect("failure json");
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(failure_body["error"]["code"], "upstream_unavailable");
+        assert_eq!(failure_body["error"]["code"], "server_error");
         assert_eq!(failure_body["error"]["message"], "upstream is unavailable");
         runtime.stop(started.port).await.unwrap();
 
@@ -1736,9 +1794,69 @@ data: [DONE]
         assert_eq!(logs[0].http_status, Some(502));
         assert_eq!(logs[0].failure_source.as_deref(), Some("upstream"));
         assert_eq!(logs[0].attempt_count, Some(1));
-        let health = fixture.station_key_health(&seeded.station_key_id).await;
-        assert_eq!(health.failure_count, 1);
-        assert_eq!(health.consecutive_failures, 1);
+        // Durable health now lands in the scoped observation/verdict tables
+        // owned by the scoped projector; the legacy station_key_health read
+        // model is read-only after the cutover.
+        let mut session = fixture
+            .runtime()
+            .begin_read()
+            .await
+            .expect("scoped health read session");
+        let observations: Vec<(String, String)> = sqlx::query_as(
+            "SELECT scope_kind, verdict FROM routing_health_observations WHERE station_id = ?1",
+        )
+        .bind(&seeded.station_id)
+        .fetch_all(session.connection())
+        .await
+        .expect("scoped health observations");
+        assert_eq!(
+            observations,
+            vec![("station_endpoint".to_string(), "degraded".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_buffered_two_xx_error_envelope_is_classified_and_stops_before_output() {
+        let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+            br#"{"error":{"message":"upstream exploded","type":"server_error","code":"server_error"}}"#
+                .to_vec(),
+        )]);
+        let fixture = V2ProxyTestFixture::new().await;
+        fixture.seed_candidate(upstream.base_url.as_str()).await;
+        let runtime = ProxyRuntimeState::for_tests();
+        let started = runtime.start(fixture.config(0)).await.expect("start v2");
+
+        let response = reqwest::Client::new()
+            .post(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                started.port
+            ))
+            .bearer_auth("relay-local-secret")
+            .json(&serde_json::json!({
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "ping"}],
+            }))
+            .send()
+            .await
+            .expect("send chat");
+        let status = response.status();
+        let failure_body: serde_json::Value = response.json().await.expect("failure json");
+        let traces = runtime.decision_traces().await;
+        runtime.stop(started.port).await.unwrap();
+
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(failure_body["error"]["code"], "server_error");
+        assert_eq!(traces.len(), 1);
+        let codes = traces[0]
+            .events
+            .iter()
+            .map(|event| event.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            codes,
+            vec!["attempt_start", "upstream_unavailable", "request_failed"],
+            "a 2xx error envelope must be classified through the canonical chain and must not fall back"
+        );
     }
 
     #[tokio::test]

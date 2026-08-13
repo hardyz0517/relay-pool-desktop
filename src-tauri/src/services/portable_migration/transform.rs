@@ -10,6 +10,9 @@ use super::{
         field_rule, secret_policy, setting_policy, FieldTransform, SecretPolicy, SettingPolicy,
         TablePolicy,
     },
+    common_login_contract::{
+        is_common_login_setting, CommonLoginCatalog, LegacyCommonLoginProfile, COMMON_LOGIN_SETTING,
+    },
     format::PortableFormatError,
     limits::PortableMigrationLimitsV1,
 };
@@ -208,7 +211,12 @@ fn transform_setting_row(
         SettingPolicy::IncludeWithTransform => {
             let mut next = row.clone();
             if let Some(value) = next.get_mut("value") {
-                *value = redact_json_text_value("settings", "value", value, limits)?;
+                *value = match key {
+                    key if is_common_login_setting(key) => {
+                        transform_common_login_setting(key, value, limits)?
+                    }
+                    _ => redact_json_text_value("settings", "value", value, limits)?,
+                };
             }
             Ok(RowTransform::Keep(next))
         }
@@ -216,6 +224,42 @@ fn transform_setting_row(
             reason: OmitReason::RegeneratedOnTarget,
         }),
     }
+}
+
+fn transform_common_login_setting(
+    key: &str,
+    value: &Value,
+    limits: PortableMigrationLimitsV1,
+) -> Result<Value, TransformError> {
+    validate_value_size(value, limits)?;
+    let text = value.as_str().ok_or_else(|| TransformError::InvalidJson {
+        table: "settings".to_string(),
+        column: "value".to_string(),
+    })?;
+    scan_for_sensitive_residue(text.as_bytes())?;
+    let parsed = parse_json_text("settings", "value", text)?;
+    validate_json_depth_for_transform(&parsed, limits)?;
+
+    let serialized = if key == COMMON_LOGIN_SETTING {
+        let catalog: CommonLoginCatalog =
+            serde_json::from_value(parsed).map_err(|_| TransformError::InvalidJson {
+                table: "settings".to_string(),
+                column: "value".to_string(),
+            })?;
+        serde_json::to_string(&catalog)
+    } else {
+        let profiles: Vec<LegacyCommonLoginProfile> =
+            serde_json::from_value(parsed).map_err(|_| TransformError::InvalidJson {
+                table: "settings".to_string(),
+                column: "value".to_string(),
+            })?;
+        serde_json::to_string(&profiles)
+    }
+    .map_err(|_| TransformError::InvalidJson {
+        table: "settings".to_string(),
+        column: "value".to_string(),
+    })?;
+    Ok(Value::String(serialized))
 }
 
 fn transform_secret_row(row: &PortableRow) -> Result<RowTransform, TransformError> {
@@ -580,6 +624,103 @@ mod tests {
                 PortableMigrationLimitsV1::CURRENT
             ),
             Err(TransformError::UnknownSecretSelector { .. })
+        ));
+
+        for scope in ["common_login_profile", "common_login_password"] {
+            let common_login_secret = PortableRow::from([
+                ("scope".into(), json!(scope)),
+                ("kind".into(), json!("password")),
+            ]);
+            assert!(matches!(
+                transform_row(
+                    "secrets",
+                    &common_login_secret,
+                    TransformOptions::default(),
+                    PortableMigrationLimitsV1::CURRENT
+                ),
+                Ok(RowTransform::Keep(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn common_login_settings_preserve_only_the_strict_reference_contract() {
+        let current_catalog = json!({
+            "emails": [{"id": "email-1", "email": "person@example.com"}],
+            "passwords": [{
+                "id": "password-1",
+                "passwordSecretId": "secret-1",
+                "secretScope": "common_login_password"
+            }]
+        });
+        let current = PortableRow::from([
+            ("key".into(), json!("common_login_catalog_json")),
+            ("value".into(), json!(current_catalog.to_string())),
+        ]);
+        let RowTransform::Keep(current) = transform_row(
+            "settings",
+            &current,
+            TransformOptions::default(),
+            PortableMigrationLimitsV1::CURRENT,
+        )
+        .expect("current catalog") else {
+            panic!("expected current catalog to be kept")
+        };
+        let current: Value = serde_json::from_str(current["value"].as_str().unwrap()).unwrap();
+        assert_eq!(current["emails"][0]["email"], "person@example.com");
+        assert_eq!(current["passwords"][0]["passwordSecretId"], "secret-1");
+
+        let legacy = PortableRow::from([
+            ("key".into(), json!("common_login_profiles_json")),
+            (
+                "value".into(),
+                json!(
+                    r#"[{"id":"profile-1","email":"legacy@example.com","passwordSecretId":"legacy-secret"}]"#
+                ),
+            ),
+        ]);
+        assert!(matches!(
+            transform_row(
+                "settings",
+                &legacy,
+                TransformOptions::default(),
+                PortableMigrationLimitsV1::CURRENT
+            ),
+            Ok(RowTransform::Keep(_))
+        ));
+
+        let with_plaintext = PortableRow::from([
+            ("key".into(), json!("common_login_catalog_json")),
+            (
+                "value".into(),
+                json!(r#"{"emails":[],"passwords":[],"password":"password-plaintext-canary"}"#),
+            ),
+        ]);
+        assert!(matches!(
+            transform_row(
+                "settings",
+                &with_plaintext,
+                TransformOptions::default(),
+                PortableMigrationLimitsV1::CURRENT
+            ),
+            Err(TransformError::SensitiveResidue)
+        ));
+
+        let unknown_field = PortableRow::from([
+            ("key".into(), json!("common_login_catalog_json")),
+            (
+                "value".into(),
+                json!(r#"{"emails":[],"passwords":[],"future":true}"#),
+            ),
+        ]);
+        assert!(matches!(
+            transform_row(
+                "settings",
+                &unknown_field,
+                TransformOptions::default(),
+                PortableMigrationLimitsV1::CURRENT
+            ),
+            Err(TransformError::InvalidJson { .. })
         ));
     }
 

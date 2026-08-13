@@ -401,13 +401,6 @@ async fn import_historical_evidence(
         profile_id,
         source.connection(),
         write,
-        table_plan("channel_monitor_runs")?,
-    )
-    .await?;
-    copy_table(
-        profile_id,
-        source.connection(),
-        write,
         table_plan("request_logs")?,
     )
     .await?;
@@ -448,9 +441,12 @@ async fn rebuild_domain_revision_baseline(write: &mut WriteSession) -> Result<()
         .await?;
     for statement in [
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'station:' || id, MAX(endpoint_revision, 1), 0, CASE WHEN endpoint_revision > 0 THEN 'legacy_endpoint_revision' ELSE 'baseline_snapshot' END FROM stations",
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'station_account:' || id, 1, 0, 'baseline_snapshot' FROM stations",
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'station_key:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot' FROM station_keys",
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'station_group:' || id, 1, 0, 'baseline_snapshot' FROM station_group_bindings",
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'setting:' || key, ROW_NUMBER() OVER (ORDER BY key), 0, 'baseline_snapshot' FROM settings",
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'model_alias:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot' FROM model_aliases",
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES ('model_alias:direct', 1, 0, 'baseline_snapshot')",
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) SELECT 'routing_policy', COALESCE(MAX(config_revision), 1), 0, 'baseline_snapshot' FROM routing_policy",
     ] {
         sqlx::query(statement).execute(write.connection()).await?;
@@ -1368,26 +1364,6 @@ const TABLE_PLANS: &[TablePlan] = &[
         ],
     },
     TablePlan {
-        name: "channel_monitor_runs",
-        columns: &[
-            "id",
-            "monitor_id",
-            "template_id",
-            "station_id",
-            "station_key_id",
-            "status",
-            "started_at",
-            "finished_at",
-            "duration_ms",
-            "http_status",
-            "latency_ms",
-            "response_model",
-            "fallback_model",
-            "error_message",
-            "created_at",
-        ],
-    },
-    TablePlan {
         name: "request_logs",
         columns: &[
             "id",
@@ -1536,7 +1512,6 @@ mod tests {
                 "collector_snapshots",
                 "group_rate_records",
                 "balance_snapshots",
-                "channel_monitor_runs",
                 "request_logs",
                 "request_attempts",
             ],

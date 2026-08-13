@@ -262,7 +262,6 @@ impl SanitizedOrigin {
         Ok(Self(origin))
     }
 
-    #[cfg(test)]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -292,7 +291,6 @@ impl EndpointFacts {
         &self.endpoint_ref
     }
 
-    #[cfg(test)]
     pub fn sanitized_origin(&self) -> &SanitizedOrigin {
         &self.sanitized_origin
     }

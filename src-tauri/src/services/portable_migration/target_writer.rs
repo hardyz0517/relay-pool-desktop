@@ -13,6 +13,10 @@ use sqlx::{
 
 use super::{
     catalog::{table_catalog, TablePolicy},
+    common_login_contract::{
+        is_supported_password_scope, CommonLoginCatalog, LegacyCommonLoginProfile,
+        COMMON_LOGIN_SETTING, LEGACY_COMMON_LOGIN_SETTING, LEGACY_PASSWORD_SCOPE, PASSWORD_KIND,
+    },
     schema_reader::ordered_import_tables_v1,
     transform::{portable_binary_bytes, scan_for_sensitive_residue, PortableRow},
     validate::{
@@ -104,6 +108,7 @@ impl TrustedTargetWriter {
         rebuild_domain_revision_baseline(&mut transaction).await?;
 
         transaction.commit().await?;
+        ensure_common_login_secret_references(connection).await?;
         validate_connection(connection).await
     }
 }
@@ -124,6 +129,12 @@ async fn rebuild_domain_revision_baseline(
     .await?;
     sqlx::query(
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'station_account:' || id, 1, 0, 'baseline_snapshot' FROM stations",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
          SELECT 'station_key:' || id, ROW_NUMBER() OVER (ORDER BY id), 0, 'baseline_snapshot'
          FROM station_keys",
     )
@@ -131,8 +142,20 @@ async fn rebuild_domain_revision_baseline(
     .await?;
     sqlx::query(
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'station_group:' || id, 1, 0, 'baseline_snapshot' FROM station_group_bindings",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
          SELECT 'setting:' || key, ROW_NUMBER() OVER (ORDER BY key), 0, 'baseline_snapshot'
          FROM settings",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         VALUES ('model_alias:direct', 1, 0, 'baseline_snapshot')",
     )
     .execute(&mut **transaction)
     .await?;
@@ -167,8 +190,82 @@ pub(crate) async fn validate_rebuilt_target_database(
         );
     }
     ensure_rebuilt_secrets_use_target_key(&mut connection, target_key_id, transport_key_id).await?;
+    ensure_common_login_secret_references(&mut connection).await?;
     connection.close().await?;
     Ok(row_counts)
+}
+
+async fn ensure_common_login_secret_references(
+    connection: &mut SqliteConnection,
+) -> PortableValidationResult<()> {
+    let current = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?1")
+        .bind(COMMON_LOGIN_SETTING)
+        .fetch_optional(&mut *connection)
+        .await?;
+    if let Some(value) = current {
+        let catalog: CommonLoginCatalog = serde_json::from_str(&value)
+            .map_err(|_| PortableMigrationValidationError::UnsupportedSchema)?;
+        for password in catalog.passwords {
+            if password.id.is_empty()
+                || password.password_secret_id.is_empty()
+                || !is_supported_password_scope(&password.secret_scope)
+            {
+                return Err(PortableMigrationValidationError::UnsupportedSchema);
+            }
+            ensure_exact_secret_reference(
+                connection,
+                &password.password_secret_id,
+                &password.secret_scope,
+                &password.id,
+            )
+            .await?;
+        }
+        return Ok(());
+    }
+
+    let legacy = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?1")
+        .bind(LEGACY_COMMON_LOGIN_SETTING)
+        .fetch_optional(&mut *connection)
+        .await?;
+    let Some(value) = legacy else {
+        return Ok(());
+    };
+    let profiles: Vec<LegacyCommonLoginProfile> = serde_json::from_str(&value)
+        .map_err(|_| PortableMigrationValidationError::UnsupportedSchema)?;
+    for profile in profiles {
+        let Some(secret_id) = profile.password_secret_id else {
+            continue;
+        };
+        if profile.id.is_empty() || secret_id.is_empty() {
+            return Err(PortableMigrationValidationError::UnsupportedSchema);
+        }
+        ensure_exact_secret_reference(connection, &secret_id, LEGACY_PASSWORD_SCOPE, &profile.id)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn ensure_exact_secret_reference(
+    connection: &mut SqliteConnection,
+    secret_id: &str,
+    scope: &str,
+    owner_id: &str,
+) -> PortableValidationResult<()> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM secrets
+         WHERE id = ?1 AND scope = ?2 AND owner_id = ?3 AND kind = ?4",
+    )
+    .bind(secret_id)
+    .bind(scope)
+    .bind(owner_id)
+    .bind(PASSWORD_KIND)
+    .fetch_one(&mut *connection)
+    .await?;
+    if count == 1 {
+        Ok(())
+    } else {
+        Err(PortableMigrationValidationError::UnsupportedSchema)
+    }
 }
 
 async fn open_trusted_writer(path: &Path) -> PortableValidationResult<SqliteConnection> {
@@ -577,6 +674,101 @@ mod tests {
                 .expect("ciphertext");
         connection.close().await.expect("close");
         assert_eq!(ciphertext, vec![1, 2, 3]);
+    }
+
+    fn common_login_batches(scope: &str, owner_id: &str) -> Vec<TrustedTableBatch> {
+        vec![
+            TrustedTableBatch {
+                table_name: "settings".to_string(),
+                rows: vec![PortableRow::from([
+                    ("key".to_string(), json!("common_login_catalog_json")),
+                    (
+                        "value".to_string(),
+                        json!(serde_json::json!({
+                            "emails": [{"id": "email-1", "email": "person@example.com"}],
+                            "passwords": [{
+                                "id": "password-1",
+                                "passwordSecretId": "secret-1",
+                                "secretScope": scope
+                            }]
+                        })
+                        .to_string()),
+                    ),
+                    ("updated_at".to_string(), json!("1")),
+                ])],
+            },
+            TrustedTableBatch {
+                table_name: "secrets".to_string(),
+                rows: vec![PortableRow::from([
+                    ("id".to_string(), json!("secret-1")),
+                    ("scope".to_string(), json!(scope)),
+                    ("owner_id".to_string(), json!(owner_id)),
+                    ("kind".to_string(), json!("password")),
+                    ("masked_value".to_string(), json!("********")),
+                    (
+                        "ciphertext".to_string(),
+                        portable_binary_bytes_test_value(&[1, 2, 3]),
+                    ),
+                    (
+                        "nonce".to_string(),
+                        portable_binary_bytes_test_value(&[4; 12]),
+                    ),
+                    ("created_at".to_string(), json!("1")),
+                    ("updated_at".to_string(), json!("1")),
+                    ("key_id".to_string(), json!("transport:key")),
+                    ("encryption_version".to_string(), json!("1")),
+                    ("value_hash".to_string(), json!("hash")),
+                ])],
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn writer_validates_current_and_legacy_common_login_secret_references() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        for (index, scope) in ["common_login_password", "common_login_profile"]
+            .into_iter()
+            .enumerate()
+        {
+            TrustedTargetWriter
+                .rebuild_current_database(
+                    &directory.path().join(format!("valid-{index}.sqlite")),
+                    &common_login_batches(scope, "password-1"),
+                )
+                .await
+                .expect("valid reference");
+        }
+
+        let invalid = directory.path().join("invalid-owner.sqlite");
+        assert!(matches!(
+            TrustedTargetWriter
+                .rebuild_current_database(
+                    &invalid,
+                    &common_login_batches("common_login_password", "different-owner"),
+                )
+                .await,
+            Err(PortableMigrationValidationError::UnsupportedSchema)
+        ));
+
+        let missing = directory.path().join("missing-secret.sqlite");
+        let mut missing_batches = common_login_batches("common_login_password", "password-1");
+        missing_batches.retain(|batch| batch.table_name != "secrets");
+        assert!(matches!(
+            TrustedTargetWriter
+                .rebuild_current_database(&missing, &missing_batches)
+                .await,
+            Err(PortableMigrationValidationError::UnsupportedSchema)
+        ));
+
+        let wrong_scope = directory.path().join("wrong-scope.sqlite");
+        let mut wrong_scope_batches = common_login_batches("common_login_password", "password-1");
+        wrong_scope_batches[1].rows[0].insert("scope".to_string(), json!("common_login_profile"));
+        assert!(matches!(
+            TrustedTargetWriter
+                .rebuild_current_database(&wrong_scope, &wrong_scope_batches)
+                .await,
+            Err(PortableMigrationValidationError::UnsupportedSchema)
+        ));
     }
 }
 

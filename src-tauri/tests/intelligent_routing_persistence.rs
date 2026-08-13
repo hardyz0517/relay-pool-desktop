@@ -29,6 +29,48 @@ fn foundation_migration_is_additive_and_has_no_timestamp_revision_fallback() {
 }
 
 #[test]
+fn scoped_verdict_and_terminal_durability_migrations_are_additive() {
+    let verdict = read_source("src/persistence/migrations/0035_scoped_routing_health_verdicts.sql");
+    assert!(verdict.contains("CREATE TABLE routing_health_verdicts"));
+
+    let outcome =
+        read_source("src/persistence/migrations/0037_request_routing_outcome_summaries.sql");
+    assert!(outcome.contains("CREATE TABLE IF NOT EXISTS request_routing_outcome_summaries"));
+
+    let outbox = read_source("src/persistence/migrations/0039_request_terminal_outbox.sql");
+    assert!(outbox.contains("CREATE TABLE request_terminal_outbox"));
+}
+
+#[test]
+fn routing_outcome_migration_is_additive_and_redacts_unstable_values() {
+    let migration =
+        read_source("src/persistence/migrations/0037_request_routing_outcome_summaries.sql");
+    assert!(migration.contains("CREATE TABLE IF NOT EXISTS request_routing_outcome_summaries"));
+    for column in [
+        "classification",
+        "confidence",
+        "evidence_source",
+        "failure_domain_commitment_digest",
+    ] {
+        assert!(
+            migration.contains(column),
+            "routing outcome missing {column}"
+        );
+    }
+    for forbidden in [
+        "authorization TEXT",
+        "upstream_url TEXT",
+        "message TEXT",
+        "request_body TEXT",
+    ] {
+        assert!(
+            !migration.contains(forbidden),
+            "routing outcome must not persist {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn cutover_migration_removes_legacy_routing_truths_and_writeback_fields() {
     let migration =
         read_source("src/persistence/migrations/0026_intelligent_routing_cutover_cleanup.sql");
@@ -74,7 +116,9 @@ fn generation_upgrade_rebuilds_revision_baseline_after_legacy_copy() {
     assert!(importer.contains("rebuild_domain_revision_baseline(&mut write).await?"));
     for scope in [
         "station:' || id",
+        "station_account:' || id",
         "station_key:' || id",
+        "station_group:' || id",
         "model_alias:' || id",
     ] {
         assert!(
@@ -132,7 +176,7 @@ fn portable_catalog_declares_foundation_tables_and_explicit_json_rules() {
             "catalog missing {table}"
         );
     }
-    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 55"));
+    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 63"));
     assert!(catalog.contains("ROUTING_POLICY_RULES"));
     assert!(catalog.contains("ROUTING_OBSERVATION_RULES"));
     assert!(catalog.contains("ROUTING_QUALITY_RULES"));

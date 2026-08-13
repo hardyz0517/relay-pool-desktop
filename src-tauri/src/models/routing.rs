@@ -21,25 +21,7 @@ pub enum RouteEndpointKind {
     Embeddings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PricingGroupType {
-    Gpt,
-    Claude,
-    Gemini,
-    Grok,
-    ImageGeneration,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum RoutingGroupFilter {
-    #[default]
-    AllGroups,
-    UngroupedOnly,
-    GroupBindingId(String),
-    GroupIdHash(String),
-    GroupType(PricingGroupType),
-}
+pub use crate::models::routing_policy::{PricingGroupType, RoutingGroupFilter};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeRoutingSettings {
@@ -58,82 +40,6 @@ impl Default for RuntimeRoutingSettings {
             routing_group_scope: RoutingGroupFilter::default(),
             scheduler_config: DispatchAlgorithmSettings::default(),
             allow_depleted_fallback: false,
-        }
-    }
-}
-
-impl Serialize for RoutingGroupFilter {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::AllGroups => serializer.serialize_str("all_groups"),
-            Self::UngroupedOnly => serializer.serialize_str("ungrouped_only"),
-            Self::GroupBindingId(id) => {
-                serde_json::json!({ "group_binding_id": id }).serialize(serializer)
-            }
-            Self::GroupIdHash(hash) => {
-                serde_json::json!({ "group_id_hash": hash }).serialize(serializer)
-            }
-            Self::GroupType(group_type) => {
-                serde_json::json!({ "group_type": group_type }).serialize(serializer)
-            }
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for RoutingGroupFilter {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        match value {
-            Value::String(value) => match value.as_str() {
-                "all_groups" => Ok(Self::AllGroups),
-                "ungrouped_only" => Ok(Self::UngroupedOnly),
-                other => Err(serde::de::Error::custom(format!(
-                    "unknown routing group filter: {other}"
-                ))),
-            },
-            Value::Object(mut object) => {
-                if object.len() != 1 {
-                    return Err(serde::de::Error::custom(
-                        "routing group filter object must contain exactly one key",
-                    ));
-                }
-                if let Some(value) = object.remove("group_binding_id") {
-                    let id = value
-                        .as_str()
-                        .filter(|id| !id.trim().is_empty())
-                        .ok_or_else(|| {
-                            serde::de::Error::custom("group_binding_id must be a non-empty string")
-                        })?;
-                    return Ok(Self::GroupBindingId(id.to_string()));
-                }
-                if let Some(value) = object.remove("group_id_hash") {
-                    let hash = value
-                        .as_str()
-                        .filter(|hash| !hash.trim().is_empty())
-                        .ok_or_else(|| {
-                            serde::de::Error::custom("group_id_hash must be a non-empty string")
-                        })?;
-                    return Ok(Self::GroupIdHash(hash.to_string()));
-                }
-                if let Some(value) = object.remove("group_type") {
-                    let group_type = PricingGroupType::deserialize(value).map_err(|error| {
-                        serde::de::Error::custom(format!("invalid group_type: {error}"))
-                    })?;
-                    return Ok(Self::GroupType(group_type));
-                }
-                Err(serde::de::Error::custom(
-                    "unknown routing group filter object key",
-                ))
-            }
-            _ => Err(serde::de::Error::custom(
-                "routing group filter must be a string or object",
-            )),
         }
     }
 }

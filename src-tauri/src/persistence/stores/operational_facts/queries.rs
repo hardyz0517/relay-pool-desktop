@@ -37,6 +37,10 @@ impl OperationalFactStore {
             SELECT
                 k.id AS station_key_id,
                 k.station_id AS station_id,
+                capacity_domain.provider_family AS capacity_provider_family,
+                capacity_domain.deployment_identity AS capacity_deployment_identity,
+                capacity_domain.region_identity AS capacity_region_identity,
+                capacity_domain.revision AS capacity_domain_revision,
                 s.endpoint_revision AS endpoint_revision,
                 s.api_base_url AS api_base_url,
                 CASE
@@ -58,22 +62,23 @@ impl OperationalFactStore {
                 COALESCE(c.model_blocklist_json, '[]') AS model_blocklist_json,
                 COALESCE(c.preferred_models_json, '[]') AS preferred_models_json,
                 COALESCE(c.routing_tags_json, '[]') AS routing_tags_json,
-                COALESCE(h.success_count, 0) AS success_count,
-                COALESCE(h.failure_count, 0) AS failure_count,
-                COALESCE(h.consecutive_failures, 0) AS consecutive_failures,
-                h.avg_latency_ms AS avg_latency_ms,
-                h.last_error_summary AS last_error_summary,
-                h.cooldown_until AS cooldown_until,
+                0 AS success_count,
+                0 AS failure_count,
+                0 AS consecutive_failures,
+                NULL AS avg_latency_ms,
+                NULL AS last_error_summary,
+                NULL AS cooldown_until,
                 b.status AS balance_status,
                 b.value AS balance_value,
                 key_revision.revision AS key_record_revision,
-                station_revision.revision AS station_record_revision
+                station_revision.revision AS station_record_revision,
+                account_revision.revision AS account_record_revision,
+                group_revision.revision AS group_record_revision
             FROM station_keys k
             JOIN stations s ON s.id = k.station_id
             LEFT JOIN station_key_capabilities c ON c.station_key_id = k.id
-            LEFT JOIN routing_health_snapshot h
-                ON h.station_key_id = k.id AND h.endpoint_revision = s.endpoint_revision
             LEFT JOIN station_group_bindings group_binding ON group_binding.id = k.group_binding_id
+            LEFT JOIN station_capacity_domains capacity_domain ON capacity_domain.station_id = s.id
             LEFT JOIN balance_snapshots b ON b.id = (
                 SELECT latest.id
                 FROM balance_snapshots latest
@@ -85,6 +90,10 @@ impl OperationalFactStore {
                 ON key_revision.scope = 'station_key:' || k.id
             LEFT JOIN domain_revisions station_revision
                 ON station_revision.scope = 'station:' || s.id
+            LEFT JOIN domain_revisions account_revision
+                ON account_revision.scope = 'station_account:' || s.id
+            LEFT JOIN domain_revisions group_revision
+                ON group_revision.scope = 'station_group:' || k.group_binding_id
             WHERE k.enabled = 1
               AND s.enabled = 1
             ORDER BY COALESCE(k.routing_order, k.priority) ASC,
@@ -155,12 +164,17 @@ impl OperationalFactStore {
                 Ok(RawOperationalCandidateRow {
                     station_key_id: row.get("station_key_id"),
                     station_id: row.get("station_id"),
+                    capacity_provider_family: row.get("capacity_provider_family"),
+                    capacity_deployment_identity: row.get("capacity_deployment_identity"),
+                    capacity_region_identity: row.get("capacity_region_identity"),
+                    capacity_domain_revision: row.get("capacity_domain_revision"),
                     endpoint_revision: row.get("endpoint_revision"),
                     api_base_url: row.get("api_base_url"),
                     credential_available: row.get::<i64, _>("credential_available") != 0,
                     priority: row.get("priority"),
                     backup_only: row.get::<i64, _>("backup_only") != 0,
                     group_binding_id: row.get("group_binding_id"),
+                    group_record_revision: row.get("group_record_revision"),
                     group_id_hash: row.get("group_id_hash"),
                     group_category: row.get("group_category"),
                     supports_chat_completions: row.get::<i64, _>("supports_chat_completions") != 0,
@@ -189,6 +203,10 @@ impl OperationalFactStore {
                         row.get("station_record_revision"),
                         format!("station:{}", row.get::<String, _>("station_id")),
                     )?,
+                    account_record_revision: required_revision(
+                        row.get("account_record_revision"),
+                        format!("station_account:{}", row.get::<String, _>("station_id")),
+                    )?,
                 })
             })
             .collect::<Result<Vec<_>, OperationalFactQueryError>>()?;
@@ -209,6 +227,7 @@ impl OperationalFactStore {
             .into_iter()
             .map(|row| {
                 Ok(RawOperationalModelAliasRow {
+                    alias_id: row.get("alias_id"),
                     client_model: row.get("client_model"),
                     upstream_model: row.get("upstream_model"),
                     record_revision: required_revision(

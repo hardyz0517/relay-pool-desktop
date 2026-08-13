@@ -505,6 +505,10 @@ async fn finalize_ingress_failure(
             ..RequestLogAnnotations::default()
         },
     );
+    let record = match failure.routing_outcome_facts() {
+        Some(outcome) => record.with_routing_outcome(outcome),
+        None => record,
+    };
     let _ = admission.terminal.send(record).await;
 }
 

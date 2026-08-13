@@ -852,6 +852,12 @@ mod tests {
                 station_id: "station-1".to_string(),
                 station_key_id: "key-1".to_string(),
                 endpoint_revision: 1,
+                credential_revision: 1,
+                account_revision: 1,
+                group_binding_id: None,
+                group_revision: None,
+                resolved_upstream_model: None,
+                model_alias_revision: 1,
                 started_at_ms: 2,
             },
             terminal: AttemptTerminal::Succeeded,
@@ -880,6 +886,7 @@ mod tests {
             attempt_count: 1,
             fallback_count: 0,
             annotations: Default::default(),
+            routing_outcome: None,
         });
         assert!(
             finish_ack
@@ -934,7 +941,7 @@ mod tests {
         )
         .expect("writer");
         let request = writer.try_reserve_request().expect("request permits");
-        let (_terminal, ack) = request.send_start(RequestStartRecord { context: context() });
+        let (terminal, ack) = request.send_start(RequestStartRecord { context: context() });
         assert!(
             ack.await
                 .expect("ack channel")
@@ -943,6 +950,10 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::Relaxed), 3);
         assert!(writer.health().is_healthy());
+        // The terminal reservation still owns an mpsc permit; dropping it
+        // releases the last sender so the worker observes channel close and
+        // the join below terminates instead of blocking forever.
+        drop(terminal);
         drop(writer);
         worker.join().await.expect("worker join");
     }

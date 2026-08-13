@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "32c8a0601dfc1869a4ce27b953f41eb1bd520e7c422771c215323a0e9a27ba9d",
+  "contract_hash": "8252023595121d55e51650a4907453b95a8bd0ffc0531c44f3984f16770385f0",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -130,6 +130,17 @@
       "transport": "ordinary",
       "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
       "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "clear_station_capacity_domain",
+      "transport": "ordinary",
+      "input_schema_hash": "8ef2596d344e75aa41d3982818b30965fb101a73da5ab40062e1737dd88aff23",
+      "output_schema_hash": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "idempotent",
       "transport_retry": false,
@@ -753,6 +764,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "get_station_capacity_domain",
+      "transport": "ordinary",
+      "input_schema_hash": "4fff3bd37721f48e52d77d2db977ff3107b8061017f64c7864dd360ca5477505",
+      "output_schema_hash": "c76d08ef3f051502fed0a0adc88898408dccfea84a70551bb43ef35e9f30ff88",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "get_station_credentials",
       "transport": "ordinary",
       "input_schema_hash": "ca6ff4935fb83b44bb017eb5decb2e38a66654fda36cdd7df87a8747ecebac82",
@@ -933,17 +955,6 @@
       "transport": "ordinary",
       "input_schema_hash": "90a4fe1ed84bdd9e08221539943358ed32d3e1c1e5e5009bc21b3624556c6441",
       "output_schema_hash": "6ddb14300570bf361abc05a9a2e485b5ba5e2baaf8cd98f001aab7367207c4bc",
-      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
-      "mutation_kind": "read",
-      "transport_retry": false,
-      "result_unknown": false,
-      "runtime_validation": "rust_dto_pre_application"
-    },
-    {
-      "name": "list_channel_monitor_runs",
-      "transport": "ordinary",
-      "input_schema_hash": "ecef33555558aeb1c48b3da54446548ebf222f597eec6901365eb27b491c4e3b",
-      "output_schema_hash": "7b20a579468f726c8771048591df2a8957b25f674c410ed10d633683b349a96f",
       "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
       "mutation_kind": "read",
       "transport_retry": false,
@@ -1930,6 +1941,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "upsert_station_capacity_domain",
+      "transport": "ordinary",
+      "input_schema_hash": "58a9228cfe6a45de3fd01d5581acb889423c71ae80ef7256d9ceb159bac23ef7",
+      "output_schema_hash": "556efc15643238a0c2191d5717fbf00b1bac841142152a2e87fba94aa6e3f505",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
       "name": "upsert_station_group_binding",
       "transport": "ordinary",
       "input_schema_hash": "13ee0edee1f9f93c4ab248ffdf6a02b689019457372341bef6109d48508372e9",
@@ -1944,6 +1966,6 @@
   "streaming_surfaces": [],
   "evidence": {
     "kind": "compiled-rust-registry",
-    "serialization_fixture_hash": "6442b625ec727b25a444c990a0aeb0e3570e19e44dc477dc8ddd534f7bd30399"
+    "serialization_fixture_hash": "a0f63f55fc4ba53c6fa22a839412ab4844980cdf6ea7c8ec20a8fb00181c0549"
   }
 }

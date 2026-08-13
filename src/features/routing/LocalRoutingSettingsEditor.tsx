@@ -2,11 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, Save } from "lucide-react";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
 import { loadRoutingPolicy, updateRoutingPolicy } from "@/lib/api/routing";
-import { getSettings, updateSettings } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
 import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
-import { queryKeys } from "@/lib/query/queryKeys";
-import { appSettingsToUpdateInput, type AppSettings } from "@/lib/types/settings";
 import { groupCategoryDefinitions } from "@/lib/groupCategories";
 import type { PricingGroupType, RoutingGroupFilter, RoutingPolicyConfigV1 } from "@/lib/types/routing";
 import { useQueryClient } from "@tanstack/react-query";
@@ -28,8 +25,6 @@ export function LocalRoutingSettingsEditor() {
   const queryClient = useQueryClient();
   const [config, setConfig] = useState<RoutingPolicyConfigV1 | null>(null);
   const [saved, setSaved] = useState<RoutingPolicyConfigV1 | null>(null);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [savedSettings, setSavedSettings] = useState<AppSettings | null>(null);
   const [revision, setRevision] = useState<number | null>(null);
   const [state, setState] = useState<SaveState>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -38,12 +33,10 @@ export function LocalRoutingSettingsEditor() {
     setState("loading");
     setError(null);
     try {
-      const [response, nextSettings] = await Promise.all([loadRoutingPolicy(), getSettings()]);
+      const response = await loadRoutingPolicy();
       setConfig(response.config);
       setSaved(response.config);
       setRevision(response.revision);
-      setSettings(nextSettings);
-      setSavedSettings(nextSettings);
       setState("idle");
     } catch (requestError) {
       setError(readError(requestError));
@@ -54,8 +47,8 @@ export function LocalRoutingSettingsEditor() {
   useEffect(() => { void reload(); }, []);
 
   const dirty = useMemo(
-    () => JSON.stringify(config) !== JSON.stringify(saved) || JSON.stringify(settings) !== JSON.stringify(savedSettings),
-    [config, saved, savedSettings, settings],
+    () => JSON.stringify(config) !== JSON.stringify(saved),
+    [config, saved],
   );
   const total = config
     ? config.reliabilityWeight + config.responsivenessWeight + config.costWeight + config.preferenceWeight
@@ -63,11 +56,6 @@ export function LocalRoutingSettingsEditor() {
 
   function update<K extends keyof RoutingPolicyConfigV1>(key: K, value: RoutingPolicyConfigV1[K]) {
     setConfig((current) => current ? { ...current, [key]: value } : current);
-    setState("dirty");
-  }
-
-  function updateSettingsField<K extends keyof AppSettings>(key: K, value: AppSettings[K]) {
-    setSettings((current) => current ? { ...current, [key]: value } : current);
     setState("dirty");
   }
 
@@ -93,18 +81,14 @@ export function LocalRoutingSettingsEditor() {
   }
 
   async function save() {
-    if (!config || !settings || revision == null || total !== 10_000 || state === "saving") return;
+    if (!config || revision == null || total !== 10_000 || state === "saving") return;
     setState("saving");
     setError(null);
     try {
-      const nextSettings = await updateSettings(appSettingsToUpdateInput(settings));
       const response = await updateRoutingPolicy({ config, expectedRevision: revision });
       setConfig(response.config);
       setSaved(response.config);
       setRevision(response.revision);
-      setSettings(nextSettings);
-      setSavedSettings(nextSettings);
-      queryClient.setQueryData(queryKeys.settings, nextSettings);
       setState("saved");
       const synchronization = await refreshRoutingQueries(queryClient);
       if (synchronization.refreshed) toast.success("路由策略已保存");
@@ -145,8 +129,8 @@ export function LocalRoutingSettingsEditor() {
                 type="number"
                 min={0}
                 step="any"
-                value={settings?.maxRateMultiplier ?? ""}
-                onChange={(event) => updateSettingsField("maxRateMultiplier", parseMaxRateMultiplier(event.target.value))}
+                value={config.maxRateMultiplier ?? ""}
+                onChange={(event) => update("maxRateMultiplier", parseMaxRateMultiplier(event.target.value))}
               />
             </label>
             <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
@@ -154,7 +138,7 @@ export function LocalRoutingSettingsEditor() {
               <SelectControl
                 ariaLabel="默认分组类型"
                 className={inputClassName}
-                value={settings ? groupFilterValue(settings.defaultRoutingGroupFilter) : "all_groups"}
+                value={groupFilterValue(config.routingGroupFilter ?? "all_groups")}
                 options={[
                   { value: "all_groups", label: "全部分组" },
                   ...groupCategoryDefinitions.filter((definition) => definition.value !== "unknown").map((definition) => ({
@@ -163,7 +147,7 @@ export function LocalRoutingSettingsEditor() {
                   })),
                   { value: "ungrouped_only", label: "仅未分组" },
                 ]}
-                onChange={(value) => updateSettingsField("defaultRoutingGroupFilter", groupFilterFromValue(value))}
+                onChange={(value) => update("routingGroupFilter", groupFilterFromValue(value))}
               />
             </label>
           </div>

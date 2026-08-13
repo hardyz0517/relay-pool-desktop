@@ -69,7 +69,9 @@ fn assert_source_malicious_invariants(manifest_dir: &Path) {
         "src/services/portable_migration/schema_reader.rs",
     );
     assert!(
-        schema_reader.contains("\"view\" | \"trigger\"")
+        schema_reader.contains("\"trigger\" =>")
+            && schema_reader.contains("\"view\" =>")
+            && schema_reader.contains("TRUSTED_TRIGGERS_V1")
             && schema_reader.contains("UnsupportedSchemaObject")
             && !schema_reader.contains("ATTACH"),
         "portable reader must reject untrusted schema objects and avoid attached databases"

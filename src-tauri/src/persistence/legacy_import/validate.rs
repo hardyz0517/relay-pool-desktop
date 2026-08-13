@@ -69,7 +69,6 @@ const VALIDATED_TABLES: &[&str] = &[
     "balance_snapshots",
     "channel_monitor_request_templates",
     "channel_monitors",
-    "channel_monitor_runs",
     "request_logs",
     "request_attempts",
     "routing_health_snapshot",

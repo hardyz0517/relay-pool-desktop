@@ -170,7 +170,7 @@ pub(crate) fn classify_route_failure(input: RouteFailureInput) -> ClassifiedRout
 pub(crate) enum RoutePlanningFailure {
     HealthUnavailable,
     CapacityExhausted,
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     CandidateLimitExceeded {
         actual: usize,
         limit: usize,
@@ -193,14 +193,14 @@ impl RoutePlanningFailure {
             Self::HealthUnavailable => planning_failure(
                 FailureClass::HealthUnavailable,
                 FailureTarget::Request,
-                RetryDisposition::TryNextCandidate,
+                RetryDisposition::TryDifferentFailureDomain,
             ),
             Self::CapacityExhausted => planning_failure(
                 FailureClass::CapacityExhausted,
                 FailureTarget::Request,
                 RetryDisposition::WaitThenReplan,
             ),
-            #[cfg(test)]
+            #[cfg(any(test, debug_assertions))]
             Self::CandidateLimitExceeded { .. } => planning_failure(
                 FailureClass::CandidateLimit,
                 FailureTarget::Request,
@@ -209,7 +209,7 @@ impl RoutePlanningFailure {
             Self::ConfigUnstable => planning_failure(
                 FailureClass::ConfigUnstable,
                 FailureTarget::Request,
-                RetryDisposition::TryNextCandidate,
+                RetryDisposition::TryDifferentFailureDomain,
             ),
             Self::DeadlineExceeded => planning_failure(
                 FailureClass::Deadline,
@@ -230,7 +230,7 @@ impl RoutePlanningFailure {
         match self {
             Self::HealthUnavailable => "route_health_unavailable",
             Self::CapacityExhausted => "route_capacity_exhausted",
-            #[cfg(test)]
+            #[cfg(any(test, debug_assertions))]
             Self::CandidateLimitExceeded { actual, limit } => {
                 if actual > limit {
                     "route_candidate_limit_exceeded"

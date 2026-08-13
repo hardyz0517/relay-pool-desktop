@@ -3,9 +3,7 @@ use serde_json::{json, Value};
 
 use crate::{
     models::{proxy::UpstreamApiFormat, routing::StationKeyCapabilities},
-    services::{
-        proxy::redact_error_message, proxy::should_fallback, station_endpoints::build_api_url,
-    },
+    services::{proxy::redact_error_message, station_endpoints::build_api_url},
 };
 
 pub(crate) const DEFAULT_STATION_KEY_CONNECTIVITY_MODEL: &str = "gpt-4.1-mini";
@@ -264,8 +262,7 @@ pub(crate) fn should_try_station_key_connectivity_chat_fallback(
     {
         return false;
     }
-    matches!(status_code, 404 | 405 | 501)
-        || should_fallback(status_code)
+    matches!(status_code, 404 | 405 | 408 | 425 | 429 | 500..=599)
         || (status_code == 400 && response_error_allows_chat_fallback(message))
 }
 

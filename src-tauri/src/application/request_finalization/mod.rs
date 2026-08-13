@@ -3,7 +3,6 @@ use std::sync::{
     Arc,
 };
 
-#[cfg(test)]
 pub(crate) mod effect_planner;
 pub(crate) mod failure;
 pub(crate) mod outcome;
@@ -13,7 +12,10 @@ use futures_util::future::BoxFuture;
 
 use crate::{
     application::request_lifecycle::{
-        attempt::{AttemptTerminal, AttemptTerminalRecord, HealthEffect},
+        attempt::{
+            AttemptTerminal, AttemptTerminalRecord, DurableCapabilityEffect,
+            DurableFailureDimension, DurableHealthScope, DurableVerdict, HealthEffect,
+        },
         ports::{
             AttemptCommitAck, AttemptCostCommitAck, AttemptCostCommitRecord, LifecycleWriteError,
             RequestCommitAck, RequestCostAggregateCommitAck, RequestCostAggregateCommitRecord,
@@ -43,14 +45,19 @@ use crate::{
         },
         stores::request_log_store::{
             AttemptPersistenceResult, RequestLogStore, RequestStartPersistenceResult,
-            RequestTerminalPersistenceResult,
         },
         stores::request_log_write::{
-            AttemptHealthUpdate, AttemptTerminalWrite, RequestLogAnnotationsWrite,
-            RequestStartWrite, RequestTerminalWrite,
+            AttemptDurableEffectWrite, AttemptHealthUpdate, AttemptTerminalWrite,
+            RequestLogAnnotationsWrite, RequestRoutingOutcomeSummaryWrite, RequestStartWrite,
+            RequestTerminalWrite,
         },
         stores::request_outcome_store::{
             AttemptCostWrite, RequestCostAggregateWrite, RequestOutcomeStore,
+        },
+        stores::request_terminal_outbox::RequestTerminalOutboxStore,
+        stores::routing_health_verdict_store::{
+            DurableHealthVerdict, FailureDimension, RoutingHealthVerdictStore,
+            ScopedHealthObservation, ScopedHealthSubject, UnsupportedModelObservation,
         },
     },
 };
@@ -62,6 +69,15 @@ pub(crate) struct RequestFinalizationService {
     health: HealthTransitionService,
     observations: ObservationIngestion,
     observation_sequence: Arc<AtomicU64>,
+}
+
+const TERMINAL_OUTBOX_BATCH_SIZE: u32 = 64;
+const TERMINAL_OUTBOX_LEASE_MS: i64 = 30_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TerminalOutboxReconciliationReport {
+    pub(crate) batches_completed: u64,
+    pub(crate) terminals_projected: u64,
 }
 
 impl RequestFinalizationService {
@@ -78,6 +94,7 @@ impl RequestFinalizationService {
     pub(crate) async fn reconcile_startup_interrupted_request_lifecycle(
         &self,
     ) -> Result<StartupReconciliationReport, LifecycleWriteError> {
+        self.ensure_scoped_health_projection().await?;
         let mut total = StartupReconciliationReport::empty();
         loop {
             let now_ms = self.clock.now_utc().timestamp_millis();
@@ -100,6 +117,73 @@ impl RequestFinalizationService {
                 return Ok(total);
             }
         }
+    }
+
+    pub(crate) async fn reconcile_terminal_outbox(
+        &self,
+    ) -> Result<TerminalOutboxReconciliationReport, LifecycleWriteError> {
+        let owner = format!("startup-terminal-outbox-{}", uuid::Uuid::now_v7());
+        let mut report = TerminalOutboxReconciliationReport {
+            batches_completed: 0,
+            terminals_projected: 0,
+        };
+        loop {
+            let now_ms = self.clock.now_utc().timestamp_millis();
+            let mut claim_session = self
+                .runtime
+                .begin_write()
+                .await
+                .map_err(map_persistence_error)?;
+            let (records, batch) = RequestTerminalOutboxStore
+                .claim_batch(
+                    claim_session.connection(),
+                    &owner,
+                    now_ms,
+                    TERMINAL_OUTBOX_LEASE_MS,
+                    TERMINAL_OUTBOX_BATCH_SIZE,
+                )
+                .await
+                .map_err(map_persistence_error)?;
+            claim_session
+                .commit()
+                .await
+                .map_err(map_persistence_error)?;
+            report.batches_completed += 1;
+            for record in records {
+                let mut session = self
+                    .runtime
+                    .begin_write()
+                    .await
+                    .map_err(map_persistence_error)?;
+                let outcome = RequestLogStore
+                    .finish_request(&mut session, &record)
+                    .await
+                    .map_err(map_persistence_error)?;
+                RequestTerminalOutboxStore
+                    .delete_claimed(session.connection(), &record.request_id, &owner)
+                    .await
+                    .map_err(map_persistence_error)?;
+                session.commit().await.map_err(map_persistence_error)?;
+                report.terminals_projected += u64::from(outcome.finalized);
+            }
+            if !batch.has_more {
+                return Ok(report);
+            }
+        }
+    }
+
+    async fn ensure_scoped_health_projection(&self) -> Result<(), LifecycleWriteError> {
+        let now_ms = self.clock.now_utc().timestamp_millis();
+        let mut session = self
+            .runtime
+            .begin_write()
+            .await
+            .map_err(map_persistence_error)?;
+        RoutingHealthVerdictStore
+            .ensure_current_projection(session.connection(), now_ms)
+            .await
+            .map_err(map_persistence_error)?;
+        session.commit().await.map_err(map_persistence_error)
     }
 }
 
@@ -152,6 +236,9 @@ impl RequestLifecycleStore for RequestFinalizationService {
                 .map_err(map_persistence_error)?;
             let mut health_applied = false;
             if outcome.inserted {
+                apply_durable_attempt_effect(&mut session, &write)
+                    .await
+                    .map_err(map_persistence_error)?;
                 if let Some(observation) = attempt_health_observation(&write) {
                     health_applied = health
                         .record_observation(&mut session, observation)
@@ -184,15 +271,17 @@ impl RequestLifecycleStore for RequestFinalizationService {
         let runtime = self.runtime.clone();
         let terminal_at_ms = self.clock.now_utc().timestamp_millis();
         let write = map_request_terminal(record, terminal_at_ms);
+        let service = self.clone();
         Box::pin(async move {
             let mut session = runtime.begin_write().await.map_err(map_persistence_error)?;
-            let outcome: RequestTerminalPersistenceResult = RequestLogStore
-                .finish_request(&mut session, &write)
+            RequestTerminalOutboxStore
+                .enqueue(session.connection(), &write, terminal_at_ms)
                 .await
                 .map_err(map_persistence_error)?;
             session.commit().await.map_err(map_persistence_error)?;
+            let outcome = service.reconcile_terminal_outbox().await?;
             Ok(RequestCommitAck {
-                finalized: outcome.finalized,
+                finalized: outcome.terminals_projected > 0,
             })
         })
     }
@@ -330,6 +419,7 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
         health_update,
         public_code,
         sanitized_detail,
+        durable_effect,
     ) = match record.terminal {
         AttemptTerminal::Succeeded => (
             "succeeded".to_string(),
@@ -340,8 +430,10 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
             AttemptHealthUpdate::Success,
             None,
             None,
+            None,
         ),
         AttemptTerminal::Failed(failure) => {
+            let durable_effect = map_durable_effect(&failure.health);
             let health_update = match failure.health {
                 HealthEffect::Success => AttemptHealthUpdate::Success,
                 HealthEffect::ObserveFailure => AttemptHealthUpdate::ObserveFailure,
@@ -349,7 +441,9 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
                     AttemptHealthUpdate::Cooldown { retry_after_ms }
                 }
                 HealthEffect::HardFail => AttemptHealthUpdate::HardFail,
-                HealthEffect::Neutral => AttemptHealthUpdate::Neutral,
+                HealthEffect::Neutral | HealthEffect::Scoped(_) | HealthEffect::Capability(_) => {
+                    AttemptHealthUpdate::Neutral
+                }
             };
             (
                 "failed".to_string(),
@@ -360,6 +454,7 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
                 health_update,
                 Some(failure.public_code),
                 failure.sanitized_detail,
+                durable_effect,
             )
         }
         AttemptTerminal::Abandoned { reason } => (
@@ -371,6 +466,7 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
             AttemptHealthUpdate::Neutral,
             Some(reason),
             None,
+            None,
         ),
     };
 
@@ -380,6 +476,12 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
         station_id: record.context.station_id,
         station_key_id: record.context.station_key_id,
         endpoint_revision: record.context.endpoint_revision,
+        credential_revision: record.context.credential_revision,
+        account_revision: record.context.account_revision,
+        group_binding_id: record.context.group_binding_id,
+        group_revision: record.context.group_revision,
+        resolved_upstream_model: record.context.resolved_upstream_model,
+        model_alias_revision: record.context.model_alias_revision,
         started_at_ms: record.context.started_at_ms,
         terminal_kind,
         failure_kind,
@@ -388,10 +490,264 @@ fn map_attempt_terminal(record: AttemptTerminalRecord) -> AttemptTerminalWrite {
         health_effect,
         health_cooldown_until_ms: None,
         health_update,
+        durable_effect,
         public_code,
         sanitized_detail,
         output_committed: record.output_committed,
         terminal_at_ms: record.terminal_at_ms,
+    }
+}
+
+async fn apply_durable_attempt_effect(
+    session: &mut crate::persistence::WriteSession,
+    write: &AttemptTerminalWrite,
+) -> Result<(), PersistenceError> {
+    let Some(effect) = &write.durable_effect else {
+        return Ok(());
+    };
+    match effect {
+        AttemptDurableEffectWrite::UnsupportedModel {
+            station_key_id,
+            model: _,
+            evidence_code,
+            classifier_profile_version,
+        } => {
+            let resolved_model = write
+                .resolved_upstream_model
+                .as_ref()
+                .ok_or(PersistenceError::ConstraintViolation)?;
+            RoutingHealthVerdictStore
+                .apply_unsupported_model(
+                    session.connection(),
+                    &UnsupportedModelObservation {
+                        observation_id: format!(
+                            "capability:{}:{}",
+                            write.request_id, write.ordinal
+                        ),
+                        logical_request_id: write.request_id.clone(),
+                        attempt_ordinal: u8::try_from(write.ordinal)
+                            .map_err(|_| PersistenceError::ConstraintViolation)?,
+                        station_key_id: station_key_id.clone(),
+                        resolved_model: resolved_model.clone(),
+                        credential_revision: write.credential_revision,
+                        endpoint_revision: write.endpoint_revision,
+                        model_alias_revision: write.model_alias_revision,
+                        evidence_code: evidence_code.clone(),
+                        classifier_profile_version: classifier_profile_version.clone(),
+                    },
+                    write.terminal_at_ms.max(0),
+                )
+                .await?;
+        }
+        _ => {
+            let (subject, dimension, verdict, retry_after_ms, evidence_code, profile) = match effect
+            {
+                AttemptDurableEffectWrite::Credential {
+                    station_key_id,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                } => (
+                    ScopedHealthSubject::credential(
+                        &write.station_id,
+                        station_key_id,
+                        write.credential_revision,
+                    )?,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                ),
+                AttemptDurableEffectWrite::Account {
+                    station_id,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                } => (
+                    ScopedHealthSubject::account(station_id, write.account_revision)?,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                ),
+                AttemptDurableEffectWrite::Group {
+                    station_id,
+                    group_binding_id,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                } => (
+                    ScopedHealthSubject::group(
+                        station_id,
+                        group_binding_id,
+                        write
+                            .group_revision
+                            .filter(|_| write.group_binding_id.as_deref() == Some(group_binding_id))
+                            .ok_or(PersistenceError::ConstraintViolation)?,
+                    )?,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                ),
+                AttemptDurableEffectWrite::Endpoint {
+                    station_id,
+                    endpoint_revision,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                } => (
+                    ScopedHealthSubject::endpoint(station_id, *endpoint_revision)?,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code,
+                    classifier_profile_version,
+                ),
+                AttemptDurableEffectWrite::UnsupportedModel { .. } => unreachable!(),
+            };
+            let dimension = match dimension.as_str() {
+                "credential" => FailureDimension::Credential,
+                "account_lifecycle" => FailureDimension::AccountLifecycle,
+                "group_subscription" => FailureDimension::GroupSubscription,
+                "balance" => FailureDimension::Balance,
+                "quota" => FailureDimension::Quota,
+                "rate_limit" => FailureDimension::RateLimit,
+                "endpoint_availability" => FailureDimension::EndpointAvailability,
+                _ => return Err(PersistenceError::ConstraintViolation),
+            };
+            let verdict = match verdict.as_str() {
+                "degraded" => DurableHealthVerdict::Degraded,
+                "cooldown" => DurableHealthVerdict::Cooldown,
+                "blocked" => DurableHealthVerdict::Blocked,
+                _ => return Err(PersistenceError::ConstraintViolation),
+            };
+            let cooldown_until_ms = matches!(verdict, DurableHealthVerdict::Cooldown).then(|| {
+                write
+                    .terminal_at_ms
+                    .saturating_add(retry_after_ms.unwrap_or(30_000).max(0))
+            });
+            RoutingHealthVerdictStore
+                .apply_observation(
+                    session.connection(),
+                    &ScopedHealthObservation {
+                        observation_id: format!(
+                            "scoped-health:{}:{}:{}",
+                            write.request_id,
+                            write.ordinal,
+                            dimension.as_str()
+                        ),
+                        producer_id: format!("request-finalization:{}", write.request_id),
+                        producer_sequence: u64::from(write.ordinal),
+                        logical_request_id: write.request_id.clone(),
+                        attempt_ordinal: u8::try_from(write.ordinal)
+                            .map_err(|_| PersistenceError::ConstraintViolation)?,
+                        terminal_kind: write.terminal_kind.clone(),
+                        subject,
+                        dimension,
+                        verdict: Some(verdict),
+                        cooldown_until_ms,
+                        evidence_code: evidence_code.clone(),
+                        classifier_profile_version: profile.clone(),
+                    },
+                    write.terminal_at_ms.max(0),
+                )
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+fn map_durable_effect(effect: &HealthEffect) -> Option<AttemptDurableEffectWrite> {
+    let dimension = |value: DurableFailureDimension| {
+        match value {
+            DurableFailureDimension::Credential => "credential",
+            DurableFailureDimension::AccountLifecycle => "account_lifecycle",
+            DurableFailureDimension::GroupSubscription => "group_subscription",
+            DurableFailureDimension::Balance => "balance",
+            DurableFailureDimension::Quota => "quota",
+            DurableFailureDimension::RateLimit => "rate_limit",
+            DurableFailureDimension::EndpointAvailability => "endpoint_availability",
+        }
+        .to_string()
+    };
+    let verdict = |value: DurableVerdict| match value {
+        DurableVerdict::Degraded => ("degraded".to_string(), None),
+        DurableVerdict::Cooldown { retry_after_ms } => ("cooldown".to_string(), retry_after_ms),
+        DurableVerdict::Blocked => ("blocked".to_string(), None),
+    };
+    match effect {
+        HealthEffect::Scoped(effect) => {
+            let (verdict, retry_after_ms) = verdict(effect.verdict);
+            let dimension = dimension(effect.dimension);
+            Some(match &effect.scope {
+                DurableHealthScope::Credential { station_key_id } => {
+                    AttemptDurableEffectWrite::Credential {
+                        station_key_id: station_key_id.clone(),
+                        dimension,
+                        verdict,
+                        retry_after_ms,
+                        evidence_code: effect.evidence_code.clone(),
+                        classifier_profile_version: effect.classifier_profile_version.clone(),
+                    }
+                }
+                DurableHealthScope::Account { station_id } => AttemptDurableEffectWrite::Account {
+                    station_id: station_id.clone(),
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code: effect.evidence_code.clone(),
+                    classifier_profile_version: effect.classifier_profile_version.clone(),
+                },
+                DurableHealthScope::Group {
+                    station_id,
+                    group_binding_id,
+                } => AttemptDurableEffectWrite::Group {
+                    station_id: station_id.clone(),
+                    group_binding_id: group_binding_id.clone(),
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code: effect.evidence_code.clone(),
+                    classifier_profile_version: effect.classifier_profile_version.clone(),
+                },
+                DurableHealthScope::Endpoint {
+                    station_id,
+                    endpoint_revision,
+                } => AttemptDurableEffectWrite::Endpoint {
+                    station_id: station_id.clone(),
+                    endpoint_revision: *endpoint_revision,
+                    dimension,
+                    verdict,
+                    retry_after_ms,
+                    evidence_code: effect.evidence_code.clone(),
+                    classifier_profile_version: effect.classifier_profile_version.clone(),
+                },
+            })
+        }
+        HealthEffect::Capability(DurableCapabilityEffect::ConfirmUnsupportedModel {
+            station_key_id,
+            model,
+            evidence_code,
+            classifier_profile_version,
+        }) => Some(AttemptDurableEffectWrite::UnsupportedModel {
+            station_key_id: station_key_id.clone(),
+            model: model.clone(),
+            evidence_code: evidence_code.clone(),
+            classifier_profile_version: classifier_profile_version.clone(),
+        }),
+        _ => None,
     }
 }
 
@@ -439,6 +795,7 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
             false,
         ),
     };
+    let routing_outcome = record.routing_outcome;
     let annotations = record.annotations;
     let usage_status = request_usage_status(
         &record.context.endpoint,
@@ -453,7 +810,7 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
         lifecycle_status: lifecycle_status.to_string(),
         usage_status: usage_status.to_string(),
         terminal_kind: terminal_kind.to_string(),
-        terminal_code,
+        terminal_code: terminal_code.clone(),
         terminal_detail,
         protocol_completed,
         delivery_terminal: format!("{:?}", record.terminal.delivery),
@@ -461,6 +818,88 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
         attempt_count: record.attempt_count,
         fallback_count: record.fallback_count,
         terminal_at_ms,
+        routing_outcome: RequestRoutingOutcomeSummaryWrite {
+            terminal_kind: terminal_kind.to_string(),
+            terminal_code: terminal_code.unwrap_or_else(|| "request_completed".to_string()),
+            classification: routing_outcome.as_ref().map_or_else(
+                || request_terminal_classification(terminal_kind).to_string(),
+                |facts| facts.classification.clone(),
+            ),
+            confidence: routing_outcome.as_ref().map_or_else(
+                || "not_applicable".to_string(),
+                |facts| facts.confidence.clone(),
+            ),
+            evidence_source: routing_outcome
+                .as_ref()
+                .map_or_else(|| "none".to_string(), |facts| facts.evidence_source.clone()),
+            request_accepted: routing_outcome.as_ref().map_or_else(
+                || {
+                    if protocol_completed {
+                        "accepted"
+                    } else {
+                        "unknown"
+                    }
+                    .to_string()
+                },
+                |facts| facts.request_accepted.clone(),
+            ),
+            send_phase: routing_outcome.as_ref().map_or_else(
+                || {
+                    if protocol_completed {
+                        "response_started"
+                    } else {
+                        "unknown"
+                    }
+                    .to_string()
+                },
+                |facts| facts.send_phase.clone(),
+            ),
+            replay_disposition: routing_outcome.as_ref().map_or_else(
+                || {
+                    if protocol_completed {
+                        "completed"
+                    } else {
+                        "stopped_uncertain"
+                    }
+                    .to_string()
+                },
+                |facts| facts.replay_disposition.clone(),
+            ),
+            billing_state: routing_outcome.as_ref().map_or_else(
+                || {
+                    if protocol_completed {
+                        "completed"
+                    } else {
+                        "possibly_billed"
+                    }
+                    .to_string()
+                },
+                |facts| facts.billing_state.clone(),
+            ),
+            retry_disposition: routing_outcome.as_ref().map_or_else(
+                || {
+                    if record.fallback_count > 0 {
+                        "same_target_exhausted"
+                    } else {
+                        "none"
+                    }
+                    .to_string()
+                },
+                |facts| facts.retry_disposition.clone(),
+            ),
+            effect_summary: routing_outcome.as_ref().map_or_else(
+                || "neutral".to_string(),
+                |facts| facts.effect_summary.clone(),
+            ),
+            failure_domain_commitment_version: routing_outcome
+                .as_ref()
+                .and_then(|facts| facts.failure_domain_commitment_version),
+            failure_domain_commitment_digest: routing_outcome
+                .and_then(|facts| facts.failure_domain_commitment_digest),
+            attempt_count: record.attempt_count,
+            fallback_count: record.fallback_count,
+            terminal_at_ms,
+        },
         annotations: RequestLogAnnotationsWrite {
             model: annotations.model,
             stream: annotations.stream,
@@ -486,6 +925,15 @@ fn map_request_terminal(record: FinalRequestRecord, terminal_at_ms: i64) -> Requ
             first_token_ms: annotations.first_token_ms,
             billing_mode: annotations.billing_mode,
         },
+    }
+}
+
+fn request_terminal_classification(terminal_kind: &str) -> &'static str {
+    match terminal_kind {
+        "completed" | "partial_success" => "success",
+        "interrupted" => "downstream",
+        "failed" => "generic",
+        _ => "local",
     }
 }
 
@@ -559,7 +1007,7 @@ mod tests {
         delivery::DeliveryTerminal,
         request::{
             AttemptId, DeliveryFailure, RequestContextSnapshot, RequestLogAnnotations,
-            RequestTerminalSnapshot,
+            RequestRoutingOutcomeFacts, RequestTerminalSnapshot,
         },
     };
 
@@ -606,6 +1054,12 @@ mod tests {
                 station_id: "station-1".to_string(),
                 station_key_id: "key-1".to_string(),
                 endpoint_revision: 4,
+                credential_revision: 1,
+                account_revision: 1,
+                group_binding_id: None,
+                group_revision: None,
+                resolved_upstream_model: None,
+                model_alias_revision: 1,
                 started_at_ms: 1_010,
             },
             terminal: AttemptTerminal::Failed(ClassifiedAttemptFailure {
@@ -723,6 +1177,55 @@ mod tests {
         assert_eq!(write.annotations.first_token_ms, Some(17));
         assert_eq!(write.annotations.billing_mode.as_deref(), Some("token"));
         assert_eq!(write.annotations.upstream_base_url, None);
+    }
+
+    #[test]
+    fn request_terminal_mapping_prefers_typed_canonical_outcome_over_terminal_inference() {
+        let digest = "a".repeat(64);
+        let write = map_request_terminal(
+            FinalRequestRecord::new(
+                context("req-canonical"),
+                RequestTerminalSnapshot {
+                    terminal: RequestTerminal::Failed(
+                        crate::application::request_lifecycle::request::RequestFailure {
+                            code: "server_error".to_string(),
+                            detail: None,
+                        },
+                    ),
+                    delivery: DeliveryTerminal::NotStarted,
+                },
+                Some(AttemptId::new("req-canonical", 0)),
+                1,
+                0,
+                RequestLogAnnotations::default(),
+            )
+            .with_routing_outcome(RequestRoutingOutcomeFacts {
+                classification: "capacity".to_string(),
+                confidence: "confirmed".to_string(),
+                evidence_source: "error_envelope".to_string(),
+                request_accepted: "not_accepted".to_string(),
+                send_phase: "response_started".to_string(),
+                replay_disposition: "stopped_uncertain".to_string(),
+                billing_state: "possibly_billed".to_string(),
+                retry_disposition: "same_target_exhausted".to_string(),
+                effect_summary: "neutral".to_string(),
+                failure_domain_commitment_version: Some(1),
+                failure_domain_commitment_digest: Some(digest.clone()),
+            }),
+            1_250,
+        );
+
+        assert_eq!(write.routing_outcome.classification, "capacity");
+        assert_eq!(write.routing_outcome.confidence, "confirmed");
+        assert_eq!(write.routing_outcome.evidence_source, "error_envelope");
+        assert_eq!(write.routing_outcome.send_phase, "response_started");
+        assert_eq!(
+            write
+                .routing_outcome
+                .failure_domain_commitment_digest
+                .as_deref(),
+            Some(digest.as_str())
+        );
     }
 
     #[test]

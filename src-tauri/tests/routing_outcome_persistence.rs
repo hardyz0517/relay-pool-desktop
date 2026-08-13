@@ -18,6 +18,8 @@ mod persistence {
 
 #[path = "../src/persistence/stores/request_cost_write.rs"]
 mod request_cost_write;
+#[path = "../src/persistence/stores/request_log_write.rs"]
+mod request_log_write;
 #[path = "../src/persistence/stores/request_outcome_store.rs"]
 mod request_outcome_store;
 

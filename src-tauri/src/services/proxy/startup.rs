@@ -27,6 +27,11 @@ pub(crate) async fn start_from_v2_persisted_settings(
         .map_err(|error| error.to_string())?;
     services
         .request_finalization
+        .reconcile_terminal_outbox()
+        .await
+        .map_err(|error| format!("startup terminal outbox reconciliation failed: {error:?}"))?;
+    services
+        .request_finalization
         .reconcile_startup_interrupted_request_lifecycle()
         .await
         .map_err(|error| format!("startup request lifecycle reconciliation failed: {error:?}"))?;

@@ -1,7 +1,13 @@
 use http::StatusCode;
 use serde_json::Value;
 
-use crate::application::request_finalization::failure::{PublicError, PublicErrorCode};
+use super::request_send::RequestSendPhase;
+
+use crate::application::request_finalization::failure::{
+    BillingState, CanonicalFailure, EvidenceConfidence, FailureClass, FailureTarget, PublicError,
+    PublicErrorCode, ReplaySafety, RequestAcceptance, RetryDisposition,
+};
+use crate::application::request_lifecycle::request::RequestRoutingOutcomeFacts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureSource {
@@ -155,6 +161,8 @@ pub struct ProxyFailure {
     pub public_message: String,
     pub retry_after_ms: Option<i64>,
     pub internal_detail: Option<String>,
+    pub(crate) request_send_phase: RequestSendPhase,
+    canonical: Option<Box<CanonicalFailure>>,
     context: Option<Box<ProxyFailureContext>>,
 }
 
@@ -183,6 +191,8 @@ impl ProxyFailure {
             public_message: public_message.into(),
             retry_after_ms: None,
             internal_detail: None,
+            request_send_phase: RequestSendPhase::Unknown,
+            canonical: None,
             context: None,
         }
     }
@@ -223,6 +233,15 @@ impl ProxyFailure {
     }
 
     pub fn into_response(self) -> (StatusCode, Value) {
+        // Upstream failures must speak stable OpenAI-compatible semantics to
+        // Codex/OpenAI SDK clients (Task 7 public adapter). Local, routing,
+        // internal and downstream failures keep the stable local envelope so
+        // the desktop tool's own consumers can distinguish auth, body and
+        // routing conditions without re-deriving them from an upstream code.
+        if self.source == FailureSource::Upstream {
+            let public = adapt_proxy_failure(&self);
+            return (public.status, public.into_json());
+        }
         let message = crate::services::secrets::mask::redact_text(&self.public_message);
         (
             self.http_status,
@@ -245,6 +264,181 @@ impl ProxyFailure {
             error.http_status,
             error.message,
         )
+    }
+
+    /// Preserve the complete canonical outcome for every downstream consumer.
+    /// Public HTTP fields are a projection only and must never become an input
+    /// to retry, health, capability, or lifecycle decisions.
+    pub(crate) fn from_canonical(canonical: CanonicalFailure) -> Self {
+        let mut failure = Self::from_public_error(canonical.public.clone());
+        failure.retry_after_ms = match canonical.health {
+            crate::application::request_finalization::failure::HealthEffect::Cooldown {
+                retry_after_ms,
+            } => retry_after_ms,
+            _ => None,
+        };
+        failure.canonical = Some(Box::new(canonical));
+        failure
+    }
+
+    pub(crate) fn canonical(&self) -> Option<&CanonicalFailure> {
+        self.canonical.as_deref()
+    }
+
+    pub(crate) fn with_request_send_phase(mut self, phase: RequestSendPhase) -> Self {
+        self.request_send_phase = phase;
+        self
+    }
+
+    /// Creates the closed terminal facts while the canonical failure and its
+    /// transport-owned phase are still available. Persistence must not recreate
+    /// these facts from the public error projection.
+    pub(crate) fn routing_outcome_facts(&self) -> Option<RequestRoutingOutcomeFacts> {
+        let canonical = self.canonical()?;
+        let (failure_domain_commitment_version, failure_domain_commitment_digest) = match &canonical
+            .target
+        {
+            FailureTarget::ProviderCapacity { domain_commitment } => {
+                let commitment = crate::application::routing_engine::failure_domains::CapacityDomainCommitment::from_canonical(domain_commitment)?;
+                (
+                    Some(i64::from(commitment.schema_version)),
+                    Some(commitment.digest_hex),
+                )
+            }
+            _ => (None, None),
+        };
+        Some(RequestRoutingOutcomeFacts {
+            classification: canonical_classification(canonical.class).to_string(),
+            confidence: confidence_label(canonical.confidence).to_string(),
+            evidence_source: evidence_source_label(canonical.class).to_string(),
+            request_accepted: acceptance_label(canonical.request_acceptance).to_string(),
+            send_phase: send_phase_label(self.request_send_phase).to_string(),
+            replay_disposition: replay_label(canonical.replay_safety).to_string(),
+            billing_state: billing_label(canonical.billing).to_string(),
+            retry_disposition: retry_label(canonical.retry).to_string(),
+            effect_summary: effect_summary(canonical).to_string(),
+            failure_domain_commitment_version,
+            failure_domain_commitment_digest,
+        })
+    }
+}
+
+fn canonical_classification(class: FailureClass) -> &'static str {
+    match class {
+        FailureClass::Authentication => "authentication",
+        FailureClass::InsufficientBalance => "balance",
+        FailureClass::RateLimited | FailureClass::QuotaExhausted => "rate_limit",
+        FailureClass::ProviderCapacity | FailureClass::CapacityExhausted => "capacity",
+        FailureClass::ModelUnavailable => "model_not_found",
+        FailureClass::Transport => "transport",
+        FailureClass::Timeout | FailureClass::Deadline => "timeout",
+        FailureClass::MalformedResponse | FailureClass::StreamInterrupted => "protocol",
+        FailureClass::DownstreamDrop => "downstream",
+        FailureClass::Upstream5xx
+        | FailureClass::UpstreamOverloaded
+        | FailureClass::RelayServiceUnavailable => "server_error",
+        FailureClass::ConfigRequired
+        | FailureClass::PolicyRejected
+        | FailureClass::EconomicsUnavailable
+        | FailureClass::HealthUnavailable
+        | FailureClass::RuntimeConcurrencyLimited
+        | FailureClass::CapabilityMismatch
+        | FailureClass::BadRequest
+        | FailureClass::ProviderRejectedRequest
+        | FailureClass::CandidateLimit
+        | FailureClass::FactsUnavailable
+        | FailureClass::ConfigUnstable
+        | FailureClass::Lifecycle
+        | FailureClass::Invariant => "local",
+        FailureClass::Uncertain => "generic",
+    }
+}
+
+fn confidence_label(confidence: EvidenceConfidence) -> &'static str {
+    match confidence {
+        EvidenceConfidence::Confirmed => "confirmed",
+        EvidenceConfidence::Probable => "probable",
+        EvidenceConfidence::Unknown => "unknown",
+        EvidenceConfidence::Conflicting => "conflicting",
+    }
+}
+
+fn evidence_source_label(class: FailureClass) -> &'static str {
+    match class {
+        FailureClass::Transport => "transport",
+        FailureClass::Timeout | FailureClass::Deadline => "timeout",
+        FailureClass::StreamInterrupted | FailureClass::MalformedResponse => "sse_event",
+        FailureClass::DownstreamDrop => "downstream",
+        FailureClass::ConfigRequired
+        | FailureClass::PolicyRejected
+        | FailureClass::EconomicsUnavailable
+        | FailureClass::HealthUnavailable
+        | FailureClass::RuntimeConcurrencyLimited
+        | FailureClass::CandidateLimit
+        | FailureClass::FactsUnavailable
+        | FailureClass::ConfigUnstable
+        | FailureClass::Lifecycle
+        | FailureClass::Invariant => "local",
+        _ => "error_envelope",
+    }
+}
+
+fn acceptance_label(acceptance: RequestAcceptance) -> &'static str {
+    match acceptance {
+        RequestAcceptance::RejectedBeforeAcceptance => "not_accepted",
+        RequestAcceptance::AcceptedOrMayHaveBeenAccepted => "accepted",
+        RequestAcceptance::Unknown => "unknown",
+    }
+}
+
+fn send_phase_label(phase: RequestSendPhase) -> &'static str {
+    match phase {
+        RequestSendPhase::NotConnected => "not_connected",
+        RequestSendPhase::ResponseStarted => "response_started",
+        RequestSendPhase::Unknown => "unknown",
+        #[cfg(test)]
+        RequestSendPhase::ConnectedNoHeaders
+        | RequestSendPhase::HeadersSent
+        | RequestSendPhase::BodyPartiallySent
+        | RequestSendPhase::BodyFullySent => "unknown",
+    }
+}
+
+fn replay_label(replay: ReplaySafety) -> &'static str {
+    match replay {
+        ReplaySafety::ReplaySafe => "not_applicable",
+        ReplaySafety::RequiresProviderIdempotency | ReplaySafety::NotReplayable => {
+            "stopped_uncertain"
+        }
+    }
+}
+
+fn billing_label(billing: BillingState) -> &'static str {
+    match billing {
+        BillingState::BillingUncertain => "possibly_billed",
+    }
+}
+
+fn retry_label(retry: RetryDisposition) -> &'static str {
+    match retry {
+        RetryDisposition::RetrySameTarget => "same_target_exhausted",
+        RetryDisposition::TryDifferentFailureDomain
+        | RetryDisposition::WaitThenReplan
+        | RetryDisposition::StopRequest => "fail_closed",
+    }
+}
+
+fn effect_summary(canonical: &CanonicalFailure) -> &'static str {
+    if matches!(
+        canonical.health,
+        crate::application::request_finalization::failure::HealthEffect::Neutral
+    ) && matches!(
+        canonical.capability,
+        crate::application::request_finalization::failure::CapabilityEffect::Neutral
+    ) {
+        "neutral"
+    } else {
+        "health_or_capability_applied"
     }
 }
 
@@ -338,5 +532,216 @@ fn retry_class_for_public_error(code: PublicErrorCode) -> RetryClass {
         | PublicErrorCode::CandidateLimitExceeded
         | PublicErrorCode::InvariantViolation
         | PublicErrorCode::UpstreamUncertain => RetryClass::Never,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OpenAiPublicError {
+    pub(crate) status: StatusCode,
+    pub(crate) error_type: &'static str,
+    pub(crate) code: &'static str,
+    pub(crate) message: String,
+}
+
+impl OpenAiPublicError {
+    pub(crate) fn into_json(self) -> Value {
+        serde_json::json!({
+            "error": {
+                "message": self.message,
+                "type": self.error_type,
+                "param": Value::Null,
+                "code": self.code,
+            }
+        })
+    }
+}
+
+pub(crate) fn adapt_proxy_failure(failure: &ProxyFailure) -> OpenAiPublicError {
+    let message = crate::services::secrets::mask::redact_text(&failure.public_message);
+    let (status, error_type, code) = match failure.code {
+        ProxyFailureCode::LocalAuthMissing | ProxyFailureCode::LocalAuthInvalid => (
+            StatusCode::UNAUTHORIZED,
+            "authentication_error",
+            "invalid_api_key",
+        ),
+        ProxyFailureCode::UpstreamAuthenticationFailed => {
+            (StatusCode::BAD_GATEWAY, "server_error", "server_error")
+        }
+        ProxyFailureCode::UpstreamRateLimited => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limit_error",
+            "rate_limit_exceeded",
+        ),
+        ProxyFailureCode::UpstreamModelUnavailable => (
+            StatusCode::NOT_FOUND,
+            "invalid_request_error",
+            "model_not_found",
+        ),
+        ProxyFailureCode::RequestBodyInvalid
+        | ProxyFailureCode::RequestBodyTooLarge
+        | ProxyFailureCode::RequestBodyTimeout
+        | ProxyFailureCode::UpstreamRequestRejected => (
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "invalid_request_error",
+        ),
+        ProxyFailureCode::UpstreamOverloaded => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server_error",
+            "server_error",
+        ),
+        ProxyFailureCode::UpstreamUnavailable
+        | ProxyFailureCode::UpstreamConnectFailed
+        | ProxyFailureCode::UpstreamFirstByteTimeout
+        | ProxyFailureCode::UpstreamMalformedResponse
+        | ProxyFailureCode::UpstreamUncertain
+        | ProxyFailureCode::UpstreamStreamFailed => (
+            if failure.http_status == StatusCode::SERVICE_UNAVAILABLE {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::BAD_GATEWAY
+            },
+            "server_error",
+            "server_error",
+        ),
+        _ if matches!(failure.source, FailureSource::Upstream) => {
+            (failure.http_status, "server_error", "server_error")
+        }
+        _ => (
+            failure.http_status,
+            "relay_pool_error",
+            failure.code.as_str(),
+        ),
+    };
+    OpenAiPublicError {
+        status,
+        error_type,
+        code,
+        message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::request_finalization::failure::{
+        failure_from_provider_signal, CapabilityApplicabilitySet, ProviderErrorSemanticSignal,
+    };
+    use crate::services::proxy::error::{FailureSource, RetryClass};
+
+    fn failure(code: ProxyFailureCode, status: StatusCode) -> ProxyFailure {
+        ProxyFailure::new(
+            code,
+            FailureSource::Upstream,
+            RetryClass::Never,
+            status,
+            "safe",
+        )
+    }
+
+    #[test]
+    fn capacity_and_upstream_auth_use_retry_compatible_server_error() {
+        let capacity = adapt_proxy_failure(&failure(
+            ProxyFailureCode::UpstreamOverloaded,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ));
+        assert_eq!(
+            (capacity.status, capacity.error_type, capacity.code),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "server_error",
+                "server_error"
+            )
+        );
+        let auth = adapt_proxy_failure(&failure(
+            ProxyFailureCode::UpstreamAuthenticationFailed,
+            StatusCode::UNAUTHORIZED,
+        ));
+        assert_eq!(
+            (auth.status, auth.error_type, auth.code),
+            (StatusCode::BAD_GATEWAY, "server_error", "server_error")
+        );
+    }
+
+    #[test]
+    fn local_auth_remains_a_real_authentication_error() {
+        let mut local = failure(ProxyFailureCode::LocalAuthInvalid, StatusCode::UNAUTHORIZED);
+        local.source = FailureSource::Local;
+        let public = adapt_proxy_failure(&local);
+        assert_eq!(
+            (public.error_type, public.code),
+            ("authentication_error", "invalid_api_key")
+        );
+    }
+
+    #[test]
+    fn public_http_contract_is_golden() {
+        let cases = [
+            (
+                ProxyFailureCode::UpstreamOverloaded,
+                StatusCode::SERVICE_UNAVAILABLE,
+                503,
+                "server_error",
+                "server_error",
+            ),
+            (
+                ProxyFailureCode::UpstreamUnavailable,
+                StatusCode::BAD_GATEWAY,
+                502,
+                "server_error",
+                "server_error",
+            ),
+            (
+                ProxyFailureCode::UpstreamRateLimited,
+                StatusCode::TOO_MANY_REQUESTS,
+                429,
+                "rate_limit_error",
+                "rate_limit_exceeded",
+            ),
+            (
+                ProxyFailureCode::UpstreamModelUnavailable,
+                StatusCode::NOT_FOUND,
+                404,
+                "invalid_request_error",
+                "model_not_found",
+            ),
+            (
+                ProxyFailureCode::UpstreamRequestRejected,
+                StatusCode::BAD_REQUEST,
+                400,
+                "invalid_request_error",
+                "invalid_request_error",
+            ),
+        ];
+        for (failure_code, source_status, status, error_type, code) in cases {
+            let public = adapt_proxy_failure(&failure(failure_code, source_status));
+            assert_eq!(
+                (public.status.as_u16(), public.error_type, public.code),
+                (status, error_type, code)
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_failure_outcome_preserves_classification_and_transport_phase() {
+        let digest = "b".repeat(64);
+        let failure = ProxyFailure::from_canonical(failure_from_provider_signal(
+            ProviderErrorSemanticSignal::ProviderCapacity {
+                domain_commitment: format!("v1:{digest}"),
+                retry_after_ms: None,
+            },
+            CapabilityApplicabilitySet::UnknownModelCatalog,
+        ))
+        .with_request_send_phase(RequestSendPhase::ResponseStarted);
+
+        let facts = failure.routing_outcome_facts().expect("canonical facts");
+        assert_eq!(facts.classification, "capacity");
+        assert_eq!(facts.confidence, "confirmed");
+        assert_eq!(facts.send_phase, "response_started");
+        assert_eq!(facts.failure_domain_commitment_version, Some(1));
+        assert_eq!(
+            facts.failure_domain_commitment_digest.as_deref(),
+            Some(digest.as_str())
+        );
     }
 }

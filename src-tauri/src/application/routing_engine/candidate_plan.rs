@@ -8,6 +8,7 @@ use crate::application::operational_facts::{
 };
 #[cfg(test)]
 use crate::application::routing_engine::eligibility::RouteRejection;
+use crate::application::routing_engine::failure_domains::CapacityDomainCommitment;
 #[cfg(test)]
 use crate::application::routing_engine::request::{OrderingProfile, PlanningRoundContext};
 
@@ -35,6 +36,16 @@ pub struct RoutePlanCandidate {
     pub station_key_id: String,
     pub station_id: String,
     pub endpoint_revision: i64,
+    /// Revision fences captured with the selected planning snapshot. Attempt
+    /// finalization must use these, never re-read mutable current revisions.
+    pub credential_revision: i64,
+    pub account_revision: i64,
+    pub group_binding_id: Option<String>,
+    pub group_revision: Option<i64>,
+    pub resolved_upstream_model: Option<String>,
+    pub model_alias_revision: i64,
+    pub capacity_domain: Option<CapacityDomainCommitment>,
+    pub capacity_domain_revision: Option<i64>,
     pub priority: i64,
     pub tier: AvailabilityTier,
     pub pricing: RoutePlanPricingSnapshot,
@@ -345,6 +356,14 @@ fn plan_candidate(
         station_key_id: candidate.identity.station_key_id.clone(),
         station_id: candidate.identity.station_id.clone(),
         endpoint_revision: candidate.identity.endpoint_revision,
+        credential_revision: 1,
+        account_revision: 1,
+        group_binding_id: None,
+        group_revision: None,
+        resolved_upstream_model: None,
+        model_alias_revision: 1,
+        capacity_domain: None,
+        capacity_domain_revision: None,
         priority: candidate.priority,
         tier,
         pricing: RoutePlanPricingSnapshot {

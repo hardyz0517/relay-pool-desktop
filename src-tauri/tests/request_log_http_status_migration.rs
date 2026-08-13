@@ -43,8 +43,8 @@ async fn schema_31_upgrades_request_logs_with_nullable_validated_http_status() {
         .fetch_one(&mut connection)
         .await
         .expect("migration ledger");
-    assert_eq!(schema_version, 32);
-    assert_eq!(sqlx_version, 32);
+    assert_eq!(schema_version, 39);
+    assert_eq!(sqlx_version, 39);
 
     let column = sqlx::query(
         "SELECT name, \"notnull\" FROM pragma_table_info('request_logs') WHERE name = 'http_status'",

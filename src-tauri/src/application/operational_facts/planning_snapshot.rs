@@ -6,10 +6,13 @@ use crate::{
     },
     application::routing_engine::{
         factors::{reliability_posterior, responsiveness_score},
+        failure_domains::ProviderCapacityDomain,
         request::{GroupFilterMode, RouteKind, RouteRequestFacts},
-        routing_health::health_values_are_blocked,
     },
     models::routing_policy::RoutingPolicyConfigV1,
+    persistence::stores::routing_health_verdict_store::{
+        DurableHealthVerdict, FailureDimension, RoutingHealthVerdictStore, ScopedHealthSubject,
+    },
     persistence::stores::routing_quality_store::RoutingQualityStore,
     persistence::{stores::operational_facts::OperationalFactStore, ReadSession},
 };
@@ -39,12 +42,31 @@ impl PlanningSnapshotBuilder {
         read: &mut ReadSession,
         options: &OperationalFactReadOptions,
         policy: RoutingPolicyConfigV1,
+        routing_policy_revision: u64,
         profile: DispatchAlgorithmProfile,
         runtime: RuntimeOverlaySnapshot,
         request: &RouteRequestFacts,
     ) -> Result<PlanningSnapshot, PlanningSnapshotBuildError> {
         let reader = OperationalFactReader::new(OperationalFactStore);
         let facts = reader.load_bundle(read, options).await?;
+        let scoped_subjects = scoped_subjects_for_planning(&facts, request)?;
+        let scoped_verdicts = RoutingHealthVerdictStore
+            .load_active_batch(read.connection(), &scoped_subjects)
+            .await
+            .map_err(|error| {
+                PlanningSnapshotBuildError::Facts(OperationalFactReadError::Source(
+                    error.to_string(),
+                ))
+            })?;
+        let capability_subjects = capability_subjects_for_planning(&facts, request);
+        let unsupported_models = RoutingHealthVerdictStore
+            .load_unsupported_model_batch(read.connection(), &capability_subjects)
+            .await
+            .map_err(|error| {
+                PlanningSnapshotBuildError::Facts(OperationalFactReadError::Source(
+                    error.to_string(),
+                ))
+            })?;
         let scopes = facts
             .candidates()
             .iter()
@@ -72,6 +94,7 @@ impl PlanningSnapshotBuilder {
         // The raw query has a broader fixed upper bound to contain database
         // work. The policy is the actual planner limit, applied after hard
         // gates so an ineligible early row cannot starve a usable candidate.
+        let resolved_model = resolved_model(&facts, request);
         let candidates = facts
             .candidates()
             .iter()
@@ -80,8 +103,32 @@ impl PlanningSnapshotBuilder {
                 station_id: candidate.station_id().as_str().to_string(),
                 endpoint_revision: candidate.endpoint().endpoint_ref().revision().get(),
                 credential_revision: candidate.credential().record_revision().get(),
+                account_revision: candidate.account_record_revision().get(),
+                group_binding_id: candidate.group_binding_id().map(ToString::to_string),
+                group_revision: candidate
+                    .group_record_revision()
+                    .map(|revision| revision.get()),
+                resolved_upstream_model: resolved_model.as_ref().map(|(model, _)| model.clone()),
+                model_alias_revision: resolved_model
+                    .as_ref()
+                    .map(|(_, revision)| *revision)
+                    .unwrap_or(1),
+                capacity_domain: resolved_model.as_ref().and_then(|(model, _)| {
+                    ProviderCapacityDomain::from_trusted_identity(
+                        candidate.capacity_provider_family()?,
+                        model,
+                        candidate.capacity_deployment_identity(),
+                        candidate.capacity_region_identity(),
+                    )
+                    .map(|domain| domain.commitment())
+                }),
+                capacity_domain_revision: candidate
+                    .capacity_domain_revision()
+                    .map(|revision| revision.get()),
                 credential_available: candidate.credential().available(),
-                hard_eligible: candidate_hard_eligible(candidate, request, &policy),
+                hard_eligible: candidate_hard_eligible(candidate, request, &policy)
+                    && candidate_scoped_admitted(candidate, request, &facts, &scoped_verdicts)
+                    && candidate_capability_admitted(candidate, request, &unsupported_models),
                 backup_only: candidate.backup_only(),
                 depleted: candidate_is_depleted(candidate),
                 capability_basis_points: 10_000,
@@ -130,6 +177,7 @@ impl PlanningSnapshotBuilder {
         let snapshot = PlanningSnapshot {
             snapshot_id: facts.snapshot_id().as_str().to_string(),
             durable_revision,
+            routing_policy_revision,
             policy,
             profile,
             candidates,
@@ -140,6 +188,46 @@ impl PlanningSnapshotBuilder {
             .map_err(PlanningSnapshotBuildError::Invalid)?;
         Ok(snapshot)
     }
+}
+
+fn capability_subjects_for_planning(
+    facts: &super::assembler::OperationalFactBundle,
+    request: &RouteRequestFacts,
+) -> Vec<(String, String, i64, i64, i64)> {
+    let Some((resolved_model, alias_revision)) = resolved_model(facts, request) else {
+        return Vec::new();
+    };
+    facts
+        .candidates()
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.station_key_id().as_str().to_string(),
+                resolved_model.clone(),
+                candidate.credential().record_revision().get(),
+                candidate.endpoint().endpoint_ref().revision().get(),
+                alias_revision,
+            )
+        })
+        .collect()
+}
+
+fn candidate_capability_admitted(
+    candidate: &super::assembler::OperationalCandidateFact,
+    request: &RouteRequestFacts,
+    unsupported: &std::collections::BTreeSet<(String, String, i64, i64, i64)>,
+) -> bool {
+    if request.requested_model().is_none() {
+        return true;
+    }
+    // `unsupported` was loaded only for this request's resolved model and
+    // alias revision, so candidate identity and execution revisions are the
+    // remaining exact fence here.
+    !unsupported.iter().any(|(key, _, credential, endpoint, _)| {
+        key == candidate.station_key_id().as_str()
+            && *credential == candidate.credential().record_revision().get()
+            && *endpoint == candidate.endpoint().endpoint_ref().revision().get()
+    })
 }
 
 fn candidate_is_depleted(candidate: &super::assembler::OperationalCandidateFact) -> bool {
@@ -193,19 +281,138 @@ fn candidate_hard_eligible(
             .any(|candidate_tag| candidate_tag.eq_ignore_ascii_case(tag))
     });
     let group_ok = candidate_matches_group_scope(candidate, request);
-    let health_ok = !health_values_are_blocked(
-        candidate.cooldown_until(),
-        candidate.last_error_summary(),
-        request.admitted_at_ms(),
-    );
     let depleted = candidate_is_depleted(candidate);
     protocol_ok
         && model_ok
         && features_ok
         && tags_ok
         && group_ok
-        && health_ok
         && (!depleted || policy.allow_depleted_fallback)
+}
+
+fn scoped_subjects_for_planning(
+    facts: &super::assembler::OperationalFactBundle,
+    request: &RouteRequestFacts,
+) -> Result<Vec<ScopedHealthSubject>, PlanningSnapshotBuildError> {
+    let mut subjects = Vec::with_capacity(facts.candidates().len().saturating_mul(5));
+    for candidate in facts.candidates() {
+        let station_id = candidate.station_id().as_str();
+        let station_key_id = candidate.station_key_id().as_str();
+        let credential_revision = candidate.credential().record_revision().get();
+        let endpoint_revision = candidate.endpoint().endpoint_ref().revision().get();
+        subjects.push(
+            ScopedHealthSubject::credential(station_id, station_key_id, credential_revision)
+                .map_err(|_| PlanningSnapshotBuildError::Invalid("credential health scope"))?,
+        );
+        subjects.push(
+            ScopedHealthSubject::account(station_id, candidate.account_record_revision().get())
+                .map_err(|_| PlanningSnapshotBuildError::Invalid("account health scope"))?,
+        );
+        subjects.push(
+            ScopedHealthSubject::endpoint(station_id, endpoint_revision)
+                .map_err(|_| PlanningSnapshotBuildError::Invalid("endpoint health scope"))?,
+        );
+        if let (Some(binding), Some(revision)) = (
+            candidate.group_binding_id(),
+            candidate.group_record_revision(),
+        ) {
+            subjects.push(
+                ScopedHealthSubject::group(station_id, binding, revision.get())
+                    .map_err(|_| PlanningSnapshotBuildError::Invalid("group health scope"))?,
+            );
+        }
+        if let Some((upstream, alias_revision)) = resolved_model(facts, request) {
+            subjects.push(
+                ScopedHealthSubject::model_on_key(
+                    station_id,
+                    station_key_id,
+                    &upstream,
+                    candidate.endpoint().sanitized_origin().as_str(),
+                    credential_revision,
+                    endpoint_revision,
+                    alias_revision,
+                )
+                .map_err(|_| PlanningSnapshotBuildError::Invalid("model health scope"))?,
+            );
+        }
+    }
+    Ok(subjects)
+}
+
+fn candidate_scoped_admitted(
+    candidate: &super::assembler::OperationalCandidateFact,
+    request: &RouteRequestFacts,
+    facts: &super::assembler::OperationalFactBundle,
+    verdicts: &std::collections::BTreeMap<
+        (String, FailureDimension),
+        crate::persistence::stores::routing_health_verdict_store::ScopedHealthVerdictRow,
+    >,
+) -> bool {
+    let mut subjects = vec![
+        ScopedHealthSubject::credential(
+            candidate.station_id().as_str(),
+            candidate.station_key_id().as_str(),
+            candidate.credential().record_revision().get(),
+        ),
+        ScopedHealthSubject::account(
+            candidate.station_id().as_str(),
+            candidate.account_record_revision().get(),
+        ),
+        ScopedHealthSubject::endpoint(
+            candidate.station_id().as_str(),
+            candidate.endpoint().endpoint_ref().revision().get(),
+        ),
+    ];
+    if let (Some(binding), Some(revision)) = (
+        candidate.group_binding_id(),
+        candidate.group_record_revision(),
+    ) {
+        subjects.push(ScopedHealthSubject::group(
+            candidate.station_id().as_str(),
+            binding,
+            revision.get(),
+        ));
+    }
+    if let Some((upstream, alias_revision)) = resolved_model(facts, request) {
+        subjects.push(ScopedHealthSubject::model_on_key(
+            candidate.station_id().as_str(),
+            candidate.station_key_id().as_str(),
+            &upstream,
+            candidate.endpoint().sanitized_origin().as_str(),
+            candidate.credential().record_revision().get(),
+            candidate.endpoint().endpoint_ref().revision().get(),
+            alias_revision,
+        ));
+    }
+    subjects.into_iter().all(|subject| {
+        subject.ok().is_none_or(|subject| {
+            verdicts
+                .iter()
+                .filter(|((scope, _), _)| scope == subject.scope())
+                .all(|(_, row)| row.verdict == DurableHealthVerdict::Degraded)
+        })
+    })
+}
+
+fn resolved_model(
+    facts: &super::assembler::OperationalFactBundle,
+    request: &RouteRequestFacts,
+) -> Option<(String, i64)> {
+    let requested = request.requested_model()?;
+    facts
+        .model_aliases()
+        .iter()
+        .find(|alias| {
+            alias.client_model().eq_ignore_ascii_case(requested)
+                || alias.upstream_model().eq_ignore_ascii_case(requested)
+        })
+        .map(|alias| {
+            (
+                alias.upstream_model().to_string(),
+                alias.record_revision().get(),
+            )
+        })
+        .or_else(|| Some((requested.to_string(), 1)))
 }
 
 fn candidate_matches_group_scope(
@@ -300,10 +507,10 @@ mod tests {
     }
 
     #[test]
-    fn hard_gate_rejects_active_cooldown_and_offline_durable_health() {
+    fn legacy_key_only_health_is_not_a_planner_authority_after_scoped_cutover() {
         let mut candidate = test_candidate(None, None, None);
         candidate.set_durable_health_for_planning_test(Some("1001"), None);
-        assert!(!candidate_hard_eligible(
+        assert!(candidate_hard_eligible(
             &candidate,
             &test_request(GroupFilterMode::Any, None),
             &RoutingPolicyConfigV1::default(),
@@ -312,7 +519,7 @@ mod tests {
             None,
             Some("auth_error: upstream returned HTTP 401"),
         );
-        assert!(!candidate_hard_eligible(
+        assert!(candidate_hard_eligible(
             &candidate,
             &test_request(GroupFilterMode::Any, None),
             &RoutingPolicyConfigV1::default(),

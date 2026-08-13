@@ -19,7 +19,10 @@ async fn alerting_foundation_creates_contract_and_indexes() {
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    assert_eq!(schema_version, 32);
+    // Schema 34 removed the legacy channel_monitor_runs table; 35 added the
+    // scoped routing health projector; 36 folded routing settings into the
+    // versioned policy aggregate; and 39 added the terminal outbox.
+    assert_eq!(schema_version, 39);
 
     let legacy_table_exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_events'",

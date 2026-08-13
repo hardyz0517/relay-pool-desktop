@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "Task 18A freezes the local metrics contract before production recorders are wired to it"
-)]
-
 use std::{
     collections::VecDeque,
     time::{SystemTime, UNIX_EPOCH},
@@ -12,10 +7,15 @@ pub(crate) const MAX_METRIC_LABELS: usize = 6;
 pub(crate) const MAX_METRIC_LABEL_VALUE_BYTES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    dead_code,
+    reason = "contract=observability.generic-metric-kinds; owner=observability/metrics; remove_when=generic runtime recorders are wired"
+)]
 pub(crate) enum MetricKind {
     BindingDrift,
     BlockingOrphan,
     BlockingSaturation,
+    Classification,
     CollectorFailure,
     CommandError,
     CommandLatency,
@@ -32,6 +32,10 @@ pub(crate) enum MetricKind {
 }
 
 impl MetricKind {
+    #[expect(
+        dead_code,
+        reason = "contract=observability.stage4-metric-inventory; owner=observability/metrics; remove_when=generic runtime recorders are wired"
+    )]
     pub(crate) fn stage4_required() -> &'static [Self] {
         &[
             Self::BindingDrift,
@@ -55,7 +59,33 @@ impl MetricKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClassificationMetricLabel {
+    AttemptStart,
+    CanonicalFailure,
+    SameTargetRetry,
+    SameDomainSuppressed,
+    CrossDomainFallback,
+    CommittedStop,
+    SsePrecommitError,
+    Saturation,
+    FailClosed,
+    ProfileMismatch,
+    Truncated,
+    RequestTerminal,
+    #[expect(
+        dead_code,
+        reason = "contract=observability.classification-unknown; owner=observability/metrics; remove_when=an explicit unknown classifier terminal is emitted"
+    )]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    dead_code,
+    reason = "contract=observability.generic-metric-labels; owner=observability/metrics; remove_when=generic runtime recorders are wired"
+)]
 pub(crate) enum MetricLabel {
+    Classification(ClassificationMetricLabel),
     Command(&'static str),
     Outcome(MetricOutcome),
     Runtime(RuntimeMetricLabel),
@@ -69,7 +99,7 @@ impl MetricLabel {
             Self::Command(value) | Self::Task(value) | Self::WorkKind(value) => {
                 validate_label_value(value)?;
             }
-            Self::Outcome(_) | Self::Runtime(_) => {}
+            Self::Classification(_) | Self::Outcome(_) | Self::Runtime(_) => {}
         }
         Ok(self)
     }
@@ -92,6 +122,10 @@ pub(crate) enum RuntimeMetricLabel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    dead_code,
+    reason = "contract=observability.generic-metric-outcomes; owner=observability/metrics; remove_when=generic runtime recorders are wired"
+)]
 pub(crate) enum MetricOutcome {
     Cancelled,
     Error,

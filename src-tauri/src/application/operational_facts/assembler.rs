@@ -125,11 +125,17 @@ impl CredentialAvailabilityFact {
 pub(crate) struct OperationalCandidateFact {
     station_key_id: StationKeyId,
     station_id: StationId,
+    capacity_provider_family: Option<String>,
+    capacity_deployment_identity: Option<String>,
+    capacity_region_identity: Option<String>,
+    capacity_domain_revision: Option<RecordRevision>,
     endpoint: EndpointFacts,
     credential: CredentialAvailabilityFact,
     priority: i64,
     backup_only: bool,
     group_binding_id: Option<String>,
+    group_record_revision: Option<RecordRevision>,
+    account_record_revision: RecordRevision,
     group_id_hash: Option<String>,
     group_category: Option<String>,
     supports_chat_completions: bool,
@@ -161,6 +167,22 @@ impl OperationalCandidateFact {
         &self.station_id
     }
 
+    pub(crate) fn capacity_provider_family(&self) -> Option<&str> {
+        self.capacity_provider_family.as_deref()
+    }
+
+    pub(crate) fn capacity_deployment_identity(&self) -> Option<&str> {
+        self.capacity_deployment_identity.as_deref()
+    }
+
+    pub(crate) fn capacity_region_identity(&self) -> Option<&str> {
+        self.capacity_region_identity.as_deref()
+    }
+
+    pub(crate) fn capacity_domain_revision(&self) -> Option<RecordRevision> {
+        self.capacity_domain_revision
+    }
+
     pub(crate) fn endpoint(&self) -> &EndpointFacts {
         &self.endpoint
     }
@@ -177,6 +199,12 @@ impl OperationalCandidateFact {
     }
     pub(crate) fn group_binding_id(&self) -> Option<&str> {
         self.group_binding_id.as_deref()
+    }
+    pub(crate) fn group_record_revision(&self) -> Option<RecordRevision> {
+        self.group_record_revision
+    }
+    pub(crate) fn account_record_revision(&self) -> RecordRevision {
+        self.account_record_revision
     }
     pub(crate) fn group_id_hash(&self) -> Option<&str> {
         self.group_id_hash.as_deref()
@@ -223,12 +251,6 @@ impl OperationalCandidateFact {
     pub(crate) fn avg_latency_ms(&self) -> Option<i64> {
         self.avg_latency_ms
     }
-    pub(crate) fn last_error_summary(&self) -> Option<&str> {
-        self.last_error_summary.as_deref()
-    }
-    pub(crate) fn cooldown_until(&self) -> Option<&str> {
-        self.cooldown_until.as_deref()
-    }
     pub(crate) fn balance_status(&self) -> Option<&str> {
         self.balance_status.as_deref()
     }
@@ -246,6 +268,10 @@ impl OperationalCandidateFact {
         Self {
             station_key_id: StationKeyId::new("key-a").expect("valid test key"),
             station_id: station_id.clone(),
+            capacity_provider_family: None,
+            capacity_deployment_identity: None,
+            capacity_region_identity: None,
+            capacity_domain_revision: None,
             endpoint: EndpointFacts::new(
                 EndpointRef::new(
                     station_id,
@@ -263,6 +289,8 @@ impl OperationalCandidateFact {
             priority: 0,
             backup_only: false,
             group_binding_id: group_binding_id.map(ToString::to_string),
+            group_record_revision: group_binding_id.map(|_| RecordRevision::new(1).unwrap()),
+            account_record_revision: RecordRevision::new(1).unwrap(),
             group_id_hash: group_id_hash.map(ToString::to_string),
             group_category: group_category.map(ToString::to_string),
             supports_chat_completions: true,
@@ -318,20 +346,22 @@ impl SettingFact {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ModelAliasFact {
+    alias_id: String,
     client_model: String,
     upstream_model: String,
     record_revision: RecordRevision,
 }
 
 impl ModelAliasFact {
-    #[cfg(test)]
     pub(crate) fn client_model(&self) -> &str {
         &self.client_model
     }
 
-    #[cfg(test)]
     pub(crate) fn upstream_model(&self) -> &str {
         &self.upstream_model
+    }
+    pub(crate) fn record_revision(&self) -> RecordRevision {
+        self.record_revision
     }
 }
 
@@ -364,7 +394,6 @@ impl OperationalFactBundle {
         &self.settings_by_key
     }
 
-    #[cfg(test)]
     pub(crate) fn model_aliases(&self) -> &[ModelAliasFact] {
         &self.model_aliases
     }
@@ -415,6 +444,13 @@ pub(crate) fn assemble_operational_fact_bundle(
             Ok(OperationalCandidateFact {
                 station_key_id,
                 station_id,
+                capacity_provider_family: row.capacity_provider_family,
+                capacity_deployment_identity: row.capacity_deployment_identity,
+                capacity_region_identity: row.capacity_region_identity,
+                capacity_domain_revision: row
+                    .capacity_domain_revision
+                    .map(RecordRevision::new)
+                    .transpose()?,
                 endpoint,
                 credential: CredentialAvailabilityFact::new(
                     row.credential_available,
@@ -423,6 +459,11 @@ pub(crate) fn assemble_operational_fact_bundle(
                 priority: row.priority,
                 backup_only: row.backup_only,
                 group_binding_id: row.group_binding_id,
+                group_record_revision: row
+                    .group_record_revision
+                    .map(RecordRevision::new)
+                    .transpose()?,
+                account_record_revision: RecordRevision::new(row.account_record_revision)?,
                 group_id_hash: row.group_id_hash,
                 group_category: row.group_category,
                 supports_chat_completions: row.supports_chat_completions,
@@ -482,6 +523,7 @@ pub(crate) fn assemble_operational_fact_bundle(
             let revision = RecordRevision::new(row.record_revision)?;
             max_alias_revision = max_alias_revision.max(row.record_revision);
             Ok(ModelAliasFact {
+                alias_id: row.alias_id,
                 client_model: row.client_model,
                 upstream_model: row.upstream_model,
                 record_revision: revision,

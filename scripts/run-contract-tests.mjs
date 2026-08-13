@@ -30,6 +30,7 @@ const contracts = [
   ["node", ["scripts/change-center-alerting-architecture.test.mjs"]],
   ["node", ["scripts/routing-operational-architecture.test.mjs"]],
   ["node", ["scripts/intelligent-routing-architecture.test.mjs"]],
+  ["node", ["scripts/upstream-error-contract.test.mjs"]],
   ["node", ["scripts/routing-error-contract.test.mjs"]],
   ["node", ["scripts/routing-dto-completeness.test.mjs"]],
   ["node", ["scripts/routing-read-model-architecture.test.mjs"]],

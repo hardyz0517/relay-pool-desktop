@@ -20,6 +20,10 @@ use crate::{
     app_composition,
     application::{app_services::AppServices, pagination::PageLimit},
     models::{
+        group_facts::{
+            UpdateStationKeyGroupBindingInput, UpsertStationGroupBindingInput,
+            BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
+        },
         pricing::UpsertBalanceSnapshotInput,
         proxy::RequestLog,
         routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
@@ -310,6 +314,158 @@ impl RoutingLoopbackHarness {
             .expect("update loopback candidate capabilities");
     }
 
+    pub async fn set_candidate_upstream_api_format(
+        &self,
+        candidate: &SeededCandidate,
+        format: &str,
+    ) {
+        let station_id = candidate.station_id.clone();
+        let format = format.to_string();
+        self.runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query("UPDATE stations SET upstream_api_format = ?1 WHERE id = ?2")
+                        .bind(format)
+                        .bind(station_id)
+                        .execute(write.connection())
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("set loopback candidate upstream API format");
+    }
+
+    pub async fn set_candidate_station_type(
+        &self,
+        candidate: &SeededCandidate,
+        station_type: &str,
+    ) {
+        let station_id = candidate.station_id.clone();
+        let station_type = station_type.to_string();
+        self.runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE stations
+                         SET station_type = ?1,
+                             endpoint_revision = endpoint_revision + 1
+                         WHERE id = ?2",
+                    )
+                    .bind(station_type)
+                    .bind(station_id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("set loopback candidate station type");
+    }
+
+    pub async fn bind_candidate_to_group(
+        &self,
+        candidate: &SeededCandidate,
+        group_key_hash: &str,
+    ) -> String {
+        let binding = self
+            .services
+            .collectors
+            .upsert_station_group_binding(UpsertStationGroupBindingInput {
+                station_id: candidate.station_id.clone(),
+                station_key_id: None,
+                binding_kind: BINDING_KIND_STATION_GROUP.to_string(),
+                parent_group_binding_id: None,
+                group_key_hash: group_key_hash.to_string(),
+                group_id_hash: Some(format!("id-{group_key_hash}")),
+                group_name: format!("Loopback group {group_key_hash}"),
+                binding_status: BINDING_STATUS_AVAILABLE.to_string(),
+                default_rate_multiplier: None,
+                user_rate_multiplier: None,
+                effective_rate_multiplier: None,
+                inferred_group_category: None,
+                group_category_override: None,
+                rate_source: Some("manual".to_string()),
+                confidence: 1.0,
+                last_seen_at: None,
+                raw_json_redacted: None,
+            })
+            .await
+            .expect("create loopback group binding");
+        self.services
+            .credentials
+            .update_station_key_group_binding(UpdateStationKeyGroupBindingInput {
+                station_key_id: candidate.station_key_id.clone(),
+                group_binding_id: binding.id.clone(),
+            })
+            .await
+            .expect("bind loopback candidate group");
+        binding.id
+    }
+
+    pub async fn bump_group_revision(&self, group_binding_id: &str) {
+        let group_binding_id = group_binding_id.to_string();
+        self.runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE station_group_bindings SET group_name = group_name || ' recovered' WHERE id = ?1",
+                    )
+                    .bind(group_binding_id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("bump loopback group revision");
+    }
+
+    pub async fn bump_candidate_endpoint_revision(&self, candidate: &SeededCandidate) {
+        let station_id = candidate.station_id.clone();
+        self.runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "UPDATE stations SET endpoint_revision = endpoint_revision + 1 WHERE id = ?1",
+                    )
+                    .bind(station_id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("bump loopback candidate endpoint revision");
+    }
+
+    pub async fn set_candidate_upstream_url(
+        &self,
+        candidate: &SeededCandidate,
+        upstream_base_url: &str,
+    ) {
+        let station_id = candidate.station_id.clone();
+        let api_base_url = format!("{}/v1", upstream_base_url.trim_end_matches('/'));
+        self.runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query("UPDATE stations SET api_base_url = ?1 WHERE id = ?2")
+                        .bind(api_base_url)
+                        .bind(station_id)
+                        .execute(write.connection())
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("set loopback candidate upstream URL");
+    }
+
     pub async fn upsert_model_alias(&self, client_model: &str, upstream_model: &str) {
         self.services
             .routing
@@ -358,6 +514,42 @@ impl RoutingLoopbackHarness {
             })
             .await
             .expect("balance snapshot");
+    }
+
+    pub async fn seed_station_account_concurrency(&self, station_id: &str, limit: i64) {
+        self.services
+            .pricing
+            .upsert_balance_snapshot(UpsertBalanceSnapshotInput {
+                id: Some(format!("account-capacity-{station_id}")),
+                station_id: station_id.to_string(),
+                station_key_id: None,
+                scope: "station".to_string(),
+                value: Some(100.0),
+                currency: "CNY".to_string(),
+                credit_unit: None,
+                used_value: None,
+                total_value: None,
+                today_request_count: None,
+                total_request_count: None,
+                today_consumption: None,
+                total_consumption: None,
+                today_base_consumption: None,
+                total_base_consumption: None,
+                today_token_count: None,
+                today_input_token_count: None,
+                today_output_token_count: None,
+                total_token_count: None,
+                total_input_token_count: None,
+                total_output_token_count: None,
+                account_concurrency_limit: Some(limit),
+                low_balance_threshold: None,
+                status: "healthy".to_string(),
+                source: "routing_loopback".to_string(),
+                confidence: 1.0,
+                collected_at: Some("2026-07-31T00:00:00Z".to_string()),
+            })
+            .await
+            .expect("station account concurrency snapshot");
     }
 
     pub async fn request_log_summaries(&self) -> Vec<RequestLogSummary> {
@@ -415,6 +607,42 @@ impl RoutingLoopbackHarness {
             .fetch_one(read.connection())
             .await
             .expect("attempt cost count")
+    }
+
+    pub async fn unsupported_model_verdict_count(&self, candidate: &SeededCandidate) -> i64 {
+        let mut read = self
+            .runtime
+            .handle()
+            .begin_read()
+            .await
+            .expect("begin capability verdict read");
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_capability_model_verdicts WHERE station_key_id = ?1 AND verdict = 'unsupported'",
+        )
+        .bind(&candidate.station_key_id)
+        .fetch_one(read.connection())
+        .await
+            .expect("capability verdict count")
+    }
+
+    pub async fn blocked_group_subscription_verdict_count(&self, group_binding_id: &str) -> i64 {
+        let mut read = self
+            .runtime
+            .handle()
+            .begin_read()
+            .await
+            .expect("begin group verdict read");
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_health_verdicts
+             WHERE scope_kind = 'station_group'
+               AND failure_dimension = 'group_subscription'
+               AND group_binding_id = ?1
+               AND verdict = 'blocked'",
+        )
+        .bind(group_binding_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("group verdict count")
     }
 
     pub async fn cost_aggregate_summary(

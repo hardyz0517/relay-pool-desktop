@@ -393,6 +393,7 @@ fn final_record() -> FinalRequestRecord {
         attempt_count: 1,
         fallback_count: 0,
         annotations: RequestLogAnnotations::default(),
+        routing_outcome: None,
     }
 }
 
@@ -412,6 +413,12 @@ fn attempt_context() -> AttemptContext {
         station_id: "station-fault".to_string(),
         station_key_id: "key-fault".to_string(),
         endpoint_revision: 1,
+        credential_revision: 1,
+        account_revision: 1,
+        group_binding_id: None,
+        group_revision: None,
+        resolved_upstream_model: None,
+        model_alias_revision: 1,
         started_at_ms: 2,
     }
 }

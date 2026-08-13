@@ -96,7 +96,7 @@ pub(crate) enum CatalogError {
 // The v1 catalog describes the post-alerting-cutover user schema. Historical
 // `change_events` is intentionally absent; the six alerting tables below are
 // the durable replacement and must be recognized by portable migration.
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 55;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 63;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -133,7 +133,10 @@ pub(crate) fn setting_policy(key: &str) -> Option<SettingPolicy> {
         | "max_rate_multiplier"
         | "dispatch_algorithm_profile_json"
         | "allow_depleted_fallback" => Some(SettingPolicy::Reset),
-        "common_login_profiles_json" => Some(SettingPolicy::IncludeWithTransform),
+        super::common_login_contract::LEGACY_COMMON_LOGIN_SETTING
+        | super::common_login_contract::COMMON_LOGIN_SETTING => {
+            Some(SettingPolicy::IncludeWithTransform)
+        }
         "local_key" | "local_proxy_start_on_launch" => Some(SettingPolicy::Reset),
         _ => None,
     }
@@ -148,7 +151,14 @@ pub(crate) fn secret_policy(scope: &str, kind: &str) -> Option<SecretPolicy> {
         ("station_credentials", "access_token")
         | ("station_credentials", "refresh_token")
         | ("station_credentials", "cookie") => Some(SecretPolicy::DeleteAndResetReference),
-        ("common_login_profile", "password") => Some(SecretPolicy::IncludeAndRekey),
+        (
+            super::common_login_contract::LEGACY_PASSWORD_SCOPE,
+            super::common_login_contract::PASSWORD_KIND,
+        )
+        | (
+            super::common_login_contract::PASSWORD_SCOPE,
+            super::common_login_contract::PASSWORD_KIND,
+        ) => Some(SecretPolicy::IncludeAndRekey),
         ("application", "local_proxy_access_key") => Some(SecretPolicy::ExcludeAndRegenerate),
         _ => None,
     }
@@ -323,6 +333,14 @@ const STATIONS_COLUMNS: &[&str] = &[
     "last_pricing_fetched_at",
     "note",
     "created_at",
+    "updated_at",
+];
+const STATION_CAPACITY_DOMAINS_COLUMNS: &[&str] = &[
+    "station_id",
+    "provider_family",
+    "deployment_identity",
+    "region_identity",
+    "revision",
     "updated_at",
 ];
 const STATION_KEYS_COLUMNS: &[&str] = &[
@@ -577,6 +595,7 @@ const REQUEST_LOGS_COLUMNS: &[&str] = &[
     "normalization_status",
     "balance_scope",
     "economic_context_json",
+    "http_status",
 ];
 const REQUEST_ATTEMPTS_COLUMNS: &[&str] = &[
     "request_id",
@@ -677,6 +696,26 @@ const ROUTING_REQUEST_COST_AGGREGATES_COLUMNS: &[&str] = &[
     "created_at_ms",
     "updated_at_ms",
 ];
+const REQUEST_ROUTING_OUTCOME_SUMMARIES_COLUMNS: &[&str] = &[
+    "request_id",
+    "profile_version",
+    "terminal_kind",
+    "terminal_code",
+    "classification",
+    "confidence",
+    "evidence_source",
+    "request_accepted",
+    "send_phase",
+    "replay_disposition",
+    "billing_state",
+    "retry_disposition",
+    "effect_summary",
+    "failure_domain_commitment_version",
+    "failure_domain_commitment_digest",
+    "attempt_count",
+    "fallback_count",
+    "terminal_at_ms",
+];
 const ROUTING_LIFECYCLE_RECONCILIATION_PROGRESS_COLUMNS: &[&str] = &[
     "singleton_key",
     "last_request_id",
@@ -687,6 +726,22 @@ const ROUTING_LIFECYCLE_RECONCILIATION_PROGRESS_COLUMNS: &[&str] = &[
     "decisions_marked_trace_incomplete",
     "completed",
 ];
+const REQUEST_TERMINAL_OUTBOX_COLUMNS: &[&str] = &[
+    "request_id",
+    "payload_json",
+    "payload_sha256",
+    "created_at_ms",
+    "lease_owner",
+    "lease_expires_at_ms",
+    "attempts",
+];
+const REQUEST_TERMINAL_OUTBOX_RULES: &[FieldRule] = &[FieldRule {
+    // The outbox is reset during export/import, but the catalog still requires
+    // an explicit policy for structured payloads so a future policy change
+    // cannot accidentally copy an unreviewed terminal body.
+    name: "payload_json",
+    transform: FieldTransform::Exclude,
+}];
 const COLLECTOR_RUNS_COLUMNS: &[&str] = &[
     "id",
     "run_key",
@@ -938,6 +993,18 @@ const MODEL_BASE_PRICES_COLUMNS: &[&str] = &[
     "note",
     "created_at",
     "updated_at",
+    "input_price_priority",
+    "output_price_priority",
+    "cache_creation_price",
+    "cache_creation_price_priority",
+    "cache_creation_price_above_1hr",
+    "cache_read_price",
+    "cache_read_price_priority",
+    "long_context_input_token_threshold",
+    "long_context_input_cost_multiplier",
+    "long_context_output_cost_multiplier",
+    "supports_service_tier",
+    "supports_prompt_caching",
 ];
 const CHANNEL_MONITOR_TEMPLATE_COLUMNS: &[&str] = &[
     "id",
@@ -991,23 +1058,6 @@ const CHANNEL_MONITORS_COLUMNS: &[&str] = &[
     "schedule_revision",
     "next_due_at_ms",
     "pause_on_zero_balance",
-];
-const CHANNEL_MONITOR_RUNS_COLUMNS: &[&str] = &[
-    "id",
-    "monitor_id",
-    "template_id",
-    "station_id",
-    "station_key_id",
-    "status",
-    "started_at",
-    "finished_at",
-    "duration_ms",
-    "http_status",
-    "latency_ms",
-    "response_model",
-    "fallback_model",
-    "error_message",
-    "created_at",
 ];
 const CHANNEL_MONITOR_EXECUTIONS_COLUMNS: &[&str] = &[
     "id",
@@ -1235,6 +1285,106 @@ const ROUTING_HEALTH_AXES_COLUMNS: &[&str] = &[
     "value_basis_points",
     "updated_at_ms",
 ];
+const ROUTING_HEALTH_GENERATIONS_COLUMNS: &[&str] = &[
+    "generation_id",
+    "projector_version",
+    "status",
+    "watermark_ingested_at_ms",
+    "watermark_ingestion_sequence",
+    "watermark_observation_id",
+    "projected_row_count",
+    "projected_content_hash",
+    "created_at_ms",
+    "activated_at_ms",
+];
+const ROUTING_HEALTH_OBSERVATIONS_COLUMNS: &[&str] = &[
+    "ingestion_sequence",
+    "observation_id",
+    "producer_id",
+    "producer_sequence",
+    "payload_hash",
+    "logical_request_id",
+    "attempt_ordinal",
+    "terminal_kind",
+    "ingested_at_ms",
+    "scope",
+    "scope_kind",
+    "failure_dimension",
+    "station_id",
+    "station_key_id",
+    "group_binding_id",
+    "resolved_model_commitment",
+    "credential_revision",
+    "account_revision",
+    "group_revision",
+    "endpoint_revision",
+    "model_alias_revision",
+    "verdict",
+    "cooldown_until_ms",
+    "evidence_code",
+    "projector_profile_version",
+    "created_at_ms",
+];
+const ROUTING_HEALTH_VERDICTS_COLUMNS: &[&str] = &[
+    "generation_id",
+    "scope",
+    "scope_kind",
+    "failure_dimension",
+    "station_id",
+    "station_key_id",
+    "group_binding_id",
+    "resolved_model_commitment",
+    "credential_revision",
+    "account_revision",
+    "group_revision",
+    "endpoint_revision",
+    "model_alias_revision",
+    "verdict",
+    "cooldown_until_ms",
+    "evidence_code",
+    "source_observation_id",
+    "source_ingested_at_ms",
+    "source_ingestion_sequence",
+    "projector_version",
+    "updated_at_ms",
+];
+const ROUTING_HEALTH_PROJECTOR_STATE_COLUMNS: &[&str] = &[
+    "singleton_key",
+    "projector_version",
+    "active_generation_id",
+    "watermark_ingested_at_ms",
+    "watermark_ingestion_sequence",
+    "watermark_observation_id",
+    "updated_at_ms",
+];
+const ROUTING_CAPABILITY_MODEL_OBSERVATIONS_COLUMNS: &[&str] = &[
+    "ingestion_sequence",
+    "observation_id",
+    "payload_hash",
+    "logical_request_id",
+    "attempt_ordinal",
+    "station_key_id",
+    "resolved_model",
+    "credential_revision",
+    "endpoint_revision",
+    "model_alias_revision",
+    "verdict",
+    "evidence_code",
+    "classifier_profile_version",
+    "created_at_ms",
+];
+const ROUTING_CAPABILITY_MODEL_VERDICTS_COLUMNS: &[&str] = &[
+    "station_key_id",
+    "resolved_model",
+    "credential_revision",
+    "endpoint_revision",
+    "model_alias_revision",
+    "verdict",
+    "source_observation_id",
+    "source_ingestion_sequence",
+    "projector_version",
+    "updated_at_ms",
+];
 
 const SETTINGS_RULES: &[FieldRule] = &[];
 const SECRETS_RULES: &[FieldRule] = &[
@@ -1403,6 +1553,10 @@ const REQUEST_LOG_RULES: &[FieldRule] = &[
         transform: FieldTransform::RedactJson,
     },
 ];
+const MODEL_BASE_PRICE_RULES: &[FieldRule] = &[FieldRule {
+    name: "long_context_input_token_threshold",
+    transform: FieldTransform::Copy,
+}];
 const REQUEST_ATTEMPT_RULES: &[FieldRule] = &[FieldRule {
     name: "sanitized_detail",
     transform: FieldTransform::RedactText,
@@ -1548,10 +1702,6 @@ const CHANNEL_MONITOR_RULES: &[FieldRule] = &[
         transform: FieldTransform::ResetNull,
     },
 ];
-const CHANNEL_RUN_RULES: &[FieldRule] = &[FieldRule {
-    name: "error_message",
-    transform: FieldTransform::RedactText,
-}];
 const CHANNEL_EXECUTION_RULES: &[FieldRule] = &[FieldRule {
     name: "summary_failure_kind",
     transform: FieldTransform::RedactText,
@@ -1658,6 +1808,15 @@ const TABLES: &[TableCatalog] = &[
         true,
         STATIONS_COLUMNS,
         STATIONS_RULES,
+    ),
+    table(
+        "station_capacity_domains",
+        TablePolicy::Include,
+        DataCategory::CoreData,
+        DependencyStage::StationChildren,
+        true,
+        STATION_CAPACITY_DOMAINS_COLUMNS,
+        &[],
     ),
     table(
         "station_keys",
@@ -1795,6 +1954,24 @@ const TABLES: &[TableCatalog] = &[
         ROUTING_REQUEST_COST_AGGREGATE_RULES,
     ),
     table(
+        "request_routing_outcome_summaries",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        REQUEST_ROUTING_OUTCOME_SUMMARIES_COLUMNS,
+        &[],
+    ),
+    table(
+        "request_terminal_outbox",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        REQUEST_TERMINAL_OUTBOX_COLUMNS,
+        REQUEST_TERMINAL_OUTBOX_RULES,
+    ),
+    table(
         "routing_lifecycle_reconciliation_progress",
         TablePolicy::Reset,
         DataCategory::DeviceRuntimeState,
@@ -1909,7 +2086,7 @@ const TABLES: &[TableCatalog] = &[
         DependencyStage::Pricing,
         true,
         MODEL_BASE_PRICES_COLUMNS,
-        &[],
+        MODEL_BASE_PRICE_RULES,
     ),
     table(
         "channel_monitor_request_templates",
@@ -1928,15 +2105,6 @@ const TABLES: &[TableCatalog] = &[
         true,
         CHANNEL_MONITORS_COLUMNS,
         CHANNEL_MONITOR_RULES,
-    ),
-    table(
-        "channel_monitor_runs",
-        TablePolicy::OptionalHistory,
-        DataCategory::History,
-        DependencyStage::History,
-        true,
-        CHANNEL_MONITOR_RUNS_COLUMNS,
-        CHANNEL_RUN_RULES,
     ),
     table(
         "channel_monitor_executions",
@@ -2111,6 +2279,60 @@ const TABLES: &[TableCatalog] = &[
         ROUTING_HEALTH_AXES_COLUMNS,
         &[],
     ),
+    table(
+        "routing_health_generations",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_HEALTH_GENERATIONS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_health_observations",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_HEALTH_OBSERVATIONS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_health_verdicts",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_HEALTH_VERDICTS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_health_projector_state",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_HEALTH_PROJECTOR_STATE_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_capability_model_observations",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_CAPABILITY_MODEL_OBSERVATIONS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_capability_model_verdicts",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_CAPABILITY_MODEL_VERDICTS_COLUMNS,
+        &[],
+    ),
 ];
 
 const fn table(
@@ -2192,6 +2414,14 @@ mod tests {
         assert_eq!(setting_policy("local_key"), Some(SettingPolicy::Reset));
         assert_eq!(setting_policy("future_setting"), None);
         assert_eq!(
+            setting_policy("common_login_profiles_json"),
+            Some(SettingPolicy::IncludeWithTransform)
+        );
+        assert_eq!(
+            setting_policy("common_login_catalog_json"),
+            Some(SettingPolicy::IncludeWithTransform)
+        );
+        assert_eq!(
             secret_policy("station_key", "api_key"),
             Some(SecretPolicy::IncludeAndRekey)
         );
@@ -2199,6 +2429,15 @@ mod tests {
             secret_policy("application", "local_proxy_access_key"),
             Some(SecretPolicy::ExcludeAndRegenerate)
         );
+        assert_eq!(
+            secret_policy("common_login_profile", "password"),
+            Some(SecretPolicy::IncludeAndRekey)
+        );
+        assert_eq!(
+            secret_policy("common_login_password", "password"),
+            Some(SecretPolicy::IncludeAndRekey)
+        );
+        assert_eq!(secret_policy("common_login_password", "token"), None);
         assert_eq!(secret_policy("station_key", "future_secret"), None);
     }
 }

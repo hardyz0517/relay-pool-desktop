@@ -7,6 +7,7 @@ use super::dashboard_metrics_rollup::{
     clear_dashboard_metric_rollups, record_request_finish_rollup, record_request_start_rollup,
 };
 use super::request_log_write::{AttemptTerminalWrite, RequestStartWrite, RequestTerminalWrite};
+use super::request_outcome_store::RequestOutcomeStore;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct RequestLogStore;
@@ -200,6 +201,16 @@ impl RequestLogStore {
         record: &RequestTerminalWrite,
     ) -> Result<RequestTerminalPersistenceResult, PersistenceError> {
         let finalized = update_request_terminal(session.connection(), record).await?;
+        // A duplicate terminal is allowed only when it carries the exact same
+        // durable routing outcome. Do this for both outcomes of the CAS so a
+        // late conflicting terminal cannot be silently treated as idempotent.
+        RequestOutcomeStore
+            .insert_routing_outcome_summary(
+                session.connection(),
+                &record.request_id,
+                &record.routing_outcome,
+            )
+            .await?;
         if finalized {
             record_request_finish_rollup(session.connection(), record).await?;
         }
@@ -497,6 +508,7 @@ mod v2_tests {
     use sqlx::Row;
 
     use crate::persistence::{
+        error::PersistenceError,
         runtime::PersistenceRuntime,
         stores::request_log_write::{
             AttemptHealthUpdate, AttemptTerminalWrite, RequestLogAnnotationsWrite,
@@ -537,6 +549,12 @@ mod v2_tests {
             station_id: "station-1".to_string(),
             station_key_id: "key-1".to_string(),
             endpoint_revision: 1,
+            credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: None,
+            group_revision: None,
+            resolved_upstream_model: None,
+            model_alias_revision: 1,
             started_at_ms: 1001,
             terminal_kind: "succeeded".to_string(),
             failure_kind: None,
@@ -545,6 +563,7 @@ mod v2_tests {
             health_effect: "success".to_string(),
             health_cooldown_until_ms: None,
             health_update: AttemptHealthUpdate::Success,
+            durable_effect: None,
             public_code: None,
             sanitized_detail: None,
             output_committed: true,
@@ -568,6 +587,25 @@ mod v2_tests {
             attempt_count: 1,
             fallback_count: 0,
             terminal_at_ms: 1100,
+            routing_outcome:
+                crate::persistence::stores::request_log_write::RequestRoutingOutcomeSummaryWrite {
+                    terminal_kind: "completed".to_string(),
+                    terminal_code: "request_completed".to_string(),
+                    classification: "success".to_string(),
+                    confidence: "not_applicable".to_string(),
+                    evidence_source: "none".to_string(),
+                    request_accepted: "accepted".to_string(),
+                    send_phase: "response_started".to_string(),
+                    replay_disposition: "completed".to_string(),
+                    billing_state: "completed".to_string(),
+                    retry_disposition: "none".to_string(),
+                    effect_summary: "neutral".to_string(),
+                    failure_domain_commitment_version: None,
+                    failure_domain_commitment_digest: None,
+                    attempt_count: 1,
+                    fallback_count: 0,
+                    terminal_at_ms: 1100,
+                },
             annotations: RequestLogAnnotationsWrite {
                 model: Some("gpt-test".to_string()),
                 stream: true,
@@ -748,7 +786,28 @@ mod v2_tests {
         );
         duplicate.commit().await.expect("commit");
 
+        let mut conflicting_record = final_record.clone();
+        conflicting_record.routing_outcome.terminal_code = "request_terminal_collision".to_string();
+        let mut collision = runtime.begin_write().await.expect("write");
+        let error = store
+            .finish_request(&mut collision, &conflicting_record)
+            .await
+            .expect_err("conflicting durable outcome must fail closed");
+        assert!(matches!(error, PersistenceError::InvariantViolation(_)));
+
         let mut read = runtime.begin_read().await.expect("read");
+        let outcome = crate::persistence::stores::request_outcome_store::RequestOutcomeStore
+            .routing_outcome_summary(read.connection(), "req-terminal")
+            .await
+            .expect("outcome query")
+            .expect("durable routing outcome");
+        assert_eq!(outcome.profile_version, "routing_outcome_v1");
+        assert_eq!(outcome.terminal_kind, "completed");
+        assert_eq!(outcome.terminal_code, "request_completed");
+        assert_eq!(outcome.classification, "success");
+        assert_eq!(outcome.confidence, "not_applicable");
+        assert_eq!(outcome.send_phase, "response_started");
+        assert_eq!(outcome.attempt_count, 1);
         let row = sqlx::query(
             "SELECT model, stream, station_key_id, station_id, upstream_base_url,
                     route_policy, route_reason, rejected_candidates_json, body_bytes,

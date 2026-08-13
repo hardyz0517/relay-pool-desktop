@@ -11,10 +11,6 @@ pub(crate) enum RuntimeCompositionError {
     Injected(#[from] UpgradeInjectedFailure),
     #[error("runtime service state slot is already occupied")]
     StateSlotOccupied,
-    #[allow(
-        dead_code,
-        reason = "source-included persistence tests compile runtime_composition without app_composition constructors"
-    )]
     #[error("runtime work dependency configuration is invalid")]
     WorkRuntimeConfiguration,
     #[error("runtime service registration failed")]
@@ -23,49 +19,6 @@ pub(crate) enum RuntimeCompositionError {
     FinalizationDrain,
 }
 
-#[allow(
-    dead_code,
-    reason = "legacy five-slot bundle remains for source-included persistence fault tests until every ready-service publisher moves to facade-aware bundles"
-)]
-pub(crate) struct ReadyServiceBundle<Startup, Persistence, Application, Monitor, Collector> {
-    startup: Startup,
-    persistence: Persistence,
-    application: Application,
-    monitor: Monitor,
-    collector: Collector,
-}
-
-impl<Startup, Persistence, Application, Monitor, Collector>
-    ReadyServiceBundle<Startup, Persistence, Application, Monitor, Collector>
-{
-    #[allow(
-        dead_code,
-        reason = "source-included fault tests use the legacy five-slot constructor while production publishes the first facade slot through the six-slot constructor"
-    )]
-    pub(crate) fn new(
-        startup: Startup,
-        persistence: Persistence,
-        application: Application,
-        monitor: Monitor,
-        collector: Collector,
-    ) -> Self {
-        Self {
-            startup,
-            persistence,
-            application,
-            monitor,
-            collector,
-        }
-    }
-}
-
-#[cfg_attr(
-    test,
-    allow(
-        dead_code,
-        reason = "source-included persistence tests do not publish the facade-aware production bundle"
-    )
-)]
 pub(crate) struct ReadyServiceBundleWithCommandFacades<
     Startup,
     Persistence,
@@ -159,13 +112,6 @@ impl<
         Collector,
     >
 {
-    #[cfg_attr(
-        test,
-        allow(
-            dead_code,
-            reason = "source-included persistence tests do not publish the facade-aware production bundle"
-        )
-    )]
     pub(crate) fn new(
         startup: Startup,
         persistence: Persistence,
@@ -223,13 +169,6 @@ pub(crate) trait ReadyServiceRegistry {
     fn manage<T: Send + Sync + 'static>(&mut self, state: T) -> bool;
 }
 
-#[cfg_attr(
-    test,
-    allow(
-        dead_code,
-        reason = "source-included fault tests exercise the registry contract without constructing a Tauri app"
-    )
-)]
 struct TauriReadyServiceRegistry<'app, R: Runtime>(&'app mut tauri::App<R>);
 
 impl<R: Runtime> ReadyServiceRegistry for TauriReadyServiceRegistry<'_, R> {
@@ -271,10 +210,6 @@ impl<Supervisor, Blocking, Outbound, Operation>
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "source-included persistence tests compile runtime_composition without production Tauri setup"
-)]
 pub(crate) fn register_work_runtime<R, Supervisor, Blocking, Outbound, Operation>(
     faults: &dyn UpgradeFaultInjector,
     app: &mut tauri::App<R>,
@@ -313,93 +248,6 @@ where
     Ok(())
 }
 
-#[allow(
-    dead_code,
-    reason = "legacy five-slot registration remains for source-included persistence fault tests until facade migration fully replaces AppServices command state"
-)]
-pub(crate) fn register_ready_services<R, Startup, Persistence, Application, Monitor, Collector>(
-    faults: &dyn UpgradeFaultInjector,
-    app: &mut tauri::App<R>,
-    services: ReadyServiceBundle<Startup, Persistence, Application, Monitor, Collector>,
-) -> Result<(), RuntimeCompositionError>
-where
-    R: Runtime,
-    Startup: Send + Sync + 'static,
-    Persistence: Send + Sync + 'static,
-    Application: Send + Sync + 'static,
-    Monitor: Send + Sync + 'static,
-    Collector: Send + Sync + 'static,
-{
-    let mut registry = TauriReadyServiceRegistry(app);
-    register_ready_services_in(faults, &mut registry, services)
-}
-
-#[allow(
-    dead_code,
-    reason = "source-included persistence fault tests exercise this five-slot registration path"
-)]
-pub(crate) fn register_ready_services_in<
-    Registry,
-    Startup,
-    Persistence,
-    Application,
-    Monitor,
-    Collector,
->(
-    faults: &dyn UpgradeFaultInjector,
-    registry: &mut Registry,
-    services: ReadyServiceBundle<Startup, Persistence, Application, Monitor, Collector>,
-) -> Result<(), RuntimeCompositionError>
-where
-    Registry: ReadyServiceRegistry,
-    Startup: Send + Sync + 'static,
-    Persistence: Send + Sync + 'static,
-    Application: Send + Sync + 'static,
-    Monitor: Send + Sync + 'static,
-    Collector: Send + Sync + 'static,
-{
-    faults.check(UpgradeFailpoint::ServiceRegistration)?;
-    if registry.contains::<Startup>()
-        || registry.contains::<Persistence>()
-        || registry.contains::<Application>()
-        || registry.contains::<Monitor>()
-        || registry.contains::<Collector>()
-    {
-        return Err(RuntimeCompositionError::StateSlotOccupied);
-    }
-
-    let ReadyServiceBundle {
-        startup,
-        persistence,
-        application,
-        monitor,
-        collector,
-    } = services;
-    if !registry.manage(startup) {
-        return Err(RuntimeCompositionError::ServiceRegistration);
-    }
-    if !registry.manage(persistence) {
-        return Err(RuntimeCompositionError::ServiceRegistration);
-    }
-    if !registry.manage(application) {
-        return Err(RuntimeCompositionError::ServiceRegistration);
-    }
-    if !registry.manage(monitor) {
-        return Err(RuntimeCompositionError::ServiceRegistration);
-    }
-    if !registry.manage(collector) {
-        return Err(RuntimeCompositionError::ServiceRegistration);
-    }
-    Ok(())
-}
-
-#[cfg_attr(
-    test,
-    allow(
-        dead_code,
-        reason = "source-included persistence tests do not publish the facade-aware production bundle"
-    )
-)]
 pub(crate) fn register_ready_services_with_command_facades<
     R,
     Startup,
@@ -478,13 +326,6 @@ where
     register_ready_services_with_command_facades_in(faults, &mut registry, services)
 }
 
-#[cfg_attr(
-    test,
-    allow(
-        dead_code,
-        reason = "source-included persistence tests do not publish the facade-aware production bundle"
-    )
-)]
 pub(crate) fn register_ready_services_with_command_facades_in<
     Registry,
     Startup,

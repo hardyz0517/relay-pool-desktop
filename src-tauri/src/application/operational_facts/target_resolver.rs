@@ -1,9 +1,12 @@
 use std::fmt;
 
+use sha2::{Digest, Sha256};
+
 use crate::{
     application::{
         credentials::{ExecutionCredentialResolver, SecretBytes, SecretRef},
         routing_engine::capacity::{CapacityLease, RetryPermit},
+        routing_engine::failure_domains::{CapacityDomainCommitment, ProviderCapacityDomain},
     },
     models::{
         proxy::UpstreamApiFormat,
@@ -15,8 +18,16 @@ use crate::{
 pub(crate) struct ExecutionTargetRef {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
+    pub(crate) station_type: String,
+    pub(crate) capacity_provider_family: Option<String>,
+    pub(crate) capacity_deployment_identity: Option<String>,
+    pub(crate) capacity_region_identity: Option<String>,
+    pub(crate) capacity_domain_revision: Option<i64>,
+    pub(crate) group_binding_id: Option<String>,
     pub(crate) endpoint_revision: i64,
     pub(crate) credential_revision: i64,
+    pub(crate) account_revision: i64,
+    pub(crate) group_revision: Option<i64>,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
     pub(crate) collector_proxy_mode: String,
@@ -33,8 +44,68 @@ pub(crate) struct LeasedSelectedTarget {
     pub(crate) station_key_id: String,
     pub(crate) expected_endpoint_revision: i64,
     pub(crate) expected_secret_ref_id: String,
+    pub(crate) expected_credential_revision: i64,
+    pub(crate) expected_account_revision: i64,
+    pub(crate) expected_group_binding_id: Option<String>,
+    pub(crate) expected_group_revision: Option<i64>,
+    pub(crate) resolved_upstream_model: Option<String>,
+    pub(crate) model_alias_revision: i64,
+    pub(crate) expected_capacity_domain: Option<CapacityDomainCommitment>,
+    pub(crate) expected_capacity_domain_revision: Option<i64>,
+    pub(crate) policy_revision: u64,
+    pub(crate) request_body_identity: RequestBodyIdentity,
+    pub(crate) protocol_profile: TargetProtocolProfile,
     pub(crate) lease: CapacityLease,
     pub(crate) retry_permit: Option<RetryPermit>,
+}
+
+pub(crate) const TARGET_EXECUTION_COMMITMENT_VERSION: &str = "target-execution-v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequestBodyIdentity {
+    pub(crate) byte_len: usize,
+    pub(crate) sha256_hex: String,
+}
+
+impl RequestBodyIdentity {
+    pub(crate) fn from_bytes(body: &[u8]) -> Self {
+        Self {
+            byte_len: body.len(),
+            sha256_hex: encode_hex(&Sha256::digest(body)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TargetProtocolProfile {
+    pub(crate) upstream_api_format: UpstreamApiFormat,
+    pub(crate) stream: bool,
+    pub(crate) uses_tools: bool,
+    pub(crate) uses_vision: bool,
+    pub(crate) uses_reasoning: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TargetExecutionCommitment {
+    pub(crate) version: &'static str,
+    pub(crate) station_key_id: String,
+    pub(crate) station_id: String,
+    /// Provider semantics select the error-rule profile. Retain the identity
+    /// in the retry fence so an in-flight request cannot change classifier
+    /// behavior after a station configuration update.
+    pub(crate) station_type: String,
+    pub(crate) credential_revision: i64,
+    pub(crate) endpoint_revision: i64,
+    pub(crate) account_revision: i64,
+    pub(crate) group_binding_id: Option<String>,
+    pub(crate) group_revision: Option<i64>,
+    pub(crate) resolved_upstream_model: Option<String>,
+    pub(crate) model_alias_revision: i64,
+    pub(crate) capacity_domain: Option<CapacityDomainCommitment>,
+    pub(crate) capacity_domain_revision: Option<i64>,
+    pub(crate) policy_revision: u64,
+    pub(crate) request_body_identity: RequestBodyIdentity,
+    pub(crate) protocol_profile: TargetProtocolProfile,
 }
 
 pub(crate) struct ExecutionTargetResolver;
@@ -63,7 +134,7 @@ impl ExecutionTargetResolver {
                 reason: "target_disabled",
             });
         }
-        let Some(secret_ref) = current.api_key_secret_ref else {
+        let Some(secret_ref) = current.api_key_secret_ref.clone() else {
             return Err(ExecutionTargetError::MissingCredentialRef {
                 station_key_id: current.station_key_id,
                 inline_api_key_present: current.inline_api_key_present,
@@ -89,30 +160,120 @@ impl ExecutionTargetResolver {
             .map_err(|error| ExecutionTargetError::SecretUnavailable {
                 station_key_id: error.station_key_id,
             })?;
+        let commitment = Self::commitment(&selected, &current)?;
         Ok(ExecutionTargetHandle {
             station_key_id: current.station_key_id,
             station_id: current.station_id,
+            station_type: current.station_type,
+            group_binding_id: current.group_binding_id,
             endpoint_revision: current.endpoint_revision,
             api_base_url: normalized_api_base_url,
             upstream_api_format: current.upstream_api_format,
             collector_proxy_mode: current.collector_proxy_mode,
             collector_proxy_url: current.collector_proxy_url,
             api_key,
+            commitment,
             lease: selected.lease,
             _retry_permit: selected.retry_permit,
         })
+    }
+
+    /// The resolver is the only constructor and verifier for execution
+    /// commitments. Retry code receives this opaque complete value and must
+    /// not rebuild a weaker revision list.
+    pub(crate) fn commitment(
+        selected: &LeasedSelectedTarget,
+        current: &ExecutionTargetRef,
+    ) -> Result<TargetExecutionCommitment, ExecutionTargetError> {
+        if selected.model_alias_revision <= 0
+            || selected.policy_revision == 0
+            || selected.expected_credential_revision <= 0
+            || selected.expected_account_revision <= 0
+            || selected
+                .expected_group_revision
+                .is_some_and(|revision| revision <= 0)
+            || selected.expected_group_binding_id.is_some()
+                != selected.expected_group_revision.is_some()
+            || selected.expected_capacity_domain.is_some()
+                != selected.expected_capacity_domain_revision.is_some()
+        {
+            return Err(ExecutionTargetError::InvalidCommitment {
+                station_key_id: selected.station_key_id.clone(),
+            });
+        }
+        if selected.expected_credential_revision != current.credential_revision
+            || selected.expected_account_revision != current.account_revision
+            || selected.expected_group_revision != current.group_revision
+        {
+            return Err(ExecutionTargetError::CommitmentChanged {
+                station_key_id: current.station_key_id.clone(),
+            });
+        }
+        let capacity_domain = selected
+            .resolved_upstream_model
+            .as_deref()
+            .and_then(|model| {
+                ProviderCapacityDomain::from_trusted_identity(
+                    current.capacity_provider_family.as_deref()?,
+                    model,
+                    current.capacity_deployment_identity.as_deref(),
+                    current.capacity_region_identity.as_deref(),
+                )
+                .map(|domain| domain.commitment())
+            });
+        if capacity_domain != selected.expected_capacity_domain
+            || current.capacity_domain_revision != selected.expected_capacity_domain_revision
+        {
+            return Err(ExecutionTargetError::CommitmentChanged {
+                station_key_id: current.station_key_id.clone(),
+            });
+        }
+        Ok(TargetExecutionCommitment {
+            version: TARGET_EXECUTION_COMMITMENT_VERSION,
+            station_key_id: current.station_key_id.clone(),
+            station_id: current.station_id.clone(),
+            station_type: current.station_type.clone(),
+            credential_revision: current.credential_revision,
+            endpoint_revision: current.endpoint_revision,
+            account_revision: current.account_revision,
+            group_binding_id: selected.expected_group_binding_id.clone(),
+            group_revision: current.group_revision,
+            resolved_upstream_model: selected.resolved_upstream_model.clone(),
+            model_alias_revision: selected.model_alias_revision,
+            capacity_domain,
+            capacity_domain_revision: current.capacity_domain_revision,
+            policy_revision: selected.policy_revision,
+            request_body_identity: selected.request_body_identity.clone(),
+            protocol_profile: selected.protocol_profile.clone(),
+        })
+    }
+
+    pub(crate) fn revalidate_commitment(
+        expected: &TargetExecutionCommitment,
+        current: &TargetExecutionCommitment,
+    ) -> Result<(), ExecutionTargetError> {
+        if expected == current {
+            Ok(())
+        } else {
+            Err(ExecutionTargetError::CommitmentChanged {
+                station_key_id: current.station_key_id.clone(),
+            })
+        }
     }
 }
 
 pub(crate) struct ExecutionTargetHandle {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
+    pub(crate) station_type: String,
+    pub(crate) group_binding_id: Option<String>,
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) upstream_api_format: UpstreamApiFormat,
     pub(crate) collector_proxy_mode: String,
     pub(crate) collector_proxy_url: Option<String>,
     pub(crate) api_key: SecretBytes,
+    pub(crate) commitment: TargetExecutionCommitment,
     #[cfg_attr(
         not(test),
         expect(
@@ -132,6 +293,7 @@ impl fmt::Debug for ExecutionTargetHandle {
             .field("station_id", &self.station_id)
             .field("endpoint_revision", &self.endpoint_revision)
             .field("upstream_api_format", &self.upstream_api_format)
+            .field("commitment_version", &self.commitment.version)
             .field("api_key", &"<redacted>")
             .finish_non_exhaustive()
     }
@@ -164,4 +326,20 @@ pub(crate) enum ExecutionTargetError {
     SecretUnavailable {
         station_key_id: String,
     },
+    InvalidCommitment {
+        station_key_id: String,
+    },
+    CommitmentChanged {
+        station_key_id: String,
+    },
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }

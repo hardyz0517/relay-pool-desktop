@@ -108,10 +108,12 @@ pub(crate) struct PreparedUpstreamRequest {
 
 pub(crate) fn response_headers_for_downstream(headers: &HeaderMap) -> HeaderMap {
     let mut output = HeaderMap::new();
+    // This is an explicit compatibility allowlist. Upstream topology IDs,
+    // authentication challenges, cookies, hop-by-hop fields and retry hints
+    // are intentionally not forwarded on successful responses.
     for name in [
         header::CONTENT_TYPE,
         header::CACHE_CONTROL,
-        http::HeaderName::from_static("x-request-id"),
         http::HeaderName::from_static("openai-processing-ms"),
     ] {
         if let Some(value) = headers.get(&name) {
@@ -255,6 +257,13 @@ fn upstream_headers(forwarded: &HeaderMap, accept: Option<&'static str>) -> Head
 }
 
 fn rewrite_json_model(body: &Bytes, mapped_model: Option<&str>) -> Result<Bytes, ProxyFailure> {
+    if mapped_model.is_none() {
+        // The execution retry loop may prepare this request more than once. Keep
+        // the ingress-owned immutable allocation when no target-specific rewrite
+        // is needed; target-specific model aliases still require a fresh body.
+        parse_json_body(body)?;
+        return Ok(body.clone());
+    }
     let value = parse_json_body(body)?;
     rewrite_json_value_model(value, mapped_model)
 }
@@ -510,6 +519,29 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn unmodified_retry_body_reuses_the_ingress_bytes_allocation() {
+        let request = canonical_request(
+            RouteEndpointKind::ChatCompletions,
+            br#"{"model":"client-model","messages":[{"role":"user","content":"hi"}]}"#,
+            false,
+            HeaderMap::new(),
+        )
+        .await;
+
+        let first = EndpointAdapter::ChatCompletions
+            .prepare_for_format(&request, UpstreamApiFormat::Auto, None)
+            .expect("first prepared retry body");
+        let second = EndpointAdapter::ChatCompletions
+            .prepare_for_format(&request, UpstreamApiFormat::Auto, None)
+            .expect("second prepared retry body");
+
+        assert_eq!(first.body.as_ptr(), request.body.as_ptr());
+        assert_eq!(second.body.as_ptr(), request.body.as_ptr());
+        assert_eq!(first.body, request.body);
+        assert_eq!(second.body, request.body);
+    }
+
     #[test]
     fn endpoint_adapters_filter_upstream_response_headers() {
         let input = HeaderMap::from_iter([
@@ -523,6 +555,11 @@ mod tests {
                 http::HeaderName::from_static("x-request-id"),
                 HeaderValue::from_static("abc"),
             ),
+            (
+                header::WWW_AUTHENTICATE,
+                HeaderValue::from_static("Bearer realm=upstream"),
+            ),
+            (header::RETRY_AFTER, HeaderValue::from_static("99")),
         ]);
 
         let filtered = super::response_headers_for_downstream(&input);
@@ -531,9 +568,11 @@ mod tests {
             filtered.get(header::CONTENT_TYPE).unwrap(),
             "application/json"
         );
-        assert_eq!(filtered.get("x-request-id").unwrap(), "abc");
+        assert!(!filtered.contains_key("x-request-id"));
         assert!(!filtered.contains_key(header::SET_COOKIE));
         assert!(!filtered.contains_key(header::CONNECTION));
+        assert!(!filtered.contains_key(header::WWW_AUTHENTICATE));
+        assert!(!filtered.contains_key(header::RETRY_AFTER));
     }
 
     async fn canonical_request(

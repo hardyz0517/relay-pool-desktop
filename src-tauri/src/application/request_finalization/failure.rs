@@ -20,9 +20,16 @@ pub(crate) enum FailureTarget {
     StationAccount {
         station_id: String,
     },
+    StationGroup {
+        station_id: String,
+        group_binding_id: String,
+    },
     StationEndpoint {
         station_id: String,
         endpoint_revision: i64,
+    },
+    ProviderCapacity {
+        domain_commitment: String,
     },
     ProviderProtocol {
         protocol: ProviderProtocolKind,
@@ -80,6 +87,10 @@ pub(crate) enum FailureClass {
     Authentication,
     InsufficientBalance,
     RateLimited,
+    QuotaExhausted,
+    RuntimeConcurrencyLimited,
+    ProviderCapacity,
+    RelayServiceUnavailable,
     ModelUnavailable,
     CapabilityMismatch,
     BadRequest,
@@ -103,9 +114,37 @@ pub(crate) enum FailureClass {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RetryDisposition {
-    TryNextCandidate,
+    RetrySameTarget,
+    TryDifferentFailureDomain,
     WaitThenReplan,
     StopRequest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EvidenceConfidence {
+    Confirmed,
+    Probable,
+    Unknown,
+    Conflicting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequestAcceptance {
+    RejectedBeforeAcceptance,
+    AcceptedOrMayHaveBeenAccepted,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReplaySafety {
+    ReplaySafe,
+    RequiresProviderIdempotency,
+    NotReplayable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BillingState {
+    BillingUncertain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +205,11 @@ pub(crate) struct CanonicalFailure {
     pub(crate) health: HealthEffect,
     pub(crate) capability: CapabilityEffect,
     pub(crate) public: PublicError,
+    pub(crate) confidence: EvidenceConfidence,
+    pub(crate) request_acceptance: RequestAcceptance,
+    pub(crate) replay_safety: ReplaySafety,
+    pub(crate) billing: BillingState,
+    pub(crate) classifier_profile_version: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -274,6 +318,26 @@ pub(crate) fn public_error_for_class(class: FailureClass) -> PublicError {
             code: PublicErrorCode::RateLimited,
             http_status: StatusCode::TOO_MANY_REQUESTS,
             message: "upstream is rate limited",
+        },
+        FailureClass::QuotaExhausted => PublicError {
+            code: PublicErrorCode::RateLimited,
+            http_status: StatusCode::TOO_MANY_REQUESTS,
+            message: "upstream quota is exhausted",
+        },
+        FailureClass::RuntimeConcurrencyLimited => PublicError {
+            code: PublicErrorCode::UpstreamOverloaded,
+            http_status: StatusCode::TOO_MANY_REQUESTS,
+            message: "upstream concurrency is limited",
+        },
+        FailureClass::ProviderCapacity => PublicError {
+            code: PublicErrorCode::UpstreamOverloaded,
+            http_status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "upstream server is temporarily overloaded",
+        },
+        FailureClass::RelayServiceUnavailable => PublicError {
+            code: PublicErrorCode::UpstreamUnavailable,
+            http_status: StatusCode::BAD_GATEWAY,
+            message: "upstream relay service is unavailable",
         },
         FailureClass::ModelUnavailable => PublicError {
             code: PublicErrorCode::ModelUnavailable,
@@ -392,6 +456,10 @@ pub(crate) enum ProviderErrorSemanticSignal {
     ConfirmedInsufficientBalance {
         station_id: String,
     },
+    ConfirmedGroupSubscriptionInvalid {
+        station_id: String,
+        group_binding_id: String,
+    },
     ConfirmedCapabilityMismatch {
         protocol: ProviderProtocolKind,
     },
@@ -401,15 +469,26 @@ pub(crate) enum ProviderErrorSemanticSignal {
     },
     BadRequest,
     Overloaded,
+    ProviderCapacity {
+        domain_commitment: String,
+        retry_after_ms: Option<i64>,
+    },
     ServerError {
         station_id: String,
         endpoint_revision: i64,
     },
     GenericStatus {
         status: u16,
+        confidence: EvidenceConfidence,
     },
-    Transport,
-    Timeout,
+    Transport {
+        station_id: String,
+        endpoint_revision: i64,
+    },
+    Timeout {
+        station_id: String,
+        endpoint_revision: i64,
+    },
     MalformedResponse,
 }
 
@@ -417,11 +496,12 @@ pub(crate) fn failure_from_provider_signal(
     signal: ProviderErrorSemanticSignal,
     applicability: CapabilityApplicabilitySet,
 ) -> CanonicalFailure {
+    let mut confidence = EvidenceConfidence::Confirmed;
     let (target, class, retry, health, capability) = match signal {
         ProviderErrorSemanticSignal::ConfirmedAuthentication { station_key_id } => (
             FailureTarget::StationKeyCredential { station_key_id },
             FailureClass::Authentication,
-            RetryDisposition::TryNextCandidate,
+            RetryDisposition::TryDifferentFailureDomain,
             HealthEffect::HardFail,
             CapabilityEffect::Neutral,
         ),
@@ -451,14 +531,27 @@ pub(crate) fn failure_from_provider_signal(
         ProviderErrorSemanticSignal::ConfirmedInsufficientBalance { station_id } => (
             FailureTarget::StationAccount { station_id },
             FailureClass::InsufficientBalance,
-            RetryDisposition::TryNextCandidate,
+            RetryDisposition::TryDifferentFailureDomain,
+            HealthEffect::HardFail,
+            CapabilityEffect::Neutral,
+        ),
+        ProviderErrorSemanticSignal::ConfirmedGroupSubscriptionInvalid {
+            station_id,
+            group_binding_id,
+        } => (
+            FailureTarget::StationGroup {
+                station_id,
+                group_binding_id,
+            },
+            FailureClass::PolicyRejected,
+            RetryDisposition::TryDifferentFailureDomain,
             HealthEffect::HardFail,
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::ConfirmedCapabilityMismatch { protocol } => (
             FailureTarget::ProviderProtocol { protocol },
             FailureClass::CapabilityMismatch,
-            RetryDisposition::TryNextCandidate,
+            RetryDisposition::TryDifferentFailureDomain,
             HealthEffect::Neutral,
             CapabilityEffect::ConfirmUnsupportedProtocol { protocol },
         ),
@@ -482,10 +575,20 @@ pub(crate) fn failure_from_provider_signal(
         ProviderErrorSemanticSignal::Overloaded => (
             FailureTarget::Uncertain,
             FailureClass::UpstreamOverloaded,
-            RetryDisposition::TryNextCandidate,
+            RetryDisposition::TryDifferentFailureDomain,
             HealthEffect::Cooldown {
                 retry_after_ms: None,
             },
+            CapabilityEffect::Neutral,
+        ),
+        ProviderErrorSemanticSignal::ProviderCapacity {
+            domain_commitment,
+            retry_after_ms,
+        } => (
+            FailureTarget::ProviderCapacity { domain_commitment },
+            FailureClass::ProviderCapacity,
+            RetryDisposition::RetrySameTarget,
+            HealthEffect::Cooldown { retry_after_ms },
             CapabilityEffect::Neutral,
         ),
         ProviderErrorSemanticSignal::ServerError {
@@ -497,34 +600,46 @@ pub(crate) fn failure_from_provider_signal(
                 endpoint_revision,
             },
             FailureClass::Upstream5xx,
-            RetryDisposition::TryNextCandidate,
+            RetryDisposition::TryDifferentFailureDomain,
             HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
-        ProviderErrorSemanticSignal::GenericStatus { .. } => (
-            FailureTarget::Uncertain,
-            FailureClass::Uncertain,
-            RetryDisposition::StopRequest,
-            HealthEffect::Neutral,
-            CapabilityEffect::Neutral,
-        ),
-        ProviderErrorSemanticSignal::Transport => (
+        ProviderErrorSemanticSignal::GenericStatus {
+            confidence: signal_confidence,
+            ..
+        } => {
+            confidence = signal_confidence;
+            (
+                FailureTarget::Uncertain,
+                FailureClass::Uncertain,
+                RetryDisposition::StopRequest,
+                HealthEffect::Neutral,
+                CapabilityEffect::Neutral,
+            )
+        }
+        ProviderErrorSemanticSignal::Transport {
+            station_id,
+            endpoint_revision,
+        } => (
             FailureTarget::StationEndpoint {
-                station_id: String::new(),
-                endpoint_revision: 0,
+                station_id,
+                endpoint_revision,
             },
             FailureClass::Transport,
-            RetryDisposition::TryNextCandidate,
+            RetryDisposition::TryDifferentFailureDomain,
             HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
-        ProviderErrorSemanticSignal::Timeout => (
+        ProviderErrorSemanticSignal::Timeout {
+            station_id,
+            endpoint_revision,
+        } => (
             FailureTarget::StationEndpoint {
-                station_id: String::new(),
-                endpoint_revision: 0,
+                station_id,
+                endpoint_revision,
             },
             FailureClass::Timeout,
-            RetryDisposition::TryNextCandidate,
+            RetryDisposition::TryDifferentFailureDomain,
             HealthEffect::ObserveFailure,
             CapabilityEffect::Neutral,
         ),
@@ -545,6 +660,11 @@ pub(crate) fn failure_from_provider_signal(
         health,
         capability,
         public: public_error_for_class(class),
+        confidence,
+        request_acceptance: default_request_acceptance(class),
+        replay_safety: default_replay_safety(class),
+        billing: BillingState::BillingUncertain,
+        classifier_profile_version: "canonical-failure-v1",
     }
 }
 
@@ -560,5 +680,47 @@ pub(crate) fn planning_failure(
         health: HealthEffect::Neutral,
         capability: CapabilityEffect::Neutral,
         public: public_error_for_class(class),
+        confidence: EvidenceConfidence::Confirmed,
+        request_acceptance: default_request_acceptance(class),
+        replay_safety: default_replay_safety(class),
+        billing: BillingState::BillingUncertain,
+        classifier_profile_version: "canonical-failure-v1",
+    }
+}
+
+fn default_request_acceptance(class: FailureClass) -> RequestAcceptance {
+    match class {
+        FailureClass::ProviderCapacity
+        | FailureClass::ProviderRejectedRequest
+        | FailureClass::Authentication
+        | FailureClass::InsufficientBalance
+        | FailureClass::RateLimited
+        | FailureClass::QuotaExhausted
+        | FailureClass::RuntimeConcurrencyLimited
+        | FailureClass::ModelUnavailable
+        | FailureClass::CapabilityMismatch => RequestAcceptance::RejectedBeforeAcceptance,
+        FailureClass::Upstream5xx
+        | FailureClass::Transport
+        | FailureClass::Timeout
+        | FailureClass::StreamInterrupted => RequestAcceptance::AcceptedOrMayHaveBeenAccepted,
+        _ => RequestAcceptance::Unknown,
+    }
+}
+
+fn default_replay_safety(class: FailureClass) -> ReplaySafety {
+    match class {
+        FailureClass::ProviderCapacity
+        | FailureClass::Authentication
+        | FailureClass::InsufficientBalance
+        | FailureClass::RateLimited
+        | FailureClass::QuotaExhausted
+        | FailureClass::RuntimeConcurrencyLimited
+        | FailureClass::ModelUnavailable
+        | FailureClass::CapabilityMismatch => ReplaySafety::ReplaySafe,
+        FailureClass::Transport
+        | FailureClass::Timeout
+        | FailureClass::Upstream5xx
+        | FailureClass::StreamInterrupted => ReplaySafety::RequiresProviderIdempotency,
+        _ => ReplaySafety::NotReplayable,
     }
 }

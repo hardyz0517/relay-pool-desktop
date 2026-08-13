@@ -1,3 +1,5 @@
+use crate::observability::decision_trace::RequestDecisionTraceV1;
+use crate::persistence::stores::request_outcome_store::RoutingOutcomeSummaryRow;
 use crate::persistence::stores::routing_decisions::queries::{
     RouteCandidateDecisionRow, RoutingDecisionCursor, RoutingDecisionPage,
     RoutingDecisionSummaryRow,
@@ -55,8 +57,74 @@ pub(crate) struct RecentRouteDecisionSummary {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RequestDecisionTraceStatus {
+    DurableSummary,
+    RuntimeTrace,
     LegacySummary,
     TraceUnavailable,
+}
+
+pub(crate) fn decision_trace_from_durable_outcome(
+    summary: RoutingOutcomeSummaryRow,
+) -> RequestDecisionTrace {
+    let detail_code = summary.terminal_code.clone();
+    let terminal_kind = summary.terminal_kind.clone();
+    RequestDecisionTrace {
+        trace_version: REQUEST_DECISION_TRACE_VERSION,
+        request_log_id: summary.request_id,
+        status: RequestDecisionTraceStatus::DurableSummary,
+        reason: "request_routing_outcome_summary".to_string(),
+        legacy_summary: None,
+        timeline: vec![RequestDecisionTimelineItem {
+            ordinal: 1,
+            kind: RequestDecisionTimelineKind::DownstreamDelivery,
+            status: RequestDecisionTimelineStatus::Available,
+            title: "Routing outcome".to_string(),
+            summary: format!(
+                "terminal={terminal_kind}; classification={}; confidence={}; evidence={}; acceptance={}; send_phase={}; replay={}; billing={}; retry={}; effect={}",
+                summary.classification,
+                summary.confidence,
+                summary.evidence_source,
+                summary.request_accepted,
+                summary.send_phase,
+                summary.replay_disposition,
+                summary.billing_state,
+                summary.retry_disposition,
+                summary.effect_summary,
+            ),
+            detail_code,
+            route_policy: None,
+            route_reason: Some(summary.profile_version),
+            station_key_id: None,
+            station_id: None,
+            attempt_count: Some(summary.attempt_count),
+            fallback_count: Some(summary.fallback_count),
+            duration_ms: None,
+            cost_status: None,
+            estimated_total_cost: None,
+            cost_currency: None,
+        }],
+        planning_rounds: Vec::new(),
+    }
+}
+
+/// Durable terminal facts are authoritative after restart. When the current
+/// process still retains the bounded runtime trace, expose it as supplemental
+/// diagnostic context instead of making callers choose one source.
+pub(crate) fn append_runtime_trace(
+    mut durable: RequestDecisionTrace,
+    runtime: RequestDecisionTraceV1,
+) -> RequestDecisionTrace {
+    let runtime = decision_trace_from_runtime(runtime);
+    let offset = durable.timeline.len() as u32;
+    durable
+        .timeline
+        .extend(runtime.timeline.into_iter().map(|mut item| {
+            item.ordinal = item.ordinal.saturating_add(offset);
+            item
+        }));
+    durable.planning_rounds.extend(runtime.planning_rounds);
+    durable.reason = "request_routing_outcome_summary_with_runtime_events".to_string();
+    durable
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -204,6 +272,58 @@ pub fn decision_trace_from_decision(
         legacy_summary: None,
         timeline,
         planning_rounds,
+    }
+}
+
+pub(crate) fn decision_trace_from_runtime(trace: RequestDecisionTraceV1) -> RequestDecisionTrace {
+    let timeline = trace
+        .events
+        .into_iter()
+        .map(|event| RequestDecisionTimelineItem {
+            ordinal: event.ordinal,
+            kind: match event.kind.as_str() {
+                "attempt_start" | "canonical_failure" | "sse_error_before_semantic_commit" => {
+                    RequestDecisionTimelineKind::AttemptProtocol
+                }
+                "same_target_retry"
+                | "same_domain_fallback_suppressed"
+                | "cross_domain_fallback" => RequestDecisionTimelineKind::Fallback,
+                "committed_stop" | "request_terminal" => {
+                    RequestDecisionTimelineKind::DownstreamDelivery
+                }
+                "saturation" | "fail_closed" | "profile_version_mismatch" | "trace_truncated" => {
+                    RequestDecisionTimelineKind::Unavailable
+                }
+                _ => RequestDecisionTimelineKind::Unavailable,
+            },
+            status: if event.kind.as_str() == "trace_truncated" {
+                RequestDecisionTimelineStatus::Skipped
+            } else {
+                RequestDecisionTimelineStatus::Available
+            },
+            title: event.kind.as_str().replace('_', " "),
+            summary: event.code.clone(),
+            detail_code: event.code,
+            route_policy: None,
+            route_reason: None,
+            station_key_id: None,
+            station_id: None,
+            attempt_count: None,
+            fallback_count: None,
+            duration_ms: None,
+            cost_status: None,
+            estimated_total_cost: None,
+            cost_currency: None,
+        })
+        .collect();
+    RequestDecisionTrace {
+        trace_version: trace.profile_version,
+        request_log_id: trace.request_id,
+        status: RequestDecisionTraceStatus::RuntimeTrace,
+        reason: "decision_trace_ring".to_string(),
+        legacy_summary: None,
+        timeline,
+        planning_rounds: Vec::new(),
     }
 }
 

@@ -148,7 +148,7 @@ It does not own:
 - real user request logs;
 - a second health universe separate from routing health.
 
-Legacy `channel_monitor_runs` may remain read-only for one release observation cycle. New monitor facts are written only through `MonitorExecution -> MonitorTargetResult -> ProbeAttempt`.
+Legacy `channel_monitor_runs` was backfilled into V2 facts by schema `10` and removed by schema `34`. Monitor history is available only through `MonitorExecution -> MonitorTargetResult -> ProbeAttempt`.
 
 ### Pricing / Channel Status Projection
 

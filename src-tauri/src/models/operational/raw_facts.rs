@@ -47,14 +47,20 @@ pub(crate) const MAX_OPERATIONAL_CANDIDATES: usize = 1024;
 pub(crate) struct RawOperationalCandidateRow {
     pub(crate) station_key_id: String,
     pub(crate) station_id: String,
+    pub(crate) capacity_provider_family: Option<String>,
+    pub(crate) capacity_deployment_identity: Option<String>,
+    pub(crate) capacity_region_identity: Option<String>,
+    pub(crate) capacity_domain_revision: Option<i64>,
     pub(crate) endpoint_revision: i64,
     pub(crate) api_base_url: String,
     pub(crate) credential_available: bool,
     pub(crate) key_record_revision: i64,
     pub(crate) station_record_revision: i64,
+    pub(crate) account_record_revision: i64,
     pub(crate) priority: i64,
     pub(crate) backup_only: bool,
     pub(crate) group_binding_id: Option<String>,
+    pub(crate) group_record_revision: Option<i64>,
     pub(crate) group_id_hash: Option<String>,
     pub(crate) group_category: Option<String>,
     pub(crate) supports_chat_completions: bool,
@@ -86,6 +92,7 @@ pub(crate) struct RawOperationalSettingRow {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RawOperationalModelAliasRow {
+    pub(crate) alias_id: String,
     pub(crate) client_model: String,
     pub(crate) upstream_model: String,
     pub(crate) record_revision: i64,

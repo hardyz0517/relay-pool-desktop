@@ -113,50 +113,81 @@ impl DualTerminalFinalizationLease {
                 });
         let correlation_id = correlation::current_or_new();
         Some(tokio::spawn(async move {
-            if let Some((attempt_record, attempt_reservation)) = attempt {
+            let attempt_persisted = if let Some((attempt_record, attempt_reservation)) = attempt {
                 let attempt_ack = attempt_reservation.send(attempt_record).await;
                 match attempt_ack {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(_)) => record_finalization_failure(
-                        "proxy.finalization.attempt_persistence_failed",
-                        &correlation_id,
-                    ),
-                    Err(_) => record_finalization_failure(
-                        "proxy.finalization.attempt_ack_dropped",
-                        &correlation_id,
-                    ),
+                    Ok(Ok(_)) => true,
+                    Ok(Err(_)) => {
+                        record_finalization_failure(
+                            "proxy.finalization.attempt_persistence_failed",
+                            &correlation_id,
+                        );
+                        false
+                    }
+                    Err(_) => {
+                        record_finalization_failure(
+                            "proxy.finalization.attempt_ack_dropped",
+                            &correlation_id,
+                        );
+                        false
+                    }
                 }
-            }
-
-            if let Some(costs) = costs {
-                if !costs.write(&record).await {
-                    record_finalization_failure(
-                        "proxy.finalization.cost_persistence_failed",
-                        &correlation_id,
-                    );
-                }
-            }
-
-            let final_record = match outcome {
-                FinalizationOutcome::Completed => record.complete(delivery),
-                FinalizationOutcome::Failed { code, detail } => record.fail(code, detail, delivery),
-                FinalizationOutcome::Interrupted { detail } => record.interrupt(delivery, detail),
+            } else {
+                true
             };
-            let request_ack = request.terminal.send(final_record).await;
-            match request_ack {
-                Ok(Ok(_)) => {}
-                Ok(Err(_)) => record_finalization_failure(
-                    "proxy.finalization.request_persistence_failed",
-                    &correlation_id,
-                ),
-                Err(_) => record_finalization_failure(
-                    "proxy.finalization.request_ack_dropped",
-                    &correlation_id,
-                ),
+
+            if attempt_persisted {
+                if let Some(costs) = costs {
+                    if !costs.write(&record).await {
+                        record_finalization_failure(
+                            "proxy.finalization.cost_persistence_failed",
+                            &correlation_id,
+                        );
+                    }
+                }
+
+                let final_record = match outcome {
+                    FinalizationOutcome::Completed => record.complete(delivery),
+                    FinalizationOutcome::Failed { code, detail } => {
+                        record.fail(code, detail, delivery)
+                    }
+                    FinalizationOutcome::Interrupted { detail } => {
+                        record.interrupt(delivery, detail)
+                    }
+                };
+                persist_request_terminal(request, final_record, &correlation_id).await;
+            } else {
+                // The request still needs one durable terminal for lifecycle
+                // recovery, but it must not claim the selected attempt's
+                // successful outcome when that attempt write was unavailable.
+                let final_record = record.interrupt(
+                    delivery,
+                    Some("selected_attempt_terminal_persistence_failed".to_string()),
+                );
+                persist_request_terminal(request, final_record, &correlation_id).await;
+                return;
             }
-            drop(request.request_lease);
         }))
     }
+}
+
+async fn persist_request_terminal(
+    request: DownstreamRequestFinalizationLease,
+    record: crate::services::proxy::lifecycle::request::FinalRequestRecord,
+    correlation_id: &correlation::CorrelationId,
+) {
+    let request_ack = request.terminal.send(record).await;
+    match request_ack {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) => record_finalization_failure(
+            "proxy.finalization.request_persistence_failed",
+            correlation_id,
+        ),
+        Err(_) => {
+            record_finalization_failure("proxy.finalization.request_ack_dropped", correlation_id)
+        }
+    }
+    drop(request.request_lease);
 }
 
 fn record_finalization_failure(code: &'static str, correlation_id: &correlation::CorrelationId) {

@@ -19,6 +19,7 @@ use super::{
     request_logs::RequestLogService,
     routing::RoutingService,
     settings::SettingsService,
+    station_capacity_domains::StationCapacityDomainService,
     stations::StationService,
 };
 use crate::background_tasks::BlockingExecutor;
@@ -26,6 +27,7 @@ use crate::background_tasks::BlockingExecutor;
 #[derive(Clone)]
 pub(crate) struct AppServices {
     pub(crate) stations: Arc<StationService>,
+    pub(crate) station_capacity_domains: Arc<StationCapacityDomainService>,
     pub(crate) data_directory: Arc<DataDirectoryService>,
     pub(crate) credentials: Arc<CredentialService>,
     pub(crate) collectors: Arc<CollectorService>,
@@ -81,6 +83,10 @@ impl AppServices {
                 clock.clone(),
                 ids.clone(),
             )),
+            Arc::new(StationCapacityDomainService::new(
+                runtime.clone(),
+                clock.clone(),
+            )),
             data_directory,
             Arc::new(CredentialService::new(
                 runtime.clone(),
@@ -121,6 +127,7 @@ impl AppServices {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         stations: Arc<StationService>,
+        station_capacity_domains: Arc<StationCapacityDomainService>,
         data_directory: Arc<DataDirectoryService>,
         credentials: Arc<CredentialService>,
         collectors: Arc<CollectorService>,
@@ -140,6 +147,7 @@ impl AppServices {
     ) -> Self {
         Self {
             stations,
+            station_capacity_domains,
             data_directory,
             credentials,
             collectors,

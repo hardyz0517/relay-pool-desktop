@@ -59,5 +59,35 @@
     "LocalRoutingWorkspace": 17,
     "frontend_pricing_group_hash": 17,
     "derived_asset_status_writeback": 18
+  },
+  "upstream_error_classification_cutover": {
+    "status": "task-0-red-baseline",
+    "baseline": "docs/superpowers/audits/upstream-error-classification-baseline.md",
+    "fixture_catalog": "src-tauri/tests/fixtures/upstream_errors/catalog.v1.json",
+    "required_target_owners": [
+      "versioned_provider_rule_set",
+      "canonical_outcome_classifier",
+      "lossless_effect_plan",
+      "retry_controller",
+      "scoped_health_verdict_projector",
+      "openai_compatible_public_error_adapter"
+    ],
+    "delete_by_task": {
+      "routing_failure_upstream_status_classification": 9,
+      "should_fallback_upstream_status_classification": 9,
+      "retry_policy_http_status_switch": 9,
+      "execution_attempt_failure_kind_reconstruction": 9,
+      "execution_health_effect_reconstruction": 9,
+      "provider_duplicate_message_status_inference": 9,
+      "proxy_failure_public_error_reverse_inference": 9,
+      "scoped_effect_station_key_writeback": 9
+    },
+    "forbidden_consumer_inputs_after_cutover": [
+      "raw_provider_code",
+      "free_form_message",
+      "projected_public_http_status",
+      "ProxyFailure public projection"
+    ],
+    "temporary_allowed_exceptions": []
   }
 }

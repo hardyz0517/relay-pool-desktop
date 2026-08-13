@@ -51,6 +51,10 @@ mod application {
     }
 
     pub(crate) mod routing_engine {
+        pub(crate) mod failure_domains {
+            pub(crate) use crate::failure_domains::*;
+        }
+
         pub(crate) mod capacity {
             use std::{
                 collections::BTreeMap,
@@ -178,6 +182,8 @@ mod models {
     }
 }
 
+#[path = "../src/application/routing_engine/failure_domains.rs"]
+mod failure_domains;
 #[path = "../src/models/station_endpoints.rs"]
 mod station_endpoints;
 #[path = "../src/application/operational_facts/target_resolver.rs"]
@@ -194,6 +200,7 @@ use application::routing_engine::capacity::{
 use models::{proxy::UpstreamApiFormat, station_endpoints::sanitized_api_base_url_for_trace};
 use target_resolver::{
     ExecutionTargetError, ExecutionTargetRef, ExecutionTargetResolver, LeasedSelectedTarget,
+    RequestBodyIdentity,
 };
 
 #[derive(Clone)]
@@ -234,8 +241,16 @@ fn target_ref(
     ExecutionTargetRef {
         station_key_id: station_key_id.to_string(),
         station_id: format!("station-{station_key_id}"),
+        station_type: "openai_compatible".to_string(),
+        capacity_provider_family: None,
+        capacity_deployment_identity: None,
+        capacity_region_identity: None,
+        capacity_domain_revision: None,
+        group_binding_id: None,
         endpoint_revision,
         credential_revision: 1,
+        account_revision: 1,
+        group_revision: None,
         api_base_url: "https://relay.example/proxy/v1".to_string(),
         upstream_api_format: UpstreamApiFormat::Auto,
         collector_proxy_mode: "direct".to_string(),
@@ -270,6 +285,23 @@ fn leased_selected(
         station_key_id: station_key_id.to_string(),
         expected_endpoint_revision,
         expected_secret_ref_id: expected_secret_ref_id.to_string(),
+        expected_credential_revision: 1,
+        expected_account_revision: 1,
+        expected_group_binding_id: None,
+        expected_group_revision: None,
+        resolved_upstream_model: Some("fixture-model".to_string()),
+        model_alias_revision: 1,
+        expected_capacity_domain: None,
+        expected_capacity_domain_revision: None,
+        policy_revision: 1,
+        request_body_identity: target_resolver::RequestBodyIdentity::from_bytes(b"fixture-body"),
+        protocol_profile: target_resolver::TargetProtocolProfile {
+            upstream_api_format: UpstreamApiFormat::Auto,
+            stream: false,
+            uses_tools: false,
+            uses_vision: false,
+            uses_reasoning: false,
+        },
         lease,
         retry_permit: None,
     }
@@ -369,6 +401,93 @@ async fn stale_endpoint_or_credential_ref_returns_typed_error_and_releases_lease
             .active,
         0
     );
+}
+
+#[tokio::test]
+async fn resolver_is_the_single_commitment_constructor_and_revalidates_every_axis() {
+    let registry = CompositeCapacityRegistry::default();
+    let credentials = FakeCredentialResolver {
+        secret: "sk-task17-secret-canary".to_string(),
+    };
+    let handle = ExecutionTargetResolver::resolve(
+        leased_selected(&registry, "key-a", 3, "secret-a"),
+        target_ref("key-a", 3, Some(secret_ref("secret-a", "key-a"))),
+        &credentials,
+    )
+    .await
+    .expect("resolved target");
+    let commitment = handle.commitment.clone();
+    drop(handle);
+
+    let selected = leased_selected(&registry, "key-a", 3, "secret-a");
+    let current = target_ref("key-a", 3, Some(secret_ref("secret-a", "key-a")));
+    let current_commitment = ExecutionTargetResolver::commitment(&selected, &current)
+        .expect("identical execution inputs commitment");
+    ExecutionTargetResolver::revalidate_commitment(&commitment, &current_commitment)
+        .expect("identical execution inputs revalidate");
+    drop(selected);
+
+    let mut changed_body = leased_selected(&registry, "key-a", 3, "secret-a");
+    changed_body.request_body_identity = RequestBodyIdentity::from_bytes(b"different-body");
+    assert!(matches!(
+        ExecutionTargetResolver::revalidate_commitment(
+            &commitment,
+            &ExecutionTargetResolver::commitment(&changed_body, &current)
+                .expect("changed body commitment"),
+        ),
+        Err(ExecutionTargetError::CommitmentChanged { .. })
+    ));
+
+    let mut changed_protocol = leased_selected(&registry, "key-a", 3, "secret-a");
+    changed_protocol.protocol_profile.stream = true;
+    assert!(matches!(
+        ExecutionTargetResolver::revalidate_commitment(
+            &commitment,
+            &ExecutionTargetResolver::commitment(&changed_protocol, &current)
+                .expect("changed protocol commitment"),
+        ),
+        Err(ExecutionTargetError::CommitmentChanged { .. })
+    ));
+
+    let mut changed_policy = leased_selected(&registry, "key-a", 3, "secret-a");
+    changed_policy.policy_revision = 2;
+    assert!(matches!(
+        ExecutionTargetResolver::revalidate_commitment(
+            &commitment,
+            &ExecutionTargetResolver::commitment(&changed_policy, &current)
+                .expect("changed policy commitment"),
+        ),
+        Err(ExecutionTargetError::CommitmentChanged { .. })
+    ));
+
+    let mut changed_alias = leased_selected(&registry, "key-a", 3, "secret-a");
+    changed_alias.model_alias_revision = 2;
+    assert!(matches!(
+        ExecutionTargetResolver::revalidate_commitment(
+            &commitment,
+            &ExecutionTargetResolver::commitment(&changed_alias, &current)
+                .expect("changed alias commitment"),
+        ),
+        Err(ExecutionTargetError::CommitmentChanged { .. })
+    ));
+
+    let mut changed_provider_profile = current.clone();
+    changed_provider_profile.station_type = "sub2api".to_string();
+    assert!(matches!(
+        ExecutionTargetResolver::revalidate_commitment(
+            &commitment,
+            &ExecutionTargetResolver::commitment(
+                &leased_selected(&registry, "key-a", 3, "secret-a"),
+                &changed_provider_profile,
+            )
+            .expect("changed provider profile commitment"),
+        ),
+        Err(ExecutionTargetError::CommitmentChanged { .. })
+    ));
+
+    let debug = format!("{commitment:?}");
+    assert!(!debug.contains("sk-task17-secret-canary"));
+    assert!(!debug.contains("relay.example"));
 }
 
 #[tokio::test]

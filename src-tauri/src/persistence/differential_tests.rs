@@ -21,7 +21,15 @@ use crate::{
             pricing_projector::RoutingCostBasis,
         },
         request_finalization::RequestFinalizationService,
+        request_finalization::{
+            effect_planner::classified_attempt_failure_from_canonical,
+            failure::{
+                failure_from_provider_signal, CapabilityApplicabilitySet,
+                ProviderErrorSemanticSignal,
+            },
+        },
         request_lifecycle::{
+            attempt::{AttemptContext, AttemptTerminal, AttemptTerminalRecord},
             delivery::DeliveryTerminal,
             ports::RequestLifecycleStore,
             request::{
@@ -30,7 +38,10 @@ use crate::{
             },
         },
         routing::RoutingService,
-        routing_engine::request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
+        routing_engine::{
+            planning_snapshot::RuntimeOverlaySnapshot,
+            request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
+        },
         settings::SettingsService,
         stations::StationService,
     },
@@ -90,6 +101,198 @@ async fn request_finalization_is_idempotent_in_v2() {
     assert!(first.finalized);
     assert!(!duplicate.finalized);
     assert_eq!(fixture.count("request_logs").await, 1);
+}
+
+#[tokio::test]
+async fn proxy_group_subscription_failure_excludes_only_its_group_in_the_next_planning_snapshot() {
+    let fixture = V2Fixture::create().await;
+    fixture
+        .seed_planning_candidate("key-group-a", "station-a", Some("group-a"), "gpt-upstream")
+        .await;
+    fixture
+        .seed_planning_candidate("key-group-b", "station-b", Some("group-b"), "gpt-upstream")
+        .await;
+    let routing = RoutingService::new(fixture.runtime().await.handle());
+    let request = planning_request("gpt-test");
+
+    assert_eq!(
+        planning_ids(&routing, &request).await,
+        ["key-group-a", "key-group-b"]
+    );
+
+    let finalizer = RequestFinalizationService::new(fixture.runtime().await.handle());
+    persist_proxy_failure(
+        &finalizer,
+        AttemptContext {
+            attempt_id: crate::application::request_lifecycle::request::AttemptId::new(
+                "req-group",
+                0,
+            ),
+            station_id: "station-a".to_string(),
+            station_key_id: "key-group-a".to_string(),
+            endpoint_revision: 1,
+            credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: Some("group-a".to_string()),
+            group_revision: Some(1),
+            resolved_upstream_model: Some("gpt-upstream".to_string()),
+            model_alias_revision: 1,
+            started_at_ms: 1,
+        },
+        failure_from_provider_signal(
+            ProviderErrorSemanticSignal::ConfirmedGroupSubscriptionInvalid {
+                station_id: "station-a".to_string(),
+                group_binding_id: "group-a".to_string(),
+            },
+            CapabilityApplicabilitySet::ConfirmedModelCatalog,
+        ),
+    )
+    .await;
+
+    assert_eq!(planning_ids(&routing, &request).await, ["key-group-b"]);
+    fixture.bump_group_revision("group-a").await;
+    assert_eq!(
+        planning_ids(&routing, &request).await,
+        ["key-group-a", "key-group-b"]
+    );
+}
+
+#[tokio::test]
+async fn proxy_model_not_found_excludes_only_that_key_model_commitment_until_revision_changes() {
+    let fixture = V2Fixture::create().await;
+    fixture
+        .seed_planning_candidate("key-model-a", "station-a", None, "gpt-upstream")
+        .await;
+    fixture
+        .seed_planning_candidate("key-model-b", "station-b", None, "gpt-upstream")
+        .await;
+    let routing = RoutingService::new(fixture.runtime().await.handle());
+    let request = planning_request("gpt-test");
+
+    assert_eq!(
+        planning_ids(&routing, &request).await,
+        ["key-model-a", "key-model-b"]
+    );
+
+    let finalizer = RequestFinalizationService::new(fixture.runtime().await.handle());
+    persist_proxy_failure(
+        &finalizer,
+        AttemptContext {
+            attempt_id: crate::application::request_lifecycle::request::AttemptId::new(
+                "req-model",
+                0,
+            ),
+            station_id: "station-a".to_string(),
+            station_key_id: "key-model-a".to_string(),
+            endpoint_revision: 1,
+            credential_revision: 1,
+            account_revision: 1,
+            group_binding_id: None,
+            group_revision: None,
+            resolved_upstream_model: Some("gpt-upstream".to_string()),
+            model_alias_revision: 1,
+            started_at_ms: 1,
+        },
+        failure_from_provider_signal(
+            ProviderErrorSemanticSignal::ConfirmedModelNotFound {
+                station_key_id: "key-model-a".to_string(),
+                model: "gpt-upstream".to_string(),
+            },
+            CapabilityApplicabilitySet::ConfirmedModelCatalog,
+        ),
+    )
+    .await;
+
+    assert_eq!(planning_ids(&routing, &request).await, ["key-model-b"]);
+    fixture.bump_key_revision("key-model-a").await;
+    assert_eq!(
+        planning_ids(&routing, &request).await,
+        ["key-model-a", "key-model-b"]
+    );
+}
+
+async fn persist_proxy_failure(
+    finalizer: &RequestFinalizationService,
+    context: AttemptContext,
+    failure: crate::application::request_finalization::failure::CanonicalFailure,
+) {
+    finalizer
+        .start_request(RequestStartRecord {
+            context: RequestContextSnapshot {
+                request_id: context.attempt_id.request_id.clone(),
+                method: "POST".to_string(),
+                local_path: "/v1/chat/completions".to_string(),
+                endpoint: "chat_completions".to_string(),
+                received_at_ms: context.started_at_ms,
+            },
+        })
+        .await
+        .expect("proxy request starts before its attempt terminal");
+    finalizer
+        .finish_attempt(AttemptTerminalRecord {
+            context,
+            terminal: AttemptTerminal::Failed(classified_attempt_failure_from_canonical(&failure)),
+            output_committed: false,
+            terminal_at_ms: 10,
+        })
+        .await
+        .expect("proxy terminal persists");
+}
+
+fn planning_request(model: &str) -> crate::application::routing_engine::request::RouteRequestFacts {
+    RouteRequestClassifier::classify(
+        CanonicalRouteRequest {
+            route_kind: RouteKind::Inference,
+            requested_model: Some(model.to_string()),
+            stream: false,
+            uses_tools: false,
+            uses_vision: false,
+            uses_reasoning: false,
+            untrusted_headers: Vec::new(),
+        },
+        validated_route_settings(&RuntimeRoutingSettings::default()),
+        100,
+    )
+}
+
+async fn planning_ids(
+    routing: &RoutingService,
+    request: &crate::application::routing_engine::request::RouteRequestFacts,
+) -> Vec<&'static str> {
+    let snapshot = routing
+        .load_intelligent_planning_snapshot(
+            request,
+            RuntimeOverlaySnapshot {
+                runtime_instance_id: "e2e-runtime".to_string(),
+                runtime_revision: 1,
+                candidate_set_revision: 1,
+                in_flight: 0,
+                max_concurrency: 1,
+                affinity_station_key_id: None,
+            },
+        )
+        .await;
+    let snapshot = match snapshot {
+        Ok(Some(snapshot)) => snapshot,
+        Err(error) => {
+            let debug = routing
+                .load_workspace_candidates_with_request_pricing(request)
+                .await;
+            panic!("planning snapshot: {error:?}; workspace: {debug:?}")
+        }
+        Ok(None) => panic!("routing policy unavailable"),
+    };
+    snapshot
+        .candidates
+        .iter()
+        .map(|candidate| match candidate.station_key_id.as_str() {
+            "key-group-a" => "key-group-a",
+            "key-group-b" => "key-group-b",
+            "key-model-a" => "key-model-a",
+            "key-model-b" => "key-model-b",
+            other => panic!("unexpected candidate {other}"),
+        })
+        .collect()
 }
 
 #[tokio::test]
@@ -1284,6 +1487,97 @@ impl V2Fixture {
         PersistenceRuntime::open(&self.path, current_test_binary())
             .await
             .expect("open runtime")
+    }
+
+    async fn seed_planning_candidate(
+        &self,
+        key_id: &str,
+        station_id: &str,
+        group_binding_id: Option<&str>,
+        upstream_model: &str,
+    ) {
+        let mut connection = self.connect().await;
+        sqlx::query("INSERT INTO stations (id, name, station_type, website_url, api_base_url, api_key, enabled, created_at, updated_at) VALUES (?1, ?1, 'newapi', 'https://fixture.invalid', 'https://fixture.invalid/v1', '', 1, '1', '1')")
+            .bind(station_id)
+            .execute(&mut connection)
+            .await
+            .expect("planning station");
+        if let Some(group_id) = group_binding_id {
+            sqlx::query("INSERT INTO station_group_bindings (id, station_id, station_key_id, binding_kind, group_key_hash, group_name, binding_status, created_at, updated_at) VALUES (?1, ?2, NULL, 'station_group', ?1, ?1, 'bound', '1', '1')")
+                .bind(group_id)
+                .bind(station_id)
+                .execute(&mut connection)
+                .await
+                .expect("planning group");
+        }
+        sqlx::query("INSERT INTO station_keys (id, station_id, name, api_key, enabled, priority, group_binding_id, created_at, updated_at) VALUES (?1, ?2, ?1, 'sk-test', 1, 1, ?3, '1', '1')")
+            .bind(key_id)
+            .bind(station_id)
+            .bind(group_binding_id)
+            .execute(&mut connection)
+            .await
+            .expect("planning key");
+        sqlx::query("INSERT INTO station_key_capabilities (station_key_id, supports_chat_completions, supports_responses, supports_embeddings, supports_stream, supports_tools, supports_vision, supports_reasoning, model_allowlist_json, model_blocklist_json, preferred_models_json, only_use_as_backup, routing_tags_json, updated_at) VALUES (?1, 1, 1, 0, 1, 1, 1, 1, '[]', '[]', '[]', 0, '[]', '1')")
+            .bind(key_id)
+            .execute(&mut connection)
+            .await
+            .expect("planning capabilities");
+        sqlx::query("INSERT OR IGNORE INTO model_aliases (id, client_model, upstream_model, enabled, created_at, updated_at) VALUES ('alias-planning', 'gpt-test', ?1, 1, '1', '1')")
+            .bind(upstream_model)
+            .execute(&mut connection)
+            .await
+            .expect("planning alias");
+        for scope in [
+            format!("station:{station_id}"),
+            format!("station_key:{key_id}"),
+            format!("station_account:{station_id}"),
+            "model_alias:alias-planning".to_string(),
+        ]
+        .into_iter()
+        .chain(group_binding_id.map(|id| format!("station_group:{id}")))
+        {
+            sqlx::query("INSERT OR IGNORE INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, 0, 'baseline_snapshot')")
+                .bind(scope)
+                .execute(&mut connection)
+                .await
+                .expect("planning revision");
+        }
+        let key_revision: Option<i64> =
+            sqlx::query_scalar("SELECT revision FROM domain_revisions WHERE scope = ?1")
+                .bind(format!("station_key:{key_id}"))
+                .fetch_optional(&mut connection)
+                .await
+                .expect("read planning key revision");
+        assert_eq!(key_revision, Some(1));
+        let joined_revision: Option<i64> = sqlx::query_scalar(
+            "SELECT r.revision FROM station_keys k LEFT JOIN domain_revisions r ON r.scope = 'station_key:' || k.id WHERE k.id = ?1",
+        )
+        .bind(key_id)
+        .fetch_one(&mut connection)
+        .await
+        .expect("join planning key revision");
+        assert_eq!(joined_revision, Some(1));
+        connection.close().await.expect("close planning seed");
+    }
+
+    async fn bump_group_revision(&self, group_binding_id: &str) {
+        let mut connection = self.connect().await;
+        sqlx::query("UPDATE station_group_bindings SET updated_at = '2' WHERE id = ?1")
+            .bind(group_binding_id)
+            .execute(&mut connection)
+            .await
+            .expect("bump group revision");
+        connection.close().await.expect("close group revision");
+    }
+
+    async fn bump_key_revision(&self, key_id: &str) {
+        let mut connection = self.connect().await;
+        sqlx::query("UPDATE station_keys SET api_key = 'sk-test-rotated' WHERE id = ?1")
+            .bind(key_id)
+            .execute(&mut connection)
+            .await
+            .expect("bump key revision");
+        connection.close().await.expect("close key revision");
     }
 
     async fn seed_endpoint_state(&self, station_id: &str) {

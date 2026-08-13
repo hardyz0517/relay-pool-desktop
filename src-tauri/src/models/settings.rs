@@ -37,11 +37,32 @@ pub struct AppSettings {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSettingsInput {
     pub local_proxy_port: u16,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=settings.routing-policy-compat-input; owner=application/routing_policy; remove_when=legacy settings mutation no longer accepts routing policy compatibility fields"
+        )
+    )]
     #[serde(rename = "defaultRoutingStrategy")]
     pub routing_policy_name: String,
     pub collector_proxy_mode: String,
     pub collector_proxy_url: Option<String>,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=settings.routing-policy-compat-input; owner=application/routing_policy; remove_when=legacy settings mutation no longer accepts routing policy compatibility fields"
+        )
+    )]
     pub max_rate_multiplier: Option<Option<f64>>,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=settings.routing-policy-compat-input; owner=application/routing_policy; remove_when=legacy settings mutation no longer accepts routing policy compatibility fields"
+        )
+    )]
     #[serde(rename = "defaultRoutingGroupFilter")]
     pub routing_group_scope: Option<RoutingGroupFilter>,
     #[serde(rename = "schedulerAdvancedSettings")]
@@ -53,6 +74,13 @@ pub struct UpdateSettingsInput {
     pub pricing_refresh_interval_minutes: u16,
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=settings.routing-policy-compat-input; owner=application/routing_policy; remove_when=legacy settings mutation no longer accepts routing policy compatibility fields"
+        )
+    )]
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
     pub tray_behavior: Option<String>,

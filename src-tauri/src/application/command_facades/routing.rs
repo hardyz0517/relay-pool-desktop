@@ -145,6 +145,29 @@ impl RoutingCommandFacade {
         &self,
         request_log_id: String,
     ) -> Result<RequestDecisionTrace, ApplicationError> {
+        // Durable terminal facts survive restart. A retained runtime trace is
+        // supplemental diagnostics, never an alternative source of truth.
+        if let Ok(trace) = self
+            .routing
+            .get_request_decision_trace(request_log_id.clone())
+            .await
+        {
+            if let Some(runtime) = self.proxy.decision_trace_for_request(&request_log_id).await {
+                return Ok(
+                    crate::application::queries::request_decision_trace::append_runtime_trace(
+                        trace, runtime,
+                    ),
+                );
+            }
+            return Ok(trace);
+        }
+        if let Some(trace) = self.proxy.decision_trace_for_request(&request_log_id).await {
+            return Ok(
+                crate::application::queries::request_decision_trace::decision_trace_from_runtime(
+                    trace,
+                ),
+            );
+        }
         self.routing
             .get_request_decision_trace(request_log_id)
             .await

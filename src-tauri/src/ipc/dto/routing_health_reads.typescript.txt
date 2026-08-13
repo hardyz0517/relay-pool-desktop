@@ -11,7 +11,7 @@ export type RoutingCapacityReadModeDto = "snapshot_only";
 export type RoutingReadModelStatusDto = "available" | "unavailable";
 export type RouteDecisionReadModelStatusDto = "available" | "unavailable";
 export type OperationalDetailReadModelStatusDto = "available" | "unavailable";
-export type RequestDecisionTraceStatusDto = "legacy_summary" | "trace_unavailable";
+export type RequestDecisionTraceStatusDto = "durable_summary" | "runtime_trace" | "legacy_summary" | "trace_unavailable";
 export type RequestDecisionTimelineKindDto = "legacy_summary" | "planning_round" | "slot_wait" | "attempt_protocol" | "fallback" | "downstream_delivery" | "cost_aggregate" | "unavailable";
 export type RequestDecisionTimelineStatusDto = "available" | "legacy_summary" | "unavailable" | "skipped";
 

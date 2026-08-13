@@ -1,6 +1,7 @@
 pub(crate) mod activation_journal;
 pub(crate) mod age_envelope;
 pub(crate) mod catalog;
+mod common_login_contract;
 pub(crate) mod fault;
 pub(crate) mod format;
 pub(crate) mod inspection_registry;

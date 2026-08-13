@@ -47,6 +47,8 @@ export type RoutingPolicyConfigV1Dto = {
   allowDepletedFallback: boolean;
   affinityEnabled: boolean;
   affinityTtlSeconds: number;
+  maxRateMultiplier?: number | null;
+  routingGroupFilter?: RoutingGroupFilterDto;
 };
 
 export type UpdateRoutingPolicyInputDto = {
