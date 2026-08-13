@@ -1,6 +1,26 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { RequestStatusCode } from "./RequestLogTable";
+import type { RequestLog } from "@/lib/types/proxy";
+import { RequestLogTable, RequestStatusCode } from "./RequestLogTable";
+
+describe("RequestLogTable", () => {
+  it("reserves enough untruncated width for the full timestamp", () => {
+    const markup = renderToStaticMarkup(
+      <RequestLogTable
+        rows={[{ id: "log-1", path: "/v1/responses", startedAt: "2026-08-11T12:34:56" } as RequestLog]}
+        keyById={new Map()}
+        stationById={new Map()}
+        selectedId={null}
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("w-[176px] min-w-[176px] tabular-nums");
+    expect(markup).toContain("[&amp;_td:last-child]:overflow-visible");
+    expect(markup).toContain("[&amp;_td:last-child]:text-clip");
+    expect(markup).toContain("2026/08/11 12:34:56");
+  });
+});
 
 describe("RequestStatusCode", () => {
   it.each([

@@ -59,10 +59,16 @@ function createChangeCenterRoutingLink(event: ChangeCenterLinkEvent): ChangeCent
   return event.stationId ? { kind: "station", stationId: event.stationId, source: "change_center" } : null;
 }
 
-type View = "active" | "unread" | "resolved" | "all";
+type View = "all" | "unread" | "active" | "info";
 type Severity = "all" | "critical" | "warning" | "info";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
+export const CHANGE_CENTER_VIEW_OPTIONS: Array<{ value: View; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "unread", label: "未读" },
+  { value: "active", label: "活动" },
+  { value: "info", label: "信息" },
+];
 
 function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
   return {
@@ -101,11 +107,11 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
     {
       ...alertingCurrentQueryOptions({
       severity: severity === "all" ? null : severity,
-      lifecycleState: view === "active" || view === "unread" ? view : view === "resolved" ? "resolved" : null,
+      lifecycleState: view === "active" || view === "unread" ? view : null,
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
       }),
-      enabled: view !== "all",
+      enabled: view === "active" || view === "unread",
     },
   );
   const activityQuery = useActivityQuery({
@@ -114,15 +120,15 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
     }),
-    enabled: view === "all",
+    enabled: view === "all" || view === "info",
   });
   const incidents = incidentQuery.data?.items ?? [];
   const activities = useMemo<AlertingActivity[]>(
-    () => view === "all" ? (activityQuery.data?.items ?? []) : incidents.map(toIncidentActivity),
+    () => view === "all" || view === "info" ? (activityQuery.data?.items ?? []) : incidents.map(toIncidentActivity),
     [activityQuery.data?.items, incidents, view],
   );
-  const pageData = view === "all" ? activityQuery.data : incidentQuery.data;
-  const activeQuery = view === "all" ? activityQuery : incidentQuery;
+  const pageData = view === "all" || view === "info" ? activityQuery.data : incidentQuery.data;
+  const activeQuery = view === "all" || view === "info" ? activityQuery : incidentQuery;
   const stationNames = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
@@ -133,9 +139,9 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
       if (activity.recordType === "incident") {
         const active = activity.lifecycleState !== "resolved";
         if (view === "active" && !active) return false;
-        if (view === "resolved" && active) return false;
         if (view === "unread" && activity.seenAtMs != null) return false;
       }
+      if (view === "info" && activity.recordType !== "change") return false;
       if (!needle) return true;
       return [activity.eventType, activity.conditionKey, activity.stationId, activity.lifecycleState, activity.reasonCode, activity.objectId]
         .filter((value): value is string => Boolean(value))
@@ -214,6 +220,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
   }
 
   function requestClearAll() {
+    if (view === "info") return;
     if (!activities.some((activity) => activity.recordType === "incident")) return;
     setIsClearConfirmOpen(true);
   }
@@ -223,7 +230,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
     try {
       const clearedCount = await clearAlertingIncidents({
         severity: severity === "all" ? null : severity,
-        lifecycleState: view === "all" ? null : view,
+        lifecycleState: view === "active" || view === "unread" ? view : null,
       });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
       await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
@@ -262,7 +269,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
           <div data-testid="change-center-toolbar-surface" className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
             <Toolbar className="flex-wrap">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <SegmentedControl value={view} options={[{ value: "active", label: "活动" }, { value: "unread", label: "未读" }, { value: "resolved", label: "已恢复" }, { value: "all", label: "全部" }]} onChange={changeView} />
+                <SegmentedControl value={view} options={CHANGE_CENTER_VIEW_OPTIONS} onChange={changeView} />
                 <SelectControl ariaLabel="严重度" className={inputClassName} value={severity} options={[{ value: "all", label: "全部严重度" }, { value: "critical", label: "严重" }, { value: "warning", label: "警告" }, { value: "info", label: "信息" }]} onChange={changeSeverity} />
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
@@ -270,15 +277,15 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (pageData?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
-                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || !activities.some((activity) => activity.recordType === "incident")}><Trash2 className="h-4 w-4" />清空告警</Button>
+                <Button variant="secondary" onClick={() => void markAllSeen()} disabled={view === "info" || isMarkingAllSeen || (pageData?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
+                <Button variant="secondary" onClick={requestClearAll} disabled={view === "info" || isClearingAll || !activities.some((activity) => activity.recordType === "incident")}><Trash2 className="h-4 w-4" />清空告警</Button>
                 <Button variant="secondary" onClick={() => void refresh(true)} disabled={activeQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
               </div>
             </Toolbar>
           </div>
           <div data-testid="change-center-list-surface" className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
             {activeQuery.error ? <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{readError(activeQuery.error)}</div> : null}
-            {pageInfo.items.length === 0 ? <EmptyState title={activeQuery.isPending ? (view === "all" ? "正在加载活动" : "正在加载问题") : (view === "all" ? "暂无活动" : "暂无问题")} description={view === "all" ? "告警、恢复状态和信息类变更会按时间显示在这里。" : "当前事实、恢复状态和待处理提醒会显示在这里。"} /> : (
+            {pageInfo.items.length === 0 ? <EmptyState title={activeQuery.isPending ? (view === "all" ? "正在加载活动" : view === "info" ? "正在加载信息" : "正在加载问题") : (view === "all" ? "暂无活动" : view === "info" ? "暂无信息" : "暂无问题")} description={view === "all" ? "告警、恢复状态和信息类变更会按时间显示在这里。" : view === "info" ? "信息类变更会按时间显示在这里。" : "当前事实、恢复状态和待处理提醒会显示在这里。"} /> : (
               <div className="divide-y divide-border bg-surface">
                 {pageInfo.items.map((activity) => {
                   const key = `${activity.recordType}:${activity.id}:${activity.episodeNumber ?? 0}`;
@@ -292,7 +299,7 @@ export function ChangeCenterPage({ onOpenRoutingDeepLink, onOpenSettings }: Chan
           </div>
           {shouldShowPagination ? <div data-testid="change-center-pagination-surface" className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
             <div className="flex flex-wrap items-center gap-3"><span>第 {pageInfo.currentPage} 页：{pageInfo.startIndex}-{pageInfo.endIndex}</span><label className="flex items-center gap-2"><span>每页数量</span><select aria-label="每页数量" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); setPageCursors({ 1: null }); }} className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-ring">{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label></div>
-            <Pagination ariaLabel="变更中心分页" page={pageInfo.currentPage} totalPages={pageInfo.totalPages} disabled={incidentQuery.isFetching} onPageChange={changePage} />
+            <Pagination ariaLabel="变更中心分页" page={pageInfo.currentPage} totalPages={pageInfo.totalPages} disabled={activeQuery.isFetching} onPageChange={changePage} />
           </div> : null}
         </div>
       </div>

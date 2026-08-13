@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AlertingChangeActivity } from "@/lib/types/alerting";
-import { changeSummary } from "./ChangeCenterPage";
+import { CHANGE_CENTER_VIEW_OPTIONS, changeSummary } from "./ChangeCenterPage";
 
 function changeActivity(overrides: Partial<AlertingChangeActivity> = {}): AlertingChangeActivity {
   return {
@@ -35,6 +35,16 @@ function changeActivity(overrides: Partial<AlertingChangeActivity> = {}): Alerti
 }
 
 describe("change center activity presentation", () => {
+  it("orders the views with all first and unread second", () => {
+    expect(CHANGE_CENTER_VIEW_OPTIONS).toEqual([
+      { value: "all", label: "全部" },
+      { value: "unread", label: "未读" },
+      { value: "active", label: "活动" },
+      { value: "info", label: "信息" },
+    ]);
+    expect(CHANGE_CENTER_VIEW_OPTIONS.some((option) => option.label === "已恢复")).toBe(false);
+  });
+
   it("shows a readable informational rate transition", () => {
     expect(changeSummary(changeActivity())).toBe("默认组 · 倍率 1 → 0.8");
   });

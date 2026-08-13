@@ -64,7 +64,12 @@ export function RequestLogTable({ rows, keyById, stationById, selectedId, onSele
       render: (row) => <span className="font-medium text-success-foreground">{formatRequestCost(row)}</span>,
     },
     { key: "latency", header: "延迟", render: (row) => <LatencyCell log={row} /> },
-    { key: "time", header: "时间", render: (row) => formatLogTime(row.startedAt, true) },
+    {
+      key: "time",
+      header: "时间",
+      className: "w-[176px] min-w-[176px] tabular-nums",
+      render: (row) => formatLogTime(row.startedAt, true),
+    },
   ], [keyById, stationById]);
 
   return (
@@ -77,7 +82,7 @@ export function RequestLogTable({ rows, keyById, stationById, selectedId, onSele
           selectedKey={selectedId ?? undefined}
           onRowClick={(row) => onSelect(row.id)}
           headerVariant="plain"
-          className="rounded-none border-0 shadow-none [&_table]:table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis"
+          className="rounded-none border-0 shadow-none [&_table]:table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td:last-child]:overflow-visible [&_td:last-child]:text-clip"
         />
       </div>
     </div>
