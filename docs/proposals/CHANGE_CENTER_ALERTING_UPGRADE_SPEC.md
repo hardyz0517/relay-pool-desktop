@@ -13,7 +13,7 @@
 - `docs/PROJECT_PLAN.md`
 - `docs/PRODUCT_MODEL.md`
 - `docs/SCHEMA_UPGRADE_AUTHORING.md`
-- `docs/proposals/STATUS_MONITORING_REFACTOR_SPEC.md`
+- `docs/specs/STATUS_MONITORING_REFACTOR_SPEC.md`
 - `src-tauri/src/persistence/migrations/0006_collectors_changes.sql`
 - `src-tauri/src/persistence/stores/change_store.rs`
 - `src-tauri/src/application/collectors.rs`

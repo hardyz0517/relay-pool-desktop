@@ -4,15 +4,15 @@ This release gate applies to any Relay Pool Desktop release that changes local S
 
 Status: schema15 cleanup is source-qualified and production-architecture-qualified. Publishing a release from this area still requires full release verification, including Tauri signing credentials.
 
-The current implementation has automated evidence for the schema `15` route, cleanup debts D-01 through D-09 in `docs/superpowers/audits/2026-07-31-schema15-upgrade-debt-manifest.json`, the production `application::* -> sqlx::*` architecture boundary, `pnpm test:contracts`, `cargo fmt --check`, `cargo check --locked`, full `cargo test --locked`, and `pnpm verify:fast`. With the local PowerShell proxy set to `http://127.0.0.1:7890`, the advisory/license/source gate passes. With `RELAY_POOL_RELEASE_TAG=v0.3.3`, the release version contract passes and the release build reaches Tauri bundling. A future published build must provide `TAURI_SIGNING_PRIVATE_KEY` or `TAURI_SIGNING_PRIVATE_KEY_PATH` and complete `pnpm verify:release` on the final tree. Current closeout evidence is recorded in `docs/superpowers/audits/2026-07-31-schema15-upgrade-debt-closeout.md`.
+The current implementation has automated evidence for the schema `15` route, cleanup debts D-01 through D-09 in `docs/audits/2026-07-31-schema15-upgrade-debt-manifest.json`, the production `application::* -> sqlx::*` architecture boundary, `pnpm test:contracts`, `cargo fmt --check`, `cargo check --locked`, full `cargo test --locked`, and `pnpm verify:fast`. With the local PowerShell proxy set to `http://127.0.0.1:7890`, the advisory/license/source gate passes. With `RELAY_POOL_RELEASE_TAG=v0.3.3`, the release version contract passes and the release build reaches Tauri bundling. A future published build must provide `TAURI_SIGNING_PRIVATE_KEY` or `TAURI_SIGNING_PRIVATE_KEY_PATH` and complete `pnpm verify:release` on the final tree. Current closeout evidence is recorded in `docs/archive/audits/2026-07-31-schema15-upgrade-debt-closeout.md`.
 
 ## Declared Compatibility Window
 
 | Item | Release Value |
 |---|---|
 | Minimum automatic upgrade baseline | schema `15` |
-| Latest compatibility schema | schema `34` |
-| Latest SQL migration ledger | schema `34` |
+| Latest compatibility schema | schema `40` |
+| Latest SQL migration ledger | schema `40` |
 | Latest secret format | `1` |
 | Fresh-install key behavior | create one active device key before publishing the first generation-2 database |
 | Existing-database key behavior | missing or wrong key enters typed recovery; never create a replacement key automatically |
@@ -34,20 +34,20 @@ schema 15, legacy secrets
   -> structural migration to schema 16
   -> encrypted-secret baseline conversion
   -> schema 17 + secret_format_version 1
-  -> structural migrations to schema 34
+  -> structural migrations to schema 40
   -> final verification
 
 schema 16, legacy secrets
   -> encrypted-secret baseline conversion
   -> schema 17 + secret_format_version 1
-  -> structural migrations to schema 34
+  -> structural migrations to schema 40
   -> final verification
 
-schema 17-33, secret_format_version 1
-  -> structural migrations to schema 34
+schema 17-39, secret_format_version 1
+  -> structural migrations to schema 40
   -> final verification
 
-schema 34, secret_format_version 1
+schema 40, secret_format_version 1
   -> final verification
 ```
 

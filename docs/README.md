@@ -1,75 +1,42 @@
-# 文档导航
+# Relay Pool Desktop 文档
 
-本文档用于区分当前规范、工程记录与历史资料。开发前应优先阅读当前规范；历史计划只用于理解演进背景，不能直接作为当前实现依据。
+这里维护项目当前规范、设计决策、实施记录和发布资料。开发前先从本页确认文档状态，再阅读相关代码、测试与自动化契约。
+
+发生冲突时，事实优先级依次为：[`AGENTS.md`](../AGENTS.md)、当前代码与自动化契约、本页列出的当前规范、已批准设计、带日期的工程记录、历史归档。
 
 ## 当前规范
 
-- [`PRICING_MULTIPLIER_MODEL.md`](PRICING_MULTIPLIER_MODEL.md)：原始倍率、兑换率与实际倍率的统一模型及消费边界。
+以下文档长期有效，是当前实现与评审的主要入口：
+
 - [`PROJECT_PLAN.md`](PROJECT_PLAN.md)：项目定位、能力边界与当前阶段方向。
 - [`PRODUCT_MODEL.md`](PRODUCT_MODEL.md)：核心领域术语与对象职责。
+- [`PRICING_MULTIPLIER_MODEL.md`](PRICING_MULTIPLIER_MODEL.md)：原始倍率、兑换率、实际倍率与消费边界。
 - [`SECURITY_EXPORT_IMPORT.md`](SECURITY_EXPORT_IMPORT.md)：导入、导出与敏感数据边界。
-- [`SCHEMA_UPGRADE_AUTHORING.md`](SCHEMA_UPGRADE_AUTHORING.md)：schema `15` 之后的数据升级 authoring contract。
-- [`../AGENTS.md`](../AGENTS.md)：仓库级开发、验证与交付规则。
+- [`SCHEMA_UPGRADE_AUTHORING.md`](SCHEMA_UPGRADE_AUTHORING.md)：schema `15` 之后的数据升级编写契约。
 
-智能路由升级已进入批准设计与实施阶段：
+智能路由当前以 [`specs/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](specs/INTELLIGENT_ROUTING_ENGINE_SPEC.md) 为目标规格，以 [`plans/2026-08-05-intelligent-routing-engine-upgrade.md`](plans/2026-08-05-intelligent-routing-engine-upgrade.md) 为总体实施记录。上游错误分类与重试的收口范围见 [`plans/2026-08-13-upstream-error-classification-retry-closure.md`](plans/2026-08-13-upstream-error-classification-retry-closure.md)，传输边界见 [`specs/2026-08-13-reliable-transport-send-phase-spike.md`](specs/2026-08-13-reliable-transport-send-phase-spike.md)。
 
-- [`proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md)：目标架构与验收合同。
-- [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：唯一总体实施计划。
-- [`superpowers/plans/2026-08-12-upstream-error-classification-retry-upgrade.md`](superpowers/plans/2026-08-12-upstream-error-classification-retry-upgrade.md)：从属于智能路由总计划的上游错误分类、capacity 同目标重试、SSE 提交边界与客户端错误兼容专项计划。
-- [`superpowers/audits/upstream-error-classification-baseline.md`](superpowers/audits/upstream-error-classification-baseline.md)：上述专项 Task 0 的生产调用链、公开端点范围、fixture catalog、RED 证据和删除边界基线。
-- [`superpowers/plans/2026-08-13-upstream-error-classification-retry-closure.md`](superpowers/plans/2026-08-13-upstream-error-classification-retry-closure.md)：上述专项的当前收口范围；已正式接受 reqwest 三态 send phase 边界，当前只收口 full verifier 运行证据与资格文档。
-- [`superpowers/specs/2026-08-13-reliable-transport-send-phase-spike.md`](superpowers/specs/2026-08-13-reliable-transport-send-phase-spike.md)：三态 `NotConnected | ResponseStarted | Unknown` 的证据、非幂等 `Unknown` fail-closed 约束，以及将来独立 transport 替换所需前置条件。
-- 智能路由本地产品边界已完成：[`superpowers/audits/intelligent-routing-acceptance-matrix.md`](superpowers/audits/intelligent-routing-acceptance-matrix.md)、[`superpowers/audits/intelligent-routing-qualification.md`](superpowers/audits/intelligent-routing-qualification.md)、[`superpowers/audits/intelligent-routing-deletion-ledger.md`](superpowers/audits/intelligent-routing-deletion-ledger.md) 和 [`superpowers/audits/intelligent-routing-boundary-manifest.json`](superpowers/audits/intelligent-routing-boundary-manifest.json) 是同一 revision 的证据闭环。真实 provider、外部监控和发布机 soak 仍属于独立发布门禁。
+变更中心告警仍以 [`proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md`](proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md) 记录目标设计；基线、边界清单与实施证据位于 [`audits/`](audits/)。价格监控联动和状态监控 V2 的设计入口分别为 [`specs/PRICING_MONITORING_INTEGRATION_SPEC.md`](specs/PRICING_MONITORING_INTEGRATION_SPEC.md) 与 [`specs/STATUS_MONITORING_REFACTOR_SPEC.md`](specs/STATUS_MONITORING_REFACTOR_SPEC.md)。
 
-价格 / 倍率页与渠道状态页的只读联动已进入当前实现基线：
+## 目录分类
 
-- [`proposals/PRICING_MONITORING_INTEGRATION_SPEC.md`](proposals/PRICING_MONITORING_INTEGRATION_SPEC.md)：行为契约与跨层边界。
-- [`superpowers/plans/2026-08-03-pricing-monitoring-integration.md`](superpowers/plans/2026-08-03-pricing-monitoring-integration.md)：实施步骤、验证命令与回滚边界。
-
-发生冲突时，优先级依次为：`AGENTS.md`、当前代码与自动化约束、上述当前规范、带日期的设计记录、历史阶段计划。
-
-## 提案与待排期规格
-
-- [`proposals/`](proposals/)：尚未成为当前实现基线的 Draft、RFC 和待排期规格。
-- [`proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md`](proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md)：变更中心告警闭环、恢复状态机、提醒策略与“设置 → 提醒与告警”入口 Draft。
-- [`superpowers/plans/2026-08-08-change-center-alerting-upgrade.md`](superpowers/plans/2026-08-08-change-center-alerting-upgrade.md)：上述 Draft 的完整执行计划；待规格批准后方可实施。
-- [`superpowers/audits/change-center-alerting-baseline.md`](superpowers/audits/change-center-alerting-baseline.md)：Task 0 基线事实、已完成证据与未完成范围。
-- [`superpowers/audits/change-center-alerting-deletion-ledger.md`](superpowers/audits/change-center-alerting-deletion-ledger.md)：旧变更中心代码、IPC、表和前端入口的 owner、删除前置条件与状态。
-- [`superpowers/audits/change-center-alerting-boundary-manifest.json`](superpowers/audits/change-center-alerting-boundary-manifest.json)：legacy allowlist、新领域边界和受保护用户文件清单。
-- [`proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](proposals/INTELLIGENT_ROUTING_ENGINE_SPEC.md)：已完成设计评审的智能路由、共享后端事实、评分、置信度、监控反馈与解释合同。
-- [`superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md`](superpowers/plans/2026-08-05-intelligent-routing-engine-upgrade.md)：上述智能路由规范的详细实施任务、原子 cutover、删除合同与验证命令。
-- [`proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md`](proposals/CROSS_DEVICE_ENCRYPTED_MIGRATION_SPEC.md)：跨设备加密迁移 Draft。
-- [`proposals/STATUS_MONITORING_REFACTOR_SPEC.md`](proposals/STATUS_MONITORING_REFACTOR_SPEC.md)：状态监控 V2 架构和实现参考。
-
-## 跨设备加密迁移发布状态
-
-跨设备数据搬家 capability 已允许进入 `codex/cross-device-encrypted-migration` 集成分支；发布晋级仍必须基于目标 release revision 完成两机 smoke、签名包门禁和 artifact/canary 审计。默认导出、本机备份和同机 data-dir relocation 都不是 `.rpd-move` 跨设备迁移包。
-
-## 状态监控 V2 记录
-
-- [`superpowers/plans/2026-07-29-status-monitoring-refactor.md`](superpowers/plans/2026-07-29-status-monitoring-refactor.md)：状态监控 V2 全流程重构计划。
-- [`superpowers/audits/status-monitoring-qualification.md`](superpowers/audits/status-monitoring-qualification.md)：确定性验证、真实 provider 授权门禁与发布资格清单。
-- [`release/status-monitoring-v2-qualification.md`](release/status-monitoring-v2-qualification.md)：发布侧资格说明。
-- [`superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md`](superpowers/plans/2026-07-29-status-monitoring-legacy-table-removal.md)：已完成的 `channel_monitor_runs` 兼容层删除记录；当前 schema 仅保留 V2 execution / target / attempt 历史。
-
-## 工程记录
-
-- [`superpowers/specs/`](superpowers/specs/)：带日期的设计决策快照。
-- [`superpowers/plans/`](superpowers/plans/)：一次性实施计划和任务拆分，不代表仍有待执行。
-- [`superpowers/audits/`](superpowers/audits/)：实施审计、验收记录与架构清单；其中部分 JSON 被自动化检查直接使用，不应作为普通历史文档移动或删除。
-- [`release/`](release/)：版本说明和发布检查清单。
-
-## 参考资料
-
-- [`research/`](research/)：外部项目调研、源码审阅和 UI 参考，只提供背景与可借鉴结论。
-- [`research/SUB2API_RESPONSE_CASES.md`](research/SUB2API_RESPONSE_CASES.md)：基于 Sub2API 源码整理的客户端响应场景及 `状态码/type/code/message` 对照表。
-- [`archive/early-phase-plans/`](archive/early-phase-plans/)：P1-P8 早期阶段计划。它们记录当时范围和实现状态，已不再是当前开发入口。
+| 目录 | 内容 | 是否可作为当前实现依据 |
+| --- | --- | --- |
+| [`adrs/`](adrs/) | 已接受的架构决策及其取舍 | 是；被替代时新增 ADR，不改写历史决策 |
+| [`specs/`](specs/) | 已形成的设计快照、技术契约和专项分析 | 需结合状态、日期及当前代码判断 |
+| [`proposals/`](proposals/) | Draft、RFC 和尚未成为默认基线的目标规格 | 否，除非本页明确列为已批准入口 |
+| [`plans/`](plans/) | 一次性实施计划、任务拆分和迁移步骤 | 否；它们是执行记录，不是当前待办列表 |
+| [`audits/`](audits/) | 基线、验收、资格记录、台账和机器可读清单 | 证据类可参考；其中部分 JSON 是自动化契约 |
+| [`release/`](release/) | 版本说明、升级恢复说明和发布检查清单 | 仅适用于对应版本或发布流程 |
+| [`research/`](research/) | 外部项目调研、源码审阅和 UI 参考 | 否，只提供背景与可借鉴结论 |
+| [`archive/`](archive/) | 已结束阶段和被替代资料；按 plans、specs、audits 分类 | 否，只用于追溯历史 |
+| [`assets/`](assets/) | README 和其他文档引用的图片等静态资源 | 不适用 |
 
 ## 维护约定
 
-- 长期有效的产品或安全约束放在 `docs/` 根目录，并在本页登记。
-- 有明确日期和交付目标的设计、计划、审计分别放入 `superpowers/specs/`、`superpowers/plans/`、`superpowers/audits/`。
-- 外部项目分析与视觉参考放入 `research/`。
-- Draft、RFC 和待排期实现规格放入 `proposals/`；进入实施后按项目流程更新状态和归属。
-- 已完成且容易被误读为待办的阶段计划放入 `archive/`，保留原文，不持续更新实现细节。
-- 新文档应说明状态、适用范围；被取代时应移入归档或在文首标明替代文档。
+- `docs/` 根目录只放长期有效、跨模块的项目级规范和本导航；不要把临时设计或单次任务计划放在根目录。
+- 新文档应在开头说明状态、适用范围和关联入口。被替代后移入 `archive/`，或在文首明确标注替代文档。
+- ADR 只记录已经接受的关键架构选择；普通方案说明放 `specs/`，尚待批准的方案放 `proposals/`。
+- `plans/` 文件保留日期，用于复盘实施过程；完成后不持续改写成当前事实。
+- `audits/` 中的清单和 JSON 可能被测试或发布门禁直接读取，移动、重命名或删除前必须同步自动化引用。
+- 外部代码、产品分析和视觉参考统一放入 `research/`，不得直接视为项目实现规范。

@@ -13,8 +13,8 @@ The former Task 11 release gate is therefore downgraded to a local development q
 ## Candidate scope
 
 - Branch: `codex/routing-operational-upgrade`
-- Plan: `docs/superpowers/plans/2026-07-30-routing-operational-unification-upgrade.md`, Task 11
-- Spec reference: `docs/superpowers/specs/2026-07-30-routing-operational-unification-upgrade-spec.md`
+- Plan: `docs/archive/plans/2026-07-30-routing-operational-unification-upgrade.md`, Task 11
+- Spec reference: `docs/specs/2026-07-30-routing-operational-unification-upgrade-spec.md`
 - Checkpoint purpose: keep the legacy production router with hierarchical routing configuration readiness and safe request-log URL write boundaries before the real hierarchical selector cutover.
 - Production selector change: none. The pre-migration binary must keep unmigrated users on the existing router behavior, and saved `hierarchical_v1` configuration must not receive production traffic in this release.
 

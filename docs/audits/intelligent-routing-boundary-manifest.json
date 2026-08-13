@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "status": "qualified",
+  "source_revision": {
+    "commit": "3da68384407b7485bb83d57bf862a8936e3554ad",
+    "worktree_state": "dirty-uncommitted-audit",
+    "captured_at": "2026-08-05",
+    "note": "The audit intentionally leaves the user's implementation changes unstaged and uncommitted. Commands and hashes below were captured from this exact worktree."
+  },
+  "runtime_schema": {
+    "migration_head": 26,
+    "planning_snapshot_schema": 1,
+    "projector_fixture": "src-tauri/tests/fixtures/intelligent_routing/projectors/v1.json"
+  },
+  "algorithm_versions": {
+    "planner_owner": "intelligent_planner",
+    "dispatch_profile": "routing-profile-v1",
+    "runtime_outlier_policy": "runtime_outlier_policy_v1",
+    "quality_projector": "routing_quality_v1"
+  },
+  "projector_versions": {
+    "group": "group_identity_v1",
+    "multiplier": "rate_precedence_v1",
+    "pricing": "pricing_match_v1",
+    "balance": "balance_scope_v1",
+    "capability": "capability_evidence_v1",
+    "reliability": "reliability_axis_v1",
+    "responsiveness": "responsiveness_axis_v1",
+    "asset_status": "asset_status_rollup_v1",
+    "candidate": "route_candidate_projection_v1"
+  },
+  "generated_artifacts": {
+    "src-tauri/generated/command-registry.json": "d51976b1e12b28cc33fe03623d880add7febbe9ba340936febf9c3f988361e32",
+    "src-tauri/gen/schemas/desktop-schema.json": "bd91966d260c87ec66ee46d4ba75f6ee639a4762e7590dd75e80cc4ab264e990",
+    "src-tauri/gen/schemas/windows-schema.json": "bd91966d260c87ec66ee46d4ba75f6ee639a4762e7590dd75e80cc4ab264e990"
+  },
+  "approved_spec": "docs/specs/INTELLIGENT_ROUTING_ENGINE_SPEC.md",
+  "implementation_plan": "docs/plans/2026-08-05-intelligent-routing-engine-upgrade.md",
+  "temporary_allowed_exceptions": [],
+  "forbidden_production_dependencies": {
+    "planner": ["sqlx", "reqwest", "tauri", "ipc::dto", "SecretManager", "request log", "monitoring DTO"],
+    "frontend": ["authoritative pricing matcher", "authoritative group matcher", "authoritative capability reducer", "authoritative health reducer", "authoritative score reducer"],
+    "application_queries": ["begin_write", "page query facade"],
+    "planning_snapshot": ["plaintext credential", "ciphertext credential", "timestamp revision", "fallback revision"]
+  },
+  "required_target_owners": [
+    "PlanningSnapshotBuilder",
+    "RoutingPolicyConfigV1",
+    "RoutingObservation",
+    "DispatchAlgorithmProfile",
+    "RouteAdmissionCoordinator",
+    "RoutingWorkspaceReadModel",
+    "DomainRevisionNotice"
+  ],
+  "legacy_delete_by_task": {
+    "CanonicalRoutingCandidate": 17,
+    "candidate_projection": 17,
+    "DispatchAlgorithmSettings": 18,
+    "LocalRoutingWorkspace": 17,
+    "frontend_pricing_group_hash": 17,
+    "derived_asset_status_writeback": 18
+  },
+  "upstream_error_classification_cutover": {
+    "status": "task-0-red-baseline",
+    "baseline": "docs/audits/upstream-error-classification-baseline.md",
+    "fixture_catalog": "src-tauri/tests/fixtures/upstream_errors/catalog.v1.json",
+    "required_target_owners": [
+      "versioned_provider_rule_set",
+      "canonical_outcome_classifier",
+      "lossless_effect_plan",
+      "retry_controller",
+      "scoped_health_verdict_projector",
+      "openai_compatible_public_error_adapter"
+    ],
+    "delete_by_task": {
+      "routing_failure_upstream_status_classification": 9,
+      "should_fallback_upstream_status_classification": 9,
+      "retry_policy_http_status_switch": 9,
+      "execution_attempt_failure_kind_reconstruction": 9,
+      "execution_health_effect_reconstruction": 9,
+      "provider_duplicate_message_status_inference": 9,
+      "proxy_failure_public_error_reverse_inference": 9,
+      "scoped_effect_station_key_writeback": 9
+    },
+    "forbidden_consumer_inputs_after_cutover": [
+      "raw_provider_code",
+      "free_form_message",
+      "projected_public_http_status",
+      "ProxyFailure public projection"
+    ],
+    "temporary_allowed_exceptions": []
+  }
+}

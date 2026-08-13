@@ -6,7 +6,7 @@ Status Monitoring V2 replaces the legacy monitor-run implementation with a singl
 
 The release-facing qualification entry is:
 
-- `docs/superpowers/audits/status-monitoring-qualification.md`
+- `docs/audits/status-monitoring-qualification.md`
 
 Local deterministic qualification currently covers:
 
