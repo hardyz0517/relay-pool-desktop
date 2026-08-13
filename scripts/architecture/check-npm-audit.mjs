@@ -20,7 +20,7 @@ runMain(() => {
   } catch {
     throw new Error(`pnpm audit did not return JSON: ${result.stderr || result.stdout}`);
   }
-  const exceptions = readJson("docs/superpowers/audits/dependency-advisory-exceptions.json").exceptions
+  const exceptions = readJson("docs/audits/dependency-advisory-exceptions.json").exceptions
     .filter((entry) => entry.ecosystem === "npm");
   const allowed = new Set(exceptions.map((entry) => `${entry.package}:${entry.advisory_id}`));
   const legacyAdvisories = Object.entries(report.advisories ?? {}).map(([id, advisory]) => ({

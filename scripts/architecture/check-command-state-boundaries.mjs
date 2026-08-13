@@ -9,7 +9,7 @@ import {
 
 const COMMANDS_PATH = "src-tauri/src/commands/mod.rs";
 const REGISTRY_PATH = "src-tauri/src/ipc/registry.rs";
-const MATRIX_PATH = "docs/superpowers/audits/architecture-scale-command-facade-matrix.json";
+const MATRIX_PATH = "docs/audits/architecture-scale-command-facade-matrix.json";
 
 function source(relativePath) {
   const absolutePath = path.join(repoRoot, relativePath);

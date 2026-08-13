@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assert, currentRevision, readJson, repoRoot, runMain } from "./architecture/lib.mjs";
 
-const MANIFEST_PATH = "docs/superpowers/audits/routing-operational-qualification-manifest.json";
+const MANIFEST_PATH = "docs/audits/routing-operational-qualification-manifest.json";
 
 function hasFlag(name) {
   return process.argv.includes(name);

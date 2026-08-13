@@ -288,7 +288,7 @@ runMain(() => {
     console.log("TypeScript architecture fixtures passed");
     return;
   }
-  const manifest = readRequiredManifest("docs/superpowers/audits/architecture-scale-boundary-manifest.json", [
+  const manifest = readRequiredManifest("docs/audits/architecture-scale-boundary-manifest.json", [
     "current_stage",
     "allowed_edges",
     "forbidden_edges",

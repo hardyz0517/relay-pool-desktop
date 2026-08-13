@@ -4,11 +4,11 @@ import { readFileSync } from "node:fs";
 const source = readFileSync("scripts/write-routing-operational-manual-observation.ps1", "utf8");
 const contracts = readFileSync("scripts/run-contract-tests.mjs", "utf8");
 const task27Template = readFileSync(
-  "docs/superpowers/audits/routing-operational-local-self-check-template.md",
+  "docs/audits/routing-operational-local-self-check-template.md",
   "utf8",
 );
 const deletionLedger = readFileSync(
-  "docs/superpowers/audits/routing-operational-deletion-ledger.md",
+  "docs/audits/routing-operational-deletion-ledger.md",
   "utf8",
 );
 

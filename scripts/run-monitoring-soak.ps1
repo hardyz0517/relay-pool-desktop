@@ -4,7 +4,7 @@ param(
     [switch]$ReleaseBuild,
     [switch]$MixedProviderWorkload,
     [string]$CargoManifest = "src-tauri/Cargo.toml",
-    [string]$OutputPath = "docs/superpowers/audits/status-monitoring-soak-latest.json"
+    [string]$OutputPath = "docs/audits/status-monitoring-soak-latest.json"
 )
 
 $ErrorActionPreference = "Stop"

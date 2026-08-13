@@ -1,116 +1,87 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const libSource = await readFile("src-tauri/src/lib.rs", "utf8");
-const servicesModSource = await readFile("src-tauri/src/services/mod.rs", "utf8");
-const stationCollectorSource = await readFile("src-tauri/src/services/station_collectors.rs", "utf8").catch(
-  () => "",
-);
-const stationCatalogSource = await readFile(
-  "src-tauri/src/persistence/stores/station_catalog.rs",
-  "utf8",
-);
-const sub2apiLoginSource = await readFile("src-tauri/src/services/collectors/sub2api.rs", "utf8");
-const sub2apiAdapterSource = await readFile("src-tauri/src/services/collectors/adapters/sub2api.rs", "utf8");
-const newapiAdapterSource = [
-  await readFile("src-tauri/src/services/collectors/adapters/newapi/mod.rs", "utf8"),
-  await readFile("src-tauri/src/services/collectors/adapters/newapi/client.rs", "utf8"),
-  await readFile("src-tauri/src/services/collectors/adapters/newapi/auth.rs", "utf8"),
-  await readFile("src-tauri/src/services/collectors/adapters/newapi/parsers.rs", "utf8"),
-].join("\n");
-const openaiCompatibleAdapterSource = await readFile(
-  "src-tauri/src/services/collectors/adapters/openai_compatible.rs",
-  "utf8",
-);
-const stationsPageSource = await readFile("src/features/stations/StationsPage.tsx", "utf8");
+const [
+  libSource,
+  servicesModSource,
+  coordinatorSource,
+  stationCollectorSource,
+  collectionFacadeSource,
+  settingsFacadeSource,
+  appCompositionSource,
+  stationCatalogSource,
+  sub2apiDriverSource,
+  newapiDriverSource,
+] = await Promise.all([
+  readFile("src-tauri/src/lib.rs", "utf8"),
+  readFile("src-tauri/src/services/mod.rs", "utf8"),
+  readFile("src-tauri/src/services/station_collection_coordinator.rs", "utf8"),
+  readFile("src-tauri/src/services/station_collectors.rs", "utf8"),
+  readFile("src-tauri/src/application/command_facades/station_collection.rs", "utf8"),
+  readFile("src-tauri/src/application/command_facades/settings_stations.rs", "utf8"),
+  readFile("src-tauri/src/app_composition.rs", "utf8"),
+  readFile("src-tauri/src/persistence/stores/station_catalog.rs", "utf8"),
+  readFile("src-tauri/src/services/collectors/drivers/sub2api/mod.rs", "utf8"),
+  readFile("src-tauri/src/services/collectors/drivers/newapi/mod.rs", "utf8"),
+]);
+
+const stationCollectorProductionSource = stationCollectorSource.split("#[cfg(test)]")[0];
 
 assert.ok(
-  servicesModSource.includes("pub mod station_collectors;"),
-  "Tauri services should expose a station collector runner module",
+  servicesModSource.includes("pub mod station_collectors;") &&
+    servicesModSource.includes("mod station_collection_coordinator;"),
+  "services should expose the runner and crate-private collection coordinator",
+);
+assert.ok(
+  coordinatorSource.includes("pub(crate) struct StationCollectionCoordinator {") &&
+    coordinatorSource.includes("pub(crate) async fn acquire") &&
+    coordinatorSource.includes("pub(crate) fn try_acquire"),
+  "the coordinator should own both waiting background admission and immediate manual admission",
+);
+assert.ok(
+  !stationCollectorProductionSource.includes("ACTIVE_STATION_RUNS") &&
+    !stationCollectorProductionSource.includes("StationCollectorRunGuard"),
+  "the runner must not retain a separate static station-run guard",
+);
+assert.ok(
+  stationCollectorProductionSource.includes("StationCollectionCoordinator"),
+  "the runner should use the shared coordinator for station admission",
+);
+assert.ok(
+  collectionFacadeSource.includes("run_with_station_collection_lease") &&
+    collectionFacadeSource.includes("StationCollectionCommandError::Admission"),
+  "manual collection and saved-station login should share explicit admission",
+);
+assert.ok(
+  settingsFacadeSource.includes("persist_and_apply_collection_runtime_settings") &&
+    settingsFacadeSource.includes("set_max_concurrency"),
+  "persisted collection concurrency should update the shared runtime coordinator",
+);
+assert.ok(
+  libSource.includes("let station_collection_coordinator =") &&
+    libSource.includes("StationCollectionCoordinator::new") &&
+    libSource.includes("StationCollectorRunnerState::start_v2"),
+  "app setup should construct one coordinator and start the runner",
+);
+assert.ok(
+  !appCompositionSource.includes("StationCollectionCoordinator::new") &&
+    !stationCollectorProductionSource.includes("StationCollectionCoordinator::new"),
+  "composition and runner must receive the startup coordinator rather than construct another one",
 );
 
 assert.ok(
-  libSource.includes("StationCollectorRunnerState::start"),
-  "app setup should start the station collector runner",
+  stationCatalogSource.includes("pub(crate) async fn due_collector_task") &&
+    stationCatalogSource.includes("collector_task_state.updated_at") &&
+    stationCatalogSource.includes("(?2 * 60000) <= ?3"),
+  "due query should keep each task interval and persisted task state semantics",
 );
-
-assert.ok(
-  libSource.includes("station_collector_runner"),
-  "app setup should manage the station collector runner state",
-);
-
-assert.ok(
-  stationCatalogSource.includes("pub async fn due_collectors") &&
-    stationCatalogSource.includes("collection_interval_minutes") &&
-    stationCatalogSource.includes("* 60000) <= ?1"),
-  "station collector due query should use each station's collection interval",
-);
-
 assert.ok(
   stationCollectorSource.includes("CollectorTask::Balance") &&
     stationCollectorSource.includes("CollectorTask::Groups"),
-  "station collector runner should collect balance and groups on each scheduled station run",
+  "scheduled collection should retain balance and groups tasks",
 );
-
 assert.ok(
-  stationsPageSource.includes("useActivityQuery(refreshEnabled, stationsQueryOptions())") &&
-    stationsPageSource.includes("currentStationBalanceSnapshotsQueryOptions()"),
-  "station asset page should refresh automatic collector results through shared activity queries",
-);
-
-assert.ok(
-  stationsPageSource.includes("queryClient.invalidateQueries({ queryKey: queryKeys.balanceSnapshots })") &&
-    stationsPageSource.includes("queryClient.cancelQueries({ queryKey: queryKeys.balanceSnapshots })"),
-  "station asset refresh paths should update the station balance snapshots cache",
-);
-
-assert.ok(
-  sub2apiAdapterSource.includes("COLLECTOR_HTTP_TIMEOUT") &&
-    sub2apiAdapterSource.includes(".timeout(COLLECTOR_HTTP_TIMEOUT)") &&
-    newapiAdapterSource.includes("COLLECTOR_HTTP_TIMEOUT") &&
-    newapiAdapterSource.includes(".timeout(COLLECTOR_HTTP_TIMEOUT)") &&
-    openaiCompatibleAdapterSource.includes("COLLECTOR_HTTP_TIMEOUT") &&
-    openaiCompatibleAdapterSource.includes(".timeout(COLLECTOR_HTTP_TIMEOUT)"),
-  "collector HTTP requests should have a bounded timeout so one station cannot block the scheduled runner",
-);
-
-assert.ok(
-  sub2apiAdapterSource.includes("CollectionAttemptBudget") &&
-    sub2apiAdapterSource.includes("recoveryActions"),
-  "Sub2API scheduled collection should use bounded adaptive recovery diagnostics",
-);
-
-assert.ok(
-  sub2apiLoginSource.includes("login_access_token_with_budget"),
-  "Sub2API auth recovery should share the collection task budget",
-);
-
-const accountProfileBalanceSource = sub2apiAdapterSource.match(
-  /fn collect_account_profile_balance[\s\S]*?\r?\n}\r?\n\r?\nfn merge_account_profile_balance/,
-)?.[0];
-assert.ok(accountProfileBalanceSource, "Sub2API account profile balance collector should exist");
-assert.ok(
-  accountProfileBalanceSource.includes("login_and_store_access_token_with_budget") &&
-    !accountProfileBalanceSource.includes("login_and_store_access_token(database"),
-  "Sub2API account profile balance login should use the shared collection task budget",
-);
-
-assert.ok(
-  sub2apiAdapterSource.indexOf("let account_profile_balance = collect_account_profile_balance") > -1 &&
-    sub2apiAdapterSource.indexOf("let account_profile_balance = collect_account_profile_balance") <
-      sub2apiAdapterSource.indexOf("if facts.balances.is_empty()"),
-  "Sub2API balance collection should read the account profile before deciding whether usage fallback is needed",
-);
-
-assert.ok(
-  sub2apiAdapterSource.includes("fn merge_account_profile_balance") &&
-    sub2apiAdapterSource.includes("account_concurrency_limit") &&
-    sub2apiAdapterSource.includes("parse_account_concurrency_limit"),
-  "Sub2API account profile collection should parse and merge account concurrency limit",
-);
-
-assert.ok(
-  stationsPageSource.includes("row.latestBalance?.updatedAt ?? row.latestBalance?.collectedAt") &&
-    !stationsPageSource.includes("const lastCollectText = formatRelativeTime(station.lastPricingFetchedAt ?? station.updatedAt);"),
-  "station asset balance timestamp should use the latest balance snapshot time, not the pricing collection timestamp",
+  sub2apiDriverSource.includes("context.budget") &&
+    newapiDriverSource.includes("context.budget"),
+  "provider drivers should keep using the collection request budget",
 );

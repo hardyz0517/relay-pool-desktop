@@ -4,7 +4,7 @@ param(
     [string[]]$Providers = @("openai", "anthropic", "gemini", "xai-grok", "generic-openai"),
     [ValidateSet("standard_api", "codex_cli_compat", "claude_code_compat", "gemini_cli_compat")]
     [string[]]$Profiles = @("standard_api"),
-    [string]$OutputPath = "docs/superpowers/audits/status-monitoring-live-latest.json"
+    [string]$OutputPath = "docs/audits/status-monitoring-live-latest.json"
 )
 
 $ErrorActionPreference = "Stop"

@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 
 const runner = readFileSync("scripts/run-routing-operational-local-self-check.ps1", "utf8");
 const manifest = JSON.parse(
-  readFileSync("docs/superpowers/audits/routing-operational-qualification-manifest.json", "utf8"),
+  readFileSync("docs/audits/routing-operational-qualification-manifest.json", "utf8"),
 );
-const deletionLedger = readFileSync("docs/superpowers/audits/routing-operational-deletion-ledger.md", "utf8");
+const deletionLedger = readFileSync("docs/audits/routing-operational-deletion-ledger.md", "utf8");
 
 for (const suite of [
   "operational_fact_reader",

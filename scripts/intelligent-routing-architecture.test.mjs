@@ -13,7 +13,7 @@ if (fixtureMode) {
   process.exit(0);
 }
 
-const manifest = readJson("docs/superpowers/audits/intelligent-routing-boundary-manifest.json");
+const manifest = readJson("docs/audits/intelligent-routing-boundary-manifest.json");
 assert.equal(manifest.schema_version, 1, "boundary manifest schema version must be 1");
 assert.deepEqual(
   manifest.temporary_allowed_exceptions,

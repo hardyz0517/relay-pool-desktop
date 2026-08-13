@@ -7,7 +7,7 @@ runMain(() => {
   assert(outputIndex >= 0 && process.argv[outputIndex + 1], "--output <path> is required");
   const output = path.resolve(repoRoot, process.argv[outputIndex + 1]);
   assert(output.startsWith(path.join(repoRoot, "output") + path.sep), "generated cargo-deny config must be under output/");
-  const exceptions = readJson("docs/superpowers/audits/dependency-advisory-exceptions.json").exceptions
+  const exceptions = readJson("docs/audits/dependency-advisory-exceptions.json").exceptions
     .filter((entry) => entry.ecosystem === "cargo");
   const ids = exceptions.map((entry) => entry.advisory_id);
   assert(ids.every((id) => /^RUSTSEC-\d{4}-\d{4}$/.test(id)), "cargo advisory exceptions require exact RUSTSEC ids");

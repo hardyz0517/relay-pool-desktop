@@ -91,7 +91,7 @@ function loadRegistry(boundary) {
     return { commands: new Set(registry.commands.map((entry) => entry.name)), mode: "generated" };
   }
   requirePlaceholderException(boundary);
-  const inventory = readRequiredManifest("docs/superpowers/audits/architecture-scale-upgrade-inventory.json", [
+  const inventory = readRequiredManifest("docs/audits/architecture-scale-upgrade-inventory.json", [
     "schema_version",
     "source_revision",
     "inventories",
@@ -114,7 +114,7 @@ function setDifference(left, right) {
 }
 
 runMain(() => {
-  const boundary = readRequiredManifest("docs/superpowers/audits/architecture-scale-boundary-manifest.json", ["current_stage", "command_state_allowlist", "temporary_edges"]);
+  const boundary = readRequiredManifest("docs/audits/architecture-scale-boundary-manifest.json", ["current_stage", "command_state_allowlist", "temporary_edges"]);
   const registry = loadRegistry(boundary);
   const acl = commandsFromCompiledAcl();
   assert(registry.commands.size > 0, "command registry must not be empty");

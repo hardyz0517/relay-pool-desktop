@@ -12,7 +12,7 @@ const ENTRY_KEYS = new Set([
 ]);
 
 runMain(() => {
-  const manifest = readRequiredManifest("docs/superpowers/audits/dependency-advisory-exceptions.json", ["schema_version", "exceptions"]);
+  const manifest = readRequiredManifest("docs/audits/dependency-advisory-exceptions.json", ["schema_version", "exceptions"]);
   assert(manifest.schema_version === 1, "advisory exception schema_version must be 1");
   assert(Array.isArray(manifest.exceptions), "advisory exceptions must be an array");
   const today = new Date();

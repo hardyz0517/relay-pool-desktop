@@ -5,7 +5,7 @@ param(
     [int]$Samples = 20,
     [int]$WorkspaceP95LimitMs = 250,
     [int]$SchedulerLagP95LimitMs = 2000,
-    [string]$OutputPath = "docs/superpowers/audits/status-monitoring-read-model-performance-latest.json"
+    [string]$OutputPath = "docs/audits/status-monitoring-read-model-performance-latest.json"
 )
 
 $ErrorActionPreference = "Stop"

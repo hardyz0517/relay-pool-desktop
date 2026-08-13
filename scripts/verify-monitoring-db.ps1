@@ -2,7 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$DatabasePath,
     [int]$MaxRunningAgeMinutes = 10,
-    [string]$OutputPath = "docs/superpowers/audits/status-monitoring-db-latest.json"
+    [string]$OutputPath = "docs/audits/status-monitoring-db-latest.json"
 )
 
 $ErrorActionPreference = "Stop"

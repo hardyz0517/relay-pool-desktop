@@ -92,7 +92,7 @@ function workflowRustVersions() {
 }
 
 runMain(() => {
-  const ledger = readRequiredManifest("docs/superpowers/audits/architecture-scale-dependency-lifecycle.json", ["schema_version"]);
+  const ledger = readRequiredManifest("docs/audits/architecture-scale-dependency-lifecycle.json", ["schema_version"]);
   assert(ledger.schema_version === 1, "dependency lifecycle schema_version must be 1");
   const entries = entriesOf(ledger);
   const actual = resolvedVersions();

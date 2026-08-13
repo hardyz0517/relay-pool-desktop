@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const manifest = JSON.parse(
-  readFileSync("docs/superpowers/audits/routing-operational-boundary-manifest.json", "utf8"),
+  readFileSync("docs/audits/routing-operational-boundary-manifest.json", "utf8"),
 );
-const deletionLedger = readFileSync("docs/superpowers/audits/routing-operational-deletion-ledger.md", "utf8");
+const deletionLedger = readFileSync("docs/audits/routing-operational-deletion-ledger.md", "utf8");
 const runtimeSource = readFileSync("src-tauri/src/services/proxy/runtime.rs", "utf8");
 const responseBodySource = readFileSync("src-tauri/src/services/proxy/response_body.rs", "utf8");
 

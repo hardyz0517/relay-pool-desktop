@@ -71,7 +71,7 @@ runMain(() => {
     console.log("Artifact policy fixtures passed");
     return;
   }
-  const inventory = readRequiredManifest("docs/superpowers/audits/architecture-scale-upgrade-inventory.json", ["inventories"]);
+  const inventory = readRequiredManifest("docs/audits/architecture-scale-upgrade-inventory.json", ["inventories"]);
   const registered = inventoryArtifactPaths(inventory);
   const tracked = command("git", ["ls-files", "-z"]).split("\0").filter(Boolean).map(normalizePath);
   const trackedArtifacts = tracked.filter((file) => /(?:^|\/)(?:output|target|dist)(?:\/|$)/.test(file));

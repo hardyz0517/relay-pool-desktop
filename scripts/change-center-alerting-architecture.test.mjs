@@ -9,8 +9,8 @@ const args = process.argv.slice(2);
 const rootIndex = args.indexOf("--root");
 const root = path.resolve(rootIndex >= 0 ? args[rootIndex + 1] : process.cwd());
 const verbose = args.includes("--verbose");
-const manifestPath = "docs/superpowers/audits/change-center-alerting-boundary-manifest.json";
-const ledgerPath = "docs/superpowers/audits/change-center-alerting-deletion-ledger.md";
+const manifestPath = "docs/audits/change-center-alerting-boundary-manifest.json";
+const ledgerPath = "docs/audits/change-center-alerting-deletion-ledger.md";
 const manifest = readJson(manifestPath);
 const ledger = readSource(ledgerPath);
 

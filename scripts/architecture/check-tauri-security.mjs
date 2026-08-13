@@ -49,7 +49,7 @@ function exactOriginValidatorImplemented(exactOrigin) {
 }
 
 runMain(() => {
-  const manifest = readRequiredManifest("docs/superpowers/audits/architecture-scale-tauri-security-manifest.json", [
+  const manifest = readRequiredManifest("docs/audits/architecture-scale-tauri-security-manifest.json", [
     "schema_version",
     "production_config",
     "window_patterns",
@@ -57,7 +57,7 @@ runMain(() => {
     "application_exact_origin_validator",
     "demo_entry_reachability",
   ]);
-  const boundary = readRequiredManifest("docs/superpowers/audits/architecture-scale-boundary-manifest.json", ["current_stage"]);
+  const boundary = readRequiredManifest("docs/audits/architecture-scale-boundary-manifest.json", ["current_stage"]);
   const currentStage = authoritativeStage(boundary, "boundary manifest");
   assert(manifest.schema_version === 1, "Tauri security manifest schema_version must be 1");
   const productionConfigPath = manifest.production_config.path ?? manifest.production_config;

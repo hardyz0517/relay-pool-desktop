@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const manifest = JSON.parse(
-  await readFile("docs/superpowers/audits/persistence-v2-released-schema-manifest.json", "utf8"),
+  await readFile("docs/audits/persistence-v2-released-schema-manifest.json", "utf8"),
 );
 const generator = await readFile("scripts/build-persistence-v2-fixtures.ps1", "utf8");
 

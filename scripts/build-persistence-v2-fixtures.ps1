@@ -10,7 +10,7 @@ Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $fixtureRoot = Join-Path $repoRoot 'src-tauri\tests\persistence_upgrade\fixtures'
-$manifestPath = Join-Path $repoRoot 'docs\superpowers\audits\persistence-v2-released-schema-manifest.json'
+$manifestPath = Join-Path $repoRoot 'docs\audits\persistence-v2-released-schema-manifest.json'
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "relay-pool-persistence-v2-fixtures-$PID"
 $probeTarget = Join-Path $tempRoot 'cargo-target'
 $probeSource = @'

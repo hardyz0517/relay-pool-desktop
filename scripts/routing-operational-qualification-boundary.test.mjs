@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 const validator = readFileSync("scripts/routing-operational-qualification.mjs", "utf8");
 const contractsRunner = readFileSync("scripts/run-contract-tests.mjs", "utf8");
 const template = readFileSync(
-  "docs/superpowers/audits/routing-operational-qualification-template.md",
+  "docs/audits/routing-operational-qualification-template.md",
   "utf8",
 );
 

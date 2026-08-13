@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const ledger = await readFile("docs/superpowers/audits/relay-pool-field-ownership-ledger.md", "utf8");
+const ledger = await readFile("docs/audits/relay-pool-field-ownership-ledger.md", "utf8");
 
 assert.ok(
   ledger.includes("## Stage 8 兼容字段复查结论"),
