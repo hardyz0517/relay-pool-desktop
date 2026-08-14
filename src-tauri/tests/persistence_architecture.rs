@@ -145,6 +145,45 @@ fn persistence_v2_dependency_edges_match_the_boundary_manifest() {
 }
 
 #[test]
+fn station_collection_coordinator_dependency_edges_are_registered() {
+    let manifest = BoundaryManifest::load("../docs/audits/persistence-v2-boundary-manifest.json")
+        .expect("load boundary manifest");
+    let expected = [
+        (
+            "app_composition",
+            "services::station_collection_coordinator",
+        ),
+        (
+            "application::command_facades::settings_stations",
+            "services::station_collection_coordinator",
+        ),
+        (
+            "application::command_facades::station_collection",
+            "services::station_collection_coordinator",
+        ),
+        (
+            "commands::station_collection",
+            "services::station_collection_coordinator",
+        ),
+        ("lib", "services::station_collection_coordinator"),
+        ("services::station_collectors", "services::secrets::mask"),
+        (
+            "services::station_collectors",
+            "services::station_collection_coordinator",
+        ),
+    ];
+    for (from, to) in expected {
+        assert!(
+            manifest
+                .allowed_edges
+                .iter()
+                .any(|edge| edge.from == from && edge.to == to && !edge.temporary),
+            "dependency edge {from} -> {to} must be registered as a permanent allowed edge"
+        );
+    }
+}
+
+#[test]
 fn legacy_persistence_is_absent_from_release_source() {
     let source_root = Path::new("src");
     let manifest = BoundaryManifest::load("../docs/audits/persistence-v2-boundary-manifest.json")
