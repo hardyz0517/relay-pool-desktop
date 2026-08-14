@@ -588,6 +588,13 @@ mod services {
                 "/src/services/collectors/orchestration.rs"
             ));
         }
+
+        pub mod manual_authorization {
+            include!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/services/collectors/manual_authorization.rs"
+            ));
+        }
     }
 }
 

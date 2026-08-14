@@ -234,6 +234,7 @@ fn operational_projections(pricing_basis: RoutingCostBasis) -> CandidateOperatio
         group: Some(GroupProjection {
             identity: GroupIdentity::BindingId("group-a".to_string()),
             display_name: "Primary".to_string(),
+            category: None,
             available: true,
             trace: trace("group_resolved"),
         }),

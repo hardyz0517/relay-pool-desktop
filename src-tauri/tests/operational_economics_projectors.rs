@@ -88,6 +88,7 @@ fn group_identity_prefers_binding_then_group_key_then_group_id_then_legacy_name(
         group_key_hash: Some("local-hash".to_string()),
         group_id_hash: Some("remote-hash".to_string()),
         group_name: Some("Shared Name".to_string()),
+        group_category: None,
         status: GroupStatus::Available,
         trace: trace("binding"),
     })
@@ -103,6 +104,7 @@ fn group_identity_prefers_binding_then_group_key_then_group_id_then_legacy_name(
         group_key_hash: Some("local-hash".to_string()),
         group_id_hash: Some("remote-hash".to_string()),
         group_name: Some("Shared Name".to_string()),
+        group_category: None,
         status: GroupStatus::Available,
         trace: trace("key-hash"),
     })
@@ -114,6 +116,7 @@ fn group_identity_prefers_binding_then_group_key_then_group_id_then_legacy_name(
         group_key_hash: None,
         group_id_hash: Some("remote-hash".to_string()),
         group_name: Some("Shared Name".to_string()),
+        group_category: None,
         status: GroupStatus::Available,
         trace: trace("id-hash"),
     })
@@ -125,6 +128,7 @@ fn group_identity_prefers_binding_then_group_key_then_group_id_then_legacy_name(
         group_key_hash: None,
         group_id_hash: None,
         group_name: Some(" Shared   Name ".to_string()),
+        group_category: None,
         status: GroupStatus::Available,
         trace: trace("legacy"),
     })
@@ -139,6 +143,7 @@ fn group_hashes_are_not_interchangeable_even_when_values_match_display_names() {
         group_key_hash: Some("same-value".to_string()),
         group_id_hash: None,
         group_name: Some("same-value".to_string()),
+        group_category: None,
         status: GroupStatus::Available,
         trace: trace("local"),
     })
@@ -148,6 +153,7 @@ fn group_hashes_are_not_interchangeable_even_when_values_match_display_names() {
         group_key_hash: None,
         group_id_hash: Some("same-value".to_string()),
         group_name: Some("same-value".to_string()),
+        group_category: None,
         status: GroupStatus::Available,
         trace: trace("remote"),
     })

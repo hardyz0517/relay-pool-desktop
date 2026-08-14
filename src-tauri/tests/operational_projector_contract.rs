@@ -98,6 +98,7 @@ fn every_reducer_emits_version_reason_and_source_reference() {
         group_key_hash: None,
         group_id_hash: None,
         group_name: Some("Shared".into()),
+        group_category: None,
         status: GroupStatus::Available,
         trace: trace(),
     });
