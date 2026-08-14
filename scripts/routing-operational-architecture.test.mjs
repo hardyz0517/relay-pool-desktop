@@ -8,7 +8,6 @@ const root = path.resolve(rootArgIndex >= 0 ? args[rootArgIndex + 1] : process.c
 const manifestPath = path.join(
   root,
   "docs",
-  "superpowers",
   "audits",
   "routing-operational-boundary-manifest.json",
 );
