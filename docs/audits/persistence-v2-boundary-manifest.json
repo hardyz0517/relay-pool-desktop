@@ -4475,6 +4475,41 @@
             "from": "observability::diagnostics",
             "to": "observability::metrics",
             "temporary": false
+        },
+        {
+            "from": "app_composition",
+            "to": "services::station_collection_coordinator",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::settings_stations",
+            "to": "services::station_collection_coordinator",
+            "temporary": false
+        },
+        {
+            "from": "application::command_facades::station_collection",
+            "to": "services::station_collection_coordinator",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_collection",
+            "to": "services::station_collection_coordinator",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "services::station_collection_coordinator",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collectors",
+            "to": "services::secrets::mask",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collectors",
+            "to": "services::station_collection_coordinator",
+            "temporary": false
         }
     ],
     "temporary_legacy_consumers": [],
