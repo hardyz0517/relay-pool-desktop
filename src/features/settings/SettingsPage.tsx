@@ -509,7 +509,6 @@ export function SettingsPage() {
                 </Button>
               </div>
             }
-            description="打开当前运行日志或其所在文件夹；不受开发者模式开关影响。"
             label="运行日志"
           />
         </SectionCard>

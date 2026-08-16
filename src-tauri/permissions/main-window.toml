@@ -7,6 +7,8 @@ commands.allow = [
   "record_frontend_boundary_failure",
   "read_runtime_diagnostics",
   "export_runtime_support_bundle",
+  "open_runtime_log_directory",
+  "open_runtime_log_file",
   "get_runtime_contract_info",
   "get_runtime_status",
   "get_data_store_startup_state",
