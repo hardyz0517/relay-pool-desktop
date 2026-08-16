@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "6ead9b9b97fd61d2d74ab421177d79c0cafe503ef64f9ce2ff6aabbbdc67a140";
+    "f5f24bef3a76e1759e1c909cbb4fa917a19fe1b7dd827c87c22c04b4d94ab149";
 
 #[cfg_attr(
     not(test),
@@ -338,7 +338,7 @@ fn command_contract(name: &str) -> CommandContract {
             )
         },
         "open_runtime_log_directory" | "open_runtime_log_file" => {
-            migrated_mutation("EmptyInputDto", "unit", "non_idempotent", true)
+            migrated_mutation("EmptyInputDto", "unit", "idempotent", false)
         }
         "record_frontend_boundary_failure" => CommandContract {
             runtime_validation: "rust_dto_pre_application",
@@ -1853,11 +1853,11 @@ export function exportRuntimeSupportBundle(input: EmptyInputDto = {}): Promise<R
 }
 
 export function openRuntimeLogDirectory(input: EmptyInputDto = {}): Promise<void> {
-  return invokeNonIdempotent<void>("open_runtime_log_directory", { input });
+  return invokeCommand<void>("open_runtime_log_directory", { input });
 }
 
 export function openRuntimeLogFile(input: EmptyInputDto = {}): Promise<void> {
-  return invokeNonIdempotent<void>("open_runtime_log_file", { input });
+  return invokeCommand<void>("open_runtime_log_file", { input });
 }
 
 export function getRuntimeContractInfo(input: EmptyInputDto = {}): Promise<RuntimeContractInfo> {
