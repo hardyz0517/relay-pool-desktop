@@ -31,12 +31,16 @@ export function AppShell({
 
   const visibleRoutes = useMemo(
     () =>
-      appRoutes.filter((route) => route.id !== "collectors" || settings?.developerModeEnabled),
+      appRoutes.filter(
+        (route) =>
+          (route.id !== "collectors" && route.id !== "runtimeDiagnostics") ||
+          settings?.developerModeEnabled,
+      ),
     [settings?.developerModeEnabled],
   );
 
   useEffect(() => {
-    if (activeRouteId === "collectors" && settings && !settings.developerModeEnabled) {
+    if ((activeRouteId === "collectors" || activeRouteId === "runtimeDiagnostics") && settings && !settings.developerModeEnabled) {
       onRouteChange("settings");
     }
   }, [activeRouteId, onRouteChange, settings]);

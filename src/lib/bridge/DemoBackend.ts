@@ -175,6 +175,10 @@ export class DemoBackend implements BackendClient {
   readonly runtime: BackendClient["runtime"] = {
     getRuntimeStatus: () => this.rejectUnsupported("runtime_status"),
   };
+  readonly runtimeDiagnostics: BackendClient["runtimeDiagnostics"] = {
+    readRuntimeDiagnostics: () => this.rejectUnsupported("runtime_diagnostics"),
+    exportRuntimeSupportBundle: () => this.rejectUnsupported("runtime_diagnostics"),
+  };
   readonly dataRecovery: BackendClient["dataRecovery"] = {
     getDataStoreStartupState: () => this.rejectUnsupported("data_recovery"),
     refreshDataStoreCandidates: () => this.rejectUnsupported("data_recovery"),

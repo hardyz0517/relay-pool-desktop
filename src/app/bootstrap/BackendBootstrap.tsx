@@ -7,6 +7,8 @@ import type { BackendClient } from "@/lib/bridge/BackendClient";
 import type { RuntimeContractInfo } from "@/lib/bridge/contract";
 import { unknownErrorMessage } from "@/lib/bridge/errorMessage";
 import { isRuntimeContractMismatch } from "@/lib/bridge/runtimeContractError";
+import { configureRuntimeContextSession, clearRuntimeContextSession } from "@/lib/bridge/runtimeContext";
+import { initializeRuntimeContext } from "@/lib/bridge/generated";
 
 export type BackendClientFactory = () => BackendClient;
 
@@ -46,12 +48,23 @@ export function BackendBootstrap({
     void client.handshake().then(
       (contract) => {
         if (requestSequence.current !== requestId) return;
-        setActiveBackendClient(client);
-        if (client.mode === "demo") {
-          setState({ kind: "DemoReady", client, contract });
-        } else {
-          setState({ kind: "DataStoreBootstrapping", client, contract });
-        }
+        const initialize = client.mode === "desktop" && client.runtimeDiagnostics
+          ? initializeRuntimeContext()
+          : Promise.resolve(null);
+        void initialize.then((sessionId) => {
+          if (requestSequence.current !== requestId) return;
+          if (sessionId) configureRuntimeContextSession(sessionId);
+          setActiveBackendClient(client);
+          if (client.mode === "demo") {
+            setState({ kind: "DemoReady", client, contract });
+          } else {
+            setState({ kind: "DataStoreBootstrapping", client, contract });
+          }
+        }, (error) => {
+          if (requestSequence.current !== requestId) return;
+          setActiveBackendClient(null);
+          setState({ kind: "RuntimeUnavailable", client, error });
+        });
       },
       (error) => {
         if (requestSequence.current !== requestId) return;
@@ -68,6 +81,7 @@ export function BackendBootstrap({
     return () => {
       requestSequence.current += 1;
       setActiveBackendClient(null);
+      clearRuntimeContextSession();
     };
   }, [start]);
 

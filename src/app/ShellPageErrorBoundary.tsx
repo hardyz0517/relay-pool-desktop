@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "@/components/ui";
+import { recordFrontendBoundaryFailure } from "@/lib/bridge/generated";
 
 type Props = { children: ReactNode };
 type State = { failed: boolean };
@@ -12,7 +13,8 @@ export class ShellPageErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(_error: Error, _info: ErrorInfo) {
-    // Do not log raw page data or credentials. Development diagnostics use aggregate counters only.
+    // The boundary event intentionally carries no error, stack, props, or DOM data.
+    void recordFrontendBoundaryFailure().catch(() => undefined);
   }
 
   private retry = () => this.setState({ failed: false });

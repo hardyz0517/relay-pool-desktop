@@ -9,6 +9,7 @@ import {
   KeyRound,
   Radio,
   Settings,
+  Bug,
 } from "lucide-react";
 import type { AppRoute } from "@/lib/types/navigation";
 
@@ -54,6 +55,12 @@ export const appRoutes: AppRoute[] = [
     label: "采集中心",
     description: "高级工具中调试采集、登录态和快照识别",
     icon: FlaskConical,
+  },
+  {
+    id: "runtimeDiagnostics",
+    label: "运行诊断",
+    description: "开发者模式下查看安全筛选的运行事件",
+    icon: Bug,
   },
   {
     id: "changes",

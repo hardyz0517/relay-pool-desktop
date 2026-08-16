@@ -10,6 +10,7 @@ import { RoutingPage } from "@/features/routing";
 import type { VersionedRequestLogDeepLink, RequestLogDeepLink } from "@/lib/types/requestLogDeepLinks";
 import type { VersionedRoutingDeepLink, RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { SettingsPage } from "@/features/settings";
+import { RuntimeDiagnosticsPage } from "@/features/runtime-diagnostics/RuntimeDiagnosticsPage";
 import { StationsPage } from "@/features/stations";
 import type { AppRouteId } from "@/lib/types/navigation";
 import type { Station } from "@/lib/types/stations";
@@ -69,6 +70,8 @@ export const ShellPageContent = memo(function ShellPageContent({
       return <ChannelStatusPage onOpenRoutingDeepLink={routingDeepLinkHandler} />;
     case "collectors":
       return <CollectorsPage onOpenRoutingDeepLink={routingDeepLinkHandler} />;
+    case "runtimeDiagnostics":
+      return <RuntimeDiagnosticsPage />;
     case "changes":
       return (
         <ChangeCenterPage

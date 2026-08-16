@@ -8,6 +8,7 @@ export type AppRouteId =
   | "pricing"
   | "channels"
   | "collectors"
+  | "runtimeDiagnostics"
   | "changes"
   | "logs"
   | "settings";

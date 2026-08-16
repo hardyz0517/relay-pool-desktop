@@ -60,6 +60,13 @@ const shellPagePolicies: Record<AppRouteId, PageTransitionPolicy> = {
     retention: "keep",
     prewarmPriority: null,
   },
+  runtimeDiagnostics: {
+    pageId: "runtimeDiagnostics",
+    kind: "shell",
+    parentRouteId: "runtimeDiagnostics",
+    retention: "keep",
+    prewarmPriority: null,
+  },
   changes: {
     pageId: "changes",
     kind: "shell",

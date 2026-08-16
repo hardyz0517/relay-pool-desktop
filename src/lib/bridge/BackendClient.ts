@@ -125,6 +125,11 @@ import type {
   PricingGroupMonitorStatusInput,
   PricingGroupMonitorStatusWorkspace,
 } from "@/lib/types/pricingMonitoring";
+import type {
+  RuntimeDiagnosticsPageDto,
+  RuntimeDiagnosticsQueryDto,
+  RuntimeSupportBundleResultDto,
+} from "./generated";
 
 export type BackendMode = "desktop" | "demo";
 
@@ -214,6 +219,11 @@ export type DashboardDomainClient = {
 
 export type RuntimeDomainClient = {
   getRuntimeStatus(): Promise<RuntimeStatus>;
+};
+
+export type RuntimeDiagnosticsDomainClient = {
+  readRuntimeDiagnostics(input?: RuntimeDiagnosticsQueryDto): Promise<RuntimeDiagnosticsPageDto>;
+  exportRuntimeSupportBundle(): Promise<RuntimeSupportBundleResultDto | null>;
 };
 
 export type DataRecoveryDomainClient = {
@@ -389,6 +399,7 @@ export type BackendClient = {
   readonly providerDrafts?: ProviderDraftsDomainClient;
   readonly updater: UpdaterDomainClient;
   readonly runtime: RuntimeDomainClient;
+  readonly runtimeDiagnostics?: RuntimeDiagnosticsDomainClient;
   handshake(): Promise<RuntimeContractInfo>;
 };
 

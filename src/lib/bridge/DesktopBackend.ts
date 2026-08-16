@@ -1,5 +1,4 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { validateRuntimeContract } from "@/app/bootstrap/runtimeContract";
 import { normalizeGroupCategory } from "@/lib/groupCategories";
@@ -58,6 +57,9 @@ import {
   getPortableMigrationCapability as getPortableMigrationCapabilityBinding,
   getPortableMigrationOperation as getPortableMigrationOperationBinding,
   getRuntimeContractInfo,
+  restartApplication as restartApplicationBinding,
+  readRuntimeDiagnostics as readRuntimeDiagnosticsBinding,
+  exportRuntimeSupportBundle as exportRuntimeSupportBundleBinding,
   getAlertingIncident as getAlertingIncidentBinding,
   clearAlertingIncidents as clearAlertingIncidentsBinding,
   getRuntimeStatus as getRuntimeStatusBinding,
@@ -341,13 +343,18 @@ export class DesktopBackend implements BackendClient {
   readonly runtime = {
     getRuntimeStatus: () => getRuntimeStatusBinding(),
   };
+  readonly runtimeDiagnostics = {
+    readRuntimeDiagnostics: (input: import("./generated").RuntimeDiagnosticsQueryDto = {}) =>
+      readRuntimeDiagnosticsBinding(input),
+    exportRuntimeSupportBundle: () => exportRuntimeSupportBundleBinding(),
+  };
   readonly dataRecovery = {
     getDataStoreStartupState: () => getDataStoreStartupStateBinding().then(normalizeDataStoreStartupView),
     refreshDataStoreCandidates: () => refreshDataStoreCandidatesBinding().then(normalizeDataStoreStartupView),
     locateDataStoreCandidate: () => locateDataStoreCandidateBinding().then(normalizeDataStoreCandidate),
     activateDataStoreCandidate: (candidateId: string) => activateDataStoreCandidateBinding({ candidateId }),
     createNewDataStore: (confirmed: boolean) => createNewDataStoreBinding({ confirmed }),
-    restartApp: () => relaunch(),
+    restartApp: () => restartApplicationBinding(),
     openDataStoreBackupDir: () => openDataStoreBackupDirBinding(),
     exportDataStoreDiagnostic: () => exportDataStoreDiagnosticBinding(),
   };
@@ -426,7 +433,7 @@ export class DesktopBackend implements BackendClient {
     installPendingUpdateAndRelaunch: async () => {
       if (!this.pendingUpdate) throw new Error("没有已下载的应用更新");
       await this.pendingUpdate.install();
-      await relaunch();
+      await restartApplicationBinding();
     },
     closePendingUpdate: async () => {
       const update = this.pendingUpdate;
