@@ -63,12 +63,48 @@ impl ChallengeValidator {
     }
 
     pub fn validate(&self, candidate: &str) -> bool {
-        let candidate_hash = hash_normalized(candidate);
-        candidate_hash
-            .as_slice()
-            .ct_eq(self.expected_answer_hash.as_slice())
-            .into()
+        answer_markers(candidate).any(|answer| {
+            let candidate_hash = hash_normalized(answer);
+            candidate_hash
+                .as_slice()
+                .ct_eq(self.expected_answer_hash.as_slice())
+                .into()
+        })
     }
+}
+
+fn answer_markers(candidate: &str) -> impl Iterator<Item = &str> {
+    const PREFIX: &str = "RP_ANSWER=";
+
+    candidate.match_indices(PREFIX).filter_map(|(start, _)| {
+        let valid_left_boundary = candidate[..start]
+            .chars()
+            .next_back()
+            .map_or(true, |character| {
+                !character.is_ascii_alphanumeric() && character != '_'
+            });
+        if !valid_left_boundary {
+            return None;
+        }
+
+        let answer_start = start + PREFIX.len();
+        let tail = &candidate[answer_start..];
+        let remainder = tail.trim_start_matches(char::is_whitespace);
+        let whitespace_bytes = tail.len() - remainder.len();
+        let digit_count = remainder
+            .as_bytes()
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        let valid_right_boundary = remainder[digit_count..]
+            .chars()
+            .next()
+            .map_or(true, |character| {
+                !character.is_ascii_alphanumeric() && character != '_'
+            });
+        (digit_count > 0 && valid_right_boundary)
+            .then(|| &candidate[start..answer_start + whitespace_bytes + digit_count])
+    })
 }
 
 fn hash_normalized(value: &str) -> [u8; 32] {
@@ -106,5 +142,10 @@ mod tests {
             ChallengeValidator::from_expected_answer_for_tests("RP_ANSWER=42")
                 .validate("RP_ANSWER= 42")
         );
+        let validator = ChallengeValidator::from_expected_answer_for_tests("RP_ANSWER=42");
+        assert!(validator.validate("The result is `RP_ANSWER=42`."));
+        assert!(!validator.validate("The result is RP_ANSWER=41."));
+        assert!(!validator.validate("NOT_RP_ANSWER=42"));
+        assert!(!validator.validate("RP_ANSWER=42extra"));
     }
 }

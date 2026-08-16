@@ -8,6 +8,7 @@ use crate::{
 };
 
 const MINIMAL_PROBE_INSTRUCTIONS: &str = "Follow the input exactly.";
+const PROBE_MAX_OUTPUT_TOKENS: u32 = 64;
 const CODEX_PROBE_INSTRUCTIONS: &str = "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.";
 const CLAUDE_CODE_PROBE_INSTRUCTIONS: &str =
     "You are Claude Code, Anthropic's official CLI for Claude.";
@@ -103,7 +104,7 @@ pub fn build_probe_request_body(
             "model": model,
             "instructions": MINIMAL_PROBE_INSTRUCTIONS,
             "input": prompt,
-            "max_output_tokens": 16,
+            "max_output_tokens": PROBE_MAX_OUTPUT_TOKENS,
             "store": false,
             "stream": stream
         }),
@@ -121,7 +122,7 @@ pub fn build_probe_request_body(
         }),
         (ProtocolKind::AnthropicMessages, _) => json!({
             "model": model,
-            "max_tokens": 16,
+            "max_tokens": PROBE_MAX_OUTPUT_TOKENS,
             "stream": stream,
             "messages": [{"role": "user", "content": prompt}]
         }),
@@ -135,7 +136,7 @@ pub fn build_probe_request_body(
         }),
         (ProtocolKind::GeminiNative, _) => json!({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": 16}
+            "generationConfig": {"maxOutputTokens": PROBE_MAX_OUTPUT_TOKENS}
         }),
         (ProtocolKind::OpenAiChat | ProtocolKind::GenericOpenAi, _) => json!({
             "model": model,
@@ -143,13 +144,13 @@ pub fn build_probe_request_body(
                 {"role": "system", "content": MINIMAL_PROBE_INSTRUCTIONS},
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 16,
+            "max_tokens": PROBE_MAX_OUTPUT_TOKENS,
             "stream": stream
         }),
         (ProtocolKind::XaiGrok, _) => json!({
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 16,
+            "max_tokens": PROBE_MAX_OUTPUT_TOKENS,
             "stream": stream
         }),
     };
@@ -184,7 +185,7 @@ mod tests {
 
         assert_eq!(value["instructions"], MINIMAL_PROBE_INSTRUCTIONS);
         assert_eq!(value["input"], "Reply exactly RP_ANSWER=42");
-        assert_eq!(value["max_output_tokens"], 16);
+        assert_eq!(value["max_output_tokens"], 64);
         assert_eq!(value["store"], false);
         assert_eq!(value["stream"], true);
     }
@@ -236,7 +237,9 @@ mod tests {
             assert_eq!(value["messages"][0]["role"], "system");
             assert_eq!(value["messages"][0]["content"], MINIMAL_PROBE_INSTRUCTIONS);
             assert_eq!(value["messages"][1]["role"], "user");
-            assert_eq!(value["max_tokens"], 16);
+            assert_eq!(value["max_tokens"], 64);
+            assert!(value.get("thinking").is_none());
+            assert!(value.get("enable_thinking").is_none());
         }
     }
 

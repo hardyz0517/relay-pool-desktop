@@ -170,6 +170,28 @@ fn common_json_success_requires_extracted_output_and_validator_hit() {
 
     assert_eq!(parsed.outcome, ProbeOutcome::Available);
     assert_eq!(parsed.output_text.as_deref(), Some("RP_ANSWER=42"));
+
+    let explained = parse_json_probe_response(
+        ProtocolKind::OpenAiChat,
+        200,
+        Some("application/json"),
+        br#"{"choices":[{"message":{"content":"The result is `RP_ANSWER=42`."}}]}"#,
+        &validator(),
+        ResponseLimits::default(),
+    );
+    assert_eq!(explained.outcome, ProbeOutcome::Available);
+
+    let mismatch = parse_json_probe_response(
+        ProtocolKind::OpenAiChat,
+        200,
+        Some("application/json"),
+        br#"{"choices":[{"message":{"content":"RP_ANSWER=41"}}]}"#,
+        &validator(),
+        ResponseLimits::default(),
+    );
+    assert_eq!(mismatch.failure_kind, Some(FailureKind::ContentMismatch));
+    assert_eq!(mismatch.output_bytes, "RP_ANSWER=41".len());
+    assert!(mismatch.output_text.is_none());
 }
 
 #[test]
@@ -278,7 +300,7 @@ fn openai_chat_json_success_extracts_model_usage_and_rejects_fake_200() {
         ResponseLimits::default(),
     );
     assert_eq!(fake.outcome, ProbeOutcome::Unavailable);
-    assert_eq!(fake.failure_kind, Some(FailureKind::ContentMismatch));
+    assert_eq!(fake.failure_kind, Some(FailureKind::EmptyResponse));
 }
 
 #[test]
@@ -304,6 +326,7 @@ fn openai_chat_stream_requires_delta_content_and_done() {
         ResponseLimits::default(),
     );
     assert_eq!(no_content.outcome, ProbeOutcome::Unavailable);
+    assert_eq!(no_content.failure_kind, Some(FailureKind::EmptyResponse));
 
     let error = adapter.parse_response(
         200,

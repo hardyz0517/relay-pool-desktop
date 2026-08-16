@@ -59,10 +59,9 @@ pub struct ProbeExecutionOutput {
     pub failure_kind: Option<FailureKind>,
     pub retryable: bool,
     pub latency_ms: u64,
-    #[cfg(test)]
     pub http_status: Option<u16>,
-    #[cfg(test)]
     pub response_model: Option<String>,
+    pub output_bytes: usize,
     pub semantic_confidence: SemanticConfidence,
     /// A closed, safe diagnostic code; never raw upstream content.
     pub error_summary: Option<String>,
@@ -70,8 +69,6 @@ pub struct ProbeExecutionOutput {
     pub request_profile_hash: String,
     #[cfg(test)]
     pub response_bytes: usize,
-    #[cfg(test)]
-    pub output_bytes: usize,
     #[cfg(test)]
     pub debug_summary: ProbeExecutionDebugSummary,
 }
@@ -263,18 +260,15 @@ where
             failure_kind: parsed.failure_kind,
             retryable: retryable(parsed.failure_kind),
             latency_ms: transport_response.total_latency_ms,
-            #[cfg(test)]
             http_status: parsed.http_status,
-            #[cfg(test)]
             response_model: parsed.model,
+            output_bytes: parsed.output_bytes,
             semantic_confidence: SemanticConfidence::ProtocolValidated,
             error_summary,
             #[cfg(test)]
             request_profile_hash: request_profile_hash.clone(),
             #[cfg(test)]
             response_bytes: parsed.response_bytes,
-            #[cfg(test)]
-            output_bytes: parsed.output_bytes,
             #[cfg(test)]
             debug_summary: ProbeExecutionDebugSummary {
                 method: transport_response.evidence.method,
@@ -331,6 +325,8 @@ fn retryable(failure_kind: Option<FailureKind>) -> bool {
                 | FailureKind::ServerError
                 | FailureKind::Network
                 | FailureKind::Timeout
+                | FailureKind::EmptyResponse
+                | FailureKind::ContentMismatch
         )
     )
 }
@@ -364,18 +360,15 @@ fn failure_output(
         failure_kind: Some(failure_kind),
         retryable: retryable(Some(failure_kind)),
         latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        #[cfg(test)]
         http_status: _http_status,
-        #[cfg(test)]
         response_model: None,
+        output_bytes: 0,
         semantic_confidence: SemanticConfidence::ProtocolValidated,
         error_summary: _error_summary.clone(),
         #[cfg(test)]
         request_profile_hash: _request_profile_hash.clone(),
         #[cfg(test)]
         response_bytes: 0,
-        #[cfg(test)]
-        output_bytes: 0,
         #[cfg(test)]
         debug_summary: ProbeExecutionDebugSummary {
             method: "POST".to_string(),

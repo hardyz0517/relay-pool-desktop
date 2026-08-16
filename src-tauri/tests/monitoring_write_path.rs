@@ -185,6 +185,23 @@ async fn orchestrator_buffer_commits_v2_facts_without_legacy_run_writes_and_repl
         1
     );
     assert_eq!(count(&mut connection, "channel_monitor_attempts").await, 1);
+    let attempt = sqlx::query(
+        "SELECT http_status, response_model, content_extracted, validation_passed, output_bytes \
+         FROM channel_monitor_attempts WHERE execution_id = 'execution-1'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("attempt diagnostics");
+    assert_eq!(attempt.get::<Option<i64>, _>("http_status"), Some(200));
+    assert_eq!(
+        attempt
+            .get::<Option<String>, _>("response_model")
+            .as_deref(),
+        Some("upstream-model")
+    );
+    assert_eq!(attempt.get::<i64, _>("content_extracted"), 1);
+    assert_eq!(attempt.get::<i64, _>("validation_passed"), 1);
+    assert_eq!(attempt.get::<i64, _>("output_bytes"), 12);
     assert_eq!(
         count(&mut connection, "channel_monitor_target_results").await,
         1
@@ -384,6 +401,9 @@ fn buffered_execution(
         outcome,
         failure_kind,
         retryable: false,
+        http_status: Some(200),
+        response_model: Some("upstream-model".to_string()),
+        output_bytes: 12,
         semantic_confidence: SemanticConfidence::ProtocolValidated,
         error_summary: None,
     };

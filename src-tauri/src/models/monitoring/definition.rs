@@ -178,7 +178,7 @@ impl MonitorDefinition {
 
     pub fn theoretical_max_attempts(&self) -> u32 {
         let model_count = 1 + self.fallback_models.len() as u32;
-        model_count * u32::from(self.retry_policy.max_attempts_per_model)
+        model_count * (u32::from(self.retry_policy.max_attempts_per_model) + 1)
     }
 
     pub fn primary_attempt_fits_deadline(&self) -> bool {

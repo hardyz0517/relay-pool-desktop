@@ -125,10 +125,11 @@ pub(crate) fn validate_output_text(
     limits: ResponseLimits,
 ) -> ParsedProbeResponse {
     if output_text.is_empty() {
-        return ParsedProbeResponse::unavailable(
+        return semantic_failure(
             protocol_kind,
             http_status,
-            FailureKind::ContentMismatch,
+            FailureKind::EmptyResponse,
+            output_text,
             response_bytes,
         );
     }
@@ -141,14 +142,36 @@ pub(crate) fn validate_output_text(
         );
     }
     if !validator.validate(&output_text) {
-        return ParsedProbeResponse::unavailable(
+        return semantic_failure(
             protocol_kind,
             http_status,
             FailureKind::ContentMismatch,
+            output_text,
             response_bytes,
         );
     }
     ParsedProbeResponse::available(protocol_kind, http_status, output_text, response_bytes)
+}
+
+fn semantic_failure(
+    protocol_kind: ProtocolKind,
+    http_status: Option<u16>,
+    failure_kind: FailureKind,
+    output_text: String,
+    response_bytes: usize,
+) -> ParsedProbeResponse {
+    ParsedProbeResponse {
+        protocol_kind,
+        outcome: ProbeOutcome::Unavailable,
+        failure_kind: Some(failure_kind),
+        terminal: true,
+        http_status,
+        model: None,
+        usage: None,
+        output_bytes: output_text.len(),
+        output_text: None,
+        response_bytes,
+    }
 }
 
 #[cfg(test)]

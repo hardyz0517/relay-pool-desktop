@@ -148,6 +148,9 @@ impl ProbeTransport for ProbeExecutorTransport {
                 retryable: output.retryable,
                 retry_after_ms: None,
                 latency_ms: output.latency_ms,
+                http_status: output.http_status,
+                response_model: output.response_model,
+                output_bytes: output.output_bytes,
                 semantic_confidence: output.semantic_confidence,
                 error_summary: output.error_summary,
             }

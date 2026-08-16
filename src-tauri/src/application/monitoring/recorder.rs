@@ -34,6 +34,9 @@ pub(crate) struct RecordedAttempt {
     pub(crate) outcome: ProbeOutcome,
     pub(crate) failure_kind: Option<FailureKind>,
     pub(crate) retryable: bool,
+    pub(crate) http_status: Option<u16>,
+    pub(crate) response_model: Option<String>,
+    pub(crate) output_bytes: usize,
     pub(crate) semantic_confidence: SemanticConfidence,
     /// A closed, safe diagnostic code propagated from the probe implementation.
     pub(crate) error_summary: Option<String>,

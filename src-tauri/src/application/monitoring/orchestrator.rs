@@ -40,6 +40,9 @@ pub(crate) struct ProbeTransportResult {
     pub(crate) retryable: bool,
     pub(crate) retry_after_ms: Option<u64>,
     pub(crate) latency_ms: u64,
+    pub(crate) http_status: Option<u16>,
+    pub(crate) response_model: Option<String>,
+    pub(crate) output_bytes: usize,
     pub(crate) semantic_confidence: SemanticConfidence,
     /// A closed, implementation-defined diagnostic code. It must never hold
     /// upstream response text or credentials.
@@ -59,6 +62,9 @@ impl ProbeTransportResult {
             retryable,
             retry_after_ms,
             latency_ms,
+            http_status: None,
+            response_model: None,
+            output_bytes: 0,
             semantic_confidence: SemanticConfidence::ProtocolValidated,
             error_summary: Some(failure_kind.as_str().to_string()),
         }
@@ -166,7 +172,8 @@ where
                 }
             }
 
-            for attempt_number in 0..plan.retry_policy.max_attempts_per_model {
+            let mut semantic_verification_used = false;
+            for attempt_number in 0..plan.retry_policy.max_attempts_per_model.saturating_add(1) {
                 let remaining_before_attempt = deadline_at_ms - self.clock.now_ms();
                 if remaining_before_attempt < plan.schedule_policy.attempt_timeout_ms as i64 {
                     terminal_hard_failure = Some(FailureKind::Timeout);
@@ -212,6 +219,9 @@ where
                         transport_result.failure_kind
                     },
                     retryable: transport_result.retryable,
+                    http_status: transport_result.http_status,
+                    response_model: transport_result.response_model.clone(),
+                    output_bytes: transport_result.output_bytes,
                     semantic_confidence: transport_result.semantic_confidence,
                     error_summary: if slow_success {
                         Some(FailureKind::SlowLatency.as_str().to_string())
@@ -225,14 +235,21 @@ where
                 if transport_result.outcome.is_route_available() {
                     return target_result_from_attempts(execution_id, target, &attempts);
                 }
-                if !transport_result.retryable
-                    || !transport_result
+                let semantic_verification = transport_result.failure_kind.is_some_and(|failure| {
+                    matches!(
+                        failure,
+                        FailureKind::EmptyResponse | FailureKind::ContentMismatch
+                    )
+                }) && !semantic_verification_used;
+                let configured_retry = transport_result.retryable
+                    && transport_result
                         .failure_kind
                         .is_some_and(retry_allowed_for_failure)
-                    || attempt_number + 1 >= plan.retry_policy.max_attempts_per_model
-                {
+                    && attempt_number + 1 < plan.retry_policy.max_attempts_per_model;
+                if !semantic_verification && !configured_retry {
                     break;
                 }
+                semantic_verification_used |= semantic_verification;
 
                 let delay_ms = transport_result.retry_after_ms.unwrap_or_else(|| {
                     exponential_delay(

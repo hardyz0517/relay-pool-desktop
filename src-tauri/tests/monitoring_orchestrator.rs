@@ -205,9 +205,66 @@ fn available_transport_result(latency_ms: u64) -> ProbeTransportResult {
         retryable: false,
         retry_after_ms: None,
         latency_ms,
+        http_status: Some(200),
+        response_model: Some("upstream-model".to_string()),
+        output_bytes: 12,
         semantic_confidence: models::monitoring::SemanticConfidence::ProtocolValidated,
         error_summary: None,
     }
+}
+
+#[tokio::test]
+async fn semantic_mismatch_gets_one_verification_when_configured_attempts_is_one() {
+    let mut transport = FakeTransport::default();
+    transport.push_for_key(
+        "key-a",
+        ProbeTransportResult::failure(FailureKind::ContentMismatch, true, None, 10),
+    );
+    transport.push_for_key("key-a", available_transport_result(10));
+    let mut request = default_request(vec![target("key-a", Some(ProtocolKind::OpenAiResponses))]);
+    request.snapshot.retry_policy = RetryPolicy::new(1, 0, 0).expect("retry");
+    let mut orchestrator = harness(transport);
+
+    orchestrator
+        .request_execution(request)
+        .await
+        .expect("execution");
+    let (_, _, recorder, transport) = orchestrator.into_parts();
+
+    assert_eq!(transport.requests.len(), 2);
+    assert_eq!(recorder.attempts.len(), 2);
+    assert_eq!(recorder.targets[0].terminal_outcome, ProbeOutcome::Degraded);
+    assert_eq!(
+        recorder.targets[0].terminal_failure_kind,
+        Some(FailureKind::RecoveredAfterRetry)
+    );
+}
+
+#[tokio::test]
+async fn repeated_empty_response_is_verified_only_once() {
+    let mut transport = FakeTransport::default();
+    for _ in 0..3 {
+        transport.push_for_key(
+            "key-a",
+            ProbeTransportResult::failure(FailureKind::EmptyResponse, true, None, 10),
+        );
+    }
+    let mut request = default_request(vec![target("key-a", Some(ProtocolKind::OpenAiResponses))]);
+    request.snapshot.retry_policy = RetryPolicy::new(3, 0, 0).expect("retry");
+    let mut orchestrator = harness(transport);
+
+    orchestrator
+        .request_execution(request)
+        .await
+        .expect("execution");
+    let (_, _, recorder, transport) = orchestrator.into_parts();
+
+    assert_eq!(transport.requests.len(), 2);
+    assert_eq!(recorder.attempts.len(), 2);
+    assert_eq!(
+        recorder.targets[0].terminal_failure_kind,
+        Some(FailureKind::EmptyResponse)
+    );
 }
 
 #[test]

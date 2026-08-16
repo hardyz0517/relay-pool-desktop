@@ -231,19 +231,17 @@ fn attempt_row(
         started_at_ms: attempt.started_at_ms,
         finished_at_ms: Some(attempt.finished_at_ms),
         latency_ms: Some((attempt.finished_at_ms - attempt.started_at_ms).max(0)),
-        http_status: None,
+        http_status: attempt.http_status.map(i64::from),
         outcome: attempt.outcome.as_str().to_string(),
         failure_kind: attempt
             .failure_kind
             .map(|failure_kind| failure_kind.as_str().to_string()),
         retryable: attempt.retryable,
-        response_model: attempt
-            .outcome
-            .is_route_available()
-            .then(|| attempt.model.clone()),
-        content_extracted: attempt.outcome.is_route_available(),
+        response_model: attempt.response_model.clone(),
+        content_extracted: attempt.output_bytes > 0,
         validation_passed: attempt.outcome.is_route_available(),
-        output_bytes: 0,
+        output_bytes: i64::try_from(attempt.output_bytes)
+            .map_err(|_| PersistenceError::ConstraintViolation)?,
         error_summary: attempt.error_summary.clone().or_else(|| {
             attempt
                 .failure_kind

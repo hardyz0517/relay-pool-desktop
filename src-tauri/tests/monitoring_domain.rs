@@ -131,7 +131,7 @@ fn definition_deduplicates_fallbacks_and_proves_primary_attempt_can_fit_deadline
     let definition = MonitorDefinition::from_draft(input).expect("definition");
 
     assert_eq!(definition.fallback_models, ["fallback-a", "fallback-b"]);
-    assert_eq!(definition.theoretical_max_attempts(), 6);
+    assert_eq!(definition.theoretical_max_attempts(), 9);
     assert!(definition.primary_attempt_fits_deadline());
 }
 
