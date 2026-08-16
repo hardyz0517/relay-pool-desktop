@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "a755c496a72275e3acb8663651423f5dcd1c0ed8ec452eea07fe188182c3a8cf";
+    "6ead9b9b97fd61d2d74ab421177d79c0cafe503ef64f9ce2ff6aabbbdc67a140";
 
 #[cfg_attr(
     not(test),
@@ -80,6 +80,8 @@ macro_rules! ipc_command_registry {
             initialize_runtime_context => $crate::commands::runtime_context::initialize_runtime_context,
             read_runtime_diagnostics => $crate::commands::runtime_diagnostics::read_runtime_diagnostics,
             export_runtime_support_bundle => $crate::commands::runtime_diagnostics::export_runtime_support_bundle,
+            open_runtime_log_directory => $crate::commands::runtime_diagnostics::open_runtime_log_directory,
+            open_runtime_log_file => $crate::commands::runtime_diagnostics::open_runtime_log_file,
             record_frontend_boundary_failure => $crate::commands::runtime_diagnostics::record_frontend_boundary_failure,
             get_data_store_startup_state => $crate::commands::data_store_startup::get_data_store_startup_state,
             refresh_data_store_candidates => $crate::commands::data_store_startup::refresh_data_store_candidates,
@@ -335,6 +337,9 @@ fn command_contract(name: &str) -> CommandContract {
                 true,
             )
         },
+        "open_runtime_log_directory" | "open_runtime_log_file" => {
+            migrated_mutation("EmptyInputDto", "unit", "non_idempotent", true)
+        }
         "record_frontend_boundary_failure" => CommandContract {
             runtime_validation: "rust_dto_pre_application",
             ..migrated_mutation("EmptyInputDto", "unit", "idempotent", false)
@@ -1845,6 +1850,14 @@ export function readRuntimeDiagnostics(input: RuntimeDiagnosticsQueryDto = {}): 
 
 export function exportRuntimeSupportBundle(input: EmptyInputDto = {}): Promise<RuntimeSupportBundleResultDto | null> {
   return invokeCommand<RuntimeSupportBundleResultDto | null>("export_runtime_support_bundle", { input });
+}
+
+export function openRuntimeLogDirectory(input: EmptyInputDto = {}): Promise<void> {
+  return invokeNonIdempotent<void>("open_runtime_log_directory", { input });
+}
+
+export function openRuntimeLogFile(input: EmptyInputDto = {}): Promise<void> {
+  return invokeNonIdempotent<void>("open_runtime_log_file", { input });
 }
 
 export function getRuntimeContractInfo(input: EmptyInputDto = {}): Promise<RuntimeContractInfo> {

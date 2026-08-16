@@ -60,6 +60,8 @@ import {
   restartApplication as restartApplicationBinding,
   readRuntimeDiagnostics as readRuntimeDiagnosticsBinding,
   exportRuntimeSupportBundle as exportRuntimeSupportBundleBinding,
+  openRuntimeLogDirectory as openRuntimeLogDirectoryBinding,
+  openRuntimeLogFile as openRuntimeLogFileBinding,
   getAlertingIncident as getAlertingIncidentBinding,
   clearAlertingIncidents as clearAlertingIncidentsBinding,
   getRuntimeStatus as getRuntimeStatusBinding,
@@ -347,6 +349,8 @@ export class DesktopBackend implements BackendClient {
     readRuntimeDiagnostics: (input: import("./generated").RuntimeDiagnosticsQueryDto = {}) =>
       readRuntimeDiagnosticsBinding(input),
     exportRuntimeSupportBundle: () => exportRuntimeSupportBundleBinding(),
+    openRuntimeLogDirectory: () => openRuntimeLogDirectoryBinding(),
+    openRuntimeLogFile: () => openRuntimeLogFileBinding(),
   };
   readonly dataRecovery = {
     getDataStoreStartupState: () => getDataStoreStartupStateBinding().then(normalizeDataStoreStartupView),

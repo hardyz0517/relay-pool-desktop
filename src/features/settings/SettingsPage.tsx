@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
+import { Copy, ExternalLink, FileText, FolderOpen, Github, Play, RefreshCw, RotateCcw, Square, Wand2 } from "lucide-react";
 import relayPoolLogo from "@/assets/relay-pool-logo.png";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, SectionCard, SelectControl, StatusBadge, SwitchControl, useToast } from "@/components/ui";
@@ -13,6 +13,7 @@ import {
   stopLocalProxy,
 } from "@/lib/api/proxy";
 import { openExternalUrl } from "@/lib/api/external";
+import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import { chooseDataDir, getLocalAccessKey, resetDataDir, updateLocalAccessKey, updateSettings } from "@/lib/api/settings";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { proxyStatusQueryOptions, settingsQueryOptions } from "@/lib/query/resourceQueries";
@@ -164,6 +165,23 @@ export function SettingsPage() {
         ? withManualProxyDefault({ ...form, collectorProxyMode })
         : { ...form, collectorProxyMode };
     await commitSettingsForm(nextForm, "默认网络出口已更新");
+  }
+
+  async function openRuntimeLog(target: "file" | "directory") {
+    try {
+      const diagnostics = getActiveBackendClient().runtimeDiagnostics;
+      if (!diagnostics) {
+        throw new Error("运行日志仅支持桌面端");
+      }
+      if (target === "file") {
+        await diagnostics.openRuntimeLogFile();
+      } else {
+        await diagnostics.openRuntimeLogDirectory();
+      }
+    } catch (requestError) {
+      const message = readError(requestError);
+      toast.error(target === "file" ? "打开运行日志失败" : "打开运行日志文件夹失败", message);
+    }
   }
 
   async function copyLocalAccessKey(value?: string) {
@@ -477,6 +495,22 @@ export function SettingsPage() {
               />
             }
             label="开发者模式"
+          />
+          <SettingRow
+            control={
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => void openRuntimeLog("file")}>
+                  <FileText className="h-4 w-4" />
+                  打开日志
+                </Button>
+                <Button type="button" variant="outline" onClick={() => void openRuntimeLog("directory")}>
+                  <FolderOpen className="h-4 w-4" />
+                  打开日志文件夹
+                </Button>
+              </div>
+            }
+            description="打开当前运行日志或其所在文件夹；不受开发者模式开关影响。"
+            label="运行日志"
           />
         </SectionCard>
 

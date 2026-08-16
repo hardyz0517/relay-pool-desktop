@@ -224,6 +224,8 @@ export type RuntimeDomainClient = {
 export type RuntimeDiagnosticsDomainClient = {
   readRuntimeDiagnostics(input?: RuntimeDiagnosticsQueryDto): Promise<RuntimeDiagnosticsPageDto>;
   exportRuntimeSupportBundle(): Promise<RuntimeSupportBundleResultDto | null>;
+  openRuntimeLogDirectory(): Promise<void>;
+  openRuntimeLogFile(): Promise<void>;
 };
 
 export type DataRecoveryDomainClient = {

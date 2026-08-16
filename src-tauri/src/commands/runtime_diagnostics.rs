@@ -1,6 +1,7 @@
 use serde_json::Value;
-#[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::SystemTime;
 use tauri::State;
 
 use crate::{
@@ -96,6 +97,102 @@ pub async fn export_runtime_support_bundle(
         },
     )
     .await
+}
+
+#[tauri::command]
+pub async fn open_runtime_log_directory(
+    runtime_log: State<'_, std::sync::Arc<RuntimeLogService>>,
+    registry: State<'_, RuntimeContextRegistry>,
+    input: Value,
+    runtime_context: Option<Value>,
+) -> Result<(), CommandError> {
+    crate::observability::correlation::in_command_scope_with_runtime_context(
+        "open_runtime_log_directory",
+        &registry,
+        runtime_context,
+        async {
+            crate::ipc::dto::EmptyInputDto::parse(input)?;
+            std::fs::create_dir_all(runtime_log.root())
+                .map_err(|_| CommandError::internal(None))?;
+            open_path_with_system(runtime_log.root()).map_err(|_| CommandError::internal(None))
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn open_runtime_log_file(
+    runtime_log: State<'_, std::sync::Arc<RuntimeLogService>>,
+    registry: State<'_, RuntimeContextRegistry>,
+    input: Value,
+    runtime_context: Option<Value>,
+) -> Result<(), CommandError> {
+    crate::observability::correlation::in_command_scope_with_runtime_context(
+        "open_runtime_log_file",
+        &registry,
+        runtime_context,
+        async {
+            crate::ipc::dto::EmptyInputDto::parse(input)?;
+            let path = latest_runtime_log_file(runtime_log.root()).ok_or_else(|| {
+                CommandError::try_new(
+                    CommandErrorCode::NotFound,
+                    "No runtime log file is available yet.",
+                    false,
+                    None,
+                    None,
+                )
+                .expect("valid bounded command error")
+            })?;
+            open_path_with_system(&path).map_err(|_| CommandError::internal(None))
+        },
+    )
+    .await
+}
+
+fn latest_runtime_log_file(root: &Path) -> Option<PathBuf> {
+    let mut latest: Option<(SystemTime, PathBuf)> = None;
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        if latest
+            .as_ref()
+            .is_none_or(|(latest_time, _)| modified > *latest_time)
+        {
+            latest = Some((modified, path));
+        }
+    }
+    latest.map(|(_, path)| path)
+}
+
+fn open_path_with_system(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let result = Command::new("explorer.exe").arg(path).status();
+    #[cfg(target_os = "macos")]
+    let result = Command::new("open").arg(path).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = Command::new("xdg-open").arg(path).status();
+
+    result
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!(
+                    "launcher exited with status {status}"
+                )))
+            }
+        })
+        .map_err(|error| format!("failed to open {}: {error}", path.display()))
 }
 
 async fn ensure_developer_mode(
