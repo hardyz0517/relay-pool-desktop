@@ -29,13 +29,24 @@ fn command_error(error: ProviderDraftCommandError) -> error::CommandError {
 pub async fn create_or_resume_provider_draft(
     facade: State<'_, ProviderDraftCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProviderDraftDto, error::CommandError> {
-    correlation::in_command_scope("create_or_resume_provider_draft", async {
-        facade
-            .create_or_resume(CreateProviderDraftInputDto::parse(input)?)
-            .await
-            .map_err(command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "create_or_resume_provider_draft",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            facade
+                .create_or_resume(CreateProviderDraftInputDto::parse(input)?)
+                .await
+                .map_err(command_error)
+        },
+    )
     .await
 }
 
@@ -43,11 +54,22 @@ pub async fn create_or_resume_provider_draft(
 pub async fn get_provider_draft(
     facade: State<'_, ProviderDraftCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProviderDraftDto, error::CommandError> {
-    correlation::in_command_scope("get_provider_draft", async {
-        let input = ProviderDraftIdInputDto::parse(input)?;
-        facade.get(input.draft_id).await.map_err(command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_provider_draft",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ProviderDraftIdInputDto::parse(input)?;
+            facade.get(input.draft_id).await.map_err(command_error)
+        },
+    )
     .await
 }
 
@@ -55,13 +77,24 @@ pub async fn get_provider_draft(
 pub async fn patch_provider_draft(
     facade: State<'_, ProviderDraftCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProviderDraftDto, error::CommandError> {
-    correlation::in_command_scope("patch_provider_draft", async {
-        facade
-            .patch(PatchProviderDraftInputDto::parse(input)?)
-            .await
-            .map_err(command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "patch_provider_draft",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            facade
+                .patch(PatchProviderDraftInputDto::parse(input)?)
+                .await
+                .map_err(command_error)
+        },
+    )
     .await
 }
 
@@ -69,11 +102,22 @@ pub async fn patch_provider_draft(
 pub async fn discard_provider_draft(
     facade: State<'_, ProviderDraftCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("discard_provider_draft", async {
-        let input = ProviderDraftIdInputDto::parse(input)?;
-        facade.discard(input.draft_id).await.map_err(command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "discard_provider_draft",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ProviderDraftIdInputDto::parse(input)?;
+            facade.discard(input.draft_id).await.map_err(command_error)
+        },
+    )
     .await
 }
 
@@ -81,14 +125,25 @@ pub async fn discard_provider_draft(
 pub async fn collect_provider_draft_preview(
     facade: State<'_, ProviderDraftCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProviderDraftPreviewDto, error::CommandError> {
-    correlation::in_command_scope("collect_provider_draft_preview", async {
-        let (draft_id, task) = CollectProviderDraftPreviewInputDto::parse(input)?;
-        facade
-            .collect_preview(draft_id, task)
-            .await
-            .map_err(command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "collect_provider_draft_preview",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let (draft_id, task) = CollectProviderDraftPreviewInputDto::parse(input)?;
+            facade
+                .collect_preview(draft_id, task)
+                .await
+                .map_err(command_error)
+        },
+    )
     .await
 }
 
@@ -96,14 +151,25 @@ pub async fn collect_provider_draft_preview(
 pub async fn scan_provider_draft_remote_keys(
     facade: State<'_, ProviderDraftCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<RemoteKeyScanResult, error::CommandError> {
-    correlation::in_command_scope("scan_provider_draft_remote_keys", async {
-        let input = ProviderDraftIdInputDto::parse(input)?;
-        facade
-            .scan_remote_keys(input.draft_id)
-            .await
-            .map_err(command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "scan_provider_draft_remote_keys",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ProviderDraftIdInputDto::parse(input)?;
+            facade
+                .scan_remote_keys(input.draft_id)
+                .await
+                .map_err(command_error)
+        },
+    )
     .await
 }
 
@@ -111,13 +177,24 @@ pub async fn scan_provider_draft_remote_keys(
 pub async fn commit_provider_draft(
     facade: State<'_, ProviderDraftCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<StationDto, error::CommandError> {
-    correlation::in_command_scope("commit_provider_draft", async {
-        facade
-            .commit(CommitProviderDraftInputDto::parse(input)?)
-            .await
-            .map(StationDto::from)
-            .map_err(command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "commit_provider_draft",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            facade
+                .commit(CommitProviderDraftInputDto::parse(input)?)
+                .await
+                .map(StationDto::from)
+                .map_err(command_error)
+        },
+    )
     .await
 }

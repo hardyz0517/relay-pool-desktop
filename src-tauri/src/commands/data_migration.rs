@@ -22,11 +22,22 @@ use crate::{
 pub async fn get_portable_migration_capability(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableMigrationCapabilityDto, error::CommandError> {
-    correlation::in_command_scope("get_portable_migration_capability", async {
-        EmptyInputDto::parse(input)?;
-        Ok(facade.capability())
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_portable_migration_capability",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            Ok(facade.capability())
+        },
+    )
     .await
 }
 
@@ -34,13 +45,27 @@ pub async fn get_portable_migration_capability(
 pub async fn choose_portable_export_path(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Option<PortablePathTokenDto>, error::CommandError> {
-    correlation::in_command_scope("choose_portable_export_path", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .choose_export_path()
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "choose_portable_export_path",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::export_failed(),
+                facade
+                    .choose_export_path()
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -48,13 +73,27 @@ pub async fn choose_portable_export_path(
 pub async fn start_portable_export(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableMigrationOperationStartedDto, error::CommandError> {
-    correlation::in_command_scope("start_portable_export", async {
-        let input = StartPortableExportInputDto::parse(input)?;
-        facade
-            .start_portable_export(input)
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "start_portable_export",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = StartPortableExportInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::export_failed(),
+                facade
+                    .start_portable_export(input)
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -62,13 +101,27 @@ pub async fn start_portable_export(
 pub async fn get_portable_export_result(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableExportResultDto, error::CommandError> {
-    correlation::in_command_scope("get_portable_export_result", async {
-        let input = PortableMigrationResultInputDto::parse(input)?;
-        facade
-            .get_portable_export_result(input.resource_id)
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_portable_export_result",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = PortableMigrationResultInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::export_failed(),
+                facade
+                    .get_portable_export_result(input.resource_id)
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -76,13 +129,27 @@ pub async fn get_portable_export_result(
 pub async fn choose_portable_import_file(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Option<PortablePathTokenDto>, error::CommandError> {
-    correlation::in_command_scope("choose_portable_import_file", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .choose_import_file()
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "choose_portable_import_file",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::inspect_failed(),
+                facade
+                    .choose_import_file()
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -90,13 +157,27 @@ pub async fn choose_portable_import_file(
 pub async fn start_portable_import_inspection(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableMigrationOperationStartedDto, error::CommandError> {
-    correlation::in_command_scope("start_portable_import_inspection", async {
-        let input = InspectPortableImportInputDto::parse(input)?;
-        facade
-            .start_portable_import_inspection(input)
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "start_portable_import_inspection",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = InspectPortableImportInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::inspect_failed(),
+                facade
+                    .start_portable_import_inspection(input)
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -104,13 +185,27 @@ pub async fn start_portable_import_inspection(
 pub async fn get_portable_import_inspection(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableImportInspectionDto, error::CommandError> {
-    correlation::in_command_scope("get_portable_import_inspection", async {
-        let input = PortableMigrationResultInputDto::parse(input)?;
-        facade
-            .get_portable_import_inspection(input.resource_id)
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_portable_import_inspection",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = PortableMigrationResultInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::inspect_failed(),
+                facade
+                    .get_portable_import_inspection(input.resource_id)
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -118,13 +213,27 @@ pub async fn get_portable_import_inspection(
 pub async fn start_portable_import_prepare(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableMigrationOperationStartedDto, error::CommandError> {
-    correlation::in_command_scope("start_portable_import_prepare", async {
-        let input = PreparePortableImportInputDto::parse(input)?;
-        facade
-            .start_portable_import_prepare(input)
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "start_portable_import_prepare",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = PreparePortableImportInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::prepare_failed(),
+                facade
+                    .start_portable_import_prepare(input)
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -132,13 +241,27 @@ pub async fn start_portable_import_prepare(
 pub async fn get_portable_import_prepare_result(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableImportPrepareResultDto, error::CommandError> {
-    correlation::in_command_scope("get_portable_import_prepare_result", async {
-        let input = PortableMigrationResultInputDto::parse(input)?;
-        facade
-            .get_portable_import_prepare_result(input.resource_id)
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_portable_import_prepare_result",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = PortableMigrationResultInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::prepare_failed(),
+                facade
+                    .get_portable_import_prepare_result(input.resource_id)
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -146,13 +269,27 @@ pub async fn get_portable_import_prepare_result(
 pub async fn get_portable_migration_operation(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableMigrationOperationDto, error::CommandError> {
-    correlation::in_command_scope("get_portable_migration_operation", async {
-        let input = PortableMigrationOperationInputDto::parse(input)?;
-        facade
-            .operation(input.operation_id())
-            .map_err(public_portable_migration_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_portable_migration_operation",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = PortableMigrationOperationInputDto::parse(input)?;
+            crate::observability::runtime::bootstrap::record_failure(
+                crate::services::portable_migration::runtime_events::prepare_failed(),
+                facade
+                    .operation(input.operation_id())
+                    .map_err(public_portable_migration_error),
+            )
+        },
+    )
     .await
 }
 
@@ -160,11 +297,22 @@ pub async fn get_portable_migration_operation(
 pub async fn get_portable_import_recovery_state(
     facade: State<'_, PortableMigrationCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<PortableImportRecoveryStateDto, error::CommandError> {
-    correlation::in_command_scope("get_portable_import_recovery_state", async {
-        EmptyInputDto::parse(input)?;
-        Ok(facade.recovery_state())
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_portable_import_recovery_state",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            Ok(facade.recovery_state())
+        },
+    )
     .await
 }
 

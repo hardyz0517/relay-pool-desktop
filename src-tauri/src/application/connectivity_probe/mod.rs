@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
@@ -8,12 +8,37 @@ use crate::{
 
 pub(crate) const DEFAULT_STATION_KEY_CONNECTIVITY_MODEL: &str = "gpt-4.1-mini";
 pub(crate) const STATION_KEY_CONNECTIVITY_CANDIDATE_LIMIT: usize = 2;
-pub(crate) const STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT: usize = 64 * 1024;
+/// Keep the probe inexpensive while leaving enough room for compatible
+/// providers that emit a short preamble or reasoning before the answer.
+pub(crate) const STATION_KEY_CONNECTIVITY_RESPONSES_MAX_OUTPUT_TOKENS: u32 = 128;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum StationKeyConnectivityProbeKind {
     Responses,
     ChatCompletions,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StationKeyConnectivityClientProfile {
+    StandardApi,
+    CodexCliCompat,
+}
+
+impl Default for StationKeyConnectivityClientProfile {
+    fn default() -> Self {
+        Self::StandardApi
+    }
+}
+
+impl StationKeyConnectivityClientProfile {
+    pub(crate) fn for_protocol(self, kind: StationKeyConnectivityProbeKind) -> Self {
+        match kind {
+            StationKeyConnectivityProbeKind::Responses => self,
+            StationKeyConnectivityProbeKind::ChatCompletions => Self::StandardApi,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +60,8 @@ pub(crate) struct StationKeyConnectivityProbeResult {
     pub(crate) status_code: u16,
     pub(crate) duration_ms: i64,
     pub(crate) message: String,
+    pub(crate) validated_protocol: StationKeyConnectivityProbeKind,
+    pub(crate) client_profile: StationKeyConnectivityClientProfile,
     pub(crate) response_mode: StationKeyConnectivityResponseMode,
     pub(crate) stream_fallback_reason: Option<String>,
 }
@@ -46,6 +73,8 @@ impl StationKeyConnectivityProbeResult {
             status_code,
             duration_ms,
             message,
+            validated_protocol: StationKeyConnectivityProbeKind::Responses,
+            client_profile: StationKeyConnectivityClientProfile::StandardApi,
             response_mode: StationKeyConnectivityResponseMode::Stream,
             stream_fallback_reason: None,
         }
@@ -57,6 +86,8 @@ impl StationKeyConnectivityProbeResult {
             status_code,
             duration_ms,
             message,
+            validated_protocol: StationKeyConnectivityProbeKind::Responses,
+            client_profile: StationKeyConnectivityClientProfile::StandardApi,
             response_mode: StationKeyConnectivityResponseMode::Stream,
             stream_fallback_reason: None,
         }
@@ -67,6 +98,22 @@ impl StationKeyConnectivityProbeResult {
         response_mode: StationKeyConnectivityResponseMode,
     ) -> Self {
         self.response_mode = response_mode;
+        self
+    }
+
+    pub(crate) fn with_validated_protocol(
+        mut self,
+        validated_protocol: StationKeyConnectivityProbeKind,
+    ) -> Self {
+        self.validated_protocol = validated_protocol;
+        self
+    }
+
+    pub(crate) fn with_client_profile(
+        mut self,
+        client_profile: StationKeyConnectivityClientProfile,
+    ) -> Self {
+        self.client_profile = client_profile;
         self
     }
 
@@ -91,15 +138,33 @@ pub(crate) fn build_station_key_connectivity_probe_body(
     model: &str,
     kind: StationKeyConnectivityProbeKind,
     mode: StationKeyConnectivityRequestMode,
+    client_profile: StationKeyConnectivityClientProfile,
 ) -> Value {
     match kind {
-        StationKeyConnectivityProbeKind::Responses => json!({
-            "model": model,
-            "input": "hi",
-            "store": false,
-            "stream": matches!(mode, StationKeyConnectivityRequestMode::Stream),
-            "max_output_tokens": 32,
-        }),
+        StationKeyConnectivityProbeKind::Responses => match client_profile {
+            StationKeyConnectivityClientProfile::StandardApi => json!({
+                "model": model,
+                "input": "hi",
+                "store": false,
+                "stream": matches!(mode, StationKeyConnectivityRequestMode::Stream),
+                "max_output_tokens": STATION_KEY_CONNECTIVITY_RESPONSES_MAX_OUTPUT_TOKENS,
+            }),
+            StationKeyConnectivityClientProfile::CodexCliCompat => json!({
+                "model": model,
+                "instructions": "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}]
+                }],
+                "tools": [],
+                "tool_choice": "auto",
+                "parallel_tool_calls": false,
+                "reasoning": {"effort": "low", "summary": "auto"},
+                "store": false,
+                "stream": matches!(mode, StationKeyConnectivityRequestMode::Stream),
+            }),
+        },
         StationKeyConnectivityProbeKind::ChatCompletions => json!({
             "model": model,
             "messages": [{
@@ -123,125 +188,6 @@ pub(crate) fn station_key_connectivity_protocol_label(
 
 pub(crate) fn redact_connectivity_error(message: &str) -> String {
     redact_error_message(&truncate_connectivity_reply(message.trim()))
-}
-
-pub(crate) struct StationKeyConnectivitySseDecoder {
-    kind: StationKeyConnectivityProbeKind,
-    pending: Vec<u8>,
-    message: String,
-    terminal_seen: bool,
-}
-
-impl StationKeyConnectivitySseDecoder {
-    pub(crate) fn new(kind: StationKeyConnectivityProbeKind) -> Self {
-        Self {
-            kind,
-            pending: Vec::new(),
-            message: String::new(),
-            terminal_seen: false,
-        }
-    }
-
-    pub(crate) fn push(&mut self, chunk: &[u8]) -> Result<Vec<String>, String> {
-        self.pending.extend_from_slice(chunk);
-        if self.pending.len() > STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT {
-            return Err("SSE pending buffer too large".to_string());
-        }
-
-        let mut deltas = Vec::new();
-        while let Some((boundary, separator_len)) = find_sse_event_boundary(&self.pending) {
-            let event_bytes = self.pending[..boundary].to_vec();
-            self.pending.drain(..boundary + separator_len);
-            let event_text = std::str::from_utf8(&event_bytes)
-                .map_err(|_| "SSE event contained invalid UTF-8".to_string())?;
-            deltas.extend(self.consume_event(event_text)?);
-        }
-        Ok(deltas)
-    }
-
-    pub(crate) fn finish(self) -> Result<String, String> {
-        if !self.pending.is_empty() {
-            return Err("SSE stream ended with incomplete event".to_string());
-        }
-        if !self.terminal_seen {
-            return Err("SSE stream ended without terminal signal".to_string());
-        }
-        Ok(redact_error_message(&truncate_connectivity_reply(
-            &self.message,
-        )))
-    }
-
-    fn consume_event(&mut self, event_text: &str) -> Result<Vec<String>, String> {
-        let mut data_lines = Vec::new();
-        for raw_line in event_text.lines() {
-            let line = raw_line.trim_end_matches('\r');
-            if line.is_empty() || line.starts_with(':') {
-                continue;
-            }
-            if let Some(data) = line.strip_prefix("data:") {
-                data_lines.push(data.strip_prefix(' ').unwrap_or(data));
-            }
-        }
-        if data_lines.is_empty() {
-            return Ok(Vec::new());
-        }
-        let data = data_lines.join("\n");
-        if data.trim() == "[DONE]" {
-            self.terminal_seen = true;
-            return Ok(Vec::new());
-        }
-
-        let value = serde_json::from_str::<Value>(&data)
-            .map_err(|error| format!("Malformed SSE JSON: {error}"))?;
-        let delta = match self.kind {
-            StationKeyConnectivityProbeKind::Responses => self.consume_responses_event(&value),
-            StationKeyConnectivityProbeKind::ChatCompletions => self.consume_chat_event(&value),
-        };
-        Ok(delta.into_iter().collect())
-    }
-
-    fn consume_responses_event(&mut self, value: &Value) -> Option<String> {
-        match value.get("type").and_then(Value::as_str) {
-            Some("response.output_text.delta") => {
-                let delta = value.get("delta").and_then(Value::as_str)?;
-                self.message.push_str(delta);
-                Some(delta.to_string())
-            }
-            Some("response.completed") => {
-                self.terminal_seen = true;
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn consume_chat_event(&mut self, value: &Value) -> Option<String> {
-        let delta = value
-            .get("choices")
-            .and_then(Value::as_array)
-            .and_then(|choices| choices.first())
-            .and_then(|choice| choice.get("delta"))
-            .and_then(|delta| delta.get("content"))
-            .and_then(Value::as_str)?;
-        self.message.push_str(delta);
-        Some(delta.to_string())
-    }
-}
-
-fn find_sse_event_boundary(bytes: &[u8]) -> Option<(usize, usize)> {
-    for index in 0..bytes.len() {
-        if bytes[index] == b'\n' && bytes.get(index + 1) == Some(&b'\n') {
-            return Some((index, 2));
-        }
-        if bytes[index] == b'\r'
-            && bytes.get(index + 1) == Some(&b'\n')
-            && bytes.get(index + 2) == Some(&b'\r')
-            && bytes.get(index + 3) == Some(&b'\n')
-        {
-            return Some((index, 4));
-        }
-    }
-    None
 }
 
 pub(crate) fn should_try_station_key_connectivity_chat_fallback(
@@ -426,7 +372,8 @@ pub(crate) fn run_station_key_connectivity_single_model_probe<F>(
 where
     F: FnMut(StationKeyConnectivityProbeKind) -> StationKeyConnectivityProbeResult,
 {
-    let response_result = send_probe(StationKeyConnectivityProbeKind::Responses);
+    let response_result = send_probe(StationKeyConnectivityProbeKind::Responses)
+        .with_validated_protocol(StationKeyConnectivityProbeKind::Responses);
     if response_result.ok {
         return response_result;
     }
@@ -439,7 +386,8 @@ where
         return response_result;
     }
 
-    let chat_result = send_probe(StationKeyConnectivityProbeKind::ChatCompletions);
+    let chat_result = send_probe(StationKeyConnectivityProbeKind::ChatCompletions)
+        .with_validated_protocol(StationKeyConnectivityProbeKind::ChatCompletions);
     let duration_ms = response_result
         .duration_ms
         .saturating_add(chat_result.duration_ms);
@@ -457,6 +405,8 @@ where
             response_result.message, chat_result.message
         ),
     )
+    .with_validated_protocol(StationKeyConnectivityProbeKind::ChatCompletions)
+    .with_client_profile(StationKeyConnectivityClientProfile::StandardApi)
 }
 
 pub(crate) fn model_ids_from_models_response(value: &Value) -> Vec<String> {

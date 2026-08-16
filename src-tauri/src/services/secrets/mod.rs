@@ -23,6 +23,20 @@ pub struct SecretManager {
 }
 
 impl SecretManager {
+    #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+    pub(crate) fn for_runtime_logging_smoke() -> Self {
+        // The packaged smoke must exercise startup/data-store wiring without
+        // touching the user's Windows Credential Manager. This key exists
+        // only in the process-local debug smoke binary and is never persisted.
+        Self {
+            resolver: DeviceKeyResolver::active(
+                DeviceKeyId::new("runtime-logging-windows-smoke"),
+                SecretKeyMaterial::from_bytes([0x42; 32]),
+                CURRENT_SECRET_ENCRYPTION_VERSION,
+            ),
+        }
+    }
+
     pub async fn load_existing(blocking: BlockingExecutor) -> Result<Self, DeviceKeyError> {
         let key = blocking
             .submit("device_key_load_existing", None, None, None, |_| {

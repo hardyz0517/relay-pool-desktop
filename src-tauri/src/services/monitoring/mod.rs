@@ -8,4 +8,5 @@ pub mod orchestrator_transport;
 pub mod profiles;
 pub mod request_shape;
 pub mod runner;
+pub(crate) mod runtime_events;
 pub mod transport;

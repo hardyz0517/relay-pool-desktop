@@ -137,6 +137,10 @@ impl OperationRegistry {
             return Err(OperationRegistryError::InvalidSpec);
         }
         let correlation_id = correlation::current_or_new();
+        // Tokio task-local values are not inherited by spawned tasks. Capture
+        // the validated command interaction at admission for the operation
+        // scope below so its runtime events remain linked to that gesture.
+        let interaction_id = correlation::current_interaction();
         let token = CancellationToken::new();
         let commit_barrier = Arc::new(AtomicBool::new(false));
         {
@@ -193,12 +197,17 @@ impl OperationRegistry {
             registry: self.clone(),
         };
         let join = tokio::spawn(async move {
-            correlation::in_scope("operation.run", correlation_id, async move {
-                let terminal = tokio::time::timeout(spec.deadline, (request.body)(context))
-                    .await
-                    .unwrap_or(OperationTerminal::TimedOut);
-                registry.finish(id, terminal);
-            })
+            correlation::in_scope_with_interaction(
+                "operation.run",
+                correlation_id,
+                interaction_id,
+                async move {
+                    let terminal = tokio::time::timeout(spec.deadline, (request.body)(context))
+                        .await
+                        .unwrap_or(OperationTerminal::TimedOut);
+                    registry.finish(id, terminal);
+                },
+            )
             .await;
         });
         let mut inner = self.inner.lock().expect("operation registry mutex");
@@ -692,3 +701,54 @@ impl std::fmt::Display for OperationRegistryError {
 }
 
 impl std::error::Error for OperationRegistryError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::correlation;
+    use crate::observability::runtime_context::RuntimeContextRegistry;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn command_interaction_is_explicitly_propagated_to_spawned_operation() {
+        let context_registry = RuntimeContextRegistry::new();
+        let operations = OperationRegistry::new(OperationRegistryConfig::architecture_budget());
+        let observed = correlation::in_command_scope_with_runtime_context(
+            "fixture_command",
+            &context_registry,
+            Some(serde_json::json!({
+                "contextSessionId": context_registry.context_session_id(),
+                "interactionId": "int_0123456789abcdef0123456789abcdef"
+            })),
+            async {
+                let parent_correlation = correlation::current_id_string();
+                let (sender, receiver) = oneshot::channel();
+                let operation_id = operations
+                    .start(OperationStartRequest::new(
+                        "fixture_operation",
+                        OperationOwner::new("fixture"),
+                        move |_context| {
+                            Box::pin(async move {
+                                let _ = sender.send((
+                                    correlation::current_id_string(),
+                                    correlation::current_interaction_id_string(),
+                                ));
+                                OperationTerminal::Completed
+                            })
+                        },
+                    ))
+                    .expect("operation admitted");
+                let child_context = receiver.await.expect("operation scope observed");
+                (parent_correlation, child_context, operation_id)
+            },
+        )
+        .await;
+
+        assert_eq!(
+            observed.1 .1.as_deref(),
+            Some("int_0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(observed.1 .0, observed.0);
+        assert!(observed.2.as_u64() > 0);
+    }
+}

@@ -11,6 +11,32 @@ publish = false
 name = "relay_pool_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["desktop-runtime", "tray"]
+desktop-runtime = [
+    "tauri/wry",
+    "tauri/compression",
+    "tauri/common-controls-v6",
+    "tauri/dynamic-acl",
+    "tauri/x11",
+    "tauri/dbus",
+]
+tray = ["desktop-runtime", "tauri/tray-icon"]
+# Test executables are not bundled with the production Windows manifest. Do
+# not enable `common-controls-v6` here: that feature makes the test binary
+# import `TaskDialogIndirect`, which the legacy comctl32 loader rejects before
+# the test process can start. The production desktop feature keeps v6 because
+# the packaged application receives the matching activation context.
+tauri-test = ["tauri/test", "tauri/wry"]
+# Enables loopback tests that exercise the complete runtime-log service. These
+# tests are excluded from legacy integration harnesses that include individual
+# owner modules without the application observability graph.
+runtime-logging-artifact = []
+# Debug-only packaged smoke seam. The corresponding path/exit hooks are also
+# gated by `debug_assertions`, so enabling this feature in a release build
+# cannot redirect application data or force an automatic exit.
+runtime-logging-windows-smoke = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -41,7 +67,7 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v7", "rng"] }
 sha2 = "0.10"
 subtle = "2"
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", default-features = false }
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-single-instance = "2"
 tauri-plugin-process = "2"

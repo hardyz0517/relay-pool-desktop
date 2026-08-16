@@ -22,6 +22,7 @@ pub mod responses_chat_stream;
 pub mod routing_repository;
 pub(crate) mod routing_runtime;
 pub mod runtime;
+pub(crate) mod runtime_events;
 pub mod server;
 pub mod startup;
 pub mod startup_auto_start;

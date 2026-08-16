@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::background_tasks::task::{TaskId, TaskRunId};
-use crate::observability::redaction::redact_text_preview_with_limit;
+use crate::services::secrets::mask::redact_text_preview;
 
 const MAX_RUNTIME_FAILURE_CODE_BYTES: usize = 96;
 
@@ -70,7 +70,7 @@ impl From<TaskStatusSnapshot> for RuntimeTaskSummary {
             last_failure_code: snapshot
                 .last_failure_code
                 .or_else(|| failure_code_from_state(&snapshot.state))
-                .map(|code| redact_text_preview_with_limit(&code, MAX_RUNTIME_FAILURE_CODE_BYTES)),
+                .map(|code| redact_runtime_failure_code(&code)),
             consecutive_failures: snapshot.consecutive_failures,
             next_retry_at_ms: snapshot.next_retry_at_ms.or_else(|| {
                 matches!(snapshot.state, TaskState::BackingOff { .. })
@@ -125,6 +125,15 @@ fn failure_code_from_state(state: &TaskState) -> Option<String> {
     match state {
         TaskState::Failed { code } => Some(code.clone()),
         _ => None,
+    }
+}
+
+fn redact_runtime_failure_code(code: &str) -> String {
+    let redacted = redact_text_preview(code, MAX_RUNTIME_FAILURE_CODE_BYTES);
+    if redacted.contains("[REDACTED]") {
+        "[REDACTED]".to_string()
+    } else {
+        redacted
     }
 }
 

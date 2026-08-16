@@ -35,6 +35,8 @@ pub(crate) struct RecordedAttempt {
     pub(crate) failure_kind: Option<FailureKind>,
     pub(crate) retryable: bool,
     pub(crate) semantic_confidence: SemanticConfidence,
+    /// A closed, safe diagnostic code propagated from the probe implementation.
+    pub(crate) error_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

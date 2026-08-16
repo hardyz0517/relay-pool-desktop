@@ -236,13 +236,22 @@ impl ProxyRuntimeState {
         config: ProxyStartConfig,
         lifecycle_store: Arc<dyn RequestLifecycleStore>,
     ) -> Result<ProxyStatus, String> {
+        crate::observability::runtime::bootstrap::emit(
+            crate::services::proxy::runtime_events::lifecycle_start_started(),
+        );
         let _operation = self.lifecycle_operation.lock().await;
         {
             let inner = self.v2.lock().await;
             if let Some(server) = inner.server.as_ref() {
                 if server.local_addr.port() == config.port || config.port == 0 {
+                    crate::observability::runtime::bootstrap::emit(
+                        crate::services::proxy::runtime_events::lifecycle_already_running(),
+                    );
                     return Ok(self.v2_status_from_inner(&inner, server.local_addr.port()));
                 }
+                crate::observability::runtime::bootstrap::emit(
+                    crate::services::proxy::runtime_events::lifecycle_start_failed(),
+                );
                 return Err(format!(
                     "local proxy is already running on port {}; stop it before starting port {}",
                     server.local_addr.port(),
@@ -282,6 +291,9 @@ impl ProxyRuntimeState {
             routing_runtime.diagnostic_memory_budget(),
         )
         .map_err(|failure| {
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::proxy::runtime_events::lifecycle_start_failed(),
+            );
             let message = failure.public_message.clone();
             let failed = failed_status(config.port, message.clone());
             self.publish_status(failed);
@@ -290,6 +302,9 @@ impl ProxyRuntimeState {
         let (lifecycle_writer, lifecycle_worker) =
             LifecycleWriter::start(lifecycle_writer_capacity(&config.limits), lifecycle_store)
                 .map_err(|error| {
+                    crate::observability::runtime::bootstrap::emit(
+                        crate::services::proxy::runtime_events::lifecycle_start_failed(),
+                    );
                     let message = format!("start lifecycle writer failed: {error:?}");
                     let failed = failed_status(config.port, message.clone());
                     self.publish_status(failed);
@@ -337,9 +352,15 @@ impl ProxyRuntimeState {
                 inner.lifecycle_worker = Some(lifecycle_worker);
                 inner.routing_runtime = Some(routing_runtime);
                 self.publish_status(started.clone());
+                crate::observability::runtime::bootstrap::emit(
+                    crate::services::proxy::runtime_events::lifecycle_start_succeeded(),
+                );
                 Ok(started)
             }
             Err(error) => {
+                crate::observability::runtime::bootstrap::emit(
+                    crate::services::proxy::runtime_events::lifecycle_start_failed(),
+                );
                 let error = match lifecycle_worker.join().await {
                     Ok(()) => error,
                     Err(_) => format!(
@@ -361,6 +382,9 @@ impl ProxyRuntimeState {
             let Some(server) = inner.server.take() else {
                 let stopped = default_status(default_port);
                 self.publish_status(stopped.clone());
+                crate::observability::runtime::bootstrap::emit(
+                    crate::services::proxy::runtime_events::lifecycle_stop_succeeded(),
+                );
                 return Ok(stopped);
             };
             self.publish_status(ProxyStatus {
@@ -388,11 +412,17 @@ impl ProxyRuntimeState {
         let stopped = combined_shutdown_status(port, stop_result, worker_result);
         self.publish_status(stopped.clone());
         if stopped.lifecycle == ProxyLifecycle::Failed {
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::proxy::runtime_events::lifecycle_stop_failed(),
+            );
             Err(stopped
                 .last_error
                 .clone()
                 .unwrap_or_else(|| "proxy stop failed".to_string()))
         } else {
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::proxy::runtime_events::lifecycle_stop_succeeded(),
+            );
             Ok(stopped)
         }
     }
@@ -405,6 +435,9 @@ impl ProxyRuntimeState {
             let Some(server) = inner.server.take() else {
                 let stopped = default_status(0);
                 self.publish_status(stopped.clone());
+                crate::observability::runtime::bootstrap::emit(
+                    crate::services::proxy::runtime_events::lifecycle_drain_succeeded(),
+                );
                 return Ok(stopped);
             };
             self.publish_status(ProxyStatus {
@@ -421,6 +454,16 @@ impl ProxyRuntimeState {
         };
         let port = server.local_addr.port();
         let stop_result = server.stop(timeout).await;
+        if stop_result
+            .as_ref()
+            .err()
+            .map(|error| error == "proxy server shutdown timed out")
+            .unwrap_or(false)
+        {
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::proxy::runtime_events::lifecycle_drain_timeout(),
+            );
+        }
         let worker = self.v2.lock().await.lifecycle_worker.take();
         let worker_result = match worker {
             Some(worker) => worker
@@ -432,11 +475,17 @@ impl ProxyRuntimeState {
         let stopped = combined_shutdown_status(port, stop_result, worker_result);
         self.publish_status(stopped.clone());
         if stopped.lifecycle == ProxyLifecycle::Failed {
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::proxy::runtime_events::lifecycle_drain_failed(),
+            );
             Err(stopped
                 .last_error
                 .clone()
                 .unwrap_or_else(|| "proxy drain failed".to_string()))
         } else {
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::proxy::runtime_events::lifecycle_drain_succeeded(),
+            );
             Ok(stopped)
         }
     }
@@ -1144,6 +1193,48 @@ mod tests {
             ProxyLifecycle::Running
         );
         runtime.stop(port).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn v2_bind_failure_publishes_final_jsonl_runtime_event() {
+        let occupied = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("occupy port");
+        let port = occupied.local_addr().expect("occupied address").port();
+        let fixture = V2ProxyTestFixture::new().await;
+        let runtime = ProxyRuntimeState::for_tests();
+        let root = tempfile::tempdir().expect("runtime log root");
+        let service = Arc::new(crate::observability::runtime::RuntimeLogService::open(
+            root.path(),
+        ));
+
+        crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                runtime
+                    .start(fixture.config(port))
+                    .await
+                    .expect_err("occupied port must fail startup");
+            },
+        )
+        .await;
+        service.flush();
+
+        let page = crate::observability::runtime::RuntimeLogReader::new(root.path()).read_page(
+            0,
+            50,
+            1024 * 1024,
+        );
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        let mut observed = page.lines.iter().filter_map(|line| {
+            serde_json::from_slice::<crate::observability::runtime::RuntimeEvent>(line.as_bytes())
+                .ok()
+        });
+        assert!(
+            observed.any(|event| event.event_code.as_str() == "proxy.lifecycle.start_failed"),
+            "proxy bind failure must reach final JSONL artifact"
+        );
+        drop(occupied);
     }
 
     #[tokio::test]
@@ -1910,6 +2001,75 @@ data: [DONE]
         assert!(
             elapsed < Duration::from_secs(2),
             "configured precommit timeout was ignored: {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_loopback_upstream_disconnect_publishes_final_jsonl_event() {
+        let upstream = LoopbackUpstream::script(vec![ScriptedResponse::Disconnect]);
+        let fixture = V2ProxyTestFixture::new().await;
+        fixture.seed_candidate(upstream.base_url.as_str()).await;
+        let runtime = ProxyRuntimeState::for_tests();
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(crate::observability::runtime::RuntimeLogService::open(
+            root.path(),
+        ));
+        let response = crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                let started = runtime.start(fixture.config(0)).await.expect("start v2");
+                let response = reqwest::Client::new()
+                    .post(format!("http://127.0.0.1:{}/v1/responses", started.port))
+                    .bearer_auth("relay-local-secret")
+                    .json(&serde_json::json!({
+                        "model": "gpt-test",
+                        "input": "loopback-disconnect",
+                    }))
+                    .send()
+                    .await
+                    .expect("send disconnect request");
+                let status = response.status();
+                let body = response.bytes().await.expect("disconnect response body");
+                runtime.stop(started.port).await.expect("stop v2");
+                (status, body)
+            },
+        )
+        .await;
+
+        assert_eq!(response.0, StatusCode::BAD_GATEWAY);
+        upstream.wait_for_requests(1);
+        service.flush();
+
+        let page = crate::observability::runtime::RuntimeLogReader::new(root.path()).read_page(
+            0,
+            100,
+            1024 * 1024,
+        );
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        let events = page
+            .lines
+            .iter()
+            .filter_map(|line| {
+                serde_json::from_slice::<crate::observability::runtime::RuntimeEvent>(
+                    line.as_bytes(),
+                )
+                .ok()
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_code.as_str() == "proxy.upstream.failed"),
+            "upstream disconnect must reach the final JSONL artifact"
+        );
+        assert!(
+            page.lines.iter().all(|line| {
+                !line
+                    .as_bytes()
+                    .windows(b"loopback-disconnect".len())
+                    .any(|window| window == b"loopback-disconnect")
+            }),
+            "runtime JSONL must not retain request payloads"
         );
     }
 

@@ -10,7 +10,7 @@ use crate::{
             anthropic_messages::AnthropicMessagesAdapter, contract::ProtocolAdapter,
             gemini_native::GeminiNativeAdapter, generic_openai::GenericOpenAiAdapter,
             openai_chat::OpenAiChatAdapter, openai_responses::OpenAiResponsesAdapter,
-            xai_grok::XaiGrokAdapter,
+            openai_stream::IncrementalOpenAiStream, xai_grok::XaiGrokAdapter,
         },
         challenge::ChallengeValidator,
         profiles::{registry::BuiltinProfileRegistry, HeaderValue},
@@ -64,6 +64,8 @@ pub struct ProbeExecutionOutput {
     #[cfg(test)]
     pub response_model: Option<String>,
     pub semantic_confidence: SemanticConfidence,
+    /// A closed, safe diagnostic code; never raw upstream content.
+    pub error_summary: Option<String>,
     #[cfg(test)]
     pub request_profile_hash: String,
     #[cfg(test)]
@@ -179,10 +181,31 @@ where
             }),
             request_deadline: input.deadline_at,
         };
+        let limits = Default::default();
+        let mut incremental_stream = input
+            .stream
+            .then(|| IncrementalOpenAiStream::for_protocol(input.protocol_kind, limits))
+            .flatten();
         let transport_response = if input.stream {
-            self.transport
-                .execute_streaming(request, cancellation_token)
-                .await
+            if let Some(consumer) = incremental_stream.as_mut() {
+                self.transport
+                    .execute_streaming(request, cancellation_token, |chunk| consumer.consume(chunk))
+                    .await
+            } else {
+                // The non-OpenAI adapters retain their existing stream contract
+                // until they are migrated to a matching shared reducer.
+                let mut body = Vec::new();
+                let response = self
+                    .transport
+                    .execute_streaming(request, cancellation_token, |chunk| {
+                        body.extend_from_slice(chunk);
+                    })
+                    .await;
+                response.map(|mut response| {
+                    response.body = body;
+                    response
+                })
+            }
         } else {
             self.transport
                 .execute_buffered(request, cancellation_token)
@@ -217,13 +240,24 @@ where
             }
         }
 
-        let parsed = adapter.parse_response(
-            transport_response.http_status,
-            transport_response.content_type.as_deref(),
-            &transport_response.body,
-            &input.validator,
-            Default::default(),
-        );
+        let (parsed, error_summary) = match incremental_stream {
+            Some(consumer) => consumer.finish(
+                transport_response.http_status,
+                transport_response.content_type.as_deref(),
+                &input.validator,
+            ),
+            None => {
+                let parsed = adapter.parse_response(
+                    transport_response.http_status,
+                    transport_response.content_type.as_deref(),
+                    &transport_response.body,
+                    &input.validator,
+                    limits,
+                );
+                let error_summary = parsed.failure_kind.map(|kind| kind.as_str().to_string());
+                (parsed, error_summary)
+            }
+        };
         ProbeExecutionOutput {
             outcome: parsed.outcome,
             failure_kind: parsed.failure_kind,
@@ -234,6 +268,7 @@ where
             #[cfg(test)]
             response_model: parsed.model,
             semantic_confidence: SemanticConfidence::ProtocolValidated,
+            error_summary,
             #[cfg(test)]
             request_profile_hash: request_profile_hash.clone(),
             #[cfg(test)]
@@ -334,6 +369,7 @@ fn failure_output(
         #[cfg(test)]
         response_model: None,
         semantic_confidence: SemanticConfidence::ProtocolValidated,
+        error_summary: _error_summary.clone(),
         #[cfg(test)]
         request_profile_hash: _request_profile_hash.clone(),
         #[cfg(test)]

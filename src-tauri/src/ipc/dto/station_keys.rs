@@ -5,7 +5,10 @@ use serde_json::Value;
 
 use crate::application::{
     command_facades::{StationKeyConnectivityResult, StationKeyModelDiscoveryResult},
-    connectivity_probe::StationKeyConnectivityResponseMode,
+    connectivity_probe::{
+        StationKeyConnectivityClientProfile, StationKeyConnectivityProbeKind,
+        StationKeyConnectivityResponseMode,
+    },
 };
 use crate::models::{
     credentials::{
@@ -65,6 +68,8 @@ pub struct StationKeyConnectivityResultDto {
     duration_ms: i64,
     model: String,
     message: String,
+    validated_protocol: StationKeyConnectivityProbeKind,
+    client_profile: StationKeyConnectivityClientProfile,
     response_mode: StationKeyConnectivityResponseMode,
     stream_fallback_reason: Option<String>,
 }
@@ -78,6 +83,8 @@ impl From<StationKeyConnectivityResult> for StationKeyConnectivityResultDto {
             duration_ms: result.duration_ms,
             model: result.model,
             message: result.message,
+            validated_protocol: result.validated_protocol,
+            client_profile: result.client_profile,
             response_mode: result.response_mode,
             stream_fallback_reason: result.stream_fallback_reason,
         }
@@ -239,6 +246,8 @@ impl ReorderStationKeysInputDto {
 pub struct StationKeyConnectivityInputDto {
     pub station_key_id: String,
     pub model: String,
+    #[serde(default)]
+    pub client_profile: StationKeyConnectivityClientProfile,
 }
 
 impl StationKeyConnectivityInputDto {
@@ -249,6 +258,7 @@ impl StationKeyConnectivityInputDto {
         Ok(Self {
             station_key_id: input.station_key_id,
             model: input.model.trim().to_string(),
+            client_profile: input.client_profile,
         })
     }
 }

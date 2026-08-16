@@ -113,8 +113,33 @@ pub fn redact_text(text: &str) -> String {
         }
     }
 
+    let mut redact_following = 0usize;
     text.split_whitespace()
         .map(|segment| {
+            if redact_following > 0 {
+                redact_following -= 1;
+                return "[REDACTED]".to_string();
+            }
+
+            if is_auth_scheme_marker(segment) {
+                // Authorization values are commonly represented as
+                // `authorization bearer <token>` or `authorization:
+                // Bearer <token>`. Redact the bounded value chain even when
+                // the token is short enough to evade secret-shape heuristics.
+                redact_following = if segment
+                    .trim_end_matches([':', '='])
+                    .eq_ignore_ascii_case("authorization")
+                    || segment
+                        .trim_end_matches([':', '='])
+                        .eq_ignore_ascii_case("proxy-authorization")
+                {
+                    2
+                } else {
+                    1
+                };
+                return "[REDACTED]".to_string();
+            }
+
             if looks_like_secret(segment) || segment_has_secret_assignment(segment) {
                 "[REDACTED]".to_string()
             } else {
@@ -178,6 +203,13 @@ fn looks_like_secret(value: &str) -> bool {
             || lower.contains("password="))
 }
 
+fn is_auth_scheme_marker(value: &str) -> bool {
+    let normalized = value.trim_end_matches([':', '=']);
+    normalized.eq_ignore_ascii_case("authorization")
+        || normalized.eq_ignore_ascii_case("proxy-authorization")
+        || normalized.eq_ignore_ascii_case("bearer")
+}
+
 fn segment_has_secret_assignment(value: &str) -> bool {
     let lower = value.to_lowercase();
     SECRET_HINTS
@@ -203,6 +235,14 @@ mod tests {
 
         assert!(redacted.contains("[REDACTED]"));
         assert!(!redacted.contains("sk-p8-secret-plaintext-canary"));
+    }
+
+    #[test]
+    fn redact_text_removes_short_bearer_token_after_authorization_marker() {
+        let redacted = redact_text("authorization bearer sk-secret");
+
+        assert_eq!(redacted, "[REDACTED] [REDACTED] [REDACTED]");
+        assert!(!redacted.contains("sk-secret"));
     }
 
     #[test]

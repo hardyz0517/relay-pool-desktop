@@ -12,14 +12,25 @@ use crate::{
 pub async fn list_request_logs(
     facade: State<'_, RequestLogsCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Vec<RequestLogDto>, error::CommandError> {
-    correlation::in_command_scope("list_request_logs", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .list_request_logs(PageLimit::new(500).expect("bounded limit"))
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "list_request_logs",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .list_request_logs(PageLimit::new(500).expect("bounded limit"))
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -27,13 +38,24 @@ pub async fn list_request_logs(
 pub async fn clear_request_logs(
     facade: State<'_, RequestLogsCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("clear_request_logs", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .clear_request_logs()
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "clear_request_logs",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .clear_request_logs()
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }

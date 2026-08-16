@@ -58,8 +58,15 @@ pub mod monitoring_auth;
 pub mod openai_chat;
 #[path = "../src/services/monitoring/adapters/openai_responses.rs"]
 pub mod openai_responses;
+#[path = "../src/services/monitoring/adapters/openai_stream.rs"]
+pub mod openai_stream;
+#[path = "../src/services/protocol_streaming/sse.rs"]
+pub mod protocol_sse;
+pub(crate) use protocol_sse::{SseDecoder, SseEvent, SseLimits, StreamError};
 #[path = "../src/services/monitoring/profiles/mod.rs"]
 pub mod profiles;
+#[path = "../src/services/protocol_streaming/openai.rs"]
+pub mod protocol_openai;
 #[path = "../src/services/monitoring/request_shape.rs"]
 pub mod request_shape;
 #[path = "../src/services/monitoring/adapters/sse.rs"]
@@ -93,6 +100,9 @@ mod services {
             pub mod openai_responses {
                 pub use crate::openai_responses::*;
             }
+            pub(crate) mod openai_stream {
+                pub(crate) use crate::openai_stream::*;
+            }
             pub mod sse {
                 pub use crate::sse::*;
             }
@@ -115,6 +125,15 @@ mod services {
         pub mod transport {
             pub use crate::transport::*;
         }
+    }
+    pub(crate) mod protocol_streaming {
+        pub(crate) use crate::{
+            protocol_openai::{
+                parse_openai_responses_json, OpenAiChatReducer, OpenAiResponsesReducer,
+                OpenAiStreamSummary, OpenAiUsage,
+            },
+            SseDecoder, SseEvent, SseLimits, StreamError,
+        };
     }
 }
 

@@ -1,0 +1,6 @@
+export type InteractionId = `int_${string}`;
+export type IpcContextSessionId = `ctx_${string}`;
+export type IpcRuntimeContextV1 = {
+  contextSessionId: IpcContextSessionId;
+  interactionId: InteractionId | null;
+};

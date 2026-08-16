@@ -33,6 +33,7 @@ use crate::{
 pub(crate) enum RemoteKeyOperationError {
     Application(ApplicationError),
     Unsupported,
+    UnsupportedWithDetail(String),
     ExternalUnavailable,
     ResultUnknown,
     Conflict,
@@ -746,9 +747,11 @@ fn sub2api_remote_key_context<'a>(
 
 fn remote_key_error_from_driver(error: DriverFailure) -> RemoteKeyOperationError {
     match error.kind {
-        DriverFailureKind::Unsupported | DriverFailureKind::InvalidRequest => {
-            RemoteKeyOperationError::Unsupported
-        }
+        DriverFailureKind::Unsupported | DriverFailureKind::InvalidRequest => error
+            .sanitized_detail
+            .filter(|detail| !detail.trim().is_empty())
+            .map(RemoteKeyOperationError::UnsupportedWithDetail)
+            .unwrap_or(RemoteKeyOperationError::Unsupported),
         DriverFailureKind::ResultUnknown => RemoteKeyOperationError::ResultUnknown,
         DriverFailureKind::AuthRejected
         | DriverFailureKind::RateLimited
@@ -1369,6 +1372,19 @@ fn secret_fingerprint_match_confidence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_driver_failure_preserves_its_sanitized_detail() {
+        let error = remote_key_error_from_driver(DriverFailure::unsupported(
+            "Sub2API remote-key request endpoint revision mismatch",
+        ));
+
+        assert!(matches!(
+            error,
+            RemoteKeyOperationError::UnsupportedWithDetail(detail)
+                if detail == "Sub2API remote-key request endpoint revision mismatch"
+        ));
+    }
 
     #[test]
     fn fingerprints_are_stable_without_exposing_secrets() {

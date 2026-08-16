@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "c699f70c58a959fabd790673a693439c36feddee5b36d0688639bf1d652161da",
+  "contract_hash": "a755c496a72275e3acb8663651423f5dcd1c0ed8ec452eea07fe188182c3a8cf",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -478,6 +478,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "export_runtime_support_bundle",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "123c6515f59e8561c33fff77f797a48258008d74dbc195a7b9690b8ff60edfd9",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
+      "runtime_validation": "developer_mode_gate"
+    },
+    {
       "name": "finish_capture_session",
       "transport": "ordinary",
       "input_schema_hash": "3ead33aea82e96d8b76ab8eb1799af7b25011f1cb11530cef58c0788a4016f1e",
@@ -850,6 +861,17 @@
       "transport_retry": false,
       "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "initialize_runtime_context",
+      "transport": "ordinary",
+      "input_schema_hash": "a2bf3cc185eb8a7f85616649c335fd5e107b266522d1a969e24434d628d73a37",
+      "output_schema_hash": "b14aa750dedbf34436ba19a68375769b27243e851e6f25fb0966501388e728e2",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "legacy_unclassified",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "legacy_unmigrated"
     },
     {
       "name": "inspect_latest_update_manifest",
@@ -1380,6 +1402,17 @@
       "runtime_validation": "rust_dto_pre_application"
     },
     {
+      "name": "read_runtime_diagnostics",
+      "transport": "ordinary",
+      "input_schema_hash": "8081be45d7b83b96bce95cac62d3a30dcdd31aa1d81c8bf9fa95aa12bf8ac7e5",
+      "output_schema_hash": "a5c49e7de6d3099fd5a107bedcba0410bffbe29ce33ae66a0a6851c48fc5e49a",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "read",
+      "transport_retry": false,
+      "result_unknown": false,
+      "runtime_validation": "developer_mode_gate"
+    },
+    {
       "name": "record_alerting_observation",
       "transport": "ordinary",
       "input_schema_hash": "28837c633f5763297e2db8bd9cfa8d15bdf2e175fc1e09a42112ec9260f254b7",
@@ -1399,6 +1432,17 @@
       "mutation_kind": "non_idempotent",
       "transport_retry": false,
       "result_unknown": true,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "record_frontend_boundary_failure",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "idempotent",
+      "transport_retry": false,
+      "result_unknown": false,
       "runtime_validation": "rust_dto_pre_application"
     },
     {
@@ -1498,6 +1542,17 @@
       "mutation_kind": "read",
       "transport_retry": false,
       "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "restart_application",
+      "transport": "ordinary",
+      "input_schema_hash": "68c49b9dd927ea7f3dd04398c060e522569680437953d44bd7d64dcafd2ac2a5",
+      "output_schema_hash": "385cfdbc00ec32031699460779c15099b2bba3cad0e440fffb08e10df0acb9e1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
     },
     {

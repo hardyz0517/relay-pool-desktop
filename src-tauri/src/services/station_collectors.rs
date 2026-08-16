@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
+pub(crate) mod runtime_events;
+
 use futures_util::{future::BoxFuture, stream, StreamExt};
 
 use crate::{
@@ -20,7 +22,6 @@ use crate::{
             output::CollectorTask,
             CollectorSourcePort, V2CollectorSourceAdapter,
         },
-        secrets::mask::redact_text_preview,
         station_collection_coordinator::{
             StationCollectionAdmissionError, StationCollectionCoordinator,
         },
@@ -368,6 +369,7 @@ async fn runner_loop_v2(
     loop {
         tokio::select! {
             _ = context.cancellation_token.cancelled() => {
+                crate::observability::runtime::bootstrap::emit(runtime_events::cancelled());
                 return Err(TaskFailure::cancelled());
             }
             _ = interval.tick() => {
@@ -393,19 +395,15 @@ async fn run_due_station_collections_once_v2(
                         Ok(ScheduledStationCollectionOutcome::Completed)
                         | Ok(ScheduledStationCollectionOutcome::SkippedAlreadyRunning)
                         | Ok(ScheduledStationCollectionOutcome::Cancelled) => {}
-                        Err(error) => tracing::warn!(
-                            error = %redact_text_preview(&error, 512),
-                            "scheduled station collection failed"
-                        ),
+                        Err(_error) => {
+                            crate::observability::runtime::bootstrap::emit(runtime_events::failed())
+                        }
                     }
                 })
                 .await;
         }
-        Err(error) => {
-            tracing::warn!(
-                error = %redact_text_preview(&error, 512),
-                "scheduled station collection could not query due stations"
-            );
+        Err(_error) => {
+            crate::observability::runtime::bootstrap::emit(runtime_events::query_failed())
         }
     }
 }
@@ -561,6 +559,8 @@ mod tests {
 
     use super::*;
     use crate::background_tasks::{TaskRunId, TaskState};
+    use crate::observability::runtime::bootstrap;
+    use crate::observability::runtime::{RuntimeEvent, RuntimeLogReader, RuntimeLogService};
     use crate::services::station_collection_coordinator::StationCollectionCoordinator;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -825,6 +825,30 @@ mod tests {
             port.completed_station_ids(),
             vec!["station-a", "station-b", "station-c"]
         );
+    }
+
+    #[tokio::test]
+    async fn provider_fault_from_real_collector_runner_publishes_final_jsonl_event() {
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(RuntimeLogService::open(root.path()));
+        let port = FailureIsolatingRunnerPort::new(vec![scheduled_collection(
+            "station-a",
+            &[CollectorTask::Balance],
+        )]);
+        let coordinator = coordinator(1);
+
+        bootstrap::with_test_service(Arc::clone(&service), || async {
+            run_due_station_collections_once_v2(&port, &coordinator, &test_run_context()).await;
+        })
+        .await;
+        service.flush();
+
+        let page = RuntimeLogReader::new(root.path()).read_page(0, 200, 1024 * 1024);
+        assert!(page.lines.iter().any(|line| {
+            serde_json::from_slice::<RuntimeEvent>(line.as_bytes())
+                .ok()
+                .is_some_and(|event| event.event_code.as_str() == "collector.station.failed")
+        }));
     }
 
     #[tokio::test]

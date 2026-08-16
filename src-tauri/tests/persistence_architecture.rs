@@ -166,7 +166,6 @@ fn station_collection_coordinator_dependency_edges_are_registered() {
             "services::station_collection_coordinator",
         ),
         ("lib", "services::station_collection_coordinator"),
-        ("services::station_collectors", "services::secrets::mask"),
         (
             "services::station_collectors",
             "services::station_collection_coordinator",

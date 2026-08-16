@@ -83,6 +83,20 @@ impl AsyncOutboundClient {
         request: OutboundRequest,
         cancellation_token: CancellationToken,
     ) -> Result<OutboundResponse, OutboundFailure> {
+        let result = self.execute_inner(request, cancellation_token).await;
+        if result.is_err() {
+            crate::observability::runtime::bootstrap::emit_rate_limited(
+                crate::outbound::runtime_events::request_failed(),
+            );
+        }
+        result
+    }
+
+    async fn execute_inner(
+        &self,
+        request: OutboundRequest,
+        cancellation_token: CancellationToken,
+    ) -> Result<OutboundResponse, OutboundFailure> {
         let url = validate_url(&request.url)?;
         let redacted_start_url = redact_url(&url);
         let mut attempts = 0_usize;
@@ -147,6 +161,26 @@ impl AsyncOutboundClient {
     }
 
     pub async fn execute_stream<H>(
+        &self,
+        request: OutboundRequest,
+        cancellation_token: CancellationToken,
+        on_chunk: H,
+    ) -> Result<OutboundStreamResponse, OutboundFailure>
+    where
+        H: FnMut(&[u8]) -> Result<(), OutboundFailure> + Send,
+    {
+        let result = self
+            .execute_stream_inner(request, cancellation_token, on_chunk)
+            .await;
+        if result.is_err() {
+            crate::observability::runtime::bootstrap::emit_rate_limited(
+                crate::outbound::runtime_events::request_failed(),
+            );
+        }
+        result
+    }
+
+    async fn execute_stream_inner<H>(
         &self,
         request: OutboundRequest,
         cancellation_token: CancellationToken,
@@ -651,6 +685,64 @@ fn validate_url(input: &str) -> Result<Url, OutboundFailure> {
         return Err(OutboundFailure::new(OutboundFailureKind::InvalidUrl));
     }
     Ok(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use tokio_util::sync::CancellationToken;
+
+    use super::{
+        AsyncOutboundClient, AsyncOutboundClientConfig, OutboundFailureKind, OutboundRequest,
+    };
+    use crate::observability::runtime::{RuntimeEvent, RuntimeLogReader, RuntimeLogService};
+
+    #[tokio::test]
+    async fn failed_buffered_request_publishes_redacted_runtime_artifact() {
+        crate::observability::runtime::bootstrap::reset_rate_limit_for_tests();
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(RuntimeLogService::open(root.path()));
+        let error = crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget())
+                    .execute(
+                        OutboundRequest::get(
+                            "not a URL with sk-secret",
+                            crate::outbound::RequestBudget::from_now(Duration::from_secs(1)),
+                        ),
+                        CancellationToken::new(),
+                    )
+                    .await
+                    .expect_err("invalid URL must fail")
+            },
+        )
+        .await;
+        assert!(matches!(error.kind, OutboundFailureKind::InvalidUrl));
+        service.flush();
+
+        let page = RuntimeLogReader::new(root.path()).read_page(0, 50, 1024 * 1024);
+        let event = page
+            .lines
+            .iter()
+            .filter_map(|line| serde_json::from_slice::<RuntimeEvent>(line.as_bytes()).ok())
+            .find(|event| event.event_code.as_str() == "outbound.request.failed")
+            .expect("outbound failure event");
+        assert_eq!(
+            event.component,
+            crate::observability::runtime::Component::Outbound
+        );
+        let raw = page
+            .lines
+            .iter()
+            .map(|line| line.as_bytes())
+            .collect::<Vec<_>>();
+        assert!(!raw
+            .iter()
+            .any(|line| line.windows(9).any(|window| window == b"sk-secret")));
+    }
 }
 
 fn redirect_url(current_url: &Url, headers: &HeaderMap) -> Result<Option<Url>, OutboundFailure> {

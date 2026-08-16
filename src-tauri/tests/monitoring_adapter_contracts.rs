@@ -23,6 +23,13 @@ pub mod http_mapping;
 pub mod openai_chat;
 #[path = "../src/services/monitoring/adapters/openai_responses.rs"]
 pub mod openai_responses;
+#[path = "../src/services/monitoring/adapters/openai_stream.rs"]
+pub mod openai_stream;
+#[path = "../src/services/protocol_streaming/sse.rs"]
+pub mod protocol_sse;
+pub(crate) use protocol_sse::{SseDecoder, SseEvent, SseLimits, StreamError};
+#[path = "../src/services/protocol_streaming/openai.rs"]
+pub mod protocol_openai;
 #[path = "../src/services/monitoring/adapters/sse.rs"]
 pub mod sse;
 #[path = "../src/services/monitoring/adapters/xai_grok.rs"]
@@ -44,10 +51,20 @@ mod services {
             pub use crate::openai_chat;
             #[allow(unused_imports)]
             pub use crate::openai_responses;
+            pub(crate) use crate::openai_stream;
             pub use crate::sse;
             #[allow(unused_imports)]
             pub use crate::xai_grok;
         }
+    }
+    pub(crate) mod protocol_streaming {
+        pub(crate) use crate::{
+            protocol_openai::{
+                parse_openai_responses_json, OpenAiChatReducer, OpenAiResponsesReducer,
+                OpenAiStreamSummary, OpenAiUsage,
+            },
+            SseDecoder, SseEvent, SseLimits, StreamError,
+        };
     }
 }
 

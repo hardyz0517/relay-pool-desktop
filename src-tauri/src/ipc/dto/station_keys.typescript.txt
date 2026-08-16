@@ -3,7 +3,13 @@ export type StationKeyIdInputDto = { id: string };
 export type RemoteStationKeyInputDto = { remoteKeyId: string; stationId: string };
 export type ReorderKeyPoolInputDto = { keyIds: string[] };
 export type ReorderStationKeysInputDto = { stationId: string; keyIds: string[] };
-export type StationKeyConnectivityInputDto = { stationKeyId: string; model: string };
+export type StationKeyConnectivityClientProfile = "standard_api" | "codex_cli_compat";
+export type StationKeyConnectivityValidatedProtocol = "responses" | "chat_completions";
+export type StationKeyConnectivityInputDto = {
+  stationKeyId: string;
+  model: string;
+  clientProfile?: StationKeyConnectivityClientProfile;
+};
 export type StationKeyConnectivityResponseMode = "stream" | "non_stream_fallback";
 export type StationKeyConnectivityResultDto = {
   stationKeyId: string;
@@ -12,6 +18,8 @@ export type StationKeyConnectivityResultDto = {
   durationMs: number;
   model: string;
   message: string;
+  validatedProtocol: StationKeyConnectivityValidatedProtocol;
+  clientProfile: StationKeyConnectivityClientProfile;
   responseMode: StationKeyConnectivityResponseMode;
   streamFallbackReason: string | null;
 };

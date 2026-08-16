@@ -30,25 +30,36 @@ pub async fn start_capture_session(
     app: tauri::AppHandle,
     facade: State<'_, CaptureCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
-    correlation::in_command_scope("start_capture_session", async {
-        let input = CaptureStationIdInputDto::parse(input)?;
-        let plan = facade
-            .start_capture_session(input.station_id)
-            .await
-            .map_err(capture_command_error)?;
-        open_capture_window(app, &plan).map_err(capture_command_error)?;
-        let web_authorization_cookie_url = plan.target.station.website_url.clone();
-        facade
-            .start_prepared_session(
-                plan.station_id,
-                plan.label,
-                plan.endpoint_revision,
-                web_authorization_cookie_url,
-            )
-            .map_err(CaptureCommandError::Message)
-            .map_err(capture_command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "start_capture_session",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CaptureStationIdInputDto::parse(input)?;
+            let plan = facade
+                .start_capture_session(input.station_id)
+                .await
+                .map_err(capture_command_error)?;
+            open_capture_window(app, &plan).map_err(capture_command_error)?;
+            let web_authorization_cookie_url = plan.target.station.website_url.clone();
+            facade
+                .start_prepared_session(
+                    plan.station_id,
+                    plan.label,
+                    plan.endpoint_revision,
+                    web_authorization_cookie_url,
+                )
+                .map_err(CaptureCommandError::Message)
+                .map_err(capture_command_error)
+        },
+    )
     .await
 }
 
@@ -57,25 +68,36 @@ pub async fn start_provider_draft_authorization(
     app: tauri::AppHandle,
     facade: State<'_, CaptureCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
-    correlation::in_command_scope("start_provider_draft_authorization", async {
-        let input = ProviderDraftIdInputDto::parse(input)?;
-        let plan = facade
-            .start_provider_draft_authorization(input.draft_id)
-            .await
-            .map_err(capture_command_error)?;
-        open_capture_window(app, &plan).map_err(capture_command_error)?;
-        let web_authorization_cookie_url = plan.target.station.website_url.clone();
-        facade
-            .start_prepared_session(
-                plan.station_id,
-                plan.label,
-                plan.endpoint_revision,
-                web_authorization_cookie_url,
-            )
-            .map_err(CaptureCommandError::Message)
-            .map_err(capture_command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "start_provider_draft_authorization",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ProviderDraftIdInputDto::parse(input)?;
+            let plan = facade
+                .start_provider_draft_authorization(input.draft_id)
+                .await
+                .map_err(capture_command_error)?;
+            open_capture_window(app, &plan).map_err(capture_command_error)?;
+            let web_authorization_cookie_url = plan.target.station.website_url.clone();
+            facade
+                .start_prepared_session(
+                    plan.station_id,
+                    plan.label,
+                    plan.endpoint_revision,
+                    web_authorization_cookie_url,
+                )
+                .map_err(CaptureCommandError::Message)
+                .map_err(capture_command_error)
+        },
+    )
     .await
 }
 
@@ -83,11 +105,22 @@ pub async fn start_provider_draft_authorization(
 pub async fn get_capture_session_status(
     sessions: State<'_, service_capture::session::CaptureSessionStore>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
-    correlation::in_command_scope("get_capture_session_status", async {
-        let input = CaptureStationIdInputDto::parse(input)?;
-        Ok(sessions.status(&input.station_id)?)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_capture_session_status",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CaptureStationIdInputDto::parse(input)?;
+            Ok(sessions.status(&input.station_id)?)
+        },
+    )
     .await
 }
 
@@ -95,14 +128,25 @@ pub async fn get_capture_session_status(
 pub async fn record_capture_event(
     facade: State<'_, CaptureCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
-    correlation::in_command_scope("record_capture_event", async {
-        let input = CapturedHttpEventInputDto::parse(input)?.into_domain();
-        facade
-            .record_capture_event(input)
-            .await
-            .map_err(capture_command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "record_capture_event",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CapturedHttpEventInputDto::parse(input)?.into_domain();
+            facade
+                .record_capture_event(input)
+                .await
+                .map_err(capture_command_error)
+        },
+    )
     .await
 }
 
@@ -110,11 +154,22 @@ pub async fn record_capture_event(
 pub async fn clear_capture_session(
     sessions: State<'_, service_capture::session::CaptureSessionStore>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
-    correlation::in_command_scope("clear_capture_session", async {
-        let input = CaptureStationIdInputDto::parse(input)?;
-        Ok(sessions.clear(&input.station_id)?)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "clear_capture_session",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CaptureStationIdInputDto::parse(input)?;
+            Ok(sessions.clear(&input.station_id)?)
+        },
+    )
     .await
 }
 
@@ -123,17 +178,28 @@ pub async fn close_capture_session(
     app: tauri::AppHandle,
     sessions: State<'_, service_capture::session::CaptureSessionStore>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CaptureSessionStatusDto, error::CommandError> {
-    correlation::in_command_scope("close_capture_session", async {
-        let input = CaptureStationIdInputDto::parse(input)?;
-        let label = capture_window_label(&input.station_id);
-        if let Some(window) = app.get_webview_window(&label) {
-            window
-                .close()
-                .map_err(|error| format!("关闭网页登录窗口失败: {error}"))?;
-        }
-        Ok(sessions.clear(&input.station_id)?)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "close_capture_session",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CaptureStationIdInputDto::parse(input)?;
+            let label = capture_window_label(&input.station_id);
+            if let Some(window) = app.get_webview_window(&label) {
+                window
+                    .close()
+                    .map_err(|error| format!("关闭网页登录窗口失败: {error}"))?;
+            }
+            Ok(sessions.clear(&input.station_id)?)
+        },
+    )
     .await
 }
 
@@ -141,14 +207,25 @@ pub async fn close_capture_session(
 pub async fn finish_capture_session(
     facade: State<'_, CaptureCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("finish_capture_session", async {
-        let input = CaptureStationIdInputDto::parse(input)?;
-        facade
-            .finish_capture_session(input.station_id)
-            .await
-            .map_err(capture_command_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "finish_capture_session",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CaptureStationIdInputDto::parse(input)?;
+            facade
+                .finish_capture_session(input.station_id)
+                .await
+                .map_err(capture_command_error)
+        },
+    )
     .await
 }
 
@@ -157,39 +234,50 @@ pub async fn finish_web_authorization_session(
     app: tauri::AppHandle,
     facade: State<'_, CaptureCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("finish_web_authorization_session", async {
-        let input = CaptureStationIdInputDto::parse(input)?;
-        let cookie_url = facade
-            .web_authorization_cookie_url(&input.station_id)
-            .await
-            .map_err(CaptureCommandError::Message)
-            .map_err(capture_command_error)?;
-        let window = app
-            .get_webview_window(&capture_window_label(&input.station_id))
-            .ok_or_else(|| {
-                CaptureCommandError::Message(
-                    "Capture authorization window is not available; reopen it and retry."
-                        .to_string(),
-                )
-            })
-            .map_err(capture_command_error)?;
-        let target = tauri::Url::parse(&cookie_url)
-            .map_err(|error| {
-                CaptureCommandError::Message(format!(
-                    "Station website URL cannot be used for cookie lookup: {error}"
-                ))
-            })
-            .map_err(capture_command_error)?;
-        let cookie_header =
-            read_capture_window_cookies(window, target, &facade.blocking_executor())
+    correlation::in_command_scope_with_runtime_context(
+        "finish_web_authorization_session",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CaptureStationIdInputDto::parse(input)?;
+            let cookie_url = facade
+                .web_authorization_cookie_url(&input.station_id)
                 .await
+                .map_err(CaptureCommandError::Message)
                 .map_err(capture_command_error)?;
-        facade
-            .finish_web_authorization_session(input.station_id, cookie_header)
-            .await
-            .map_err(capture_command_error)
-    })
+            let window = app
+                .get_webview_window(&capture_window_label(&input.station_id))
+                .ok_or_else(|| {
+                    CaptureCommandError::Message(
+                        "Capture authorization window is not available; reopen it and retry."
+                            .to_string(),
+                    )
+                })
+                .map_err(capture_command_error)?;
+            let target = tauri::Url::parse(&cookie_url)
+                .map_err(|error| {
+                    CaptureCommandError::Message(format!(
+                        "Station website URL cannot be used for cookie lookup: {error}"
+                    ))
+                })
+                .map_err(capture_command_error)?;
+            let cookie_header =
+                read_capture_window_cookies(window, target, &facade.blocking_executor())
+                    .await
+                    .map_err(capture_command_error)?;
+            facade
+                .finish_web_authorization_session(input.station_id, cookie_header)
+                .await
+                .map_err(capture_command_error)
+        },
+    )
     .await
 }
 
@@ -198,39 +286,50 @@ pub async fn finish_provider_draft_authorization_session(
     app: tauri::AppHandle,
     facade: State<'_, CaptureCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProviderDraftPreviewDto, error::CommandError> {
-    correlation::in_command_scope("finish_provider_draft_authorization_session", async {
-        let input = ProviderDraftIdInputDto::parse(input)?;
-        let cookie_url = facade
-            .web_authorization_cookie_url(&input.draft_id)
-            .await
-            .map_err(CaptureCommandError::Message)
-            .map_err(capture_command_error)?;
-        let window = app
-            .get_webview_window(&capture_window_label(&input.draft_id))
-            .ok_or_else(|| {
-                CaptureCommandError::Message(
-                    "Capture authorization window is not available; reopen it and retry."
-                        .to_string(),
-                )
-            })
-            .map_err(capture_command_error)?;
-        let target = tauri::Url::parse(&cookie_url)
-            .map_err(|error| {
-                CaptureCommandError::Message(format!(
-                    "Station website URL cannot be used for cookie lookup: {error}"
-                ))
-            })
-            .map_err(capture_command_error)?;
-        let cookie_header =
-            read_capture_window_cookies(window, target, &facade.blocking_executor())
+    correlation::in_command_scope_with_runtime_context(
+        "finish_provider_draft_authorization_session",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ProviderDraftIdInputDto::parse(input)?;
+            let cookie_url = facade
+                .web_authorization_cookie_url(&input.draft_id)
                 .await
+                .map_err(CaptureCommandError::Message)
                 .map_err(capture_command_error)?;
-        facade
-            .finish_provider_draft_authorization_session(input.draft_id, cookie_header)
-            .await
-            .map_err(capture_command_error)
-    })
+            let window = app
+                .get_webview_window(&capture_window_label(&input.draft_id))
+                .ok_or_else(|| {
+                    CaptureCommandError::Message(
+                        "Capture authorization window is not available; reopen it and retry."
+                            .to_string(),
+                    )
+                })
+                .map_err(capture_command_error)?;
+            let target = tauri::Url::parse(&cookie_url)
+                .map_err(|error| {
+                    CaptureCommandError::Message(format!(
+                        "Station website URL cannot be used for cookie lookup: {error}"
+                    ))
+                })
+                .map_err(capture_command_error)?;
+            let cookie_header =
+                read_capture_window_cookies(window, target, &facade.blocking_executor())
+                    .await
+                    .map_err(capture_command_error)?;
+            facade
+                .finish_provider_draft_authorization_session(input.draft_id, cookie_header)
+                .await
+                .map_err(capture_command_error)
+        },
+    )
     .await
 }
 

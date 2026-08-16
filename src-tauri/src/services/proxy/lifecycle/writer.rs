@@ -453,8 +453,8 @@ fn retryable_write_error(error: &LifecycleWriteError) -> bool {
 }
 
 async fn write_with_retry<T, F>(
-    operation: &'static str,
-    request_id: &str,
+    _operation: &'static str,
+    _request_id: &str,
     mut write: F,
 ) -> Result<T, LifecycleWriteError>
 where
@@ -464,29 +464,43 @@ where
         match write().await {
             Ok(value) => return Ok(value),
             Err(error) if attempt < MAX_WRITE_ATTEMPTS && retryable_write_error(&error) => {
-                tracing::warn!(
-                    operation,
-                    request_id,
-                    attempt,
-                    max_attempts = MAX_WRITE_ATTEMPTS,
-                    error = ?error,
-                    "lifecycle writer persistence attempt failed; retrying"
-                );
+                let _ = (attempt, MAX_WRITE_ATTEMPTS);
+                emit_runtime_event(LifecycleWriterEvent::PersistenceRetry);
                 tokio::time::sleep(RETRY_DELAYS[attempt - 1]).await;
             }
             Err(error) => {
-                tracing::error!(
-                    operation,
-                    request_id,
-                    attempt,
-                    error = ?error,
-                    "lifecycle writer persistence failed"
-                );
+                let _ = attempt;
+                emit_runtime_event(LifecycleWriterEvent::PersistenceFailed);
                 return Err(error);
             }
         }
     }
     unreachable!("lifecycle writer retry loop must return");
+}
+
+// Lifecycle writer is also compiled as a standalone source module by a few
+// integration fixtures. Keep those fixtures independent from the full Tauri
+// observability root while preserving the production event adapter.
+#[derive(Clone, Copy)]
+enum LifecycleWriterEvent {
+    PersistenceRetry,
+    PersistenceFailed,
+}
+
+#[cfg(test)]
+fn emit_runtime_event(_event: LifecycleWriterEvent) {}
+
+#[cfg(not(test))]
+fn emit_runtime_event(event: LifecycleWriterEvent) {
+    let descriptor = match event {
+        LifecycleWriterEvent::PersistenceRetry => {
+            crate::services::proxy::runtime_events::persistence_retry()
+        }
+        LifecycleWriterEvent::PersistenceFailed => {
+            crate::services::proxy::runtime_events::persistence_failed()
+        }
+    };
+    crate::observability::runtime::bootstrap::emit(descriptor);
 }
 
 impl LifecycleWriterMetrics {

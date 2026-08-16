@@ -3,6 +3,8 @@ use serde::Serialize;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+pub(crate) mod runtime_events;
+
 use super::outbound::current_system_proxy_url;
 use crate::outbound::{
     AsyncOutboundClient, OutboundFailure, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
@@ -44,9 +46,19 @@ pub async fn inspect_latest_update_manifest(
     outbound: &AsyncOutboundClient,
     current_version: &str,
 ) -> Result<PublishedUpdateInspection, String> {
+    inspect_update_manifest_at(outbound, current_version, UPDATE_MANIFEST_URL).await
+}
+
+/// Keep the production endpoint fixed while letting the owner test its actual
+/// outbound/parser path against a local server.
+async fn inspect_update_manifest_at(
+    outbound: &AsyncOutboundClient,
+    current_version: &str,
+    manifest_url: &str,
+) -> Result<PublishedUpdateInspection, String> {
     let response = match outbound
         .execute(
-            updater_manifest_request(Duration::from_secs(10))
+            updater_manifest_request(manifest_url, Duration::from_secs(10))
                 .map_err(|error| format!("Failed to build updater manifest request: {error}"))?,
             CancellationToken::new(),
         )
@@ -68,7 +80,10 @@ pub async fn inspect_latest_update_manifest(
     inspect_manifest_body(&body, current_version)
 }
 
-fn updater_manifest_request(timeout: Duration) -> Result<OutboundRequest, OutboundFailure> {
+fn updater_manifest_request(
+    manifest_url: &str,
+    timeout: Duration,
+) -> Result<OutboundRequest, OutboundFailure> {
     let policy = OutboundHeaderPolicy::provider_default();
     let mut headers = OutboundHeaders::new();
     headers.insert_public(
@@ -78,7 +93,7 @@ fn updater_manifest_request(timeout: Duration) -> Result<OutboundRequest, Outbou
     )?;
     Ok(OutboundRequest {
         method: Method::GET,
-        url: UPDATE_MANIFEST_URL.to_string(),
+        url: manifest_url.to_string(),
         correlation_id: None,
         headers,
         body: Vec::new(),
@@ -130,16 +145,22 @@ fn normalize_version(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        inspect_manifest_body, updater_manifest_request, PublishedVersionRelation,
-        UPDATE_MANIFEST_URL,
+        inspect_manifest_body, inspect_update_manifest_at, updater_manifest_request,
+        PublishedVersionRelation, UPDATE_MANIFEST_URL,
     };
     use crate::outbound::{OutboundRetryPolicy, ProxyPolicy};
     use http::Method;
-    use std::time::Duration;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::Arc,
+        time::Duration,
+    };
 
     #[test]
     fn updater_manifest_request_uses_shared_outbound_policy() {
-        let request = updater_manifest_request(Duration::from_secs(10)).unwrap();
+        let request =
+            updater_manifest_request(UPDATE_MANIFEST_URL, Duration::from_secs(10)).unwrap();
 
         assert_eq!(request.method, Method::GET);
         assert_eq!(request.url, UPDATE_MANIFEST_URL);
@@ -200,5 +221,118 @@ mod tests {
         assert!(inspect_manifest_body("{}", "0.2.2").is_err());
         assert!(inspect_manifest_body(r#"{"version":"not-semver"}"#, "0.2.2").is_err());
         assert!(inspect_manifest_body(r#"{"version":"0.2.3"}"#, "not-semver").is_err());
+    }
+
+    #[tokio::test]
+    async fn loopback_malformed_manifest_failure_publishes_final_jsonl_event() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback updater");
+        let address = listener.local_addr().expect("loopback updater address");
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept updater request");
+            let mut request = [0_u8; 4096];
+            assert!(stream.read(&mut request).expect("read updater request") > 0);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 16\r\nconnection: close\r\n\r\n{not-json-canary",
+                )
+                .expect("write malformed updater manifest");
+        });
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(crate::observability::runtime::RuntimeLogService::open(
+            root.path(),
+        ));
+        let outbound = crate::outbound::AsyncOutboundClient::new(
+            crate::outbound::AsyncOutboundClientConfig::architecture_budget(),
+        );
+
+        crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                let result = inspect_update_manifest_at(
+                    &outbound,
+                    "0.0.0",
+                    &format!("http://{address}/latest.json"),
+                )
+                .await;
+                assert!(crate::observability::runtime::bootstrap::record_failure(
+                    crate::services::updater::runtime_events::manifest_inspect_failed(),
+                    result,
+                )
+                .is_err());
+            },
+        )
+        .await;
+        worker.join().expect("updater loopback joins");
+        service.flush();
+
+        let page = crate::observability::runtime::RuntimeLogReader::new(root.path()).read_page(
+            0,
+            50,
+            1024 * 1024,
+        );
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        let raw = page
+            .lines
+            .iter()
+            .map(|line| line.as_bytes())
+            .collect::<Vec<_>>();
+        assert!(raw.iter().any(|line| line
+            .windows(31)
+            .any(|window| window == b"updater.manifest.inspect_failed")));
+        assert!(!raw
+            .iter()
+            .any(|line| line.windows(15).any(|window| window == b"not-json-canary")));
+    }
+
+    #[tokio::test]
+    async fn loopback_disconnect_manifest_failure_publishes_final_jsonl_event() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback updater");
+        let address = listener.local_addr().expect("loopback updater address");
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept updater request");
+            let mut request = [0_u8; 4096];
+            assert!(stream.read(&mut request).expect("read updater request") > 0);
+            // Drop the accepted connection before response headers. This is a
+            // deterministic provider/network disconnect, not a DNS fixture.
+        });
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(crate::observability::runtime::RuntimeLogService::open(
+            root.path(),
+        ));
+        let outbound = crate::outbound::AsyncOutboundClient::new(
+            crate::outbound::AsyncOutboundClientConfig::architecture_budget(),
+        );
+
+        crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                let result = inspect_update_manifest_at(
+                    &outbound,
+                    "0.0.0",
+                    &format!("http://{address}/latest.json"),
+                )
+                .await;
+                assert!(crate::observability::runtime::bootstrap::record_failure(
+                    crate::services::updater::runtime_events::manifest_inspect_failed(),
+                    result,
+                )
+                .is_err());
+            },
+        )
+        .await;
+        worker.join().expect("updater loopback joins");
+        service.flush();
+
+        let page = crate::observability::runtime::RuntimeLogReader::new(root.path()).read_page(
+            0,
+            50,
+            1024 * 1024,
+        );
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        assert!(page.lines.iter().any(|line| {
+            serde_json::from_slice::<crate::observability::runtime::RuntimeEvent>(line.as_bytes())
+                .ok()
+                .is_some_and(|event| event.event_code.as_str() == "updater.manifest.inspect_failed")
+        }));
     }
 }

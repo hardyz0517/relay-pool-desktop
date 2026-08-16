@@ -14,20 +14,31 @@ use crate::{
 pub async fn import_relay_pool_to_ccswitch(
     facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CcswitchImportResultDto, error::CommandError> {
-    correlation::in_command_scope("import_relay_pool_to_ccswitch", async {
-        EmptyInputDto::parse(input)?;
-        let target = facade
-            .import_relay_pool_to_ccswitch()
-            .await
-            .map_err(super::public_local_proxy_error)?;
-        let (result, deeplink) =
-            prepare_ccswitch_import(&target.local_access_key, &target.proxy_status);
+    correlation::in_command_scope_with_runtime_context(
+        "import_relay_pool_to_ccswitch",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            let target = facade
+                .import_relay_pool_to_ccswitch()
+                .await
+                .map_err(super::public_local_proxy_error)?;
+            let (result, deeplink) =
+                prepare_ccswitch_import(&target.local_access_key, &target.proxy_status);
 
-        super::open_url_with_system(&deeplink)?;
+            super::open_url_with_system(&deeplink)?;
 
-        Ok(result)
-    })
+            Ok(result)
+        },
+    )
     .await
 }
 

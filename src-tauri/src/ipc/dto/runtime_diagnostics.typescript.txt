@@ -1,0 +1,53 @@
+export type RuntimeDiagnosticsQueryDto = {
+  segmentIndex?: number;
+  lineIndex?: number;
+  level?: "error" | "warn" | "info" | "debug";
+  component?: "app" | "ipc" | "persistence" | "proxy" | "outbound" | "collector" | "monitoring" | "operation" | "migration" | "frontend" | "runtime";
+  eventCode?: string;
+  correlationId?: string;
+  interactionId?: string;
+};
+
+export type RuntimeEventDto = {
+  schemaVersion: number;
+  atMs: number;
+  sequence: number;
+  level: RuntimeDiagnosticsQueryDto["level"];
+  eventCode: string;
+  component: NonNullable<RuntimeDiagnosticsQueryDto["component"]>;
+  outcome: "ok" | "error" | "cancelled" | "timeout" | "overloaded" | "degraded";
+  sessionId: string;
+  correlationId: string | null;
+  interactionId: string | null;
+  operationId: string | null;
+  durationMs: number | null;
+  detail: Record<string, unknown>;
+  errorCode: string | null;
+  messageKey: string;
+  deprecatedReplacedBy: string | null;
+  manifestSource: "current" | "previous";
+};
+
+export type RuntimeDiagnosticsPageDto = {
+  events: RuntimeEventDto[];
+  nextSegmentIndex: number | null;
+  nextLineIndex: number | null;
+  issueCount: number;
+  sinkDegraded: boolean;
+  droppedCount: number;
+  rejectedCount: number;
+  lastSinkErrorCode: string | null;
+  clockStable: boolean;
+  recoveryExamined: number;
+  recoveryRecovered: number;
+  recoverySkipped: number;
+  retentionConsidered: number;
+  retentionDeleted: number;
+  retentionSkippedUnknown: number;
+  retentionDeleteFailures: number;
+};
+
+export type RuntimeSupportBundleResultDto = {
+  eventCount: number;
+  issueCount: number;
+};

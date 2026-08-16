@@ -241,7 +241,11 @@ impl TaskSupervisor {
         };
         let body = Arc::clone(&slot.spec.body);
         let task = async move {
-            correlation::in_scope("task.run", correlation_id, async move {
+            // Supervisor tasks are scheduler-owned work, not a direct child
+            // operation of an IPC gesture. Keep interaction explicitly null
+            // even if a future executor implementation propagates task-local
+            // values across its spawn boundary.
+            correlation::in_scope_with_interaction("task.run", correlation_id, None, async move {
                 match AssertUnwindSafe((body)(context)).catch_unwind().await {
                     Ok(result) => Ok(result),
                     Err(_) => Err(()),
@@ -390,3 +394,55 @@ impl std::fmt::Display for TaskSupervisorError {
 }
 
 impl std::error::Error for TaskSupervisorError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observability::correlation;
+    use crate::observability::runtime_context::RuntimeContextRegistry;
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn scheduler_owned_task_does_not_inherit_command_interaction() {
+        let context_registry = RuntimeContextRegistry::new();
+        let supervisor = TaskSupervisor::new();
+        let task_id = TaskId::from("fixture-scheduler-task");
+        let observed = correlation::in_command_scope_with_runtime_context(
+            "fixture_command",
+            &context_registry,
+            Some(serde_json::json!({
+                "contextSessionId": context_registry.context_session_id(),
+                "interactionId": "int_0123456789abcdef0123456789abcdef"
+            })),
+            async {
+                let (sender, receiver) = oneshot::channel();
+                let sender = Arc::new(Mutex::new(Some(sender)));
+                supervisor
+                    .register(TaskSpec::new(task_id.clone(), "fixture_scheduler", {
+                        let sender = Arc::clone(&sender);
+                        move |_context| {
+                            let sender = sender.lock().expect("sender mutex").take();
+                            Box::pin(async move {
+                                if let Some(sender) = sender {
+                                    let _ =
+                                        sender.send(correlation::current_interaction_id_string());
+                                }
+                                Ok(())
+                            })
+                        }
+                    }))
+                    .expect("task registered");
+                supervisor.start(&task_id).expect("task started");
+                receiver.await.expect("task scope observed")
+            },
+        )
+        .await;
+
+        assert_eq!(observed, None);
+        supervisor
+            .join_finished(&task_id)
+            .await
+            .expect("task joined");
+    }
+}

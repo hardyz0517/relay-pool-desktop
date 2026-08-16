@@ -749,13 +749,18 @@ async fn runner_loop(
         tokio::select! {
             biased;
             _ = context.cancellation_token.cancelled() => {
+                crate::observability::runtime::bootstrap::emit(
+                    crate::services::monitoring::runtime_events::runner_cancelled(),
+                );
                 interrupt_live_executions(runner.as_ref()).await;
                 drain_execution_tasks(&mut executions).await;
                 return Err(TaskFailure::cancelled());
             }
             joined = executions.join_next(), if !executions.is_empty() => {
                 if let Some(Err(error)) = joined {
-                    eprintln!("monitoring runner worker failed: {error}");
+                    crate::observability::runtime::bootstrap::emit(
+                        crate::services::monitoring::runtime_events::runner_worker_failed(),
+                    );
                 }
             }
             prepared = receive_manual(&manual_rx), if has_capacity => {
@@ -798,7 +803,9 @@ async fn execute_prepared_and_record_failure(
             .interrupt_monitoring_execution(&execution_id)
             .await;
         if error != "monitoring execution was cancelled before start" {
-            eprintln!("monitoring runner failed: {error}");
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::monitoring::runtime_events::runner_failed(),
+            );
         }
     }
 }
@@ -880,7 +887,10 @@ async fn start_due_monitoring_executions(
                             Ok(LiveRegistrationOutcome::Registered(registration)) => {
                                 prepared.registration = Some(registration);
                                 if let Err(error) = runner.persist_queued(&prepared).await {
-                                    eprintln!("monitoring runner failed: {error}");
+                                    crate::observability::runtime::bootstrap::emit(
+                                        crate::services::monitoring::runtime_events::runner_failed(
+                                        ),
+                                    );
                                 } else {
                                     spawn_prepared_execution(
                                         executions,
@@ -892,16 +902,22 @@ async fn start_due_monitoring_executions(
                             }
                             Ok(LiveRegistrationOutcome::Existing { .. }) => {}
                             Err(error) if !is_monitor_already_running_error(&error) => {
-                                eprintln!("monitoring runner failed: {error}");
+                                crate::observability::runtime::bootstrap::emit(
+                                    crate::services::monitoring::runtime_events::runner_failed(),
+                                );
                             }
                             Err(_) => {}
                         }
                     }
-                    Err(error) => eprintln!("monitoring runner failed: {error}"),
+                    Err(_) => crate::observability::runtime::bootstrap::emit(
+                        crate::services::monitoring::runtime_events::runner_failed(),
+                    ),
                 }
             }
         }
-        Err(error) => eprintln!("monitoring runner could not query due monitors: {error}"),
+        Err(_) => crate::observability::runtime::bootstrap::emit(
+            crate::services::monitoring::runtime_events::runner_query_failed(),
+        ),
     }
     started
 }

@@ -1,9 +1,208 @@
-use std::future::Future;
+use std::{future::Future, path::Path, sync::Arc};
 
 use crate::persistence::upgrade_fault::{
     UpgradeFailpoint, UpgradeFaultInjector, UpgradeInjectedFailure,
 };
 use tauri::{Manager, Runtime};
+
+use crate::{
+    app_runtime_events,
+    observability::runtime::{
+        crash::CrashMarkerError, event::RedactionReason, runtime_events, CrashMarker, EventOutcome,
+        PreviousSession, RuntimeDetail, RuntimeLogService, RuntimePhase,
+    },
+};
+
+/// The process-local runtime diagnostics lifecycle.
+///
+/// Creating the crash marker and writer here gives startup and shutdown one
+/// executable boundary. The Tauri layer owns application services; this type
+/// owns only the independent diagnostics resources, so it can be exercised
+/// against a temporary directory without starting a native runtime.
+pub(crate) struct RuntimeLogLifecycle {
+    service: Arc<RuntimeLogService>,
+    marker: Option<Arc<CrashMarker>>,
+    previous_session: Option<PreviousSession>,
+    marker_open_failed: bool,
+}
+
+impl RuntimeLogLifecycle {
+    pub(crate) fn open(root: impl AsRef<Path>) -> Self {
+        #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+        if std::env::var("RELAY_POOL_RUNTIME_LOGGING_SMOKE_FAULT")
+            .ok()
+            .as_deref()
+            == Some("marker-io")
+        {
+            return Self::open_with_marker_and_service(
+                root.as_ref(),
+                |_| {
+                    Err(CrashMarkerError::Io(std::io::Error::other(
+                        "fixture marker I/O failure",
+                    )))
+                },
+                |path| RuntimeLogService::open_for_runtime_logging_smoke(path),
+            );
+        }
+
+        #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+        return Self::open_with_marker_and_service(
+            root.as_ref(),
+            |path| CrashMarker::open(path),
+            |path| RuntimeLogService::open_for_runtime_logging_smoke(path),
+        );
+
+        #[cfg(not(all(feature = "runtime-logging-windows-smoke", debug_assertions)))]
+        Self::open_with_marker(root.as_ref(), |path| CrashMarker::open(path))
+    }
+
+    #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+    fn open_with_marker_and_service(
+        root: &Path,
+        open_marker: impl FnOnce(&Path) -> Result<(CrashMarker, PreviousSession), CrashMarkerError>,
+        open_service: impl FnOnce(&Path) -> RuntimeLogService,
+    ) -> Self {
+        let (marker, previous_session, marker_open_failed) = match open_marker(root) {
+            Ok((marker, previous)) => (Some(Arc::new(marker)), Some(previous), false),
+            Err(_) => (None, None, true),
+        };
+        Self {
+            service: Arc::new(open_service(root)),
+            marker,
+            previous_session,
+            marker_open_failed,
+        }
+    }
+
+    fn open_with_marker(
+        root: &Path,
+        open_marker: impl FnOnce(&Path) -> Result<(CrashMarker, PreviousSession), CrashMarkerError>,
+    ) -> Self {
+        // The marker must be opened before the writer: it remains available
+        // when process setup fails after this point or a panic bypasses the
+        // asynchronous queue.
+        let (marker, previous_session, marker_open_failed) = match open_marker(root) {
+            Ok((marker, previous)) => (Some(Arc::new(marker)), Some(previous), false),
+            Err(_) => (None, None, true),
+        };
+        Self {
+            service: Arc::new(RuntimeLogService::open(root)),
+            marker,
+            previous_session,
+            marker_open_failed,
+        }
+    }
+
+    pub(crate) fn service(&self) -> Arc<RuntimeLogService> {
+        Arc::clone(&self.service)
+    }
+
+    pub(crate) fn marker(&self) -> Option<Arc<CrashMarker>> {
+        self.marker.as_ref().map(Arc::clone)
+    }
+
+    /// Publish startup maintenance and lifecycle evidence after the caller
+    /// has installed the process-local bootstrap adapter.
+    pub(crate) fn record_startup(&self) {
+        let (recovery_report, retention_report) = self.service.startup_maintenance();
+        if self.marker_open_failed {
+            crate::observability::runtime::bootstrap::emit_fixed_stderr(
+                runtime_events::crash_marker_unavailable(),
+            );
+            self.service.record_descriptor(
+                runtime_events::crash_marker_unavailable(),
+                EventOutcome::Error,
+                RuntimeDetail::Redacted {
+                    reason: RedactionReason::UnknownError,
+                },
+            );
+        }
+        self.service.record_descriptor(
+            app_runtime_events::bootstrap_started(),
+            EventOutcome::Ok,
+            RuntimeDetail::Phase {
+                phase: RuntimePhase::Bootstrap,
+            },
+        );
+        if recovery_report.recovered > 0 {
+            self.service.record_descriptor(
+                runtime_events::log_recovery_completed(),
+                EventOutcome::Ok,
+                RuntimeDetail::Recovery {
+                    recovered_events: recovery_report.recovered.min(u32::MAX as usize) as u32,
+                },
+            );
+        }
+        if retention_report.delete_failures > 0 {
+            self.service.record_descriptor(
+                runtime_events::log_retention_degraded(),
+                EventOutcome::Degraded,
+                RuntimeDetail::Redacted {
+                    reason: RedactionReason::UnknownError,
+                },
+            );
+        }
+        if self
+            .previous_session
+            .is_some_and(|previous| !matches!(previous, PreviousSession::None))
+        {
+            self.service.record_descriptor(
+                app_runtime_events::previous_session_unclean_exit(),
+                EventOutcome::Degraded,
+                RuntimeDetail::Recovery {
+                    recovered_events: 0,
+                },
+            );
+        }
+    }
+
+    /// Drain application work, then make the shutdown marker and final log
+    /// flush durable even when the drain reports failure. The callback owns
+    /// application-specific work and must keep independently recoverable
+    /// cleanup steps running before returning its aggregate result.
+    pub(crate) async fn shutdown<F, Fut>(&self, work: F)
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<(), ()>>,
+    {
+        self.service.record_descriptor(
+            app_runtime_events::shutdown_started(),
+            EventOutcome::Ok,
+            RuntimeDetail::Phase {
+                phase: RuntimePhase::Shutdown,
+            },
+        );
+        if work().await.is_err() {
+            self.service.record_descriptor(
+                app_runtime_events::shutdown_persistence_drain_failed(),
+                EventOutcome::Error,
+                RuntimeDetail::Redacted {
+                    reason: RedactionReason::UnknownError,
+                },
+            );
+        }
+        if let Some(marker) = &self.marker {
+            if marker.clean_shutdown().is_err() {
+                self.service.record_descriptor(
+                    runtime_events::crash_marker_clean_failed(),
+                    EventOutcome::Error,
+                    RuntimeDetail::Redacted {
+                        reason: RedactionReason::UnknownError,
+                    },
+                );
+            }
+        }
+        self.service.flush();
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn open_with_marker_for_tests(
+        root: &Path,
+        open_marker: impl FnOnce(&Path) -> Result<(CrashMarker, PreviousSession), CrashMarkerError>,
+    ) -> Self {
+        Self::open_with_marker(root, open_marker)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum RuntimeCompositionError {

@@ -136,16 +136,23 @@ impl UpstreamClientPool {
         prepared: PreparedUpstreamRequest,
         target: &ExecutionTargetHandle,
     ) -> Result<UpstreamAttempt, ProxyFailure> {
-        self.send_with_parts(
-            prepared,
-            &target.collector_proxy_mode,
-            target.collector_proxy_url.as_deref(),
-            &target.api_base_url,
-            target.api_key.as_bytes(),
-            &target.station_id,
-            target.endpoint_revision,
-        )
-        .await
+        let result = self
+            .send_with_parts(
+                prepared,
+                &target.collector_proxy_mode,
+                target.collector_proxy_url.as_deref(),
+                &target.api_base_url,
+                target.api_key.as_bytes(),
+                &target.station_id,
+                target.endpoint_revision,
+            )
+            .await;
+        if result.is_err() {
+            crate::observability::runtime::bootstrap::emit_rate_limited(
+                crate::services::proxy::runtime_events::upstream_failed(),
+            );
+        }
+        result
     }
 
     async fn send_with_parts(
@@ -587,25 +594,51 @@ mod tests {
 
     #[tokio::test]
     async fn upstream_disconnect_after_receiving_request_stays_unknown() {
+        crate::observability::runtime::bootstrap::reset_rate_limit_for_tests();
         let pool = UpstreamClientPool::new(
             short_limits(),
             DiagnosticMemoryBudget::new(32 * 1024 * 1024),
         )
         .expect("pool");
         let upstream = RawLoopback::disconnect_after_request();
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(crate::observability::runtime::RuntimeLogService::open(
+            root.path(),
+        ));
 
-        let failure = pool
-            .send_resolved(
-                prepared_post_request("/v1/chat/completions", Bytes::from_static(b"{}")),
-                &test_target(&upstream.base_url),
-            )
-            .await
-            .expect_err("a peer close before response headers must fail the request");
+        let failure = crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                pool.send_resolved(
+                    prepared_post_request("/v1/chat/completions", Bytes::from_static(b"{}")),
+                    &test_target(&upstream.base_url),
+                )
+                .await
+                .expect_err("a peer close before response headers must fail the request")
+            },
+        )
+        .await;
 
         // The fixture proves the peer accepted a request and read bytes, but reqwest
         // does not expose the write boundary to us. Reporting NotConnected here would
         // authorize an unsafe transparent replay of a non-idempotent request.
         assert_eq!(failure.request_send_phase, super::RequestSendPhase::Unknown);
+        service.flush();
+        let page = crate::observability::runtime::RuntimeLogReader::new(root.path()).read_page(
+            0,
+            50,
+            1024 * 1024,
+        );
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        assert!(page.lines.iter().any(|line| {
+            serde_json::from_slice::<crate::observability::runtime::RuntimeEvent>(line.as_bytes())
+                .ok()
+                .is_some_and(|event| event.event_code.as_str() == "proxy.upstream.failed")
+        }));
+        assert!(!page.lines.iter().any(|line| line
+            .as_bytes()
+            .windows(16)
+            .any(|window| window == b"sk-upstream-test")));
     }
 
     #[tokio::test]

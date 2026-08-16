@@ -8,8 +8,13 @@ use zeroize::Zeroizing;
 
 use crate::{
     application::{
-        connectivity_probe::StationKeyConnectivityResponseMode, credentials::CredentialService,
-        error::ApplicationError, routing::RoutingService,
+        connectivity_probe::{
+            StationKeyConnectivityClientProfile, StationKeyConnectivityProbeKind,
+            StationKeyConnectivityResponseMode,
+        },
+        credentials::CredentialService,
+        error::ApplicationError,
+        routing::RoutingService,
     },
     background_tasks::OperationId,
     models::{routing::StationKeyCapabilities, station_keys::KeyPoolItem},
@@ -44,6 +49,8 @@ pub(crate) struct StationKeyConnectivityResult {
     pub(crate) duration_ms: i64,
     pub(crate) model: String,
     pub(crate) message: String,
+    pub(crate) validated_protocol: StationKeyConnectivityProbeKind,
+    pub(crate) client_profile: StationKeyConnectivityClientProfile,
     pub(crate) response_mode: StationKeyConnectivityResponseMode,
     pub(crate) stream_fallback_reason: Option<String>,
 }
@@ -366,6 +373,8 @@ mod tests {
             duration_ms: 42,
             model: "gpt-test".to_string(),
             message: "ok".to_string(),
+            validated_protocol: StationKeyConnectivityProbeKind::Responses,
+            client_profile: StationKeyConnectivityClientProfile::StandardApi,
             response_mode: StationKeyConnectivityResponseMode::Stream,
             stream_fallback_reason: None,
         }

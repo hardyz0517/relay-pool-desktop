@@ -248,6 +248,17 @@ impl CommandError {
             .unwrap_or_else(|_| Self::internal(None))
     }
 
+    pub(crate) fn unsupported_with_detail(detail: String) -> Self {
+        Self::try_new(
+            CommandErrorCode::Unsupported,
+            detail,
+            false,
+            None,
+            current_correlation_id(),
+        )
+        .unwrap_or_else(|_| Self::from_driver(DriverFailure::Unsupported))
+    }
+
     pub(crate) fn from_work(error: WorkFailure) -> Self {
         let (code, message, retryable) = match error {
             WorkFailure::Timeout => (CommandErrorCode::Timeout, "The operation timed out.", true),
@@ -454,6 +465,19 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn unsupported_detail_falls_back_when_it_fails_public_error_validation() {
+        let error = CommandError::unsupported_with_detail(
+            "Sub2API response included an access token".to_string(),
+        );
+
+        assert_eq!(error.code, CommandErrorCode::Unsupported);
+        assert_eq!(
+            error.message,
+            "The provider does not support this operation."
+        );
     }
 
     #[test]

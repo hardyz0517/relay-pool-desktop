@@ -55,7 +55,9 @@ impl ExitCoordinator {
                         .await
                         .is_err()
                     {
-                        eprintln!("application exit drain timed out after {timeout:?}");
+                        crate::observability::runtime::bootstrap::emit(
+                            crate::app_runtime_events::exit_drain_timeout(),
+                        );
                     }
                     coordinator.mark_final_exit_requested();
                     app.exit(code.unwrap_or(0));

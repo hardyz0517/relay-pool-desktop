@@ -48,7 +48,10 @@ impl MonitoringTransportConfig {
                 body_read_timeout: Duration::from_millis(500),
                 total_timeout: Duration::from_secs(2),
             },
-            success_body_max_bytes: 64 * 1024,
+            // Streaming probe consumers enforce their own, protocol-specific
+            // total limit. Keep the loopback transport high enough that it
+            // does not reintroduce the historical 64 KiB false failure.
+            success_body_max_bytes: 2 * 1024 * 1024,
             error_body_max_bytes: 8 * 1024,
             redirect_max_hops: 2,
         }
@@ -153,12 +156,18 @@ impl MonitoringTransport {
         cancellation_token: CancellationToken,
     ) -> Result<MonitoringTransportResponse, MonitoringTransportError> {
         let started = Instant::now();
-        let outbound_request = self.outbound_request(&request)?;
-        let response = self
-            .client
-            .execute(outbound_request, cancellation_token)
-            .await
-            .map_err(map_outbound_failure)?;
+        let response = match self.outbound_request(&request) {
+            Ok(outbound_request) => self
+                .client
+                .execute(outbound_request, cancellation_token)
+                .await
+                .map_err(map_outbound_failure),
+            Err(error) => Err(error),
+        };
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => return Err(self.record_failure(error)),
+        };
         let total_latency_ms = elapsed_ms(started.elapsed());
         let content_type = response
             .headers
@@ -200,22 +209,35 @@ impl MonitoringTransport {
         })
     }
 
-    pub async fn execute_streaming(
+    /// Streams each received network chunk directly to `on_chunk`.
+    ///
+    /// Monitoring callers must reduce SSE events in this callback instead of
+    /// reconstructing a successful response body in memory.
+    pub async fn execute_streaming<H>(
         &self,
         request: MonitoringTransportRequest,
         cancellation_token: CancellationToken,
-    ) -> Result<MonitoringTransportResponse, MonitoringTransportError> {
+        mut on_chunk: H,
+    ) -> Result<MonitoringTransportResponse, MonitoringTransportError>
+    where
+        H: FnMut(&[u8]) + Send,
+    {
         let started = Instant::now();
-        let outbound_request = self.outbound_request(&request)?;
-        let mut body = Vec::new();
-        let stream_response = self
-            .client
-            .execute_stream(outbound_request, cancellation_token, |chunk| {
-                body.extend_from_slice(chunk);
-                Ok(())
-            })
-            .await
-            .map_err(map_outbound_failure)?;
+        let stream_response = match self.outbound_request(&request) {
+            Ok(outbound_request) => self
+                .client
+                .execute_stream(outbound_request, cancellation_token, |chunk| {
+                    on_chunk(chunk);
+                    Ok(())
+                })
+                .await
+                .map_err(map_outbound_failure),
+            Err(error) => Err(error),
+        };
+        let stream_response = match stream_response {
+            Ok(response) => response,
+            Err(error) => return Err(self.record_failure(error)),
+        };
         let total_latency_ms = elapsed_ms(started.elapsed());
         Ok(MonitoringTransportResponse {
             http_status: stream_response.status.as_u16(),
@@ -224,7 +246,9 @@ impl MonitoringTransport {
                 .get(http::header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_string),
-            body,
+            // A streaming success is deliberately not retained. The protocol
+            // reducer receives each chunk above and owns only bounded state.
+            body: Vec::new(),
             #[cfg(test)]
             first_headers_latency_ms: total_latency_ms,
             #[cfg(test)]
@@ -303,7 +327,22 @@ impl MonitoringTransport {
             retry_policy: OutboundRetryPolicy::Never,
         })
     }
+
+    fn record_failure(&self, error: MonitoringTransportError) -> MonitoringTransportError {
+        emit_transport_failure_event();
+        error
+    }
 }
+
+#[cfg(any(not(test), feature = "runtime-logging-artifact"))]
+fn emit_transport_failure_event() {
+    crate::observability::runtime::bootstrap::emit_rate_limited(
+        crate::services::monitoring::runtime_events::transport_failed(),
+    );
+}
+
+#[cfg(all(test, not(feature = "runtime-logging-artifact")))]
+fn emit_transport_failure_event() {}
 
 impl MonitoringTransportError {
     fn from_kind(kind: MonitoringTransportFailureKind) -> Self {
@@ -387,4 +426,120 @@ fn failure_kind_for_transport(kind: &MonitoringTransportFailureKind) -> FailureK
 
 fn elapsed_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::Read,
+        net::TcpListener,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+
+    use tokio::sync::oneshot;
+    use tokio_util::sync::CancellationToken;
+
+    use super::{
+        MonitoringTransport, MonitoringTransportConfig, MonitoringTransportFailureKind,
+        MonitoringTransportRequest, RequestDescriptor,
+    };
+
+    fn request() -> MonitoringTransportRequest {
+        MonitoringTransportRequest {
+            descriptor: RequestDescriptor {
+                method: "GET".to_string(),
+                path: "/v1/models".to_string(),
+                body: Vec::new(),
+                stream: false,
+            },
+            public_headers: Vec::new(),
+            auth_header: None,
+            request_deadline: Instant::now() + Duration::from_secs(2),
+        }
+    }
+
+    #[cfg(feature = "runtime-logging-artifact")]
+    #[tokio::test]
+    async fn loopback_timeout_and_cancel_publish_monitoring_jsonl_without_payloads() {
+        crate::observability::runtime::bootstrap::reset_rate_limit_for_tests();
+        let timeout_listener = TcpListener::bind("127.0.0.1:0").expect("bind timeout fixture");
+        let timeout_address = timeout_listener
+            .local_addr()
+            .expect("timeout fixture address");
+        let timeout_worker = std::thread::spawn(move || {
+            let (mut stream, _) = timeout_listener.accept().expect("accept timeout request");
+            let mut request = [0_u8; 4096];
+            assert!(stream.read(&mut request).expect("read timeout request") > 0);
+            std::thread::sleep(Duration::from_millis(750));
+        });
+
+        let cancel_listener = TcpListener::bind("127.0.0.1:0").expect("bind cancel fixture");
+        let cancel_address = cancel_listener
+            .local_addr()
+            .expect("cancel fixture address");
+        let (accepted_sender, accepted) = oneshot::channel();
+        let cancel_worker = std::thread::spawn(move || {
+            let (mut stream, _) = cancel_listener.accept().expect("accept cancel request");
+            let mut request = [0_u8; 4096];
+            assert!(stream.read(&mut request).expect("read cancel request") > 0);
+            let _ = accepted_sender.send(());
+            std::thread::sleep(Duration::from_millis(750));
+        });
+
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(crate::observability::runtime::RuntimeLogService::open(
+            root.path(),
+        ));
+        crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                let timeout_transport = MonitoringTransport::new(
+                    MonitoringTransportConfig::loopback_test(format!("http://{timeout_address}")),
+                );
+                let timeout = timeout_transport
+                    .execute_buffered(request(), CancellationToken::new())
+                    .await
+                    .expect_err("delayed loopback headers must time out");
+                assert!(matches!(
+                    timeout.kind,
+                    MonitoringTransportFailureKind::FirstHeaderTimeout
+                        | MonitoringTransportFailureKind::DnsOrConnectOrTls
+                ));
+
+                let cancel_transport = MonitoringTransport::new(
+                    MonitoringTransportConfig::loopback_test(format!("http://{cancel_address}")),
+                );
+                let cancellation = CancellationToken::new();
+                let running = tokio::spawn({
+                    let transport = cancel_transport.clone();
+                    let cancellation = cancellation.clone();
+                    async move { transport.execute_buffered(request(), cancellation).await }
+                });
+                accepted.await.expect("loopback cancel request accepted");
+                cancellation.cancel();
+                let cancelled = running
+                    .await
+                    .expect("cancelled monitoring task joins")
+                    .expect_err("cancelled loopback request must fail");
+                assert_eq!(cancelled.kind, MonitoringTransportFailureKind::Cancelled);
+            },
+        )
+        .await;
+        timeout_worker.join().expect("timeout fixture joins");
+        cancel_worker.join().expect("cancel fixture joins");
+        service.flush();
+
+        let page = crate::observability::runtime::RuntimeLogReader::new(root.path()).read_page(
+            0,
+            50,
+            1024 * 1024,
+        );
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        assert!(page.lines.iter().any(|line| {
+            serde_json::from_slice::<crate::observability::runtime::RuntimeEvent>(line.as_bytes())
+                .ok()
+                .is_some_and(|event| event.event_code.as_str() == "monitoring.transport.failed")
+        }));
+    }
 }

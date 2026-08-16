@@ -16,14 +16,25 @@ use crate::{
 pub async fn list_station_group_bindings(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Vec<StationGroupBindingDto>, error::CommandError> {
-    correlation::in_command_scope("list_station_group_bindings", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_station_group_bindings(&input.station_id)
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "list_station_group_bindings",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .list_station_group_bindings(&input.station_id)
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -31,17 +42,28 @@ pub async fn list_station_group_bindings(
 pub async fn list_station_group_options(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Vec<StationGroupOptionDto>, error::CommandError> {
-    correlation::in_command_scope("list_station_group_options", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_station_group_options(
-                &input.station_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "list_station_group_options",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .list_station_group_options(
+                    &input.station_id,
+                    PageLimit::new(500).expect("bounded limit"),
+                )
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -49,14 +71,25 @@ pub async fn list_station_group_options(
 pub async fn upsert_station_group_binding(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<StationGroupBindingDto, error::CommandError> {
-    correlation::in_command_scope("upsert_station_group_binding", async {
-        let input = UpsertStationGroupBindingInputDto::parse(input)?.into_domain();
-        facade
-            .upsert_station_group_binding(input)
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "upsert_station_group_binding",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = UpsertStationGroupBindingInputDto::parse(input)?.into_domain();
+            facade
+                .upsert_station_group_binding(input)
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -64,17 +97,28 @@ pub async fn upsert_station_group_binding(
 pub async fn list_group_rate_records(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Vec<GroupRateRecordDto>, error::CommandError> {
-    correlation::in_command_scope("list_group_rate_records", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_group_rate_records(
-                &input.station_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "list_group_rate_records",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .list_group_rate_records(
+                    &input.station_id,
+                    PageLimit::new(500).expect("bounded limit"),
+                )
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -82,17 +126,28 @@ pub async fn list_group_rate_records(
 pub async fn list_collector_runs(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Vec<CollectorRunDto>, error::CommandError> {
-    correlation::in_command_scope("list_collector_runs", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .list_collector_runs(
-                &input.station_id,
-                PageLimit::new(500).expect("bounded limit"),
-            )
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "list_collector_runs",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .list_collector_runs(
+                    &input.station_id,
+                    PageLimit::new(500).expect("bounded limit"),
+                )
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -100,15 +155,26 @@ pub async fn list_collector_runs(
 pub async fn list_collector_snapshots(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Vec<CollectorSnapshotDto>, error::CommandError> {
-    correlation::in_command_scope("list_collector_snapshots", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        let limit = PageLimit::new(100).map_err(super::public_command_application_error)?;
-        facade
-            .list_collector_snapshots(&input.station_id, limit)
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "list_collector_snapshots",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            let limit = PageLimit::new(100).map_err(super::public_command_application_error)?;
+            facade
+                .list_collector_snapshots(&input.station_id, limit)
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -116,14 +182,25 @@ pub async fn list_collector_snapshots(
 pub async fn get_latest_collector_snapshot(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Option<CollectorSnapshotDto>, error::CommandError> {
-    correlation::in_command_scope("get_latest_collector_snapshot", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .get_latest_collector_snapshot(&input.station_id)
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_latest_collector_snapshot",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .get_latest_collector_snapshot(&input.station_id)
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -131,13 +208,24 @@ pub async fn get_latest_collector_snapshot(
 pub async fn list_latest_collector_snapshots(
     facade: State<'_, CollectorMetadataCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Vec<CollectorSnapshotDto>, error::CommandError> {
-    correlation::in_command_scope("list_latest_collector_snapshots", async {
-        let input = CollectorStationIdsInputDto::parse(input)?;
-        facade
-            .list_latest_collector_snapshots(input.station_ids)
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "list_latest_collector_snapshots",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdsInputDto::parse(input)?;
+            facade
+                .list_latest_collector_snapshots(input.station_ids)
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }

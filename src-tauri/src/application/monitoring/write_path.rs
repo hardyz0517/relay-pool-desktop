@@ -244,9 +244,11 @@ fn attempt_row(
         content_extracted: attempt.outcome.is_route_available(),
         validation_passed: attempt.outcome.is_route_available(),
         output_bytes: 0,
-        error_summary: attempt
-            .failure_kind
-            .map(|failure_kind| failure_kind.as_str().to_string()),
+        error_summary: attempt.error_summary.clone().or_else(|| {
+            attempt
+                .failure_kind
+                .map(|failure_kind| failure_kind.as_str().to_string())
+        }),
         created_at_ms: attempt.started_at_ms,
     })
 }

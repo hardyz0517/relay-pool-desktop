@@ -385,6 +385,7 @@ fn buffered_execution(
         failure_kind,
         retryable: false,
         semantic_confidence: SemanticConfidence::ProtocolValidated,
+        error_summary: None,
     };
     BufferedExecution {
         execution_id: execution_id.to_string(),

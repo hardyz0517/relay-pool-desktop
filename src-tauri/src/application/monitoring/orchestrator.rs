@@ -41,6 +41,9 @@ pub(crate) struct ProbeTransportResult {
     pub(crate) retry_after_ms: Option<u64>,
     pub(crate) latency_ms: u64,
     pub(crate) semantic_confidence: SemanticConfidence,
+    /// A closed, implementation-defined diagnostic code. It must never hold
+    /// upstream response text or credentials.
+    pub(crate) error_summary: Option<String>,
 }
 
 impl ProbeTransportResult {
@@ -57,6 +60,7 @@ impl ProbeTransportResult {
             retry_after_ms,
             latency_ms,
             semantic_confidence: SemanticConfidence::ProtocolValidated,
+            error_summary: Some(failure_kind.as_str().to_string()),
         }
     }
 }
@@ -209,6 +213,11 @@ where
                     },
                     retryable: transport_result.retryable,
                     semantic_confidence: transport_result.semantic_confidence,
+                    error_summary: if slow_success {
+                        Some(FailureKind::SlowLatency.as_str().to_string())
+                    } else {
+                        transport_result.error_summary.clone()
+                    },
                 };
                 self.recorder.append_attempt(attempt.clone());
                 attempts.push(attempt);

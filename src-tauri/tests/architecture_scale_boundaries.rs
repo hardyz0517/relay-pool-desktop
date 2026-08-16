@@ -954,10 +954,10 @@ fn production_boundaries_match_manifest() {
     assert_eq!(
         graph.tracing_sites,
         BTreeSet::from([
-            "crate::observability::correlation::in_command_scope::tracing::info_span".to_string(),
-            "crate::observability::correlation::in_scope::tracing::info_span".to_string(),
+            "crate::observability::correlation::in_command_scope_with_interaction::tracing::info_span".to_string(),
+            "crate::observability::correlation::in_scope_with_interaction::tracing::info_span"
+                .to_string(),
             "crate::observability::correlation::with_scope::tracing::info_span".to_string(),
-            "crate::services::station_collectors::run_due_station_collections_once_v2::tracing::warn".to_string(),
         ]),
         "structured tracing must flow through the stable correlation contract or an explicitly redacted runtime warning"
     );

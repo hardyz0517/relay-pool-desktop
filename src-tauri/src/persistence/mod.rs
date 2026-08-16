@@ -14,6 +14,7 @@ pub(crate) use migrations::{
 mod read_session;
 pub(crate) use read_session::ReadSession;
 pub(crate) mod runtime;
+pub(crate) mod runtime_events;
 mod runtime_lifecycle;
 pub(crate) mod schema_compatibility;
 pub(crate) mod schema_registry;

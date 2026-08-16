@@ -253,7 +253,7 @@ where
         },
         Err(error) => CollectorEvent {
             event_type: REMOTE_KEY_REFRESH_EVENT.to_string(),
-            message: remote_key_refresh_error_message(&error).to_string(),
+            message: remote_key_refresh_error_message(&error),
             status: "failed".to_string(),
         },
     };
@@ -261,14 +261,15 @@ where
     result
 }
 
-fn remote_key_refresh_error_message(error: &RemoteKeyOperationError) -> &'static str {
+fn remote_key_refresh_error_message(error: &RemoteKeyOperationError) -> String {
     match error {
-        RemoteKeyOperationError::Unsupported => "当前站点不支持远端密钥扫描。",
-        RemoteKeyOperationError::ExternalUnavailable => "远端密钥接口暂时不可用。",
-        RemoteKeyOperationError::ResultUnknown => "远端密钥扫描结果无法确认。",
-        RemoteKeyOperationError::Conflict => "站点配置已变化，请重新采集。",
+        RemoteKeyOperationError::Unsupported => "当前站点不支持远端密钥扫描。".to_string(),
+        RemoteKeyOperationError::UnsupportedWithDetail(detail) => detail.clone(),
+        RemoteKeyOperationError::ExternalUnavailable => "远端密钥接口暂时不可用。".to_string(),
+        RemoteKeyOperationError::ResultUnknown => "远端密钥扫描结果无法确认。".to_string(),
+        RemoteKeyOperationError::Conflict => "站点配置已变化，请重新采集。".to_string(),
         RemoteKeyOperationError::Application(_) | RemoteKeyOperationError::Internal => {
-            "远端密钥刷新失败。"
+            "远端密钥刷新失败。".to_string()
         }
     }
 }

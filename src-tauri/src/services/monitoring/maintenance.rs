@@ -26,7 +26,12 @@ pub(crate) fn register_monitoring_maintenance_task(
             let config = config.clone();
             Box::pin(async move {
                 tokio::select! {
-                    _ = context.cancellation_token.cancelled() => return Err(TaskFailure::cancelled()),
+                    _ = context.cancellation_token.cancelled() => {
+                        crate::observability::runtime::bootstrap::emit(
+                            crate::services::monitoring::runtime_events::maintenance_cancelled(),
+                        );
+                        return Err(TaskFailure::cancelled());
+                    },
                     _ = tokio::time::sleep(config.deterministic_startup_delay(installation_hash)) => {}
                 }
                 loop {
@@ -48,14 +53,23 @@ pub(crate) fn register_monitoring_maintenance_task(
                             ) => {
                                 match result {
                                     Ok(Ok(())) => {}
-                                    Ok(Err(error)) => eprintln!("monitoring maintenance failed: {error}"),
-                                    Err(_) => eprintln!("monitoring maintenance exceeded its time budget"),
+                                    Ok(Err(_)) => crate::observability::runtime::bootstrap::emit(
+                                        crate::services::monitoring::runtime_events::maintenance_failed(),
+                                    ),
+                                    Err(_) => crate::observability::runtime::bootstrap::emit(
+                                        crate::services::monitoring::runtime_events::maintenance_timeout(),
+                                    ),
                                 }
                             }
                         }
                     }
                     tokio::select! {
-                        _ = context.cancellation_token.cancelled() => return Err(TaskFailure::cancelled()),
+                        _ = context.cancellation_token.cancelled() => {
+                            crate::observability::runtime::bootstrap::emit(
+                                crate::services::monitoring::runtime_events::maintenance_cancelled(),
+                            );
+                            return Err(TaskFailure::cancelled());
+                        },
                         _ = tokio::time::sleep(Duration::from_millis(config.interval_ms)) => {}
                     }
                 }

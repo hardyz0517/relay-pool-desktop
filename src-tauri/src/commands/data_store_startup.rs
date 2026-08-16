@@ -87,11 +87,22 @@ impl LocatedDataStoreCandidates {
 pub async fn get_data_store_startup_state(
     state: State<'_, DataStoreStartupState>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<DataStoreStartupViewDto, error::CommandError> {
-    correlation::in_command_scope("get_data_store_startup_state", async {
-        EmptyInputDto::parse(input)?;
-        Ok(data_recovery::startup_view(&state))
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_data_store_startup_state",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            Ok(data_recovery::startup_view(&state))
+        },
+    )
     .await
 }
 
@@ -99,12 +110,23 @@ pub async fn get_data_store_startup_state(
 pub async fn refresh_data_store_candidates(
     state: State<'_, DataStoreStartupState>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<DataStoreStartupViewDto, error::CommandError> {
-    correlation::in_command_scope("refresh_data_store_candidates", async {
-        EmptyInputDto::parse(input)?;
-        Ok(inspect_startup(state.default_data_dir())
-            .map(|state| data_recovery::startup_view(&state))?)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "refresh_data_store_candidates",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            Ok(inspect_startup(state.default_data_dir())
+                .map(|state| data_recovery::startup_view(&state))?)
+        },
+    )
     .await
 }
 
@@ -112,25 +134,36 @@ pub async fn refresh_data_store_candidates(
 pub async fn locate_data_store_candidate(
     located: State<'_, LocatedDataStoreCandidates>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Option<DataStoreCandidateViewDto>, error::CommandError> {
-    correlation::in_command_scope("locate_data_store_candidate", async {
-        EmptyInputDto::parse(input)?;
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Relay Pool SQLite", &["sqlite3"])
-            .pick_file()
-        else {
-            return Ok(None);
-        };
-        if !is_supported_database_file(&path) {
-            return Err(format!(
-                "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
-            )
-            .into());
-        }
-        let candidate = inspect_candidate(&path, CandidateRole::Located)?.candidate;
-        located.record(&candidate);
-        Ok(Some(data_recovery::candidate_view(&candidate)))
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "locate_data_store_candidate",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("Relay Pool SQLite", &["sqlite3"])
+                .pick_file()
+            else {
+                return Ok(None);
+            };
+            if !is_supported_database_file(&path) {
+                return Err(format!(
+                    "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
+                )
+                .into());
+            }
+            let candidate = inspect_candidate(&path, CandidateRole::Located)?.candidate;
+            located.record(&candidate);
+            Ok(Some(data_recovery::candidate_view(&candidate)))
+        },
+    )
     .await
 }
 
@@ -140,8 +173,14 @@ pub async fn activate_data_store_candidate(
     located: State<'_, LocatedDataStoreCandidates>,
     secrets: State<'_, SecretManager>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ActivationResultDto, error::CommandError> {
-    correlation::in_command_scope("activate_data_store_candidate", async {
+    correlation::in_command_scope_with_runtime_context("activate_data_store_candidate", runtime_context_registry.inner(), runtime_context, async {
         let input = ActivateDataStoreCandidateInputDto::parse(input)?;
         let candidate_path = state
             .candidates
@@ -225,39 +264,54 @@ pub async fn activate_data_store_candidate(
 pub async fn create_new_data_store(
     state: State<'_, DataStoreStartupState>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ActivationResultDto, error::CommandError> {
-    correlation::in_command_scope("create_new_data_store", async {
-        let input = CreateNewDataStoreInputDto::parse(input)?;
-        if !input.confirmed {
-            return Err("creating a new data store requires confirmation"
-                .to_string()
-                .into());
-        }
-        let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
-            return Err("no data directory selected".to_string().into());
-        };
-        let db_path = data_dir.join(DatabaseGeneration::Two.database_file());
-        if db_path.exists() {
-            return Err(format!("target database already exists: {}", db_path.display()).into());
-        }
-        crate::services::data_store::generation_upgrade::initialize_empty_generation_two(&db_path)
+    correlation::in_command_scope_with_runtime_context(
+        "create_new_data_store",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CreateNewDataStoreInputDto::parse(input)?;
+            if !input.confirmed {
+                return Err("creating a new data store requires confirmation"
+                    .to_string()
+                    .into());
+            }
+            let Some(data_dir) = rfd::FileDialog::new().pick_folder() else {
+                return Err("no data directory selected".to_string().into());
+            };
+            let db_path = data_dir.join(DatabaseGeneration::Two.database_file());
+            if db_path.exists() {
+                return Err(
+                    format!("target database already exists: {}", db_path.display()).into(),
+                );
+            }
+            crate::services::data_store::generation_upgrade::initialize_empty_generation_two(
+                &db_path,
+            )
             .await?;
-        write_config_v3(
-            &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
-            &DataDirConfigV3 {
-                version: 3,
-                active_data_dir: Some(data_dir.clone()),
-                pending_data_dir: None,
-                source_data_dir: None,
-                database_generation: DatabaseGeneration::Two,
-                updated_at: data_store_updated_at(),
-            },
-        )?;
-        create_installation_marker(state.default_data_dir())?;
-        Ok(ActivationResult {
-            restart_required: true,
-        })
-    })
+            write_config_v3(
+                &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
+                &DataDirConfigV3 {
+                    version: 3,
+                    active_data_dir: Some(data_dir.clone()),
+                    pending_data_dir: None,
+                    source_data_dir: None,
+                    database_generation: DatabaseGeneration::Two,
+                    updated_at: data_store_updated_at(),
+                },
+            )?;
+            create_installation_marker(state.default_data_dir())?;
+            Ok(ActivationResult {
+                restart_required: true,
+            })
+        },
+    )
     .await
 }
 
@@ -265,18 +319,29 @@ pub async fn create_new_data_store(
 pub async fn open_data_store_backup_dir(
     state: State<'_, DataStoreStartupState>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<(), error::CommandError> {
-    correlation::in_command_scope("open_data_store_backup_dir", async {
-        EmptyInputDto::parse(input)?;
-        let backups = state.default_data_dir().join("backups");
-        std::fs::create_dir_all(&backups).map_err(|error| {
-            format!(
-                "failed to create backup directory {}: {error}",
-                backups.display()
-            )
-        })?;
-        Ok(open_path_with_system(&backups)?)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "open_data_store_backup_dir",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            let backups = state.default_data_dir().join("backups");
+            std::fs::create_dir_all(&backups).map_err(|error| {
+                format!(
+                    "failed to create backup directory {}: {error}",
+                    backups.display()
+                )
+            })?;
+            Ok(open_path_with_system(&backups)?)
+        },
+    )
     .await
 }
 
@@ -284,30 +349,42 @@ pub async fn open_data_store_backup_dir(
 pub async fn export_data_store_diagnostic(
     state: State<'_, DataStoreStartupState>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<Option<String>, error::CommandError> {
-    correlation::in_command_scope("export_data_store_diagnostic", async {
-        EmptyInputDto::parse(input)?;
-        let Some(path) = rfd::FileDialog::new()
-            .set_file_name("relay-pool-data-store-diagnostic.json")
-            .save_file()
-        else {
-            return Ok(None);
-        };
-        let report = build_diagnostic_report(state.default_data_dir(), &state)?;
-        let bytes = serde_json::to_vec_pretty(&report)
-            .map_err(|error| format!("failed to serialize data-store diagnostic: {error}"))?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                format!(
-                    "failed to create diagnostic directory {}: {error}",
-                    parent.display()
-                )
+    correlation::in_command_scope_with_runtime_context(
+        "export_data_store_diagnostic",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            let Some(path) = rfd::FileDialog::new()
+                .set_file_name("relay-pool-data-store-diagnostic.json")
+                .save_file()
+            else {
+                return Ok(None);
+            };
+            let report = build_diagnostic_report(state.default_data_dir(), &state)?;
+            let bytes = serde_json::to_vec_pretty(&report)
+                .map_err(|error| format!("failed to serialize data-store diagnostic: {error}"))?;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "failed to create diagnostic directory {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            }
+            std::fs::write(&path, bytes).map_err(|error| {
+                format!("failed to write diagnostic {}: {error}", path.display())
             })?;
-        }
-        std::fs::write(&path, bytes)
-            .map_err(|error| format!("failed to write diagnostic {}: {error}", path.display()))?;
-        Ok(Some(path.display().to_string()))
-    })
+            Ok(Some(path.display().to_string()))
+        },
+    )
     .await
 }
 

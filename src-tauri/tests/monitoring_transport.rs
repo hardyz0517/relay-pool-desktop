@@ -220,6 +220,37 @@ async fn monitoring_transport_maps_body_limit_and_cancellation_to_typed_failures
     assert_eq!(error.failure_kind, FailureKind::Cancelled);
 }
 
+#[tokio::test]
+async fn monitoring_transport_streams_chunks_without_retaining_success_body() {
+    let sse_body = "data: first\n\ndata: second\n\n";
+    let server = spawn_server(move |_| {
+        let response = response("200 OK", &[("content-type", "text/event-stream")], sse_body);
+        Box::pin(async move { ServerAction::Respond(response) })
+    })
+    .await;
+    let transport = MonitoringTransport::new(MonitoringTransportConfig::loopback_test(&server.url));
+    let mut received = Vec::new();
+    let result = transport
+        .execute_streaming(
+            request(
+                "/v1/responses",
+                None,
+                Instant::now() + Duration::from_secs(2),
+            ),
+            CancellationToken::new(),
+            |chunk| received.extend_from_slice(chunk),
+        )
+        .await
+        .expect("stream response");
+
+    assert_eq!(received, sse_body.as_bytes());
+    assert!(
+        result.body.is_empty(),
+        "streamed body must not be reconstructed"
+    );
+    assert_eq!(result.http_status, 200);
+}
+
 fn request(
     path: &str,
     auth_header: Option<MonitoringAuthHeader>,

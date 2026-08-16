@@ -9,6 +9,7 @@ pub(crate) mod limits;
 pub(crate) mod occupancy;
 pub(crate) mod path_tokens;
 pub(crate) mod recovery;
+pub(crate) mod runtime_events;
 pub(crate) mod schema_reader;
 pub(crate) mod snapshot;
 pub(crate) mod staging;

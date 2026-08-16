@@ -1,4 +1,5 @@
 mod app_composition;
+pub(crate) mod app_runtime_events;
 mod application;
 pub mod background_tasks;
 mod commands;
@@ -45,9 +46,185 @@ use services::portable_migration::recovery::{
     complete_portable_activation, recover_portable_activation_for_startup,
     PortableActivationManualReason, PortableActivationStartup,
 };
+#[cfg(feature = "tray")]
 use tauri::menu::{Menu, MenuItem};
+#[cfg(feature = "tray")]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, RunEvent, WindowEvent};
+
+/// Resolve the two application-owned roots used during startup.
+///
+/// The smoke override is deliberately compiled only into a debug build with
+/// an explicit feature. Production binaries always use Tauri's KnownFolder
+/// resolver, even when an attacker or a stale test harness sets the override
+/// environment variable.
+fn resolve_application_directories<R: tauri::Runtime>(
+    app: &tauri::App<R>,
+) -> Result<(PathBuf, PathBuf), String> {
+    #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+    if let Some(root) = std::env::var_os("RELAY_POOL_RUNTIME_LOGGING_SMOKE_ROOT") {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err("runtime logging smoke root must be absolute".to_string());
+        }
+
+        let config_dir = root.join("config");
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(&config_dir)
+            .map_err(|error| format!("failed to create smoke config directory: {error}"))?;
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|error| format!("failed to create smoke data directory: {error}"))?;
+        return Ok((config_dir, data_dir));
+    }
+
+    let app_config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("failed to resolve application config directory: {error}"))?;
+    let default_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve application data directory: {error}"))?;
+    Ok((app_config_dir, default_data_dir))
+}
+
+#[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+fn schedule_runtime_logging_smoke_exit<R: tauri::Runtime>(app: &tauri::App<R>) {
+    if std::env::var("RELAY_POOL_RUNTIME_LOGGING_SMOKE_EXIT")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return;
+    }
+
+    let handle = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        // Let the setup callback finish and the run loop deliver a clean
+        // ExitRequested event so the normal drain/marker path is exercised.
+        tokio::time::sleep(Duration::from_millis(750)).await;
+        let _ = mark_runtime_logging_smoke_state("complete");
+        handle.exit(0);
+    });
+}
+
+#[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+fn runtime_logging_smoke_state_path() -> Result<PathBuf, String> {
+    let root = std::env::var_os("RELAY_POOL_RUNTIME_LOGGING_SMOKE_ROOT")
+        .ok_or_else(|| "runtime logging smoke root is not configured".to_string())?;
+    let root = PathBuf::from(root);
+    std::fs::create_dir_all(&root)
+        .map_err(|error| format!("failed to create runtime logging smoke root: {error}"))?;
+    Ok(root.join("runtime-logging-smoke-restart.state"))
+}
+
+#[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+fn read_runtime_logging_smoke_boot() -> Result<u8, String> {
+    let path = runtime_logging_smoke_state_path()?;
+    let state = match std::fs::read_to_string(&path) {
+        Ok(state) => state,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(1),
+        Err(error) => {
+            return Err(format!(
+                "failed to read runtime logging smoke restart state: {error}"
+            ))
+        }
+    };
+    match state.trim() {
+        "restart-requested" => Ok(2),
+        "complete" => Err("runtime logging smoke restarted more than once".to_string()),
+        other => Err(format!(
+            "invalid runtime logging smoke restart state: {other}"
+        )),
+    }
+}
+
+#[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+fn mark_runtime_logging_smoke_state(state: &str) -> Result<(), String> {
+    let path = runtime_logging_smoke_state_path()?;
+    std::fs::write(&path, format!("{state}\n"))
+        .map_err(|error| format!("failed to write runtime logging smoke restart state: {error}"))
+}
+
+#[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+fn run_runtime_logging_smoke_probe<R: tauri::Runtime>(app: &tauri::App<R>) -> Result<bool, String> {
+    let smoke_fault = std::env::var("RELAY_POOL_RUNTIME_LOGGING_SMOKE_FAULT")
+        .ok()
+        .filter(|value| value == "panic" || value == "marker-io");
+    let settings = app
+        .try_state::<application::command_facades::SettingsStationsCommandFacade>()
+        .ok_or_else(|| "runtime logging smoke missing settings facade".to_string())?;
+    let runtime_log = app
+        .try_state::<Arc<observability::runtime::RuntimeLogService>>()
+        .ok_or_else(|| "runtime logging smoke missing runtime log".to_string())?;
+    let registry = app
+        .try_state::<ipc::dto::runtime_context::RuntimeContextRegistry>()
+        .ok_or_else(|| "runtime logging smoke missing runtime context registry".to_string())?;
+
+    // A small smoke-only segment limit makes this process exercise rotation
+    // and the same reader/export code paths without creating a large fixture.
+    for _ in 0..96 {
+        runtime_log.record_descriptor(
+            app_runtime_events::bootstrap_started(),
+            observability::runtime::EventOutcome::Ok,
+            observability::runtime::RuntimeDetail::Phase {
+                phase: observability::runtime::RuntimePhase::Startup,
+            },
+        );
+        runtime_log.flush();
+    }
+    if smoke_fault.as_deref() == Some("panic") {
+        // This branch is compiled only into the isolated debug smoke binary.
+        // The panic payload is intentionally a canary: the installed crash
+        // hook must never expose it on stderr or in the marker.
+        panic!("runtime logging smoke panic canary: authorization=sk-smoke-secret");
+    }
+    let boot_index = read_runtime_logging_smoke_boot()?;
+    let bundle_name = format!("runtime-support-bundle-{boot_index}");
+    let destination = runtime_log
+        .root()
+        .parent()
+        .ok_or_else(|| "runtime logging smoke runtime root has no parent".to_string())?
+        .join(bundle_name);
+    let (page, report) = tauri::async_runtime::block_on(
+        commands::runtime_diagnostics::run_runtime_logging_smoke_commands(
+            settings.inner(),
+            runtime_log.inner(),
+            registry.inner(),
+            &destination,
+        ),
+    )
+    .map_err(|error| format!("runtime logging smoke diagnostics command failed: {error:?}"))?;
+    if page.events.is_empty() || report.event_count == 0 {
+        return Err("runtime logging smoke diagnostics returned no events".to_string());
+    }
+    for file in [
+        "manifest.json",
+        "runtime-summary.json",
+        "runtime-events.jsonl",
+    ] {
+        if !destination.join(file).is_file() {
+            return Err(format!("runtime logging smoke bundle missing {file}"));
+        }
+    }
+    if smoke_fault.as_deref() == Some("marker-io") {
+        // This fault process proves the marker-unavailable fallback and then
+        // takes the normal clean-exit path. It must not enter the smoke's
+        // restart probe, whose debug reload intentionally remains resident.
+        return Ok(false);
+    }
+    if boot_index == 1 {
+        // The first boot must use the same lifecycle boundary as updater,
+        // data-recovery, and tray restart requests. The state marker is
+        // written only after the probe/export succeeds, so a failed first
+        // boot cannot be mistaken for a valid restart.
+        mark_runtime_logging_smoke_state("restart-requested")?;
+        request_application_restart(app.handle());
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
 
 macro_rules! tauri_handler_from_registry {
     ($( $name:ident => $handler:path, )*) => {
@@ -122,7 +299,23 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
-fn restart_application<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+/// Request a process restart through the application lifecycle boundary.
+///
+/// All restart initiators (tray, data recovery, and updater) must use this
+/// helper so the request is observable before Tauri begins the normal
+/// `ExitRequested` drain. The event payload deliberately contains no caller
+/// supplied text; the command boundary is the source of correlation context.
+pub(crate) fn request_application_restart<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(runtime_log) = app.try_state::<Arc<observability::runtime::RuntimeLogService>>() {
+        runtime_log.record_descriptor(
+            app_runtime_events::restart_requested(),
+            observability::runtime::EventOutcome::Ok,
+            observability::runtime::RuntimeDetail::Phase {
+                phase: observability::runtime::RuntimePhase::Shutdown,
+            },
+        );
+        runtime_log.flush();
+    }
     #[cfg(dev)]
     {
         if let Some(window) = app.get_webview_window("main") {
@@ -134,6 +327,7 @@ fn restart_application<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.request_restart();
 }
 
+#[cfg(feature = "tray")]
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
     let restart_item = MenuItem::with_id(app, "restart", "Restart", true, None::<&str>)?;
@@ -150,13 +344,15 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 show_main_window(app);
             }
             if menu_id.as_ref() == "restart" {
-                restart_application(app);
+                request_application_restart(app);
             }
             if menu_id.as_ref() == "quit" {
                 if let Some(coordinator) = app.try_state::<ExitCoordinator>() {
                     coordinator.request_exit(app.clone(), ExitReason::TrayQuit, 0);
                 } else {
-                    eprintln!("exit coordinator unavailable for tray quit request");
+                    observability::runtime::bootstrap::emit(
+                        app_runtime_events::exit_coordinator_unavailable(),
+                    );
                 }
             }
         })
@@ -257,8 +453,8 @@ fn prepare_data_store(
                 startup_state = inspect_startup(&default_data_dir)?;
             }
             Err(error) => {
-                eprintln!(
-                    "Relay Pool Desktop data directory relocation requires recovery: {error}"
+                observability::runtime::bootstrap::emit(
+                    persistence::runtime_events::relocation_recovery_required(),
                 );
                 startup_state.decision = StartupDecision::NeedsRecovery {
                     reason: RecoveryReason::PendingRelocation,
@@ -307,10 +503,7 @@ fn prepare_data_store(
                             )
                         }
                         StartupUpgradePlan::NeedsRecovery(reason) => {
-                            eprintln!(
-                                "Relay Pool Desktop database startup plan requires recovery: {}",
-                                reason.message(probe.compatibility_schema_version)
-                            );
+                            observability::runtime::bootstrap::emit(persistence::runtime_events::startup_plan_recovery_required());
                             startup_state.decision = StartupDecision::NeedsRecovery {
                                 reason: reason.recovery_reason(),
                             };
@@ -318,9 +511,7 @@ fn prepare_data_store(
                         }
                     },
                     Err(error) => {
-                        eprintln!(
-                            "Relay Pool Desktop database startup probe requires recovery: {error}"
-                        );
+                        observability::runtime::bootstrap::emit(persistence::runtime_events::startup_probe_recovery_required());
                         startup_state.decision = StartupDecision::NeedsRecovery {
                             reason: error.recovery_reason(),
                         };
@@ -370,7 +561,9 @@ fn prepare_data_store(
             }
         }
         Err(error) => {
-            eprintln!("Relay Pool Desktop database startup requires recovery: {error}");
+            observability::runtime::bootstrap::emit(
+                persistence::runtime_events::startup_recovery_required(),
+            );
             let reason = error.recovery_reason();
             startup_state.decision = StartupDecision::NeedsRecovery { reason };
             Ok(PreparedDataStore::Recovery(startup_state))
@@ -461,6 +654,18 @@ fn initialize_secret_material_for_startup(
     default_data_dir: &Path,
     mut startup_state: DataStoreStartupState,
 ) -> Result<StartupSecretMaterial, String> {
+    #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+    if std::env::var_os("RELAY_POOL_RUNTIME_LOGGING_SMOKE_ROOT").is_some() {
+        return Ok(StartupSecretMaterial {
+            manager: Some(services::secrets::SecretManager::for_runtime_logging_smoke()),
+            // Keeping this `None` skips the production first-run commit path,
+            // whose only purpose is to publish a key to Credential Manager.
+            // The smoke key is intentionally process-local and non-persistent.
+            first_run_key_id: None,
+            startup_state,
+        });
+    }
+
     match startup_state.decision.clone() {
         StartupDecision::FirstRun { .. }
             if !startup_has_recovery_evidence(default_data_dir, &startup_state) =>
@@ -606,6 +811,22 @@ fn mark_first_run_active_committed(
 }
 
 async fn drain_application_shutdown(app: tauri::AppHandle) {
+    let lifecycle = app
+        .try_state::<Arc<runtime_composition::RuntimeLogLifecycle>>()
+        .map(|lifecycle| Arc::clone(&*lifecycle));
+    if let Some(lifecycle) = lifecycle {
+        lifecycle
+            .shutdown(|| drain_application_components(&app))
+            .await;
+    } else {
+        // The application drain must still run if setup only registered a
+        // subset of state. There is no marker/logger owner to finalize in
+        // this degraded setup path.
+        let _ = drain_application_components(&app).await;
+    }
+}
+
+async fn drain_application_components(app: &tauri::AppHandle) -> Result<(), ()> {
     if let Some(runner) = app.try_state::<services::monitoring::runner::MonitoringRunnerState>() {
         runner.stop();
     }
@@ -614,6 +835,7 @@ async fn drain_application_shutdown(app: tauri::AppHandle) {
     {
         runner.stop();
     }
+    let mut proxy_drain_failed = false;
     if let Some(proxy) = app.try_state::<Arc<services::proxy::runtime::ProxyRuntimeState>>() {
         let drain = runtime_composition::drain_finalization(
             &persistence::upgrade_fault::NoUpgradeFaults,
@@ -625,31 +847,41 @@ async fn drain_application_shutdown(app: tauri::AppHandle) {
                     .map_err(|_| ())
             },
         );
-        if let Err(error) = drain.await {
-            eprintln!("application shutdown stopped before persistence close: {error}");
-            return;
+        if drain.await.is_err() {
+            proxy_drain_failed = true;
         }
     }
     if let Some(work_runtime) = app.try_state::<app_composition::ManagedWorkRuntime>() {
-        if let Err(error) = work_runtime
+        if work_runtime
             .supervisor
             .shutdown(Duration::from_secs(10))
             .await
+            .is_err()
         {
-            eprintln!("task supervisor shutdown failed: {error}");
+            observability::runtime::bootstrap::emit(
+                app_runtime_events::shutdown_supervisor_failed(),
+            );
         }
-        if let Err(error) = work_runtime
+        if work_runtime
             .blocking
             .shutdown(Duration::from_secs(10))
             .await
+            .is_err()
         {
-            eprintln!("blocking executor shutdown failed: {error}");
+            observability::runtime::bootstrap::emit(app_runtime_events::shutdown_blocking_failed());
         }
     }
     if let Some(owner) = app.try_state::<DataStoreRuntimeOwner>() {
-        if let Err(error) = owner.shutdown().await {
-            eprintln!("data store shutdown failed: {error}");
+        if owner.shutdown().await.is_err() {
+            observability::runtime::bootstrap::emit(
+                app_runtime_events::shutdown_persistence_failed(),
+            );
         }
+    }
+    if proxy_drain_failed {
+        Err(())
+    } else {
+        Ok(())
     }
 }
 
@@ -663,8 +895,10 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             app.manage(Arc::new(TrayBehaviorState::default()));
+            app.manage(ipc::dto::runtime_context::RuntimeContextRegistry::new());
             app.manage(ExitCoordinator::new(Duration::from_secs(45)));
             app.manage(application::data_maintenance::DataMaintenanceCoordinator::new());
+            #[cfg(feature = "tray")]
             setup_tray(app)?;
             let work_runtime = app_composition::compose_work_runtime(
                 app_composition::WorkRuntimeConfig::architecture_budget(),
@@ -676,14 +910,29 @@ pub fn run() {
                     .map_err(|error| format!("failed to compose provider registry: {error}"))?,
             );
             let blocking_executor = work_runtime.blocking.clone();
-            let app_config_dir = app.path().app_config_dir().map_err(|error| {
-                format!("failed to resolve application config directory: {error}")
-            })?;
+            let (app_config_dir, default_data_dir) = resolve_application_directories(app)?;
+            let runtime_log_root = default_data_dir.join("runtime-logs");
+            let runtime_lifecycle = Arc::new(runtime_composition::RuntimeLogLifecycle::open(
+                &runtime_log_root,
+            ));
+            if let Some(marker) = runtime_lifecycle.marker() {
+                let panic_marker = marker;
+                std::panic::set_hook(Box::new(move |_| panic_marker.record_panic()));
+            }
+            let runtime_log = runtime_lifecycle.service();
+            observability::runtime::bootstrap::install(Arc::clone(&runtime_log));
+            runtime_lifecycle.record_startup();
+            // Acquire the business installation lease only after the
+            // independent runtime logger is ready. This makes a startup
+            // contention/failure durable instead of leaving its fixed event
+            // in the pre-install pending queue when setup returns early.
             let installation_lease = InstallationLease::try_acquire(&app_config_dir)
-                .map_err(|error| format!("failed to acquire installation lease: {error}"))?;
-            let default_data_dir = app.path().app_data_dir().map_err(|error| {
-                format!("failed to resolve application data directory: {error}")
+                .map_err(|error| {
+                    runtime_log.flush();
+                    format!("failed to acquire installation lease: {error}")
             })?;
+            app.manage(Arc::clone(&runtime_lifecycle));
+            app.manage(Arc::clone(&runtime_log));
             app.manage(application::data_migration::PortableMigrationCommandFacade::new(
                 app_config_dir.clone(),
                 default_data_dir.clone(),
@@ -759,7 +1008,7 @@ pub fn run() {
                     ),
                 ),
                 Err(error) => {
-                    eprintln!("Relay Pool Desktop portable activation requires recovery: {error}");
+                    observability::runtime::bootstrap::emit(services::portable_migration::runtime_events::recovery_required());
                     (
                         None,
                         None,
@@ -820,13 +1069,9 @@ pub fn run() {
                         None
                     };
                     if let Some(error) = device_key_activation_error {
-                        eprintln!(
-                            "Relay Pool Desktop first-run device key activation requires recovery: {error}"
-                        );
+                        observability::runtime::bootstrap::emit(persistence::runtime_events::device_key_recovery_required());
                         if let Err(close_error) = tauri::async_runtime::block_on(runtime.close()) {
-                            eprintln!(
-                                "failed to close runtime after device key activation error: {close_error}"
-                            );
+                            observability::runtime::bootstrap::emit(persistence::runtime_events::runtime_close_failed());
                         }
                         startup_state.decision = StartupDecision::NeedsRecovery {
                             reason: RecoveryReason::SystemCredentialInternal,
@@ -866,6 +1111,43 @@ pub fn run() {
                             .map_err(|error| {
                                 format!("failed to load application settings: {error}")
                             })?;
+                        #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+                        let settings = if std::env::var_os(
+                            "RELAY_POOL_RUNTIME_LOGGING_SMOKE_ROOT",
+                        )
+                        .is_some()
+                        {
+                            // Developer diagnostics are enabled only in the
+                            // isolated smoke database. Production defaults
+                            // and the ordinary command gate remain unchanged.
+                            tauri::async_runtime::block_on(app_services.settings.update(
+                                models::settings::UpdateSettingsInput {
+                                    local_proxy_port: settings.local_proxy_port,
+                                    routing_policy_name: settings.routing_policy_name.clone(),
+                                    collector_proxy_mode: settings.collector_proxy_mode.clone(),
+                                    collector_proxy_url: settings.collector_proxy_url.clone(),
+                                    max_rate_multiplier: Some(settings.max_rate_multiplier),
+                                    routing_group_scope: Some(settings.routing_group_scope.clone()),
+                                    scheduler_config: Some(settings.scheduler_config.clone()),
+                                    low_balance_threshold_cny: settings.low_balance_threshold_cny,
+                                    collector_interval_minutes: settings.collector_interval_minutes,
+                                    balance_interval_minutes: settings.balance_interval_minutes,
+                                    group_rate_interval_minutes: settings.group_rate_interval_minutes,
+                                    pricing_refresh_interval_minutes:
+                                        settings.pricing_refresh_interval_minutes,
+                                    collector_timeout_seconds: settings.collector_timeout_seconds,
+                                    collector_max_concurrency: settings.collector_max_concurrency,
+                                    allow_depleted_fallback: settings.allow_depleted_fallback,
+                                    developer_mode_enabled: true,
+                                    tray_behavior: Some(settings.tray_behavior.clone()),
+                                },
+                            ))
+                            .map_err(|error| {
+                                format!("failed to enable smoke developer diagnostics: {error}")
+                            })?
+                        } else {
+                            settings
+                        };
                         let station_collection_coordinator =
                             services::station_collection_coordinator::StationCollectionCoordinator::new(
                                 NonZeroUsize::new(usize::from(settings.collector_max_concurrency))
@@ -1072,9 +1354,12 @@ pub fn run() {
                             .map_err(|error| {
                                 format!("failed to start station collector runner: {error}")
                             })?;
-                        println!(
-                            "Relay Pool Desktop database initialized at {}",
-                            database_path.display()
+                        runtime_log.record_descriptor(
+                            persistence::runtime_events::database_initialized(),
+                            observability::runtime::EventOutcome::Ok,
+                            observability::runtime::RuntimeDetail::Phase {
+                                phase: observability::runtime::RuntimePhase::Startup,
+                            },
                         );
                         let runtime_owner = DataStoreRuntimeOwner::new(
                             Some(Arc::clone(&runtime)),
@@ -1114,7 +1399,13 @@ pub fn run() {
                     }
                 }
                 PreparedDataStore::Recovery(startup_state) => {
-                    println!("Relay Pool Desktop started in data recovery mode");
+                    runtime_log.record_descriptor(
+                        persistence::runtime_events::recovery_mode_started(),
+                        observability::runtime::EventOutcome::Degraded,
+                        observability::runtime::RuntimeDetail::Phase {
+                            phase: observability::runtime::RuntimePhase::Recovery,
+                        },
+                    );
                     if let Some(secret_manager) = secret_manager.take() {
                         app.manage(secret_manager);
                     }
@@ -1127,6 +1418,13 @@ pub fn run() {
             app.manage(capture_session_store);
             app.manage(proxy_runtime);
             services::proxy::startup_auto_start::schedule(app.handle().clone());
+            #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
+            if std::env::var_os("RELAY_POOL_RUNTIME_LOGGING_SMOKE_ROOT").is_some() {
+                let restart_requested = run_runtime_logging_smoke_probe(app)?;
+                if !restart_requested {
+                    schedule_runtime_logging_smoke_exit(app);
+                }
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1149,7 +1447,7 @@ pub fn run() {
                             0,
                         );
                     } else {
-                        eprintln!("exit coordinator unavailable for main window close request");
+                        observability::runtime::bootstrap::emit(app_runtime_events::exit_coordinator_unavailable());
                     }
                 }
                 WindowEvent::Resized(_)

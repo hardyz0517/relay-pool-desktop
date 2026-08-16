@@ -22,6 +22,7 @@ pub(crate) struct IncidentSummary {
     pub event_type: String,
     pub lifecycle_state: String,
     pub severity: String,
+    pub group_name: Option<String>,
     pub station_id: Option<String>,
     pub episode_number: i64,
     pub occurrence_count: i64,
@@ -53,6 +54,7 @@ pub(crate) struct ActivitySummary {
     pub id: String,
     pub event_type: String,
     pub severity: String,
+    pub group_name: Option<String>,
     pub station_id: Option<String>,
     pub object_type: Option<String>,
     pub object_id: Option<String>,
@@ -362,12 +364,14 @@ fn incident_summary_from_row(
         &row.condition_key,
         &row.last_observation_summary_json,
     );
+    let group_name = group_name_from_summary(&row.last_observation_summary_json);
     IncidentSummary {
         id: row.id,
         condition_key: row.condition_key,
         event_type: row.event_type,
         lifecycle_state: row.lifecycle_state,
         severity: row.severity,
+        group_name,
         station_id: row.station_id,
         episode_number: row.episode_number,
         occurrence_count: row.occurrence_count,
@@ -378,6 +382,19 @@ fn incident_summary_from_row(
         seen_at_ms: row.seen_at_ms,
         snoozed_until_ms: row.snoozed_until_ms,
     }
+}
+
+fn group_name_from_summary(summary_json: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(summary_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("groupName")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.len() <= 160)
 }
 
 fn activity_summary_from_row(
@@ -391,11 +408,16 @@ fn activity_summary_from_row(
     let old_value_json = sanitized_activity_json(&row.event_type, row.old_value_json.as_deref());
     let new_value_json = sanitized_activity_json(&row.event_type, row.new_value_json.as_deref());
     let impact_json = sanitized_activity_json(&row.event_type, row.impact_json.as_deref());
+    let group_name = row
+        .last_observation_summary_json
+        .as_deref()
+        .and_then(group_name_from_summary);
     ActivitySummary {
         record_type: row.record_type,
         id: row.id,
         event_type: row.event_type,
         severity: row.severity,
+        group_name,
         station_id: row.station_id,
         object_type: row.object_type,
         object_id: row.object_id,
@@ -811,6 +833,51 @@ mod tests {
         assert_eq!(legacy_active_count, 0);
 
         drop(read);
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn missing_group_incidents_are_info_and_include_the_group_name() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("group-missing.sqlite3"))
+                .await
+                .expect("runtime");
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT INTO change_incidents (
+                            id, condition_key, event_type, lifecycle_state,
+                            base_severity, severity, object_type,
+                            lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
+                            last_seen_at_ms, occurrence_count, episode_occurrence_count,
+                            last_observation_summary_json, created_at_ms, updated_at_ms
+                         ) VALUES ('missing-group-1', 'station_group:station-1:group-1',
+                                   'group_missing', 'open', 'warning', 'warning',
+                                   'station_group_binding', 'legacy-fixture', 1, 200, 200,
+                                   1, 1, '{\"groupName\":\"Claude Kiro 高速\"}', 200, 200)",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("missing group fixture");
+
+        let page = ChangeCenterWorkspaceQuery::new(runtime.handle())
+            .list_current(None, Some("info"), Some("active"), None, 10)
+            .await
+            .expect("list missing group incident");
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].severity, "info");
+        assert_eq!(
+            page.items[0].group_name.as_deref(),
+            Some("Claude Kiro 高速")
+        );
+
         runtime.close().await.expect("close runtime");
     }
 

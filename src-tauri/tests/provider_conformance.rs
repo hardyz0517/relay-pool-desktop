@@ -276,17 +276,27 @@ mod outbound {
             .windows(4)
             .position(|window| window == b"\r\n\r\n")
             .ok_or_else(|| "missing response header end".to_string())?;
-        let headers =
+        let header_text =
             std::str::from_utf8(&response[..header_end]).map_err(|error| error.to_string())?;
-        let status = headers
+        let mut response_headers = HeaderMap::new();
+        let status = header_text
             .lines()
             .next()
             .and_then(|line| line.split_whitespace().nth(1))
             .and_then(|status| status.parse::<u16>().ok())
             .ok_or_else(|| "missing response status".to_string())?;
+        for line in header_text.lines().skip(1) {
+            let Some((name, value)) = line.split_once(':') else {
+                return Err("malformed response header".to_string());
+            };
+            let name = HeaderName::from_bytes(name.trim().as_bytes())
+                .map_err(|error| error.to_string())?;
+            let value = HeaderValue::from_str(value.trim()).map_err(|error| error.to_string())?;
+            response_headers.append(name, value);
+        }
         Ok(OutboundResponse {
             status: StatusCode::from_u16(status).map_err(|error| error.to_string())?,
-            headers: HeaderMap::new(),
+            headers: response_headers,
             body: Bytes::copy_from_slice(&response[(header_end + 4)..]),
             evidence: OutboundEvidence {
                 final_url: request.url,

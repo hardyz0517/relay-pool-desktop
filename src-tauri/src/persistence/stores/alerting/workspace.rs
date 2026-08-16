@@ -97,7 +97,8 @@ impl WorkspaceStore {
             "WITH activity AS (
                 SELECT 'incident' AS record_type, i.id AS id,
                        'incident:' || i.id AS activity_key,
-                       i.event_type AS event_type, i.severity AS severity,
+                       i.event_type AS event_type,
+                       CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
                        i.station_id AS station_id, i.object_type AS object_type,
                        i.object_id AS object_id, i.station_key_id AS station_key_id,
                        NULL AS source, NULL AS reason_code,
@@ -171,7 +172,7 @@ impl WorkspaceStore {
             "SELECT COUNT(*) FROM change_incidents
              WHERE lifecycle_state IN ('pending', 'open', 'recovering')
                AND (?1 IS NULL OR station_id = ?1)
-               AND (?2 IS NULL OR severity = ?2)",
+               AND (?2 IS NULL OR CASE WHEN event_type = 'group_missing' THEN 'info' ELSE severity END = ?2)",
         )
         .bind(station_id)
         .bind(severity)
@@ -183,10 +184,10 @@ impl WorkspaceStore {
                  LEFT JOIN incident_attention a
                    ON a.incident_id = i.id AND a.episode_number = i.episode_number
                  WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
-                   AND i.severity IN ('warning', 'critical')
+                   AND CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END IN ('warning', 'critical')
                    AND a.seen_at_ms IS NULL
                    AND (?1 IS NULL OR i.station_id = ?1)
-                   AND (?2 IS NULL OR i.severity = ?2)
+                   AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
                    AND (?3 IS NULL OR ?3 = 'incident'))
                 +
                 (SELECT COUNT(*) FROM change_event_occurrences o
@@ -215,7 +216,8 @@ impl WorkspaceStore {
     ) -> Result<(Vec<WorkspaceIncidentRow>, i64, i64), PersistenceError> {
         let limit = i64::from(limit.clamp(1, 200));
         let rows = sqlx::query(
-            "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state, i.severity,
+            "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state,
+                    CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
                     i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
                     i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
                     a.seen_at_ms, a.snoozed_until_ms
@@ -223,7 +225,7 @@ impl WorkspaceStore {
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
              WHERE (?1 IS NULL OR i.station_id = ?1)
-               AND (?2 IS NULL OR i.severity = ?2)
+               AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
                AND (
                     ?3 IS NULL
                     OR (?3 = 'active' AND i.lifecycle_state IN ('pending', 'open', 'recovering'))
@@ -251,7 +253,7 @@ impl WorkspaceStore {
             "SELECT COUNT(*) FROM change_incidents
              WHERE lifecycle_state IN ('pending', 'open', 'recovering')
                AND (?1 IS NULL OR station_id = ?1)
-               AND (?2 IS NULL OR severity = ?2)",
+               AND (?2 IS NULL OR CASE WHEN event_type = 'group_missing' THEN 'info' ELSE severity END = ?2)",
         )
         .bind(station_id)
         .bind(severity)
@@ -262,10 +264,10 @@ impl WorkspaceStore {
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
              WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
-               AND i.severity IN ('warning', 'critical')
+               AND CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END IN ('warning', 'critical')
                AND a.seen_at_ms IS NULL
                AND (?1 IS NULL OR i.station_id = ?1)
-               AND (?2 IS NULL OR i.severity = ?2)",
+               AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)",
         )
         .bind(station_id)
         .bind(severity)
@@ -281,7 +283,8 @@ impl WorkspaceStore {
         episode_number: i64,
     ) -> Result<Option<WorkspaceIncidentRow>, PersistenceError> {
         let row = sqlx::query(
-            "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state, i.severity,
+            "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state,
+                    CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
                     i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
                     i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
                     a.seen_at_ms, a.snoozed_until_ms

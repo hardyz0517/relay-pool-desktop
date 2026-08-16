@@ -9,6 +9,7 @@ use crate::{
                 RequestDescriptor, ResponseLimits,
             },
             http_mapping::classify_http_status,
+            openai_stream::IncrementalOpenAiStream,
         },
         challenge::ChallengeValidator,
     },
@@ -154,6 +155,16 @@ fn parse_chat_stream(
     validator: &ChallengeValidator,
     limits: ResponseLimits,
 ) -> ParsedProbeResponse {
+    // The OpenAI Chat adapter's buffered contract path must share exactly the
+    // same framing and terminal semantics as the live incremental executor.
+    // Other chat-shaped adapters still use the legacy helper until their own
+    // protocol reducers are migrated.
+    if protocol_kind == ProtocolKind::OpenAiChat {
+        let mut consumer = IncrementalOpenAiStream::for_protocol(protocol_kind, limits)
+            .expect("OpenAI Chat has an incremental stream consumer");
+        consumer.consume(body);
+        return consumer.finish(http_status, content_type, validator).0;
+    }
     if !is_sse(content_type) || body.is_empty() {
         return unavailable(
             protocol_kind,

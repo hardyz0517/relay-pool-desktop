@@ -96,7 +96,9 @@ pub fn register_routing_projection_task(
                             _ = tokio::time::sleep(Duration::from_millis(1_000)) => {}
                         }
                         if let Err(error) = project_once(&runtime, &context.cancellation_token).await {
-                            tracing::warn!(task = ROUTING_PROJECTION_TASK_ID, error = %error, "routing projection tick failed");
+                            crate::observability::runtime::bootstrap::emit(
+                                crate::services::proxy::runtime_events::routing_projection_tick_failed(),
+                            );
                         }
                     }
                 })

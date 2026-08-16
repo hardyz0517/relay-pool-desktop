@@ -4,58 +4,10 @@ use std::{
 };
 
 pub(crate) const MAX_METRIC_LABELS: usize = 6;
-pub(crate) const MAX_METRIC_LABEL_VALUE_BYTES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(
-    dead_code,
-    reason = "contract=observability.generic-metric-kinds; owner=observability/metrics; remove_when=generic runtime recorders are wired"
-)]
 pub(crate) enum MetricKind {
-    BindingDrift,
-    BlockingOrphan,
-    BlockingSaturation,
     Classification,
-    CollectorFailure,
-    CommandError,
-    CommandLatency,
-    HiddenQueryStart,
-    OperationCancelLatency,
-    OperationTerminal,
-    RuntimeStatus,
-    TaskBackoff,
-    TaskShutdownTimeout,
-    TaskStatus,
-    WorkspaceIpcCount,
-    WorkspaceLatency,
-    WorkspacePayloadBytes,
-}
-
-impl MetricKind {
-    #[expect(
-        dead_code,
-        reason = "contract=observability.stage4-metric-inventory; owner=observability/metrics; remove_when=generic runtime recorders are wired"
-    )]
-    pub(crate) fn stage4_required() -> &'static [Self] {
-        &[
-            Self::BindingDrift,
-            Self::BlockingOrphan,
-            Self::BlockingSaturation,
-            Self::CollectorFailure,
-            Self::CommandError,
-            Self::CommandLatency,
-            Self::HiddenQueryStart,
-            Self::OperationCancelLatency,
-            Self::OperationTerminal,
-            Self::RuntimeStatus,
-            Self::TaskBackoff,
-            Self::TaskShutdownTimeout,
-            Self::TaskStatus,
-            Self::WorkspaceIpcCount,
-            Self::WorkspaceLatency,
-            Self::WorkspacePayloadBytes,
-        ]
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,66 +24,18 @@ pub(crate) enum ClassificationMetricLabel {
     ProfileMismatch,
     Truncated,
     RequestTerminal,
-    #[expect(
-        dead_code,
-        reason = "contract=observability.classification-unknown; owner=observability/metrics; remove_when=an explicit unknown classifier terminal is emitted"
-    )]
-    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(
-    dead_code,
-    reason = "contract=observability.generic-metric-labels; owner=observability/metrics; remove_when=generic runtime recorders are wired"
-)]
 pub(crate) enum MetricLabel {
     Classification(ClassificationMetricLabel),
-    Command(&'static str),
-    Outcome(MetricOutcome),
-    Runtime(RuntimeMetricLabel),
-    Task(&'static str),
-    WorkKind(&'static str),
 }
 
 impl MetricLabel {
-    fn validate(self) -> Result<Self, MetricError> {
-        match self {
-            Self::Command(value) | Self::Task(value) | Self::WorkKind(value) => {
-                validate_label_value(value)?;
-            }
-            Self::Classification(_) | Self::Outcome(_) | Self::Runtime(_) => {}
-        }
-        Ok(self)
+    fn validate(self) -> Self {
+        let Self::Classification(_) = self;
+        self
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeMetricLabel {
-    BlockingOrphaned,
-    BlockingQueued,
-    BlockingRunning,
-    OperationExpiredTombstones,
-    OperationRunning,
-    OperationStored,
-    OperationTerminal,
-    OutboundClientInstancesCreated,
-    OutboundPoolSize,
-    TaskActive,
-    TaskRegistered,
-    TaskTerminal,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(
-    dead_code,
-    reason = "contract=observability.generic-metric-outcomes; owner=observability/metrics; remove_when=generic runtime recorders are wired"
-)]
-pub(crate) enum MetricOutcome {
-    Cancelled,
-    Error,
-    Ok,
-    Overloaded,
-    Timeout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +67,7 @@ impl MetricEvent {
         let labels = labels
             .into_iter()
             .map(MetricLabel::validate)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         Ok(Self {
             kind,
             value,
@@ -175,9 +79,9 @@ impl MetricEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetricError {
-    InvalidLabel,
     TooManyLabels,
     ZeroCapacity,
+    #[cfg(test)]
     ZeroTtl,
 }
 
@@ -202,6 +106,7 @@ impl LocalMetricBuffer {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn with_ttl(capacity: usize, ttl_ms: u64) -> Result<Self, MetricError> {
         if ttl_ms == 0 {
             return Err(MetricError::ZeroTtl);
@@ -220,6 +125,7 @@ impl LocalMetricBuffer {
         self.events.push_back(event);
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> MetricSnapshot {
         MetricSnapshot {
             dropped: self.dropped,
@@ -243,28 +149,10 @@ impl LocalMetricBuffer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct MetricSnapshot {
     pub dropped: u64,
     pub events: Vec<MetricEvent>,
-}
-
-fn validate_label_value(value: &str) -> Result<(), MetricError> {
-    let lower = value.to_ascii_lowercase();
-    if value.is_empty()
-        || value.len() > MAX_METRIC_LABEL_VALUE_BYTES
-        || value.contains("://")
-        || value.contains('?')
-        || value.contains('=')
-        || lower.contains("authorization")
-        || lower.contains("bearer")
-        || lower.contains("cookie")
-        || lower.contains("password")
-        || lower.contains("sk-")
-        || lower.contains("token")
-    {
-        return Err(MetricError::InvalidLabel);
-    }
-    Ok(())
 }
 
 fn now_millis() -> u64 {
@@ -281,55 +169,15 @@ mod tests {
 
     #[test]
     fn metric_events_reject_unbounded_label_fanout() {
-        let labels = vec![MetricLabel::Outcome(MetricOutcome::Ok); MAX_METRIC_LABELS + 1];
+        let labels = vec![
+            MetricLabel::Classification(ClassificationMetricLabel::AttemptStart);
+            MAX_METRIC_LABELS + 1
+        ];
 
         assert_eq!(
-            MetricEvent::new(MetricKind::CommandLatency, 10, labels),
+            MetricEvent::new(MetricKind::Classification, 10, labels),
             Err(MetricError::TooManyLabels)
         );
-    }
-
-    #[test]
-    fn metric_events_reject_secret_url_and_unbounded_freeform_labels() {
-        for label in [
-            MetricLabel::Command("https://provider.example/v1?token=secret"),
-            MetricLabel::Task("authorization-bearer-sk-secret"),
-            MetricLabel::WorkKind(
-                "a-label-that-is-longer-than-the-allowed-low-cardinality-budget-for-metrics",
-            ),
-        ] {
-            assert_eq!(
-                MetricEvent::new(MetricKind::CommandLatency, 1, vec![label]),
-                Err(MetricError::InvalidLabel)
-            );
-        }
-    }
-
-    #[test]
-    fn stage4_required_metric_kinds_cover_runtime_and_frontend_contracts() {
-        let kinds = MetricKind::stage4_required();
-        for required in [
-            MetricKind::CommandLatency,
-            MetricKind::CommandError,
-            MetricKind::WorkspaceLatency,
-            MetricKind::WorkspacePayloadBytes,
-            MetricKind::WorkspaceIpcCount,
-            MetricKind::TaskStatus,
-            MetricKind::TaskBackoff,
-            MetricKind::TaskShutdownTimeout,
-            MetricKind::OperationTerminal,
-            MetricKind::OperationCancelLatency,
-            MetricKind::BlockingSaturation,
-            MetricKind::BlockingOrphan,
-            MetricKind::CollectorFailure,
-            MetricKind::HiddenQueryStart,
-            MetricKind::BindingDrift,
-        ] {
-            assert!(
-                kinds.contains(&required),
-                "missing required metric kind: {required:?}"
-            );
-        }
     }
 
     #[test]
@@ -338,9 +186,11 @@ mod tests {
         for value in 1..=3 {
             buffer.record(
                 MetricEvent::new(
-                    MetricKind::BlockingSaturation,
+                    MetricKind::Classification,
                     value,
-                    vec![MetricLabel::WorkKind("blocking")],
+                    vec![MetricLabel::Classification(
+                        ClassificationMetricLabel::Saturation,
+                    )],
                 )
                 .expect("metric event"),
             );
@@ -358,18 +208,22 @@ mod tests {
         let mut buffer = LocalMetricBuffer::with_ttl(4, 10).expect("buffer");
         buffer.record(
             MetricEvent::new_at(
-                MetricKind::CommandLatency,
+                MetricKind::Classification,
                 1,
-                vec![MetricLabel::Command("get_settings")],
+                vec![MetricLabel::Classification(
+                    ClassificationMetricLabel::AttemptStart,
+                )],
                 100,
             )
             .expect("first event"),
         );
         buffer.record(
             MetricEvent::new_at(
-                MetricKind::CommandLatency,
+                MetricKind::Classification,
                 2,
-                vec![MetricLabel::Command("list_stations")],
+                vec![MetricLabel::Classification(
+                    ClassificationMetricLabel::RequestTerminal,
+                )],
                 105,
             )
             .expect("second event"),

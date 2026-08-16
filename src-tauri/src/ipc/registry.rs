@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "c699f70c58a959fabd790673a693439c36feddee5b36d0688639bf1d652161da";
+    "a755c496a72275e3acb8663651423f5dcd1c0ed8ec452eea07fe188182c3a8cf";
 
 #[cfg_attr(
     not(test),
@@ -76,6 +76,11 @@ macro_rules! ipc_command_registry {
             app_status => $crate::commands::runtime::app_status,
             get_runtime_contract_info => $crate::commands::runtime::get_runtime_contract_info,
             get_runtime_status => $crate::commands::runtime::get_runtime_status,
+            restart_application => $crate::commands::runtime::restart_application,
+            initialize_runtime_context => $crate::commands::runtime_context::initialize_runtime_context,
+            read_runtime_diagnostics => $crate::commands::runtime_diagnostics::read_runtime_diagnostics,
+            export_runtime_support_bundle => $crate::commands::runtime_diagnostics::export_runtime_support_bundle,
+            record_frontend_boundary_failure => $crate::commands::runtime_diagnostics::record_frontend_boundary_failure,
             get_data_store_startup_state => $crate::commands::data_store_startup::get_data_store_startup_state,
             refresh_data_store_candidates => $crate::commands::data_store_startup::refresh_data_store_candidates,
             locate_data_store_candidate => $crate::commands::data_store_startup::locate_data_store_candidate,
@@ -315,7 +320,25 @@ struct CommandContract {
 fn command_contract(name: &str) -> CommandContract {
     match name {
         "app_status" => migrated_read("EmptyInputDto", "AppStatusDto"),
+        "restart_application" => migrated_mutation("EmptyInputDto", "unit", "non_idempotent", true),
         "get_runtime_status" => migrated_read("EmptyInputDto", "RuntimeStatusDto"),
+        "read_runtime_diagnostics" => CommandContract {
+            runtime_validation: "developer_mode_gate",
+            ..migrated_read("RuntimeDiagnosticsQueryDto", "RuntimeDiagnosticsPageDto")
+        },
+        "export_runtime_support_bundle" => CommandContract {
+            runtime_validation: "developer_mode_gate",
+            ..migrated_mutation(
+                "EmptyInputDto",
+                "Option<RuntimeSupportBundleResultDto>",
+                "non_idempotent",
+                true,
+            )
+        },
+        "record_frontend_boundary_failure" => CommandContract {
+            runtime_validation: "rust_dto_pre_application",
+            ..migrated_mutation("EmptyInputDto", "unit", "idempotent", false)
+        },
         "get_settings" => migrated_read("EmptyInputDto", "SettingsDto"),
         "get_local_access_key" => migrated_read("EmptyInputDto", "String"),
         "update_local_access_key" => migrated_mutation(
@@ -1240,6 +1263,10 @@ export function getRuntimeStatus(input: EmptyInputDto = {}): Promise<RuntimeStat
   return invokeCommand<RuntimeStatusDto>("get_runtime_status", { input });
 }
 
+export function restartApplication(input: EmptyInputDto = {}): Promise<void> {
+  return invokeNonIdempotent<void>("restart_application", { input });
+}
+
 export function getSettings(input: EmptyInputDto = {}): Promise<SettingsDto> {
   return invokeCommand<SettingsDto>("get_settings", { input });
 }
@@ -1804,7 +1831,23 @@ export function getRuntimeContractInfo(): Promise<RuntimeContractInfo>"#,
             r#"export function getRuntimeContractInfo(): Promise<RuntimeContractInfo> {
   return invokeCommand<RuntimeContractInfo>("get_runtime_contract_info");
 }"#,
-            r#"export function getRuntimeContractInfo(input: EmptyInputDto = {}): Promise<RuntimeContractInfo> {
+            r#"export function initializeRuntimeContext(input: EmptyInputDto = {}): Promise<string> {
+  return invokeCommand<string>("initialize_runtime_context", { input });
+}
+
+export function recordFrontendBoundaryFailure(input: EmptyInputDto = {}): Promise<void> {
+  return invokeCommand<void>("record_frontend_boundary_failure", { input });
+}
+
+export function readRuntimeDiagnostics(input: RuntimeDiagnosticsQueryDto = {}): Promise<RuntimeDiagnosticsPageDto> {
+  return invokeCommand<RuntimeDiagnosticsPageDto>("read_runtime_diagnostics", { input });
+}
+
+export function exportRuntimeSupportBundle(input: EmptyInputDto = {}): Promise<RuntimeSupportBundleResultDto | null> {
+  return invokeCommand<RuntimeSupportBundleResultDto | null>("export_runtime_support_bundle", { input });
+}
+
+export function getRuntimeContractInfo(input: EmptyInputDto = {}): Promise<RuntimeContractInfo> {
   return invokeCommand<RuntimeContractInfo>("get_runtime_contract_info", { input });
 }"#,
         )
@@ -2421,7 +2464,18 @@ mod tests {
     }
 
     #[test]
-    fn runtime_status_is_the_only_public_runtime_diagnostics_surface() {
+    fn application_restart_is_a_non_idempotent_lifecycle_command() {
+        let contract = command_contract("restart_application");
+        assert_eq!(contract.input, "EmptyInputDto");
+        assert_eq!(contract.output, "unit");
+        assert_eq!(contract.mutation_kind, "non_idempotent");
+        assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
+        assert!(!contract.transport_retry);
+        assert!(contract.result_unknown);
+    }
+
+    #[test]
+    fn runtime_diagnostics_surface_requires_a_developer_gate() {
         let status = command_contract("get_runtime_status");
         assert_eq!(status.input, "EmptyInputDto");
         assert_eq!(status.output, "RuntimeStatusDto");
@@ -2430,6 +2484,7 @@ mod tests {
         assert!(!status.transport_retry);
         assert!(!status.result_unknown);
 
+        let mut diagnostics_commands = 0;
         for command in COMMANDS {
             let contract = command_contract(command.name);
             assert!(
@@ -2443,13 +2498,37 @@ mod tests {
                 "{} exposes full runtime diagnostics as an IPC output",
                 command.name
             );
-            assert!(
-                !command.name.contains("runtime_diagnostic")
-                    && !command.name.contains("runtime_diagnostics"),
-                "{} exposes a runtime diagnostics IPC command without a developer-mode gate",
-                command.name
-            );
+            let diagnostics_like = command.name.contains("runtime_diagnostic")
+                || command.name.contains("runtime_diagnostics")
+                || command.name.contains("support_bundle")
+                || command.name == "record_frontend_boundary_failure";
+            if diagnostics_like {
+                diagnostics_commands += 1;
+                assert!(
+                    matches!(
+                        command.name,
+                        "read_runtime_diagnostics"
+                            | "export_runtime_support_bundle"
+                            | "record_frontend_boundary_failure"
+                    ),
+                    "unexpected runtime diagnostics command: {}",
+                    command.name
+                );
+                if matches!(
+                    command.name,
+                    "read_runtime_diagnostics" | "export_runtime_support_bundle"
+                ) {
+                    assert_eq!(
+                        contract.runtime_validation, "developer_mode_gate",
+                        "{} must enforce developer mode before reading/exporting diagnostics",
+                        command.name
+                    );
+                } else {
+                    assert_eq!(contract.runtime_validation, "rust_dto_pre_application");
+                }
+            }
         }
+        assert_eq!(diagnostics_commands, 3);
     }
 
     #[test]

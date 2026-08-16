@@ -228,7 +228,9 @@ impl RoutingService {
             .await
             .map_err(|error| {
                 #[cfg(test)]
-                eprintln!("planning snapshot build failed: {error:?}");
+                crate::observability::runtime::bootstrap::emit(
+                    crate::services::proxy::runtime_events::planning_snapshot_failed(),
+                );
                 let _ = error;
                 ApplicationError::ConstraintViolation
             })?;

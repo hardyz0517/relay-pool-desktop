@@ -135,6 +135,7 @@ impl StartupUpgradeRecovery {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn message(self, compatibility_schema_version: i64) -> String {
         match self {
             Self::UnsupportedVersion => format!(

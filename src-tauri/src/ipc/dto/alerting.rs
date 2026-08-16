@@ -425,6 +425,7 @@ pub(crate) struct AlertingIncidentSummaryDto {
     pub event_type: String,
     pub lifecycle_state: String,
     pub severity: String,
+    pub group_name: Option<String>,
     pub station_id: Option<String>,
     pub episode_number: i64,
     pub occurrence_count: i64,
@@ -459,6 +460,7 @@ pub(crate) struct AlertingActivityDto {
     pub id: String,
     pub event_type: String,
     pub severity: String,
+    pub group_name: Option<String>,
     pub station_id: Option<String>,
     pub object_type: Option<String>,
     pub object_id: Option<String>,
@@ -691,6 +693,7 @@ impl From<ActivitySummary> for AlertingActivityDto {
             id: item.id,
             event_type: item.event_type,
             severity: item.severity,
+            group_name: item.group_name,
             station_id: item.station_id,
             object_type: item.object_type,
             object_id: item.object_id,
@@ -721,6 +724,7 @@ impl From<IncidentSummary> for AlertingIncidentSummaryDto {
             event_type: item.event_type,
             lifecycle_state: item.lifecycle_state,
             severity: item.severity,
+            group_name: item.group_name,
             station_id: item.station_id,
             episode_number: item.episode_number,
             occurrence_count: item.occurrence_count,
@@ -905,7 +909,7 @@ export type AlertingObservationInputDto = {
 };
 export type AlertingIncidentSummaryDto = {
   id: string; conditionKey: string; eventType: string; lifecycleState: string;
-  severity: string; stationId: string | null; episodeNumber: number;
+  severity: string; groupName: string | null; stationId: string | null; episodeNumber: number;
   occurrenceCount: number; lastSeenAtMs: number; collectorFailedTaskTypes: string[];
   resolvedAtMs: number | null;
   updatedAtMs: number; seenAtMs: number | null; snoozedUntilMs: number | null;
@@ -917,7 +921,7 @@ export type AlertingIncidentPageDto = {
 };
 export type AlertingActivityDto = {
   recordType: "incident" | "change"; id: string; eventType: string; severity: string;
-  stationId: string | null; objectType: string | null; objectId: string | null;
+  groupName: string | null; stationId: string | null; objectType: string | null; objectId: string | null;
   stationKeyId: string | null; source: string | null; reasonCode: string | null;
   conditionKey: string | null; lifecycleState: string | null;
   episodeNumber: number | null; occurrenceCount: number | null; activityAtMs: number;

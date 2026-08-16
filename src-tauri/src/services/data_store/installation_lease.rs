@@ -1,7 +1,10 @@
 use std::{
     fs::{File, OpenOptions, TryLockError},
     path::Path,
-    time::Instant,
+};
+
+use crate::observability::runtime::bootstrap::{
+    emit_installation_lease_event, InstallationLeaseEvent,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -15,14 +18,12 @@ pub enum LeaseError {
 #[derive(Debug)]
 pub struct InstallationLease {
     file: Option<File>,
-    acquired_at: Instant,
     #[cfg(test)]
     release_fault: Option<std::io::ErrorKind>,
 }
 
 impl InstallationLease {
     pub fn try_acquire(config_dir: &Path) -> Result<Self, LeaseError> {
-        let started = Instant::now();
         std::fs::create_dir_all(config_dir).map_err(LeaseError::Io)?;
         let path = config_dir.join("relay-pool-installation.lock");
         let file = OpenOptions::new()
@@ -33,35 +34,20 @@ impl InstallationLease {
             .open(path)
             .map_err(LeaseError::Io)?;
         if let Err(error) = file.try_lock() {
-            let elapsed_ms = started.elapsed().as_millis();
             match error {
                 TryLockError::WouldBlock => {
-                    log_installation_lease_event(
-                        "installation_lease_contended",
-                        "already_running",
-                        elapsed_ms,
-                    );
+                    log_installation_lease_event(InstallationLeaseEvent::Contended);
                     return Err(LeaseError::AlreadyRunning);
                 }
                 TryLockError::Error(error) => {
-                    log_installation_lease_event(
-                        "installation_lease_acquired",
-                        "io_error",
-                        elapsed_ms,
-                    );
+                    log_installation_lease_event(InstallationLeaseEvent::AcquireFailed);
                     return Err(LeaseError::Io(error));
                 }
             }
         }
-        let acquired_at = Instant::now();
-        log_installation_lease_event(
-            "installation_lease_acquired",
-            "ok",
-            started.elapsed().as_millis(),
-        );
+        log_installation_lease_event(InstallationLeaseEvent::Acquired);
         Ok(Self {
             file: Some(file),
-            acquired_at,
             #[cfg(test)]
             release_fault: None,
         })
@@ -69,18 +55,10 @@ impl InstallationLease {
 
     pub fn release(mut self) -> Result<(), LeaseError> {
         if let Err(error) = self.release_inner() {
-            log_installation_lease_event(
-                "installation_lease_released",
-                "io_error",
-                self.acquired_at.elapsed().as_millis(),
-            );
+            log_installation_lease_event(InstallationLeaseEvent::ReleaseFailed);
             return Err(error);
         }
-        log_installation_lease_event(
-            "installation_lease_released",
-            "ok",
-            self.acquired_at.elapsed().as_millis(),
-        );
+        log_installation_lease_event(InstallationLeaseEvent::Released);
         Ok(())
     }
 
@@ -108,30 +86,30 @@ impl InstallationLease {
 impl Drop for InstallationLease {
     fn drop(&mut self) {
         if self.file.is_some() {
-            let outcome = if self.release_inner().is_ok() {
-                "drop_ok"
+            let event = if self.release_inner().is_ok() {
+                InstallationLeaseEvent::Released
             } else {
                 // Closing the file handle remains the final OS-backed release path.
-                "drop_io_error"
+                InstallationLeaseEvent::ReleaseFailed
             };
-            log_installation_lease_event(
-                "installation_lease_released",
-                outcome,
-                self.acquired_at.elapsed().as_millis(),
-            );
+            log_installation_lease_event(event);
         }
     }
 }
 
-fn log_installation_lease_event(event: &str, outcome: &str, elapsed_ms: u128) {
-    println!("{event} outcome={outcome} elapsed_ms={elapsed_ms}");
+fn log_installation_lease_event(event: InstallationLeaseEvent) {
+    emit_installation_lease_event(event);
 }
 
 #[cfg(test)]
 mod tests {
     use std::io::ErrorKind;
+    use std::sync::Arc;
 
     use super::{InstallationLease, LeaseError};
+    use crate::observability::runtime::{
+        bootstrap, DetailKind, LeaseState, RuntimeEvent, RuntimeLogReader, RuntimeLogService,
+    };
 
     #[test]
     fn explicit_release_reports_failure_but_drop_still_releases_os_lock() {
@@ -148,5 +126,53 @@ mod tests {
             .expect("drop fallback released the file lock")
             .release()
             .expect("explicit release succeeds");
+    }
+
+    #[tokio::test]
+    async fn lease_lifecycle_publishes_typed_runtime_events() {
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(RuntimeLogService::open(root.path().join("logs")));
+        let config_dir = root.path().join("config");
+
+        bootstrap::with_test_service(Arc::clone(&service), || async {
+            let lease = InstallationLease::try_acquire(&config_dir).expect("first lease");
+            assert!(matches!(
+                InstallationLease::try_acquire(&config_dir),
+                Err(LeaseError::AlreadyRunning)
+            ));
+            lease.release().expect("release lease");
+        })
+        .await;
+        service.flush();
+
+        let page = RuntimeLogReader::new(root.path().join("logs")).read_page(0, 50, 1024 * 1024);
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        let events = page
+            .lines
+            .iter()
+            .filter_map(|line| serde_json::from_slice::<RuntimeEvent>(line.as_bytes()).ok())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| {
+            event.event_code.as_str() == "persistence.installation_lease.acquired"
+                && event.detail.kind() == DetailKind::Lease
+                && event.detail
+                    == crate::observability::runtime::RuntimeDetail::Lease {
+                        state: LeaseState::Acquired,
+                    }
+        }));
+        assert!(events.iter().any(|event| {
+            event.event_code.as_str() == "persistence.installation_lease.contended"
+                && event.detail
+                    == crate::observability::runtime::RuntimeDetail::Lease {
+                        state: LeaseState::Unavailable,
+                    }
+        }));
+        assert!(events.iter().any(|event| {
+            event.event_code.as_str() == "persistence.installation_lease.released"
+                && event.detail
+                    == crate::observability::runtime::RuntimeDetail::Lease {
+                        state: LeaseState::Released,
+                    }
+        }));
     }
 }

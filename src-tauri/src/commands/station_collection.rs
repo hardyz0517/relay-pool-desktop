@@ -20,14 +20,25 @@ use crate::{
 pub async fn detect_sub2api_station(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("detect_sub2api_station", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(input.station_id, collectors::output::CollectorTask::Detect)
-            .await
-            .map_err(public_station_collection_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "detect_sub2api_station",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .run_station_collection(input.station_id, collectors::output::CollectorTask::Detect)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
     .await
 }
 
@@ -35,14 +46,25 @@ pub async fn detect_sub2api_station(
 pub async fn collect_sub2api_station(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("collect_sub2api_station", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(input.station_id, collectors::output::CollectorTask::Full)
-            .await
-            .map_err(public_station_collection_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "collect_sub2api_station",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .run_station_collection(input.station_id, collectors::output::CollectorTask::Full)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
     .await
 }
 
@@ -50,14 +72,25 @@ pub async fn collect_sub2api_station(
 pub async fn detect_station_info(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("detect_station_info", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(input.station_id, collectors::output::CollectorTask::Detect)
-            .await
-            .map_err(public_station_collection_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "detect_station_info",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .run_station_collection(input.station_id, collectors::output::CollectorTask::Detect)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
     .await
 }
 
@@ -65,14 +98,25 @@ pub async fn detect_station_info(
 pub async fn collect_station_info(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("collect_station_info", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .run_station_collection(input.station_id, collectors::output::CollectorTask::Full)
-            .await
-            .map_err(public_station_collection_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "collect_station_info",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .run_station_collection(input.station_id, collectors::output::CollectorTask::Full)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
     .await
 }
 
@@ -80,20 +124,31 @@ pub async fn collect_station_info(
 pub async fn collect_station_task(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("collect_station_task", async {
-        let input = StationCollectorTaskInputDto::parse(input)?;
-        let task = match input.task_type {
-            StationCollectorTaskTypeDto::Detect => collectors::output::CollectorTask::Detect,
-            StationCollectorTaskTypeDto::Balance => collectors::output::CollectorTask::Balance,
-            StationCollectorTaskTypeDto::Groups => collectors::output::CollectorTask::Groups,
-            StationCollectorTaskTypeDto::Full => collectors::output::CollectorTask::Full,
-        };
-        facade
-            .run_station_collection(input.station_id, task)
-            .await
-            .map_err(public_station_collection_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "collect_station_task",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = StationCollectorTaskInputDto::parse(input)?;
+            let task = match input.task_type {
+                StationCollectorTaskTypeDto::Detect => collectors::output::CollectorTask::Detect,
+                StationCollectorTaskTypeDto::Balance => collectors::output::CollectorTask::Balance,
+                StationCollectorTaskTypeDto::Groups => collectors::output::CollectorTask::Groups,
+                StationCollectorTaskTypeDto::Full => collectors::output::CollectorTask::Full,
+            };
+            facade
+                .run_station_collection(input.station_id, task)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
     .await
 }
 
@@ -101,14 +156,25 @@ pub async fn collect_station_task(
 pub async fn test_station_login(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<CollectorRunResultDto, error::CommandError> {
-    correlation::in_command_scope("test_station_login", async {
-        let input = CollectorStationIdInputDto::parse(input)?;
-        facade
-            .test_station_login(input.station_id)
-            .await
-            .map_err(public_station_collection_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "test_station_login",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .test_station_login(input.station_id)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
     .await
 }
 
@@ -116,18 +182,29 @@ pub async fn test_station_login(
 pub async fn test_station_login_input(
     runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<StationLoginTestResultDto, error::CommandError> {
-    correlation::in_command_scope("test_station_login_input", async {
-        let input = StationLoginTestInputDto::parse(input)?.into_domain();
-        collectors::test_station_login_input_async(
-            &runtime.outbound,
-            input,
-            tokio_util::sync::CancellationToken::new(),
-            super::current_correlation_id(),
-        )
-        .await
-        .map_err(public_station_login_probe_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "test_station_login_input",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = StationLoginTestInputDto::parse(input)?.into_domain();
+            collectors::test_station_login_input_async(
+                &runtime.outbound,
+                input,
+                tokio_util::sync::CancellationToken::new(),
+                super::current_correlation_id(),
+            )
+            .await
+            .map_err(public_station_login_probe_error)
+        },
+    )
     .await
 }
 

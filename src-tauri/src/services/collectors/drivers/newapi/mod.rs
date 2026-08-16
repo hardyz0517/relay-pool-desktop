@@ -67,15 +67,29 @@ impl CollectorDriver for NewApiCollectorDriver {
         task: CollectorTaskKind,
     ) -> BoxFuture<'a, Result<DriverOutput, DriverFailure>> {
         async move {
-            match task {
+            let result = match task {
                 CollectorTaskKind::Detect => Ok(detect_output()),
                 CollectorTaskKind::Balance => collect_balance(context).await,
                 CollectorTaskKind::Groups => collect_groups(context).await,
+            };
+            if result.is_err() {
+                emit_driver_failure_event();
             }
+            result
         }
         .boxed()
     }
 }
+
+#[cfg(any(not(test), feature = "runtime-logging-artifact"))]
+fn emit_driver_failure_event() {
+    crate::observability::runtime::bootstrap::emit_rate_limited(
+        crate::services::station_collectors::runtime_events::driver_failed(),
+    );
+}
+
+#[cfg(all(test, not(feature = "runtime-logging-artifact")))]
+fn emit_driver_failure_event() {}
 
 impl RemoteKeyDriver for NewApiRemoteKeyDriver {
     fn kind(&self) -> ProviderKind {
@@ -1536,7 +1550,7 @@ mod tests {
     };
     use futures_util::FutureExt;
     use serde_json::json;
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
     use tokio_util::sync::CancellationToken;
 
     struct TestSecretAccessor(&'static str);
@@ -1639,6 +1653,65 @@ mod tests {
             .collect(&context, CollectorTaskKind::Balance)
             .await
             .expect("balance collect")
+    }
+
+    #[cfg(feature = "runtime-logging-artifact")]
+    #[tokio::test]
+    async fn loopback_retry_then_malformed_collector_response_publishes_final_jsonl_event() {
+        crate::observability::runtime::bootstrap::reset_rate_limit_for_tests();
+        let retry = "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\nretry-after: 0\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}";
+        let malformed = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 16\r\nconnection: close\r\n\r\n{not-json-canary";
+        let server =
+            TestHttpServer::sequence(vec![Some(retry.to_string()), Some(malformed.to_string())]);
+        let root = tempfile::tempdir().expect("runtime root");
+        let service = Arc::new(crate::observability::runtime::RuntimeLogService::open(
+            root.path(),
+        ));
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("sk-collector-loopback-canary");
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        crate::observability::runtime::bootstrap::with_test_service(
+            Arc::clone(&service),
+            || async {
+                let failure = NewApiCollectorDriver
+                    .collect(&context, CollectorTaskKind::Balance)
+                    .await
+                    .expect_err("malformed retry response must fail collection");
+                assert_eq!(failure.kind, DriverFailureKind::MalformedPayload);
+            },
+        )
+        .await;
+        let requests = server.finish();
+        assert_eq!(
+            requests.len(),
+            2,
+            "collector must take the bounded retry path"
+        );
+        service.flush();
+
+        let page = crate::observability::runtime::RuntimeLogReader::new(root.path()).read_page(
+            0,
+            50,
+            1024 * 1024,
+        );
+        assert!(page.issues.is_empty(), "reader issues: {:?}", page.issues);
+        let raw = page
+            .lines
+            .iter()
+            .map(|line| line.as_bytes())
+            .collect::<Vec<_>>();
+        assert!(raw.iter().any(|line| line
+            .windows(23)
+            .any(|window| window == b"collector.driver.failed")));
+        for canary in [
+            b"not-json-canary".as_slice(),
+            b"sk-collector-loopback-canary".as_slice(),
+        ] {
+            assert!(!raw
+                .iter()
+                .any(|line| line.windows(canary.len()).any(|window| window == canary)));
+        }
     }
 
     #[test]

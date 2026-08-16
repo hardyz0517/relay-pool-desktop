@@ -14,14 +14,25 @@ use crate::{
 pub async fn get_proxy_status(
     facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("get_proxy_status", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .get_proxy_status()
-            .await
-            .map_err(super::public_command_application_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_proxy_status",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .get_proxy_status()
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
     .await
 }
 
@@ -29,14 +40,25 @@ pub async fn get_proxy_status(
 pub async fn start_local_proxy(
     facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("start_local_proxy", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .start_local_proxy()
-            .await
-            .map_err(super::public_local_proxy_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "start_local_proxy",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .start_local_proxy()
+                .await
+                .map_err(super::public_local_proxy_error)
+        },
+    )
     .await
 }
 
@@ -44,14 +66,25 @@ pub async fn start_local_proxy(
 pub async fn stop_local_proxy(
     facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("stop_local_proxy", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .stop_local_proxy()
-            .await
-            .map_err(super::public_local_proxy_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "stop_local_proxy",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .stop_local_proxy()
+                .await
+                .map_err(super::public_local_proxy_error)
+        },
+    )
     .await
 }
 
@@ -59,14 +92,25 @@ pub async fn stop_local_proxy(
 pub async fn cleanup_before_update(
     facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("cleanup_before_update", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .cleanup_before_update()
-            .await
-            .map_err(super::public_local_proxy_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "cleanup_before_update",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .cleanup_before_update()
+                .await
+                .map_err(super::public_local_proxy_error)
+        },
+    )
     .await
 }
 
@@ -74,11 +118,22 @@ pub async fn cleanup_before_update(
 pub async fn prepare_local_proxy_for_update(
     proxy: State<'_, Arc<ProxyRuntimeState>>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("prepare_local_proxy_for_update", async {
-        EmptyInputDto::parse(input)?;
-        Ok(proxy.prepare_for_update(Duration::from_secs(30)).await?)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "prepare_local_proxy_for_update",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            Ok(proxy.prepare_for_update(Duration::from_secs(30)).await?)
+        },
+    )
     .await
 }
 
@@ -86,13 +141,24 @@ pub async fn prepare_local_proxy_for_update(
 pub async fn restart_local_proxy(
     facade: State<'_, LocalProxyCommandFacade>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<ProxyStatusDto, error::CommandError> {
-    correlation::in_command_scope("restart_local_proxy", async {
-        EmptyInputDto::parse(input)?;
-        facade
-            .restart_local_proxy()
-            .await
-            .map_err(super::public_local_proxy_error)
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "restart_local_proxy",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            EmptyInputDto::parse(input)?;
+            facade
+                .restart_local_proxy()
+                .await
+                .map_err(super::public_local_proxy_error)
+        },
+    )
     .await
 }

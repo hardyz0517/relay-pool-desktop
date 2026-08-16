@@ -13,6 +13,8 @@ pub(crate) mod proxy_workspace_reads;
 pub(crate) mod request_logs;
 pub(crate) mod routing_health_reads;
 pub(crate) mod routing_mutations;
+pub(crate) mod runtime_context;
+pub(crate) mod runtime_diagnostics;
 pub(crate) mod runtime_status;
 pub(crate) mod settings;
 pub(crate) mod station_collector_operations;
@@ -108,6 +110,8 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     pricing_mutations::PRICING_MUTATIONS_TYPE,
     proxy_workspace_reads::PROXY_WORKSPACE_READS_TYPE,
     request_logs::REQUEST_LOGS_TYPE,
+    runtime_context::IPC_RUNTIME_CONTEXT_TYPE,
+    runtime_diagnostics::RUNTIME_DIAGNOSTICS_TYPE,
     provider_drafts::PROVIDER_DRAFTS_TYPE,
     routing_health_reads::ROUTING_HEALTH_READS_TYPE,
     routing_mutations::ROUTING_MUTATIONS_TYPE,

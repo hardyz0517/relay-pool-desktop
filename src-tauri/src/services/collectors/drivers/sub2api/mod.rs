@@ -35,6 +35,8 @@ use crate::{
 
 const LOGIN_PATHS: [&str; 3] = ["/api/v1/auth/login", "/auth/login", "/api/login"];
 const LOGIN_FIELDS: [&str; 3] = ["email", "username", "user"];
+const REMOTE_KEY_PAGE_SIZE: usize = 100;
+const REMOTE_KEY_MAX_PAGES: usize = 10_000;
 const REQUEST_MAX_ATTEMPTS: usize = 3;
 const MALFORMED_JSON_MAX_ATTEMPTS: usize = 2;
 const RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(300), Duration::from_secs(1)];
@@ -86,9 +88,15 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             validate_remote_key_request(context, &request.station, &request.endpoints)?;
             let website_url = website_url_from_endpoints(&request.endpoints)?;
             let auth = sub2api_auth(context)?;
-            let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
-            let execution =
-                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+            let mut session = resolve_remote_key_list_session(context, &website_url, &auth).await?;
+            let execution = fetch_remote_key_list(
+                context,
+                &website_url,
+                &auth,
+                &mut session.access_token,
+                session.cookie.as_deref(),
+            )
+            .await?;
             if !execution.ok {
                 return Err(failed_from_endpoint_results(
                     &[execution.redacted.clone()],
@@ -120,9 +128,15 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             validate_remote_key_request(context, &request.station, &request.endpoints)?;
             let website_url = website_url_from_endpoints(&request.endpoints)?;
             let auth = sub2api_auth(context)?;
-            let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
-            let execution =
-                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+            let mut session = resolve_remote_key_list_session(context, &website_url, &auth).await?;
+            let execution = fetch_remote_key_list(
+                context,
+                &website_url,
+                &auth,
+                &mut session.access_token,
+                session.cookie.as_deref(),
+            )
+            .await?;
             if !execution.ok {
                 return Err(failed_from_endpoint_results(
                     &[execution.redacted.clone()],
@@ -194,8 +208,8 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
                 });
             }
 
-            let list =
-                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+            let list = fetch_remote_key_list(context, &website_url, &auth, &mut access_token, None)
+                .await?;
             if list.ok {
                 if let Some((listed_key, full_key)) = remote_key_secret_by_name_from_list_payload(
                     &request.station.station_id,
@@ -241,7 +255,8 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             let auth = sub2api_auth(context)?;
             let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
             let initial =
-                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await?;
+                fetch_remote_key_list(context, &website_url, &auth, &mut access_token, None)
+                    .await?;
             if !initial.ok {
                 return Err(failed_from_endpoint_results(
                     &[initial.redacted.clone()],
@@ -324,7 +339,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             };
 
             let reconciliation =
-                fetch_remote_key_list(context, &website_url, &auth, &mut access_token).await;
+                fetch_remote_key_list(context, &website_url, &auth, &mut access_token, None).await;
             let remaining = match reconciliation {
                 Ok(output) if output.ok => output,
                 _ => {
@@ -413,6 +428,7 @@ async fn fetch_remote_key_list(
     website_url: &str,
     auth: &Sub2ApiAuth,
     access_token: &mut String,
+    session_cookie: Option<&str>,
 ) -> Result<RemoteKeyListExecution, DriverFailure> {
     let mut requested_page = 1usize;
     let mut all_items = Vec::new();
@@ -420,14 +436,15 @@ async fn fetch_remote_key_list(
     let mut page_diagnostics = Vec::new();
 
     loop {
-        let path = format!("/api/v1/keys?page={requested_page}&page_size=100");
-        let execution = execute_bearer_json_with_recovery(
+        let path = format!("/api/v1/keys?page={requested_page}&page_size={REMOTE_KEY_PAGE_SIZE}");
+        let execution = execute_bearer_json_with_recovery_with_cookie(
             context,
             EndpointRole::RemoteKeys,
             website_url,
             &path,
             access_token,
             auth,
+            session_cookie,
         )
         .await?;
         evidence.push(execution.evidence.clone());
@@ -456,39 +473,61 @@ async fn fetch_remote_key_list(
                 "Sub2API remote-key pagination is missing items",
             )
         })?;
-        let page = required_pagination_usize(data, "page", &endpoint)?;
-        let page_size = required_pagination_usize(data, "page_size", &endpoint)?;
-        let total = required_pagination_usize(data, "total", &endpoint)?;
-        let pages = required_pagination_usize(data, "pages", &endpoint)?;
-        if page != requested_page || page_size == 0 || items.len() > page_size {
+        let page = optional_pagination_usize(data, "page");
+        let page_size = optional_pagination_usize(data, "page_size");
+        let total = optional_pagination_usize(data, "total");
+        let pages = optional_pagination_usize(data, "pages");
+        if page.is_some_and(|page| page != requested_page)
+            || page_size.is_some_and(|page_size| page_size == 0 || items.len() > page_size)
+        {
             return Err(malformed(
                 EndpointRole::RemoteKeys,
                 Some(endpoint),
                 "Sub2API remote-key pagination metadata is inconsistent",
             ));
         }
-        let expected_pages = if total == 0 {
-            0
-        } else {
-            total.div_ceil(page_size)
-        };
-        if pages != expected_pages || pages > 10_000 {
+        if pages.is_some_and(|pages| pages > REMOTE_KEY_MAX_PAGES) {
             return Err(malformed(
                 EndpointRole::RemoteKeys,
                 Some(endpoint),
-                "Sub2API remote-key pagination total is inconsistent",
+                "Sub2API remote-key pagination exceeds the supported page limit",
             ));
         }
         all_items.extend(items.iter().cloned());
-        if requested_page >= pages.max(1) {
-            if all_items.len() != total {
+        if total.is_some_and(|total| all_items.len() > total) {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                evidence.last().cloned(),
+                "Sub2API remote-key pagination returned more items than total",
+            ));
+        }
+
+        let effective_page_size = page_size.unwrap_or(REMOTE_KEY_PAGE_SIZE);
+        let complete = match total {
+            Some(total) if all_items.len() == total => true,
+            Some(_) if items.is_empty() || pages.is_some_and(|pages| requested_page >= pages) => {
                 return Err(malformed(
                     EndpointRole::RemoteKeys,
                     evidence.last().cloned(),
                     "Sub2API remote-key pagination returned a partial list",
                 ));
             }
+            Some(_) => false,
+            None => {
+                items.is_empty()
+                    || items.len() < effective_page_size
+                    || pages.is_some_and(|pages| requested_page >= pages)
+            }
+        };
+        if complete {
             break;
+        }
+        if requested_page >= REMOTE_KEY_MAX_PAGES {
+            return Err(malformed(
+                EndpointRole::RemoteKeys,
+                evidence.last().cloned(),
+                "Sub2API remote-key pagination exceeded the supported page limit",
+            ));
         }
         requested_page += 1;
     }
@@ -501,25 +540,13 @@ async fn fetch_remote_key_list(
     })
 }
 
-fn required_pagination_usize(
-    data: &Value,
-    field: &str,
-    endpoint: &EndpointEvidence,
-) -> Result<usize, DriverFailure> {
-    data.get(field)
-        .and_then(|value| {
-            value
-                .as_u64()
-                .and_then(|value| usize::try_from(value).ok())
-                .or_else(|| value.as_str()?.trim().parse::<usize>().ok())
-        })
-        .ok_or_else(|| {
-            malformed(
-                EndpointRole::RemoteKeys,
-                Some(endpoint.clone()),
-                format!("Sub2API remote-key pagination is missing {field}"),
-            )
-        })
+fn optional_pagination_usize(data: &Value, field: &str) -> Option<usize> {
+    data.get(field).and_then(|value| {
+        value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .or_else(|| value.as_str()?.trim().parse::<usize>().ok())
+    })
 }
 
 async fn create_remote_key_once(
@@ -1130,6 +1157,62 @@ struct Sub2ApiAuth {
     credit_per_cny: f64,
 }
 
+struct RemoteKeyListSession {
+    access_token: String,
+    cookie: Option<String>,
+}
+
+struct LoginSession {
+    access_token: String,
+    cookie: Option<String>,
+}
+
+enum LoginSessionResolution {
+    Session(LoginSession),
+    InteractiveAuthorizationRequired { status: u16 },
+    SuccessfulWithoutSession { status: u16 },
+    SupportedFormsFailed { statuses: Vec<u16> },
+}
+
+impl LoginSessionResolution {
+    fn into_session(self) -> Option<LoginSession> {
+        match self {
+            Self::Session(session) => Some(session),
+            Self::InteractiveAuthorizationRequired { .. }
+            | Self::SuccessfulWithoutSession { .. }
+            | Self::SupportedFormsFailed { .. } => None,
+        }
+    }
+
+    fn remote_key_detail(&self) -> String {
+        match self {
+            Self::Session(_) => "Sub2API management session is available".to_string(),
+            Self::InteractiveAuthorizationRequired { status } => {
+                format!("Sub2API login was rejected or requires interactive authorization (HTTP {status}).")
+            }
+            Self::SuccessfulWithoutSession { status } => {
+                format!(
+                    "Sub2API login succeeded but did not return a usable management session (HTTP {status})."
+                )
+            }
+            Self::SupportedFormsFailed { statuses } if !statuses.is_empty() => {
+                let statuses = statuses
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "Sub2API login did not succeed for the supported login forms (HTTP {statuses})."
+                )
+            }
+            Self::SupportedFormsFailed { .. } => {
+                "Sub2API login did not return a usable response for the supported login forms."
+                    .to_string()
+            }
+        }
+    }
+}
+
 fn sub2api_auth(context: &CollectorContext<'_>) -> Result<Sub2ApiAuth, DriverFailure> {
     match context.auth.clone() {
         Some(ProviderAuthContext::Sub2Api {
@@ -1157,30 +1240,8 @@ async fn resolve_access_token(
     website_url: &str,
     auth: &Sub2ApiAuth,
 ) -> Result<String, DriverFailure> {
-    if let Some(handle) = &auth.access_token {
-        if let Ok(secret) = context
-            .secrets
-            .resolve_secret(handle, CredentialSecretPurpose::AuthorizationHeader)
-            .await
-        {
-            let token = secret.expose().trim();
-            if !token.is_empty() {
-                return Ok(token.to_string());
-            }
-        }
-        // Older prepared contexts stored the browser token under the session
-        // cookie purpose. Keep accepting that shape while new contexts use
-        // AuthorizationHeader for JWTs.
-        if let Ok(secret) = context
-            .secrets
-            .resolve_secret(handle, CredentialSecretPurpose::SessionCookie)
-            .await
-        {
-            let token = secret.expose().trim();
-            if !token.is_empty() {
-                return Ok(token.to_string());
-            }
-        }
+    if let Some(token) = resolve_saved_access_token(context, auth).await? {
+        return Ok(token);
     }
     if let Some(handle) = &auth.session_cookie {
         let secret = context
@@ -1193,13 +1254,82 @@ async fn resolve_access_token(
         }
     }
     if let Some(login) = &auth.login {
-        if let Some(token) = login_access_token(context, website_url, login).await? {
-            return Ok(token);
+        if let Some(session) = login_session(context, website_url, login)
+            .await?
+            .into_session()
+        {
+            return Ok(session.access_token);
         }
     }
     Err(manual_required(
-        "Sub2API collector requires an access token or saved login password",
+        "Sub2API requires usable management credentials",
     ))
+}
+
+async fn resolve_remote_key_list_session(
+    context: &CollectorContext<'_>,
+    website_url: &str,
+    auth: &Sub2ApiAuth,
+) -> Result<RemoteKeyListSession, DriverFailure> {
+    let cookie = resolve_session_cookie(context, auth).await?;
+    if let Some(access_token) = resolve_saved_access_token(context, auth).await? {
+        return Ok(RemoteKeyListSession {
+            access_token,
+            cookie,
+        });
+    }
+    if let Some(cookie) = cookie {
+        return Ok(RemoteKeyListSession {
+            access_token: cookie.clone(),
+            cookie: Some(cookie),
+        });
+    }
+    if let Some(login) = &auth.login {
+        match login_session(context, website_url, login).await? {
+            LoginSessionResolution::Session(session) => {
+                return Ok(RemoteKeyListSession {
+                    access_token: session.access_token,
+                    cookie: session.cookie,
+                });
+            }
+            resolution => return Err(manual_required(resolution.remote_key_detail())),
+        }
+    }
+    Err(manual_required(
+        "Sub2API remote-key listing could not establish a management session",
+    ))
+}
+
+async fn resolve_saved_access_token(
+    context: &CollectorContext<'_>,
+    auth: &Sub2ApiAuth,
+) -> Result<Option<String>, DriverFailure> {
+    if let Some(handle) = &auth.access_token {
+        if let Ok(secret) = context
+            .secrets
+            .resolve_secret(handle, CredentialSecretPurpose::AuthorizationHeader)
+            .await
+        {
+            let token = secret.expose().trim();
+            if !token.is_empty() {
+                return Ok(Some(token.to_string()));
+            }
+        }
+        // Older prepared contexts stored the browser token under the session
+        // cookie purpose. Keep accepting that shape while new contexts use
+        // AuthorizationHeader for JWTs.
+        if let Ok(secret) = context
+            .secrets
+            .resolve_secret(handle, CredentialSecretPurpose::SessionCookie)
+            .await
+        {
+            let token = secret.expose().trim();
+            if !token.is_empty() {
+                return Ok(Some(token.to_string()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 async fn resolve_session_cookie(
@@ -1256,6 +1386,27 @@ async fn execute_bearer_json_with_recovery(
     access_token: &mut String,
     auth: &Sub2ApiAuth,
 ) -> Result<JsonExecution, DriverFailure> {
+    execute_bearer_json_with_recovery_with_cookie(
+        context,
+        role,
+        base_url,
+        path,
+        access_token,
+        auth,
+        None,
+    )
+    .await
+}
+
+async fn execute_bearer_json_with_recovery_with_cookie(
+    context: &CollectorContext<'_>,
+    role: EndpointRole,
+    base_url: &str,
+    path: &str,
+    access_token: &mut String,
+    auth: &Sub2ApiAuth,
+    session_cookie_override: Option<&str>,
+) -> Result<JsonExecution, DriverFailure> {
     let url = build_management_url(base_url, path)
         .map_err(|error| invalid_request(redact_text(&error)))?;
     let started_at = Instant::now();
@@ -1265,7 +1416,11 @@ async fn execute_bearer_json_with_recovery(
     let mut cookie_fallback_used = false;
     let mut malformed_attempts = 0;
     let mut latest = None;
-    let session_cookie = resolve_session_cookie(context, auth).await?;
+    let session_cookie = session_cookie_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or(resolve_session_cookie(context, auth).await?);
 
     for attempt in 1..=REQUEST_MAX_ATTEMPTS {
         let result = execute_bearer_json_once(
@@ -1617,10 +1772,22 @@ async fn login_access_token(
     base_url: &str,
     login: &Sub2ApiLoginCredential,
 ) -> Result<Option<String>, DriverFailure> {
+    Ok(login_session(context, base_url, login)
+        .await?
+        .into_session()
+        .map(|session| session.access_token))
+}
+
+async fn login_session(
+    context: &CollectorContext<'_>,
+    base_url: &str,
+    login: &Sub2ApiLoginCredential,
+) -> Result<LoginSessionResolution, DriverFailure> {
     let password = context
         .secrets
         .resolve_secret(&login.password, CredentialSecretPurpose::LoginPassword)
         .await?;
+    let mut statuses = Vec::new();
     for path in LOGIN_PATHS {
         let url = build_management_url(base_url, path)
             .map_err(|error| invalid_request(redact_text(&error)))?;
@@ -1636,15 +1803,28 @@ async fn login_access_token(
                 })?;
             let status = response.status.as_u16();
             let parsed = serde_json::from_slice::<Value>(&response.body).unwrap_or(Value::Null);
-            if let Some(token) = extract_token(&parsed) {
-                return Ok(Some(token));
+            if response.status.is_success() {
+                let access_token = extract_token(&parsed);
+                let cookie = extract_login_cookie(&response.headers);
+                if let Some(access_token) = access_token.or_else(|| cookie.clone()) {
+                    return Ok(LoginSessionResolution::Session(LoginSession {
+                        access_token,
+                        cookie,
+                    }));
+                }
             }
-            if is_manual_login_required(&parsed, status) || response.status.is_success() {
-                return Ok(None);
+            if is_manual_login_required(&parsed, status) {
+                return Ok(LoginSessionResolution::InteractiveAuthorizationRequired { status });
+            }
+            if response.status.is_success() {
+                return Ok(LoginSessionResolution::SuccessfulWithoutSession { status });
+            }
+            if !statuses.contains(&status) {
+                statuses.push(status);
             }
         }
     }
-    Ok(None)
+    Ok(LoginSessionResolution::SupportedFormsFailed { statuses })
 }
 
 fn build_login_request(
@@ -1708,6 +1888,23 @@ fn extract_token(value: &Value) -> Option<String> {
         .filter(|token| !token.is_empty())
         .map(ToString::to_string)
         .or_else(|| value.get("data").and_then(extract_token))
+}
+
+fn extract_login_cookie(headers: &http::HeaderMap) -> Option<String> {
+    let pairs = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .map(str::trim)
+        .filter_map(|pair| {
+            let (name, value) = pair.split_once('=')?;
+            let name = name.trim();
+            let value = value.trim();
+            (!name.is_empty() && !value.is_empty()).then(|| format!("{name}={value}"))
+        })
+        .collect::<Vec<_>>();
+    (!pairs.is_empty()).then(|| pairs.join("; "))
 }
 
 fn is_manual_login_required(value: &Value, status: u16) -> bool {
@@ -2095,6 +2292,33 @@ mod tests {
         }
     }
 
+    struct LoginSecretAccessor;
+
+    impl crate::services::collectors::contract::DriverSecretAccessor for LoginSecretAccessor {
+        fn resolve_secret<'a>(
+            &'a self,
+            _handle: &'a OpaqueCredentialHandle,
+            purpose: CredentialSecretPurpose,
+        ) -> BoxFuture<
+            'a,
+            Result<crate::services::collectors::contract::CredentialSecret, DriverFailure>,
+        > {
+            async move {
+                match purpose {
+                    CredentialSecretPurpose::LoginPassword => Ok(
+                        crate::services::collectors::contract::CredentialSecret::new(
+                            "fixture-login-password",
+                        ),
+                    ),
+                    _ => Err(DriverFailure::unsupported(
+                        "fixture only provides the login password",
+                    )),
+                }
+            }
+            .boxed()
+        }
+    }
+
     struct HybridSessionSecretAccessor;
 
     impl crate::services::collectors::contract::DriverSecretAccessor for HybridSessionSecretAccessor {
@@ -2145,10 +2369,216 @@ mod tests {
         }
     }
 
+    fn test_login_credential() -> Sub2ApiLoginCredential {
+        Sub2ApiLoginCredential {
+            username: "fixture-user".to_string(),
+            password: OpaqueCredentialHandle {
+                station_id: "station-1".to_string(),
+                credential_revision: 7,
+                scope: CredentialScope::LoginPassword,
+            },
+        }
+    }
+
+    fn login_test_context<'a>(
+        base_url: &str,
+        secrets: &'a LoginSecretAccessor,
+        outbound: &'a AsyncOutboundClient,
+    ) -> CollectorContext<'a> {
+        CollectorContext {
+            station: test_station_identity(),
+            endpoints: test_endpoints(base_url),
+            credential: test_credential(),
+            auth: None,
+            user_agent: None,
+            secrets,
+            outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        }
+    }
+
     #[test]
     fn cookie_shaped_session_is_distinguished_from_bearer_token() {
         assert!(looks_like_cookie_header("cf_clearance=fake; session=abc"));
         assert!(!looks_like_cookie_header("eyJhbGciOiJIUzI1NiJ9.fake"));
+    }
+
+    #[test]
+    fn login_cookie_headers_become_a_reusable_cookie_credential() {
+        let mut headers = http::HeaderMap::new();
+        headers.append(
+            header::SET_COOKIE,
+            HeaderValue::from_static("session=login-session; Path=/; HttpOnly"),
+        );
+        headers.append(
+            header::SET_COOKIE,
+            HeaderValue::from_static("cf_clearance=clearance-token; Path=/; Secure"),
+        );
+
+        assert_eq!(
+            extract_login_cookie(&headers).as_deref(),
+            Some("session=login-session; cf_clearance=clearance-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn login_session_reports_a_rejected_login_status_without_response_content() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            401,
+            json!({"message": "fixture rejection"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = LoginSecretAccessor;
+        let context = login_test_context(&server.base_url, &secrets, &outbound);
+
+        let resolution = login_session(&context, &server.base_url, &test_login_credential())
+            .await
+            .expect("login response should be classified");
+        let requests = server.finish();
+
+        assert!(matches!(
+            &resolution,
+            LoginSessionResolution::InteractiveAuthorizationRequired { status: 401 }
+        ));
+        assert_eq!(
+            resolution.remote_key_detail(),
+            "Sub2API login was rejected or requires interactive authorization (HTTP 401)."
+        );
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn login_session_reports_a_successful_response_without_a_session() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(200, json!({"data": {}})))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = LoginSecretAccessor;
+        let context = login_test_context(&server.base_url, &secrets, &outbound);
+
+        let resolution = login_session(&context, &server.base_url, &test_login_credential())
+            .await
+            .expect("login response should be classified");
+        let requests = server.finish();
+
+        assert!(matches!(
+            &resolution,
+            LoginSessionResolution::SuccessfulWithoutSession { status: 200 }
+        ));
+        assert_eq!(
+            resolution.remote_key_detail(),
+            "Sub2API login succeeded but did not return a usable management session (HTTP 200)."
+        );
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn login_session_accepts_a_nested_access_token_response() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({"data": {"access_token": "fixture-jwt"}}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = LoginSecretAccessor;
+        let context = login_test_context(&server.base_url, &secrets, &outbound);
+
+        let resolution = login_session(&context, &server.base_url, &test_login_credential())
+            .await
+            .expect("nested session should be accepted");
+        let requests = server.finish();
+        let session = resolution.into_session().expect("a login session");
+
+        assert_eq!(session.access_token, "fixture-jwt");
+        assert!(session.cookie.is_none());
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn remote_key_list_reuses_token_and_cookie_from_password_login() {
+        let login_body = json!({"access_token": "fixture-jwt"}).to_string();
+        let login_response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: session=fixture-session; Path=/; HttpOnly\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{login_body}",
+            login_body.len(),
+        );
+        let server = TestHttpServer::sequence(vec![
+            Some(login_response),
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [
+                            { "id": "key-1", "name": "fixture-key", "key_masked": "sk-fixture********" }
+                        ],
+                        "total": 1,
+                        "page": 1,
+                        "page_size": 50,
+                        "pages": 1
+                    }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = LoginSecretAccessor;
+        let credential = test_credential();
+        let context = CollectorContext {
+            station: test_station_identity(),
+            endpoints: test_endpoints(&server.base_url),
+            credential: credential.clone(),
+            auth: Some(ProviderAuthContext::Sub2Api {
+                station_keys: Vec::new(),
+                access_token: None,
+                session_cookie: None,
+                login: Some(Sub2ApiLoginCredential {
+                    username: "fixture-user".to_string(),
+                    password: OpaqueCredentialHandle {
+                        station_id: "station-1".to_string(),
+                        credential_revision: 7,
+                        scope: CredentialScope::LoginPassword,
+                    },
+                }),
+                credit_per_cny: 1.0,
+            }),
+            user_agent: None,
+            secrets: &secrets,
+            outbound: &outbound,
+            proxy: ProxyPolicy::Direct,
+            budget: RequestBudget::from_now(Duration::from_secs(5)),
+            cancellation: CancellationToken::new(),
+            correlation_id: "test-correlation".to_string(),
+        };
+        let auth = sub2api_auth(&context).expect("Sub2API auth context");
+        let mut session = resolve_remote_key_list_session(&context, &server.base_url, &auth)
+            .await
+            .expect("password login should create a remote-key session");
+        assert_eq!(
+            session.cookie.as_deref(),
+            Some("session=fixture-session"),
+            "password login session cookie should be retained"
+        );
+
+        let output = fetch_remote_key_list(
+            &context,
+            &server.base_url,
+            &auth,
+            &mut session.access_token,
+            session.cookie.as_deref(),
+        )
+        .await
+        .expect("remote key list should use the password-login session");
+        let requests = server.finish();
+
+        assert!(output.ok);
+        assert_eq!(mapping::remote_key_items(&output.payload).len(), 1);
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("POST /api/v1/auth/login HTTP/1.1"));
+        let remote_key_request = requests[1].to_ascii_lowercase();
+        assert!(remote_key_request.contains("authorization: bearer fixture-jwt"));
+        assert!(
+            remote_key_request.contains("cookie: session=fixture-session"),
+            "session cookie: {:?}; captured remote-key request: {remote_key_request}",
+            session.cookie
+        );
     }
 
     #[test]
@@ -2389,6 +2819,89 @@ mod tests {
             cancellation: CancellationToken::new(),
             correlation_id: "test-correlation".to_string(),
         }
+    }
+
+    #[tokio::test]
+    async fn remote_key_list_accepts_a_server_clamped_page_size_and_missing_pages() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [
+                            { "id": "key-1", "name": "first", "key_masked": "sk-one********" },
+                            { "id": "key-2", "name": "second", "key_masked": "sk-two********" }
+                        ],
+                        "total": 3,
+                        "page": 1,
+                        "page_size": 20,
+                        "pages": 2
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [
+                            { "id": "key-3", "name": "third", "key_masked": "sk-three******" }
+                        ],
+                        "total": 3,
+                        "page": 2,
+                        "page_size": 20
+                    }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+        let auth = sub2api_auth(&context).expect("Sub2API auth context");
+        let mut access_token = "sub2api-access-token".to_string();
+
+        let output =
+            fetch_remote_key_list(&context, &server.base_url, &auth, &mut access_token, None)
+                .await
+                .expect("remote key list should tolerate compatible pagination");
+        let requests = server.finish();
+
+        assert!(output.ok);
+        assert_eq!(mapping::remote_key_items(&output.payload).len(), 3);
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
+        assert!(requests[1].starts_with("GET /api/v1/keys?page=2&page_size=100 "));
+    }
+
+    #[tokio::test]
+    async fn remote_key_list_accepts_an_empty_list_with_one_reported_page() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "data": {
+                    "items": [],
+                    "total": 0,
+                    "page": 1,
+                    "page_size": 20,
+                    "pages": 1
+                }
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+        let auth = sub2api_auth(&context).expect("Sub2API auth context");
+        let mut access_token = "sub2api-access-token".to_string();
+
+        let output =
+            fetch_remote_key_list(&context, &server.base_url, &auth, &mut access_token, None)
+                .await
+                .expect("an empty remote key list is valid");
+        let requests = server.finish();
+
+        assert!(output.ok);
+        assert!(mapping::remote_key_items(&output.payload).is_empty());
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
     }
 
     fn test_balance_context<'a>(

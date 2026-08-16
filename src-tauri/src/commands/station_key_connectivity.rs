@@ -1,4 +1,4 @@
-use http::{header, HeaderValue, Method};
+use http::{header, HeaderName, HeaderValue, Method};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 use tauri::State;
@@ -17,9 +17,9 @@ use crate::{
             redact_connectivity_error, response_error_message,
             should_try_station_key_connectivity_chat_fallback,
             station_key_connectivity_model_candidates, station_key_connectivity_protocol_label,
-            StationKeyConnectivityProbeKind, StationKeyConnectivityProbeResult,
-            StationKeyConnectivityRequestMode, StationKeyConnectivityResponseMode,
-            StationKeyConnectivitySseDecoder, DEFAULT_STATION_KEY_CONNECTIVITY_MODEL,
+            StationKeyConnectivityClientProfile, StationKeyConnectivityProbeKind,
+            StationKeyConnectivityProbeResult, StationKeyConnectivityRequestMode,
+            StationKeyConnectivityResponseMode, DEFAULT_STATION_KEY_CONNECTIVITY_MODEL,
         },
     },
     background_tasks::{
@@ -42,7 +42,11 @@ use crate::{
         OutboundHeaders, OutboundRequest, ProxyPolicy, RequestBudget, SecretHeaderValue,
     },
     services::{
-        endpoint_ping::ping_station_endpoint, proxy::redact_error_message,
+        endpoint_ping::ping_station_endpoint,
+        protocol_streaming::{
+            OpenAiChatReducer, OpenAiResponsesReducer, SseDecoder, SseLimits, StreamError,
+        },
+        proxy::redact_error_message,
         station_endpoints::build_api_url,
     },
 };
@@ -53,9 +57,6 @@ use crate::application::connectivity_probe::{
 };
 
 #[cfg(test)]
-use crate::application::connectivity_probe::STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT;
-
-#[cfg(test)]
 use serde_json::json;
 
 const STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -63,6 +64,8 @@ const STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const STATION_KEY_CONNECTIVITY_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const STATION_KEY_MODEL_DISCOVERY_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 const STATION_ENDPOINT_PING_TIMEOUT: Duration = Duration::from_secs(5);
+const STATION_KEY_CONNECTIVITY_SSE_OUTPUT_LIMIT: usize = 8 * 1024;
+const STATION_KEY_CONNECTIVITY_ERROR_SUMMARY_LIMIT: usize = 16 * 1024;
 
 fn command_application_error(
     error: crate::application::error::ApplicationError,
@@ -127,49 +130,62 @@ pub async fn start_station_key_connectivity_operation(
     facade: State<'_, StationKeyConnectivityCommandFacade>,
     runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<OperationStartedDto, error::CommandError> {
-    correlation::in_command_scope("start_station_key_connectivity_operation", async {
-        let input = StationKeyConnectivityInputDto::parse(input)?;
-        let station_key_id = input.station_key_id;
-        let model = input.model;
-        let target = facade
-            .prepare_probe_target(station_key_id.clone())
-            .await
-            .map_err(station_key_connectivity_command_error)?;
-        let station_id = target.key.station_id.clone();
-        let endpoint_revision = target.key.station_endpoint_revision;
-        let concurrency_key = format!("station-key-connectivity:{station_key_id}");
-        let operation_station_key_id = station_key_id.clone();
-        let facade = facade.inner().clone();
-        let outbound = runtime.outbound.clone();
-        let operation_id = runtime
-            .operation
-            .start(
-                OperationStartRequest::new(
-                    "station_key_connectivity",
-                    OperationOwner::new("key-pool"),
-                    move |context| {
-                        Box::pin(async move {
-                            run_station_key_connectivity_operation(
-                                context,
-                                facade,
-                                outbound,
-                                target,
-                                operation_station_key_id,
-                                station_id,
-                                endpoint_revision,
-                                model,
-                            )
-                            .await
-                        })
-                    },
+    correlation::in_command_scope_with_runtime_context(
+        "start_station_key_connectivity_operation",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = StationKeyConnectivityInputDto::parse(input)?;
+            let station_key_id = input.station_key_id;
+            let model = input.model;
+            let client_profile = input.client_profile;
+            let target = facade
+                .prepare_probe_target(station_key_id.clone())
+                .await
+                .map_err(station_key_connectivity_command_error)?;
+            let station_id = target.key.station_id.clone();
+            let endpoint_revision = target.key.station_endpoint_revision;
+            let concurrency_key = format!("station-key-connectivity:{station_key_id}");
+            let operation_station_key_id = station_key_id.clone();
+            let facade = facade.inner().clone();
+            let outbound = runtime.outbound.clone();
+            let operation_id = runtime
+                .operation
+                .start(
+                    OperationStartRequest::new(
+                        "station_key_connectivity",
+                        OperationOwner::new("key-pool"),
+                        move |context| {
+                            Box::pin(async move {
+                                run_station_key_connectivity_operation(
+                                    context,
+                                    facade,
+                                    outbound,
+                                    target,
+                                    operation_station_key_id,
+                                    station_id,
+                                    endpoint_revision,
+                                    model,
+                                    client_profile,
+                                )
+                                .await
+                            })
+                        },
+                    )
+                    .with_deadline(STATION_KEY_CONNECTIVITY_OPERATION_TIMEOUT)
+                    .with_concurrency_key(concurrency_key),
                 )
-                .with_deadline(STATION_KEY_CONNECTIVITY_OPERATION_TIMEOUT)
-                .with_concurrency_key(concurrency_key),
-            )
-            .map_err(public_operation_registry_error)?;
-        Ok(OperationStartedDto::from(operation_id))
-    })
+                .map_err(public_operation_registry_error)?;
+            Ok(OperationStartedDto::from(operation_id))
+        },
+    )
     .await
 }
 
@@ -178,34 +194,45 @@ pub async fn get_station_key_connectivity_operation_result(
     facade: State<'_, StationKeyConnectivityCommandFacade>,
     runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<StationKeyConnectivityResultDto, error::CommandError> {
-    correlation::in_command_scope("get_station_key_connectivity_operation_result", async {
-        let input = OperationIdInputDto::parse(input)?;
-        let operation_id = input.operation_id();
-        let snapshot = runtime
-            .operation
-            .status(operation_id)
-            .map_err(public_operation_registry_error)?;
-        if snapshot.kind != "station_key_connectivity" || snapshot.owner.feature != "key-pool" {
-            return Err(error::CommandError::try_new(
-                error::CommandErrorCode::NotFound,
-                "The connectivity operation was not found.",
-                false,
-                None,
-                None,
-            )
-            .expect("connectivity operation not-found error is bounded"));
-        }
-        if snapshot.terminal != Some(OperationTerminal::Completed) {
-            return Err(error::CommandError::from_work(
-                error::WorkFailure::ResultUnknown,
-            ));
-        }
-        facade
-            .get_result(operation_id)
-            .map(StationKeyConnectivityResultDto::from)
-            .ok_or_else(|| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_station_key_connectivity_operation_result",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = OperationIdInputDto::parse(input)?;
+            let operation_id = input.operation_id();
+            let snapshot = runtime
+                .operation
+                .status(operation_id)
+                .map_err(public_operation_registry_error)?;
+            if snapshot.kind != "station_key_connectivity" || snapshot.owner.feature != "key-pool" {
+                return Err(error::CommandError::try_new(
+                    error::CommandErrorCode::NotFound,
+                    "The connectivity operation was not found.",
+                    false,
+                    None,
+                    None,
+                )
+                .expect("connectivity operation not-found error is bounded"));
+            }
+            if snapshot.terminal != Some(OperationTerminal::Completed) {
+                return Err(error::CommandError::from_work(
+                    error::WorkFailure::ResultUnknown,
+                ));
+            }
+            facade
+                .get_result(operation_id)
+                .map(StationKeyConnectivityResultDto::from)
+                .ok_or_else(|| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
+        },
+    )
     .await
 }
 
@@ -214,43 +241,54 @@ pub async fn start_station_key_model_discovery_operation(
     facade: State<'_, StationKeyConnectivityCommandFacade>,
     runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<OperationStartedDto, error::CommandError> {
-    correlation::in_command_scope("start_station_key_model_discovery_operation", async {
-        let input = RoutingStationKeyIdInputDto::parse(input)?;
-        let station_key_id = input.station_key_id;
-        let target = facade
-            .prepare_probe_target(station_key_id.clone())
-            .await
-            .map_err(station_key_connectivity_command_error)?;
-        let concurrency_key = format!("station-key-connectivity:{station_key_id}");
-        let operation_station_key_id = station_key_id.clone();
-        let facade = facade.inner().clone();
-        let outbound = runtime.outbound.clone();
-        let operation_id = runtime
-            .operation
-            .start(
-                OperationStartRequest::new(
-                    "station_key_model_discovery",
-                    OperationOwner::new("key-pool"),
-                    move |context| {
-                        Box::pin(async move {
-                            run_station_key_model_discovery_operation(
-                                context,
-                                facade,
-                                outbound,
-                                target,
-                                operation_station_key_id,
-                            )
-                            .await
-                        })
-                    },
+    correlation::in_command_scope_with_runtime_context(
+        "start_station_key_model_discovery_operation",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = RoutingStationKeyIdInputDto::parse(input)?;
+            let station_key_id = input.station_key_id;
+            let target = facade
+                .prepare_probe_target(station_key_id.clone())
+                .await
+                .map_err(station_key_connectivity_command_error)?;
+            let concurrency_key = format!("station-key-connectivity:{station_key_id}");
+            let operation_station_key_id = station_key_id.clone();
+            let facade = facade.inner().clone();
+            let outbound = runtime.outbound.clone();
+            let operation_id = runtime
+                .operation
+                .start(
+                    OperationStartRequest::new(
+                        "station_key_model_discovery",
+                        OperationOwner::new("key-pool"),
+                        move |context| {
+                            Box::pin(async move {
+                                run_station_key_model_discovery_operation(
+                                    context,
+                                    facade,
+                                    outbound,
+                                    target,
+                                    operation_station_key_id,
+                                )
+                                .await
+                            })
+                        },
+                    )
+                    .with_deadline(STATION_KEY_MODEL_DISCOVERY_OPERATION_TIMEOUT)
+                    .with_concurrency_key(concurrency_key),
                 )
-                .with_deadline(STATION_KEY_MODEL_DISCOVERY_OPERATION_TIMEOUT)
-                .with_concurrency_key(concurrency_key),
-            )
-            .map_err(public_operation_registry_error)?;
-        Ok(OperationStartedDto::from(operation_id))
-    })
+                .map_err(public_operation_registry_error)?;
+            Ok(OperationStartedDto::from(operation_id))
+        },
+    )
     .await
 }
 
@@ -259,34 +297,47 @@ pub async fn get_station_key_model_discovery_operation_result(
     facade: State<'_, StationKeyConnectivityCommandFacade>,
     runtime: State<'_, ManagedWorkRuntime>,
     input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
 ) -> Result<StationKeyModelDiscoveryResultDto, error::CommandError> {
-    correlation::in_command_scope("get_station_key_model_discovery_operation_result", async {
-        let input = OperationIdInputDto::parse(input)?;
-        let operation_id = input.operation_id();
-        let snapshot = runtime
-            .operation
-            .status(operation_id)
-            .map_err(public_operation_registry_error)?;
-        if snapshot.kind != "station_key_model_discovery" || snapshot.owner.feature != "key-pool" {
-            return Err(error::CommandError::try_new(
-                error::CommandErrorCode::NotFound,
-                "The model discovery operation was not found.",
-                false,
-                None,
-                None,
-            )
-            .expect("model discovery not-found error is bounded"));
-        }
-        if snapshot.terminal != Some(OperationTerminal::Completed) {
-            return Err(error::CommandError::from_work(
-                error::WorkFailure::ResultUnknown,
-            ));
-        }
-        facade
-            .get_model_discovery_result(operation_id)
-            .map(StationKeyModelDiscoveryResultDto::from)
-            .ok_or_else(|| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
-    })
+    correlation::in_command_scope_with_runtime_context(
+        "get_station_key_model_discovery_operation_result",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = OperationIdInputDto::parse(input)?;
+            let operation_id = input.operation_id();
+            let snapshot = runtime
+                .operation
+                .status(operation_id)
+                .map_err(public_operation_registry_error)?;
+            if snapshot.kind != "station_key_model_discovery"
+                || snapshot.owner.feature != "key-pool"
+            {
+                return Err(error::CommandError::try_new(
+                    error::CommandErrorCode::NotFound,
+                    "The model discovery operation was not found.",
+                    false,
+                    None,
+                    None,
+                )
+                .expect("model discovery not-found error is bounded"));
+            }
+            if snapshot.terminal != Some(OperationTerminal::Completed) {
+                return Err(error::CommandError::from_work(
+                    error::WorkFailure::ResultUnknown,
+                ));
+            }
+            facade
+                .get_model_discovery_result(operation_id)
+                .map(StationKeyModelDiscoveryResultDto::from)
+                .ok_or_else(|| error::CommandError::from_work(error::WorkFailure::ResultUnknown))
+        },
+    )
     .await
 }
 
@@ -331,6 +382,7 @@ async fn run_station_key_connectivity_operation(
     station_id: String,
     endpoint_revision: i64,
     model: String,
+    client_profile: StationKeyConnectivityClientProfile,
 ) -> OperationTerminal {
     let ping_future = collect_station_endpoint_ping(
         &context,
@@ -340,8 +392,13 @@ async fn run_station_key_connectivity_operation(
         endpoint_revision,
         target.key.station_api_base_url.clone(),
     );
-    let model_probe =
-        run_station_key_connectivity_prepared_outbound(&context, &outbound, &target, model);
+    let model_probe = run_station_key_connectivity_prepared_outbound(
+        &context,
+        &outbound,
+        &target,
+        model,
+        client_profile,
+    );
     let (result, _) = tokio::join!(model_probe, ping_future);
     let result = match result {
         Ok(result) => result,
@@ -408,6 +465,7 @@ async fn run_station_key_connectivity_prepared_outbound(
     outbound: &AsyncOutboundClient,
     target: &StationKeyConnectivityProbeTarget,
     model: String,
+    client_profile: StationKeyConnectivityClientProfile,
 ) -> Result<StationKeyConnectivityResult, OperationTerminal> {
     let upstream_api_format = match target.key.station_upstream_api_format.as_str() {
         "openai_chat_completions" => UpstreamApiFormat::OpenAiChatCompletions,
@@ -442,6 +500,7 @@ async fn run_station_key_connectivity_prepared_outbound(
             candidate,
             &upstream_api_format,
             Some(&target.capabilities),
+            client_profile,
         )
         .await?;
         if result.ok {
@@ -452,6 +511,8 @@ async fn run_station_key_connectivity_prepared_outbound(
                 duration_ms: result.duration_ms,
                 model: candidate.clone(),
                 message: result.message,
+                validated_protocol: result.validated_protocol,
+                client_profile: result.client_profile,
                 response_mode: result.response_mode,
                 stream_fallback_reason: result.stream_fallback_reason,
             });
@@ -475,6 +536,8 @@ async fn run_station_key_connectivity_prepared_outbound(
         duration_ms: result.duration_ms,
         model,
         message: result.message,
+        validated_protocol: result.validated_protocol,
+        client_profile: result.client_profile,
         response_mode: result.response_mode,
         stream_fallback_reason: result.stream_fallback_reason,
     })
@@ -498,6 +561,7 @@ async fn discover_station_key_connectivity_models_outbound(
                 "application/json",
                 Vec::new(),
                 STATION_KEY_CONNECTIVITY_MODEL_DISCOVERY_TIMEOUT,
+                &[],
             )
             .map_err(outbound_failure_terminal_or_result)?,
             cancellation_token,
@@ -524,6 +588,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
     model: &str,
     upstream_api_format: &UpstreamApiFormat,
     capabilities: Option<&StationKeyCapabilities>,
+    client_profile: StationKeyConnectivityClientProfile,
 ) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
     let response_result = send_station_key_connectivity_probe_outbound(
         context,
@@ -532,6 +597,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
         api_key,
         model,
         StationKeyConnectivityProbeKind::Responses,
+        client_profile,
     )
     .await?;
     if response_result.ok
@@ -552,6 +618,7 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
         api_key,
         model,
         StationKeyConnectivityProbeKind::ChatCompletions,
+        client_profile,
     )
     .await?;
     let duration_ms = response_result
@@ -570,7 +637,9 @@ async fn run_station_key_connectivity_single_model_probe_outbound(
             "Responses: {}; Chat Completions: {}",
             response_result.message, chat_result.message
         ),
-    ))
+    )
+    .with_validated_protocol(StationKeyConnectivityProbeKind::ChatCompletions)
+    .with_client_profile(StationKeyConnectivityClientProfile::StandardApi))
 }
 
 async fn send_station_key_connectivity_probe_outbound(
@@ -580,13 +649,23 @@ async fn send_station_key_connectivity_probe_outbound(
     api_key: &str,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
+    requested_client_profile: StationKeyConnectivityClientProfile,
 ) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
+    let client_profile = requested_client_profile.for_protocol(kind);
     let protocol = station_key_connectivity_protocol_label(kind);
     let _ = context.emit_progress(format!("attempt_started protocol={protocol} model={model}"));
     let stream_result = send_station_key_connectivity_stream_probe_outbound(
-        context, outbound, base_url, api_key, model, kind,
+        context,
+        outbound,
+        base_url,
+        api_key,
+        model,
+        kind,
+        client_profile,
     )
-    .await?;
+    .await?
+    .with_validated_protocol(kind)
+    .with_client_profile(client_profile);
     if stream_result.ok {
         return Ok(stream_result.with_response_mode(StationKeyConnectivityResponseMode::Stream));
     }
@@ -594,9 +673,17 @@ async fn send_station_key_connectivity_probe_outbound(
     let fallback_reason = redact_connectivity_error(&stream_result.message);
     let _ = context.emit_progress(format!("fallback reason={fallback_reason}"));
     let fallback_result = send_station_key_connectivity_non_stream_probe_outbound(
-        context, outbound, base_url, api_key, model, kind,
+        context,
+        outbound,
+        base_url,
+        api_key,
+        model,
+        kind,
+        client_profile,
     )
-    .await?;
+    .await?
+    .with_validated_protocol(kind)
+    .with_client_profile(client_profile);
     let duration_ms = stream_result
         .duration_ms
         .saturating_add(fallback_result.duration_ms);
@@ -607,7 +694,9 @@ async fn send_station_key_connectivity_probe_outbound(
             fallback_result.message,
         )
         .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
-        .with_stream_fallback_reason(Some(fallback_reason)));
+        .with_stream_fallback_reason(Some(fallback_reason))
+        .with_validated_protocol(kind)
+        .with_client_profile(client_profile));
     }
 
     Ok(StationKeyConnectivityProbeResult::failure(
@@ -619,7 +708,9 @@ async fn send_station_key_connectivity_probe_outbound(
         ),
     )
     .with_response_mode(StationKeyConnectivityResponseMode::NonStreamFallback)
-    .with_stream_fallback_reason(Some(fallback_reason)))
+    .with_stream_fallback_reason(Some(fallback_reason))
+    .with_validated_protocol(kind)
+    .with_client_profile(client_profile))
 }
 
 async fn send_station_key_connectivity_non_stream_probe_outbound(
@@ -629,6 +720,7 @@ async fn send_station_key_connectivity_non_stream_probe_outbound(
     api_key: &str,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
+    client_profile: StationKeyConnectivityClientProfile,
 ) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
     let url = match build_station_key_connectivity_probe_url(base_url, kind) {
         Ok(url) => url,
@@ -644,6 +736,7 @@ async fn send_station_key_connectivity_non_stream_probe_outbound(
         model,
         kind,
         StationKeyConnectivityRequestMode::NonStream,
+        client_profile,
     );
     let started = Instant::now();
     let response = outbound
@@ -655,6 +748,7 @@ async fn send_station_key_connectivity_non_stream_probe_outbound(
                 "application/json",
                 serde_json::to_vec(&body).unwrap_or_default(),
                 STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
+                station_key_connectivity_profile_headers(client_profile),
             )
             .map_err(|_| OperationTerminal::Failed {
                 code: OperationFailureCode::new("connectivity-request-invalid"),
@@ -696,6 +790,7 @@ async fn send_station_key_connectivity_stream_probe_outbound(
     api_key: &str,
     model: &str,
     kind: StationKeyConnectivityProbeKind,
+    client_profile: StationKeyConnectivityClientProfile,
 ) -> Result<StationKeyConnectivityProbeResult, OperationTerminal> {
     let url = match build_station_key_connectivity_probe_url(base_url, kind) {
         Ok(url) => url,
@@ -711,9 +806,16 @@ async fn send_station_key_connectivity_stream_probe_outbound(
         model,
         kind,
         StationKeyConnectivityRequestMode::Stream,
+        client_profile,
     );
     let started = Instant::now();
-    let mut response_body = Vec::new();
+    let mut error_body = Vec::new();
+    let mut decoder = SseDecoder::new(SseLimits::default());
+    let mut responses_reducer = matches!(kind, StationKeyConnectivityProbeKind::Responses)
+        .then(|| OpenAiResponsesReducer::new(STATION_KEY_CONNECTIVITY_SSE_OUTPUT_LIMIT));
+    let mut chat_reducer = matches!(kind, StationKeyConnectivityProbeKind::ChatCompletions)
+        .then(|| OpenAiChatReducer::new(STATION_KEY_CONNECTIVITY_SSE_OUTPUT_LIMIT));
+    let mut parser_error = None;
     let response = outbound
         .execute_stream(
             outbound_json_request(
@@ -723,13 +825,33 @@ async fn send_station_key_connectivity_stream_probe_outbound(
                 "text/event-stream",
                 serde_json::to_vec(&request_body).unwrap_or_default(),
                 STATION_KEY_CONNECTIVITY_PROBE_TIMEOUT,
+                station_key_connectivity_profile_headers(client_profile),
             )
             .map_err(|_| OperationTerminal::Failed {
                 code: OperationFailureCode::new("connectivity-request-invalid"),
             })?,
             context.cancellation_token.clone(),
             |chunk| {
-                response_body.extend_from_slice(chunk);
+                append_bounded_bytes(
+                    &mut error_body,
+                    chunk,
+                    STATION_KEY_CONNECTIVITY_ERROR_SUMMARY_LIMIT,
+                );
+                if parser_error.is_none() {
+                    match consume_station_key_connectivity_stream_chunk(
+                        &mut decoder,
+                        responses_reducer.as_mut(),
+                        chat_reducer.as_mut(),
+                        chunk,
+                    ) {
+                        Ok(delta_count) => {
+                            for _ in 0..delta_count {
+                                let _ = context.emit_progress("stream_delta_received");
+                            }
+                        }
+                        Err(error) => parser_error = Some(error),
+                    }
+                }
                 let _ = context.emit_progress("stream_chunk_received");
                 Ok(())
             },
@@ -738,12 +860,11 @@ async fn send_station_key_connectivity_stream_probe_outbound(
         .map_err(outbound_failure_terminal_or_result)?;
     let duration_ms = elapsed_ms(started);
     let status_code = response.status.as_u16();
-    let response_text = String::from_utf8_lossy(&response_body).to_string();
     if !response.status.is_success() {
         return Ok(StationKeyConnectivityProbeResult::failure(
             status_code,
             duration_ms,
-            response_error_message(&response_text, status_code),
+            response_error_message(&String::from_utf8_lossy(&error_body), status_code),
         ));
     }
     let content_type = response
@@ -766,24 +887,34 @@ async fn send_station_key_connectivity_stream_probe_outbound(
             )),
         ));
     }
-    let mut decoder = StationKeyConnectivitySseDecoder::new(kind);
-    let deltas = match decoder.push(&response_body) {
-        Ok(deltas) => deltas,
-        Err(error) => {
-            return Ok(StationKeyConnectivityProbeResult::failure(
+    if let Some(error) = parser_error {
+        return Ok(stream_probe_failure(status_code, duration_ms, error));
+    }
+    if let Err(error) = decoder.finish().and_then(|events| {
+        reduce_station_key_connectivity_stream_events(
+            events,
+            responses_reducer.as_mut(),
+            chat_reducer.as_mut(),
+        )
+    }) {
+        return Ok(stream_probe_failure(status_code, duration_ms, error));
+    }
+    let summary = match kind {
+        StationKeyConnectivityProbeKind::Responses => responses_reducer
+            .expect("responses stream must construct a Responses reducer")
+            .finish(),
+        StationKeyConnectivityProbeKind::ChatCompletions => chat_reducer
+            .expect("chat stream must construct a Chat reducer")
+            .finish(),
+    };
+    match summary {
+        Ok(summary) if !summary.output_text.trim().is_empty() => {
+            Ok(StationKeyConnectivityProbeResult::success(
                 status_code,
                 duration_ms,
-                redact_connectivity_error(&error),
-            ));
+                redact_connectivity_error(&summary.output_text),
+            ))
         }
-    };
-    for _ in deltas {
-        let _ = context.emit_progress("stream_delta_received");
-    }
-    match decoder.finish() {
-        Ok(message) if !message.trim().is_empty() => Ok(
-            StationKeyConnectivityProbeResult::success(status_code, duration_ms, message),
-        ),
         Ok(_) => Ok(StationKeyConnectivityProbeResult::success(
             status_code,
             duration_ms,
@@ -796,12 +927,58 @@ async fn send_station_key_connectivity_stream_probe_outbound(
                 }
             },
         )),
-        Err(error) => Ok(StationKeyConnectivityProbeResult::failure(
-            status_code,
-            duration_ms,
-            redact_connectivity_error(&error),
-        )),
+        Err(error) => Ok(stream_probe_failure(status_code, duration_ms, error)),
     }
+}
+
+fn consume_station_key_connectivity_stream_chunk(
+    decoder: &mut SseDecoder,
+    responses_reducer: Option<&mut OpenAiResponsesReducer>,
+    chat_reducer: Option<&mut OpenAiChatReducer>,
+    chunk: &[u8],
+) -> Result<usize, StreamError> {
+    let events = decoder.push(chunk)?;
+    let delta_count = events.len();
+    reduce_station_key_connectivity_stream_events(events, responses_reducer, chat_reducer)?;
+    Ok(delta_count)
+}
+
+fn reduce_station_key_connectivity_stream_events(
+    events: Vec<crate::services::protocol_streaming::SseEvent>,
+    responses_reducer: Option<&mut OpenAiResponsesReducer>,
+    chat_reducer: Option<&mut OpenAiChatReducer>,
+) -> Result<(), StreamError> {
+    match (responses_reducer, chat_reducer) {
+        (Some(reducer), None) => {
+            for event in events {
+                reducer.push(&event)?;
+            }
+        }
+        (None, Some(reducer)) => {
+            for event in events {
+                reducer.push(&event)?;
+            }
+        }
+        _ => return Err(StreamError::InvalidSseFraming),
+    }
+    Ok(())
+}
+
+fn stream_probe_failure(
+    status_code: u16,
+    duration_ms: i64,
+    error: StreamError,
+) -> StationKeyConnectivityProbeResult {
+    StationKeyConnectivityProbeResult::failure(
+        status_code,
+        duration_ms,
+        redact_connectivity_error(error.as_code()),
+    )
+}
+
+fn append_bounded_bytes(target: &mut Vec<u8>, chunk: &[u8], limit: usize) {
+    let remaining = limit.saturating_sub(target.len());
+    target.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
 }
 
 fn outbound_json_request(
@@ -811,6 +988,7 @@ fn outbound_json_request(
     accept: &'static str,
     body: Vec<u8>,
     timeout: Duration,
+    profile_headers: &[(&'static str, &'static str)],
 ) -> Result<OutboundRequest, OutboundFailure> {
     let policy = OutboundHeaderPolicy::provider_default();
     let mut headers = OutboundHeaders::new();
@@ -827,6 +1005,13 @@ fn outbound_json_request(
             &policy,
         )?;
     }
+    for (name, value) in profile_headers {
+        headers.insert_public(
+            HeaderName::from_static(name),
+            HeaderValue::from_static(value),
+            &policy,
+        )?;
+    }
     Ok(OutboundRequest {
         method,
         url,
@@ -837,6 +1022,18 @@ fn outbound_json_request(
         budget: RequestBudget::from_now(timeout),
         retry_policy: Default::default(),
     })
+}
+
+fn station_key_connectivity_profile_headers(
+    client_profile: StationKeyConnectivityClientProfile,
+) -> &'static [(&'static str, &'static str)] {
+    match client_profile {
+        StationKeyConnectivityClientProfile::StandardApi => &[],
+        StationKeyConnectivityClientProfile::CodexCliCompat => &[
+            ("openai-beta", "responses=experimental"),
+            ("user-agent", "codex_cli_rs/0.146.0"),
+        ],
+    }
 }
 
 fn outbound_failure_terminal_or_result(error: OutboundFailure) -> OperationTerminal {
@@ -865,12 +1062,16 @@ mod tests {
             "gpt-test",
             StationKeyConnectivityProbeKind::Responses,
             StationKeyConnectivityRequestMode::NonStream,
+            StationKeyConnectivityClientProfile::StandardApi,
         );
 
         assert_eq!(body["model"], "gpt-test");
         assert_eq!(body["input"], "hi");
         assert_eq!(body["store"], false);
-        assert_eq!(body["max_output_tokens"], 32);
+        assert_eq!(
+            body["max_output_tokens"],
+            crate::application::connectivity_probe::STATION_KEY_CONNECTIVITY_RESPONSES_MAX_OUTPUT_TOKENS
+        );
     }
 
     #[test]
@@ -879,11 +1080,13 @@ mod tests {
             "gpt-test",
             StationKeyConnectivityProbeKind::Responses,
             StationKeyConnectivityRequestMode::Stream,
+            StationKeyConnectivityClientProfile::StandardApi,
         );
         let chat = build_station_key_connectivity_probe_body(
             "gpt-test",
             StationKeyConnectivityProbeKind::ChatCompletions,
             StationKeyConnectivityRequestMode::Stream,
+            StationKeyConnectivityClientProfile::StandardApi,
         );
 
         assert_eq!(responses["model"], "gpt-test");
@@ -895,94 +1098,62 @@ mod tests {
     }
 
     #[test]
-    fn station_key_connectivity_responses_sse_decodes_split_deltas() {
-        let mut decoder =
-            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
-
-        assert!(decoder
-            .push(br#"data: {"type":"response.output_text.delta","delta":"Hel"#)
-            .unwrap()
-            .is_empty());
-        assert_eq!(decoder.push(br#"lo"}"#).unwrap(), Vec::<String>::new());
-        assert_eq!(
-            decoder
-                .push(b"\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"!\"}\n\ndata: {\"type\":\"response.completed\"}\n\n")
-                .unwrap(),
-            vec!["Hello".to_string(), "!".to_string()]
+    fn station_key_connectivity_codex_profile_uses_the_codex_responses_shape_and_headers() {
+        let body = build_station_key_connectivity_probe_body(
+            "gpt-test",
+            StationKeyConnectivityProbeKind::Responses,
+            StationKeyConnectivityRequestMode::Stream,
+            StationKeyConnectivityClientProfile::CodexCliCompat,
         );
-        assert_eq!(decoder.finish().unwrap(), "Hello!");
+
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][0]["content"][0]["text"], "hi");
+        assert_eq!(body["reasoning"]["effort"], "low");
+        assert_eq!(
+            station_key_connectivity_profile_headers(
+                StationKeyConnectivityClientProfile::CodexCliCompat
+            ),
+            [
+                ("openai-beta", "responses=experimental"),
+                ("user-agent", "codex_cli_rs/0.146.0"),
+            ]
+        );
+        assert_eq!(
+            StationKeyConnectivityClientProfile::CodexCliCompat
+                .for_protocol(StationKeyConnectivityProbeKind::ChatCompletions),
+            StationKeyConnectivityClientProfile::StandardApi
+        );
     }
 
     #[test]
-    fn station_key_connectivity_responses_sse_accepts_done_sentinel() {
-        let mut decoder =
-            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
+    fn station_key_connectivity_incrementally_consumes_a_large_legal_responses_stream() {
+        let mut decoder = SseDecoder::new(SseLimits::default());
+        let mut reducer = OpenAiResponsesReducer::new(STATION_KEY_CONNECTIVITY_SSE_OUTPUT_LIMIT);
+        let padding = b"data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"untrusted padding for a legal typed event\"}\n\n";
 
-        let deltas = decoder
-            .push(
-                b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\ndata: [DONE]\n\n",
+        for _ in 0..700 {
+            consume_station_key_connectivity_stream_chunk(
+                &mut decoder,
+                Some(&mut reducer),
+                None,
+                padding,
             )
-            .unwrap();
+            .expect("small complete events must not consume the pending-event budget");
+        }
+        consume_station_key_connectivity_stream_chunk(
+            &mut decoder,
+            Some(&mut reducer),
+            None,
+            b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n",
+        )
+        .expect("terminal events");
 
-        assert_eq!(deltas, vec!["Hi".to_string()]);
-        assert_eq!(decoder.finish().unwrap(), "Hi");
-    }
-
-    #[test]
-    fn station_key_connectivity_chat_sse_decodes_crlf_comments_and_done() {
-        let mut decoder =
-            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::ChatCompletions);
-
-        let deltas = decoder
-            .push(
-                b": keep-alive\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
-            )
-            .unwrap();
-
-        assert_eq!(deltas, vec!["Hi".to_string()]);
-        assert_eq!(decoder.finish().unwrap(), "Hi");
-    }
-
-    #[test]
-    fn station_key_connectivity_sse_rejects_malformed_json() {
-        let mut decoder =
-            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
-
-        let error = decoder
-            .push(b"data: {not-json}\n\n")
-            .expect_err("malformed SSE JSON should fail the stream attempt");
-
-        assert!(error.contains("SSE"));
-    }
-
-    #[test]
-    fn station_key_connectivity_sse_rejects_missing_terminal_signal() {
-        let mut decoder =
-            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
-
-        let deltas = decoder
-            .push(b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
-            .unwrap();
-        assert_eq!(deltas, vec!["partial".to_string()]);
-
-        let error = decoder
-            .finish()
-            .expect_err("closing without response.completed should fail");
-
-        assert!(error.contains("terminal"));
-    }
-
-    #[test]
-    fn station_key_connectivity_sse_rejects_oversized_pending_data() {
-        let mut decoder =
-            StationKeyConnectivitySseDecoder::new(StationKeyConnectivityProbeKind::Responses);
-        let oversized = vec![b'a'; STATION_KEY_CONNECTIVITY_SSE_PENDING_LIMIT + 1];
-
-        let error = decoder
-            .push(&oversized)
-            .expect_err("oversized pending data should fail");
-
-        assert!(error.contains("too large"));
+        decoder.finish().expect("complete framing");
+        assert!(decoder.stats().total_stream_bytes > 64 * 1024);
+        assert_eq!(
+            reducer.finish().expect("completed response").output_text,
+            "ok"
+        );
     }
 
     #[test]
@@ -1331,6 +1502,7 @@ mod tests {
             "claude-test",
             StationKeyConnectivityProbeKind::ChatCompletions,
             StationKeyConnectivityRequestMode::NonStream,
+            StationKeyConnectivityClientProfile::StandardApi,
         );
 
         assert_eq!(body["model"], "claude-test");

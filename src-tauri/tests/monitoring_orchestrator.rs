@@ -206,6 +206,7 @@ fn available_transport_result(latency_ms: u64) -> ProbeTransportResult {
         retry_after_ms: None,
         latency_ms,
         semantic_confidence: models::monitoring::SemanticConfidence::ProtocolValidated,
+        error_summary: None,
     }
 }
 

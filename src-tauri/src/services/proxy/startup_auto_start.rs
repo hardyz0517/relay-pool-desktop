@@ -21,7 +21,9 @@ fn env_start_requested() -> bool {
 pub fn schedule(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         if let Err(error) = start_managed_if_requested(&app).await {
-            eprintln!("Relay Pool proxy start-on-launch failed: {error}");
+            crate::observability::runtime::bootstrap::emit(
+                crate::services::proxy::runtime_events::startup_auto_start_failed(),
+            );
         }
     });
 }

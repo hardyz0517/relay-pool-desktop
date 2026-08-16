@@ -25,6 +25,7 @@ pub(crate) mod request_logs;
 pub(crate) mod routing;
 pub(crate) mod routing_engine;
 pub(crate) mod routing_policy;
+pub(crate) mod runtime_diagnostics;
 pub(crate) mod settings;
 pub(crate) mod station_capacity_domains;
 pub(crate) mod stations;

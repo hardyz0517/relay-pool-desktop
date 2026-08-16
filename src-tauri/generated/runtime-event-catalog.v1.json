@@ -1,0 +1,3156 @@
+{
+  "manifestVersion": 1,
+  "manifestId": "1e7b63e79f7ce3987cfdf9b6ac7134e2439af3c6af6e4204dddf0adba6e1595a",
+  "events": [
+    {
+      "code": "app.bootstrap.started",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.bootstrap.started",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.exit.coordinator_unavailable",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.exit.coordinator_unavailable",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.exit.drain_timeout",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.exit.drain_timeout",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.previous_session_unclean_exit",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.previous_session_unclean_exit",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.restart.requested",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.restart.requested",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.shutdown.blocking_failed",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.shutdown.blocking_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.shutdown.persistence_drain_failed",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.shutdown.persistence_drain_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.shutdown.persistence_failed",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.shutdown.persistence_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.shutdown.started",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.shutdown.started",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "app.shutdown.supervisor_failed",
+      "owner": "app.lifecycle",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "app",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "app.shutdown.supervisor_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.driver.failed",
+      "owner": "collector.driver",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.driver.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.station.cancelled",
+      "owner": "collector.station",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.station.cancelled",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.station.completed",
+      "owner": "collector.station",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.station.completed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.station.degraded",
+      "owner": "collector.station",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.station.degraded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.station.failed",
+      "owner": "collector.station",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.station.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.station.query_failed",
+      "owner": "collector.station",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.station.query_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.station.started",
+      "owner": "collector.station",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.station.started",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "frontend.boundary.failed",
+      "owner": "frontend.shell",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "frontend",
+      "level": "error",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "frontend.boundary.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "ipc.runtime_context.invalid",
+      "owner": "ipc.runtime_context",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "ipc",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "rate_limited",
+      "supportBundle": true,
+      "messageKey": "ipc.runtime_context.invalid",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "migration.portable.export_failed",
+      "owner": "migration.portable",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "migration",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "migration.portable.export_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "migration.portable.import_failed",
+      "owner": "migration.portable",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "migration",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "migration.portable.import_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "migration.portable.inspect_failed",
+      "owner": "migration.portable",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "migration",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "migration.portable.inspect_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "migration.portable.prepare_failed",
+      "owner": "migration.portable",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "migration",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "migration.portable.prepare_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "migration.portable.recovery_required",
+      "owner": "migration.portable",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "migration",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "migration.portable.recovery_required",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.maintenance.cancelled",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.maintenance.cancelled",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.maintenance.failed",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.maintenance.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.maintenance.timeout",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.maintenance.timeout",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.runner.cancelled",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.runner.cancelled",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.runner.degraded",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.runner.degraded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.runner.failed",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.runner.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.runner.query_failed",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.runner.query_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.runner.worker_failed",
+      "owner": "monitoring.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.runner.worker_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "monitoring.transport.failed",
+      "owner": "monitoring.transport",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "monitoring",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "monitoring.transport.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "outbound.request.failed",
+      "owner": "outbound.transport",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "outbound",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "outbound.request.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.database.initialized",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.database.initialized",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.device_key.recovery_required",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.device_key.recovery_required",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.installation_lease.acquire_failed",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.installation_lease.acquire_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.installation_lease.acquired",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.installation_lease.acquired",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.installation_lease.contended",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.installation_lease.contended",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.installation_lease.release_failed",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.installation_lease.release_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.installation_lease.released",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.installation_lease.released",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.recovery_mode.started",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.recovery_mode.started",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.relocation.recovery_required",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.relocation.recovery_required",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.runtime.close_failed",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.runtime.close_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.startup.plan_recovery_required",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.startup.plan_recovery_required",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.startup.probe_recovery_required",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.startup.probe_recovery_required",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "persistence.startup.recovery_required",
+      "owner": "persistence.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "persistence",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "persistence.startup.recovery_required",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.already_running",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.already_running",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.drain_failed",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.drain_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.drain_succeeded",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.drain_succeeded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.drain_timeout",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.drain_timeout",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.persistence_failed",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.persistence_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.persistence_retry",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.persistence_retry",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.start_failed",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.start_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.start_started",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.start_started",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.start_succeeded",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.start_succeeded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.stop_failed",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.stop_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.lifecycle.stop_succeeded",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.lifecycle.stop_succeeded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.startup.auto_start_failed",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.startup.auto_start_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "proxy.upstream.failed",
+      "owner": "proxy.upstream",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "proxy.upstream.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "routing.projection.tick_failed",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "routing.projection.tick_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "routing.snapshot.failed",
+      "owner": "proxy.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "proxy",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "routing.snapshot.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "runtime.clock.wall_adjusted",
+      "owner": "observability.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "runtime",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "runtime.clock.wall_adjusted",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "runtime.crash_marker.clean_failed",
+      "owner": "observability.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "runtime",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "runtime.crash_marker.clean_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "runtime.crash_marker.locked",
+      "owner": "observability.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "runtime",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "runtime.crash_marker.locked",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "runtime.crash_marker.unavailable",
+      "owner": "observability.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "runtime",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "runtime.crash_marker.unavailable",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "runtime.log_event.dropped",
+      "owner": "observability.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "runtime",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "runtime.log_event.dropped",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "runtime.log_recovery.completed",
+      "owner": "observability.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "runtime",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "runtime.log_recovery.completed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "runtime.log_retention.degraded",
+      "owner": "observability.runtime",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "runtime",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "runtime.log_retention.degraded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "updater.manifest.inspect_failed",
+      "owner": "updater.manifests",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "migration",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "updater.manifest.inspect_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    }
+  ]
+}

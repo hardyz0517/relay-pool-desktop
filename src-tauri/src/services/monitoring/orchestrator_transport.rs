@@ -117,7 +117,7 @@ impl ProbeTransport for ProbeExecutorTransport {
                         total_timeout: Duration::from_millis(remaining_ms),
                     },
                     #[cfg(test)]
-                    success_body_max_bytes: 64 * 1024,
+                    success_body_max_bytes: 2 * 1024 * 1024,
                     #[cfg(test)]
                     error_body_max_bytes: 8 * 1024,
                     #[cfg(test)]
@@ -149,6 +149,7 @@ impl ProbeTransport for ProbeExecutorTransport {
                 retry_after_ms: None,
                 latency_ms: output.latency_ms,
                 semantic_confidence: output.semantic_confidence,
+                error_summary: output.error_summary,
             }
         })
     }

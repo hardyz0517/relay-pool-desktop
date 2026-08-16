@@ -24,6 +24,9 @@ pub(crate) mod provider_drafts;
 pub(crate) mod request_logs;
 pub(crate) mod routing_health;
 pub(crate) mod runtime;
+pub(crate) mod runtime_context;
+pub(crate) mod runtime_diagnostics;
+pub(crate) mod runtime_events;
 pub(crate) mod settings;
 pub(crate) mod station_collection;
 pub(crate) mod station_key_connectivity;
@@ -248,6 +251,20 @@ mod tests {
         );
         assert_eq!(unsupported.code, error::CommandErrorCode::Unsupported);
         assert!(!unsupported.retryable);
+
+        let unsupported_with_detail = key_pool::public_remote_key_error(
+            crate::services::remote_keys::RemoteKeyOperationError::UnsupportedWithDetail(
+                "Sub2API remote-key request endpoint revision mismatch".to_string(),
+            ),
+        );
+        assert_eq!(
+            unsupported_with_detail.message,
+            "Sub2API remote-key request endpoint revision mismatch"
+        );
+        assert_eq!(
+            unsupported_with_detail.code,
+            error::CommandErrorCode::Unsupported
+        );
 
         let external = key_pool::public_remote_key_error(
             crate::services::remote_keys::RemoteKeyOperationError::ExternalUnavailable,

@@ -299,6 +299,9 @@ impl CapturedRequest {
 pub(crate) enum ScriptedResponse {
     Json(Vec<u8>),
     Sse(Vec<u8>),
+    /// Accept the request and close the TCP stream without an HTTP response.
+    /// This models a provider/proxy disconnect after the connection was made.
+    Disconnect,
     Status {
         status: u16,
         reason: &'static str,
@@ -422,6 +425,7 @@ fn write_scripted_response(stream: &mut TcpStream, response: ScriptedResponse) {
         ScriptedResponse::Sse(body) => {
             write_response(stream, 200, "OK", "text/event-stream", &body)
         }
+        ScriptedResponse::Disconnect => {}
         ScriptedResponse::Status { status, reason } => {
             write_response(stream, status, reason, "application/json", b"{}")
         }

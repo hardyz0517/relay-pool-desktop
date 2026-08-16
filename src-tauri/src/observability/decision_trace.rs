@@ -6,7 +6,10 @@
 // IPC or metric labels, so request ids and redacted resource hashes are safe.
 use std::collections::VecDeque;
 
-use super::events::is_stable_token;
+#[cfg(not(test))]
+use super::runtime::subject::is_stable_token;
+#[cfg(test)]
+use super::subject::is_stable_token;
 
 pub(crate) const DECISION_TRACE_PROFILE_VERSION: &str = "DecisionTraceProfileV1";
 pub(crate) const MAX_OUTBOUND_ATTEMPTS_PER_TRACE: usize = 4;

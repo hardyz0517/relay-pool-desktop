@@ -3,6 +3,10 @@ identifier = "main-window"
 description = "Allow the main Relay Pool Desktop window to invoke normal app commands."
 commands.allow = [
   "app_status",
+  "initialize_runtime_context",
+  "record_frontend_boundary_failure",
+  "read_runtime_diagnostics",
+  "export_runtime_support_bundle",
   "get_runtime_contract_info",
   "get_runtime_status",
   "get_data_store_startup_state",
@@ -58,6 +62,7 @@ commands.allow = [
   "stop_local_proxy",
   "cleanup_before_update",
   "prepare_local_proxy_for_update",
+  "restart_application",
   "restart_local_proxy",
   "list_request_logs",
   "clear_request_logs",
