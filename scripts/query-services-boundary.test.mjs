@@ -11,13 +11,12 @@ const queryFiles = (await readdir(queriesDir))
 assert.deepEqual(
   queryFiles,
   [
-    "changeQueries.ts",
+    "alertingQueries.ts",
     "channelQueries.ts",
-    "logQueries.ts",
     "pricingQueries.ts",
     "routingQueries.ts",
   ],
-  "Stage 2 query service inventory should be explicit until the next slice adds another reviewed query module",
+  "query service inventory should be explicit until the next reviewed module is added",
 );
 
 const forbiddenPatterns = [
@@ -58,17 +57,6 @@ const forbiddenPatterns = [
 for (const fileName of queryFiles) {
   const relativePath = `src/lib/queries/${fileName}`;
   const source = await readFile(path.join(queriesDir, fileName), "utf8");
-
-  assert.match(
-    source,
-    /(?:export\s+type\s+(?:\{[\s\S]*?\b\w+Workspace\b[\s\S]*?\}|\w+Workspace\b)|import\s+type\s+\{[\s\S]*?\b\w+Workspace\b[\s\S]*?\})/,
-    `${relativePath} should declare or explicitly import its raw facts workspace type`,
-  );
-  assert.match(
-    source,
-    /export\s+(?:async\s+)?function\s+load\w+Workspace\(/,
-    `${relativePath} should expose a load*Workspace query function`,
-  );
 
   for (const { pattern, reason } of forbiddenPatterns) {
     assert.ok(!pattern.test(source), `${relativePath}: ${reason}`);

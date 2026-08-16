@@ -1,4 +1,3 @@
-export { ActivityItem, ActivityList } from "./ActivityList";
 export { Button, type ButtonSize, type ButtonVariant } from "./button";
 export { Card } from "./Card";
 export { ConfirmDialog } from "./ConfirmDialog";
@@ -24,4 +23,3 @@ export { StatusBadge, type StatusTone } from "./StatusBadge";
 export { SwitchControl } from "./SwitchControl";
 export { Toolbar } from "./Toolbar";
 export { ToastProvider, useToast } from "./ToastProvider";
-export { WorkspaceLayout } from "./WorkspaceLayout";
