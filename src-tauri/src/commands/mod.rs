@@ -1,6 +1,7 @@
 use std::process::Command;
 
 pub(crate) mod alerting;
+pub(crate) mod browser_transport;
 pub(crate) mod capture;
 pub(crate) mod ccswitch_import;
 pub(crate) mod channel_monitoring;
@@ -267,10 +268,28 @@ mod tests {
         );
 
         let external = key_pool::public_remote_key_error(
-            crate::services::remote_keys::RemoteKeyOperationError::ExternalUnavailable,
+            crate::services::remote_keys::RemoteKeyOperationError::ExternalUnavailable(
+                crate::services::remote_keys::RemoteKeyExternalFailureReason::ProviderUnavailable,
+            ),
         );
         assert_eq!(external.code, error::CommandErrorCode::ExternalUnavailable);
         assert!(external.retryable);
+
+        let external_with_detail = key_pool::public_remote_key_error(
+            crate::services::remote_keys::RemoteKeyOperationError::ExternalUnavailableWithDetail {
+                reason: crate::services::remote_keys::RemoteKeyExternalFailureReason::AuthenticationRejected,
+                detail: "Sub2API remote-key list request was rejected (HTTP 403)".to_string(),
+            },
+        );
+        assert_eq!(
+            external_with_detail.message,
+            "Sub2API remote-key list request was rejected (HTTP 403)"
+        );
+        assert_eq!(
+            external_with_detail.code,
+            error::CommandErrorCode::ExternalUnavailable
+        );
+        assert!(external_with_detail.retryable);
 
         let conflict = key_pool::public_remote_key_error(
             crate::services::remote_keys::RemoteKeyOperationError::Conflict,

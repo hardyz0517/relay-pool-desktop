@@ -135,6 +135,28 @@ impl RemoteKeysCommandFacade {
         remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared).await
     }
 
+    pub(crate) async fn prepare_sub2api_browser_remote_key_scan(
+        &self,
+        station_id: String,
+    ) -> Result<remote_keys::PreparedSub2ApiBrowserRemoteKeyScan, RemoteKeyOperationError> {
+        let prepared = self
+            .prepare_remote_key_context("remote_key_prepare_sub2api_browser_scan", move |source| {
+                remote_keys::prepare_sub2api_remote_key_driver_context_v2(&source, station_id)
+            })
+            .await?
+            .ok_or(RemoteKeyOperationError::Unsupported)?;
+        remote_keys::prepare_sub2api_browser_remote_key_scan_v2(prepared)
+    }
+
+    pub(crate) async fn complete_sub2api_browser_remote_key_scan(
+        &self,
+        plan: remote_keys::PreparedSub2ApiBrowserRemoteKeyScan,
+        payload: serde_json::Value,
+    ) -> Result<RemoteKeyScanResult, RemoteKeyOperationError> {
+        let prepared = remote_keys::complete_sub2api_browser_remote_key_scan_v2(plan, payload)?;
+        remote_keys::finish_remote_key_scan_v2(self.credentials.as_ref(), prepared).await
+    }
+
     pub(crate) async fn create_remote_station_key(
         &self,
         input: CreateRemoteStationKeyInput,
@@ -363,7 +385,9 @@ impl RemoteKeysCommandFacade {
         tokio::select! {
             _ = cancellation_token.cancelled() => {
                 job_cancellation_token.cancel();
-                Err(RemoteKeyOperationError::ExternalUnavailable)
+                Err(RemoteKeyOperationError::ExternalUnavailable(
+                    remote_keys::RemoteKeyExternalFailureReason::Cancelled,
+                ))
             }
             result = job.result() => {
                 result.map_err(remote_key_blocking_error)?

@@ -711,10 +711,12 @@ impl DriverSecretAccessor for WebAuthorizationSecretAccessor {
 fn capture_authorization_error(error: DriverFailure) -> CaptureCommandError {
     let detail = error.sanitized_detail.as_deref().unwrap_or_default();
     match error.kind {
-        DriverFailureKind::AuthRejected => CaptureCommandError::Message(
-            "Web authorization session expired; please re-authorize in the login window."
-                .to_string(),
-        ),
+        DriverFailureKind::AuthRejected | DriverFailureKind::BrowserContextRequired => {
+            CaptureCommandError::Message(
+                "Web authorization session expired; please re-authorize in the login window."
+                    .to_string(),
+            )
+        }
         DriverFailureKind::MalformedPayload => CaptureCommandError::Message(
             "Web authorization self probe returned an invalid NewAPI user payload.".to_string(),
         ),

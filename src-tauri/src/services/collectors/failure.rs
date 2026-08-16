@@ -17,6 +17,7 @@ pub enum DriverFailureKind {
     Unsupported,
     InvalidRequest,
     AuthRejected,
+    BrowserContextRequired,
     RateLimited,
     Timeout,
     BudgetExhausted,

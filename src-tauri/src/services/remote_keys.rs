@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+use zeroize::Zeroizing;
 
 use crate::{
     application::error::ApplicationError,
@@ -29,12 +31,30 @@ use crate::{
     },
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemoteKeyExternalFailureReason {
+    CredentialsUnavailable,
+    AuthenticationRejected,
+    BrowserContextRequired,
+    RateLimited,
+    TimedOut,
+    BudgetExhausted,
+    Cancelled,
+    Transport,
+    MalformedPayload,
+    ProviderUnavailable,
+}
+
 #[derive(Debug)]
 pub(crate) enum RemoteKeyOperationError {
     Application(ApplicationError),
     Unsupported,
     UnsupportedWithDetail(String),
-    ExternalUnavailable,
+    ExternalUnavailable(RemoteKeyExternalFailureReason),
+    ExternalUnavailableWithDetail {
+        reason: RemoteKeyExternalFailureReason,
+        detail: String,
+    },
     ResultUnknown,
     Conflict,
     Internal,
@@ -43,6 +63,19 @@ pub(crate) enum RemoteKeyOperationError {
 impl From<ApplicationError> for RemoteKeyOperationError {
     fn from(error: ApplicationError) -> Self {
         Self::Application(error)
+    }
+}
+
+impl RemoteKeyOperationError {
+    pub(crate) fn requires_browser_context(&self) -> bool {
+        matches!(
+            self,
+            Self::ExternalUnavailable(RemoteKeyExternalFailureReason::BrowserContextRequired)
+                | Self::ExternalUnavailableWithDetail {
+                    reason: RemoteKeyExternalFailureReason::BrowserContextRequired,
+                    ..
+                }
+        )
     }
 }
 
@@ -167,6 +200,22 @@ pub(crate) struct PreparedSub2ApiRemoteKeyDriverContext {
     local_state: PreparedRemoteKeyLocalState,
 }
 
+pub(crate) struct PreparedSub2ApiBrowserRemoteKeyScan {
+    prepared: PreparedSub2ApiRemoteKeyDriverContext,
+    website_url: String,
+    access_token: Option<Zeroizing<String>>,
+}
+
+impl PreparedSub2ApiBrowserRemoteKeyScan {
+    pub(crate) fn website_url(&self) -> &str {
+        &self.website_url
+    }
+
+    pub(crate) fn access_token(&self) -> Option<&str> {
+        self.access_token.as_deref().map(String::as_str)
+    }
+}
+
 pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
     source: &dyn CollectorSourcePort,
     station_id: String,
@@ -197,7 +246,9 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
         .newapi_user_id
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .ok_or(RemoteKeyOperationError::ExternalUnavailable)?;
+        .ok_or(RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::CredentialsUnavailable,
+        ))?;
     let (secret_purpose, secret) = if let Some(access_token) = session
         .access_token
         .clone()
@@ -211,7 +262,9 @@ pub(crate) fn prepare_newapi_remote_key_driver_context_v2(
     {
         (CredentialSecretPurpose::SessionCookie, cookie)
     } else {
-        return Err(RemoteKeyOperationError::ExternalUnavailable);
+        return Err(RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::CredentialsUnavailable,
+        ));
     };
     let settings = source
         .get_settings()
@@ -306,6 +359,18 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
             });
             login_session_handle.clone()
         });
+    let refresh_token = session
+        .refresh_token
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .map(|token| {
+            records.push(RemoteKeySecretRecord {
+                handle: login_session_handle.clone(),
+                purpose: CredentialSecretPurpose::RefreshToken,
+                secret: token,
+            });
+            login_session_handle.clone()
+        });
     let session_cookie = session
         .cookie
         .clone()
@@ -355,7 +420,9 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
             })
         });
     if access_token.is_none() && login.is_none() {
-        return Err(RemoteKeyOperationError::ExternalUnavailable);
+        return Err(RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::CredentialsUnavailable,
+        ));
     }
 
     let settings = source
@@ -389,6 +456,7 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
         auth_context: ProviderAuthContext::Sub2Api {
             station_keys: Vec::new(),
             access_token,
+            refresh_token,
             session_cookie,
             login,
             credit_per_cny: station.credit_per_cny,
@@ -398,6 +466,33 @@ pub(crate) fn prepare_sub2api_remote_key_driver_context_v2(
         proxy,
         local_state,
     }))
+}
+
+pub(crate) fn prepare_sub2api_browser_remote_key_scan_v2(
+    prepared: PreparedSub2ApiRemoteKeyDriverContext,
+) -> Result<PreparedSub2ApiBrowserRemoteKeyScan, RemoteKeyOperationError> {
+    let website_url = prepared
+        .endpoints
+        .website_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or(RemoteKeyOperationError::Unsupported)?;
+    let access_token = prepared
+        .secret_accessor
+        .records
+        .iter()
+        .find(|record| record.purpose == CredentialSecretPurpose::AuthorizationHeader)
+        .map(|record| record.secret.trim())
+        .filter(|value| !value.is_empty())
+        .map(|value| Zeroizing::new(value.to_string()));
+
+    Ok(PreparedSub2ApiBrowserRemoteKeyScan {
+        prepared,
+        website_url,
+        access_token,
+    })
 }
 
 pub(crate) async fn prepare_newapi_remote_key_scan_v2(
@@ -584,6 +679,38 @@ pub(crate) async fn prepare_sub2api_remote_key_scan_v2(
     })
 }
 
+pub(crate) fn complete_sub2api_browser_remote_key_scan_v2(
+    plan: PreparedSub2ApiBrowserRemoteKeyScan,
+    payload: Value,
+) -> Result<PreparedRemoteKeyScan, RemoteKeyOperationError> {
+    if payload
+        .pointer("/data/items")
+        .and_then(Value::as_array)
+        .is_none()
+    {
+        return Err(RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::MalformedPayload,
+        ));
+    }
+    let prepared = plan.prepared;
+    let keys = crate::services::collectors::drivers::sub2api::parse_browser_remote_key_payload(
+        &prepared.station_id,
+        &payload,
+    );
+    let (keys, station_key_updates) = enrich_remote_key_discoveries_from_parts(
+        &prepared.local_state.group_bindings,
+        &prepared.local_state.local_key_candidates,
+        keys,
+    );
+    Ok(PreparedRemoteKeyScan::Discovered {
+        station_id: prepared.station_id,
+        expected_endpoint_revision: prepared.expected_endpoint_revision,
+        capability: prepared.capability,
+        keys,
+        station_key_updates,
+    })
+}
+
 pub(crate) async fn prepare_sub2api_remote_key_creation_v2(
     registry: &ProviderRegistry,
     outbound: &AsyncOutboundClient,
@@ -753,14 +880,53 @@ fn remote_key_error_from_driver(error: DriverFailure) -> RemoteKeyOperationError
             .map(RemoteKeyOperationError::UnsupportedWithDetail)
             .unwrap_or(RemoteKeyOperationError::Unsupported),
         DriverFailureKind::ResultUnknown => RemoteKeyOperationError::ResultUnknown,
-        DriverFailureKind::AuthRejected
-        | DriverFailureKind::RateLimited
-        | DriverFailureKind::Timeout
-        | DriverFailureKind::BudgetExhausted
-        | DriverFailureKind::Cancelled
-        | DriverFailureKind::Transport
-        | DriverFailureKind::MalformedPayload
-        | DriverFailureKind::ProviderUnavailable => RemoteKeyOperationError::ExternalUnavailable,
+        DriverFailureKind::AuthRejected => {
+            let reason = RemoteKeyExternalFailureReason::AuthenticationRejected;
+            error
+                .sanitized_detail
+                .filter(|detail| !detail.trim().is_empty())
+                .map(
+                    |detail| RemoteKeyOperationError::ExternalUnavailableWithDetail {
+                        reason,
+                        detail,
+                    },
+                )
+                .unwrap_or(RemoteKeyOperationError::ExternalUnavailable(reason))
+        }
+        DriverFailureKind::BrowserContextRequired => {
+            let reason = RemoteKeyExternalFailureReason::BrowserContextRequired;
+            error
+                .sanitized_detail
+                .filter(|detail| !detail.trim().is_empty())
+                .map(
+                    |detail| RemoteKeyOperationError::ExternalUnavailableWithDetail {
+                        reason,
+                        detail,
+                    },
+                )
+                .unwrap_or(RemoteKeyOperationError::ExternalUnavailable(reason))
+        }
+        DriverFailureKind::RateLimited => RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::RateLimited,
+        ),
+        DriverFailureKind::Timeout => {
+            RemoteKeyOperationError::ExternalUnavailable(RemoteKeyExternalFailureReason::TimedOut)
+        }
+        DriverFailureKind::BudgetExhausted => RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::BudgetExhausted,
+        ),
+        DriverFailureKind::Cancelled => {
+            RemoteKeyOperationError::ExternalUnavailable(RemoteKeyExternalFailureReason::Cancelled)
+        }
+        DriverFailureKind::Transport => {
+            RemoteKeyOperationError::ExternalUnavailable(RemoteKeyExternalFailureReason::Transport)
+        }
+        DriverFailureKind::MalformedPayload => RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::MalformedPayload,
+        ),
+        DriverFailureKind::ProviderUnavailable => RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::ProviderUnavailable,
+        ),
         DriverFailureKind::Internal => RemoteKeyOperationError::Internal,
     }
 }
@@ -1041,7 +1207,9 @@ fn prepare_remote_key_save(
     expected_endpoint_revision: i64,
 ) -> Result<PreparedRemoteKeySave, RemoteKeyOperationError> {
     if full_key.trim().is_empty() {
-        return Err(RemoteKeyOperationError::ExternalUnavailable);
+        return Err(RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::ProviderUnavailable,
+        ));
     }
     let (mut remote_keys, mut station_key_updates) = enrich_remote_key_discoveries_from_parts(
         &local_state.group_bindings,
@@ -1050,7 +1218,9 @@ fn prepare_remote_key_save(
     );
     let remote_key = remote_keys
         .pop()
-        .ok_or(RemoteKeyOperationError::ExternalUnavailable)?;
+        .ok_or(RemoteKeyOperationError::ExternalUnavailable(
+            RemoteKeyExternalFailureReason::ProviderUnavailable,
+        ))?;
     let matched_station_key_update = station_key_updates.pop();
     let matched_existing = matched_station_key_update.is_some();
     let new_group_binding_id = (!matched_existing)
@@ -1383,6 +1553,47 @@ mod tests {
             error,
             RemoteKeyOperationError::UnsupportedWithDetail(detail)
                 if detail == "Sub2API remote-key request endpoint revision mismatch"
+        ));
+    }
+
+    #[test]
+    fn auth_rejected_driver_failure_preserves_its_sanitized_detail() {
+        let error = remote_key_error_from_driver(DriverFailure::auth_rejected(
+            crate::services::collectors::failure::FailedEndpoint {
+                role: crate::services::collectors::evidence::EndpointRole::RemoteKeys,
+                status_code: Some(403),
+            },
+            "Sub2API remote-key list request was rejected (HTTP 403)",
+        ));
+
+        assert!(matches!(
+            error,
+            RemoteKeyOperationError::ExternalUnavailableWithDetail {
+                reason: RemoteKeyExternalFailureReason::AuthenticationRejected,
+                detail,
+            } if detail == "Sub2API remote-key list request was rejected (HTTP 403)"
+        ));
+    }
+
+    #[test]
+    fn browser_context_driver_failure_keeps_a_typed_recovery_reason() {
+        let mut failure = DriverFailure::auth_rejected(
+            crate::services::collectors::failure::FailedEndpoint {
+                role: crate::services::collectors::evidence::EndpointRole::RemoteKeys,
+                status_code: Some(403),
+            },
+            "Sub2API key-list edge policy requires a browser context",
+        );
+        failure.kind = DriverFailureKind::BrowserContextRequired;
+        let error = remote_key_error_from_driver(failure);
+
+        assert!(error.requires_browser_context());
+        assert!(matches!(
+            error,
+            RemoteKeyOperationError::ExternalUnavailableWithDetail {
+                reason: RemoteKeyExternalFailureReason::BrowserContextRequired,
+                ..
+            }
         ));
     }
 

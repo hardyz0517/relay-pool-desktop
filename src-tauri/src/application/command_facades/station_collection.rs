@@ -265,7 +265,8 @@ fn remote_key_refresh_error_message(error: &RemoteKeyOperationError) -> String {
     match error {
         RemoteKeyOperationError::Unsupported => "当前站点不支持远端密钥扫描。".to_string(),
         RemoteKeyOperationError::UnsupportedWithDetail(detail) => detail.clone(),
-        RemoteKeyOperationError::ExternalUnavailable => "远端密钥接口暂时不可用。".to_string(),
+        RemoteKeyOperationError::ExternalUnavailable(_) => "远端密钥接口暂时不可用。".to_string(),
+        RemoteKeyOperationError::ExternalUnavailableWithDetail { detail, .. } => detail.clone(),
         RemoteKeyOperationError::ResultUnknown => "远端密钥扫描结果无法确认。".to_string(),
         RemoteKeyOperationError::Conflict => "站点配置已变化，请重新采集。".to_string(),
         RemoteKeyOperationError::Application(_) | RemoteKeyOperationError::Internal => {
@@ -356,7 +357,9 @@ mod tests {
     async fn remote_key_refresh_failure_is_reported_without_discarding_collection() {
         let result =
             append_remote_key_refresh_event(CollectorTask::Full, result("partial"), async {
-                Err(RemoteKeyOperationError::ExternalUnavailable)
+                Err(RemoteKeyOperationError::ExternalUnavailable(
+                    crate::services::remote_keys::RemoteKeyExternalFailureReason::ProviderUnavailable,
+                ))
             })
             .await;
 
@@ -365,6 +368,24 @@ mod tests {
         assert_eq!(result.events[0].event_type, REMOTE_KEY_REFRESH_EVENT);
         assert_eq!(result.events[0].status, "failed");
         assert_eq!(result.events[0].message, "远端密钥接口暂时不可用。");
+    }
+
+    #[tokio::test]
+    async fn remote_key_refresh_preserves_safe_external_failure_detail() {
+        let result =
+            append_remote_key_refresh_event(CollectorTask::Full, result("partial"), async {
+                Err(RemoteKeyOperationError::ExternalUnavailableWithDetail {
+                    reason: crate::services::remote_keys::RemoteKeyExternalFailureReason::AuthenticationRejected,
+                    detail: "Sub2API remote-key list request was rejected (HTTP 403)".to_string(),
+                })
+            })
+            .await;
+
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(
+            result.events[0].message,
+            "Sub2API remote-key list request was rejected (HTTP 403)"
+        );
     }
 
     #[tokio::test]

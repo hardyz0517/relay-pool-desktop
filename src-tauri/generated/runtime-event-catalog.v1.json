@@ -1,6 +1,6 @@
 {
   "manifestVersion": 1,
-  "manifestId": "1e7b63e79f7ce3987cfdf9b6ac7134e2439af3c6af6e4204dddf0adba6e1595a",
+  "manifestId": "7b55c72d60c570baabc9ac50f91ac32bff2bf110aadd6d2d17d892f85fe158ef",
   "events": [
     {
       "code": "app.bootstrap.started",
@@ -493,6 +493,546 @@
       "sampling": "always",
       "supportBundle": true,
       "messageKey": "collector.driver.failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.completed",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.completed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.authentication_rejected",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.authentication_rejected",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.browser_context_required",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.browser_context_required",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.budget_exhausted",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.budget_exhausted",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.cancelled",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.cancelled",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.credentials_unavailable",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.credentials_unavailable",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.malformed_payload",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.malformed_payload",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.other",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "error",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.other",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.provider_unavailable",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.provider_unavailable",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.rate_limited",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.rate_limited",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.timed_out",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.timed_out",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.remote_key_scan.failed.transport",
+      "owner": "key_pool.remote_keys",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.remote_key_scan.failed.transport",
       "lifecycle": {
         "status": "active"
       }

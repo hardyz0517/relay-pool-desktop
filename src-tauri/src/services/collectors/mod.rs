@@ -414,6 +414,23 @@ fn prepare_sub2api_collection_v2(
             handle
         });
 
+    let refresh_token_handle = session
+        .refresh_token
+        .filter(|token| !token.trim().is_empty())
+        .map(|token| {
+            let handle = contract::OpaqueCredentialHandle {
+                station_id: station_id.clone(),
+                credential_revision: station.endpoint_revision,
+                scope: contract::CredentialScope::LoginSession,
+            };
+            records.push(SecretRecord {
+                handle: handle.clone(),
+                purpose: contract::CredentialSecretPurpose::RefreshToken,
+                secret: token,
+            });
+            handle
+        });
+
     // Keep the browser cookie separately from the JWT.  Cloudflare-protected
     // deployments may require both headers on the same management request.
     let session_cookie_handle = session
@@ -504,6 +521,7 @@ fn prepare_sub2api_collection_v2(
             auth_context: contract::ProviderAuthContext::Sub2Api {
                 station_keys: station_key_credentials,
                 access_token: access_token_handle,
+                refresh_token: refresh_token_handle,
                 session_cookie: session_cookie_handle,
                 login,
                 credit_per_cny: station.credit_per_cny,
@@ -1627,6 +1645,7 @@ fn driver_failure_code(kind: failure::DriverFailureKind) -> &'static str {
         failure::DriverFailureKind::Unsupported => "unsupported_task",
         failure::DriverFailureKind::InvalidRequest => "invalid_request",
         failure::DriverFailureKind::AuthRejected => "auth_rejected",
+        failure::DriverFailureKind::BrowserContextRequired => "browser_context_required",
         failure::DriverFailureKind::RateLimited => "rate_limited",
         failure::DriverFailureKind::Timeout => "network_timeout",
         failure::DriverFailureKind::BudgetExhausted => "budget_exhausted",

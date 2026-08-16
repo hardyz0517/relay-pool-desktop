@@ -65,6 +65,7 @@ impl OutboundHeaderPolicy {
         Self::new(
             [
                 "accept",
+                "accept-language",
                 "content-type",
                 "user-agent",
                 "x-request-id",
@@ -75,6 +76,7 @@ impl OutboundHeaderPolicy {
                 "anthropic-beta",
                 "anthropic-version",
                 "new-api-user",
+                "x-user-ui-request",
                 "x-app",
                 "x-claude-code-session-id",
                 "x-client-request-id",

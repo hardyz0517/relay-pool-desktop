@@ -3,7 +3,7 @@ mod mapping;
 use std::time::{Duration, Instant};
 
 use futures_util::future::{BoxFuture, FutureExt};
-use http::{header, HeaderValue, Method};
+use http::{header, HeaderName, HeaderValue, Method};
 use serde_json::{json, Value};
 
 use crate::{
@@ -35,11 +35,16 @@ use crate::{
 
 const LOGIN_PATHS: [&str; 3] = ["/api/v1/auth/login", "/auth/login", "/api/login"];
 const LOGIN_FIELDS: [&str; 3] = ["email", "username", "user"];
-const REMOTE_KEY_PAGE_SIZE: usize = 100;
+// Keep the request on the management console's portable default. Individual
+// deployments can expose a smaller set of UI page sizes, while the response
+// metadata still tells us the effective size for pagination.
+const REMOTE_KEY_PAGE_SIZE: usize = 20;
 const REMOTE_KEY_MAX_PAGES: usize = 10_000;
-const REQUEST_MAX_ATTEMPTS: usize = 3;
 const MALFORMED_JSON_MAX_ATTEMPTS: usize = 2;
 const RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(300), Duration::from_secs(1)];
+const SUB2API_USER_UI_REQUEST_HEADER: HeaderName = HeaderName::from_static("x-user-ui-request");
+const SUB2API_MANAGEMENT_LOCALE: HeaderValue = HeaderValue::from_static("en");
+const SUB2API_MANAGEMENT_TIMEZONE: &str = "UTC";
 
 pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
     CollectorTaskKind::Detect,
@@ -52,6 +57,13 @@ pub const FULL_COLLECTOR_TASKS: &[CollectorTaskKind] =
 pub struct Sub2ApiCollectorDriver;
 
 pub struct Sub2ApiRemoteKeyDriver;
+
+pub(crate) fn parse_browser_remote_key_payload(
+    station_id: &str,
+    payload: &Value,
+) -> Vec<RemoteStationKey> {
+    mapping::parse_remote_key_payload(station_id, payload)
+}
 
 impl CollectorDriver for Sub2ApiCollectorDriver {
     fn kind(&self) -> ProviderKind {
@@ -98,12 +110,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             )
             .await?;
             if !execution.ok {
-                return Err(failed_from_endpoint_results(
-                    &[execution.redacted.clone()],
-                    EndpointRole::RemoteKeys,
-                    Some(execution.evidence),
-                    "Sub2API remote-key list returned no canonical keys",
-                ));
+                return Err(remote_key_list_failure(&execution));
             }
             let keys =
                 mapping::parse_remote_key_payload(&request.station.station_id, &execution.payload);
@@ -138,12 +145,7 @@ impl RemoteKeyDriver for Sub2ApiRemoteKeyDriver {
             )
             .await?;
             if !execution.ok {
-                return Err(failed_from_endpoint_results(
-                    &[execution.redacted.clone()],
-                    EndpointRole::RemoteKeys,
-                    Some(execution.evidence),
-                    "Sub2API remote-key reveal list request failed",
-                ));
+                return Err(remote_key_list_failure(&execution));
             }
             let (remote_key, full_key) = remote_key_secret_from_list_payload(
                 &request.station.station_id,
@@ -436,7 +438,11 @@ async fn fetch_remote_key_list(
     let mut page_diagnostics = Vec::new();
 
     loop {
-        let path = format!("/api/v1/keys?page={requested_page}&page_size={REMOTE_KEY_PAGE_SIZE}");
+        // The management console sends these defaults with every key-list request.
+        // They are part of the Sub2API management API contract, not UI scraping.
+        let path = format!(
+            "/api/v1/keys?page={requested_page}&page_size={REMOTE_KEY_PAGE_SIZE}&sort_by=created_at&sort_order=desc&timezone={SUB2API_MANAGEMENT_TIMEZONE}"
+        );
         let execution = execute_bearer_json_with_recovery_with_cookie(
             context,
             EndpointRole::RemoteKeys,
@@ -445,6 +451,7 @@ async fn fetch_remote_key_list(
             access_token,
             auth,
             session_cookie,
+            true,
         )
         .await?;
         evidence.push(execution.evidence.clone());
@@ -1152,6 +1159,7 @@ async fn ensure_access_token(
 struct Sub2ApiAuth {
     station_keys: Vec<Sub2ApiStationKeyCredential>,
     access_token: Option<crate::services::collectors::contract::OpaqueCredentialHandle>,
+    refresh_token: Option<crate::services::collectors::contract::OpaqueCredentialHandle>,
     session_cookie: Option<crate::services::collectors::contract::OpaqueCredentialHandle>,
     login: Option<Sub2ApiLoginCredential>,
     credit_per_cny: f64,
@@ -1164,6 +1172,7 @@ struct RemoteKeyListSession {
 
 struct LoginSession {
     access_token: String,
+    refresh_token: Option<String>,
     cookie: Option<String>,
 }
 
@@ -1186,13 +1195,21 @@ impl LoginSessionResolution {
 
     fn remote_key_detail(&self) -> String {
         match self {
-            Self::Session(_) => "Sub2API management session is available".to_string(),
+            Self::Session(_) => "Sub2API management login is available".to_string(),
+            Self::InteractiveAuthorizationRequired { status: 401 } => {
+                "Sub2API login was rejected (HTTP 401).".to_string()
+            }
+            Self::InteractiveAuthorizationRequired { status: 403 } => {
+                "Sub2API login requires an interactive check (HTTP 403).".to_string()
+            }
             Self::InteractiveAuthorizationRequired { status } => {
-                format!("Sub2API login was rejected or requires interactive authorization (HTTP {status}).")
+                format!(
+                    "Sub2API login was rejected or requires an interactive check (HTTP {status})."
+                )
             }
             Self::SuccessfulWithoutSession { status } => {
                 format!(
-                    "Sub2API login succeeded but did not return a usable management session (HTTP {status})."
+                    "Sub2API login succeeded but did not return a usable management context (HTTP {status})."
                 )
             }
             Self::SupportedFormsFailed { statuses } if !statuses.is_empty() => {
@@ -1218,12 +1235,14 @@ fn sub2api_auth(context: &CollectorContext<'_>) -> Result<Sub2ApiAuth, DriverFai
         Some(ProviderAuthContext::Sub2Api {
             station_keys,
             access_token,
+            refresh_token,
             session_cookie,
             login,
             credit_per_cny,
         }) => Ok(Sub2ApiAuth {
             station_keys,
             access_token,
+            refresh_token,
             session_cookie,
             login,
             credit_per_cny,
@@ -1272,6 +1291,7 @@ async fn resolve_remote_key_list_session(
     auth: &Sub2ApiAuth,
 ) -> Result<RemoteKeyListSession, DriverFailure> {
     let cookie = resolve_session_cookie(context, auth).await?;
+    let refresh_token = resolve_refresh_token(context, auth).await?;
     if let Some(access_token) = resolve_saved_access_token(context, auth).await? {
         return Ok(RemoteKeyListSession {
             access_token,
@@ -1283,6 +1303,14 @@ async fn resolve_remote_key_list_session(
             access_token: cookie.clone(),
             cookie: Some(cookie),
         });
+    }
+    if let Some(refresh_token) = refresh_token {
+        if let Some(session) = refresh_session(context, website_url, &refresh_token).await? {
+            return Ok(RemoteKeyListSession {
+                access_token: session.access_token,
+                cookie: session.cookie,
+            });
+        }
     }
     if let Some(login) = &auth.login {
         match login_session(context, website_url, login).await? {
@@ -1362,6 +1390,21 @@ async fn resolve_session_cookie(
     Ok(None)
 }
 
+async fn resolve_refresh_token(
+    context: &CollectorContext<'_>,
+    auth: &Sub2ApiAuth,
+) -> Result<Option<String>, DriverFailure> {
+    let Some(handle) = &auth.refresh_token else {
+        return Ok(None);
+    };
+    let secret = context
+        .secrets
+        .resolve_secret(handle, CredentialSecretPurpose::RefreshToken)
+        .await?;
+    let token = secret.expose().trim();
+    Ok((!token.is_empty()).then(|| token.to_string()))
+}
+
 #[derive(Debug, Clone)]
 struct JsonExecution {
     payload: Value,
@@ -1376,6 +1419,82 @@ struct RemoteKeyListExecution {
     ok: bool,
     redacted: Value,
     evidence: Vec<EndpointEvidence>,
+}
+
+fn remote_key_list_failure(execution: &RemoteKeyListExecution) -> DriverFailure {
+    let mut failure = failed_from_endpoint_results(
+        &[execution.redacted.clone()],
+        EndpointRole::RemoteKeys,
+        Some(execution.evidence.clone()),
+        remote_key_list_failure_detail(&execution.redacted),
+    );
+    if remote_key_list_requires_browser_context(&execution.redacted) {
+        failure.kind = DriverFailureKind::BrowserContextRequired;
+        failure.auth_effect = AuthEffect::None;
+    }
+    failure
+}
+
+fn remote_key_list_requires_browser_context(redacted: &Value) -> bool {
+    redacted.get("status").and_then(Value::as_u64) == Some(403)
+        && redacted.get("responseKind").and_then(Value::as_str) == Some("html")
+        && matches!(
+            redacted.get("htmlFingerprint").and_then(Value::as_str),
+            Some("cloudflare_block" | "cloudflare_challenge")
+        )
+}
+
+fn remote_key_list_failure_detail(redacted: &Value) -> String {
+    let status = redacted
+        .get("status")
+        .and_then(Value::as_u64)
+        .map(|status| format!(" (HTTP {status})"))
+        .unwrap_or_default();
+    let recovery_actions = redacted
+        .get("recoveryActions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    let tried_refresh = recovery_actions.contains(&"token_refresh");
+    let tried_login = recovery_actions.contains(&"auth_refresh");
+    let recovery_detail = match (tried_refresh, tried_login) {
+        (true, true) => " after credential renewal and stored-login recovery",
+        (true, false) => " after credential renewal",
+        (false, true) => " after stored-login recovery",
+        (false, false) => "",
+    };
+    let rejection_detail = match redacted.get("rejectionClass").and_then(Value::as_str) {
+        Some("edge_policy") => " The provider returned an edge access-denial response.",
+        Some("application_policy") => {
+            " The provider returned a JSON application rejection for key-list access."
+        }
+        Some("session") => " The provider rejected the management session.",
+        Some("unknown") => " The provider returned an unclassified access rejection.",
+        _ => "",
+    };
+    let rejection_hint = match redacted.get("rejectionHint").and_then(Value::as_str) {
+        Some("browser_context") => " The fixed error category points to browser context.",
+        Some("network_policy") => " The fixed error category points to an IP or network policy.",
+        Some("request_shape") => {
+            " The fixed error category points to request parameters or headers."
+        }
+        Some("permission") => " The fixed error category points to key-management permission.",
+        Some("session") => " The fixed error category points to the management session.",
+        _ => "",
+    };
+    let html_fingerprint = match redacted.get("htmlFingerprint").and_then(Value::as_str) {
+        Some("cloudflare_challenge") => " The HTML fingerprint is a Cloudflare challenge.",
+        Some("cloudflare_block") => " The HTML fingerprint is a Cloudflare block page.",
+        Some("generic_forbidden") => " The HTML fingerprint is a generic 403 page.",
+        Some("empty") => " The HTML rejection body is empty.",
+        Some("other") => " The HTML fingerprint does not match a known edge page.",
+        _ => "",
+    };
+    format!(
+        "Sub2API remote-key list request was rejected{status}{recovery_detail}.{rejection_detail}{rejection_hint}{html_fingerprint} Inspect the saved session or the station's key-management permission."
+    )
 }
 
 async fn execute_bearer_json_with_recovery(
@@ -1394,6 +1513,7 @@ async fn execute_bearer_json_with_recovery(
         access_token,
         auth,
         None,
+        false,
     )
     .await
 }
@@ -1406,6 +1526,7 @@ async fn execute_bearer_json_with_recovery_with_cookie(
     access_token: &mut String,
     auth: &Sub2ApiAuth,
     session_cookie_override: Option<&str>,
+    enable_refresh_token_recovery: bool,
 ) -> Result<JsonExecution, DriverFailure> {
     let url = build_management_url(base_url, path)
         .map_err(|error| invalid_request(redact_text(&error)))?;
@@ -1413,16 +1534,33 @@ async fn execute_bearer_json_with_recovery_with_cookie(
     let mut attempts = Vec::new();
     let mut recovery_actions = Vec::new();
     let mut auth_refreshed = false;
+    let mut refresh_token_used = false;
     let mut cookie_fallback_used = false;
     let mut malformed_attempts = 0;
     let mut latest = None;
-    let session_cookie = session_cookie_override
+    let mut auth_refresh_failure = None;
+    let mut session_cookie = session_cookie_override
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .or(resolve_session_cookie(context, auth).await?);
+    let mut refresh_token = if enable_refresh_token_recovery {
+        resolve_refresh_token(context, auth).await?
+    } else {
+        None
+    };
+    // Each credential recovery step is one-shot and must leave room for the
+    // request that validates the recovered credential. Transient retries have
+    // their own bounded allowance instead of competing for the same fixed
+    // three-attempt budget.
+    let max_attempts = 1
+        + RETRY_DELAYS.len()
+        + usize::from(session_cookie.is_some())
+        + usize::from(enable_refresh_token_recovery)
+        + usize::from(auth.login.is_some());
+    let mut transient_retries_used = 0usize;
 
-    for attempt in 1..=REQUEST_MAX_ATTEMPTS {
+    for attempt in 1..=max_attempts {
         let result = execute_bearer_json_once(
             context,
             role,
@@ -1437,6 +1575,17 @@ async fn execute_bearer_json_with_recovery_with_cookie(
             return Err(failure);
         }
         let mut failure = classify_json_result(&result);
+        // A Sub2API key-list endpoint can report an expired server session as
+        // an interactive-looking 401/403 JSON response.  That is still
+        // recoverable with the saved refresh token or remembered password.
+        // Preserve the manual-authorization result only after those bounded
+        // recovery attempts have had a chance to run.
+        if enable_refresh_token_recovery
+            && matches!(result.status, Some(401 | 403))
+            && failure == Some("manual_authorization_required")
+        {
+            failure = Some("auth_rejected");
+        }
         if result.ok && result.payload.is_null() {
             failure = Some("invalid_json");
             malformed_attempts += 1;
@@ -1449,10 +1598,16 @@ async fn execute_bearer_json_with_recovery_with_cookie(
             && !looks_like_cookie_header(access_token)
         {
             "cookie_fallback"
+        } else if failure == Some("auth_rejected")
+            && enable_refresh_token_recovery
+            && !refresh_token_used
+            && refresh_token.is_some()
+        {
+            "token_refresh"
         } else if failure == Some("auth_rejected") && !auth_refreshed && auth.login.is_some() {
             "auth_refresh"
         } else if is_retryable_failure(failure, malformed_attempts)
-            && attempt < REQUEST_MAX_ATTEMPTS
+            && transient_retries_used < RETRY_DELAYS.len()
         {
             "transient_retry"
         } else {
@@ -1484,19 +1639,58 @@ async fn execute_bearer_json_with_recovery_with_cookie(
             auth_refreshed = true;
             recovery_actions.push("auth_refresh");
             if let Some(login) = auth.login.as_ref() {
-                if let Some(fresh) = login_access_token(context, base_url, login).await? {
-                    *access_token = fresh;
-                    continue;
+                match login_session(context, base_url, login).await {
+                    Ok(LoginSessionResolution::Session(fresh)) => {
+                        *access_token = fresh.access_token;
+                        if fresh.refresh_token.is_some() {
+                            refresh_token = fresh.refresh_token;
+                        }
+                        if fresh.cookie.is_some() {
+                            session_cookie = fresh.cookie;
+                        }
+                        continue;
+                    }
+                    Ok(_) => {
+                        recovery_actions.push("auth_refresh_unavailable");
+                    }
+                    Err(error) => {
+                        recovery_actions.push("auth_refresh_failed");
+                        auth_refresh_failure = error
+                            .sanitized_detail
+                            .filter(|detail| !detail.trim().is_empty());
+                    }
                 }
             }
             break;
+        }
+        if action == "token_refresh" {
+            refresh_token_used = true;
+            recovery_actions.push("token_refresh");
+            if let Some(saved_refresh_token) = refresh_token.as_deref() {
+                match refresh_session(context, base_url, saved_refresh_token).await {
+                    Ok(Some(fresh)) => {
+                        *access_token = fresh.access_token;
+                        if fresh.refresh_token.is_some() {
+                            refresh_token = fresh.refresh_token;
+                        }
+                        if fresh.cookie.is_some() {
+                            session_cookie = fresh.cookie;
+                        }
+                        continue;
+                    }
+                    Ok(None) => recovery_actions.push("token_refresh_unavailable"),
+                    Err(_) => recovery_actions.push("token_refresh_failed"),
+                }
+            }
+            continue;
         }
         if action == "transient_retry" {
             recovery_actions.push("transient_retry");
             let delay = latest
                 .as_ref()
                 .and_then(|result| result.retry_after)
-                .unwrap_or_else(|| RETRY_DELAYS.get(attempt - 1).copied().unwrap_or_default());
+                .unwrap_or(RETRY_DELAYS[transient_retries_used]);
+            transient_retries_used += 1;
             if !delay.is_zero() {
                 tokio::select! {
                     _ = context.cancellation.cancelled() => {
@@ -1531,6 +1725,16 @@ async fn execute_bearer_json_with_recovery_with_cookie(
     if !recovery_actions.is_empty() {
         redacted["recoveryActions"] = json!(recovery_actions);
     }
+    if let Some(rejection) = result.rejection {
+        redacted["rejectionClass"] = json!(rejection.class.as_str());
+        redacted["rejectionHint"] = json!(rejection.hint.as_str());
+        redacted["responseKind"] = json!(rejection.response_kind.as_str());
+        redacted["cloudflareProxy"] = json!(rejection.cloudflare_proxy);
+        redacted["htmlFingerprint"] = json!(rejection.html_fingerprint.as_str());
+    }
+    if let Some(detail) = auth_refresh_failure {
+        redacted["authRefreshFailure"] = json!(redact_text(&detail));
+    }
     let ok = result.ok && classify_json_result(&result).is_none();
     Ok(JsonExecution {
         payload: result.payload,
@@ -1552,6 +1756,98 @@ struct JsonAttemptResult {
     duration_ms: i64,
     evidence: EndpointEvidence,
     manual_authorization_required: bool,
+    rejection: Option<RemoteKeyRejectionDiagnosis>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteKeyRejectionClass {
+    EdgePolicy,
+    ApplicationPolicy,
+    Session,
+    Unknown,
+}
+
+impl RemoteKeyRejectionClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EdgePolicy => "edge_policy",
+            Self::ApplicationPolicy => "application_policy",
+            Self::Session => "session",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteKeyRejectionHint {
+    BrowserContext,
+    NetworkPolicy,
+    RequestShape,
+    Permission,
+    Session,
+    Unknown,
+}
+
+impl RemoteKeyRejectionHint {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::BrowserContext => "browser_context",
+            Self::NetworkPolicy => "network_policy",
+            Self::RequestShape => "request_shape",
+            Self::Permission => "permission",
+            Self::Session => "session",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteKeyResponseKind {
+    Json,
+    Html,
+    Other,
+}
+
+impl RemoteKeyResponseKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Html => "html",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RemoteKeyRejectionDiagnosis {
+    class: RemoteKeyRejectionClass,
+    hint: RemoteKeyRejectionHint,
+    response_kind: RemoteKeyResponseKind,
+    cloudflare_proxy: bool,
+    html_fingerprint: RemoteKeyHtmlFingerprint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteKeyHtmlFingerprint {
+    None,
+    CloudflareChallenge,
+    CloudflareBlock,
+    GenericForbidden,
+    Empty,
+    Other,
+}
+
+impl RemoteKeyHtmlFingerprint {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CloudflareChallenge => "cloudflare_challenge",
+            Self::CloudflareBlock => "cloudflare_block",
+            Self::GenericForbidden => "generic_forbidden",
+            Self::Empty => "empty",
+            Self::Other => "other",
+        }
+    }
 }
 
 impl JsonAttemptResult {
@@ -1573,6 +1869,7 @@ impl JsonAttemptResult {
                 Some("task budget exhausted".to_string()),
             ),
             manual_authorization_required: false,
+            rejection: None,
         }
     }
 
@@ -1619,6 +1916,7 @@ async fn execute_bearer_json_once(
                     None,
                 ),
                 manual_authorization_required: false,
+                rejection: None,
             };
         }
     };
@@ -1639,6 +1937,8 @@ async fn execute_bearer_json_once(
             let ok = response.status.is_success() && !payload.is_null();
             let error_message =
                 (!ok).then(|| redact_text(std::str::from_utf8(&response.body).unwrap_or_default()));
+            let rejection =
+                classify_remote_key_rejection(status, &response.headers, &payload, &response.body);
             JsonAttemptResult {
                 url: response.evidence.final_url.clone(),
                 status: Some(status),
@@ -1656,6 +1956,7 @@ async fn execute_bearer_json_once(
                     None,
                 ),
                 manual_authorization_required,
+                rejection,
             }
         }
         Err(error) => JsonAttemptResult {
@@ -1675,8 +1976,210 @@ async fn execute_bearer_json_once(
                 Some(error.to_string()),
             ),
             manual_authorization_required: false,
+            rejection: None,
         },
     }
+}
+
+fn classify_remote_key_rejection(
+    status: u16,
+    headers: &http::HeaderMap,
+    payload: &Value,
+    body: &[u8],
+) -> Option<RemoteKeyRejectionDiagnosis> {
+    if !matches!(status, 401 | 403) {
+        return None;
+    }
+
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let cloudflare_proxy = headers.contains_key("cf-ray")
+        || headers
+            .get(header::SERVER)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .contains("cloudflare");
+    let response_kind = if content_type.contains("text/html") {
+        RemoteKeyResponseKind::Html
+    } else if payload.is_object()
+        || content_type.contains("application/json")
+        || content_type.contains("+json")
+    {
+        RemoteKeyResponseKind::Json
+    } else {
+        RemoteKeyResponseKind::Other
+    };
+    let response_text = [
+        "/reason",
+        "/error/reason",
+        "/data/reason",
+        "/code",
+        "/error/code",
+        "/data/code",
+        "/message",
+        "/error/message",
+        "/data/message",
+    ]
+    .into_iter()
+    .filter_map(|pointer| payload.pointer(pointer).and_then(Value::as_str))
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_ascii_uppercase)
+    .collect::<Vec<_>>()
+    .join(" ");
+    let hint =
+        classify_remote_key_rejection_hint((!response_text.is_empty()).then_some(&response_text));
+    let class = if status == 401 || hint == RemoteKeyRejectionHint::Session {
+        RemoteKeyRejectionClass::Session
+    } else if response_kind == RemoteKeyResponseKind::Html
+        || hint == RemoteKeyRejectionHint::BrowserContext
+    {
+        RemoteKeyRejectionClass::EdgePolicy
+    } else if response_kind == RemoteKeyResponseKind::Json {
+        RemoteKeyRejectionClass::ApplicationPolicy
+    } else {
+        RemoteKeyRejectionClass::Unknown
+    };
+    let html_fingerprint = classify_remote_key_html_fingerprint(headers, response_kind, body);
+    Some(RemoteKeyRejectionDiagnosis {
+        class,
+        hint,
+        response_kind,
+        cloudflare_proxy,
+        html_fingerprint,
+    })
+}
+
+fn classify_remote_key_html_fingerprint(
+    headers: &http::HeaderMap,
+    response_kind: RemoteKeyResponseKind,
+    body: &[u8],
+) -> RemoteKeyHtmlFingerprint {
+    if response_kind != RemoteKeyResponseKind::Html {
+        return RemoteKeyHtmlFingerprint::None;
+    }
+    if body.is_empty() {
+        return RemoteKeyHtmlFingerprint::Empty;
+    }
+
+    let body = String::from_utf8_lossy(body).to_ascii_lowercase();
+    let cf_mitigated_challenge = headers
+        .get("cf-mitigated")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("challenge"));
+    if cf_mitigated_challenge
+        || [
+            "challenge-platform",
+            "cf-chl-",
+            "just a moment",
+            "checking your browser",
+        ]
+        .iter()
+        .any(|marker| body.contains(marker))
+    {
+        return RemoteKeyHtmlFingerprint::CloudflareChallenge;
+    }
+    if [
+        "cf-error-details",
+        "cloudflare ray id",
+        "sorry, you have been blocked",
+        "error code 1020",
+    ]
+    .iter()
+    .any(|marker| body.contains(marker))
+    {
+        return RemoteKeyHtmlFingerprint::CloudflareBlock;
+    }
+    if [
+        "<title>403 forbidden",
+        ">403 forbidden<",
+        "<h1>forbidden</h1>",
+        "access denied",
+    ]
+    .iter()
+    .any(|marker| body.contains(marker))
+    {
+        return RemoteKeyHtmlFingerprint::GenericForbidden;
+    }
+    RemoteKeyHtmlFingerprint::Other
+}
+
+fn classify_remote_key_rejection_hint(response_text: Option<&str>) -> RemoteKeyRejectionHint {
+    let Some(text) = response_text else {
+        return RemoteKeyRejectionHint::Unknown;
+    };
+    if [
+        "AUTH",
+        "CREDENTIAL",
+        "LOGIN",
+        "SESSION",
+        "TOKEN",
+        "UNAUTHORIZED",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker))
+    {
+        return RemoteKeyRejectionHint::Session;
+    }
+    if [
+        "BOT",
+        "BROWSER",
+        "CHALLENGE",
+        "CLOUDFLARE",
+        "ORIGIN",
+        "REFERER",
+        "USER-AGENT",
+        "WAF",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker))
+    {
+        return RemoteKeyRejectionHint::BrowserContext;
+    }
+    if [
+        "IP ADDRESS",
+        "IP_",
+        "NETWORK",
+        "REGION",
+        "WHITELIST",
+        "BLACKLIST",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker))
+    {
+        return RemoteKeyRejectionHint::NetworkPolicy;
+    }
+    if [
+        "BAD_REQUEST",
+        "HEADER",
+        "INVALID PARAM",
+        "PAGE_SIZE",
+        "REQUEST SHAPE",
+        "TIMEZONE",
+        "VALIDATION",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker))
+    {
+        return RemoteKeyRejectionHint::RequestShape;
+    }
+    if [
+        "ACCESS DENIED",
+        "FORBIDDEN",
+        "NOT ALLOWED",
+        "PERMISSION",
+        "POLICY",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker))
+    {
+        return RemoteKeyRejectionHint::Permission;
+    }
+    RemoteKeyRejectionHint::Unknown
 }
 
 fn build_json_request(
@@ -1697,6 +2200,28 @@ fn build_json_request(
             &policy,
         )
         .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+    if matches!(role, EndpointRole::RemoteKeys) {
+        // The Sub2API management client applies this profile to key operations.
+        // Keep it narrowly scoped so normal API and group collection traffic does
+        // not inherit console-only behavior.
+        headers
+            .insert_public(
+                SUB2API_USER_UI_REQUEST_HEADER,
+                HeaderValue::from_static("1"),
+                &policy,
+            )
+            .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+        headers
+            .insert_public(header::ACCEPT_LANGUAGE, SUB2API_MANAGEMENT_LOCALE, &policy)
+            .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+        headers
+            .insert_public(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+                &policy,
+            )
+            .map_err(|failure| driver_failure_from_outbound(role, failure.kind))?;
+    }
     if let Some(user_agent) = context
         .user_agent
         .as_deref()
@@ -1792,8 +2317,13 @@ async fn login_session(
         let url = build_management_url(base_url, path)
             .map_err(|error| invalid_request(redact_text(&error)))?;
         for field in LOGIN_FIELDS {
-            let payload = json!({ field: login.username, "password": password.expose() });
-            let request = build_login_request(context, &url, payload)?;
+            let mut payload = serde_json::Map::new();
+            payload.insert(field.to_string(), Value::String(login.username.to_string()));
+            payload.insert(
+                "password".to_string(),
+                Value::String(password.expose().to_string()),
+            );
+            let request = build_login_request(context, &url, Value::Object(payload))?;
             let response = context
                 .outbound
                 .execute(request, context.cancellation.clone())
@@ -1805,10 +2335,12 @@ async fn login_session(
             let parsed = serde_json::from_slice::<Value>(&response.body).unwrap_or(Value::Null);
             if response.status.is_success() {
                 let access_token = extract_token(&parsed);
+                let refresh_token = extract_refresh_token(&parsed);
                 let cookie = extract_login_cookie(&response.headers);
                 if let Some(access_token) = access_token.or_else(|| cookie.clone()) {
                     return Ok(LoginSessionResolution::Session(LoginSession {
                         access_token,
+                        refresh_token,
                         cookie,
                     }));
                 }
@@ -1825,6 +2357,38 @@ async fn login_session(
         }
     }
     Ok(LoginSessionResolution::SupportedFormsFailed { statuses })
+}
+
+async fn refresh_session(
+    context: &CollectorContext<'_>,
+    base_url: &str,
+    refresh_token: &str,
+) -> Result<Option<LoginSession>, DriverFailure> {
+    let refresh_token = refresh_token.trim();
+    if refresh_token.is_empty() {
+        return Ok(None);
+    }
+    let url = build_management_url(base_url, "/api/v1/auth/refresh")
+        .map_err(|error| invalid_request(redact_text(&error)))?;
+    let request = build_login_request(context, &url, json!({ "refresh_token": refresh_token }))?;
+    let response = context
+        .outbound
+        .execute(request, context.cancellation.clone())
+        .await
+        .map_err(|error| driver_failure_from_outbound(EndpointRole::Authorization, error.kind))?;
+    if !response.status.is_success() {
+        return Ok(None);
+    }
+    let parsed = serde_json::from_slice::<Value>(&response.body).unwrap_or(Value::Null);
+    let access_token = extract_token(&parsed);
+    let cookie = extract_login_cookie(&response.headers);
+    Ok(access_token
+        .or_else(|| cookie.clone())
+        .map(|access_token| LoginSession {
+            access_token,
+            refresh_token: extract_refresh_token(&parsed),
+            cookie,
+        }))
 }
 
 fn build_login_request(
@@ -1849,6 +2413,11 @@ fn build_login_request(
             HeaderValue::from_static("application/json"),
             &policy,
         )
+        .map_err(|failure| {
+            driver_failure_from_outbound(EndpointRole::Authorization, failure.kind)
+        })?;
+    headers
+        .insert_public(header::ACCEPT_LANGUAGE, SUB2API_MANAGEMENT_LOCALE, &policy)
         .map_err(|failure| {
             driver_failure_from_outbound(EndpointRole::Authorization, failure.kind)
         })?;
@@ -1888,6 +2457,16 @@ fn extract_token(value: &Value) -> Option<String> {
         .filter(|token| !token.is_empty())
         .map(ToString::to_string)
         .or_else(|| value.get("data").and_then(extract_token))
+}
+
+fn extract_refresh_token(value: &Value) -> Option<String> {
+    value
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| value.get("data").and_then(extract_refresh_token))
 }
 
 fn extract_login_cookie(headers: &http::HeaderMap) -> Option<String> {
@@ -1938,6 +2517,7 @@ fn classify_json_result(result: &JsonAttemptResult) -> Option<&'static str> {
         Some(DriverFailureKind::Cancelled) => return Some("cancelled"),
         Some(DriverFailureKind::BudgetExhausted) => return Some("budget_exhausted"),
         Some(DriverFailureKind::Timeout) => return Some("network_timeout"),
+        Some(DriverFailureKind::InvalidRequest) => return Some("invalid_request"),
         _ => {}
     }
     match result.status {
@@ -2028,6 +2608,8 @@ fn failure_kind_from_endpoint_results(results: &[Value]) -> DriverFailureKind {
         DriverFailureKind::RateLimited
     } else if has_failure("invalid_json") {
         DriverFailureKind::MalformedPayload
+    } else if has_failure("invalid_request") {
+        DriverFailureKind::InvalidRequest
     } else {
         DriverFailureKind::ProviderUnavailable
     }
@@ -2333,12 +2915,39 @@ mod tests {
             async move {
                 let secret = match purpose {
                     CredentialSecretPurpose::AuthorizationHeader => "captured-jwt",
+                    CredentialSecretPurpose::RefreshToken => {
+                        return Err(DriverFailure::unsupported("refresh token is unavailable"));
+                    }
                     CredentialSecretPurpose::SessionCookie => {
                         "cf_clearance=clearance; session=browser"
                     }
                     CredentialSecretPurpose::LoginPassword => {
                         return Err(DriverFailure::unsupported("login password is unavailable"));
                     }
+                };
+                Ok(crate::services::collectors::contract::CredentialSecret::new(secret))
+            }
+            .boxed()
+        }
+    }
+
+    struct RecoveryChainSecretAccessor;
+
+    impl crate::services::collectors::contract::DriverSecretAccessor for RecoveryChainSecretAccessor {
+        fn resolve_secret<'a>(
+            &'a self,
+            _handle: &'a OpaqueCredentialHandle,
+            purpose: CredentialSecretPurpose,
+        ) -> BoxFuture<
+            'a,
+            Result<crate::services::collectors::contract::CredentialSecret, DriverFailure>,
+        > {
+            async move {
+                let secret = match purpose {
+                    CredentialSecretPurpose::AuthorizationHeader => "stale-jwt",
+                    CredentialSecretPurpose::RefreshToken => "stale-refresh-token",
+                    CredentialSecretPurpose::SessionCookie => "browser_session=stale",
+                    CredentialSecretPurpose::LoginPassword => "fixture-login-password",
                 };
                 Ok(crate::services::collectors::contract::CredentialSecret::new(secret))
             }
@@ -2445,9 +3054,11 @@ mod tests {
         ));
         assert_eq!(
             resolution.remote_key_detail(),
-            "Sub2API login was rejected or requires interactive authorization (HTTP 401)."
+            "Sub2API login was rejected (HTTP 401)."
         );
         assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains(r#""email":"fixture-user""#));
+        assert!(!requests[0].contains(r#""field":"#));
     }
 
     #[tokio::test]
@@ -2468,9 +3079,132 @@ mod tests {
         ));
         assert_eq!(
             resolution.remote_key_detail(),
-            "Sub2API login succeeded but did not return a usable management session (HTTP 200)."
+            "Sub2API login succeeded but did not return a usable management context (HTTP 200)."
         );
         assert_eq!(requests.len(), 1);
+    }
+
+    #[test]
+    fn remote_key_failure_detail_preserves_the_key_endpoint_status() {
+        assert_eq!(
+            remote_key_list_failure_detail(&json!({"status": 403})),
+            "Sub2API remote-key list request was rejected (HTTP 403). Inspect the saved session or the station's key-management permission."
+        );
+        assert_eq!(
+            remote_key_list_failure_detail(&json!({"status": null})),
+            "Sub2API remote-key list request was rejected. Inspect the saved session or the station's key-management permission."
+        );
+        assert_eq!(
+            remote_key_list_failure_detail(&json!({
+                "status": 401,
+                "recoveryActions": ["token_refresh", "auth_refresh"]
+            })),
+            "Sub2API remote-key list request was rejected (HTTP 401) after credential renewal and stored-login recovery. Inspect the saved session or the station's key-management permission."
+        );
+        assert_eq!(
+            remote_key_list_failure_detail(&json!({
+                "status": 403,
+                "rejectionClass": "edge_policy",
+                "rejectionHint": "browser_context"
+            })),
+            "Sub2API remote-key list request was rejected (HTTP 403). The provider returned an edge access-denial response. The fixed error category points to browser context. Inspect the saved session or the station's key-management permission."
+        );
+    }
+
+    #[test]
+    fn browser_context_fallback_requires_a_cloudflare_html_fingerprint() {
+        assert!(remote_key_list_requires_browser_context(&json!({
+            "status": 403,
+            "responseKind": "html",
+            "htmlFingerprint": "cloudflare_block"
+        })));
+        assert!(remote_key_list_requires_browser_context(&json!({
+            "status": 403,
+            "responseKind": "html",
+            "htmlFingerprint": "cloudflare_challenge"
+        })));
+        assert!(!remote_key_list_requires_browser_context(&json!({
+            "status": 403,
+            "responseKind": "html",
+            "htmlFingerprint": "generic_forbidden"
+        })));
+        assert!(!remote_key_list_requires_browser_context(&json!({
+            "status": 403,
+            "responseKind": "json",
+            "htmlFingerprint": "cloudflare_block"
+        })));
+        assert!(!remote_key_list_requires_browser_context(&json!({
+            "status": 401,
+            "responseKind": "html",
+            "htmlFingerprint": "cloudflare_block"
+        })));
+    }
+
+    #[test]
+    fn remote_key_rejection_classification_never_retains_response_text() {
+        let mut edge_headers = http::HeaderMap::new();
+        edge_headers.insert(header::SERVER, HeaderValue::from_static("cloudflare"));
+        let proxied = classify_remote_key_rejection(
+            403,
+            &edge_headers,
+            &json!({"code": 403, "reason": "FORBIDDEN", "message": "fixture"}),
+            br#"{"code":403,"reason":"FORBIDDEN","message":"fixture"}"#,
+        )
+        .expect("403 rejection diagnosis");
+        assert_eq!(proxied.class, RemoteKeyRejectionClass::ApplicationPolicy);
+        assert_eq!(proxied.hint, RemoteKeyRejectionHint::Permission);
+        assert_eq!(proxied.response_kind, RemoteKeyResponseKind::Json);
+        assert!(proxied.cloudflare_proxy);
+
+        let mut html_headers = edge_headers.clone();
+        html_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+        let html = classify_remote_key_rejection(
+            403,
+            &html_headers,
+            &Value::Null,
+            b"<html><title>403 Forbidden</title></html>",
+        )
+        .expect("HTML rejection diagnosis");
+        assert_eq!(html.class, RemoteKeyRejectionClass::EdgePolicy);
+        assert_eq!(html.response_kind, RemoteKeyResponseKind::Html);
+        assert_eq!(
+            html.html_fingerprint,
+            RemoteKeyHtmlFingerprint::GenericForbidden
+        );
+
+        let headers = http::HeaderMap::new();
+        let session = classify_remote_key_rejection(
+            403,
+            &headers,
+            &json!({"code": 403, "reason": "SESSION_BINDING_MISMATCH", "message": "fixture"}),
+            b"",
+        )
+        .expect("session rejection diagnosis");
+        assert_eq!(session.class, RemoteKeyRejectionClass::Session);
+        assert_eq!(session.hint, RemoteKeyRejectionHint::Session);
+
+        let browser_context = classify_remote_key_rejection(
+            403,
+            &headers,
+            &json!({"code": 403, "reason": "FORBIDDEN", "message": "browser context required"}),
+            b"",
+        )
+        .expect("browser-context rejection diagnosis");
+        assert_eq!(browser_context.class, RemoteKeyRejectionClass::EdgePolicy);
+        assert_eq!(browser_context.hint, RemoteKeyRejectionHint::BrowserContext);
+
+        html_headers.insert("cf-mitigated", HeaderValue::from_static("challenge"));
+        let challenge = classify_remote_key_rejection(
+            403,
+            &html_headers,
+            &Value::Null,
+            b"<html><title>Just a moment...</title></html>",
+        )
+        .expect("challenge rejection diagnosis");
+        assert_eq!(
+            challenge.html_fingerprint,
+            RemoteKeyHtmlFingerprint::CloudflareChallenge
+        );
     }
 
     #[tokio::test]
@@ -2528,6 +3262,7 @@ mod tests {
             auth: Some(ProviderAuthContext::Sub2Api {
                 station_keys: Vec::new(),
                 access_token: None,
+                refresh_token: None,
                 session_cookie: None,
                 login: Some(Sub2ApiLoginCredential {
                     username: "fixture-user".to_string(),
@@ -2581,6 +3316,147 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn remote_key_list_refreshes_saved_token_after_auth_rejection() {
+        let refresh_body = json!({"access_token": "fresh-jwt"}).to_string();
+        let refresh_response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: session=fresh-session; Path=/; HttpOnly\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{refresh_body}",
+            refresh_body.len(),
+        );
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(403, json!({"message": "session expired"}))),
+            Some(refresh_response),
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [],
+                        "total": 0,
+                        "page": 1,
+                        "page_size": REMOTE_KEY_PAGE_SIZE,
+                        "pages": 1
+                    }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let mut context = test_context(&server.base_url, &secrets, &outbound);
+        let access_token = test_credential();
+        context.auth = Some(ProviderAuthContext::Sub2Api {
+            station_keys: Vec::new(),
+            access_token: Some(access_token.clone()),
+            refresh_token: Some(access_token.clone()),
+            session_cookie: None,
+            login: Some(Sub2ApiLoginCredential {
+                username: "fixture-user".to_string(),
+                password: OpaqueCredentialHandle {
+                    station_id: "station-1".to_string(),
+                    credential_revision: 7,
+                    scope: CredentialScope::LoginPassword,
+                },
+            }),
+            credit_per_cny: 1.0,
+        });
+        let auth = sub2api_auth(&context).expect("Sub2API auth context");
+        let mut access_token = "stale-jwt".to_string();
+
+        let output =
+            fetch_remote_key_list(&context, &server.base_url, &auth, &mut access_token, None)
+                .await
+                .expect("refreshed management session should list keys");
+        let requests = server.finish();
+
+        assert!(output.ok);
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("GET /api/v1/keys?"));
+        assert!(requests[1].starts_with("POST /api/v1/auth/refresh HTTP/1.1"));
+        let refreshed_request = requests[2].to_ascii_lowercase();
+        assert!(refreshed_request.contains("authorization: bearer fresh-jwt"));
+        assert!(refreshed_request.contains("cookie: session=fresh-session"));
+        assert!(requests
+            .iter()
+            .all(|request| !request.starts_with("POST /api/v1/auth/login HTTP/1.1")));
+    }
+
+    #[tokio::test]
+    async fn remote_key_list_retries_after_the_full_saved_session_recovery_chain() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response(401, json!({"message": "stale access token"}))),
+            Some(json_response(
+                401,
+                json!({"message": "stale browser session"}),
+            )),
+            Some(json_response(
+                401,
+                json!({"message": "stale refresh token"}),
+            )),
+            Some(json_response(
+                401,
+                json!({"message": "cookie fallback rejected"}),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "access_token": "password-login-jwt",
+                        "refresh_token": "password-login-refresh"
+                    }
+                }),
+            )),
+            Some(json_response(
+                200,
+                json!({
+                    "data": {
+                        "items": [],
+                        "total": 0,
+                        "page": 1,
+                        "page_size": REMOTE_KEY_PAGE_SIZE,
+                        "pages": 1
+                    }
+                }),
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = RecoveryChainSecretAccessor;
+        let mut context = test_context(&server.base_url, &secrets, &outbound);
+        let session_handle = test_credential();
+        context.auth = Some(ProviderAuthContext::Sub2Api {
+            station_keys: Vec::new(),
+            access_token: Some(session_handle.clone()),
+            refresh_token: Some(session_handle.clone()),
+            session_cookie: Some(session_handle),
+            login: Some(test_login_credential()),
+            credit_per_cny: 1.0,
+        });
+        let auth = sub2api_auth(&context).expect("Sub2API auth context");
+        let mut session = resolve_remote_key_list_session(&context, &server.base_url, &auth)
+            .await
+            .expect("saved session should resolve before recovery");
+
+        let output = fetch_remote_key_list(
+            &context,
+            &server.base_url,
+            &auth,
+            &mut session.access_token,
+            session.cookie.as_deref(),
+        )
+        .await
+        .expect("password-login recovery should leave room for a final key request");
+        let requests = server.finish();
+
+        assert!(output.ok);
+        assert_eq!(requests.len(), 6);
+        assert!(requests[0].starts_with("GET /api/v1/keys?"));
+        assert!(requests[1].starts_with("GET /api/v1/keys?"));
+        assert!(requests[2].starts_with("POST /api/v1/auth/refresh HTTP/1.1"));
+        assert!(requests[3].starts_with("GET /api/v1/keys?"));
+        assert!(requests[4].starts_with("POST /api/v1/auth/login HTTP/1.1"));
+        let recovered_request = requests[5].to_ascii_lowercase();
+        assert!(recovered_request.contains("authorization: bearer password-login-jwt"));
+        assert!(requests[5].starts_with("GET /api/v1/keys?"));
+    }
+
     #[test]
     fn management_request_keeps_bearer_and_browser_cookie_together() {
         let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
@@ -2614,6 +3490,73 @@ mod tests {
                 .get(header::COOKIE)
                 .and_then(|value| value.to_str().ok()),
             Some("cf_clearance=clearance; session=browser")
+        );
+        assert!(headers.get(SUB2API_USER_UI_REQUEST_HEADER).is_none());
+    }
+
+    #[test]
+    fn remote_key_management_request_reuses_the_authorized_session_user_agent() {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let mut context = test_context("https://relay.example", &secrets, &outbound);
+        context.user_agent = Some(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0"
+                .to_string(),
+        );
+        let policy = OutboundHeaderPolicy::provider_default();
+
+        let request = build_json_request(
+            &context,
+            EndpointRole::RemoteKeys,
+            "https://relay.example/api/v1/keys?page=1&page_size=20",
+            "captured-jwt",
+            None,
+            None,
+            Method::GET,
+        )
+        .expect("request should build");
+        let headers = request
+            .headers
+            .materialize(&policy)
+            .expect("headers should materialize");
+
+        assert_eq!(
+            headers
+                .get(SUB2API_USER_UI_REQUEST_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("1")
+        );
+        assert_eq!(
+            headers
+                .get(header::ACCEPT_LANGUAGE)
+                .and_then(|value| value.to_str().ok()),
+            Some("en")
+        );
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+        assert_eq!(
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0")
+        );
+    }
+
+    #[test]
+    fn invalid_request_is_not_classified_as_network_timeout() {
+        let mut result = JsonAttemptResult::budget_exhausted(
+            "https://relay.example/api/v1/keys",
+            EndpointRole::RemoteKeys,
+        );
+        result.failure_kind = Some(DriverFailureKind::InvalidRequest);
+        assert_eq!(classify_json_result(&result), Some("invalid_request"));
+        assert_eq!(
+            failure_kind_from_endpoint_results(&[json!({"failureKind": "invalid_request"})]),
+            DriverFailureKind::InvalidRequest
         );
     }
 
@@ -2698,6 +3641,7 @@ mod tests {
             auth: Some(ProviderAuthContext::Sub2Api {
                 station_keys: Vec::new(),
                 access_token: Some(credential.clone()),
+                refresh_token: None,
                 session_cookie: Some(credential),
                 login: None,
                 credit_per_cny: 1.0,
@@ -2752,6 +3696,7 @@ mod tests {
             auth: Some(ProviderAuthContext::Sub2Api {
                 station_keys: Vec::new(),
                 access_token: Some(credential.clone()),
+                refresh_token: None,
                 session_cookie: Some(credential),
                 login: None,
                 credit_per_cny: 1.0,
@@ -2796,7 +3741,7 @@ mod tests {
 
     fn test_context<'a>(
         base_url: &str,
-        secrets: &'a TestSecretAccessor,
+        secrets: &'a dyn crate::services::collectors::contract::DriverSecretAccessor,
         outbound: &'a AsyncOutboundClient,
     ) -> CollectorContext<'a> {
         let access_token = test_credential();
@@ -2807,6 +3752,7 @@ mod tests {
             auth: Some(ProviderAuthContext::Sub2Api {
                 station_keys: Vec::new(),
                 access_token: Some(access_token),
+                refresh_token: None,
                 session_cookie: None,
                 login: None,
                 credit_per_cny: 1.0,
@@ -2868,8 +3814,12 @@ mod tests {
         assert!(output.ok);
         assert_eq!(mapping::remote_key_items(&output.payload).len(), 3);
         assert_eq!(requests.len(), 2);
-        assert!(requests[0].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
-        assert!(requests[1].starts_with("GET /api/v1/keys?page=2&page_size=100 "));
+        assert!(requests[0].starts_with(
+            "GET /api/v1/keys?page=1&page_size=20&sort_by=created_at&sort_order=desc&timezone=UTC "
+        ));
+        assert!(requests[1].starts_with(
+            "GET /api/v1/keys?page=2&page_size=20&sort_by=created_at&sort_order=desc&timezone=UTC "
+        ));
     }
 
     #[tokio::test]
@@ -2901,7 +3851,9 @@ mod tests {
         assert!(output.ok);
         assert!(mapping::remote_key_items(&output.payload).is_empty());
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
+        assert!(requests[0].starts_with(
+            "GET /api/v1/keys?page=1&page_size=20&sort_by=created_at&sort_order=desc&timezone=UTC "
+        ));
     }
 
     fn test_balance_context<'a>(
@@ -2928,6 +3880,7 @@ mod tests {
                     credential: station_key,
                 }],
                 access_token: Some(access_token),
+                refresh_token: None,
                 session_cookie: None,
                 login: None,
                 credit_per_cny: 27.0,
@@ -3061,10 +4014,16 @@ mod tests {
         assert!(!output.already_absent);
         assert_eq!(output.keys.len(), 1);
         assert_eq!(requests.len(), 4);
-        assert!(requests[0].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
-        assert!(requests[1].starts_with("GET /api/v1/keys?page=2&page_size=100 "));
+        assert!(requests[0].starts_with(
+            "GET /api/v1/keys?page=1&page_size=20&sort_by=created_at&sort_order=desc&timezone=UTC "
+        ));
+        assert!(requests[1].starts_with(
+            "GET /api/v1/keys?page=2&page_size=20&sort_by=created_at&sort_order=desc&timezone=UTC "
+        ));
         assert!(requests[2].starts_with("DELETE /api/v1/keys/key-301 "));
-        assert!(requests[3].starts_with("GET /api/v1/keys?page=1&page_size=100 "));
+        assert!(requests[3].starts_with(
+            "GET /api/v1/keys?page=1&page_size=20&sort_by=created_at&sort_order=desc&timezone=UTC "
+        ));
         assert!(requests[2]
             .to_ascii_lowercase()
             .contains("authorization: bearer sub2api-access-token"));

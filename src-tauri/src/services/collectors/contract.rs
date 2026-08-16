@@ -127,6 +127,7 @@ pub enum CredentialScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CredentialSecretPurpose {
     AuthorizationHeader,
+    RefreshToken,
     SessionCookie,
     LoginPassword,
 }
@@ -140,6 +141,7 @@ pub enum ProviderAuthContext {
     Sub2Api {
         station_keys: Vec<Sub2ApiStationKeyCredential>,
         access_token: Option<OpaqueCredentialHandle>,
+        refresh_token: Option<OpaqueCredentialHandle>,
         session_cookie: Option<OpaqueCredentialHandle>,
         login: Option<Sub2ApiLoginCredential>,
         credit_per_cny: f64,

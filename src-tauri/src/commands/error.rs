@@ -259,6 +259,25 @@ impl CommandError {
         .unwrap_or_else(|_| Self::from_driver(DriverFailure::Unsupported))
     }
 
+    pub(crate) fn external_unavailable_with_detail(detail: String) -> Self {
+        Self::try_new(
+            CommandErrorCode::ExternalUnavailable,
+            detail,
+            true,
+            Some(PublicErrorDetails::External {
+                provider: None,
+                upstream_status: None,
+            }),
+            current_correlation_id(),
+        )
+        .unwrap_or_else(|_| {
+            Self::from_driver(DriverFailure::ExternalUnavailable {
+                provider: None,
+                upstream_status: None,
+            })
+        })
+    }
+
     pub(crate) fn from_work(error: WorkFailure) -> Self {
         let (code, message, retryable) = match error {
             WorkFailure::Timeout => (CommandErrorCode::Timeout, "The operation timed out.", true),
@@ -478,6 +497,30 @@ mod tests {
             error.message,
             "The provider does not support this operation."
         );
+    }
+
+    #[test]
+    fn external_unavailable_detail_preserves_safe_diagnostic() {
+        let error = CommandError::external_unavailable_with_detail(
+            "Sub2API remote-key list request was rejected (HTTP 401) after credential renewal and stored-login recovery; inspect the saved session or the station's key-management permission.".to_string(),
+        );
+
+        assert_eq!(error.code, CommandErrorCode::ExternalUnavailable);
+        assert!(error.retryable);
+        assert_eq!(
+            error.message,
+            "Sub2API remote-key list request was rejected (HTTP 401) after credential renewal and stored-login recovery; inspect the saved session or the station's key-management permission."
+        );
+    }
+
+    #[test]
+    fn external_unavailable_detail_falls_back_when_it_fails_public_error_validation() {
+        let error = CommandError::external_unavailable_with_detail(
+            "Sub2API response included an access token".to_string(),
+        );
+
+        assert_eq!(error.code, CommandErrorCode::ExternalUnavailable);
+        assert_eq!(error.message, "The external provider is unavailable.");
     }
 
     #[test]

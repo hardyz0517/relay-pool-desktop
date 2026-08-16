@@ -1360,6 +1360,11 @@ async fn build_json_request(
                     "NewAPI collector driver cannot use login passwords",
                 ));
             }
+            CredentialSecretPurpose::RefreshToken => {
+                return Err(invalid_request(
+                    "NewAPI collector driver cannot use refresh tokens",
+                ));
+            }
         }
     }
     Ok(OutboundRequest {

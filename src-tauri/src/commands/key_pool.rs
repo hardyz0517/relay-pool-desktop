@@ -259,7 +259,9 @@ pub async fn list_remote_station_keys(
 
 #[tauri::command]
 pub async fn scan_remote_station_keys(
+    app: tauri::AppHandle,
     facade: State<'_, RemoteKeysCommandFacade>,
+    runtime_log: State<'_, std::sync::Arc<crate::observability::runtime::RuntimeLogService>>,
     input: Value,
 
     runtime_context_registry: tauri::State<
@@ -274,13 +276,64 @@ pub async fn scan_remote_station_keys(
         runtime_context,
         async {
             let input = StationIdInputDto::parse(input)?;
-            facade
-                .scan_remote_station_keys(input.station_id)
-                .await
-                .map_err(public_remote_key_error)
+            match scan_remote_station_keys_with_browser_fallback(
+                &app,
+                facade.inner(),
+                input.station_id,
+            )
+            .await
+            {
+                Ok(result) => {
+                    runtime_log.record_descriptor(
+                        crate::commands::runtime_events::remote_key_scan_completed(),
+                        crate::observability::runtime::EventOutcome::Ok,
+                        crate::observability::runtime::RuntimeDetail::Boundary {
+                            action: crate::observability::runtime::event::BoundaryAction::Completed,
+                        },
+                    );
+                    runtime_log.flush();
+                    Ok(result)
+                }
+                Err(error) => {
+                    runtime_log.record_descriptor(
+                        crate::commands::runtime_events::remote_key_scan_failed(&error),
+                        crate::observability::runtime::EventOutcome::Error,
+                        crate::observability::runtime::RuntimeDetail::Boundary {
+                            action: crate::observability::runtime::event::BoundaryAction::Failed,
+                        },
+                    );
+                    runtime_log.flush();
+                    Err(public_remote_key_error(error))
+                }
+            }
         },
     )
     .await
+}
+
+async fn scan_remote_station_keys_with_browser_fallback(
+    app: &tauri::AppHandle,
+    facade: &RemoteKeysCommandFacade,
+    station_id: String,
+) -> Result<crate::models::remote_keys::RemoteKeyScanResult, remote_keys::RemoteKeyOperationError> {
+    match facade.scan_remote_station_keys(station_id.clone()).await {
+        Err(error) if error.requires_browser_context() => {
+            let plan = facade
+                .prepare_sub2api_browser_remote_key_scan(station_id.clone())
+                .await?;
+            let payload = super::browser_transport::fetch_sub2api_remote_key_list(
+                app,
+                plan.website_url(),
+                plan.access_token(),
+            )
+            .await
+            .map_err(|error| error.into_remote_key_error())?;
+            facade
+                .complete_sub2api_browser_remote_key_scan(plan, payload)
+                .await
+        }
+        result => result,
+    }
 }
 
 #[tauri::command]
@@ -530,11 +583,14 @@ pub(crate) fn public_remote_key_error(
         remote_keys::RemoteKeyOperationError::UnsupportedWithDetail(detail) => {
             error::CommandError::unsupported_with_detail(detail)
         }
-        remote_keys::RemoteKeyOperationError::ExternalUnavailable => {
+        remote_keys::RemoteKeyOperationError::ExternalUnavailable(_) => {
             error::CommandError::from_driver(error::DriverFailure::ExternalUnavailable {
                 provider: None,
                 upstream_status: None,
             })
+        }
+        remote_keys::RemoteKeyOperationError::ExternalUnavailableWithDetail { detail, .. } => {
+            error::CommandError::external_unavailable_with_detail(detail)
         }
         remote_keys::RemoteKeyOperationError::ResultUnknown => {
             error::CommandError::from_driver(error::DriverFailure::ResultUnknown)
