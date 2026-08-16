@@ -634,8 +634,8 @@ mod tests {
                             lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
                             last_seen_at_ms, occurrence_count, episode_occurrence_count,
                             last_observation_summary_json, created_at_ms, updated_at_ms
-                         ) VALUES ('incident-1', 'fixture:station_down', 'station_down', 'open',
-                                   'warning', 'warning', 'station', 'fixture', 1, 200, 200,
+                         ) VALUES ('incident-1', 'fixture:group_missing', 'group_missing', 'open',
+                                   'info', 'info', 'station_group_binding', 'fixture', 1, 200, 200,
                                    1, 1, '{}', 200, 200)",
                     )
                     .execute(write.connection())
@@ -688,6 +688,8 @@ mod tests {
         assert_eq!(first_page.items[0].event_type, "group_rate_changed");
         assert_eq!(first_page.items[0].severity, "info");
         assert_eq!(first_page.items[1].record_type, "incident");
+        assert_eq!(first_page.items[1].event_type, "group_missing");
+        assert_eq!(first_page.items[1].severity, "info");
 
         let second_page = query
             .list_activity(None, None, None, false, first_page.next_cursor.as_ref(), 2)

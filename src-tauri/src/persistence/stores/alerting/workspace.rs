@@ -184,7 +184,6 @@ impl WorkspaceStore {
                  LEFT JOIN incident_attention a
                    ON a.incident_id = i.id AND a.episode_number = i.episode_number
                  WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
-                   AND CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END IN ('warning', 'critical')
                    AND a.seen_at_ms IS NULL
                    AND (?1 IS NULL OR i.station_id = ?1)
                    AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
@@ -264,7 +263,6 @@ impl WorkspaceStore {
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
              WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
-               AND CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END IN ('warning', 'critical')
                AND a.seen_at_ms IS NULL
                AND (?1 IS NULL OR i.station_id = ?1)
                AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)",

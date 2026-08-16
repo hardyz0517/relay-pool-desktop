@@ -104,7 +104,7 @@ describe("change center activity presentation", () => {
       stationId: "station-1",
     }, "TNTAPI");
 
-    expect(summary).toBe("TNTAPI · Claude Cursor · 远程分组未找到");
+    expect(summary).toBe("远程分组未找到");
     expect(summary).not.toMatch(/检测中|已出现/);
   });
 });

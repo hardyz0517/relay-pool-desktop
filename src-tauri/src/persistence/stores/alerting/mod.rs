@@ -950,7 +950,8 @@ fn legacy_collector_task_type(condition_key: &str) -> Option<&str> {
 mod tests {
     use super::{
         legacy_collector_task_type, station_id_from_condition_key,
-        station_key_id_from_condition_key, IncidentSnapshot, IncidentStore, OccurrenceStore,
+        station_key_id_from_condition_key, AttentionStore, IncidentSnapshot, IncidentStore,
+        OccurrenceStore,
     };
     use crate::{
         models::alerting::{AlertEventType, ConditionKey, Incident, LifecycleState, Severity},
@@ -1073,6 +1074,53 @@ mod tests {
             })
             .await
             .expect("information seen state");
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn bulk_seen_marks_informational_incidents() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = PersistenceRuntime::initialize_new(
+            &temp.path().join("information-incident-seen.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT INTO change_incidents (
+                            id, condition_key, event_type, lifecycle_state, base_severity, severity,
+                            object_type, lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
+                            last_seen_at_ms, occurrence_count, episode_occurrence_count,
+                            consecutive_abnormal_count, consecutive_healthy_count,
+                            last_observation_summary_json, version, created_at_ms, updated_at_ms
+                         ) VALUES (
+                            'group-missing-1', 'fixture:group-missing-1', 'group_missing', 'open', 'warning', 'warning',
+                            'global', 'fixture', 1, 100, 100, 1, 1, 1, 0, '{}', 1, 100, 100
+                         )",
+                    )
+                    .execute(write.connection())
+                    .await?;
+
+                    let marked = AttentionStore
+                        .mark_all_seen(write, None, Some(Severity::Info), 200)
+                        .await?;
+                    assert_eq!(marked, 1);
+                    let seen_at_ms = sqlx::query_scalar::<_, Option<i64>>(
+                        "SELECT seen_at_ms FROM incident_attention WHERE incident_id = 'group-missing-1'",
+                    )
+                    .fetch_one(write.connection())
+                    .await?;
+                    assert_eq!(seen_at_ms, Some(200));
+                    Ok::<(), crate::persistence::error::PersistenceError>(())
+                })
+            })
+            .await
+            .expect("mark informational incident seen");
+
         runtime.close().await.expect("close runtime");
     }
 
@@ -1246,10 +1294,9 @@ impl AttentionStore {
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
              WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
-               AND i.severity IN ('warning', 'critical')
                AND a.seen_at_ms IS NULL
                AND (?1 IS NULL OR i.station_id = ?1)
-               AND (?2 IS NULL OR i.severity = ?2)
+               AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
              ON CONFLICT(incident_id, episode_number) DO UPDATE SET
                seen_at_ms = excluded.seen_at_ms,
                updated_at_ms = excluded.updated_at_ms

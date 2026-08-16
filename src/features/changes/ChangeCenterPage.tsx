@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCheck, ChevronDown, ChevronUp, MoreHorizontal, RefreshCw, Route, Search, Settings } from "lucide-react";
+import { Check, CheckCheck, ChevronDown, ChevronUp, MoreHorizontal, RefreshCw, Route, Search, Settings } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -315,12 +315,12 @@ function IncidentRow({ incident, stationName, busy, developerModeEnabled, expand
   const title = incidentTitle(incident, taskLabel);
   const objectTitle = incidentObjectTitle(incident, stationName);
   return <div className="group bg-surface">
-    <div className={`grid min-h-[60px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_8px_minmax(0,1fr)_auto_auto]" : "grid-cols-[8px_minmax(0,1fr)_auto_auto]"}`}>
+    <div className={`grid min-h-[60px] w-full items-center gap-3 pl-3 pr-2 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_8px_minmax(0,1fr)_96px_28px]" : "grid-cols-[8px_minmax(0,1fr)_96px_28px]"}`}>
     {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起问题" : "展开问题"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
     <SeverityDot severity={incident.severity} />
-    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{objectTitle}</div><div className="truncate text-xs text-muted-foreground">{title} · {incidentSummary(incident, stationName)}</div></div>
-    <div className="flex items-center gap-2 text-xs text-muted-foreground"><span>{formatChangeTime(incident.lastSeenAtMs)}</span>{incident.seenAtMs == null ? <span aria-label="未读" title="未读" className="h-2 w-2 rounded-full bg-primary-solid" /> : null}</div>
-    <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{incident.seenAtMs == null ? <Button size="sm" variant="ghost" disabled={busy} onClick={onMarkSeen}>标记已读</Button> : null}{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
+    <div className="min-w-0"><div className={`truncate text-[13px] ${incident.seenAtMs == null ? "font-semibold" : "font-medium"} text-foreground`}>{objectTitle}</div><div className="truncate text-xs text-muted-foreground">{title} · {incidentSummary(incident, stationName)}</div></div>
+    <div className="flex w-[96px] items-center justify-end whitespace-nowrap text-xs text-muted-foreground"><span>{formatChangeTime(incident.lastSeenAtMs)}</span></div>
+    <StatusSlot seenAtMs={incident.seenAtMs} busy={busy} onMarkSeen={onMarkSeen} routingLink={routingLink} onOpenRoutingDeepLink={onOpenRoutingDeepLink} />
     </div>
     {developerModeEnabled && expanded ? <IncidentDetail incident={incident} /> : null}
   </div>;
@@ -343,11 +343,9 @@ export function incidentSummary(
   const station = stationName ?? incident.stationId ?? incident.conditionKey;
   if (incident.severity === "info") {
     const detail = incident.eventType === "group_missing"
-      ? incident.groupName
-        ? `${incident.groupName} · 远程分组未找到`
-        : "远程分组未找到"
+      ? "远程分组未找到"
       : eventLabel(incident.eventType);
-    return `${station} · ${detail}`;
+    return incident.eventType === "group_missing" ? detail : `${station} · ${detail}`;
   }
   const stateLabel = incident.lifecycleState === "resolved" ? "已恢复" : incident.lifecycleState === "recovering" ? "恢复中" : incident.lifecycleState === "pending" ? "检测中" : "未处理";
   return `${station} · ${stateLabel} · 已出现 ${incident.occurrenceCount} 次`;
@@ -357,14 +355,23 @@ function ChangeRow({ activity, stationName, busy, developerModeEnabled, expanded
   const routingLink = createChangeCenterRoutingLink(activity);
   const rateTransition = changeRateTransition(activity);
   return <div className="group bg-surface">
-    <div className={`grid min-h-[60px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_8px_minmax(0,1fr)_auto_auto]" : "grid-cols-[8px_minmax(0,1fr)_auto_auto]"}`}>
+    <div className={`grid min-h-[60px] w-full items-center gap-3 pl-3 pr-2 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_8px_minmax(0,1fr)_96px_28px]" : "grid-cols-[8px_minmax(0,1fr)_96px_28px]"}`}>
       {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起变更" : "展开变更"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
       <SeverityDot severity={activity.severity} />
-      <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{changeObjectTitle(activity, stationName)}</div><div className="truncate text-xs text-muted-foreground">{eventLabel(activity.eventType)}{rateTransition ? <> <span className="font-semibold text-foreground">{rateTransition.oldValue} → {rateTransition.newValue}</span></> : activity.eventType === "group_added" ? null : <> · {changeSummary(activity)}</>}</div></div>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground"><span>{formatChangeTime(activity.activityAtMs)}</span>{activity.seenAtMs == null ? <span aria-label="未读" title="未读" className="h-2 w-2 rounded-full bg-primary-solid" /> : null}</div>
-      <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{activity.seenAtMs == null ? <Button size="sm" variant="ghost" disabled={busy} onClick={onMarkSeen}>标记已读</Button> : null}{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
+      <div className="min-w-0"><div className={`truncate text-[13px] ${activity.seenAtMs == null ? "font-semibold" : "font-medium"} text-foreground`}>{changeObjectTitle(activity, stationName)}</div><div className="truncate text-xs text-muted-foreground">{eventLabel(activity.eventType)}{rateTransition ? <> <span className="font-semibold text-foreground">{rateTransition.oldValue} → {rateTransition.newValue}</span></> : activity.eventType === "group_added" ? null : <> · {changeSummary(activity)}</>}</div></div>
+      <div className="flex w-[96px] items-center justify-end whitespace-nowrap text-xs text-muted-foreground"><span>{formatChangeTime(activity.activityAtMs)}</span></div>
+      <StatusSlot seenAtMs={activity.seenAtMs} busy={busy} onMarkSeen={onMarkSeen} routingLink={routingLink} onOpenRoutingDeepLink={onOpenRoutingDeepLink} />
     </div>
     {developerModeEnabled && expanded ? <ChangeDetail activity={activity} /> : null}
+  </div>;
+}
+
+function StatusSlot({ seenAtMs, busy, onMarkSeen, routingLink, onOpenRoutingDeepLink }: { seenAtMs: number | null; busy: boolean; onMarkSeen: () => void; routingLink: ChangeCenterRoutingDeepLink | null; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
+  const unread = seenAtMs == null;
+  return <div className="status-slot relative flex h-7 w-7 items-center justify-center">
+    {unread ? <span aria-label="未读" title="未读" className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary-solid transition-opacity group-hover:opacity-0 group-focus-within:opacity-0" /> : null}
+    {unread ? <IconButton className="absolute left-1/2 top-1/2 h-7 w-7 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-0 text-muted-foreground transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-selected hover:text-primary" label="标记已读" disabled={busy} onClick={onMarkSeen}><Check className="h-4 w-4" /></IconButton> : null}
+    {!unread && onOpenRoutingDeepLink && routingLink ? <IconButton className="absolute left-1/2 top-1/2 h-7 w-7 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-0 text-muted-foreground transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}
   </div>;
 }
 
