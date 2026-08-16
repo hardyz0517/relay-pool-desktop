@@ -1,6 +1,18 @@
 import { spawnSync } from "node:child_process";
 import { assert, readJson, repoRoot, runMain } from "./lib.mjs";
 
+const DEFAULT_AUDIT_TIMEOUT_MS = 120_000;
+
+function auditTimeoutMs() {
+  const raw = process.env.RELAY_POOL_NPM_AUDIT_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_AUDIT_TIMEOUT_MS;
+  }
+  const value = Number(raw);
+  assert(Number.isInteger(value) && value >= 1_000, "RELAY_POOL_NPM_AUDIT_TIMEOUT_MS must be an integer of at least 1000ms");
+  return value;
+}
+
 runMain(() => {
   // Node cannot execute .cmd shims directly on all supported Windows releases.
   // The command is repository-owned and contains no interpolated input.
@@ -12,7 +24,11 @@ runMain(() => {
     cwd: repoRoot,
     encoding: "utf8",
     windowsHide: true,
+    timeout: auditTimeoutMs(),
   });
+  if (result.error?.code === "ETIMEDOUT" || result.status === null) {
+    throw new Error(`pnpm audit did not complete within ${auditTimeoutMs()}ms; dependency advisory status is unknown`);
+  }
   assert(!result.error, `pnpm audit failed to start: ${result.error?.message}`);
   let report;
   try {
@@ -40,7 +56,11 @@ runMain(() => {
   assert(blocking.length === 0, `blocking npm advisories: ${blocking.map((entry) => `${entry.package}:${entry.id}:${entry.severity}`).join(", ")}`);
   if (result.status !== 0) {
     const reportedHigh = advisories.some((advisory) => ["high", "critical"].includes(advisory.severity));
-    assert(reportedHigh, `pnpm audit failed without parseable high/critical advisories: ${result.stderr}`);
+    const diagnostic = result.stderr?.trim() || result.stdout?.trim() || "no audit output was returned";
+    assert(
+      reportedHigh,
+      `pnpm audit exited with status ${result.status} without parseable high/critical advisories: ${diagnostic}`,
+    );
   }
   console.log(`npm advisory gate passed (${advisories.length} advisories inspected)`);
 });

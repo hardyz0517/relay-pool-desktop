@@ -7,13 +7,16 @@ const dataStoreBootstrapSource = await readFile("src/features/data-recovery/Data
 const dataRecoveryScreenSource = await readFile("src/features/data-recovery/DataRecoveryScreen.tsx", "utf8");
 const updaterProviderSource = await readFile("src/lib/updater/UpdaterProvider.tsx", "utf8");
 const updateDialogSource = await readFile("src/lib/updater/UpdateDialog.tsx", "utf8");
+const desktopBackendSource = await readFile("src/lib/bridge/DesktopBackend.ts", "utf8");
+const generatedBridgeSource = await readFile("src/lib/bridge/generated.ts", "utf8");
 
 assert.ok(
   mainSource.includes("<QueryClientProvider client={queryClient}>") &&
     mainSource.includes("renderDataStoreBootstrap={(renderReady) => <DataStoreBootstrap renderReady={renderReady} />}") &&
-    mainSource.indexOf("renderDataStoreBootstrap") < mainSource.indexOf("<UpdaterProvider>") &&
-    mainSource.indexOf("<UpdaterProvider>") < mainSource.indexOf("<App />"),
-  "desktop startup should keep DataStoreBootstrap before UpdaterProvider and the business App",
+    mainSource.indexOf("<UpdaterProvider>") < mainSource.indexOf("<BackendBootstrap") &&
+    mainSource.indexOf("<BackendBootstrap") < mainSource.indexOf("renderDataStoreBootstrap") &&
+    mainSource.indexOf("renderDataStoreBootstrap") < mainSource.indexOf("<App />"),
+  "desktop startup should keep the bootstrap gate between the updater shell and business App",
 );
 
 assert.ok(
@@ -48,6 +51,17 @@ assert.ok(
     !dataRecoveryScreenSource.includes("useActivityQuery") &&
     !dataRecoveryScreenSource.includes("queryKeys"),
   "DataRecoveryScreen should keep recovery commands as explicit foreground operations, not cached server-state reads",
+);
+
+assert.ok(
+  desktopBackendSource.includes("restartApplication as restartApplicationBinding") &&
+    desktopBackendSource.includes("restartApp: () => restartApplicationBinding()") &&
+    desktopBackendSource.includes("await restartApplicationBinding()") &&
+    !desktopBackendSource.includes('@tauri-apps/plugin-process') &&
+    !desktopBackendSource.includes("relaunch()") &&
+    generatedBridgeSource.includes('export function restartApplication(') &&
+    generatedBridgeSource.includes('"restart_application"'),
+  "data-recovery and updater restarts must use the generated native lifecycle command",
 );
 
 assert.ok(

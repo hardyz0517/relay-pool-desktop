@@ -30,16 +30,37 @@ function cargoLockPackages() {
   return packages;
 }
 
+function pnpmLockPackages(packageJson) {
+  const lockfile = parseYaml(fs.readFileSync(path.join(repoRoot, "pnpm-lock.yaml"), "utf8"));
+  const importer = lockfile.importers?.["."];
+  assert(importer && typeof importer === "object", "pnpm-lock.yaml must contain the root importer");
+
+  const npm = new Map();
+  for (const section of ["dependencies", "devDependencies", "optionalDependencies"]) {
+    for (const [name, entry] of Object.entries(importer[section] ?? {})) {
+      const version = String(entry?.version ?? "").split("(", 1)[0].trim();
+      assert(version, `pnpm-lock.yaml root importer is missing a resolved version for ${name}`);
+      npm.set(name, version);
+    }
+  }
+
+  const declared = {
+    ...(packageJson.dependencies ?? {}),
+    ...(packageJson.devDependencies ?? {}),
+    ...(packageJson.optionalDependencies ?? {}),
+  };
+  for (const name of Object.keys(declared)) {
+    assert(npm.has(name), `pnpm-lock.yaml root importer is missing declared dependency ${name}`);
+  }
+  return npm;
+}
+
 function resolvedVersions() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-  const pnpmExecutable = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const npmList = process.platform === "win32"
-    ? command(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `${pnpmExecutable} list --depth 0 --json`])
-    : command(pnpmExecutable, ["list", "--depth", "0", "--json"]);
-  const npmTree = JSON.parse(npmList);
-  const npmRoot = Array.isArray(npmTree) ? npmTree[0] : npmTree;
-  const npm = new Map(Object.entries({ ...(npmRoot.dependencies ?? {}), ...(npmRoot.devDependencies ?? {}) })
-    .map(([name, value]) => [name, value.version]));
+  // The lockfile importer is the reproducible project resolution boundary;
+  // `pnpm list` additionally opens the pnpm store SQLite database, which is
+  // unavailable in restricted or read-only verification environments.
+  const npm = pnpmLockPackages(packageJson);
 
   const cargoPackages = cargoLockPackages();
   const tools = new Map([

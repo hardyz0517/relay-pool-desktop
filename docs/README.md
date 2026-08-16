@@ -18,6 +18,8 @@
 
 变更中心告警仍以 [`proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md`](proposals/CHANGE_CENTER_ALERTING_UPGRADE_SPEC.md) 记录目标设计；基线、边界清单与实施证据位于 [`audits/`](audits/)。价格监控联动和状态监控 V2 的设计入口分别为 [`specs/PRICING_MONITORING_INTEGRATION_SPEC.md`](specs/PRICING_MONITORING_INTEGRATION_SPEC.md) 与 [`specs/STATUS_MONITORING_REFACTOR_SPEC.md`](specs/STATUS_MONITORING_REFACTOR_SPEC.md)。
 
+全软件运行日志与本地可观测性升级以 [`proposals/RUNTIME_LOGGING_OBSERVABILITY_UPGRADE_SPEC.md`](proposals/RUNTIME_LOGGING_OBSERVABILITY_UPGRADE_SPEC.md) 作为已实施规范，以 [`plans/2026-08-15-runtime-logging-observability-upgrade.md`](plans/2026-08-15-runtime-logging-observability-upgrade.md) 记录实施结果；验收证据见 [`audits/runtime-logging-acceptance-matrix.md`](audits/runtime-logging-acceptance-matrix.md)。
+
 ## 目录分类
 
 | 目录 | 内容 | 是否可作为当前实现依据 |

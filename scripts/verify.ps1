@@ -44,6 +44,7 @@ function Invoke-ArchitectureGates {
     Invoke-Checked "TypeScript boundaries" node @("scripts/architecture/check-typescript-boundaries.mjs")
     Invoke-Checked "Rust test topology" node @("scripts/architecture/check-rust-test-topology.mjs")
     Invoke-Checked "Generated IPC bindings" $pnpm @("generate:bindings", "--check")
+    Invoke-Checked "Generated runtime event catalog" $pnpm @("generate:runtime-event-catalog", "--check")
     Invoke-Checked "Command registry" node @("scripts/architecture/check-command-registry.mjs")
     Invoke-Checked "Tauri security" node @("scripts/architecture/check-tauri-security.mjs")
     Invoke-Checked "Production build entries" node @("scripts/architecture/check-build-entries.mjs")

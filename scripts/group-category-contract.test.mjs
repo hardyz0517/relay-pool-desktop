@@ -24,6 +24,8 @@ async function importPricingComparisonViewModel() {
   const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const groupFactsPath = join(tempRoot, "groupFacts.mjs");
   const pricingFactsPath = join(tempRoot, "pricingFacts.mjs");
+  const pricingGroupRefsPath = join(tempRoot, "pricingGroupRefs.mjs");
+  const formattersPath = join(tempRoot, "formatters.mjs");
   const viewModelPath = join(tempRoot, "pricingComparisonViewModel.mjs");
   await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
   await transpileTsFile("src/lib/projections/groupFacts.ts", groupFactsPath, [
@@ -32,9 +34,13 @@ async function importPricingComparisonViewModel() {
   await transpileTsFile("src/lib/projections/pricingFacts.ts", pricingFactsPath, [
     ['@/lib/projections/groupFacts', "./groupFacts.mjs"],
   ]);
+  await transpileTsFile("src/lib/projections/pricingGroupRefs.ts", pricingGroupRefsPath);
+  await transpileTsFile("src/lib/formatters.ts", formattersPath);
   await transpileTsFile("src/features/pricing/pricingComparisonViewModel.ts", viewModelPath, [
     ["../../lib/projections/pricingFacts", "./pricingFacts.mjs"],
     ["../../lib/groupCategories", "./groupCategories.mjs"],
+    ["@/lib/projections/pricingGroupRefs", "./pricingGroupRefs.mjs"],
+    ["@/lib/formatters", "./formatters.mjs"],
   ]);
   return import(`file://${viewModelPath.replaceAll("\\", "/")}`);
 }
@@ -44,7 +50,7 @@ async function importGroupVisualMeta() {
   const groupCategoriesPath = join(tempRoot, "groupCategories.mjs");
   const visualMetaPath = join(tempRoot, "groupVisualMeta.mjs");
   await transpileTsFile("src/lib/groupCategories.ts", groupCategoriesPath);
-  await transpileTsFile("src/features/stations/groupVisualMeta.ts", visualMetaPath, [
+  await transpileTsFile("src/lib/groupVisualMeta.ts", visualMetaPath, [
     ['@/lib/groupCategories', "./groupCategories.mjs"],
   ]);
   return import(`file://${visualMetaPath.replaceAll("\\", "/")}`);
@@ -220,6 +226,7 @@ assert.equal(
 const editorSource = await readFile("src/features/stations/components/StationGroupRowsEditor.tsx", "utf8");
 const selectControlSource = await readFile("src/components/ui/SelectControl.tsx", "utf8");
 const addProviderSource = await readFile("src/features/stations/AddProviderPage.tsx", "utf8");
+const addProviderControllerSource = await readFile("src/features/stations/useAddProviderPageController.ts", "utf8");
 assert.ok(
   editorSource.includes("groupCategoryOverride") && editorSource.includes("groupCategoryOptions"),
   "station group editor should expose a type dropdown backed by manual group category override",
@@ -237,10 +244,12 @@ assert.ok(
   "manual category selection should not rewrite the row rate source; category override and multiplier source are separate concerns",
 );
 assert.ok(
-  editorSource.includes('label: "跟随识别结果"') &&
-    editorSource.includes("triggerLabel: groupCategoryLabel(inferredGroupCategory)") &&
-    editorSource.includes('sectionLabel: index === 0 ? "手动指定" : undefined'),
-  "the automatic category choice should be visually distinct while the closed trigger keeps showing the inferred category",
+  editorSource.includes("value={row.groupCategoryOverride ?? row.inferredGroupCategory}") &&
+    editorSource.includes("groupCategoryOverride: value === row.inferredGroupCategory ? null : value") &&
+    !editorSource.includes("跟随识别结果") &&
+    !editorSource.includes("当前识别：") &&
+    !editorSource.includes("手动指定"),
+  "the detected category should be selected directly without a separate automatic option",
 );
 assert.ok(
   editorSource.includes("developerModeEnabled") &&
@@ -251,13 +260,13 @@ assert.ok(
 assert.ok(
   selectControlSource.includes("triggerLabel?: ReactNode") &&
     selectControlSource.includes("sectionLabel?: ReactNode") &&
-    selectControlSource.includes("Math.min(320"),
+    selectControlSource.includes("const MAX_MENU_HEIGHT = 320"),
   "the shared SelectControl should support reusable trigger labels and option section labels",
 );
 assert.ok(
-  addProviderSource.includes("getSettings") &&
+  addProviderControllerSource.includes("getSettings") &&
     addProviderSource.includes("developerModeEnabled={developerModeEnabled}"),
-  "the station editor should receive the current developer-mode setting",
+  "the station editor should receive developer mode from its page controller",
 );
 
 const detailViewModelSource = await readFile("src/features/stations/stationDetailViewModels.ts", "utf8");

@@ -67,6 +67,356 @@
     },
     "allowed_edges": [
         {
+            "from": "commands::runtime_diagnostics",
+            "to": "commands::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::bootstrap",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "observability::runtime::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::service",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "outbound::client",
+            "to": "outbound::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::runner",
+            "to": "services::monitoring::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::transport",
+            "to": "services::monitoring::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::lifecycle::writer",
+            "to": "services::proxy::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::runtime",
+            "to": "services::proxy::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::startup_auto_start",
+            "to": "services::proxy::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::upstream",
+            "to": "services::proxy::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "app_runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "app_runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "services::proxy::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::exit",
+            "to": "app_runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::routing_projection_runner",
+            "to": "services::proxy::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "commands::data_migration",
+            "to": "services::portable_migration::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "commands::updater",
+            "to": "services::updater::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "ipc::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "ipc::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "app_runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "persistence::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "services::portable_migration::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::correlation",
+            "to": "ipc::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::bootstrap",
+            "to": "persistence::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "app_runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "commands::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "ipc::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "outbound::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "persistence::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "services::monitoring::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "services::portable_migration::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "services::proxy::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "services::station_collectors::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "services::updater::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::descriptor",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "outbound::client",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "outbound::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "outbound::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "persistence::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "persistence::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "runtime_composition",
+            "to": "app_runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "runtime_composition",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "runtime_composition",
+            "to": "observability::runtime::crash",
+            "temporary": false
+        },
+        {
+            "from": "runtime_composition",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "runtime_composition",
+            "to": "observability::runtime::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::newapi",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::newapi",
+            "to": "services::station_collectors::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "services::data_store::installation_lease",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::transport",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::portable_migration::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "services::portable_migration::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::upstream",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collectors::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collectors::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "services::updater::runtime_events",
+            "to": "observability::runtime::descriptor",
+            "temporary": false
+        },
+        {
+            "from": "services::updater::runtime_events",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "test_support::runtime_lifecycle_scenarios",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "test_support::runtime_lifecycle_scenarios",
+            "to": "observability::runtime::crash",
+            "temporary": false
+        },
+        {
+            "from": "test_support::runtime_lifecycle_scenarios",
+            "to": "observability::runtime::reader",
+            "temporary": false
+        },
+        {
+            "from": "test_support::runtime_lifecycle_scenarios",
+            "to": "runtime_composition",
+            "temporary": false
+        },
+        {
             "from": "app_composition",
             "to": "application::app_services",
             "temporary": false
@@ -719,11 +1069,6 @@
         {
             "from": "background_tasks::operation",
             "to": "observability::correlation",
-            "temporary": false
-        },
-        {
-            "from": "background_tasks::status",
-            "to": "observability::redaction",
             "temporary": false
         },
         {
@@ -1659,16 +2004,6 @@
         {
             "from": "models",
             "to": "models::stations",
-            "temporary": false
-        },
-        {
-            "from": "observability::diagnostics",
-            "to": "background_tasks",
-            "temporary": false
-        },
-        {
-            "from": "observability::diagnostics",
-            "to": "outbound",
             "temporary": false
         },
         {
@@ -4472,11 +4807,6 @@
             "temporary": false
         },
         {
-            "from": "observability::diagnostics",
-            "to": "observability::metrics",
-            "temporary": false
-        },
-        {
             "from": "app_composition",
             "to": "services::station_collection_coordinator",
             "temporary": false
@@ -4503,12 +4833,382 @@
         },
         {
             "from": "services::station_collectors",
+            "to": "services::station_collection_coordinator",
+            "temporary": false
+        },
+        {
+            "from": "application::routing",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "application::runtime_diagnostics",
+            "to": "ipc::dto::runtime_diagnostics",
+            "temporary": false
+        },
+        {
+            "from": "application::runtime_diagnostics",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "application::runtime_diagnostics",
+            "to": "observability::runtime::catalog",
+            "temporary": false
+        },
+        {
+            "from": "application::runtime_diagnostics",
+            "to": "observability::runtime::reader",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::exit",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::routing_projection_runner",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "background_tasks::status",
             "to": "services::secrets::mask",
             "temporary": false
         },
         {
+            "from": "commands::alerting",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::capture",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::ccswitch_import",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::channel_monitoring",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::channel_status",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::collector_metadata",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::credentials",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::dashboard",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::data_directory",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::data_migration",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::data_migration",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "commands::data_store_startup",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::endpoint_ping",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::key_pool",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::local_proxy",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::model_aliases",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::operations",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::pricing",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::pricing_workspace",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::provider_drafts",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::request_logs",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::routing_health",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_context",
+            "to": "commands::error",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_context",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_diagnostics",
+            "to": "application::runtime_diagnostics",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_diagnostics",
+            "to": "commands::error",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_diagnostics",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_diagnostics",
+            "to": "ipc::dto::runtime_diagnostics",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_diagnostics",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_diagnostics",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "commands::runtime_diagnostics",
+            "to": "services::support_bundle",
+            "temporary": false
+        },
+        {
+            "from": "commands::settings",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_collection",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_key_connectivity",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_key_connectivity",
+            "to": "services::protocol_streaming",
+            "temporary": false
+        },
+        {
+            "from": "commands::stations",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::updater",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::updater",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::runtime_context",
+            "to": "observability::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::runtime_diagnostics",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::service",
+            "to": "observability::correlation",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::openai_responses",
+            "to": "services::protocol_streaming",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::adapters::openai_stream",
+            "to": "services::protocol_streaming",
+            "temporary": false
+        },
+        {
+            "from": "services::monitoring::runner",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::lifecycle::writer",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::runtime",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::proxy::startup_auto_start",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
             "from": "services::station_collectors",
-            "to": "services::station_collection_coordinator",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::support_bundle",
+            "to": "application::runtime_diagnostics",
+            "temporary": false
+        },
+        {
+            "from": "services::support_bundle",
+            "to": "ipc::dto::runtime_diagnostics",
+            "temporary": false
+        },
+        {
+            "from": "services::support_bundle",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "observability::correlation",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "observability::correlation",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "observability::correlation",
+            "to": "observability::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::bootstrap",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::catalog",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::reader",
+            "to": "observability::runtime::catalog",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::recovery",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::retention",
+            "to": "observability::runtime::reader",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::service",
+            "to": "observability::runtime::catalog",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::service",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime::sink",
+            "to": "observability::runtime::catalog",
+            "temporary": false
+        },
+        {
+            "from": "observability::runtime_context",
+            "to": "observability::runtime",
             "temporary": false
         }
     ],

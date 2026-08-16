@@ -36,8 +36,8 @@ assert.match(
 
 assert.match(
   libSource,
-  /fn\s+current_tray_behavior[\s\S]*try_state::<services::database::AppDatabase>[\s\S]*get_settings\(\)/,
-  "native shell should read the latest persisted tray behavior before handling window events",
+  /fn\s+current_tray_behavior[\s\S]*try_state::<Arc<TrayBehaviorState>>[\s\S]*\.get\(\)/,
+  "native shell should read the latest managed tray behavior before handling window events",
 );
 
 assert.match(
@@ -60,8 +60,8 @@ assert.match(
 
 assert.match(
   libSource,
-  /WindowEvent::CloseRequested\s*\{\s*api,\s*\.\.\s*\}\s*=>\s*\{[\s\S]*\.exit\(0\)/,
-  "closing the main window should exit when tray close behavior is disabled or minimize-only",
+  /WindowEvent::CloseRequested\s*\{\s*api,\s*\.\.\s*\}[\s\S]*ExitCoordinator[\s\S]*request_exit\([\s\S]*ExitReason::MainWindowClose/,
+  "closing the main window should request coordinated exit when tray close behavior is disabled or minimize-only",
 );
 
 assert.match(
@@ -72,8 +72,8 @@ assert.match(
 
 assert.match(
   libSource,
-  /menu_id\.as_ref\(\)\s*==\s*"quit"[\s\S]{0,240}\.exit\(0\)/,
-  "tray menu should include an explicit quit action",
+  /menu_id\.as_ref\(\)\s*==\s*"quit"[\s\S]{0,320}ExitCoordinator[\s\S]*request_exit\([\s\S]*ExitReason::TrayQuit/,
+  "tray menu should include an explicit coordinated quit action",
 );
 
 console.log("native shell single-instance and tray behavior ok");
