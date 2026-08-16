@@ -1,7 +1,10 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 use std::time::SystemTime;
+#[cfg(target_os = "windows")]
+use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
 use tauri::State;
 
 use crate::{
@@ -174,9 +177,39 @@ fn latest_runtime_log_file(root: &Path) -> Option<PathBuf> {
     latest.map(|(_, path)| path)
 }
 
+#[cfg(target_os = "windows")]
 fn open_path_with_system(path: &Path) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let result = Command::new("explorer.exe").arg(path).spawn().map(|_| ());
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+
+    let operation = OsStr::new("open")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let file = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    } as isize;
+
+    if result > 32 {
+        Ok(())
+    } else {
+        Err(format!("system opener rejected the path (code {result})"))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_path_with_system(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let result = Command::new("open").arg(path).spawn().map(|_| ());
     #[cfg(all(unix, not(target_os = "macos")))]
