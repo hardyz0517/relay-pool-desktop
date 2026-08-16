@@ -176,23 +176,13 @@ fn latest_runtime_log_file(root: &Path) -> Option<PathBuf> {
 
 fn open_path_with_system(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    let result = Command::new("explorer.exe").arg(path).status();
+    let result = Command::new("explorer.exe").arg(path).spawn().map(|_| ());
     #[cfg(target_os = "macos")]
-    let result = Command::new("open").arg(path).status();
+    let result = Command::new("open").arg(path).spawn().map(|_| ());
     #[cfg(all(unix, not(target_os = "macos")))]
-    let result = Command::new("xdg-open").arg(path).status();
+    let result = Command::new("xdg-open").arg(path).spawn().map(|_| ());
 
-    result
-        .and_then(|status| {
-            if status.success() {
-                Ok(())
-            } else {
-                Err(std::io::Error::other(format!(
-                    "launcher exited with status {status}"
-                )))
-            }
-        })
-        .map_err(|error| format!("failed to open {}: {error}", path.display()))
+    result.map_err(|error| format!("failed to launch opener for {}: {error}", path.display()))
 }
 
 async fn ensure_developer_mode(
