@@ -300,7 +300,7 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
 
   return (
     <PageScaffold
-      title="编辑密钥"
+      title={sourceItem ? `编辑密钥：${sourceItem.name}` : "编辑密钥"}
       fill
       stickyHeader
       backAction={
@@ -339,120 +339,131 @@ export function EditKeyPage({ stationKeyId, onBack, onUpdated }: EditKeyPageProp
             </>
           }
         >
-          <section className="grid gap-[var(--shell-page-gap)]">
-            <div className="grid gap-[var(--shell-page-gap)]">
-              <SectionCard title="密钥信息">
-                <div className="grid gap-3 md:grid-cols-2">
-                  <Field label="所属中转站">
-                    <input className={inputClassName} value={form.stationName} disabled />
-                  </Field>
-                  <Field label="名称">
-                    <input
-                      className={inputClassName}
-                      value={form.name}
-                      onChange={(event) => setForm({ ...form, name: event.target.value })}
-                      required
-                    />
-                  </Field>
+          <section className="grid content-start gap-3 pt-3">
+            <SectionCard
+              className="gap-1.5 [&>header]:min-h-0"
+              contentClassName="p-3 shadow-none"
+              title="基础信息"
+            >
+              <div className="grid gap-2.5 md:grid-cols-2">
+                <Field label="所属中转站">
+                  <input className={inputClassName} value={form.stationName} disabled />
+                </Field>
+                <Field label="名称">
+                  <input
+                    className={inputClassName}
+                    value={form.name}
+                    onChange={(event) => setForm({ ...form, name: event.target.value })}
+                    required
+                  />
+                </Field>
+              </div>
+              <div className="mt-2.5 grid gap-2.5">
+                <Field label="API Base URL">
+                  <input className={inputClassName} value={form.stationApiBaseUrl} disabled />
+                </Field>
+                <Field label="密钥">
+                  <input
+                    className={inputClassName}
+                    type="password"
+                    value={form.apiKey}
+                    onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
+                    placeholder="留空保留旧密钥"
+                  />
+                </Field>
+              </div>
+              {error && (
+                <div className="mt-2.5 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+                  {error}
                 </div>
-                <div className="mt-3 grid gap-3">
-                  <Field label="API Base URL">
-                    <input className={inputClassName} value={form.stationApiBaseUrl} disabled />
-                  </Field>
-                  <Field label="密钥">
-                    <input
-                      className={inputClassName}
-                      type="password"
-                      value={form.apiKey}
-                      onChange={(event) => setForm({ ...form, apiKey: event.target.value })}
-                      placeholder="留空保留旧密钥"
-                    />
-                  </Field>
-                </div>
-                {error && (
-                  <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
-                    {error}
-                  </div>
-                )}
-              </SectionCard>
+              )}
+            </SectionCard>
 
-            </div>
+            <SectionCard
+              className="gap-1.5 [&>header]:min-h-0"
+              contentClassName="p-3 shadow-none"
+              title="路由设置"
+            >
+              <div className="grid gap-2.5 md:grid-cols-3">
+                <Field label="分组">
+                  <SelectControl
+                    ariaLabel="分组"
+                    className={inputClassName}
+                    value={form.groupBindingId}
+                    options={[
+                      { value: KEEP_GROUP_BINDING_VALUE, label: "不调整绑定" },
+                      ...(sourceItem?.groupBindingId ? [{ value: CLEAR_GROUP_BINDING_VALUE, label: "清除绑定" }] : []),
+                      ...bindingOptions,
+                    ]}
+                    onChange={(groupBindingId) => {
+                      setForm({
+                        ...form,
+                        groupBindingId,
+                        groupName: groupNameForEditSelection(groupBindingId, sourceItem, groupOptions, form.groupName),
+                      });
+                    }}
+                  />
+                </Field>
+                <Field label="优先级">
+                  <input className={inputClassName} type="number" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} />
+                </Field>
+                <Field label="启用状态">
+                  <SwitchControl
+                    ariaLabel="启用密钥"
+                    checked={form.enabled}
+                    className="justify-self-start"
+                    offLabel="停用"
+                    onCheckedChange={() => setForm({ ...form, enabled: !form.enabled })}
+                    onLabel="启用"
+                  />
+                </Field>
+              </div>
+              <div className="mt-2.5 grid gap-2.5 md:grid-cols-2">
+                <Field label="档位">
+                  <input className={inputClassName} value={form.tierLabel} onChange={(event) => setForm({ ...form, tierLabel: event.target.value })} />
+                </Field>
+                <Field label="路由标签">
+                  <input className={inputClassName} value={form.routingTags} onChange={(event) => setForm({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如：高优先级, 低延迟" />
+                </Field>
+              </div>
+              <div className="mt-2.5 grid gap-2.5">
+                <Field label="备注">
+                  <textarea className={`${inputClassName} min-h-20 resize-none py-2`} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+                </Field>
+              </div>
+            </SectionCard>
 
-            <aside className="grid content-start gap-[var(--shell-page-gap)]">
-              <SectionCard title="可选项">
-                <div className="grid gap-3">
-                  <Field label="分组">
-                    <SelectControl
-                      ariaLabel="分组"
-                      className={inputClassName}
-                      value={form.groupBindingId}
-                      options={[
-                        { value: KEEP_GROUP_BINDING_VALUE, label: "不调整绑定" },
-                        ...(sourceItem?.groupBindingId ? [{ value: CLEAR_GROUP_BINDING_VALUE, label: "清除绑定" }] : []),
-                        ...bindingOptions,
-                      ]}
-                      onChange={(groupBindingId) => {
-                        setForm({
-                          ...form,
-                          groupBindingId,
-                          groupName: groupNameForEditSelection(groupBindingId, sourceItem, groupOptions, form.groupName),
-                        });
-                      }}
-                    />
-                  </Field>
-                  <Field label="优先级">
-                    <input className={inputClassName} type="number" value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })} />
-                  </Field>
-                  <Field label="档位">
-                    <input className={inputClassName} value={form.tierLabel} onChange={(event) => setForm({ ...form, tierLabel: event.target.value })} />
-                  </Field>
-                  <Field label="启用状态">
-                    <SwitchControl
-                      ariaLabel="启用密钥"
-                      checked={form.enabled}
-                      className="justify-self-start"
-                      offLabel="停用"
-                      onCheckedChange={() => setForm({ ...form, enabled: !form.enabled })}
-                      onLabel="启用"
-                    />
-                  </Field>
-                  <Field label="路由标签">
-                    <input className={inputClassName} value={form.routingTags} onChange={(event) => setForm({ ...form, routingTags: event.target.value })} placeholder="逗号分隔，例如：高优先级, 低延迟" />
-                  </Field>
-                  <Field label="备注">
-                    <textarea className={`${inputClassName} min-h-24 resize-none py-2`} value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
-                  </Field>
-                </div>
-              </SectionCard>
-
-              <SectionCard title="模型配置">
-                <KeyModelConfigurationEditor
-                  defaultModel={defaultModelFromPreferred(form.preferredModels)}
-                  modelList={form.modelAllowlist}
-                  modelListAction={
-                    <Button
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                      disabled={fetchingModels || saving}
-                      title={form.apiKey.trim() ? "请先保存新密钥" : "使用当前密钥获取模型列表"}
-                      onClick={() => void handleFetchModels()}
-                    >
-                      {fetchingModels ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      )}
-                      {fetchingModels ? "获取中" : "获取模型"}
-                    </Button>
-                  }
-                  onDefaultModelChange={(defaultModel) =>
-                    setForm({ ...form, preferredModels: preferredModelsFromDefault(defaultModel) })
-                  }
-                  onModelListChange={(modelAllowlist) => setForm({ ...form, modelAllowlist })}
-                />
-              </SectionCard>
-            </aside>
+            <SectionCard
+              className="gap-1.5 [&>header]:min-h-0"
+              contentClassName="p-3 shadow-none"
+              title="模型配置"
+            >
+              <KeyModelConfigurationEditor
+                defaultModel={defaultModelFromPreferred(form.preferredModels)}
+                modelList={form.modelAllowlist}
+                modelListAction={
+                  <Button
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    disabled={fetchingModels || saving}
+                    title={form.apiKey.trim() ? "请先保存新密钥" : "使用当前密钥获取模型列表"}
+                    onClick={() => void handleFetchModels()}
+                  >
+                    {fetchingModels ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    {fetchingModels ? "获取中" : "获取模型"}
+                  </Button>
+                }
+                onDefaultModelChange={(defaultModel) =>
+                  setForm({ ...form, preferredModels: preferredModelsFromDefault(defaultModel) })
+                }
+                onModelListChange={(modelAllowlist) => setForm({ ...form, modelAllowlist })}
+              />
+            </SectionCard>
           </section>
         </PageForm>
       )}
@@ -505,7 +516,7 @@ export function KeyModelConfigurationEditor({
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-3">
       <div className="grid gap-1.5 text-xs font-medium text-muted-foreground">
         <div>默认模型</div>
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2">
@@ -566,7 +577,7 @@ export function KeyModelConfigurationEditor({
             暂无模型
           </div>
         ) : (
-          <div aria-label="模型列表" className="flex flex-wrap gap-1.5" role="list">
+          <div aria-label="模型列表" className="flex flex-wrap gap-1" role="list">
             {models.map((model) => {
               const isDefault = defaultModel.trim().toLowerCase() === model.toLowerCase();
               return (

@@ -887,6 +887,8 @@ function buildAlertingRiskItem(
   const keyLabel = key?.name ?? keyId ?? "未知密钥";
   const title = incident.eventType === "key_invalid"
     ? `${keyOwner} 的密钥「${keyLabel}」无效`
+    : incident.eventType === "group_missing" && incident.groupName
+      ? `分组缺失 · ${incident.groupName}`
     : eventLabel(incident.eventType);
   const scope = stationName ?? incident.stationId ?? incident.conditionKey;
   const state = incidentStateLabel(incident.lifecycleState);

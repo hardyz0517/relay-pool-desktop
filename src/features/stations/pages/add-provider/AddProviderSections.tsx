@@ -117,8 +117,12 @@ export function ProviderConnectionSection({
   onTestConnection,
 }: ProviderConnectionSectionProps) {
   return (
-    <SectionCard title="连接信息">
-      <div className="grid gap-3 md:grid-cols-2">
+    <SectionCard
+      className="gap-1.5 [&>header]:min-h-0"
+      contentClassName="p-3 shadow-none"
+      title="连接信息"
+    >
+      <div className="grid gap-2.5 md:grid-cols-2">
         <Field label="供应商名称">
           <input
             className={inputClassName}
@@ -137,7 +141,7 @@ export function ProviderConnectionSection({
           />
         </Field>
       </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+      <div className="mt-2.5 grid gap-2.5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
         <Field label="前端网址">
           <input
             className={inputClassName}
@@ -168,7 +172,7 @@ export function ProviderConnectionSection({
           复制前端网址
         </Button>
       </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:items-end">
+      <div className="mt-2.5 grid gap-2.5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] md:items-end">
         <CompoundField label="登录用户名 / 邮箱">
           <FillableLoginInput
             ariaLabel="登录用户名或邮箱"
@@ -239,7 +243,7 @@ export function ProviderConnectionSection({
         </div>
       )}
       {error && (
-        <div className="mt-3 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
+        <div className="mt-2.5 rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">
           {error}
         </div>
       )}
@@ -327,6 +331,8 @@ export function ProviderGroupsSection({
 }: ProviderGroupsSectionProps) {
   return (
     <SectionCard
+      className="gap-1.5 [&>header]:min-h-0"
+      contentClassName="p-3 shadow-none"
       title="分组"
       action={
         <div className="flex flex-wrap justify-end gap-2">
@@ -421,6 +427,8 @@ export function ProviderKeysSection({
 }: ProviderKeysSectionProps) {
   return (
     <SectionCard
+      className="gap-1.5 [&>header]:min-h-0"
+      contentClassName="p-3 shadow-none"
       title="密钥"
       action={
         <div className="flex flex-wrap justify-end gap-2">
@@ -507,8 +515,12 @@ type ProviderOptionsSectionProps = {
 
 export function ProviderOptionsSection({ form, onFormChange }: ProviderOptionsSectionProps) {
   return (
-    <SectionCard title="可选项">
-      <div className="grid gap-3">
+    <SectionCard
+      className="gap-1.5 [&>header]:min-h-0"
+      contentClassName="p-3 shadow-none"
+      title="可选项"
+    >
+      <div className="grid gap-2.5">
         <Field label="兑换比例（积分 / USD）">
           <input
             className={inputClassName}
@@ -591,8 +603,8 @@ export function CapacityDomainSection({ domain, disabled, onSave, onClear }: Cap
     setDeploymentIdentity(domain?.deploymentIdentity ?? "");
     setRegionIdentity(domain?.regionIdentity ?? "");
   }, [domain]);
-  return <SectionCard title="容量域身份">
-    <div className="grid gap-3">
+  return <SectionCard className="gap-1.5 [&>header]:min-h-0" contentClassName="p-3 shadow-none" title="容量域身份">
+    <div className="grid gap-2.5">
       <Field label="Provider family"><input className={inputClassName} disabled={disabled} value={providerFamily} onChange={(event) => setProviderFamily(event.target.value)} /></Field>
       <Field label="Deployment identity"><input className={inputClassName} disabled={disabled} value={deploymentIdentity} onChange={(event) => setDeploymentIdentity(event.target.value)} /></Field>
       <Field label="Region identity"><input className={inputClassName} disabled={disabled} value={regionIdentity} onChange={(event) => setRegionIdentity(event.target.value)} /></Field>

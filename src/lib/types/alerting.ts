@@ -103,6 +103,7 @@ export type AlertingIncident = {
   eventType: string;
   lifecycleState: "pending" | "open" | "recovering" | "resolved" | string;
   severity: AlertSeverity;
+  groupName: string | null;
   stationId: string | null;
   episodeNumber: number;
   occurrenceCount: number;
@@ -125,6 +126,7 @@ type AlertingActivityBase = {
   id: string;
   eventType: string;
   severity: AlertSeverity;
+  groupName: string | null;
   stationId: string | null;
   objectType: string | null;
   objectId: string | null;

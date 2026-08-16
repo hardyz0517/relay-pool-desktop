@@ -401,7 +401,7 @@ export function DetailBody({
             {incidents.slice(0, 6).map((event) => (
               <div key={event.id} className="rounded-[var(--surface-radius)] border border-border bg-surface p-3 text-sm shadow-[var(--surface-shadow)]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-foreground">{formatIncidentEventLabel(event.eventType)}</span>
+                  <span className="font-medium text-foreground">{event.eventType === "group_missing" && event.groupName ? `分组缺失 · ${event.groupName}` : formatIncidentEventLabel(event.eventType)}</span>
                   <StatusBadge tone={event.severity === "critical" ? "error" : event.severity === "warning" ? "warning" : "info"}>
                     {event.severity === "critical" ? "严重" : event.severity === "warning" ? "警告" : "信息"}
                   </StatusBadge>

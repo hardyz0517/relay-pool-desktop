@@ -7,9 +7,11 @@ import {
   type OperationSnapshotDto,
   type OperationTerminalDto,
 } from "@/lib/bridge/generated";
+import { runUserInteraction } from "@/lib/bridge/runtimeContext";
 import type {
   StationKeyConnectivityProgressEvent,
   StationKeyConnectivityTestResult,
+  StationKeyConnectivityClientProfile,
 } from "@/lib/types/stationKeys";
 
 const DEFAULT_POLL_INTERVAL_MS = 600;
@@ -18,6 +20,7 @@ const DEFAULT_CANCEL_WAIT_MS = 1_000;
 export type ConnectivityOperationInput = {
   stationKeyId: string;
   model: string;
+  clientProfile?: StationKeyConnectivityClientProfile;
 };
 
 export type ConnectivityOperationRunOptions = {
@@ -39,7 +42,10 @@ export async function runStationKeyConnectivityOperation(
   options: ConnectivityOperationRunOptions = {},
 ): Promise<StationKeyConnectivityTestResult> {
   throwIfAborted(options.signal);
-  const started = await startStationKeyConnectivityOperation(input);
+  // The initial non-idempotent dispatch belongs to the user's click. Once it
+  // returns, polling and cancellation are operation-owned background work and
+  // must not retain a mutable interaction id across awaits.
+  const started = await runUserInteraction(() => startStationKeyConnectivityOperation(input));
   const operationId = started.operationId;
   options.onOperationId?.(operationId);
   let lastProgressSequence = 0;

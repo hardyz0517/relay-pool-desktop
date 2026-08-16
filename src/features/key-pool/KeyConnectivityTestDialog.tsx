@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Activity, Bot, Loader2, MessageCircle, RotateCw } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Loader2, RotateCw } from "lucide-react";
 import { Button, Dialog, SelectControl } from "@/components/ui";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
-import type { KeyPoolItem, StationKeyConnectivityTestResult } from "@/lib/types/stationKeys";
+import type {
+  KeyPoolItem,
+  StationKeyConnectivityClientProfile,
+  StationKeyConnectivityTestResult,
+} from "@/lib/types/stationKeys";
 import { cn } from "@/lib/utils";
 
 export const DEFAULT_KEY_CONNECTIVITY_TEST_MODEL = "gpt-5.5";
@@ -11,6 +15,14 @@ const defaultKeyConnectivityModelOptions = [
   { value: "gpt-5.5", label: "GPT-5.5" },
   { value: "gpt-5.4", label: "GPT-5.4" },
   { value: "gpt-4.1", label: "GPT-4.1" },
+];
+
+const connectivityProfileOptions: Array<{
+  value: StationKeyConnectivityClientProfile;
+  label: string;
+}> = [
+  { value: "standard_api", label: "标准 API 请求档案" },
+  { value: "codex_cli_compat", label: "Codex CLI 兼容档案" },
 ];
 
 export function KeyConnectivityTestDialog({
@@ -36,16 +48,16 @@ export function KeyConnectivityTestDialog({
   onDisplayedResponseTextChange: (value: string) => void;
   testing: boolean;
   onClose: () => void;
-  onTest: (model: string) => void;
+  onTest: (model: string, clientProfile: StationKeyConnectivityClientProfile) => void;
 }) {
   const [model, setModel] = useState(DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
+  const [clientProfile, setClientProfile] = useState<StationKeyConnectivityClientProfile>("standard_api");
   const open = item !== null;
   const modelOptions = useMemo(
     () => buildKeyConnectivityModelOptions(capabilities),
     [capabilities],
   );
   const completed = Boolean(result || error);
-  const selectedModelLabel = modelOptions.find((option) => option.value === model)?.label ?? model;
   const fullResponseText = result
     ? result.ok
       ? result.message || `Hi! What can I help you with? (${formatConnectivityDuration(result.durationMs)})`
@@ -56,6 +68,7 @@ export function KeyConnectivityTestDialog({
   useEffect(() => {
     if (open) {
       setModel(modelOptions[0]?.value ?? DEFAULT_KEY_CONNECTIVITY_TEST_MODEL);
+      setClientProfile("standard_api");
       onDisplayedResponseTextChange("");
     }
   }, [modelOptions, onDisplayedResponseTextChange, open, item?.id]);
@@ -83,10 +96,10 @@ export function KeyConnectivityTestDialog({
               testing && "bg-primary-solid hover:bg-primary-solid",
             )}
             disabled={!item || testing}
-            onClick={() => onTest(model)}
+            onClick={() => onTest(model, clientProfile)}
           >
             {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> : <RotateCw className="h-3.5 w-3.5" />}
-            {testing ? "测试中..." : completed ? "重试" : "测试模型"}
+            {testing ? "测试中..." : completed ? "重新测试" : "测试连接"}
           </Button>
         </div>
       }
@@ -122,11 +135,23 @@ export function KeyConnectivityTestDialog({
           />
         </Field>
 
-        <div className="rounded-[10px] border border-border bg-surface-inset p-4 font-mono text-[12px] leading-5 text-muted-foreground shadow-inner">
+        <Field label="Responses 请求档案">
+          <SelectControl
+            value={clientProfile}
+            options={connectivityProfileOptions}
+            ariaLabel="选择 Responses 请求档案"
+            className="h-9 w-full rounded-[10px] border-border bg-surface text-[13px]"
+            menuClassName="text-[13px]"
+            disabled={testing}
+            onChange={(value) => setClientProfile(value as StationKeyConnectivityClientProfile)}
+          />
+          <span className="text-[11px] font-normal text-muted-foreground">
+            仅用于 Responses；失败时自动回退到 Chat Completions。
+          </span>
+        </Field>
+
+        <div className="rounded-[10px] border border-border bg-surface-inset p-4 text-[12px] leading-5 text-muted-foreground shadow-inner">
           {buildConnectivityConsoleLines({
-            item,
-            model,
-            selectedModelLabel,
             testing,
             result,
             error,
@@ -135,41 +160,21 @@ export function KeyConnectivityTestDialog({
             progressLabel,
             responseTypingComplete,
           }).map((line, index) => (
-            <div key={`${line.text}-${index}`} className={line.className}>
-              {testing && index === 0 ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <Loader2
-                    data-testid="key-connectivity-console-spinner"
-                    className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-                  />
-                  {line.text}
-                </span>
-              ) : (
-                line.text
-              )}
+            <div key={`${line.text}-${index}`} className={cn("flex items-start gap-2", line.className)}>
+              {testing && index === 0 ? <Loader2 data-testid="key-connectivity-console-spinner" className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : null}
+              {!testing && index === 0 && result?.ok ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : null}
+              {!testing && index === 0 && (error || result?.ok === false) ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : null}
+              <span>{line.text}</span>
             </div>
           ))}
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <Bot className="h-3.5 w-3.5" />
-            测试模型
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <MessageCircle className="h-3.5 w-3.5" />
-            提示词："hi"
-          </span>
-        </div>
       </div>
     </Dialog>
   );
 }
 
 export function buildConnectivityConsoleLines({
-  item,
-  model,
-  selectedModelLabel,
   testing,
   result,
   error,
@@ -178,9 +183,6 @@ export function buildConnectivityConsoleLines({
   progressLabel,
   responseTypingComplete,
 }: {
-  item: KeyPoolItem | null;
-  model: string;
-  selectedModelLabel: string;
   testing: boolean;
   result: StationKeyConnectivityTestResult | null;
   error: string | null;
@@ -189,66 +191,61 @@ export function buildConnectivityConsoleLines({
   progressLabel: string | null;
   responseTypingComplete: boolean;
 }) {
-  const lines = [
-    { text: testing ? "连接 API 中..." : `开始测试密钥：${item?.name ?? "密钥"}`, className: "text-info-foreground" },
-    { text: `使用模型：${selectedModelLabel}`, className: "font-semibold text-info-foreground" },
-    { text: '发送测试消息："hi"', className: "text-muted-foreground" },
-  ];
-  const responseLabelLine = { text: "响应：", className: "font-semibold text-warning-foreground" };
+  const responseLabelLine = { text: "响应内容", className: "mt-3 border-t border-border pt-3 font-semibold text-muted-foreground" };
 
   if (testing) {
-    const progressLines = progressLabel
-      ? [{ text: progressLabel, className: "text-info-foreground" }]
-      : [];
-    const fallbackLines = streamFallbackReason
-      ? [
-          { text: "流式失败，已清空部分输出并回退非流式请求。", className: "text-warning-foreground" },
-          { text: `原因：${streamFallbackReason}`, className: "text-warning-foreground/80" },
-        ]
-      : [];
-    const responseLines = displayedResponseText
-      ? [{ text: displayedResponseText, className: "font-semibold text-success-foreground" }]
-      : [{ text: "等待流式片段...", className: "text-muted-foreground" }];
-    return [...lines, responseLabelLine, ...progressLines, ...fallbackLines, ...responseLines];
+    return [
+      { text: progressLabel || "正在测试连接...", className: "font-semibold text-info-foreground" },
+      ...(streamFallbackReason
+        ? [
+            { text: "流式响应失败，正在回退到非流式请求。", className: "text-warning-foreground" },
+            { text: `原因：${streamFallbackReason}`, className: "text-warning-foreground/80" },
+          ]
+        : []),
+      responseLabelLine,
+      { text: displayedResponseText || "等待响应...", className: "font-semibold text-muted-foreground" },
+    ];
   }
   if (result) {
+    const protocolFallback = result.validatedProtocol === "chat_completions";
+    const streamFallback = result.responseMode === "non_stream_fallback";
+    const statusLine = protocolFallback
+      ? "已回退到 Chat Completions，测试成功"
+      : streamFallback
+        ? "已降级为非流式 Responses，测试成功"
+      : result.ok
+        ? "测试成功"
+        : "测试未通过";
     return [
-      ...lines,
-      {
-        text: result.responseMode === "stream" ? "响应模式：流式响应" : "响应模式：非流式回退",
-        className: result.responseMode === "stream" ? "text-success-foreground" : "text-warning-foreground",
-      },
-      ...(result.streamFallbackReason
-        ? [{ text: `回退原因：${result.streamFallbackReason}`, className: "text-warning-foreground/80" }]
+      { text: statusLine, className: result.ok && !protocolFallback && !streamFallback ? "font-semibold text-success-foreground" : "font-semibold text-warning-foreground" },
+      { text: `协议 ${protocolLabel(result.validatedProtocol)} · ${connectivityProfileLabel(result.clientProfile)} · ${formatConnectivityDuration(result.durationMs)}`, className: "text-muted-foreground" },
+      ...(streamFallbackReason || result.streamFallbackReason
+        ? [{ text: `回退原因：${streamFallbackReason || result.streamFallbackReason}`, className: "text-warning-foreground/80" }]
         : []),
       responseLabelLine,
       {
         text: displayedResponseText,
         className: result.ok ? "font-semibold text-success-foreground" : "font-semibold text-danger-foreground",
       },
-      ...(responseTypingComplete
-        ? [
-            {
-              text: result.ok ? "测试完成！" : "测试未通过。",
-              className: result.ok
-                ? "mt-2 border-t border-border pt-2 text-success-foreground"
-                : "mt-2 border-t border-border pt-2 text-danger-foreground",
-            },
-          ]
-        : []),
+      ...(responseTypingComplete ? [{ text: result.ok ? "测试完成" : "请检查配置后重试", className: result.ok ? "text-success-foreground" : "text-danger-foreground" }] : []),
     ];
   }
   if (error) {
     return [
-      ...lines,
+      { text: "测试未通过", className: "font-semibold text-danger-foreground" },
       responseLabelLine,
       { text: displayedResponseText, className: "font-semibold text-danger-foreground" },
-      ...(responseTypingComplete
-        ? [{ text: "测试失败。", className: "mt-2 border-t border-border pt-2 text-danger-foreground" }]
-        : []),
     ];
   }
-  return [...lines, { text: `待测试模型 ${model}`, className: "text-muted-foreground" }];
+  return [{ text: "准备测试连接", className: "font-semibold text-muted-foreground" }];
+}
+
+function connectivityProfileLabel(profile: StationKeyConnectivityClientProfile) {
+  return profile === "codex_cli_compat" ? "Codex CLI 兼容档案" : "标准 API 请求档案";
+}
+
+function protocolLabel(protocol: StationKeyConnectivityTestResult["validatedProtocol"]) {
+  return protocol === "chat_completions" ? "Chat Completions" : "Responses";
 }
 
 function formatConnectivityDuration(durationMs: number) {

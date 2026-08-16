@@ -444,7 +444,9 @@ function buildIncidentItems(incidents: AlertingIncident[]): StationDetailDiagnos
   }
 
   return incidents.slice(0, 4).map((event) => ({
-    label: formatIncidentEventLabel(event.eventType),
+    label: event.eventType === "group_missing" && event.groupName
+      ? `分组缺失 · ${event.groupName}`
+      : formatIncidentEventLabel(event.eventType),
     value: `${event.lifecycleState} · episode ${event.episodeNumber} · ${event.occurrenceCount} occurrences`,
     tone: event.severity === "critical" ? "error" : event.severity === "warning" ? "warning" : "neutral",
   }));

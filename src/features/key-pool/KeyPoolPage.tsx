@@ -240,7 +240,7 @@ export function KeyPoolPage(props: KeyPoolPageShellProps) {
         onDisplayedResponseTextChange={setDisplayedResponseText}
         testing={Boolean(connectivityDialogItem && testingKeyId === connectivityDialogItem.id)}
         onClose={closeConnectivityDialog}
-        onTest={(model) => void handleRunConnectivityTest(model)}
+        onTest={(model, clientProfile) => void handleRunConnectivityTest(model, clientProfile)}
       />
 
       <ConfirmDialog

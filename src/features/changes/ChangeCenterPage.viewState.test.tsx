@@ -5,8 +5,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
-import type { ChangeCenterView } from "./ChangeCenterPage";
-import { ChangeCenterPage } from "./ChangeCenterPage";
+import { CHANGE_CENTER_DEFAULT_VIEW, ChangeCenterPage, type ChangeCenterView } from "./ChangeCenterPage";
 
 vi.mock("@/lib/query/useActivityQuery", () => ({
   useActivityQuery: (options: { queryKey?: readonly unknown[] }) => {
@@ -34,7 +33,7 @@ vi.mock("@/lib/query/useActivityQuery", () => ({
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function ViewStateHarness({ mounted }: { mounted: boolean }) {
-  const [view, setView] = useState<ChangeCenterView>("active");
+  const [view, setView] = useState<ChangeCenterView>(CHANGE_CENTER_DEFAULT_VIEW);
   return mounted ? (
     <ChangeCenterPage selectedView={view} onSelectedViewChange={setView} />
   ) : null;
@@ -72,18 +71,22 @@ describe("ChangeCenterPage view retention", () => {
 
   it("restores the selected view after the page component remounts", () => {
     render(true);
-    const informationView = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
-      .find((button) => button.textContent === "信息");
-    expect(informationView).toBeDefined();
+    const allView = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent === "全部");
+    expect(allView?.getAttribute("aria-checked")).toBe("true");
 
-    act(() => informationView?.click());
-    expect(informationView?.getAttribute("aria-checked")).toBe("true");
+    const unreadView = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent === "未读");
+    expect(unreadView).toBeDefined();
+
+    act(() => unreadView?.click());
+    expect(unreadView?.getAttribute("aria-checked")).toBe("true");
 
     render(false);
     render(true);
 
-    const restoredInformationView = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
-      .find((button) => button.textContent === "信息");
-    expect(restoredInformationView?.getAttribute("aria-checked")).toBe("true");
+    const restoredUnreadView = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent === "未读");
+    expect(restoredUnreadView?.getAttribute("aria-checked")).toBe("true");
   });
 });

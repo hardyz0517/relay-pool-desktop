@@ -1,4 +1,4 @@
-import { Sparkles, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { Button, SelectControl, type SelectOption } from "@/components/ui";
 import { groupCategoryDefinitions, type StationGroupCategory } from "@/lib/groupCategories";
 import { cn } from "@/lib/utils";
@@ -28,8 +28,6 @@ type StationGroupRowsEditorProps = {
 const inputClassName =
   "h-8 w-full min-w-0 rounded-[var(--surface-radius)] border border-border bg-surface px-2.5 text-xs text-foreground outline-none transition placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:bg-surface-subtle disabled:text-muted-foreground";
 const groupRowsGridTemplate = "minmax(9rem,1fr) 7.5rem 6rem 5.5rem 2.5rem";
-const autoGroupCategoryValue = "__auto__";
-type GroupCategorySelectValue = typeof autoGroupCategoryValue | StationGroupCategory;
 export const groupCategoryOptions = groupCategoryDefinitions.map((definition) => ({
   value: definition.value,
   label: definition.label,
@@ -106,11 +104,11 @@ export function StationGroupRowsEditor({
                   }
                   placeholder={`分组 ${index + 1}`}
                 />
-                <SelectControl<GroupCategorySelectValue>
+                <SelectControl<StationGroupCategory>
                   ariaLabel="选择分组类型"
                   className="h-8 w-full min-w-0 px-2.5 text-xs shadow-none"
                   disabled={disabled}
-                  value={row.groupCategoryOverride ?? autoGroupCategoryValue}
+                  value={row.groupCategoryOverride ?? row.inferredGroupCategory}
                   menuClassName="min-w-[12rem]"
                   options={groupCategorySelectOptions(
                     row.inferredGroupCategory,
@@ -118,10 +116,7 @@ export function StationGroupRowsEditor({
                   )}
                   onChange={(value) =>
                     updateRow(row.clientId, {
-                      groupCategoryOverride:
-                        value === autoGroupCategoryValue
-                          ? null
-                          : value,
+                      groupCategoryOverride: value === row.inferredGroupCategory ? null : value,
                     })
                   }
                 />
@@ -166,34 +161,19 @@ export function StationGroupRowsEditor({
   );
 }
 
-function groupCategoryLabel(value: StationGroupCategory) {
-  return groupCategoryOptions.find((option) => option.value === value)?.label ?? "未知";
-}
-
 function groupCategorySelectOptions(
   inferredGroupCategory: StationGroupCategory,
   developerModeEnabled: boolean,
-): SelectOption<GroupCategorySelectValue>[] {
-  const manualOptions = groupCategoryDefinitions
+): SelectOption<StationGroupCategory>[] {
+  return groupCategoryDefinitions
     .filter(
       (definition) =>
         developerModeEnabled ||
-        (definition.value !== "embedding" && definition.value !== "rerank"),
+        (definition.value !== "embedding" && definition.value !== "rerank") ||
+        definition.value === inferredGroupCategory,
     )
-    .map((definition, index) => ({
+    .map((definition) => ({
       value: definition.value,
       label: definition.label,
-      sectionLabel: index === 0 ? "手动指定" : undefined,
     }));
-
-  return [
-    {
-      value: autoGroupCategoryValue,
-      label: "跟随识别结果",
-      triggerLabel: groupCategoryLabel(inferredGroupCategory),
-      description: `当前识别：${groupCategoryLabel(inferredGroupCategory)}`,
-      leadingIcon: <Sparkles className="h-3.5 w-3.5" />,
-    },
-    ...manualOptions,
-  ];
 }

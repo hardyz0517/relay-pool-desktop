@@ -23,6 +23,8 @@ const result: StationKeyConnectivityTestResult = {
   durationMs: 42,
   model: "gpt-4.1-mini",
   message: "ok",
+  validatedProtocol: "responses",
+  clientProfile: "standard_api",
   responseMode: "stream",
   streamFallbackReason: null,
 };

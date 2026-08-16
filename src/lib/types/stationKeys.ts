@@ -171,11 +171,17 @@ export type StationKeyConnectivityTestResult = {
   durationMs: number;
   model: string;
   message: string;
+  validatedProtocol: StationKeyConnectivityValidatedProtocol;
+  clientProfile: StationKeyConnectivityClientProfile;
   responseMode: StationKeyConnectivityResponseMode;
   streamFallbackReason: string | null;
 };
 
 export type StationKeyConnectivityResponseMode = "stream" | "non_stream_fallback";
+
+export type StationKeyConnectivityValidatedProtocol = "responses" | "chat_completions";
+
+export type StationKeyConnectivityClientProfile = "standard_api" | "codex_cli_compat";
 
 export type StationKeyConnectivityProgressEvent =
   | { type: "attemptStarted"; model: string; protocol: string }

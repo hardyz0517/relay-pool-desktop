@@ -21,7 +21,12 @@ import { channelMonitoringQueryOptions, keyPoolQueryOptions, stationsQueryOption
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { StationGroupOption } from "@/lib/types/groupFacts";
 import type { StationKeyCapabilities } from "@/lib/types/routing";
-import type { KeyPoolItem, StationKeyConnectivityProgressEvent, StationKeyConnectivityTestResult } from "@/lib/types/stationKeys";
+import type {
+  KeyPoolItem,
+  StationKeyConnectivityClientProfile,
+  StationKeyConnectivityProgressEvent,
+  StationKeyConnectivityTestResult,
+} from "@/lib/types/stationKeys";
 import { useToast } from "@/components/ui";
 import {
   ConnectivityOperationCancelledError,
@@ -275,7 +280,7 @@ export function useKeyPoolPageController({
     }
   }
 
-  async function handleRunConnectivityTest(model: string) {
+  async function handleRunConnectivityTest(model: string, clientProfile: StationKeyConnectivityClientProfile) {
     if (!connectivityDialogItem) {
       return;
     }
@@ -302,7 +307,7 @@ export function useKeyPoolPageController({
     };
     try {
       const result = await connectivityOperation.run(
-        { stationKeyId: item.id, model },
+        { stationKeyId: item.id, model, clientProfile },
         { onEvent: handleConnectivityEvent },
       );
       setConnectivityTestResult(result);

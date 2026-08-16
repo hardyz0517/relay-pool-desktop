@@ -115,8 +115,8 @@ export function AddProviderPage(props: AddProviderPageProps) {
           </>
         }
       >
-        <section className="grid gap-[var(--shell-page-gap)]">
-          <div className="grid gap-[var(--shell-page-gap)]">
+        <section className="grid content-start gap-3 pt-3">
+          <div className="grid gap-3">
             {!editing && <ProviderPresetSection presetId={form.presetId} onApplyPreset={applyPreset} />}
 
             <ProviderConnectionSection
@@ -183,7 +183,7 @@ export function AddProviderPage(props: AddProviderPageProps) {
             />
           </div>
 
-          <aside className="grid content-start gap-[var(--shell-page-gap)]">
+          <aside className="grid content-start gap-3">
             <ProviderOptionsSection form={form} onFormChange={setForm} />
             {activeStationId && <CapacityDomainSection domain={capacityDomain} disabled={saving || loading || capacityDomainSaving} onSave={(input) => void handleSaveCapacityDomain(input)} onClear={() => void handleClearCapacityDomain()} />}
           </aside>

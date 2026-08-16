@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCheck, ChevronDown, ChevronUp, RefreshCw, Route, Search, Settings, Trash2 } from "lucide-react";
+import { CheckCheck, ChevronDown, ChevronUp, MoreHorizontal, RefreshCw, Route, Search, Settings } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import {
   Button,
@@ -10,14 +10,12 @@ import {
   Pagination,
   SegmentedControl,
   SelectControl,
-  StatusBadge,
   Toolbar,
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import {
   alertingActivityQueryOptions,
-  alertingCurrentQueryOptions,
   alertingDeliveriesQueryOptions,
   alertingOccurrencesQueryOptions,
 } from "@/lib/queries/alertingQueries";
@@ -61,40 +59,20 @@ function createChangeCenterRoutingLink(event: ChangeCenterLinkEvent): ChangeCent
   return event.stationId ? { kind: "station", stationId: event.stationId, source: "change_center" } : null;
 }
 
-export type ChangeCenterView = "all" | "unread" | "active" | "info";
+export type ChangeCenterView = "all" | "unread";
 type Severity = "all" | "critical" | "warning" | "info";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
-export const CHANGE_CENTER_DEFAULT_VIEW: ChangeCenterView = "active";
+export const CHANGE_CENTER_DEFAULT_VIEW: ChangeCenterView = "all";
 export const CHANGE_CENTER_VIEW_OPTIONS: Array<{ value: ChangeCenterView; label: string }> = [
   { value: "all", label: "全部" },
   { value: "unread", label: "未读" },
-  { value: "active", label: "活动" },
-  { value: "info", label: "信息" },
 ];
 export const CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW = {
   all: "all",
   unread: "all",
-  active: "incidents",
-  info: "information",
 } as const satisfies Record<ChangeCenterView, "incidents" | "information" | "all">;
 export const CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW = CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW;
-
-function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
-  return {
-    ...incident,
-    recordType: "incident",
-    objectType: null,
-    objectId: null,
-    stationKeyId: null,
-    source: null,
-    reasonCode: null,
-    activityAtMs: incident.updatedAtMs,
-    oldValueJson: null,
-    newValueJson: null,
-    impactJson: null,
-  };
-}
 
 export function ChangeCenterPage({
   onOpenRoutingDeepLink,
@@ -119,34 +97,22 @@ export function ChangeCenterPage({
   const stationsQuery = useActivityQuery(stationsQueryOptions());
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;
-  const incidentQuery = useActivityQuery(
-    {
-      ...alertingCurrentQueryOptions({
-      severity: severity === "all" ? null : severity,
-      lifecycleState: view === "active" ? view : null,
-      cursor: pageCursors[page] ?? null,
-      limit: pageSize,
-      }),
-      enabled: view === "active",
-    },
-  );
   const activityQuery = useActivityQuery({
     ...alertingActivityQueryOptions({
       severity: severity === "all" ? null : severity,
-      recordType: view === "info" ? "change" : null,
+      recordType: null,
       unreadOnly: view === "unread",
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
     }),
-    enabled: view === "all" || view === "info" || view === "unread",
+    enabled: true,
   });
-  const incidents = incidentQuery.data?.items ?? [];
   const activities = useMemo<AlertingActivity[]>(
-    () => view === "active" ? incidents.map(toIncidentActivity) : (activityQuery.data?.items ?? []),
-    [activityQuery.data?.items, incidents, view],
+    () => activityQuery.data?.items ?? [],
+    [activityQuery.data?.items],
   );
-  const pageData = view === "active" ? incidentQuery.data : activityQuery.data;
-  const activeQuery = view === "active" ? incidentQuery : activityQuery;
+  const pageData = activityQuery.data;
+  const activeQuery = activityQuery;
   const stationNames = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
@@ -154,14 +120,9 @@ export function ChangeCenterPage({
   const filteredActivities = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return activities.filter((activity) => {
-      if (activity.recordType === "incident") {
-        const active = activity.lifecycleState !== "resolved";
-        if (view === "active" && !active) return false;
-        if (view === "unread" && activity.seenAtMs != null) return false;
-      }
-      if (view === "info" && activity.recordType !== "change") return false;
+      if (view === "unread" && activity.seenAtMs != null) return false;
       if (!needle) return true;
-      return [activity.eventType, activity.conditionKey, activity.stationId, activity.lifecycleState, activity.reasonCode, activity.objectId]
+      return [activity.eventType, activity.recordType === "incident" ? activity.groupName : null, activity.conditionKey, activity.stationId, activity.lifecycleState, activity.reasonCode, activity.objectId]
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(needle));
     });
@@ -256,7 +217,7 @@ export function ChangeCenterPage({
     try {
       const clearedCount = await clearAlertingActivity({
         severity: severity === "all" ? null : severity,
-        lifecycleState: view === "active" || view === "unread" ? view : null,
+        lifecycleState: null,
         recordScope: CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW[view],
       });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
@@ -293,7 +254,7 @@ export function ChangeCenterPage({
           <SummaryTile label="当前加载" value={activities.length} />
         </div>
         <div className="min-w-0">
-          <div data-testid="change-center-toolbar-surface" className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
+          <div data-testid="change-center-toolbar-surface" className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
             <Toolbar className="flex-wrap">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <SegmentedControl value={view} options={CHANGE_CENTER_VIEW_OPTIONS} onChange={changeView} />
@@ -305,14 +266,19 @@ export function ChangeCenterPage({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Button variant="secondary" onClick={() => void markAllSeen()} disabled={isMarkingAllSeen || (pageData?.unseenCount ?? 0) === 0}><CheckCheck className="h-4 w-4" />一键已读</Button>
-                <Button variant="secondary" onClick={requestClearAll} disabled={isClearingAll || activities.length === 0}><Trash2 className="h-4 w-4" />清空变更</Button>
                 <Button variant="secondary" onClick={() => void refresh(true)} disabled={activeQuery.isFetching}><RefreshCw className="h-4 w-4" />刷新</Button>
+                <details className="relative">
+                  <summary aria-label="更多操作" title="更多操作" className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-[4px] border border-border bg-surface text-muted-foreground outline-none transition hover:bg-selected hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden"><MoreHorizontal className="h-4 w-4" /></summary>
+                  <div className="absolute right-0 z-10 mt-1 w-32 rounded-[4px] border border-border bg-surface p-1 shadow-[var(--surface-shadow)]">
+                    <Button className="w-full justify-start" size="sm" variant="ghost" onClick={requestClearAll} disabled={isClearingAll || activities.length === 0}>清空变更</Button>
+                  </div>
+                </details>
               </div>
             </Toolbar>
           </div>
           <div data-testid="change-center-list-surface" className="mt-3 min-w-0 overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
             {activeQuery.error ? <div className="border-b border-danger-border bg-danger-surface px-3 py-2 text-sm text-danger-foreground">{readError(activeQuery.error)}</div> : null}
-            {pageInfo.items.length === 0 ? <EmptyState title={activeQuery.isPending ? (view === "all" ? "正在加载活动" : view === "info" ? "正在加载信息" : "正在加载问题") : (view === "all" ? "暂无活动" : view === "info" ? "暂无信息" : "暂无问题")} description={view === "all" ? "告警、恢复状态和信息类变更会按时间显示在这里。" : view === "info" ? "信息类变更会按时间显示在这里。" : "当前事实、恢复状态和待处理提醒会显示在这里。"} /> : (
+            {pageInfo.items.length === 0 ? <EmptyState title={activeQuery.isPending ? "正在加载变更" : "暂无变更"} description="告警、恢复状态和信息类变更会按时间显示在这里。" /> : (
               <div className="divide-y divide-border bg-surface">
                 {pageInfo.items.map((activity) => {
                   const key = `${activity.recordType}:${activity.id}:${activity.episodeNumber ?? 0}`;
@@ -346,31 +312,84 @@ export function ChangeCenterPage({
 function IncidentRow({ incident, stationName, busy, developerModeEnabled, expanded, onToggle, onMarkSeen, onOpenRoutingDeepLink }: { incident: AlertingIncident; stationName: string | null | undefined; busy: boolean; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onMarkSeen: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
   const routingLink = createChangeCenterRoutingLink(incident);
   const taskLabel = collectorFailureTaskLabel(incident);
-  const stateLabel = incident.lifecycleState === "resolved" ? "已恢复" : incident.lifecycleState === "recovering" ? "恢复中" : incident.lifecycleState === "pending" ? "检测中" : "未处理";
-  return <div className="bg-surface">
-    <div className={`grid min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_auto_minmax(0,1fr)_auto_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}>
+  const title = incidentTitle(incident, taskLabel);
+  const objectTitle = incidentObjectTitle(incident, stationName);
+  return <div className="group bg-surface">
+    <div className={`grid min-h-[60px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_8px_minmax(0,1fr)_auto_auto]" : "grid-cols-[8px_minmax(0,1fr)_auto_auto]"}`}>
     {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起问题" : "展开问题"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
-    <StatusBadge className="justify-self-start" tone={incident.severity === "critical" ? "error" : incident.severity === "warning" ? "warning" : "info"}>{severityLabel(incident.severity)}</StatusBadge>
-    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(incident.eventType)}{taskLabel ? ` · ${taskLabel}` : ""}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? incident.stationId ?? incident.conditionKey} · {stateLabel} · 已出现 {incident.occurrenceCount} 次</div></div>
-    <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(incident.lastSeenAtMs)}</span><span>{incident.seenAtMs == null ? "未读" : "已读"}</span></div>
-    <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" disabled={busy || incident.seenAtMs != null} onClick={onMarkSeen}>标记已读</Button>{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
+    <SeverityDot severity={incident.severity} />
+    <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{objectTitle}</div><div className="truncate text-xs text-muted-foreground">{title} · {incidentSummary(incident, stationName)}</div></div>
+    <div className="flex items-center gap-2 text-xs text-muted-foreground"><span>{formatChangeTime(incident.lastSeenAtMs)}</span>{incident.seenAtMs == null ? <span aria-label="未读" title="未读" className="h-2 w-2 rounded-full bg-primary-solid" /> : null}</div>
+    <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{incident.seenAtMs == null ? <Button size="sm" variant="ghost" disabled={busy} onClick={onMarkSeen}>标记已读</Button> : null}{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
     </div>
     {developerModeEnabled && expanded ? <IncidentDetail incident={incident} /> : null}
   </div>;
 }
 
+export function incidentTitle(
+  incident: Pick<AlertingIncident, "eventType" | "groupName">,
+  taskLabel?: string | null,
+) {
+  if (incident.eventType === "group_missing" && incident.groupName) {
+    return `${eventLabel(incident.eventType)} · ${incident.groupName}`;
+  }
+  return `${eventLabel(incident.eventType)}${taskLabel ? ` · ${taskLabel}` : ""}`;
+}
+
+export function incidentSummary(
+  incident: Pick<AlertingIncident, "conditionKey" | "eventType" | "groupName" | "lifecycleState" | "occurrenceCount" | "severity" | "stationId">,
+  stationName: string | null | undefined,
+) {
+  const station = stationName ?? incident.stationId ?? incident.conditionKey;
+  if (incident.severity === "info") {
+    const detail = incident.eventType === "group_missing"
+      ? incident.groupName
+        ? `${incident.groupName} · 远程分组未找到`
+        : "远程分组未找到"
+      : eventLabel(incident.eventType);
+    return `${station} · ${detail}`;
+  }
+  const stateLabel = incident.lifecycleState === "resolved" ? "已恢复" : incident.lifecycleState === "recovering" ? "恢复中" : incident.lifecycleState === "pending" ? "检测中" : "未处理";
+  return `${station} · ${stateLabel} · 已出现 ${incident.occurrenceCount} 次`;
+}
+
 function ChangeRow({ activity, stationName, busy, developerModeEnabled, expanded, onToggle, onMarkSeen, onOpenRoutingDeepLink }: { activity: Extract<AlertingActivity, { recordType: "change" }>; stationName: string | null | undefined; busy: boolean; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onMarkSeen: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
   const routingLink = createChangeCenterRoutingLink(activity);
-  return <div className="bg-surface">
-    <div className={`grid min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_auto_minmax(0,1fr)_auto_auto]" : "grid-cols-[auto_minmax(0,1fr)_auto_auto]"}`}>
+  const rateTransition = changeRateTransition(activity);
+  return <div className="group bg-surface">
+    <div className={`grid min-h-[60px] w-full items-center gap-3 px-3 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_8px_minmax(0,1fr)_auto_auto]" : "grid-cols-[8px_minmax(0,1fr)_auto_auto]"}`}>
       {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起变更" : "展开变更"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
-      <StatusBadge className="justify-self-start" tone="info">信息</StatusBadge>
-      <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{eventLabel(activity.eventType)}</div><div className="truncate text-xs text-muted-foreground">{stationName ?? activity.stationId ?? "全局"} · {changeSummary(activity)}</div></div>
-      <div className="flex flex-col items-end text-xs text-muted-foreground"><span className="font-medium text-foreground">{formatChangeTime(activity.activityAtMs)}</span><span>{activity.seenAtMs == null ? "未读" : "已读"}</span></div>
-      <div className="flex items-center justify-end gap-1"><Button size="sm" variant="ghost" disabled={busy || activity.seenAtMs != null} onClick={onMarkSeen}>标记已读</Button>{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
+      <SeverityDot severity={activity.severity} />
+      <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-foreground">{changeObjectTitle(activity, stationName)}</div><div className="truncate text-xs text-muted-foreground">{eventLabel(activity.eventType)}{rateTransition ? <> <span className="font-semibold text-foreground">{rateTransition.oldValue} → {rateTransition.newValue}</span></> : activity.eventType === "group_added" ? null : <> · {changeSummary(activity)}</>}</div></div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground"><span>{formatChangeTime(activity.activityAtMs)}</span>{activity.seenAtMs == null ? <span aria-label="未读" title="未读" className="h-2 w-2 rounded-full bg-primary-solid" /> : null}</div>
+      <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{activity.seenAtMs == null ? <Button size="sm" variant="ghost" disabled={busy} onClick={onMarkSeen}>标记已读</Button> : null}{onOpenRoutingDeepLink && routingLink ? <IconButton className="h-7 w-7 text-muted-foreground hover:bg-selected hover:text-primary" label="打开站点" onClick={() => onOpenRoutingDeepLink(routingLink)}><Route className="h-4 w-4" /></IconButton> : null}</div>
     </div>
     {developerModeEnabled && expanded ? <ChangeDetail activity={activity} /> : null}
   </div>;
+}
+
+function SeverityDot({ severity }: { severity: AlertingActivity["severity"] }) {
+  const className = severity === "critical" ? "bg-danger-foreground" : severity === "warning" ? "bg-warning-foreground" : "bg-info-foreground";
+  return <span aria-label={severityLabel(severity)} title={severityLabel(severity)} className={`h-2 w-2 rounded-full ${className}`} />;
+}
+
+function incidentObjectTitle(incident: AlertingIncident, stationName: string | null | undefined) {
+  const station = stationName ?? incident.stationId ?? "全局";
+  return incident.groupName ? `${station} · ${incident.groupName}` : station;
+}
+
+export function changeObjectTitle(activity: Extract<AlertingActivity, { recordType: "change" }>, stationName: string | null | undefined) {
+  const groupName = stringValue(parseAuditObject(activity.newValueJson)?.groupName);
+  const station = stationName ?? activity.stationId ?? "全局";
+  return groupName ? `${station} · ${groupName}` : station;
+}
+
+function changeRateTransition(activity: Extract<AlertingActivity, { recordType: "change" }>) {
+  if (activity.eventType !== "group_rate_changed") return null;
+  const details = parseAuditObject(activity.newValueJson);
+  const oldValue = scalarValue(details?.oldEffectiveRateMultiplier);
+  const newValue = scalarValue(details?.newEffectiveRateMultiplier);
+  return oldValue && newValue ? { oldValue, newValue } : null;
 }
 
 function ChangeDetail({ activity }: { activity: Extract<AlertingActivity, { recordType: "change" }> }) {
