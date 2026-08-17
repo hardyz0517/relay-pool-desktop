@@ -12,7 +12,7 @@
 
 <p align='center'>
   <a href='https://github.com/hardyz0517/relay-pool-desktop/releases/latest'><img alt='版本' src='https://img.shields.io/github/v/release/hardyz0517/relay-pool-desktop?label=%E7%89%88%E6%9C%AC&color=2563eb' /></a>
-  <img alt='版本' src='https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.4.3-0f766e' />
+  <img alt='版本' src='https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.4.6-0f766e' />
   <img alt='状态' src='https://img.shields.io/badge/%E7%8A%B6%E6%80%81-%E6%8A%80%E6%9C%AF%E9%A2%84%E8%A7%88-f59e0b' />
   <img alt='平台' src='https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20x64-111827' />
   <img alt='Tauri' src='https://img.shields.io/badge/Tauri-2.x-24c8db' />
@@ -32,11 +32,11 @@
 
 ---
 
-**当前版本：v0.4.3（技术预览）**。Relay Pool Desktop 是 Windows 本地桌面工具。接口、数据结构、兼容范围和安装方式仍可能变化，请在真实凭据环境中谨慎升级，并先保留必要备份。
+**当前版本：v0.4.6（技术预览）**。Relay Pool Desktop 是 Windows 本地桌面工具。接口、数据结构、兼容范围和安装方式仍可能变化，请在真实凭据环境中谨慎升级，并先保留必要备份。
 
 ## 适合谁
 
-- 管理多个 Sub2API、NewAPI 中转站，希望集中查看余额、密钥、价格、分组与健康状态；
+- 管理多个 Sub2API、NewAPI 中转站，希望集中查看余额、密钥、价格、分组、官方渠道状态与健康状态；
 - 需要持续检测站点和密钥的可用性，及时发现余额不足、价格变化、分组异常、故障和冷却；
 - 希望让 Codex、Claude Code、Gemini CLI、CCSwitch 等客户端始终连接一个固定网关，由本地策略完成智能路由和失败切换。
 
@@ -101,9 +101,11 @@ Codex / Claude Code / Gemini CLI / CCSwitch
 
 ![渠道状态页](docs/assets/readme/channels.png)
 
+站点详情还会展示中转站官方渠道状态：读取 Sub2API 的渠道监视器列表，保留独立的采集来源、完整性和最近样本事实，不与主动探测结果混用。
+
 ### 变更中心
 
-追踪余额、密钥、采集、价格、倍率、模型和路由变化，集中查看哪些变化需要处理，以及它们对本地路由的影响。
+追踪余额、密钥、采集、价格、倍率、模型、分组缺失和路由变化，并单独查看活动告警，集中判断哪些变化需要处理以及它们对本地路由的影响。
 
 ![变更中心页](docs/assets/readme/changes.png)
 

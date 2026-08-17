@@ -5210,6 +5210,156 @@
             "from": "observability::runtime_context",
             "to": "observability::runtime",
             "temporary": false
+        },
+        {
+            "from": "application::collectors",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "application::collectors",
+            "to": "persistence::stores::station_published_status_store",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_published_status",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_published_status",
+            "to": "persistence::stores::station_published_status_store",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_published_status",
+            "to": "services::collectors::contract",
+            "temporary": false
+        },
+        {
+            "from": "application::queries::station_published_status",
+            "to": "services::collectors::drivers",
+            "temporary": false
+        },
+        {
+            "from": "commands::key_pool",
+            "to": "commands::runtime_events",
+            "temporary": false
+        },
+        {
+            "from": "commands::key_pool",
+            "to": "models::remote_keys",
+            "temporary": false
+        },
+        {
+            "from": "commands::key_pool",
+            "to": "observability::runtime",
+            "temporary": false
+        },
+        {
+            "from": "commands::key_pool",
+            "to": "observability::runtime::event",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_published_status",
+            "to": "application::app_services",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_published_status",
+            "to": "commands::error",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_published_status",
+            "to": "ipc::dto::runtime_context",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_published_status",
+            "to": "ipc::dto::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "commands::station_published_status",
+            "to": "services",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::runtime_diagnostics",
+            "to": "observability::runtime::catalog",
+            "temporary": false
+        },
+        {
+            "from": "ipc::dto::station_published_status",
+            "to": "application::queries::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "application::command_facades",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "commands::runtime_diagnostics",
+            "temporary": false
+        },
+        {
+            "from": "lib",
+            "to": "models::settings",
+            "temporary": false
+        },
+        {
+            "from": "persistence::stores::station_published_status_store",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "runtime_composition",
+            "to": "observability::runtime::bootstrap",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::sub2api",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::sub2api::published_status",
+            "to": "models",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::sub2api::published_status",
+            "to": "models::secrets",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::drivers::sub2api::published_status",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "services::collectors::facts",
+            "to": "models::station_published_status",
+            "temporary": false
+        },
+        {
+            "from": "services::remote_keys",
+            "to": "services::collectors::drivers::sub2api",
+            "temporary": false
+        },
+        {
+            "from": "services::station_collectors",
+            "to": "services::collectors::contract",
+            "temporary": false
+        },
+        {
+            "from": "application::app_services",
+            "to": "application::queries::station_published_status",
+            "temporary": false
         }
     ],
     "temporary_legacy_consumers": [],

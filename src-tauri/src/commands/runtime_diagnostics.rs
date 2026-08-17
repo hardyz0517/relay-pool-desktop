@@ -215,7 +215,7 @@ fn open_path_with_system(path: &Path) -> Result<(), String> {
     #[cfg(all(unix, not(target_os = "macos")))]
     let result = Command::new("xdg-open").arg(path).spawn().map(|_| ());
 
-    result.map_err(|error| format!("failed to launch opener for {}: {error}", path.display()))
+    result.map_err(|error| format!("failed to launch opener: {error}"))
 }
 
 async fn ensure_developer_mode(

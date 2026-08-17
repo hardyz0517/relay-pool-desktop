@@ -176,7 +176,7 @@ fn portable_catalog_declares_foundation_tables_and_explicit_json_rules() {
             "catalog missing {table}"
         );
     }
-    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 63"));
+    assert!(catalog.contains("EXPECTED_USER_TABLE_COUNT_V1: usize = 66"));
     assert!(catalog.contains("ROUTING_POLICY_RULES"));
     assert!(catalog.contains("ROUTING_OBSERVATION_RULES"));
     assert!(catalog.contains("ROUTING_QUALITY_RULES"));

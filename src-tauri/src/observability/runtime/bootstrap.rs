@@ -206,6 +206,19 @@ fn emit_to(service: &RuntimeLogService, descriptor: &'static EventDescriptor) {
 /// used for malformed boundary metadata, where the business command must
 /// continue but an untrusted caller must not be able to fill the runtime log.
 pub(crate) fn emit_rate_limited(descriptor: &'static EventDescriptor) {
+    // Isolated test services must not contend on the process-wide production
+    // rate-limit window with unrelated tests running in parallel.
+    #[cfg(test)]
+    if TEST_SERVICE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .is_some_and(|service| service.is_some())
+    {
+        emit(descriptor);
+        return;
+    }
+
     let clock = RATE_LIMIT_CLOCK.get_or_init(Instant::now);
     let now_ms = clock.elapsed().as_millis().min(u64::MAX as u128) as u64;
     let mut previous = LAST_RATE_LIMITED_EVENT_MS.load(Ordering::Relaxed);
