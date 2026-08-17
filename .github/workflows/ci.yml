@@ -21,6 +21,8 @@ concurrency:
 jobs:
   verify:
     runs-on: windows-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Fetch tags
