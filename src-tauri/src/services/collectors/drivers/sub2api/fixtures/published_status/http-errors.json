@@ -1,0 +1,9 @@
+{
+  "responses": [
+    { "httpStatus": 401, "body": { "code": 401, "message": "authorization required" }, "expectedSourceState": "authorization_required" },
+    { "httpStatus": 403, "body": { "code": 403, "message": "forbidden" }, "expectedSourceState": "authorization_required" },
+    { "httpStatus": 404, "body": { "code": 404, "message": "not found" }, "expectedSourceState": "unsupported" },
+    { "httpStatus": 429, "body": { "code": 429, "message": "rate limited" }, "expectedSourceState": "failed" },
+    { "httpStatus": 500, "body": { "code": 500, "message": "synthetic server failure" }, "expectedSourceState": "failed" }
+  ]
+}

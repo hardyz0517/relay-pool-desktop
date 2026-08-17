@@ -26,7 +26,7 @@ pub(crate) enum StartupUpgradeRecovery {
 pub(crate) enum StartupUpgradeStep {
     EnsureStructuralPreBaseline,
     EnsureSecretBaseline,
-    EnsureLatestSchema,
+    EnsureSchema { target_schema: i64 },
     EnsureAlertingUpgrade,
     EnsureLegacyChangeEventsRemoval,
     OpenRuntime,
@@ -106,10 +106,15 @@ pub(crate) fn plan_upgrade(probe: &StartupUpgradeProbe) -> StartupUpgradePlan {
     } else {
         compatibility_schema
     };
+    let requires_alerting_upgrade = latest_schema >= ALERTING_FOUNDATION_SCHEMA_VERSION
+        && schema_after_secret_baseline <= ALERTING_FOUNDATION_SCHEMA_VERSION;
     if schema_after_secret_baseline < latest_schema {
-        steps.push(StartupUpgradeStep::EnsureLatestSchema);
+        let target_schema = requires_alerting_upgrade
+            .then_some(ALERTING_FOUNDATION_SCHEMA_VERSION)
+            .unwrap_or(latest_schema);
+        steps.push(StartupUpgradeStep::EnsureSchema { target_schema });
     }
-    if latest_schema >= ALERTING_FOUNDATION_SCHEMA_VERSION {
+    if requires_alerting_upgrade {
         steps.push(StartupUpgradeStep::EnsureAlertingUpgrade);
         if latest_schema > ALERTING_FOUNDATION_SCHEMA_VERSION {
             steps.push(StartupUpgradeStep::EnsureLegacyChangeEventsRemoval);
@@ -211,7 +216,9 @@ mod tests {
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureStructuralPreBaseline,
                 StartupUpgradeStep::EnsureSecretBaseline,
-                StartupUpgradeStep::EnsureLatestSchema,
+                StartupUpgradeStep::EnsureSchema {
+                    target_schema: ALERTING_FOUNDATION_SCHEMA_VERSION,
+                },
                 StartupUpgradeStep::EnsureAlertingUpgrade,
                 StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
                 StartupUpgradeStep::OpenRuntime,
@@ -229,7 +236,9 @@ mod tests {
             plan,
             StartupUpgradePlan::Execute(vec![
                 StartupUpgradeStep::EnsureSecretBaseline,
-                StartupUpgradeStep::EnsureLatestSchema,
+                StartupUpgradeStep::EnsureSchema {
+                    target_schema: ALERTING_FOUNDATION_SCHEMA_VERSION,
+                },
                 StartupUpgradeStep::EnsureAlertingUpgrade,
                 StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
                 StartupUpgradeStep::OpenRuntime,
@@ -251,7 +260,27 @@ mod tests {
         assert_eq!(
             plan,
             StartupUpgradePlan::Execute(vec![
-                StartupUpgradeStep::EnsureLatestSchema,
+                StartupUpgradeStep::EnsureSchema { target_schema: 18 },
+                StartupUpgradeStep::OpenRuntime,
+                StartupUpgradeStep::VerifyWritableRuntime,
+                StartupUpgradeStep::VerifySecrets,
+            ])
+        );
+    }
+
+    #[test]
+    fn post_alerting_schema_moves_directly_to_the_latest_schema() {
+        let plan = plan_upgrade(&probe_with_latest(
+            41,
+            41,
+            42,
+            SecretFormatProbe::EncryptedBaseline,
+        ));
+
+        assert_eq!(
+            plan,
+            StartupUpgradePlan::Execute(vec![
+                StartupUpgradeStep::EnsureSchema { target_schema: 42 },
                 StartupUpgradeStep::OpenRuntime,
                 StartupUpgradeStep::VerifyWritableRuntime,
                 StartupUpgradeStep::VerifySecrets,

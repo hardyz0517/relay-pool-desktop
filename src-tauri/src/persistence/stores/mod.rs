@@ -26,3 +26,4 @@ pub(crate) mod routing_store;
 pub(crate) mod settings_store;
 pub(crate) mod station_capacity_domain_store;
 pub(crate) mod station_catalog;
+pub(crate) mod station_published_status_store;

@@ -88,6 +88,9 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_station_keys_order",
     "idx_station_keys_routing_order",
     "idx_station_keys_station_id",
+    "idx_station_published_monitor_samples_timeline",
+    "idx_station_published_monitors_workspace",
+    "idx_station_published_status_sources_station_revision",
     "idx_stations_order",
     "idx_routing_health_one_active_generation",
     "idx_routing_health_observations_cursor",
@@ -549,7 +552,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
-        assert_eq!(fingerprint.index_count, 64);
+        assert_eq!(fingerprint.index_count, 67);
     }
 
     #[tokio::test]

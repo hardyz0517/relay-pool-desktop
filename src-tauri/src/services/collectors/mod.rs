@@ -1343,20 +1343,36 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
 }
 
 fn aggregate_full_output_status(outputs: &[AdapterOutput]) -> String {
-    let success = outputs
+    // Published status is display-only for core station health, but its child
+    // run remains part of the Full operation result shown to the user.
+    let core_outputs = outputs
+        .iter()
+        .filter(|output| output.task != CollectorTask::PublishedStatus)
+        .collect::<Vec<_>>();
+    if core_outputs.is_empty() {
+        return "failed".to_string();
+    }
+    let success = core_outputs
         .iter()
         .filter(|output| output.status == "success")
         .count();
-    let partial = outputs
+    let partial = core_outputs
         .iter()
         .filter(|output| output.status == "partial")
         .count();
-    let manual = outputs
+    let manual = core_outputs
         .iter()
         .filter(|output| output.status == "manual_required")
         .count();
-    if success == outputs.len() {
-        "success".to_string()
+    if success == core_outputs.len() {
+        let published_status_failed = outputs.iter().any(|output| {
+            output.task == CollectorTask::PublishedStatus && output.status != "success"
+        });
+        if published_status_failed {
+            "partial".to_string()
+        } else {
+            "success".to_string()
+        }
     } else if success > 0 || partial > 0 {
         "partial".to_string()
     } else if manual > 0 {
@@ -1514,6 +1530,12 @@ fn driver_output_to_adapter_output(
     let balance_count = output.facts.balances.len();
     let group_count = output.facts.groups.len();
     let rate_count = output.facts.rates.len();
+    let published_status_count = output
+        .facts
+        .published_status
+        .as_ref()
+        .map(|batch| batch.monitors.len())
+        .unwrap_or_default();
     let groups = output
         .facts
         .groups
@@ -1561,12 +1583,14 @@ fn driver_output_to_adapter_output(
             "balanceCount": balance_count,
             "groupCount": group_count,
             "rateCount": rate_count,
+            "publishedStatusMonitorCount": published_status_count,
             "modelCount": 0,
         }),
         normalized_json: json!({
             "balanceCount": balance_count,
             "groupCount": group_count,
             "rateCount": rate_count,
+            "publishedStatusMonitorCount": published_status_count,
             "groups": groups,
             "rateMultipliers": rate_multipliers,
             "models": [],
@@ -1662,6 +1686,7 @@ fn collector_task_kind(task: CollectorTask) -> Option<contract::CollectorTaskKin
     match task {
         CollectorTask::Balance => Some(contract::CollectorTaskKind::Balance),
         CollectorTask::Groups => Some(contract::CollectorTaskKind::Groups),
+        CollectorTask::PublishedStatus => Some(contract::CollectorTaskKind::PublishedStatus),
         CollectorTask::Detect => Some(contract::CollectorTaskKind::Detect),
         CollectorTask::Full => None,
     }
@@ -1728,6 +1753,7 @@ fn collector_task_from_kind(task: contract::CollectorTaskKind) -> CollectorTask 
     match task {
         contract::CollectorTaskKind::Balance => CollectorTask::Balance,
         contract::CollectorTaskKind::Groups => CollectorTask::Groups,
+        contract::CollectorTaskKind::PublishedStatus => CollectorTask::PublishedStatus,
         contract::CollectorTaskKind::Detect => CollectorTask::Detect,
     }
 }
@@ -1941,7 +1967,50 @@ mod tests {
         );
         assert_eq!(
             full_child_tasks(contract::ProviderKind::Sub2Api),
-            vec![CollectorTask::Balance, CollectorTask::Groups],
+            vec![
+                CollectorTask::Balance,
+                CollectorTask::Groups,
+                CollectorTask::PublishedStatus,
+            ],
+        );
+    }
+
+    #[test]
+    fn full_parent_surfaces_published_status_child_failures_as_partial() {
+        let output = |task: CollectorTask, status: &str| AdapterOutput {
+            adapter: "sub2api".to_string(),
+            task,
+            status: status.to_string(),
+            facts: facts::CollectorFacts::default(),
+            summary_json: json!({"endpointResults": []}),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: None,
+            error_message: None,
+        };
+        let prepared = PreparedStationCollection {
+            station_id: "station-1".to_string(),
+            endpoint_revision: 7,
+            adapter: "sub2api".to_string(),
+            task: CollectorTask::Full,
+            outputs: vec![
+                output(CollectorTask::Balance, "success"),
+                output(CollectorTask::Groups, "success"),
+                output(CollectorTask::PublishedStatus, "manual_required"),
+            ],
+            enabled_key_count: 1,
+        };
+
+        let full = aggregate_full_output_v2(&prepared);
+
+        assert_eq!(full.status, "partial");
+        assert_eq!(
+            full.summary_json["childRuns"],
+            json!([
+                {"task": "balance", "status": "success", "errorCode": null},
+                {"task": "groups", "status": "success", "errorCode": null},
+                {"task": "published_status", "status": "manual_required", "errorCode": null},
+            ])
         );
     }
 

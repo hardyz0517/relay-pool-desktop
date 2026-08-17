@@ -359,6 +359,7 @@ mod tests {
                     collector_interval_minutes: 30,
                     balance_interval_minutes: 5,
                     group_rate_interval_minutes: 20,
+                    published_status_interval_minutes: 5,
                     pricing_refresh_interval_minutes: 60,
                     collector_timeout_seconds: 15,
                     collector_max_concurrency: 3,

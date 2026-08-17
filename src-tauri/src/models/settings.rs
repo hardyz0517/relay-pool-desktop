@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::routing::{DispatchAlgorithmSettings, RoutingGroupFilter};
 
+const fn default_published_status_interval_minutes() -> u16 {
+    5
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -22,6 +26,7 @@ pub struct AppSettings {
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
     pub group_rate_interval_minutes: u16,
+    pub published_status_interval_minutes: u16,
     pub pricing_refresh_interval_minutes: u16,
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
@@ -71,6 +76,8 @@ pub struct UpdateSettingsInput {
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
     pub group_rate_interval_minutes: u16,
+    #[serde(default = "default_published_status_interval_minutes")]
+    pub published_status_interval_minutes: u16,
     pub pricing_refresh_interval_minutes: u16,
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
@@ -111,5 +118,6 @@ mod tests {
 
         assert!(input.routing_group_scope.is_none());
         assert!(input.scheduler_config.is_none());
+        assert_eq!(input.published_status_interval_minutes, 5);
     }
 }

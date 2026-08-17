@@ -266,12 +266,7 @@ impl EventDefinition {
 )]
 pub fn event_registry() -> &'static [EventDefinition] {
     static REGISTRY: [EventDefinition; 16] = [
-        EventDefinition::state(
-            AlertEventType::GroupMissing,
-            Severity::Info,
-            RecoveryOwner::GroupBinding,
-            900,
-        ),
+        EventDefinition::audit(AlertEventType::GroupMissing, Severity::Info),
         EventDefinition::state(
             AlertEventType::KeyGroupUnresolved,
             Severity::Warning,
@@ -384,13 +379,13 @@ mod tests {
     }
 
     #[test]
-    fn group_missing_is_informational() {
-        assert_eq!(
-            event_definition(AlertEventType::GroupMissing)
-                .expect("group missing definition")
-                .base_severity,
-            Severity::Info
-        );
+    fn group_missing_is_an_informational_audit_event() {
+        let definition =
+            event_definition(AlertEventType::GroupMissing).expect("group missing definition");
+        assert_eq!(definition.category, EventCategory::AuditChange);
+        assert_eq!(definition.observation_kind, ObservationKind::Change);
+        assert_eq!(definition.base_severity, Severity::Info);
+        assert_eq!(definition.recovery_owner, RecoveryOwner::None);
     }
 
     #[test]

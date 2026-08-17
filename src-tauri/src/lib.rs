@@ -1133,6 +1133,8 @@ pub fn run() {
                                     collector_interval_minutes: settings.collector_interval_minutes,
                                     balance_interval_minutes: settings.balance_interval_minutes,
                                     group_rate_interval_minutes: settings.group_rate_interval_minutes,
+                                    published_status_interval_minutes: settings
+                                        .published_status_interval_minutes,
                                     pricing_refresh_interval_minutes:
                                         settings.pricing_refresh_interval_minutes,
                                     collector_timeout_seconds: settings.collector_timeout_seconds,

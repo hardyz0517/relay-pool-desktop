@@ -1,0 +1,22 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "id": "monitor-unknown-status",
+        "name": "Unknown source status",
+        "provider": "openai",
+        "group_name": null,
+        "primary_model": "gpt-4o-mini",
+        "primary_status": "new-status-not-yet-mapped",
+        "primary_latency_ms": null,
+        "primary_ping_latency_ms": null,
+        "extra_models": [],
+        "timeline": [
+          { "model": "gpt-4o-mini", "status": null, "latency_ms": null, "ping_latency_ms": null, "checked_at": "2026-08-15T04:00:00Z", "message": null }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "items": [
+      {
+        "id": "monitor-valid-among-malformed",
+        "name": "Valid monitor",
+        "provider": "openai",
+        "primary_model": "gpt-4o-mini",
+        "primary_status": "healthy",
+        "timeline": [
+          { "model": "gpt-4o-mini", "status": "healthy", "latency_ms": 100, "ping_latency_ms": 15, "checked_at": "2026-08-15T05:00:00Z" }
+        ]
+      },
+      17,
+      {
+        "id": "monitor-invalid-timeline",
+        "name": "Invalid timeline item",
+        "provider": "openai",
+        "primary_model": "gpt-4o-mini",
+        "primary_status": "healthy",
+        "timeline": [
+          { "model": "gpt-4o-mini", "status": "healthy", "checked_at": "not-a-time" }
+        ]
+      }
+    ]
+  }
+}

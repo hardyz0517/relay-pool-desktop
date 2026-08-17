@@ -171,6 +171,7 @@ impl WorkspaceStore {
         let active_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM change_incidents
              WHERE lifecycle_state IN ('pending', 'open', 'recovering')
+               AND CASE WHEN event_type = 'group_missing' THEN 'info' ELSE severity END IN ('warning', 'critical')
                AND (?1 IS NULL OR station_id = ?1)
                AND (?2 IS NULL OR CASE WHEN event_type = 'group_missing' THEN 'info' ELSE severity END = ?2)",
         )
@@ -227,7 +228,9 @@ impl WorkspaceStore {
                AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
                AND (
                     ?3 IS NULL
-                    OR (?3 = 'active' AND i.lifecycle_state IN ('pending', 'open', 'recovering'))
+                    OR (?3 = 'active'
+                        AND i.lifecycle_state IN ('pending', 'open', 'recovering')
+                        AND CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END IN ('warning', 'critical'))
                     OR (?3 = 'unread' AND i.lifecycle_state IN ('pending', 'open', 'recovering') AND a.seen_at_ms IS NULL)
                     OR i.lifecycle_state = ?3
                )
@@ -251,6 +254,7 @@ impl WorkspaceStore {
         let active_count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM change_incidents
              WHERE lifecycle_state IN ('pending', 'open', 'recovering')
+               AND CASE WHEN event_type = 'group_missing' THEN 'info' ELSE severity END IN ('warning', 'critical')
                AND (?1 IS NULL OR station_id = ?1)
                AND (?2 IS NULL OR CASE WHEN event_type = 'group_missing' THEN 'info' ELSE severity END = ?2)",
         )

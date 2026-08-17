@@ -19,6 +19,7 @@ use crate::{
         collectors::{
             self,
             apply::{CollectorApplyPort, V2CollectorApplyAdapter},
+            contract::CollectorTaskKind,
             output::CollectorTask,
             CollectorSourcePort, V2CollectorSourceAdapter,
         },
@@ -49,13 +50,18 @@ pub(crate) fn v2_runner_port(
     let apply: Arc<dyn CollectorApplyPort> =
         Arc::new(V2CollectorApplyAdapter::new((*services.collectors).clone()));
     let tasks: Arc<dyn StationCollectorTaskPort> = Arc::new(V2StationCollectorTaskAdapter::new(
-        source, apply, blocking, outbound, providers,
+        source,
+        apply,
+        blocking,
+        outbound,
+        Arc::clone(&providers),
     ));
     Arc::new(V2StationCollectorRunnerAdapter::new(
         services.collectors.clone(),
         services.settings.clone(),
         tasks,
         remote_keys,
+        providers,
     ))
 }
 
@@ -182,22 +188,39 @@ impl StationCollectorTaskPort for V2StationCollectorTaskAdapter {
                     .map_err(|error| error.to_string())?
                 }
             };
+            ensure_collection_not_cancelled(&context.cancellation_token)?;
             let refresh_remote_keys = collectors::should_refresh_remote_keys_after_collection(
                 task,
                 prepared.2.status.as_str(),
             );
-            collectors::apply_prepared_station_task_v2(
+            apply_prepared_station_task_cancellable_v2(
                 apply.as_ref(),
                 prepared.0,
                 prepared.1,
                 prepared.2,
+                context.cancellation_token.clone(),
             )
             .await
             .map(|_| StationCollectorTaskOutcome {
                 refresh_remote_keys,
             })
-            .map_err(|error| error.to_string())
         })
+    }
+}
+
+async fn apply_prepared_station_task_cancellable_v2(
+    apply: &dyn CollectorApplyPort,
+    station_id: String,
+    endpoint_revision: i64,
+    output: collectors::output::AdapterOutput,
+    cancellation_token: tokio_util::sync::CancellationToken,
+) -> Result<crate::application::collectors::CollectorApplyOutcome, String> {
+    let apply_future =
+        collectors::apply_prepared_station_task_v2(apply, station_id, endpoint_revision, output);
+    tokio::select! {
+        biased;
+        _ = cancellation_token.cancelled() => Err("Station collector task was cancelled".to_string()),
+        result = apply_future => result.map_err(|error| error.to_string()),
     }
 }
 
@@ -232,6 +255,7 @@ pub(crate) struct V2StationCollectorRunnerAdapter {
     settings: Arc<SettingsService>,
     tasks: Arc<dyn StationCollectorTaskPort>,
     remote_keys: Arc<dyn StationCollectorRemoteKeyRefreshPort>,
+    providers: Arc<collectors::orchestration::ProviderRegistry>,
 }
 
 impl V2StationCollectorRunnerAdapter {
@@ -240,12 +264,14 @@ impl V2StationCollectorRunnerAdapter {
         settings: Arc<SettingsService>,
         tasks: Arc<dyn StationCollectorTaskPort>,
         remote_keys: Arc<dyn StationCollectorRemoteKeyRefreshPort>,
+        providers: Arc<collectors::orchestration::ProviderRegistry>,
     ) -> Self {
         Self {
             collectors,
             settings,
             tasks,
             remote_keys,
+            providers,
         }
     }
 }
@@ -268,6 +294,7 @@ impl StationCollectorRunnerPort for V2StationCollectorRunnerAdapter {
     ) -> BoxFuture<'static, Result<Vec<ScheduledStationCollection>, String>> {
         let collectors = self.collectors.clone();
         let settings = self.settings.clone();
+        let providers = self.providers.clone();
         Box::pin(async move {
             let limit = PageLimit::new(limit).map_err(|error| error.to_string())?;
             let settings = settings.load().await.map_err(|error| error.to_string())?;
@@ -279,9 +306,27 @@ impl StationCollectorRunnerPort for V2StationCollectorRunnerAdapter {
                 .due_stations_for_task("groups", settings.group_rate_interval_minutes, limit)
                 .await
                 .map_err(|error| error.to_string())?;
+            let published_status_stations = collectors
+                .due_stations_for_task(
+                    "published_status",
+                    settings.published_status_interval_minutes,
+                    limit,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .filter(|station| {
+                    providers.supports_collector_task_for_station_type(
+                        &station.station_type,
+                        CollectorTaskKind::PublishedStatus,
+                    )
+                })
+                .map(|station| station.id)
+                .collect::<Vec<_>>();
             Ok(merge_due_station_collections(
                 balance_stations.into_iter().map(|station| station.id),
                 group_stations.into_iter().map(|station| station.id),
+                published_status_stations,
                 limit.get() as usize,
             ))
         })
@@ -495,6 +540,7 @@ impl Drop for StationCollectorRunnerState {
 fn merge_due_station_collections(
     balance_station_ids: impl IntoIterator<Item = String>,
     group_station_ids: impl IntoIterator<Item = String>,
+    published_status_station_ids: impl IntoIterator<Item = String>,
     limit: usize,
 ) -> Vec<ScheduledStationCollection> {
     let mut collections = Vec::<ScheduledStationCollection>::new();
@@ -506,6 +552,10 @@ fn merge_due_station_collections(
         (
             CollectorTask::Groups,
             group_station_ids.into_iter().collect::<Vec<_>>(),
+        ),
+        (
+            CollectorTask::PublishedStatus,
+            published_status_station_ids.into_iter().collect::<Vec<_>>(),
         ),
     ] {
         for station_id in station_ids {
@@ -553,14 +603,26 @@ fn blocking_executor_error_message(error: BlockingExecutorError) -> String {
     }
 }
 
+fn ensure_collection_not_cancelled(
+    cancellation_token: &tokio_util::sync::CancellationToken,
+) -> Result<(), String> {
+    if cancellation_token.is_cancelled() {
+        return Err("Station collector task was cancelled".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroUsize;
 
     use super::*;
+    use crate::application::error::ApplicationError;
     use crate::background_tasks::{TaskRunId, TaskState};
     use crate::observability::runtime::bootstrap;
     use crate::observability::runtime::{RuntimeEvent, RuntimeLogReader, RuntimeLogService};
+    use crate::services::collectors::facts::CollectorFacts;
+    use crate::services::collectors::output::AdapterOutput;
     use crate::services::station_collection_coordinator::StationCollectionCoordinator;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -575,6 +637,7 @@ mod tests {
             merge_due_station_collections(
                 ["station-1".to_string(), "station-2".to_string()],
                 ["station-1".to_string(), "station-3".to_string()],
+                [],
                 2,
             ),
             vec![
@@ -585,6 +648,32 @@ mod tests {
                 ScheduledStationCollection {
                     station_id: "station-2".to_string(),
                     tasks: vec![CollectorTask::Balance],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn merges_published_status_with_existing_due_station_tasks() {
+        assert_eq!(
+            merge_due_station_collections(
+                ["station-1".to_string()],
+                ["station-2".to_string()],
+                ["station-1".to_string(), "station-3".to_string()],
+                3,
+            ),
+            vec![
+                ScheduledStationCollection {
+                    station_id: "station-1".to_string(),
+                    tasks: vec![CollectorTask::Balance, CollectorTask::PublishedStatus],
+                },
+                ScheduledStationCollection {
+                    station_id: "station-2".to_string(),
+                    tasks: vec![CollectorTask::Groups],
+                },
+                ScheduledStationCollection {
+                    station_id: "station-3".to_string(),
+                    tasks: vec![CollectorTask::PublishedStatus],
                 },
             ]
         );
@@ -1380,6 +1469,118 @@ mod tests {
             blocking_executor_error_message(BlockingExecutorError::CancelledBeforeStart),
             "Station collector task was cancelled"
         );
+    }
+
+    #[tokio::test]
+    async fn a_collector_result_is_not_applied_after_cancellation() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+
+        let apply = CancellableApplyPort::new();
+        let result = apply_prepared_station_task_cancellable_v2(
+            &apply,
+            "station-1".to_string(),
+            1,
+            apply_output(),
+            cancellation,
+        )
+        .await;
+
+        assert_eq!(
+            result,
+            Err("Station collector task was cancelled".to_string())
+        );
+        assert_eq!(apply.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancellation_discards_an_in_progress_apply_before_it_can_complete() {
+        let cancellation = CancellationToken::new();
+        let apply = Arc::new(CancellableApplyPort::new());
+        let started = apply.started.clone();
+        let running_apply = Arc::clone(&apply);
+        let running_cancellation = cancellation.clone();
+        let running = tokio::spawn(async move {
+            apply_prepared_station_task_cancellable_v2(
+                running_apply.as_ref(),
+                "station-1".to_string(),
+                1,
+                apply_output(),
+                running_cancellation,
+            )
+            .await
+        });
+
+        started.notified().await;
+        cancellation.cancel();
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), running)
+                .await
+                .expect("cancelled apply joins")
+                .expect("apply task joins"),
+            Err("Station collector task was cancelled".to_string())
+        );
+        assert_eq!(apply.calls(), 1);
+    }
+
+    fn apply_output() -> AdapterOutput {
+        AdapterOutput {
+            adapter: "fixture".to_string(),
+            task: CollectorTask::PublishedStatus,
+            status: "success".to_string(),
+            facts: CollectorFacts::default(),
+            summary_json: serde_json::json!({}),
+            normalized_json: serde_json::json!({}),
+            raw_json_redacted: None,
+            error_code: None,
+            error_message: None,
+        }
+    }
+
+    struct CancellableApplyPort {
+        calls: AtomicUsize,
+        started: Arc<Notify>,
+    }
+
+    impl CancellableApplyPort {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                started: Arc::new(Notify::new()),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl CollectorApplyPort for CancellableApplyPort {
+        fn apply<'a>(
+            &'a self,
+            _request: crate::application::collectors::CollectorApplyRequest,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            crate::application::collectors::CollectorApplyOutcome,
+                            ApplicationError,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let started = Arc::clone(&self.started);
+            Box::pin(async move {
+                started.notify_waiters();
+                std::future::pending::<
+                    Result<crate::application::collectors::CollectorApplyOutcome, ApplicationError>,
+                >()
+                .await
+            })
+        }
     }
 
     fn test_run_context() -> TaskRunContext {

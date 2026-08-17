@@ -94,6 +94,7 @@ pub struct AuthorizationCapabilityDescriptor {
 pub enum CollectorTaskKind {
     Balance,
     Groups,
+    PublishedStatus,
     Detect,
 }
 

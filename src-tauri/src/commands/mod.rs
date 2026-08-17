@@ -31,6 +31,7 @@ pub(crate) mod runtime_events;
 pub(crate) mod settings;
 pub(crate) mod station_collection;
 pub(crate) mod station_key_connectivity;
+pub(crate) mod station_published_status;
 pub(crate) mod stations;
 pub(crate) mod updater;
 

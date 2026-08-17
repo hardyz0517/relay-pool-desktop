@@ -385,6 +385,263 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn group_missing_incidents_upgrade_to_one_informational_change() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 41).await;
+
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        sqlx::query(
+            "INSERT INTO change_incidents (
+                id, condition_key, event_type, lifecycle_state, base_severity, severity,
+                object_type, lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
+                last_seen_at_ms, occurrence_count, episode_occurrence_count,
+                last_observation_summary_json, created_at_ms, updated_at_ms
+             ) VALUES (
+                'legacy-group-missing', 'station_group:station-1:group-1', 'group_missing',
+                'resolved', 'warning', 'warning', 'station_group_binding', 'legacy',
+                1, 100, 300, 1, 1, '{\"groupName\":\"Legacy group\"}', 100, 300
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy group incident");
+        sqlx::query(
+            "INSERT INTO incident_attention (
+                incident_id, episode_number, seen_at_ms, updated_at_ms
+             ) VALUES ('legacy-group-missing', 1, 250, 250)",
+        )
+        .execute(&pool)
+        .await
+        .expect("legacy attention");
+        for (id, kind, observed_at_ms) in [
+            ("legacy-group-missing-abnormal", "abnormal", 200_i64),
+            ("legacy-group-missing-healthy", "healthy", 300_i64),
+        ] {
+            sqlx::query(
+                "INSERT INTO change_event_occurrences (
+                    id, source_observation_key, event_type, category, observation_kind,
+                    severity, condition_key, incident_id, episode_number, object_type, source,
+                    new_value_json, observed_at_ms, created_at_ms
+                 ) VALUES (?1, ?2, 'group_missing', 'condition_observation', ?3,
+                           'warning', 'station_group:station-1:group-1',
+                           'legacy-group-missing', 1, 'station_group_binding', 'legacy',
+                           '{\"groupName\":\"Legacy group\"}', ?4, ?4)",
+            )
+            .bind(id)
+            .bind(format!("fixture:{id}"))
+            .bind(kind)
+            .bind(observed_at_ms)
+            .execute(&pool)
+            .await
+            .expect("legacy group occurrence");
+        }
+
+        migrator_through(42)
+            .expect("schema 42 migrator")
+            .run(&pool)
+            .await
+            .expect("upgrade missing group information");
+
+        let incident_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_incidents WHERE event_type = 'group_missing'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("group incident count");
+        assert_eq!(incident_count, 0);
+        let information_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_event_occurrences
+             WHERE event_type = 'group_missing'
+               AND category = 'audit_change'
+               AND observation_kind = 'change'
+               AND severity = 'info'
+               AND incident_id IS NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("group information count");
+        assert_eq!(information_count, 1);
+        let seen_at_ms: Option<i64> = sqlx::query_scalar(
+            "SELECT seen_at_ms FROM change_event_occurrences
+             WHERE event_type = 'group_missing' AND category = 'audit_change'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("migrated seen state");
+        assert_eq!(seen_at_ms, Some(250));
+        let recovery_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_event_occurrences
+             WHERE event_type = 'group_missing' AND observation_kind = 'healthy'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("group recovery count");
+        assert_eq!(recovery_count, 0);
+        let attention_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM incident_attention WHERE incident_id = 'legacy-group-missing'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("legacy attention cleanup");
+        assert_eq!(attention_count, 0);
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn station_published_status_migration_creates_constrained_fact_tables() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_v2_database(&path)
+            .await
+            .expect("initialize database");
+
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        assert_eq!(
+            applied_schema_version(&pool).await.expect("schema version"),
+            42
+        );
+        for table in [
+            "station_published_status_sources",
+            "station_published_monitors",
+            "station_published_monitor_samples",
+        ] {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            )
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .expect("table existence");
+            assert_eq!(exists, 1, "missing {table}");
+        }
+        for index in [
+            "idx_station_published_status_sources_station_revision",
+            "idx_station_published_monitors_workspace",
+            "idx_station_published_monitor_samples_timeline",
+        ] {
+            let exists: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            )
+            .bind(index)
+            .fetch_one(&pool)
+            .await
+            .expect("index existence");
+            assert_eq!(exists, 1, "missing {index}");
+        }
+        let interval: String = sqlx::query_scalar(
+            "SELECT value FROM settings WHERE key = 'published_status_interval_minutes'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("published status interval setting");
+        assert_eq!(interval, "5");
+
+        let missing_station = sqlx::query(
+            r#"
+            INSERT INTO station_published_status_sources (
+                station_id, endpoint_revision, source_kind, source_state, last_attempt_at,
+                monitor_count, created_at, updated_at
+            ) VALUES ('missing', 1, 'fixture', 'available', '0', 0, '0', '0')
+            "#,
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            missing_station.is_err(),
+            "source station foreign key must hold"
+        );
+
+        sqlx::query(
+            r#"
+            INSERT INTO stations (
+                id, name, station_type, website_url, api_base_url, created_at, updated_at
+            ) VALUES (
+                'published-status-station', 'Published Status Fixture', 'sub2api',
+                'https://example.invalid', 'https://example.invalid/v1', '0', '0'
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture station");
+        sqlx::query(
+            r#"
+            INSERT INTO station_published_status_sources (
+                station_id, endpoint_revision, source_kind, source_state, last_attempt_at,
+                monitor_count, created_at, updated_at
+            ) VALUES ('published-status-station', 1, 'fixture', 'available', '0', 1, '0', '0')
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture source");
+        sqlx::query(
+            r#"
+            INSERT INTO station_published_monitors (
+                id, station_id, endpoint_revision, source_kind, upstream_monitor_id,
+                identity_kind, name, provider, primary_model, extra_models_json,
+                presence_status, current_outcome, source_status, last_seen_run_id,
+                last_seen_at, created_at, updated_at
+            ) VALUES (
+                'published-status-monitor', 'published-status-station', 1, 'fixture',
+                'upstream-monitor', 'upstream_id', 'Fixture Monitor', 'fixture', 'fixture-model',
+                '[]', 'current', 'available', 'available', 'fixture-run', '0', '0', '0'
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture monitor");
+        sqlx::query(
+            r#"
+            INSERT INTO station_published_monitor_samples (
+                id, monitor_id, model, checked_at, outcome, source_status,
+                first_seen_run_id, last_seen_run_id, created_at, updated_at
+            ) VALUES (
+                'published-status-sample', 'published-status-monitor', 'fixture-model', '0',
+                'available', 'available', 'fixture-run', 'fixture-run', '0', '0'
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture sample");
+        let duplicate = sqlx::query(
+            r#"
+            INSERT INTO station_published_monitor_samples (
+                id, monitor_id, model, checked_at, outcome, source_status,
+                first_seen_run_id, last_seen_run_id, created_at, updated_at
+            ) VALUES (
+                'duplicate-published-status-sample', 'published-status-monitor', 'fixture-model',
+                '0', 'available', 'available', 'fixture-run', 'fixture-run', '0', '0'
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await;
+        assert!(duplicate.is_err(), "sample identity must be unique");
+
+        sqlx::query("DELETE FROM stations WHERE id = 'published-status-station'")
+            .execute(&pool)
+            .await
+            .expect("delete fixture station");
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM station_published_monitor_samples WHERE monitor_id = 'published-status-monitor'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("remaining samples");
+        assert_eq!(remaining, 0, "station delete must cascade published facts");
+        pool.close().await;
+    }
+
+    #[tokio::test]
     async fn remote_key_upgrade_repairs_duplicate_local_owners_before_enforcing_uniqueness() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("relay-pool-v2.sqlite3");

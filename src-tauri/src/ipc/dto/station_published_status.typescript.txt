@@ -1,0 +1,44 @@
+export type StationPublishedStatusWorkspaceInputDto = {
+  stationId: string;
+};
+
+export type StationPublishedStatusSampleDto = {
+  model: string;
+  checkedAtMs: number;
+  outcome: "available" | "degraded" | "unavailable" | "unknown";
+  latencyMs: number | null;
+  pingLatencyMs: number | null;
+};
+
+export type StationPublishedStatusRowDto = {
+  id: string;
+  upstreamMonitorId: string;
+  identityKind: "upstream_id" | "derived_fallback";
+  name: string;
+  provider: string;
+  groupName: string | null;
+  primaryModel: string;
+  extraModels: string[];
+  presenceStatus: "current" | "missing";
+  currentOutcome: "available" | "degraded" | "unavailable" | "unknown";
+  currentLatencyMs: number | null;
+  currentPingLatencyMs: number | null;
+  recentAvailabilityPercent: number | null;
+  upstreamCheckedAtMs: number | null;
+  samples: StationPublishedStatusSampleDto[];
+};
+
+export type StationPublishedStatusWorkspaceDto = {
+  stationId: string;
+  endpointRevision: number;
+  supported: boolean;
+  sourceState: "never_collected" | "available" | "empty" | "unsupported" | "authorization_required" | "degraded" | "failed";
+  completeness: "complete" | "partial" | null;
+  lastAttemptAtMs: number | null;
+  lastSuccessAtMs: number | null;
+  lastCompleteAtMs: number | null;
+  safeErrorKind: string | null;
+  monitorCount: number;
+  stale: boolean;
+  rows: StationPublishedStatusRowDto[];
+};

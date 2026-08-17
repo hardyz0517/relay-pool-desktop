@@ -96,7 +96,7 @@ pub(crate) enum CatalogError {
 // The v1 catalog describes the post-alerting-cutover user schema. Historical
 // `change_events` is intentionally absent; the six alerting tables below are
 // the durable replacement and must be recognized by portable migration.
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 63;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 66;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -123,6 +123,7 @@ pub(crate) fn setting_policy(key: &str) -> Option<SettingPolicy> {
         | "collector_interval_minutes"
         | "balance_interval_minutes"
         | "group_rate_interval_minutes"
+        | "published_status_interval_minutes"
         | "pricing_refresh_interval_minutes"
         | "collector_timeout_seconds"
         | "collector_max_concurrency"
@@ -841,6 +842,70 @@ const COLLECTOR_TASK_STATE_COLUMNS: &[&str] = &[
     "next_due_at",
     "updated_at",
 ];
+const STATION_PUBLISHED_STATUS_SOURCES_COLUMNS: &[&str] = &[
+    "station_id",
+    "endpoint_revision",
+    "source_kind",
+    "source_state",
+    "last_attempt_at",
+    "last_success_at",
+    "last_complete_at",
+    "last_error_kind",
+    "monitor_count",
+    "created_at",
+    "updated_at",
+];
+const STATION_PUBLISHED_MONITORS_COLUMNS: &[&str] = &[
+    "id",
+    "station_id",
+    "endpoint_revision",
+    "source_kind",
+    "upstream_monitor_id",
+    "identity_kind",
+    "name",
+    "provider",
+    "group_name",
+    "primary_model",
+    "extra_models_json",
+    "presence_status",
+    "current_outcome",
+    "source_status",
+    "current_latency_ms",
+    "current_ping_latency_ms",
+    "availability_7d_percent",
+    "upstream_checked_at",
+    "last_seen_run_id",
+    "last_seen_at",
+    "created_at",
+    "updated_at",
+];
+const STATION_PUBLISHED_MONITOR_SAMPLES_COLUMNS: &[&str] = &[
+    "id",
+    "monitor_id",
+    "model",
+    "checked_at",
+    "outcome",
+    "source_status",
+    "latency_ms",
+    "ping_latency_ms",
+    "safe_message",
+    "first_seen_run_id",
+    "last_seen_run_id",
+    "created_at",
+    "updated_at",
+];
+const STATION_PUBLISHED_STATUS_SOURCE_RULES: &[FieldRule] = &[FieldRule {
+    name: "last_error_kind",
+    transform: FieldTransform::RedactText,
+}];
+const STATION_PUBLISHED_MONITOR_RULES: &[FieldRule] = &[FieldRule {
+    name: "extra_models_json",
+    transform: FieldTransform::BoundedJson,
+}];
+const STATION_PUBLISHED_MONITOR_SAMPLE_RULES: &[FieldRule] = &[FieldRule {
+    name: "safe_message",
+    transform: FieldTransform::RedactText,
+}];
 const ALERT_POLICIES_COLUMNS: &[&str] = &[
     "id",
     "name",
@@ -2036,6 +2101,33 @@ const TABLES: &[TableCatalog] = &[
         &[],
     ),
     table(
+        "station_published_status_sources",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::StationChildren,
+        false,
+        STATION_PUBLISHED_STATUS_SOURCES_COLUMNS,
+        STATION_PUBLISHED_STATUS_SOURCE_RULES,
+    ),
+    table(
+        "station_published_monitors",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        STATION_PUBLISHED_MONITORS_COLUMNS,
+        STATION_PUBLISHED_MONITOR_RULES,
+    ),
+    table(
+        "station_published_monitor_samples",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        STATION_PUBLISHED_MONITOR_SAMPLES_COLUMNS,
+        STATION_PUBLISHED_MONITOR_SAMPLE_RULES,
+    ),
+    table(
         "change_incidents",
         TablePolicy::OptionalHistory,
         DataCategory::History,
@@ -2386,6 +2478,22 @@ mod tests {
             TablePolicy::OptionalHistory
         );
         assert_eq!(
+            table_catalog("station_published_status_sources")
+                .unwrap()
+                .policy,
+            TablePolicy::Reset
+        );
+        assert_eq!(
+            table_catalog("station_published_monitors").unwrap().policy,
+            TablePolicy::OptionalHistory
+        );
+        assert_eq!(
+            table_catalog("station_published_monitor_samples")
+                .unwrap()
+                .policy,
+            TablePolicy::OptionalHistory
+        );
+        assert_eq!(
             field_rule("channel_monitors", "last_status"),
             Some(FieldTransform::ResetNull)
         );
@@ -2413,6 +2521,10 @@ mod tests {
     #[test]
     fn setting_and_secret_allowlists_fail_closed() {
         assert_eq!(setting_policy("local_key"), Some(SettingPolicy::Reset));
+        assert_eq!(
+            setting_policy("published_status_interval_minutes"),
+            Some(SettingPolicy::Include)
+        );
         assert_eq!(setting_policy("future_setting"), None);
         assert_eq!(
             setting_policy("common_login_profiles_json"),

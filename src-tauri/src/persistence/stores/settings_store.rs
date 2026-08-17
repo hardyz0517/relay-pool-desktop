@@ -189,6 +189,10 @@ impl SettingsStore {
                 update.input.group_rate_interval_minutes.to_string(),
             ),
             (
+                "published_status_interval_minutes",
+                update.input.published_status_interval_minutes.to_string(),
+            ),
+            (
                 "pricing_refresh_interval_minutes",
                 update.input.pricing_refresh_interval_minutes.to_string(),
             ),
@@ -287,6 +291,12 @@ async fn settings_from_connection(
             &mut *connection,
             "group_rate_interval_minutes",
             "20",
+        )
+        .await?,
+        published_status_interval_minutes: parse_setting_or_default(
+            &mut *connection,
+            "published_status_interval_minutes",
+            "5",
         )
         .await?,
         pricing_refresh_interval_minutes: parse_setting_or_default(
@@ -490,6 +500,7 @@ fn validate_settings(input: &UpdateSettingsInput) -> Result<(), PersistenceError
         || input.collector_interval_minutes == 0
         || input.balance_interval_minutes == 0
         || input.group_rate_interval_minutes == 0
+        || !(1..=1_440).contains(&input.published_status_interval_minutes)
         || input.pricing_refresh_interval_minutes == 0
         || input.collector_timeout_seconds < 3
         || input.collector_max_concurrency == 0
@@ -561,6 +572,7 @@ fn is_supported_setting_key(key: &str) -> bool {
             | "collector_interval_minutes"
             | "balance_interval_minutes"
             | "group_rate_interval_minutes"
+            | "published_status_interval_minutes"
             | "pricing_refresh_interval_minutes"
             | "collector_timeout_seconds"
             | "collector_max_concurrency"

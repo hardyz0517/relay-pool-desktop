@@ -49,6 +49,8 @@ impl ObservationIngress {
             || self.observed_at_ms < 0
             || self.fact_fresh_until_ms < self.observed_at_ms
             || !is_redacted_json(&self.summary_json)
+            || (self.event_type == AlertEventType::GroupMissing
+                && (self.kind != ObservationKind::Change || self.severity != Severity::Info))
         {
             return Err(PersistenceError::ConstraintViolation);
         }
@@ -375,6 +377,32 @@ mod tests {
         input.fact_fresh_until_ms = 20;
         input.summary_json = r#"{"authorization":"Bearer secret"}"#.to_string();
         assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn group_missing_requires_an_informational_change_observation() {
+        let mut input = ObservationIngress {
+            source_observation_key: "group-missing-1".to_string(),
+            event_type: AlertEventType::GroupMissing,
+            condition_key: ConditionKey::new("station_group:1:group").unwrap(),
+            kind: ObservationKind::Abnormal,
+            severity: Severity::Info,
+            object_type: "station_group_binding".to_string(),
+            object_id: Some("group-1".to_string()),
+            station_id: Some("station-1".to_string()),
+            station_key_id: None,
+            source: "fixture".to_string(),
+            reason_code: Some("group_missing".to_string()),
+            summary_json: "{}".to_string(),
+            observed_at_ms: 10,
+            fact_fresh_until_ms: 10,
+        };
+        assert!(input.validate().is_err());
+        input.kind = ObservationKind::Change;
+        input.severity = Severity::Warning;
+        assert!(input.validate().is_err());
+        input.severity = Severity::Info;
+        assert!(input.validate().is_ok());
     }
 
     #[tokio::test]

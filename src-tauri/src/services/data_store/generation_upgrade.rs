@@ -407,7 +407,10 @@ fn encrypted_baseline_ready_startup_steps() -> Vec<StartupUpgradeStep> {
     if persistence::current_schema_version()
         > crate::services::secrets::baseline_conversion::ENCRYPTED_SECRET_BASELINE_SCHEMA_VERSION
     {
-        steps.push(StartupUpgradeStep::EnsureLatestSchema);
+        steps.push(StartupUpgradeStep::EnsureSchema {
+            target_schema: persistence::current_schema_version()
+                .min(ALERTING_FOUNDATION_SCHEMA_VERSION),
+        });
     }
     if persistence::current_schema_version() >= ALERTING_FOUNDATION_SCHEMA_VERSION {
         steps.push(StartupUpgradeStep::EnsureAlertingUpgrade);

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "fixtureKind": "sub2api-published-status",
+  "provenance": "Minimal synthetic responses derived only from the field-level audit in docs/research/SUB2API_SOURCE_AUDIT.md. They contain no captured account, credential, cookie, or endpoint data.",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/channel-monitors",
+    "requestsPerCollection": 1,
+    "responseBodyLimitBytes": 4194304
+  },
+  "limits": {
+    "maxMonitorsPerBatch": 512,
+    "maxTimelineItemsPerMonitor": 240,
+    "maxRetainedSamplesPerMonitorModel": 60,
+    "maxSourceStatusBytes": 64,
+    "maxSafeMessageBytes": 512,
+    "maxMonitorIdBytes": 128,
+    "maxMonitorNameBytes": 128,
+    "maxModelNameBytes": 128,
+    "maxProviderNameBytes": 128,
+    "maxGroupNameBytes": 128
+  },
+  "statusMapping": {
+    "healthy": "available",
+    "degraded": "degraded",
+    "failed": "unavailable",
+    "unrecognizedOrNull": "unknown"
+  },
+  "cases": [
+    {
+      "id": "complete-60",
+      "payload": "complete-60.json",
+      "expectedCompleteness": "complete",
+      "expectedMonitorCount": 1,
+      "expectedTimelineCount": 60
+    },
+    {
+      "id": "normalization-boundaries",
+      "payload": "normalization-boundaries.json",
+      "expectedCompleteness": "partial",
+      "covers": [
+        "under-retention-limit",
+        "over-retention-limit",
+        "unordered-timeline",
+        "identical-duplicate",
+        "conflicting-duplicate"
+      ]
+    },
+    {
+      "id": "empty-success",
+      "payload": "empty-success.json",
+      "expectedSourceState": "empty"
+    },
+    {
+      "id": "unknown-and-nullable",
+      "payload": "unknown-and-nullable.json",
+      "expectedCompleteness": "partial",
+      "expectedUnknownOutcome": true
+    },
+    {
+      "id": "partial-malformed-item",
+      "payload": "partial-malformed-item.json",
+      "expectedCompleteness": "partial",
+      "expectedValidMonitorCount": 1
+    },
+    {
+      "id": "malformed-envelope",
+      "payload": "malformed-envelope.json",
+      "expectedSourceState": "failed"
+    },
+    {
+      "id": "http-errors",
+      "payload": "http-errors.json",
+      "expectedSourceStates": [
+        "authorization_required",
+        "unsupported",
+        "failed",
+        "failed"
+      ]
+    }
+  ]
+}

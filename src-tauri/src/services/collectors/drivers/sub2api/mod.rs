@@ -1,4 +1,5 @@
 mod mapping;
+pub(crate) mod published_status;
 
 use std::time::{Duration, Instant};
 
@@ -8,6 +9,10 @@ use serde_json::{json, Value};
 
 use crate::{
     models::remote_keys::RemoteStationKey,
+    models::station_published_status::{
+        PublishedStatusBatch, PublishedStatusCompleteness, PublishedStatusSourceState,
+        MAX_PUBLISHED_STATUS_RESPONSE_BODY_BYTES, STATION_PUBLISHED_STATUS_SOURCE_KIND,
+    },
     outbound::{
         OutboundFailureKind, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
         OutboundRetryPolicy, SecretHeaderValue,
@@ -50,9 +55,13 @@ pub const SUPPORTED_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
     CollectorTaskKind::Detect,
     CollectorTaskKind::Balance,
     CollectorTaskKind::Groups,
+    CollectorTaskKind::PublishedStatus,
 ];
-pub const FULL_COLLECTOR_TASKS: &[CollectorTaskKind] =
-    &[CollectorTaskKind::Balance, CollectorTaskKind::Groups];
+pub const FULL_COLLECTOR_TASKS: &[CollectorTaskKind] = &[
+    CollectorTaskKind::Balance,
+    CollectorTaskKind::Groups,
+    CollectorTaskKind::PublishedStatus,
+];
 
 pub struct Sub2ApiCollectorDriver;
 
@@ -80,6 +89,7 @@ impl CollectorDriver for Sub2ApiCollectorDriver {
                 CollectorTaskKind::Detect => Ok(detect_output()),
                 CollectorTaskKind::Balance => collect_balance(context).await,
                 CollectorTaskKind::Groups => collect_groups(context).await,
+                CollectorTaskKind::PublishedStatus => collect_published_status(context).await,
             }
         }
         .boxed()
@@ -742,6 +752,141 @@ fn detect_output() -> DriverOutput {
             raw_json_redacted: None,
         },
     }
+}
+
+/// Collects only the structured Sub2API management endpoint. The published
+/// facts are display-only and deliberately never invoke active monitoring or
+/// routing-health services.
+async fn collect_published_status(
+    context: &CollectorContext<'_>,
+) -> Result<DriverOutput, DriverFailure> {
+    let website_url = website_url(context)?;
+    let auth = sub2api_auth(context)?;
+    let mut access_token = resolve_access_token(context, &website_url, &auth).await?;
+    let execution = execute_bearer_json_with_recovery_with_cookie_and_success_body_limit(
+        context,
+        EndpointRole::Website,
+        &website_url,
+        "/api/v1/channel-monitors",
+        &mut access_token,
+        &auth,
+        None,
+        true,
+        Some(MAX_PUBLISHED_STATUS_RESPONSE_BODY_BYTES),
+    )
+    .await?;
+    let collected_at_ms = crate::services::time::now_millis_for_services() as i64;
+    let (batch, status) = if execution.ok {
+        let batch = published_status::parse_channel_monitors_payload(
+            &context.station.station_id,
+            context.station.endpoint_revision,
+            collected_at_ms,
+            &execution.payload,
+        )
+        .map_err(|error| {
+            malformed(
+                EndpointRole::Website,
+                Some(execution.evidence.clone()),
+                error.to_string(),
+            )
+        })?;
+        let status = if batch.completeness == PublishedStatusCompleteness::Partial {
+            DriverOutputStatus::Partial
+        } else {
+            DriverOutputStatus::Success
+        };
+        (batch, status)
+    } else if let Some((source_state, status)) = published_status_nonfatal_transport_outcome(
+        execution.evidence.status_code,
+        &execution.payload,
+    ) {
+        let response_status = execution.evidence.status_code;
+        let safe_error_kind = response_status
+            .map(|status| format!("http_{status}"))
+            .or_else(|| {
+                execution
+                    .redacted
+                    .get("failureKind")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            });
+        (
+            PublishedStatusBatch {
+                station_id: context.station.station_id.clone(),
+                endpoint_revision: context.station.endpoint_revision,
+                source_kind: STATION_PUBLISHED_STATUS_SOURCE_KIND.to_string(),
+                source_state,
+                completeness: PublishedStatusCompleteness::Partial,
+                monitors: Vec::new(),
+                collected_at_ms,
+                safe_error_kind,
+            },
+            status,
+        )
+    } else {
+        return Err(failed_from_endpoint_results(
+            std::slice::from_ref(&execution.redacted),
+            EndpointRole::Website,
+            Some(vec![execution.evidence]),
+            "Sub2API published-status list request failed",
+        ));
+    };
+
+    Ok(DriverOutput {
+        facts: CollectorFacts {
+            published_status: Some(batch),
+            ..CollectorFacts::default()
+        },
+        evidence: vec![execution.evidence.clone()],
+        status,
+        diagnostics: RedactedDiagnostics {
+            summary: Some(
+                json!({
+                    "endpointResults": [execution.redacted],
+                    "publishedStatus": true,
+                })
+                .to_string(),
+            ),
+            raw_json_redacted: None,
+        },
+    })
+}
+
+/// Classifies only known provider capability envelopes as non-fatal. A generic
+/// 404 can also mean a wrong base URL or proxy response and must remain a
+/// failed collection rather than disabling the provider capability.
+fn published_status_nonfatal_transport_outcome(
+    status_code: Option<u16>,
+    payload: &Value,
+) -> Option<(PublishedStatusSourceState, DriverOutputStatus)> {
+    match status_code {
+        Some(404) if published_status_unsupported_envelope(payload) => Some((
+            PublishedStatusSourceState::Unsupported,
+            DriverOutputStatus::Success,
+        )),
+        Some(401 | 403) => Some((
+            PublishedStatusSourceState::AuthorizationRequired,
+            DriverOutputStatus::ManualRequired,
+        )),
+        _ => None,
+    }
+}
+
+fn published_status_unsupported_envelope(payload: &Value) -> bool {
+    let code = payload
+        .get("code")
+        .or_else(|| payload.get("error").and_then(|error| error.get("code")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_lowercase);
+    matches!(
+        code.as_deref(),
+        Some(
+            "feature_not_supported"
+                | "channel_monitors_not_supported"
+                | "published_status_not_supported"
+        )
+    )
 }
 
 async fn collect_groups(context: &CollectorContext<'_>) -> Result<DriverOutput, DriverFailure> {
@@ -1528,6 +1673,31 @@ async fn execute_bearer_json_with_recovery_with_cookie(
     session_cookie_override: Option<&str>,
     enable_refresh_token_recovery: bool,
 ) -> Result<JsonExecution, DriverFailure> {
+    execute_bearer_json_with_recovery_with_cookie_and_success_body_limit(
+        context,
+        role,
+        base_url,
+        path,
+        access_token,
+        auth,
+        session_cookie_override,
+        enable_refresh_token_recovery,
+        None,
+    )
+    .await
+}
+
+async fn execute_bearer_json_with_recovery_with_cookie_and_success_body_limit(
+    context: &CollectorContext<'_>,
+    role: EndpointRole,
+    base_url: &str,
+    path: &str,
+    access_token: &mut String,
+    auth: &Sub2ApiAuth,
+    session_cookie_override: Option<&str>,
+    enable_refresh_token_recovery: bool,
+    success_body_max_bytes: Option<usize>,
+) -> Result<JsonExecution, DriverFailure> {
     let url = build_management_url(base_url, path)
         .map_err(|error| invalid_request(redact_text(&error)))?;
     let started_at = Instant::now();
@@ -1561,7 +1731,7 @@ async fn execute_bearer_json_with_recovery_with_cookie(
     let mut transient_retries_used = 0usize;
 
     for attempt in 1..=max_attempts {
-        let result = execute_bearer_json_once(
+        let result = execute_bearer_json_once_with_success_body_limit(
             context,
             role,
             &url,
@@ -1569,6 +1739,7 @@ async fn execute_bearer_json_with_recovery_with_cookie(
             session_cookie.as_deref(),
             None,
             Method::GET,
+            success_body_max_bytes,
         )
         .await;
         if let Some(failure) = fatal_attempt_failure(&result, role) {
@@ -1887,6 +2058,29 @@ async fn execute_bearer_json_once(
     body: Option<Value>,
     method: Method,
 ) -> JsonAttemptResult {
+    execute_bearer_json_once_with_success_body_limit(
+        context,
+        role,
+        url,
+        bearer,
+        session_cookie,
+        body,
+        method,
+        None,
+    )
+    .await
+}
+
+async fn execute_bearer_json_once_with_success_body_limit(
+    context: &CollectorContext<'_>,
+    role: EndpointRole,
+    url: &str,
+    bearer: &str,
+    session_cookie: Option<&str>,
+    body: Option<Value>,
+    method: Method,
+    success_body_max_bytes: Option<usize>,
+) -> JsonAttemptResult {
     let started_at = Instant::now();
     let request = match build_json_request(
         context,
@@ -1922,7 +2116,11 @@ async fn execute_bearer_json_once(
     };
     match context
         .outbound
-        .execute(request, context.cancellation.clone())
+        .execute_with_success_body_limit(
+            request,
+            context.cancellation.clone(),
+            success_body_max_bytes,
+        )
         .await
     {
         Ok(response) => {
@@ -2518,6 +2716,7 @@ fn classify_json_result(result: &JsonAttemptResult) -> Option<&'static str> {
         Some(DriverFailureKind::BudgetExhausted) => return Some("budget_exhausted"),
         Some(DriverFailureKind::Timeout) => return Some("network_timeout"),
         Some(DriverFailureKind::InvalidRequest) => return Some("invalid_request"),
+        Some(DriverFailureKind::MalformedPayload) => return Some("response_too_large"),
         _ => {}
     }
     match result.status {
@@ -2606,7 +2805,7 @@ fn failure_kind_from_endpoint_results(results: &[Value]) -> DriverFailureKind {
         DriverFailureKind::AuthRejected
     } else if has_failure("rate_limited") || has_status(|status| status == 429) {
         DriverFailureKind::RateLimited
-    } else if has_failure("invalid_json") {
+    } else if has_failure("invalid_json") || has_failure("response_too_large") {
         DriverFailureKind::MalformedPayload
     } else if has_failure("invalid_request") {
         DriverFailureKind::InvalidRequest
@@ -3765,6 +3964,182 @@ mod tests {
             cancellation: CancellationToken::new(),
             correlation_id: "test-correlation".to_string(),
         }
+    }
+
+    #[test]
+    fn published_status_http_outcomes_are_explicit_and_capability_aware() {
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(
+                Some(404),
+                &json!({"code": "channel_monitors_not_supported"}),
+            ),
+            Some((
+                PublishedStatusSourceState::Unsupported,
+                DriverOutputStatus::Success,
+            ))
+        );
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(
+                Some(404),
+                &json!({"code": 404, "message": "route not found"}),
+            ),
+            None
+        );
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(Some(401), &Value::Null),
+            Some((
+                PublishedStatusSourceState::AuthorizationRequired,
+                DriverOutputStatus::ManualRequired,
+            ))
+        );
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(Some(403), &Value::Null),
+            Some((
+                PublishedStatusSourceState::AuthorizationRequired,
+                DriverOutputStatus::ManualRequired,
+            ))
+        );
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(Some(429), &Value::Null),
+            None
+        );
+        assert_eq!(
+            published_status_nonfatal_transport_outcome(Some(500), &Value::Null),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn published_status_rate_limit_is_a_failed_collector_result() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            429,
+            json!({"code": 429, "message": "rate limited"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = Sub2ApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect_err("rate limit must fail the published-status collector run");
+
+        assert_eq!(error.kind, DriverFailureKind::RateLimited);
+        let requests = server.finish();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/v1/channel-monitors "));
+    }
+
+    #[tokio::test]
+    async fn published_status_collection_uses_only_the_list_endpoint_and_redacts_credentials() {
+        let payload = serde_json::from_str::<Value>(include_str!(
+            "fixtures/published_status/complete-60.json"
+        ))
+        .expect("published status fixture JSON");
+        let server = TestHttpServer::sequence(vec![Some(json_response(200, payload))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = Sub2ApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect("published status collection");
+        let requests = server.finish();
+        let batch = output
+            .facts
+            .published_status
+            .expect("published status facts");
+        let diagnostics = output
+            .diagnostics
+            .summary
+            .as_deref()
+            .expect("redacted diagnostics");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(batch.source_state, PublishedStatusSourceState::Available);
+        assert_eq!(batch.monitors.len(), 1);
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/v1/channel-monitors HTTP/1.1"));
+        assert!(!requests[0].contains("/api/v1/channel-monitors/"));
+        assert!(!diagnostics.contains("sub2api-access-token"));
+        assert!(output.diagnostics.raw_json_redacted.is_none());
+    }
+
+    #[tokio::test]
+    async fn published_status_not_found_is_a_successful_unsupported_capability_result() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            404,
+            json!({"code": "channel_monitors_not_supported"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let output = Sub2ApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect("unsupported capability result");
+        let requests = server.finish();
+        let batch = output
+            .facts
+            .published_status
+            .expect("published status batch");
+
+        assert_eq!(output.status, DriverOutputStatus::Success);
+        assert_eq!(batch.source_state, PublishedStatusSourceState::Unsupported);
+        assert!(batch.monitors.is_empty());
+        assert_eq!(batch.safe_error_kind.as_deref(), Some("http_404"));
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/v1/channel-monitors HTTP/1.1"));
+    }
+
+    #[tokio::test]
+    async fn published_status_generic_not_found_is_a_failed_collector_result() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            404,
+            json!({"code": 404, "message": "fixture endpoint not found"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = Sub2ApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect_err("generic HTTP 404 must not disable a provider capability");
+
+        assert_eq!(error.kind, DriverFailureKind::ProviderUnavailable);
+        assert_eq!(server.finish().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn published_status_rejects_a_response_larger_than_four_mib() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            200,
+            json!({
+                "code": 0,
+                "data": { "items": [] },
+                "padding": "x".repeat(MAX_PUBLISHED_STATUS_RESPONSE_BODY_BYTES),
+            }),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+
+        let error = Sub2ApiCollectorDriver
+            .collect(&context, CollectorTaskKind::PublishedStatus)
+            .await
+            .expect_err("oversized response must fail the published-status collector run");
+        let requests = server.finish();
+
+        assert_eq!(error.kind, DriverFailureKind::MalformedPayload);
+        assert_eq!(error.auth_effect, AuthEffect::None);
+        assert_eq!(
+            error.sanitized_detail.as_deref(),
+            Some("Sub2API published-status list request failed")
+        );
+        assert_eq!(requests.len(), 1);
     }
 
     #[tokio::test]

@@ -24,6 +24,7 @@
         "maxRateMultiplier": null,
         "pendingDataDir": null,
         "pricingRefreshIntervalMinutes": 60,
+        "publishedStatusIntervalMinutes": 5,
         "schedulerAdvancedSettings": {
           "errorRate": 0.8,
           "fallbackMaxWaiting": 100,
@@ -101,6 +102,7 @@
         "lowBalanceThresholdCny": 15.0,
         "maxRateMultiplier": null,
         "pricingRefreshIntervalMinutes": 60,
+        "publishedStatusIntervalMinutes": 5,
         "schedulerAdvancedSettings": null,
         "trayBehavior": null
       },
@@ -125,6 +127,7 @@
         "maxRateMultiplier": null,
         "pendingDataDir": null,
         "pricingRefreshIntervalMinutes": 60,
+        "publishedStatusIntervalMinutes": 5,
         "schedulerAdvancedSettings": {
           "errorRate": 0.8,
           "fallbackMaxWaiting": 100,
@@ -2179,6 +2182,26 @@
         "stationId": "station-1",
         "status": "capturing",
         "webAuthorizationCandidate": false
+      }
+    },
+    {
+      "command": "get_station_published_status_workspace",
+      "input": {
+        "stationId": "station-1"
+      },
+      "output": {
+        "completeness": "complete",
+        "endpointRevision": 1,
+        "lastAttemptAtMs": 1700000000000,
+        "lastCompleteAtMs": 1700000000000,
+        "lastSuccessAtMs": 1700000000000,
+        "monitorCount": 1,
+        "rows": [],
+        "safeErrorKind": null,
+        "sourceState": "available",
+        "stale": false,
+        "stationId": "station-1",
+        "supported": true
       }
     },
     {

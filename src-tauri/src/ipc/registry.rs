@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "f5f24bef3a76e1759e1c909cbb4fa917a19fe1b7dd827c87c22c04b4d94ab149";
+    "b099a4916ef707ac08479aa440df8ac9cc9b142c3fda76e256407054ccae8275";
 
 #[cfg_attr(
     not(test),
@@ -173,6 +173,7 @@ macro_rules! ipc_command_registry {
             get_channel_monitor_execution => $crate::commands::channel_status::get_channel_monitor_execution,
             list_channel_monitor_attempts => $crate::commands::channel_status::list_channel_monitor_attempts,
             list_monitoring_capabilities => $crate::commands::channel_status::list_monitoring_capabilities,
+            get_station_published_status_workspace => $crate::commands::station_published_status::get_station_published_status_workspace,
             load_pricing_comparison_workspace => $crate::commands::pricing_workspace::load_pricing_comparison_workspace,
             load_pricing_group_monitor_status => $crate::commands::pricing_workspace::load_pricing_group_monitor_status,
             create_channel_monitor => $crate::commands::channel_monitoring::create_channel_monitor,
@@ -704,6 +705,10 @@ fn command_contract(name: &str) -> CommandContract {
             "ChannelStatusWorkspaceInputDto",
             "ChannelStatusWorkspaceDto",
         ),
+        "get_station_published_status_workspace" => migrated_read(
+            "StationPublishedStatusWorkspaceInputDto",
+            "StationPublishedStatusWorkspaceDto",
+        ),
         "list_channel_monitor_executions" => migrated_read(
             "ChannelMonitorExecutionListInputDto",
             "ChannelMonitorExecutionPageDto",
@@ -1104,6 +1109,7 @@ fn pilot_serialization_fixture() -> String {
         collector_interval_minutes: 30,
         balance_interval_minutes: 5,
         group_rate_interval_minutes: 20,
+        published_status_interval_minutes: 5,
         pricing_refresh_interval_minutes: 60,
         collector_timeout_seconds: 15,
         collector_max_concurrency: 3,
@@ -1120,7 +1126,8 @@ fn pilot_serialization_fixture() -> String {
         "maxRateMultiplier": null, "defaultRoutingGroupFilter": "all_groups",
         "schedulerAdvancedSettings": null, "lowBalanceThresholdCny": 15.0,
         "collectorIntervalMinutes": 30, "balanceIntervalMinutes": 5,
-        "groupRateIntervalMinutes": 20, "pricingRefreshIntervalMinutes": 60,
+        "groupRateIntervalMinutes": 20, "publishedStatusIntervalMinutes": 5,
+        "pricingRefreshIntervalMinutes": 60,
         "collectorTimeoutSeconds": 15,
         "collectorMaxConcurrency": 3, "allowDepletedFallback": false,
         "developerModeEnabled": false
@@ -1165,6 +1172,7 @@ fn pilot_serialization_fixture() -> String {
     commands.extend(super::dto::channel_monitor_mutations::serialization_fixtures());
     commands.extend(super::dto::channel_monitor_operations::serialization_fixtures());
     commands.extend(super::dto::station_collector_operations::serialization_fixtures());
+    commands.extend(super::dto::station_published_status::serialization_fixtures());
     commands.extend(super::dto::routing_health_reads::serialization_fixtures());
     commands.extend(super::dto::routing_mutations::serialization_fixtures());
     commands.extend(super::dto::pricing_reads::serialization_fixtures());
@@ -1420,6 +1428,10 @@ export function deleteChannelMonitorTemplate(input: ChannelMonitorMutationIdInpu
 
 export function loadChannelStatusWorkspace(input: ChannelStatusWorkspaceInputDto = {}): Promise<ChannelStatusWorkspaceDto> {
   return invokeCommand<ChannelStatusWorkspaceDto>("load_channel_status_workspace", { input });
+}
+
+export function getStationPublishedStatusWorkspace(input: StationPublishedStatusWorkspaceInputDto): Promise<StationPublishedStatusWorkspaceDto> {
+  return invokeCommand<StationPublishedStatusWorkspaceDto>("get_station_published_status_workspace", { input });
 }
 
 export function listChannelMonitorExecutions(input: ChannelMonitorExecutionListInputDto = {}): Promise<ChannelMonitorExecutionPageDto> {

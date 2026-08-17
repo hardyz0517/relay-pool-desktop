@@ -40,7 +40,7 @@ async fn schema_39_upgrades_information_changes_with_nullable_seen_state() {
     .fetch_one(&mut connection)
     .await
     .expect("compatibility schema");
-    assert_eq!(schema_version, 40);
+    assert_eq!(schema_version, 42);
 
     let column = sqlx::query(
         "SELECT name, \"notnull\" FROM pragma_table_info('change_event_occurrences') WHERE name = 'seen_at_ms'",

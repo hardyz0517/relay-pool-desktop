@@ -10,3 +10,4 @@ pub(crate) mod request_decision_trace;
 pub(crate) mod routing_runtime;
 pub(crate) mod routing_workspace;
 pub(crate) mod station_assets;
+pub(crate) mod station_published_status;

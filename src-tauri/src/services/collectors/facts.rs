@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::models::station_published_status::PublishedStatusBatch;
+
 pub const NORMALIZED_BALANCE_CURRENCY: &str = "USD";
 
 #[derive(Debug, Clone)]
@@ -66,4 +68,5 @@ pub struct CollectorFacts {
     pub balances: Vec<CollectedBalanceFact>,
     pub groups: Vec<CollectedGroupFact>,
     pub rates: Vec<CollectedRateFact>,
+    pub published_status: Option<PublishedStatusBatch>,
 }

@@ -11,6 +11,9 @@ use std::{
 
 use serde::Deserialize;
 
+#[path = "../src/models/station_published_status.rs"]
+mod station_published_status_model;
+
 mod outbound {
     use std::io::{Read, Write};
     use std::net::TcpStream;
@@ -42,10 +45,27 @@ mod outbound {
         pub async fn execute(
             &self,
             request: OutboundRequest,
-            _cancellation_token: CancellationToken,
+            cancellation_token: CancellationToken,
         ) -> Result<OutboundResponse, OutboundFailure> {
-            execute_local_http(request)
-                .map_err(|_| OutboundFailure::new(OutboundFailureKind::RequestFailed))
+            self.execute_with_success_body_limit(request, cancellation_token, None)
+                .await
+        }
+
+        pub async fn execute_with_success_body_limit(
+            &self,
+            request: OutboundRequest,
+            _cancellation_token: CancellationToken,
+            success_body_max_bytes: Option<usize>,
+        ) -> Result<OutboundResponse, OutboundFailure> {
+            match execute_local_http(request, success_body_max_bytes) {
+                Ok(response) => Ok(response),
+                Err(error) if error == "response_body_limit" => Err(OutboundFailure::new(
+                    OutboundFailureKind::BodyLimitExceeded {
+                        limit_bytes: success_body_max_bytes.unwrap_or_default(),
+                    },
+                )),
+                Err(_) => Err(OutboundFailure::new(OutboundFailureKind::RequestFailed)),
+            }
         }
     }
 
@@ -230,7 +250,10 @@ mod outbound {
         }
     }
 
-    fn execute_local_http(request: OutboundRequest) -> Result<OutboundResponse, String> {
+    fn execute_local_http(
+        request: OutboundRequest,
+        success_body_max_bytes: Option<usize>,
+    ) -> Result<OutboundResponse, String> {
         let (host, port, path) = parse_http_url(&request.url)?;
         let mut stream =
             TcpStream::connect((host.as_str(), port)).map_err(|error| error.to_string())?;
@@ -294,10 +317,15 @@ mod outbound {
             let value = HeaderValue::from_str(value.trim()).map_err(|error| error.to_string())?;
             response_headers.append(name, value);
         }
+        let status = StatusCode::from_u16(status).map_err(|error| error.to_string())?;
+        let body = Bytes::copy_from_slice(&response[(header_end + 4)..]);
+        if status.is_success() && success_body_max_bytes.is_some_and(|limit| body.len() > limit) {
+            return Err("response_body_limit".to_string());
+        }
         Ok(OutboundResponse {
-            status: StatusCode::from_u16(status).map_err(|error| error.to_string())?,
+            status,
             headers: response_headers,
-            body: Bytes::copy_from_slice(&response[(header_end + 4)..]),
+            body,
             evidence: OutboundEvidence {
                 final_url: request.url,
                 retry_after: None,
@@ -324,6 +352,10 @@ mod outbound {
 }
 
 mod models {
+    pub mod station_published_status {
+        pub use crate::station_published_status_model::*;
+    }
+
     pub mod credentials {
         #[derive(Debug, Clone)]
         pub struct PersistStationSessionInput {
@@ -420,6 +452,12 @@ mod models {
             pub id: String,
             pub website_url: String,
             pub endpoint_revision: i64,
+        }
+    }
+
+    pub mod secrets {
+        pub fn redact_text(text: &str) -> String {
+            crate::services::secrets::mask::redact_text(text)
         }
     }
 }

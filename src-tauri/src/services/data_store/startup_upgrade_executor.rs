@@ -74,18 +74,16 @@ pub(crate) fn execute_startup_upgrade_plan(
                         )
                     })?;
             }
-            StartupUpgradeStep::EnsureLatestSchema => {
-                let target_schema = persistence::current_schema_version()
-                    .min(alerting_upgrade::ALERTING_FOUNDATION_SCHEMA_VERSION);
+            StartupUpgradeStep::EnsureSchema { target_schema } => {
                 block_on(persistence::upgrade_existing_v2_database_to_schema(
                     final_path,
-                    target_schema,
+                    *target_schema,
                 ))
                 .map_err(|error| {
                         StartupUpgradeError::new(
                             RecoveryReason::SchemaMigrationFailed,
                             format!(
-                                "failed to migrate generation 2 database to alerting foundation schema: {error}"
+                                "failed to migrate generation 2 database to schema {target_schema}: {error}"
                             ),
                         )
                     })?;
@@ -222,14 +220,15 @@ fn validate_startup_upgrade_steps(steps: &[StartupUpgradeStep]) -> Result<(), St
         match step {
             StartupUpgradeStep::EnsureStructuralPreBaseline
             | StartupUpgradeStep::EnsureSecretBaseline
-            | StartupUpgradeStep::EnsureLatestSchema
+            | StartupUpgradeStep::EnsureSchema { .. }
             | StartupUpgradeStep::EnsureAlertingUpgrade => {
                 if opened_runtime {
                     return Err(invalid_step_contract(
                         "startup upgrade plan tried to run migration steps after opening runtime",
                     ));
                 }
-                if matches!(step, StartupUpgradeStep::EnsureLatestSchema) && alerting_upgrade_seen {
+                if matches!(step, StartupUpgradeStep::EnsureSchema { .. }) && alerting_upgrade_seen
+                {
                     return Err(invalid_step_contract(
                         "startup upgrade plan tried to migrate schema after alerting upgrade",
                     ));
@@ -364,7 +363,7 @@ mod tests {
         validate_startup_upgrade_steps(&[
             StartupUpgradeStep::EnsureStructuralPreBaseline,
             StartupUpgradeStep::EnsureSecretBaseline,
-            StartupUpgradeStep::EnsureLatestSchema,
+            StartupUpgradeStep::EnsureSchema { target_schema: 29 },
             StartupUpgradeStep::EnsureAlertingUpgrade,
             StartupUpgradeStep::EnsureLegacyChangeEventsRemoval,
             StartupUpgradeStep::OpenRuntime,
@@ -402,7 +401,7 @@ mod tests {
         assert_invalid_contract(&[
             StartupUpgradeStep::OpenRuntime,
             StartupUpgradeStep::VerifyWritableRuntime,
-            StartupUpgradeStep::EnsureLatestSchema,
+            StartupUpgradeStep::EnsureSchema { target_schema: 29 },
             StartupUpgradeStep::VerifySecrets,
         ]);
     }

@@ -141,6 +141,9 @@ pub async fn collect_station_task(
                 StationCollectorTaskTypeDto::Detect => collectors::output::CollectorTask::Detect,
                 StationCollectorTaskTypeDto::Balance => collectors::output::CollectorTask::Balance,
                 StationCollectorTaskTypeDto::Groups => collectors::output::CollectorTask::Groups,
+                StationCollectorTaskTypeDto::PublishedStatus => {
+                    collectors::output::CollectorTask::PublishedStatus
+                }
                 StationCollectorTaskTypeDto::Full => collectors::output::CollectorTask::Full,
             };
             facade

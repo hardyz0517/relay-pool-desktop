@@ -826,23 +826,20 @@ async fn collect_current_facts(
         let station_key_id: Option<String> = row.get("station_key_id");
         let status: String = row.get("binding_status");
         let binding_kind: String = row.get("binding_kind");
-        let event_type = if binding_kind == "key_binding" {
-            AlertEventType::KeyGroupUnresolved
-        } else {
-            AlertEventType::GroupMissing
-        };
+        // Station-group absence is an append-only information change. It has
+        // no current-fact lifecycle to rebuild; key binding absence remains a
+        // warning condition because it can block routing.
+        if binding_kind != "key_binding" {
+            continue;
+        }
+        let event_type = AlertEventType::KeyGroupUnresolved;
         let key =
             condition_key("group", &id).ok_or_else(|| PersistenceError::ConstraintViolation)?;
-        let severity = if event_type == AlertEventType::GroupMissing {
-            Severity::Info
-        } else {
-            Severity::Warning
-        };
         facts.push(fact(
             event_type,
             key,
             status == "missing",
-            severity,
+            Severity::Warning,
             "group_binding",
             Some(id),
             Some(station_id),

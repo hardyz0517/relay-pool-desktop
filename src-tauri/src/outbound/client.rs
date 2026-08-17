@@ -83,7 +83,26 @@ impl AsyncOutboundClient {
         request: OutboundRequest,
         cancellation_token: CancellationToken,
     ) -> Result<OutboundResponse, OutboundFailure> {
-        let result = self.execute_inner(request, cancellation_token).await;
+        self.execute_with_success_body_limit(request, cancellation_token, None)
+            .await
+    }
+
+    /// Applies a narrower successful-response limit for one bounded operation
+    /// without changing the shared client policy used by other provider calls.
+    pub async fn execute_with_success_body_limit(
+        &self,
+        request: OutboundRequest,
+        cancellation_token: CancellationToken,
+        success_body_max_bytes: Option<usize>,
+    ) -> Result<OutboundResponse, OutboundFailure> {
+        if success_body_max_bytes == Some(0) {
+            return Err(OutboundFailure::new(
+                OutboundFailureKind::BodyLimitExceeded { limit_bytes: 0 },
+            ));
+        }
+        let result = self
+            .execute_inner(request, cancellation_token, success_body_max_bytes)
+            .await;
         if result.is_err() {
             crate::observability::runtime::bootstrap::emit_rate_limited(
                 crate::outbound::runtime_events::request_failed(),
@@ -96,6 +115,7 @@ impl AsyncOutboundClient {
         &self,
         request: OutboundRequest,
         cancellation_token: CancellationToken,
+        success_body_max_bytes: Option<usize>,
     ) -> Result<OutboundResponse, OutboundFailure> {
         let url = validate_url(&request.url)?;
         let redacted_start_url = redact_url(&url);
@@ -117,7 +137,13 @@ impl AsyncOutboundClient {
                 }
                 result = tokio::time::timeout(
                     total_timeout,
-                    self.execute_once(&request, &url, &redacted_start_url, cancellation_token.clone()),
+                    self.execute_once(
+                        &request,
+                        &url,
+                        &redacted_start_url,
+                        cancellation_token.clone(),
+                        success_body_max_bytes,
+                    ),
                 ) => {
                     match result {
                         Ok(result) => result,
@@ -263,6 +289,7 @@ impl AsyncOutboundClient {
         start_url: &Url,
         redacted_start_url: &str,
         cancellation_token: CancellationToken,
+        success_body_max_bytes: Option<usize>,
     ) -> Result<OutboundResponse, OutboundFailure> {
         let client = self.client_for_policy(&request.proxy)?;
         let mut current_url = start_url.clone();
@@ -336,7 +363,7 @@ impl AsyncOutboundClient {
             let retry_after = retry_after(response.headers());
             let headers = response.headers().clone();
             let body_limit = if status.is_success() {
-                self.config.success_body_max_bytes
+                success_body_max_bytes.unwrap_or(self.config.success_body_max_bytes)
             } else {
                 self.config.error_body_max_bytes
             };

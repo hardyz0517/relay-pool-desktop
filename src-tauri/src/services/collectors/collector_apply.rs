@@ -95,6 +95,7 @@ async fn apply_adapter_output(
     output: AdapterOutput,
 ) -> Result<CollectorApplyOutcome, ApplicationError> {
     let mut facts = output.facts;
+    let published_status = facts.published_status.take();
     append_station_balance_aggregates(&mut facts.balances);
     let endpoint_counts = endpoint_counts_from_summary(&output.summary_json);
     let request = CollectorApplyRequest {
@@ -171,6 +172,7 @@ async fn apply_adapter_output(
                 })
                 .collect(),
             models: Vec::new(),
+            published_status,
         },
         summary_json: output.summary_json,
         normalized_json: output.normalized_json,

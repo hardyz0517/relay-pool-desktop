@@ -26,6 +26,10 @@ use crate::{
             BINDING_STATUS_MISSING,
         },
         shared_capabilities::StationGroupOption,
+        station_published_status::{
+            PublishedStatusBatch, PublishedStatusCompleteness, PublishedStatusSourceState,
+            STATION_PUBLISHED_STATUS_SOURCE_KIND,
+        },
         stations::Station,
     },
     persistence::{
@@ -37,6 +41,10 @@ use crate::{
                 RateTransition, RateWrite, StationGroupBindingWrite, StoredCollectorApply,
             },
             station_catalog::StationCatalogStore,
+            station_published_status_store::{
+                PublishedMonitorSampleWrite, PublishedMonitorWrite, PublishedStatusSourceWrite,
+                StationPublishedStatusStore,
+            },
         },
     },
     services::group_categories::normalize_group_category,
@@ -99,6 +107,7 @@ pub(crate) struct CanonicalCollectorFacts {
     pub groups: Vec<CanonicalGroupFact>,
     pub rates: Vec<CanonicalRateFact>,
     pub models: Vec<CanonicalModelFact>,
+    pub published_status: Option<PublishedStatusBatch>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -174,6 +183,7 @@ pub(crate) struct CollectorService {
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     collectors: CollectorStore,
+    published_status: StationPublishedStatusStore,
     stations: StationCatalogStore,
     alerting: AlertingIngress,
 }
@@ -214,6 +224,7 @@ impl CollectorService {
             clock,
             ids,
             collectors: CollectorStore,
+            published_status: StationPublishedStatusStore,
             stations: StationCatalogStore,
             alerting: AlertingIngress::new(runtime.clone()),
         }
@@ -239,7 +250,8 @@ impl CollectorService {
         interval_minutes: u16,
         limit: crate::application::pagination::PageLimit,
     ) -> Result<Vec<Station>, ApplicationError> {
-        if !matches!(task_type, "balance" | "groups") || interval_minutes == 0 {
+        if !matches!(task_type, "balance" | "groups" | "published_status") || interval_minutes == 0
+        {
             return Err(ApplicationError::ConstraintViolation);
         }
         let mut read = self.runtime.begin_read().await?;
@@ -567,6 +579,7 @@ impl CollectorService {
         let snapshot_id = self.ids.next_id();
         let ids = self.ids.clone();
         let collectors = self.collectors;
+        let published_status = self.published_status;
         let alerting = self.alerting.clone();
 
         self.runtime
@@ -628,6 +641,19 @@ impl CollectorService {
                             },
                         )
                         .await?;
+
+                    if request.task_type == "published_status" {
+                        apply_station_published_status(
+                            &published_status,
+                            write,
+                            &*ids,
+                            &request,
+                            &run_id,
+                            &now,
+                            started_ms,
+                        )
+                        .await?;
+                    }
 
                     for balance in &request.facts.balances {
                         collectors
@@ -842,7 +868,9 @@ impl CollectorService {
                     // runs still persist facts and run history, but must not create a
                     // second incident for the same collection operation.
                     let emit_collector_observation =
-                        should_emit_collector_observation(request.parent_run_id.as_deref());
+                        collector_task_side_effect_policy(&request.task_type)
+                            .emits_collector_observation
+                            && should_emit_collector_observation(request.parent_run_id.as_deref());
                     if emit_collector_observation
                         && matches!(request.status.as_str(), "success" | "partial" | "failed")
                     {
@@ -881,15 +909,18 @@ impl CollectorService {
                             },
                         )
                         .await?;
-                    if request.parent_run_id.is_none() {
+                    if request.parent_run_id.is_none()
+                        && task_updates_station_collection_status(&request.task_type)
+                    {
                         collectors
                             .update_station_collection_status(
                                 write,
                                 &request.station_id,
                                 request.endpoint_revision,
-                                &request.status,
+                                station_collection_status_for_request(&request),
                                 &now,
-                                matches!(request.task_type.as_str(), "groups" | "models" | "full"),
+                                collector_task_side_effect_policy(&request.task_type)
+                                    .refreshes_group_bindings,
                             )
                             .await?;
                     }
@@ -916,6 +947,261 @@ impl CollectorService {
             })
             .await
             .map_err(Into::into)
+    }
+}
+
+async fn apply_station_published_status(
+    store: &StationPublishedStatusStore,
+    write: &mut crate::persistence::WriteSession,
+    ids: &dyn IdGenerator,
+    request: &CollectorApplyRequest,
+    run_id: &str,
+    now: &str,
+    now_ms: i64,
+) -> Result<(), crate::persistence::error::PersistenceError> {
+    let batch = request.facts.published_status.as_ref();
+    if let Some(batch) = batch {
+        batch
+            .validate()
+            .map_err(|_| crate::persistence::error::PersistenceError::ConstraintViolation)?;
+        if batch.station_id != request.station_id
+            || batch.endpoint_revision != request.endpoint_revision
+            || batch.source_kind != STATION_PUBLISHED_STATUS_SOURCE_KIND
+        {
+            return Err(crate::persistence::error::PersistenceError::ConstraintViolation);
+        }
+    }
+
+    let source_state = batch
+        .map(|batch| batch.source_state)
+        .unwrap_or_else(|| published_status_source_state_for_failed_apply(request));
+    let successful_read = is_successful_published_status_read(
+        source_state,
+        batch.and_then(|batch| batch.safe_error_kind.as_deref()),
+    );
+    let complete_read = batch.is_some_and(|batch| {
+        batch.completeness == PublishedStatusCompleteness::Complete && successful_read
+    });
+    let source = PublishedStatusSourceWrite {
+        station_id: request.station_id.clone(),
+        endpoint_revision: request.endpoint_revision,
+        source_kind: STATION_PUBLISHED_STATUS_SOURCE_KIND.to_string(),
+        source_state: source_state.as_str().to_string(),
+        last_attempt_at: now.to_string(),
+        last_success_at: successful_read.then(|| now.to_string()),
+        last_complete_at: complete_read.then(|| now.to_string()),
+        last_error_kind: batch
+            .and_then(|batch| batch.safe_error_kind.clone())
+            .or_else(|| request.error_code.clone()),
+        monitor_count: successful_read.then(|| {
+            batch
+                .map(|batch| batch.monitors.len() as i64)
+                .unwrap_or_default()
+        }),
+        created_at: now.to_string(),
+        updated_at: now.to_string(),
+    };
+    store.upsert_source(write, &source).await?;
+    // A failed first read for a newly configured endpoint must not erase the
+    // last verified facts. A successful read replaces the prior endpoint's
+    // display facts in the same transaction.
+    if successful_read {
+        store
+            .purge_other_endpoint_revisions(
+                write,
+                &request.station_id,
+                request.endpoint_revision,
+                STATION_PUBLISHED_STATUS_SOURCE_KIND,
+            )
+            .await?;
+    }
+
+    let Some(batch) = batch.filter(|_| successful_read) else {
+        return Ok(());
+    };
+
+    let mut seen_monitor_ids = Vec::with_capacity(batch.monitors.len());
+    for monitor in &batch.monitors {
+        let monitor_id = store
+            .upsert_monitor(
+                write,
+                &PublishedMonitorWrite {
+                    id: ids.next_id(),
+                    station_id: request.station_id.clone(),
+                    endpoint_revision: request.endpoint_revision,
+                    source_kind: STATION_PUBLISHED_STATUS_SOURCE_KIND.to_string(),
+                    upstream_monitor_id: monitor.upstream_monitor_id.clone(),
+                    identity_kind: monitor.identity_kind.as_str().to_string(),
+                    name: monitor.name.clone(),
+                    provider: monitor.provider.clone(),
+                    group_name: monitor.group_name.clone(),
+                    primary_model: monitor.primary_model.clone(),
+                    extra_models_json: serde_json::to_string(&monitor.extra_models)
+                        .expect("validated extra models serialize"),
+                    current_outcome: monitor.current_outcome.as_str().to_string(),
+                    source_status: monitor.source_status.clone(),
+                    current_latency_ms: monitor.current_latency_ms,
+                    current_ping_latency_ms: monitor.current_ping_latency_ms,
+                    upstream_checked_at_ms: monitor.upstream_checked_at_ms,
+                    last_seen_run_id: run_id.to_string(),
+                    last_seen_at: now.to_string(),
+                    created_at: now.to_string(),
+                    updated_at: now.to_string(),
+                },
+            )
+            .await?;
+        seen_monitor_ids.push(monitor_id.clone());
+        for sample in &monitor.samples {
+            store
+                .upsert_sample(
+                    write,
+                    &PublishedMonitorSampleWrite {
+                        id: ids.next_id(),
+                        monitor_id: monitor_id.clone(),
+                        model: sample.model.clone(),
+                        checked_at_ms: sample.checked_at_ms,
+                        outcome: sample.outcome.as_str().to_string(),
+                        source_status: sample.source_status.clone(),
+                        latency_ms: sample.latency_ms,
+                        ping_latency_ms: sample.ping_latency_ms,
+                        safe_message: sample.safe_message.clone(),
+                        first_seen_run_id: run_id.to_string(),
+                        last_seen_run_id: run_id.to_string(),
+                        created_at: now.to_string(),
+                        updated_at: now.to_string(),
+                    },
+                )
+                .await?;
+        }
+    }
+    if complete_read {
+        store
+            .mark_unseen_monitors_missing(
+                write,
+                &request.station_id,
+                request.endpoint_revision,
+                STATION_PUBLISHED_STATUS_SOURCE_KIND,
+                &seen_monitor_ids,
+                now,
+            )
+            .await?;
+    }
+    store
+        .retain_active_samples(
+            write,
+            &request.station_id,
+            request.endpoint_revision,
+            STATION_PUBLISHED_STATUS_SOURCE_KIND,
+        )
+        .await?;
+    let missing_cutoff = now_ms.saturating_sub(30 * 24 * 60 * 60 * 1_000).to_string();
+    store
+        .delete_missing_before(
+            write,
+            &request.station_id,
+            request.endpoint_revision,
+            STATION_PUBLISHED_STATUS_SOURCE_KIND,
+            &missing_cutoff,
+        )
+        .await?;
+    Ok(())
+}
+
+fn published_status_source_state_for_failed_apply(
+    request: &CollectorApplyRequest,
+) -> PublishedStatusSourceState {
+    if request.manual_action_required || request.status == "manual_required" {
+        PublishedStatusSourceState::AuthorizationRequired
+    } else if request.error_code.as_deref() == Some("unsupported_task") {
+        PublishedStatusSourceState::Unsupported
+    } else {
+        PublishedStatusSourceState::Failed
+    }
+}
+
+fn is_successful_published_status_read(
+    source_state: PublishedStatusSourceState,
+    safe_error_kind: Option<&str>,
+) -> bool {
+    safe_error_kind.is_none()
+        && matches!(
+            source_state,
+            PublishedStatusSourceState::Available
+                | PublishedStatusSourceState::Empty
+                | PublishedStatusSourceState::Degraded
+        )
+}
+
+#[derive(Clone, Copy)]
+struct CollectorTaskSideEffectPolicy {
+    updates_station_collection_status: bool,
+    emits_collector_observation: bool,
+    refreshes_group_bindings: bool,
+}
+
+fn collector_task_side_effect_policy(task_type: &str) -> CollectorTaskSideEffectPolicy {
+    match task_type {
+        "detect" | "balance" => CollectorTaskSideEffectPolicy {
+            updates_station_collection_status: true,
+            emits_collector_observation: true,
+            refreshes_group_bindings: false,
+        },
+        "groups" | "full" => CollectorTaskSideEffectPolicy {
+            updates_station_collection_status: true,
+            emits_collector_observation: true,
+            refreshes_group_bindings: true,
+        },
+        "published_status" => CollectorTaskSideEffectPolicy {
+            updates_station_collection_status: false,
+            emits_collector_observation: false,
+            refreshes_group_bindings: false,
+        },
+        // `validate_request` rejects unknown tasks. Defaulting to no side effects
+        // keeps any future task isolated until it receives an explicit policy.
+        _ => CollectorTaskSideEffectPolicy {
+            updates_station_collection_status: false,
+            emits_collector_observation: false,
+            refreshes_group_bindings: false,
+        },
+    }
+}
+
+fn task_updates_station_collection_status(task_type: &str) -> bool {
+    collector_task_side_effect_policy(task_type).updates_station_collection_status
+}
+
+/// Published status is a display-only optional child of Full collection. Its
+/// failure must stay visible in its own source state without degrading the
+/// station's core collector status.
+fn station_collection_status_for_request(request: &CollectorApplyRequest) -> &str {
+    if request.task_type != "full" {
+        return &request.status;
+    }
+
+    let Some(children) = request
+        .summary_json
+        .get("childRuns")
+        .and_then(Value::as_array)
+    else {
+        return &request.status;
+    };
+    let core_children = children
+        .iter()
+        .filter(|child| {
+            matches!(
+                child.get("task").and_then(Value::as_str),
+                Some("balance" | "groups" | "detect")
+            )
+        })
+        .collect::<Vec<_>>();
+    if !core_children.is_empty()
+        && core_children
+            .iter()
+            .all(|child| child.get("status").and_then(Value::as_str) == Some("success"))
+    {
+        "success"
+    } else {
+        &request.status
     }
 }
 
@@ -1019,7 +1305,7 @@ fn validate_request(request: &CollectorApplyRequest) -> Result<(), ApplicationEr
         || request.adapter.trim().is_empty()
         || !matches!(
             request.task_type.as_str(),
-            "detect" | "balance" | "groups" | "full"
+            "detect" | "balance" | "groups" | "published_status" | "full"
         )
         || !matches!(
             request.status.as_str(),
@@ -1101,18 +1387,9 @@ fn group_transition_observation(
             {
                 (
                     AlertEventType::GroupMissing,
-                    ObservationKind::Abnormal,
+                    ObservationKind::Change,
                     Severity::Info,
                     "group_missing",
-                )
-            } else if current.binding_status == BINDING_STATUS_AVAILABLE
-                && previous_status == Some(BINDING_STATUS_MISSING)
-            {
-                (
-                    AlertEventType::GroupMissing,
-                    ObservationKind::Healthy,
-                    Severity::Info,
-                    "group_available",
                 )
             } else if current.binding_status == BINDING_STATUS_AVAILABLE
                 && transition.previous.is_none()
@@ -1375,7 +1652,14 @@ mod tests {
         application::{
             credentials::CredentialService, error::ApplicationError, stations::StationService,
         },
-        models::{station_keys::CreateStationKeyInput, stations::CreateStationInput},
+        models::{
+            station_keys::CreateStationKeyInput,
+            station_published_status::{
+                PublishedMonitorFact, PublishedMonitorIdentityKind, PublishedMonitorSampleFact,
+                PublishedSampleOutcome,
+            },
+            stations::{CreateStationInput, UpdateStationInput},
+        },
         persistence::{runtime::PersistenceRuntime, stores::collector_store::GroupState},
         services::secrets::vault::DataKeyVault,
     };
@@ -1520,7 +1804,8 @@ mod tests {
             "station_group:station-1:group-hash"
         );
 
-        let mut missing_current = transition.current.clone();
+        let available_current = transition.current.clone();
+        let mut missing_current = available_current.clone();
         missing_current.binding_status = BINDING_STATUS_MISSING.to_string();
         let missing = group_transition_observation(
             &GroupTransition {
@@ -1532,13 +1817,496 @@ mod tests {
         )
         .expect("missing group emits an informational observation");
         assert_eq!(missing.event_type, AlertEventType::GroupMissing);
+        assert_eq!(missing.kind, ObservationKind::Change);
         assert_eq!(missing.severity, Severity::Info);
+
+        assert!(group_transition_observation(
+            &GroupTransition {
+                previous: Some(GroupState {
+                    binding_status: BINDING_STATUS_MISSING.to_string(),
+                    ..available_current.clone()
+                }),
+                current: available_current,
+            },
+            "1700000001000",
+            "run-3",
+        )
+        .is_none());
     }
 
     #[test]
     fn child_collection_runs_do_not_create_duplicate_collector_incidents() {
         assert!(should_emit_collector_observation(None));
         assert!(!should_emit_collector_observation(Some("full-run-1")));
+    }
+
+    #[test]
+    fn published_status_apply_request_is_valid_and_never_updates_core_task_failures() {
+        let request = CollectorApplyRequest {
+            run_key: "published-status-run".to_string(),
+            station_id: "station-1".to_string(),
+            endpoint_revision: 1,
+            parent_run_id: None,
+            adapter: "sub2api".to_string(),
+            task_type: "published_status".to_string(),
+            status: "partial".to_string(),
+            facts: CanonicalCollectorFacts::default(),
+            summary_json: json!({ "endpointResults": [] }),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: Some("rate_limited".to_string()),
+            error_message: Some("published status rate limited".to_string()),
+            endpoint_count: 1,
+            success_count: 0,
+            failure_count: 1,
+            manual_action_required: false,
+            next_due_at: None,
+        };
+
+        assert!(validate_request(&request).is_ok());
+        assert!(!task_updates_station_collection_status(&request.task_type));
+        let policy = collector_task_side_effect_policy(&request.task_type);
+        assert!(!policy.emits_collector_observation);
+        assert!(!policy.refreshes_group_bindings);
+        assert!(
+            merge_collector_failed_task_types(vec!["published_status".to_string()], &request)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn only_successful_published_status_reads_replace_superseded_endpoint_facts() {
+        assert!(is_successful_published_status_read(
+            PublishedStatusSourceState::Available,
+            None
+        ));
+        assert!(is_successful_published_status_read(
+            PublishedStatusSourceState::Empty,
+            None
+        ));
+        assert!(is_successful_published_status_read(
+            PublishedStatusSourceState::Degraded,
+            None
+        ));
+        assert!(!is_successful_published_status_read(
+            PublishedStatusSourceState::Unsupported,
+            None
+        ));
+        assert!(!is_successful_published_status_read(
+            PublishedStatusSourceState::AuthorizationRequired,
+            None
+        ));
+        assert!(!is_successful_published_status_read(
+            PublishedStatusSourceState::Failed,
+            None
+        ));
+        assert!(!is_successful_published_status_read(
+            PublishedStatusSourceState::Available,
+            Some("malformed_payload")
+        ));
+    }
+
+    #[tokio::test]
+    async fn failed_new_endpoint_revision_preserves_prior_published_status_facts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("published-status.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let initial_station = stations
+            .create(CreateStationInput {
+                name: "Published status fixture".to_string(),
+                station_type: "sub2api".to_string(),
+                website_url: "https://published-status.example.test".to_string(),
+                api_base_url: "https://published-status.example.test/v1".to_string(),
+                api_key: String::new(),
+                collector_proxy_mode: "inherit".to_string(),
+                collector_proxy_url: None,
+                enabled: true,
+                credit_per_cny: 1.0,
+                low_balance_threshold_cny: None,
+                collection_interval_minutes: 5,
+                note: None,
+            })
+            .await
+            .expect("station");
+
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-revision-one",
+                &initial_station,
+                Some(published_status_batch(&initial_station)),
+                "success",
+            ))
+            .await
+            .expect("initial published facts");
+        assert_eq!(
+            published_status_fact_counts(&runtime, &initial_station.id, 1).await,
+            (1, 1, 1)
+        );
+
+        let updated_station = stations
+            .update_station(UpdateStationInput {
+                id: initial_station.id.clone(),
+                name: initial_station.name.clone(),
+                station_type: initial_station.station_type.clone(),
+                website_url: initial_station.website_url.clone(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: initial_station.collector_proxy_mode.clone(),
+                collector_proxy_url: initial_station.collector_proxy_url.clone(),
+                enabled: initial_station.enabled,
+                credit_per_cny: initial_station.credit_per_cny,
+                low_balance_threshold_cny: initial_station.low_balance_threshold_cny,
+                collection_interval_minutes: initial_station.collection_interval_minutes,
+                note: initial_station.note.clone(),
+            })
+            .await
+            .expect("station endpoint update");
+        assert_eq!(updated_station.endpoint_revision, 2);
+
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-revision-two-failed",
+                &updated_station,
+                None,
+                "failed",
+            ))
+            .await
+            .expect("failed published-status run is recorded");
+        assert_eq!(
+            published_status_fact_counts(&runtime, &initial_station.id, 1).await,
+            (1, 1, 1)
+        );
+        assert_eq!(
+            published_status_fact_counts(&runtime, &initial_station.id, 2).await,
+            (1, 0, 0)
+        );
+
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-revision-two-success",
+                &updated_station,
+                Some(published_status_batch(&updated_station)),
+                "success",
+            ))
+            .await
+            .expect("successful replacement facts");
+        assert_eq!(
+            published_status_fact_counts(&runtime, &initial_station.id, 1).await,
+            (0, 0, 0)
+        );
+        assert_eq!(
+            published_status_fact_counts(&runtime, &initial_station.id, 2).await,
+            (1, 1, 1)
+        );
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn station_published_status_apply_replay_is_idempotent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("published-status.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(published_status_station_input())
+            .await
+            .expect("station");
+        let request = published_status_apply_request(
+            "published-status-idempotent-run",
+            &station,
+            Some(published_status_batch(&station)),
+            "success",
+        );
+
+        let first = collectors
+            .apply_result(request.clone())
+            .await
+            .expect("initial apply");
+        let replay = collectors
+            .apply_result(request)
+            .await
+            .expect("idempotent replay");
+
+        assert!(first.inserted);
+        assert!(!replay.inserted);
+        assert_eq!(first.run_id, replay.run_id);
+        assert_eq!(first.snapshot_id, replay.snapshot_id);
+        assert_eq!(
+            published_status_fact_counts(&runtime, &station.id, station.endpoint_revision).await,
+            (1, 1, 1)
+        );
+        assert_eq!(
+            collector_apply_row_counts(&runtime, &station.id).await,
+            (1, 1, 1)
+        );
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn station_published_status_partial_and_failed_applies_preserve_prior_facts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("published-status.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(published_status_station_input())
+            .await
+            .expect("station");
+
+        let mut complete = published_status_batch(&station);
+        let mut retained = complete.monitors[0].clone();
+        retained.upstream_monitor_id = "monitor-retained".to_string();
+        retained.name = "Retained Monitor".to_string();
+        complete.monitors.push(retained.clone());
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-complete-inventory",
+                &station,
+                Some(complete),
+                "success",
+            ))
+            .await
+            .expect("complete inventory");
+
+        let mut partial = published_status_batch(&station);
+        partial.source_state = PublishedStatusSourceState::Degraded;
+        partial.completeness = PublishedStatusCompleteness::Partial;
+        partial.monitors = vec![retained];
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-partial-inventory",
+                &station,
+                Some(partial),
+                "partial",
+            ))
+            .await
+            .expect("partial inventory");
+
+        assert_eq!(
+            published_status_current_monitor_ids(&runtime, &station.id, station.endpoint_revision)
+                .await,
+            vec![
+                "monitor-fixture".to_string(),
+                "monitor-retained".to_string()
+            ]
+        );
+
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-failed-inventory",
+                &station,
+                None,
+                "failed",
+            ))
+            .await
+            .expect("failed attempt is persisted without clearing facts");
+
+        assert_eq!(
+            published_status_fact_counts(&runtime, &station.id, station.endpoint_revision).await,
+            (1, 2, 2)
+        );
+        assert_eq!(
+            published_status_current_monitor_ids(&runtime, &station.id, station.endpoint_revision)
+                .await,
+            vec![
+                "monitor-fixture".to_string(),
+                "monitor-retained".to_string()
+            ]
+        );
+        let source =
+            published_status_source_metadata(&runtime, &station.id, station.endpoint_revision)
+                .await;
+        assert_eq!(source.0, "failed");
+        assert_eq!(source.1.as_deref(), Some("1700000000000"));
+        assert_eq!(source.2.as_deref(), Some("1700000000000"));
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn station_published_status_apply_sql_failure_rolls_back_run_snapshot_and_facts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("published-status.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let station = stations
+            .create(published_status_station_input())
+            .await
+            .expect("station");
+
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-before-sql-failure",
+                &station,
+                Some(published_status_batch(&station)),
+                "success",
+            ))
+            .await
+            .expect("initial facts");
+        runtime
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        CREATE TRIGGER fail_published_status_sample_insert
+                        BEFORE INSERT ON station_published_monitor_samples
+                        BEGIN
+                            SELECT RAISE(ABORT, 'fixture published status sample failure');
+                        END
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("install failure trigger");
+
+        let mut batch = published_status_batch(&station);
+        batch.monitors[0].samples[0].checked_at_ms += 1;
+        assert!(matches!(
+            collectors
+                .apply_result(published_status_apply_request(
+                    "published-status-sql-failure",
+                    &station,
+                    Some(batch),
+                    "success",
+                ))
+                .await,
+            Err(ApplicationError::Internal)
+        ));
+
+        assert_eq!(
+            published_status_fact_counts(&runtime, &station.id, station.endpoint_revision).await,
+            (1, 1, 1)
+        );
+        assert_eq!(
+            collector_apply_row_counts(&runtime, &station.id).await,
+            (1, 1, 1)
+        );
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn station_published_status_apply_rejects_stale_revision_before_writing_a_run() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("published-status.sqlite3"))
+                .await
+                .expect("runtime");
+        let clock: Arc<dyn Clock> = Arc::new(FixedClock);
+        let ids: Arc<dyn IdGenerator> = Arc::new(SequenceIds::default());
+        let stations = StationService::new(runtime.handle(), clock.clone(), ids.clone());
+        let collectors = CollectorService::new(runtime.handle(), clock, ids);
+        let initial_station = stations
+            .create(published_status_station_input())
+            .await
+            .expect("station");
+        collectors
+            .apply_result(published_status_apply_request(
+                "published-status-before-revision-change",
+                &initial_station,
+                Some(published_status_batch(&initial_station)),
+                "success",
+            ))
+            .await
+            .expect("initial facts");
+        let stale_request = published_status_apply_request(
+            "published-status-stale-revision",
+            &initial_station,
+            Some(published_status_batch(&initial_station)),
+            "success",
+        );
+        let updated_station = stations
+            .update_station(UpdateStationInput {
+                id: initial_station.id.clone(),
+                name: initial_station.name.clone(),
+                station_type: initial_station.station_type.clone(),
+                website_url: initial_station.website_url.clone(),
+                api_base_url: "https://replacement.example.test/v1".to_string(),
+                api_key: None,
+                collector_proxy_mode: initial_station.collector_proxy_mode.clone(),
+                collector_proxy_url: initial_station.collector_proxy_url.clone(),
+                enabled: initial_station.enabled,
+                credit_per_cny: initial_station.credit_per_cny,
+                low_balance_threshold_cny: initial_station.low_balance_threshold_cny,
+                collection_interval_minutes: initial_station.collection_interval_minutes,
+                note: initial_station.note.clone(),
+            })
+            .await
+            .expect("station endpoint update");
+
+        assert!(matches!(
+            collectors.apply_result(stale_request).await,
+            Err(ApplicationError::StaleRevision)
+        ));
+        assert_eq!(
+            published_status_fact_counts(
+                &runtime,
+                &initial_station.id,
+                initial_station.endpoint_revision,
+            )
+            .await,
+            (1, 1, 1)
+        );
+        assert_eq!(
+            published_status_fact_counts(
+                &runtime,
+                &initial_station.id,
+                updated_station.endpoint_revision
+            )
+            .await,
+            (0, 0, 0)
+        );
+        assert_eq!(
+            collector_apply_row_counts(&runtime, &initial_station.id).await,
+            (1, 1, 1)
+        );
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[test]
+    fn every_known_collector_task_has_an_explicit_side_effect_policy() {
+        for task_type in ["detect", "balance", "groups", "published_status", "full"] {
+            let policy = collector_task_side_effect_policy(task_type);
+            if task_type == "published_status" {
+                assert!(!policy.updates_station_collection_status);
+                assert!(!policy.emits_collector_observation);
+            } else {
+                assert!(policy.updates_station_collection_status);
+                assert!(policy.emits_collector_observation);
+            }
+        }
+        let unknown = collector_task_side_effect_policy("future_task");
+        assert!(!unknown.updates_station_collection_status);
+        assert!(!unknown.emits_collector_observation);
+        assert!(!unknown.refreshes_group_bindings);
     }
 
     #[test]
@@ -1593,6 +2361,40 @@ mod tests {
             ),
             vec!["groups".to_string()]
         );
+
+        request.status = "success".to_string();
+        request.summary_json = json!({
+            "childRuns": [
+                { "task": "balance", "status": "success" },
+                { "task": "groups", "status": "success" },
+                { "task": "published_status", "status": "failed" },
+            ],
+        });
+        assert!(merge_collector_failed_task_types(
+            vec!["published_status".to_string(), "full".to_string()],
+            &request,
+        )
+        .is_empty());
+        assert_eq!(station_collection_status_for_request(&request), "success");
+
+        request.summary_json = json!({
+            "childRuns": [
+                { "task": "balance", "status": "success" },
+                { "task": "groups", "status": "partial" },
+                { "task": "published_status", "status": "failed" },
+            ],
+        });
+        request.status = "partial".to_string();
+        assert_eq!(station_collection_status_for_request(&request), "partial");
+
+        request.summary_json = json!({
+            "childRuns": [
+                { "task": "balance", "status": "success" },
+                { "task": "groups", "status": "failed" },
+                { "task": "published_status", "status": "failed" },
+            ],
+        });
+        assert_eq!(station_collection_status_for_request(&request), "partial");
     }
 
     fn capture_request(station_id: &str, endpoint_revision: i64) -> CaptureSnapshotRequest {
@@ -2041,6 +2843,199 @@ mod tests {
             manual_action_required: status == "manual_required",
             next_due_at: None,
         }
+    }
+
+    fn published_status_station_input() -> CreateStationInput {
+        CreateStationInput {
+            name: "Published status fixture".to_string(),
+            station_type: "sub2api".to_string(),
+            website_url: "https://published-status.example.test".to_string(),
+            api_base_url: "https://published-status.example.test/v1".to_string(),
+            api_key: String::new(),
+            collector_proxy_mode: "inherit".to_string(),
+            collector_proxy_url: None,
+            enabled: true,
+            credit_per_cny: 1.0,
+            low_balance_threshold_cny: None,
+            collection_interval_minutes: 5,
+            note: None,
+        }
+    }
+
+    fn published_status_apply_request(
+        run_key: &str,
+        station: &Station,
+        batch: Option<PublishedStatusBatch>,
+        status: &str,
+    ) -> CollectorApplyRequest {
+        CollectorApplyRequest {
+            run_key: run_key.to_string(),
+            station_id: station.id.clone(),
+            endpoint_revision: station.endpoint_revision,
+            parent_run_id: None,
+            adapter: "sub2api".to_string(),
+            task_type: "published_status".to_string(),
+            status: status.to_string(),
+            facts: CanonicalCollectorFacts {
+                published_status: batch,
+                ..CanonicalCollectorFacts::default()
+            },
+            summary_json: json!({}),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: (status == "failed").then(|| "rate_limited".to_string()),
+            error_message: (status == "failed").then(|| "fixture failure".to_string()),
+            endpoint_count: 1,
+            success_count: i64::from(status != "failed"),
+            failure_count: i64::from(status == "failed"),
+            manual_action_required: false,
+            next_due_at: None,
+        }
+    }
+
+    fn published_status_batch(station: &Station) -> PublishedStatusBatch {
+        PublishedStatusBatch {
+            station_id: station.id.clone(),
+            endpoint_revision: station.endpoint_revision,
+            source_kind: STATION_PUBLISHED_STATUS_SOURCE_KIND.to_string(),
+            source_state: PublishedStatusSourceState::Available,
+            completeness: PublishedStatusCompleteness::Complete,
+            monitors: vec![PublishedMonitorFact {
+                upstream_monitor_id: "monitor-fixture".to_string(),
+                identity_kind: PublishedMonitorIdentityKind::UpstreamId,
+                name: "Fixture Monitor".to_string(),
+                provider: "openai".to_string(),
+                group_name: Some("default".to_string()),
+                primary_model: "fixture-model".to_string(),
+                extra_models: Vec::new(),
+                current_outcome: PublishedSampleOutcome::Available,
+                source_status: "healthy".to_string(),
+                current_latency_ms: Some(20),
+                current_ping_latency_ms: Some(3),
+                upstream_checked_at_ms: Some(1_700_000_000_000),
+                samples: vec![PublishedMonitorSampleFact {
+                    model: "fixture-model".to_string(),
+                    outcome: PublishedSampleOutcome::Available,
+                    source_status: "healthy".to_string(),
+                    latency_ms: Some(20),
+                    ping_latency_ms: Some(3),
+                    checked_at_ms: 1_700_000_000_000,
+                    safe_message: None,
+                }],
+            }],
+            collected_at_ms: 1_700_000_000_000,
+            safe_error_kind: None,
+        }
+    }
+
+    async fn collector_apply_row_counts(
+        runtime: &PersistenceRuntime,
+        station_id: &str,
+    ) -> (i64, i64, i64) {
+        let mut read = runtime.begin_read().await.expect("read session");
+        let runs = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM collector_runs WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("run count");
+        let snapshots = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM collector_snapshots WHERE station_id = ?1",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("snapshot count");
+        let task_states = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM collector_task_state WHERE station_id = ?1 AND task_type = 'published_status'",
+        )
+        .bind(station_id)
+        .fetch_one(read.connection())
+        .await
+        .expect("task state count");
+        (runs, snapshots, task_states)
+    }
+
+    async fn published_status_current_monitor_ids(
+        runtime: &PersistenceRuntime,
+        station_id: &str,
+        endpoint_revision: i64,
+    ) -> Vec<String> {
+        let mut read = runtime.begin_read().await.expect("read session");
+        sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT upstream_monitor_id
+            FROM station_published_monitors
+            WHERE station_id = ?1
+              AND endpoint_revision = ?2
+              AND presence_status = 'current'
+            ORDER BY upstream_monitor_id ASC
+            "#,
+        )
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .fetch_all(read.connection())
+        .await
+        .expect("current monitor ids")
+    }
+
+    async fn published_status_source_metadata(
+        runtime: &PersistenceRuntime,
+        station_id: &str,
+        endpoint_revision: i64,
+    ) -> (String, Option<String>, Option<String>) {
+        let mut read = runtime.begin_read().await.expect("read session");
+        let row = sqlx::query(
+            r#"
+            SELECT source_state, last_success_at, last_complete_at
+            FROM station_published_status_sources
+            WHERE station_id = ?1 AND endpoint_revision = ?2
+            "#,
+        )
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .fetch_one(read.connection())
+        .await
+        .expect("source metadata");
+        (
+            row.get("source_state"),
+            row.get("last_success_at"),
+            row.get("last_complete_at"),
+        )
+    }
+
+    async fn published_status_fact_counts(
+        runtime: &PersistenceRuntime,
+        station_id: &str,
+        endpoint_revision: i64,
+    ) -> (i64, i64, i64) {
+        let mut read = runtime.begin_read().await.expect("read session");
+        let sources = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM station_published_status_sources WHERE station_id = ?1 AND endpoint_revision = ?2",
+        )
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .fetch_one(read.connection())
+        .await
+        .expect("source count");
+        let monitors = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM station_published_monitors WHERE station_id = ?1 AND endpoint_revision = ?2",
+        )
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .fetch_one(read.connection())
+        .await
+        .expect("monitor count");
+        let samples = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM station_published_monitor_samples samples JOIN station_published_monitors monitors ON monitors.id = samples.monitor_id WHERE monitors.station_id = ?1 AND monitors.endpoint_revision = ?2",
+        )
+        .bind(station_id)
+        .bind(endpoint_revision)
+        .fetch_one(read.connection())
+        .await
+        .expect("sample count");
+        (sources, monitors, samples)
     }
 
     #[tokio::test]

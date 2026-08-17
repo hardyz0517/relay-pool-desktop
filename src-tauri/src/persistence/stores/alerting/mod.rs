@@ -347,6 +347,7 @@ impl IncidentStore {
                  WHERE (station_id = ?1 OR station_key_id IN (
                      SELECT id FROM station_keys WHERE station_id = ?1
                  ))
+                   AND event_type != 'group_missing'
                    AND lifecycle_state IN ('pending', 'open', 'recovering')
              )
                AND status IN ('scheduled', 'claimed', 'outcome_unknown')",
@@ -367,6 +368,7 @@ impl IncidentStore {
              WHERE (station_id = ?1 OR station_key_id IN (
                  SELECT id FROM station_keys WHERE station_id = ?1
              ))
+               AND event_type != 'group_missing'
                AND lifecycle_state IN ('pending', 'open', 'recovering')",
         )
         .bind(station_id)
@@ -396,6 +398,7 @@ impl IncidentStore {
              WHERE incident_id IN (
                  SELECT id FROM change_incidents
                  WHERE lifecycle_state IN ('pending', 'open', 'recovering')
+                   AND event_type != 'group_missing'
                    AND (?1 IS NULL OR station_id = ?1)
                    AND (?2 IS NULL OR severity = ?2)
              )
@@ -416,6 +419,7 @@ impl IncidentStore {
                  next_notification_at_ms = NULL, version = version + 1,
                  updated_at_ms = ?3
              WHERE lifecycle_state IN ('pending', 'open', 'recovering')
+               AND event_type != 'group_missing'
                AND (?1 IS NULL OR station_id = ?1)
                AND (?2 IS NULL OR severity = ?2)",
         )
@@ -441,6 +445,7 @@ impl IncidentStore {
                  LEFT JOIN incident_attention a
                    ON a.incident_id = i.id AND a.episode_number = i.episode_number
                  WHERE (?1 IS NULL OR i.station_id = ?1)
+                   AND i.event_type != 'group_missing'
                    AND (?2 IS NULL OR i.severity = ?2)
                    AND (
                        ?3 IS NULL
@@ -476,7 +481,8 @@ impl IncidentStore {
         let rows = sqlx::query(
             "SELECT id, episode_number, station_id, station_key_id, object_type, object_id, condition_key
              FROM change_incidents
-             WHERE lifecycle_state IN ('pending', 'open', 'recovering')",
+             WHERE lifecycle_state IN ('pending', 'open', 'recovering')
+               AND event_type != 'group_missing'",
         )
         .fetch_all(session.connection())
         .await?;
@@ -701,6 +707,7 @@ impl IncidentStore {
                         next_notification_at_ms, version, created_at_ms, updated_at_ms
                  FROM change_incidents
                  WHERE lifecycle_state IN ('pending','open','recovering')
+                   AND event_type != 'group_missing'
                    AND (updated_at_ms > ?1 OR (updated_at_ms = ?1 AND id > ?2))
                  ORDER BY updated_at_ms ASC, id ASC LIMIT ?3",
             )
@@ -721,6 +728,7 @@ impl IncidentStore {
                         next_notification_at_ms, version, created_at_ms, updated_at_ms
                  FROM change_incidents
                  WHERE lifecycle_state IN ('pending','open','recovering')
+                   AND event_type != 'group_missing'
                  ORDER BY updated_at_ms ASC, id ASC LIMIT ?1",
             )
             .bind(limit)
@@ -1098,7 +1106,7 @@ mod tests {
                             consecutive_abnormal_count, consecutive_healthy_count,
                             last_observation_summary_json, version, created_at_ms, updated_at_ms
                          ) VALUES (
-                            'group-missing-1', 'fixture:group-missing-1', 'group_missing', 'open', 'warning', 'warning',
+                            'info-incident-1', 'fixture:info-incident-1', 'station_down', 'open', 'info', 'info',
                             'global', 'fixture', 1, 100, 100, 1, 1, 1, 0, '{}', 1, 100, 100
                          )",
                     )
@@ -1110,7 +1118,7 @@ mod tests {
                         .await?;
                     assert_eq!(marked, 1);
                     let seen_at_ms = sqlx::query_scalar::<_, Option<i64>>(
-                        "SELECT seen_at_ms FROM incident_attention WHERE incident_id = 'group-missing-1'",
+                        "SELECT seen_at_ms FROM incident_attention WHERE incident_id = 'info-incident-1'",
                     )
                     .fetch_one(write.connection())
                     .await?;
@@ -1294,6 +1302,7 @@ impl AttentionStore {
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
              WHERE i.lifecycle_state IN ('pending', 'open', 'recovering')
+               AND i.event_type != 'group_missing'
                AND a.seen_at_ms IS NULL
                AND (?1 IS NULL OR i.station_id = ?1)
                AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)

@@ -12,9 +12,14 @@ const MAX_PROXY_URL_BYTES: usize = 2_048;
 const MAX_RATE_MULTIPLIER: f64 = 1_000.0;
 const MAX_BALANCE_THRESHOLD_CNY: f64 = 1_000_000_000.0;
 const MAX_INTERVAL_MINUTES: u16 = 10_080;
+const MAX_PUBLISHED_STATUS_INTERVAL_MINUTES: u16 = 1_440;
 const MAX_TIMEOUT_SECONDS: u16 = 300;
 const MAX_LOCAL_ACCESS_KEY_BYTES: usize = 4_096;
 const MAX_EXTERNAL_URL_BYTES: usize = 2_048;
+
+const fn default_published_status_interval_minutes() -> u16 {
+    5
+}
 
 pub type AppStatusDto = AppStatus;
 
@@ -217,6 +222,8 @@ pub struct UpdateSettingsInputDto {
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
     pub group_rate_interval_minutes: u16,
+    #[serde(default = "default_published_status_interval_minutes")]
+    pub published_status_interval_minutes: u16,
     pub pricing_refresh_interval_minutes: u16,
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
@@ -248,6 +255,7 @@ impl UpdateSettingsInputDto {
             collector_interval_minutes: self.collector_interval_minutes,
             balance_interval_minutes: self.balance_interval_minutes,
             group_rate_interval_minutes: self.group_rate_interval_minutes,
+            published_status_interval_minutes: self.published_status_interval_minutes,
             pricing_refresh_interval_minutes: self.pricing_refresh_interval_minutes,
             collector_timeout_seconds: self.collector_timeout_seconds,
             collector_max_concurrency: self.collector_max_concurrency,
@@ -314,6 +322,15 @@ impl UpdateSettingsInputDto {
                     "The interval is out of range.",
                 ));
             }
+        }
+        if !(1..=MAX_PUBLISHED_STATUS_INTERVAL_MINUTES)
+            .contains(&self.published_status_interval_minutes)
+        {
+            return Err(invalid_input(
+                "publishedStatusIntervalMinutes",
+                "out_of_range",
+                "The published status interval is out of range.",
+            ));
         }
         if !(3..=MAX_TIMEOUT_SECONDS).contains(&self.collector_timeout_seconds) {
             return Err(invalid_input(
@@ -409,6 +426,7 @@ pub struct SettingsDto {
     pub collector_interval_minutes: u16,
     pub balance_interval_minutes: u16,
     pub group_rate_interval_minutes: u16,
+    pub published_status_interval_minutes: u16,
     pub pricing_refresh_interval_minutes: u16,
     pub collector_timeout_seconds: u16,
     pub collector_max_concurrency: u16,
@@ -436,6 +454,7 @@ impl From<AppSettings> for SettingsDto {
             collector_interval_minutes: value.collector_interval_minutes,
             balance_interval_minutes: value.balance_interval_minutes,
             group_rate_interval_minutes: value.group_rate_interval_minutes,
+            published_status_interval_minutes: value.published_status_interval_minutes,
             pricing_refresh_interval_minutes: value.pricing_refresh_interval_minutes,
             collector_timeout_seconds: value.collector_timeout_seconds,
             collector_max_concurrency: value.collector_max_concurrency,
@@ -518,6 +537,7 @@ export type UpdateSettingsInputDto = {
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
   groupRateIntervalMinutes: number;
+  publishedStatusIntervalMinutes: number;
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
@@ -548,6 +568,7 @@ export type SettingsDto = {
   collectorIntervalMinutes: number;
   balanceIntervalMinutes: number;
   groupRateIntervalMinutes: number;
+  publishedStatusIntervalMinutes: number;
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
@@ -584,6 +605,7 @@ mod input_contract_tests {
             "collectorIntervalMinutes": 30,
             "balanceIntervalMinutes": 5,
             "groupRateIntervalMinutes": 20,
+            "publishedStatusIntervalMinutes": 5,
             "pricingRefreshIntervalMinutes": 60,
             "collectorTimeoutSeconds": 15,
             "collectorMaxConcurrency": 3,
@@ -631,6 +653,18 @@ mod input_contract_tests {
             .expect("object")
             .remove("maxRateMultiplier");
         assert!(UpdateSettingsInputDto::parse(missing).is_err());
+    }
+
+    #[test]
+    fn update_settings_accepts_old_clients_without_the_published_status_interval() {
+        let mut input = valid_input();
+        input
+            .as_object_mut()
+            .expect("object")
+            .remove("publishedStatusIntervalMinutes");
+
+        let parsed = UpdateSettingsInputDto::parse(input).expect("old IPC payload is accepted");
+        assert_eq!(parsed.published_status_interval_minutes, 5);
     }
 
     #[test]

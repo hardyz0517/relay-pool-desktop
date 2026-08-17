@@ -71,6 +71,9 @@ impl CollectorDriver for NewApiCollectorDriver {
                 CollectorTaskKind::Detect => Ok(detect_output()),
                 CollectorTaskKind::Balance => collect_balance(context).await,
                 CollectorTaskKind::Groups => collect_groups(context).await,
+                CollectorTaskKind::PublishedStatus => Err(DriverFailure::unsupported(
+                    "NewAPI does not publish a supported channel monitor status API",
+                )),
             };
             if result.is_err() {
                 emit_driver_failure_event();

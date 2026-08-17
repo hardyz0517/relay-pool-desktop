@@ -19,6 +19,7 @@ pub(crate) mod runtime_status;
 pub(crate) mod settings;
 pub(crate) mod station_collector_operations;
 pub(crate) mod station_keys;
+pub(crate) mod station_published_status;
 pub(crate) mod stations;
 pub(crate) mod updater_data_recovery;
 
@@ -118,6 +119,7 @@ pub const REGISTERED_TYPES: &[TypeDescriptor] = &[
     runtime_status::RUNTIME_STATUS_TYPE,
     settings::SETTINGS_TYPE,
     station_collector_operations::STATION_COLLECTOR_OPERATIONS_TYPE,
+    station_published_status::STATION_PUBLISHED_STATUS_TYPE,
     station_keys::STATION_KEY_TYPE,
     stations::STATION_TYPE,
     updater_data_recovery::UPDATER_DATA_RECOVERY_TYPE,

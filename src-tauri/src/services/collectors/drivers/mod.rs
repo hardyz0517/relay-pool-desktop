@@ -4,8 +4,9 @@ pub mod sub2api;
 use std::sync::Arc;
 
 use crate::services::collectors::contract::{
-    AuthorizationCapabilityDescriptor, CollectorCapabilityDescriptor, DriverCapabilities,
-    ProviderDescriptor, ProviderEntry, ProviderKind, RemoteKeyCapabilityDescriptor,
+    AuthorizationCapabilityDescriptor, CollectorCapabilityDescriptor, CollectorTaskKind,
+    DriverCapabilities, ProviderDescriptor, ProviderEntry, ProviderKind,
+    RemoteKeyCapabilityDescriptor,
 };
 
 pub fn static_provider_entries() -> Vec<ProviderEntry> {
@@ -65,3 +66,38 @@ pub fn static_provider_entries() -> Vec<ProviderEntry> {
 }
 
 pub const REQUIRED_PROVIDER_KINDS: &[ProviderKind] = &[ProviderKind::Sub2Api, ProviderKind::NewApi];
+
+/// Read-model composition has no runtime registry, so it reads the same
+/// provider descriptors used to build the registry rather than hard-coding
+/// individual station types.
+pub fn station_type_supports_collector_task(station_type: &str, task: CollectorTaskKind) -> bool {
+    static_provider_entries().into_iter().any(|entry| {
+        entry
+            .descriptor
+            .station_types
+            .contains(&station_type.trim())
+            && entry
+                .descriptor
+                .capabilities
+                .collector
+                .as_ref()
+                .is_some_and(|capability| capability.supported_tasks.contains(&task))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn published_status_support_is_declared_by_provider_capability() {
+        assert!(station_type_supports_collector_task(
+            "sub2api",
+            CollectorTaskKind::PublishedStatus,
+        ));
+        assert!(!station_type_supports_collector_task(
+            "newapi",
+            CollectorTaskKind::PublishedStatus,
+        ));
+    }
+}

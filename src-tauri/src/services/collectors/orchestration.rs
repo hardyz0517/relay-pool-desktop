@@ -105,6 +105,27 @@ impl ProviderRegistry {
         self.entries.len()
     }
 
+    /// Returns whether a registered provider owns the station type and
+    /// explicitly declares the requested collector task.
+    pub fn supports_collector_task_for_station_type(
+        &self,
+        station_type: &str,
+        task: crate::services::collectors::contract::CollectorTaskKind,
+    ) -> bool {
+        self.entries.values().any(|entry| {
+            entry
+                .descriptor
+                .station_types
+                .contains(&station_type.trim())
+                && entry
+                    .descriptor
+                    .capabilities
+                    .collector
+                    .as_ref()
+                    .is_some_and(|capability| capability.supported_tasks.contains(&task))
+        })
+    }
+
     fn entry(&self, kind: ProviderKind) -> Result<&ProviderEntry, DriverFailure> {
         self.entries
             .get(&kind)

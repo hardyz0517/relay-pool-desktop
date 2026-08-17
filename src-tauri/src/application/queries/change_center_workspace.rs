@@ -411,7 +411,12 @@ fn activity_summary_from_row(
     let group_name = row
         .last_observation_summary_json
         .as_deref()
-        .and_then(group_name_from_summary);
+        .and_then(group_name_from_summary)
+        .or_else(|| {
+            row.new_value_json
+                .as_deref()
+                .and_then(group_name_from_summary)
+        });
     ActivitySummary {
         record_type: row.record_type,
         id: row.id,
@@ -616,7 +621,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn activity_feed_combines_incidents_and_informational_changes() {
+    async fn activity_feed_lists_informational_changes_in_time_order() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runtime =
             PersistenceRuntime::initialize_new(&temp.path().join("activity-feed.sqlite3"))
@@ -627,19 +632,6 @@ mod tests {
             .handle()
             .write(|write| {
                 Box::pin(async move {
-                    sqlx::query(
-                        "INSERT INTO change_incidents (
-                            id, condition_key, event_type, lifecycle_state,
-                            base_severity, severity, object_type,
-                            lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
-                            last_seen_at_ms, occurrence_count, episode_occurrence_count,
-                            last_observation_summary_json, created_at_ms, updated_at_ms
-                         ) VALUES ('incident-1', 'fixture:group_missing', 'group_missing', 'open',
-                                   'info', 'info', 'station_group_binding', 'fixture', 1, 200, 200,
-                                   1, 1, '{}', 200, 200)",
-                    )
-                    .execute(write.connection())
-                    .await?;
                     for (id, event_type, observed_at_ms, summary) in [
                         (
                             "change-1",
@@ -652,6 +644,12 @@ mod tests {
                             "group_rate_changed",
                             300_i64,
                             r#"{"groupName":"default","oldEffectiveRateMultiplier":1.0,"newEffectiveRateMultiplier":0.8}"#,
+                        ),
+                        (
+                            "change-3",
+                            "group_missing",
+                            200_i64,
+                            r#"{"groupName":"Claude Kiro 高速","status":"missing"}"#,
                         ),
                     ] {
                         sqlx::query(
@@ -681,13 +679,13 @@ mod tests {
             .list_activity(None, None, None, false, None, 2)
             .await
             .expect("first activity page");
-        assert_eq!(first_page.active_count, 1);
+        assert_eq!(first_page.active_count, 0);
         assert_eq!(first_page.unseen_count, 3);
         assert_eq!(first_page.items.len(), 2);
         assert_eq!(first_page.items[0].record_type, "change");
         assert_eq!(first_page.items[0].event_type, "group_rate_changed");
         assert_eq!(first_page.items[0].severity, "info");
-        assert_eq!(first_page.items[1].record_type, "incident");
+        assert_eq!(first_page.items[1].record_type, "change");
         assert_eq!(first_page.items[1].event_type, "group_missing");
         assert_eq!(first_page.items[1].severity, "info");
 
@@ -703,12 +701,12 @@ mod tests {
             .list_activity(None, None, Some("change"), false, None, 10)
             .await
             .expect("informational activity page");
-        assert_eq!(information_page.items.len(), 2);
+        assert_eq!(information_page.items.len(), 3);
         assert!(information_page
             .items
             .iter()
             .all(|item| item.record_type == "change"));
-        assert_eq!(information_page.unseen_count, 2);
+        assert_eq!(information_page.unseen_count, 3);
 
         runtime
             .handle()
@@ -737,8 +735,87 @@ mod tests {
         assert!(unread_page
             .items
             .iter()
-            .any(|item| item.record_type == "incident"));
+            .all(|item| item.record_type == "change"));
         assert!(unread_page.items.iter().any(|item| item.id == "change-1"));
+
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[tokio::test]
+    async fn activity_cursor_does_not_skip_older_active_incidents() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("activity-cursor.sqlite3"))
+                .await
+                .expect("runtime");
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT INTO change_incidents (
+                            id, condition_key, event_type, lifecycle_state,
+                            base_severity, severity, object_type,
+                            lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
+                            last_seen_at_ms, occurrence_count, episode_occurrence_count,
+                            last_observation_summary_json, created_at_ms, updated_at_ms
+                         ) VALUES ('older-active', 'fixture:older-active', 'collector_failed',
+                                   'open', 'warning', 'warning', 'station', 'fixture', 1,
+                                   100, 100, 1, 1, '{}', 100, 100)",
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    for (id, observed_at_ms) in
+                        [("newer-change", 300_i64), ("middle-change", 200_i64)]
+                    {
+                        sqlx::query(
+                            "INSERT INTO change_event_occurrences (
+                                id, source_observation_key, event_type, category,
+                                observation_kind, severity, object_type, source,
+                                observed_at_ms, created_at_ms
+                             ) VALUES (?1, ?2, 'audit_change', 'audit_change', 'change',
+                                       'info', 'global', 'fixture', ?3, ?3)",
+                        )
+                        .bind(id)
+                        .bind(format!("fixture:{id}"))
+                        .bind(observed_at_ms)
+                        .execute(write.connection())
+                        .await?;
+                    }
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("activity cursor fixtures");
+
+        let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
+        let first_page = query
+            .list_activity(None, None, None, false, None, 2)
+            .await
+            .expect("first activity page");
+        assert_eq!(first_page.active_count, 1);
+        assert_eq!(
+            first_page
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["newer-change", "middle-change"]
+        );
+
+        let second_page = query
+            .list_activity(None, None, None, false, first_page.next_cursor.as_ref(), 2)
+            .await
+            .expect("second activity page");
+        assert_eq!(
+            second_page
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["older-active"]
+        );
+        assert!(second_page.next_cursor.is_none());
 
         runtime.close().await.expect("close runtime");
     }
@@ -839,7 +916,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_group_incidents_are_info_and_include_the_group_name() {
+    async fn missing_group_activity_is_information_not_an_active_problem() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runtime =
             PersistenceRuntime::initialize_new(&temp.path().join("group-missing.sqlite3"))
@@ -850,16 +927,16 @@ mod tests {
             .write(|write| {
                 Box::pin(async move {
                     sqlx::query(
-                        "INSERT INTO change_incidents (
-                            id, condition_key, event_type, lifecycle_state,
-                            base_severity, severity, object_type,
-                            lifecycle_policy_fingerprint, episode_number, first_seen_at_ms,
-                            last_seen_at_ms, occurrence_count, episode_occurrence_count,
-                            last_observation_summary_json, created_at_ms, updated_at_ms
-                         ) VALUES ('missing-group-1', 'station_group:station-1:group-1',
-                                   'group_missing', 'open', 'warning', 'warning',
-                                   'station_group_binding', 'legacy-fixture', 1, 200, 200,
-                                   1, 1, '{\"groupName\":\"Claude Kiro 高速\"}', 200, 200)",
+                        "INSERT INTO change_event_occurrences (
+                            id, source_observation_key, event_type, category,
+                            observation_kind, severity, condition_key, object_type, source,
+                            reason_code, new_value_json, observed_at_ms, created_at_ms
+                         ) VALUES ('missing-group-1', 'fixture:group_missing', 'group_missing',
+                                   'audit_change', 'change', 'info',
+                                   'station_group:station-1:group-1', 'station_group_binding',
+                                   'fixture', 'group_missing',
+                                   '{\"groupName\":\"Claude Kiro 高速\",\"status\":\"missing\"}',
+                                   200, 200)",
                     )
                     .execute(write.connection())
                     .await?;
@@ -869,16 +946,25 @@ mod tests {
             .await
             .expect("missing group fixture");
 
-        let page = ChangeCenterWorkspaceQuery::new(runtime.handle())
-            .list_current(None, Some("info"), Some("active"), None, 10)
+        let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
+        let information_page = query
+            .list_activity(None, Some("info"), Some("change"), false, None, 10)
             .await
-            .expect("list missing group incident");
-        assert_eq!(page.items.len(), 1);
-        assert_eq!(page.items[0].severity, "info");
+            .expect("list missing group information");
+        assert_eq!(information_page.items.len(), 1);
+        assert_eq!(information_page.items[0].record_type, "change");
+        assert_eq!(information_page.items[0].severity, "info");
         assert_eq!(
-            page.items[0].group_name.as_deref(),
+            information_page.items[0].group_name.as_deref(),
             Some("Claude Kiro 高速")
         );
+
+        let active_page = query
+            .list_current(None, None, Some("active"), None, 10)
+            .await
+            .expect("list active problems");
+        assert!(active_page.items.is_empty());
+        assert_eq!(active_page.active_count, 0);
 
         runtime.close().await.expect("close runtime");
     }

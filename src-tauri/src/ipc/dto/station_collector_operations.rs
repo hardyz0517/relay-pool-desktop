@@ -44,6 +44,7 @@ pub enum StationCollectorTaskTypeDto {
     Detect,
     Balance,
     Groups,
+    PublishedStatus,
     Full,
 }
 
