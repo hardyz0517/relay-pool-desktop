@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const repoRoot = process.cwd();
 const migrationsDir = path.join(repoRoot, "src-tauri", "src", "persistence", "migrations");
@@ -13,22 +14,15 @@ const catalogPath = path.join(
   "catalog.rs",
 );
 
-const migrationSql = fs
-  .readdirSync(migrationsDir)
-  .filter((name) => name.endsWith(".sql"))
-  .sort()
-  .map((name) => fs.readFileSync(path.join(migrationsDir, name), "utf8"))
-  .join("\n")
-  .replace(/--.*$/gm, "");
 const catalogSource = fs.readFileSync(catalogPath, "utf8");
 
-const actualTables = extractMigrationTables(migrationSql);
+const actualTables = extractMigrationTables(runMigrations());
 const declaredTables = extractCatalogTables(catalogSource);
 
 assert.equal(
   actualTables.size,
-  37,
-  "portable migration v1 expects the current 37 persisted user tables, including app_secret_bindings",
+  66,
+  "portable migration v1 expects the current 66 persisted user tables, including station-published status facts",
 );
 assert.deepEqual(
   [...declaredTables.keys()].sort(),
@@ -38,8 +32,8 @@ assert.deepEqual(
 
 for (const [table, columns] of actualTables) {
   assert.deepEqual(
-    declaredTables.get(table) ?? [],
-    columns,
+    [...(declaredTables.get(table) ?? [])].sort(),
+    [...columns].sort(),
     `MigrationDataCatalog column list drifted for table ${table}`,
   );
 }
@@ -52,41 +46,38 @@ assert.match(
 
 console.log(`portable migration catalog covers ${actualTables.size} tables`);
 
-function extractMigrationTables(sql) {
-  const tables = new Map();
-  const createRe = /\bCREATE\s+(?:TEMP\s+)?TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/gi;
-  let match;
-  while ((match = createRe.exec(sql))) {
-    const table = match[1];
-    if (/^persistence_v\d+_schema_guard$/.test(table)) continue;
-    const openParen = sql.indexOf("(", match.index);
-    const closeParen = matchingParen(sql, openParen);
-    const body = sql.slice(openParen + 1, closeParen);
-    tables.set(table, extractCreateColumns(body));
-    createRe.lastIndex = closeParen + 1;
+function runMigrations() {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON;");
+  for (const migration of fs.readdirSync(migrationsDir).filter((name) => name.endsWith(".sql")).sort()) {
+    db.exec(fs.readFileSync(path.join(migrationsDir, migration), "utf8"));
   }
-
-  const alterRe = /\bALTER\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\s+ADD\s+COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)\b/gi;
-  while ((match = alterRe.exec(sql))) {
-    const [, table, column] = match;
-    const columns = tables.get(table);
-    assert.ok(columns, `ALTER TABLE referenced unknown table ${table}`);
-    columns.push(column);
-  }
-
-  return new Map([...tables.entries()].sort(([a], [b]) => a.localeCompare(b)));
+  return db;
 }
 
-function extractCreateColumns(body) {
-  return splitTopLevel(body)
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .filter((part) => !/^(PRIMARY|FOREIGN|UNIQUE|CHECK|CONSTRAINT)\b/i.test(part))
-    .map((part) => {
-      const match = part.match(/^["`[]?([A-Za-z_][A-Za-z0-9_]*)/);
-      assert.ok(match, `could not parse CREATE TABLE column from ${part}`);
-      return match[1];
-    });
+function extractMigrationTables(db) {
+  const tables = new Map();
+  const ignoredDerivedTables = new Set([
+    "dashboard_request_metric_rollups",
+    "dashboard_request_cost_rollups",
+    "dashboard_request_cost_totals_rollups",
+    "station_endpoint_health",
+    "station_key_health",
+  ]);
+  const tableNames = db
+    .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    .all()
+    .map((row) => row.name)
+    .filter((table) => !ignoredDerivedTables.has(table));
+  for (const table of tableNames) {
+    assert.match(table, /^[A-Za-z_][A-Za-z0-9_]*$/, `unsafe schema table name ${table}`);
+    const columns = db
+      .prepare(`PRAGMA table_info("${table}")`)
+      .all()
+      .map((column) => column.name);
+    tables.set(table, columns);
+  }
+  return tables;
 }
 
 function extractCatalogTables(source) {
@@ -113,51 +104,4 @@ function extractCatalogTables(source) {
   }
 
   return new Map([...tables.entries()].sort(([a], [b]) => a.localeCompare(b)));
-}
-
-function matchingParen(text, openIndex) {
-  let depth = 0;
-  let quote = null;
-  for (let index = openIndex; index < text.length; index += 1) {
-    const char = text[index];
-    if (quote) {
-      if (char === quote && text[index - 1] !== "\\") quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-    } else if (char === "(") {
-      depth += 1;
-    } else if (char === ")") {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  throw new Error("unclosed CREATE TABLE parenthesis");
-}
-
-function splitTopLevel(text) {
-  const parts = [];
-  let start = 0;
-  let depth = 0;
-  let quote = null;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (quote) {
-      if (char === quote && text[index - 1] !== "\\") quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-    } else if (char === "(") {
-      depth += 1;
-    } else if (char === ")") {
-      depth -= 1;
-    } else if (char === "," && depth === 0) {
-      parts.push(text.slice(start, index));
-      start = index + 1;
-    }
-  }
-  parts.push(text.slice(start));
-  return parts;
 }
