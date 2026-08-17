@@ -2,6 +2,7 @@ import type {
   CreateStationInputDto,
   EndpointPingResultDto,
   SettingsDto,
+  StationPublishedStatusWorkspaceDto,
   StationEndpointHealthDto,
   StationDto,
   UpdateSettingsInputDto,
@@ -26,6 +27,7 @@ import type {
   DataStoreStartupView,
   SchemaCompatibilityView,
 } from "@/lib/types/dataRecovery";
+import type { StationPublishedStatusWorkspace } from "@/lib/types/stationPublishedStatus";
 
 export function normalizeSettings(settings: SettingsDto | AppSettings): AppSettings {
   const maybeSettings = settings as SettingsDto & Partial<Record<keyof AppSettings, unknown>>;
@@ -47,6 +49,7 @@ export function normalizeSettings(settings: SettingsDto | AppSettings): AppSetti
     ),
     balanceIntervalMinutes: normalizeNumber(maybeSettings.balanceIntervalMinutes, 5),
     groupRateIntervalMinutes: normalizeNumber(maybeSettings.groupRateIntervalMinutes, 20),
+    publishedStatusIntervalMinutes: normalizeNumber(maybeSettings.publishedStatusIntervalMinutes, 5),
     pricingRefreshIntervalMinutes: normalizeNumber(maybeSettings.pricingRefreshIntervalMinutes, 60),
     collectorTimeoutSeconds: normalizeNumber(maybeSettings.collectorTimeoutSeconds, 15),
     collectorMaxConcurrency: normalizeNumber(maybeSettings.collectorMaxConcurrency, 3),
@@ -72,6 +75,7 @@ export function toUpdateSettingsDto(input: UpdateSettingsInput): UpdateSettingsI
     collectorIntervalMinutes: input.collectorIntervalMinutes,
     balanceIntervalMinutes: input.balanceIntervalMinutes,
     groupRateIntervalMinutes: input.groupRateIntervalMinutes,
+    publishedStatusIntervalMinutes: input.publishedStatusIntervalMinutes,
     pricingRefreshIntervalMinutes: input.pricingRefreshIntervalMinutes,
     collectorTimeoutSeconds: input.collectorTimeoutSeconds,
     collectorMaxConcurrency: input.collectorMaxConcurrency,
@@ -145,6 +149,49 @@ export function normalizeEndpointPingResult(result: EndpointPingResultDto): Endp
   return {
     ...result,
     status: result.status === "success" ? "success" : "failed",
+  };
+}
+
+export function normalizeStationPublishedStatusWorkspace(
+  workspace: StationPublishedStatusWorkspaceDto,
+): StationPublishedStatusWorkspace {
+  return {
+    stationId: workspace.stationId,
+    endpointRevision: workspace.endpointRevision,
+    supported: workspace.supported,
+    sourceState: workspace.sourceState,
+    completeness: workspace.completeness,
+    lastAttemptAtMs: workspace.lastAttemptAtMs,
+    lastSuccessAtMs: workspace.lastSuccessAtMs,
+    lastCompleteAtMs: workspace.lastCompleteAtMs,
+    monitorCount: workspace.monitorCount,
+    stale: workspace.stale,
+    safeErrorKind: workspace.safeErrorKind,
+    rows: workspace.rows.map((row) => ({
+      rowKey: row.id,
+      upstreamMonitorId: row.upstreamMonitorId,
+      identityKind: row.identityKind,
+      name: row.name,
+      provider: row.provider,
+      groupName: row.groupName,
+      primaryModel: row.primaryModel,
+      extraModels: row.extraModels,
+      currentOutcome: row.currentOutcome,
+      currentLatencyMs: row.currentLatencyMs,
+      currentPingLatencyMs: row.currentPingLatencyMs,
+      recentAvailabilityPercent: row.recentAvailabilityPercent,
+      upstreamCheckedAtMs: row.upstreamCheckedAtMs,
+      recentSamples: row.samples.flatMap((sample, index) => {
+        return [{
+          id: `${row.id}:${sample.model}:${sample.checkedAtMs}:${index}`,
+          model: sample.model,
+          outcome: sample.outcome,
+          latencyMs: sample.latencyMs,
+          pingLatencyMs: sample.pingLatencyMs,
+          checkedAtMs: sample.checkedAtMs,
+        }];
+      }),
+    })),
   };
 }
 

@@ -99,6 +99,10 @@ describe("StationAssetRows", () => {
 
     expect(host.textContent).toContain("8.00USD");
 
+    const actionStrip = host.querySelector<HTMLElement>("[data-station-action-strip]");
+    expect(actionStrip?.className).toContain("md:focus-within:opacity-100");
+    expect(actionStrip?.className).not.toContain("md:group-focus-within:opacity-100");
+
     const rowButton = host.querySelector<HTMLElement>('[role="button"]')!;
     await act(async () => rowButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(onOpen).toHaveBeenCalledWith(row.station);

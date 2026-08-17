@@ -66,6 +66,7 @@ import {
   clearAlertingIncidents as clearAlertingIncidentsBinding,
   getRuntimeStatus as getRuntimeStatusBinding,
   getSettings as getSettingsBinding,
+  getStationPublishedStatusWorkspace as getStationPublishedStatusWorkspaceBinding,
   getStationCredentials as getStationCredentialsBinding,
   getStationCapacityDomain as getStationCapacityDomainBinding,
   getStationKeyCapabilities as getStationKeyCapabilitiesBinding,
@@ -189,6 +190,7 @@ import type {
 import {
   normalizeSettings,
   normalizeEndpointPingResult,
+  normalizeStationPublishedStatusWorkspace,
   normalizeStation,
   normalizeStationEndpointHealth,
   normalizeDataStoreCandidate,
@@ -317,6 +319,12 @@ export class DesktopBackend implements BackendClient {
     finishWebAuthorizationSession: (stationId: string) => finishWebAuthorizationSessionBinding({ stationId }),
     clearCaptureSession: (stationId: string) => clearCaptureSessionBinding({ stationId }),
     closeCaptureSession: (stationId: string) => closeCaptureSessionBinding({ stationId }),
+  };
+  readonly stationPublishedStatus = {
+    getStationPublishedStatusWorkspace: (stationId: string) =>
+      getStationPublishedStatusWorkspaceBinding({ stationId }).then(
+        normalizeStationPublishedStatusWorkspace,
+      ),
   };
   readonly providerDrafts: BackendClient["providerDrafts"] = {
     createOrResume: (input) => createOrResumeProviderDraftBinding(input),

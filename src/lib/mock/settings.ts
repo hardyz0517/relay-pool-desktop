@@ -4,6 +4,7 @@ export type MockSettings = {
   collectionIntervalMinutes: number;
   balanceIntervalMinutes: number;
   groupRateIntervalMinutes: number;
+  publishedStatusIntervalMinutes: number;
   pricingRefreshIntervalMinutes: number;
   collectorTimeoutSeconds: number;
   collectorMaxConcurrency: number;
@@ -22,6 +23,7 @@ export const mockSettings: MockSettings = {
   collectionIntervalMinutes: 30,
   balanceIntervalMinutes: 5,
   groupRateIntervalMinutes: 20,
+  publishedStatusIntervalMinutes: 5,
   pricingRefreshIntervalMinutes: 60,
   collectorTimeoutSeconds: 15,
   collectorMaxConcurrency: 3,

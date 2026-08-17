@@ -1,4 +1,4 @@
-import { AlertCircle, Clock3, Filter, Gauge, Power, PowerOff, Route, Search, Server, UsersRound } from "lucide-react";
+import { AlertCircle, Clock3, Filter, Gauge, Power, PowerOff, Route, Search, Server, Upload, UsersRound } from "lucide-react";
 import { Button, Dialog, EmptyState, MetricPanel, SectionCard, useToast } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
@@ -26,6 +26,8 @@ type LocalRoutingStatusTabProps = {
   nowMs: number;
   proxyActionPending: boolean;
   onToggleProxy: () => void;
+  importingCCSwitch: boolean;
+  onImportToCCSwitch: () => void;
   deepLink?: VersionedRoutingDeepLink | null;
 };
 
@@ -45,6 +47,8 @@ export function LocalRoutingStatusTab({
   nowMs,
   proxyActionPending,
   onToggleProxy,
+  importingCCSwitch,
+  onImportToCCSwitch,
   deepLink,
 }: LocalRoutingStatusTabProps) {
   const [decisionDetailsOpen, setDecisionDetailsOpen] = useState(false);
@@ -144,6 +148,15 @@ export function LocalRoutingStatusTab({
                 <button type="button" className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-hover hover:text-foreground" aria-label="复制本地访问密钥" onClick={() => void copyLocalAccessKey()}>
                   <Copy className="h-3.5 w-3.5" />
                 </button>
+                <Button
+                  disabled={importingCCSwitch}
+                  size="sm"
+                  variant="secondary"
+                  onClick={onImportToCCSwitch}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  {importingCCSwitch ? "导入中" : "导入到 CCSwitch"}
+                </Button>
               </div>
             </div>
           </div>

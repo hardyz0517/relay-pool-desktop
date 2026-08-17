@@ -7,8 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
 import { CHANGE_CENTER_DEFAULT_VIEW, ChangeCenterPage, type ChangeCenterView } from "./ChangeCenterPage";
 
+const queryCalls: Array<{ queryKey?: readonly unknown[]; enabled?: boolean }> = [];
+
 vi.mock("@/lib/query/useActivityQuery", () => ({
-  useActivityQuery: (options: { queryKey?: readonly unknown[] }) => {
+  useActivityQuery: (options: { queryKey?: readonly unknown[]; enabled?: boolean }) => {
+    queryCalls.push(options);
     const queryName = options.queryKey?.[0];
     if (queryName === "stations") {
       return { data: [], error: null, isFetching: false, isPending: false };
@@ -45,6 +48,7 @@ describe("ChangeCenterPage view retention", () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
+    queryCalls.length = 0;
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -88,5 +92,21 @@ describe("ChangeCenterPage view retention", () => {
     const restoredUnreadView = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
       .find((button) => button.textContent === "未读");
     expect(restoredUnreadView?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("loads active incidents from the current-incident query", () => {
+    render(true);
+    const activeView = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+      .find((button) => button.textContent === "活动");
+    act(() => activeView?.click());
+
+    expect(queryCalls).toContainEqual(expect.objectContaining({
+      queryKey: ["alertingCurrent", expect.objectContaining({ lifecycleState: "active" })],
+      enabled: true,
+    }));
+    expect(queryCalls).toContainEqual(expect.objectContaining({
+      queryKey: ["alertingActivity", expect.anything()],
+      enabled: false,
+    }));
   });
 });

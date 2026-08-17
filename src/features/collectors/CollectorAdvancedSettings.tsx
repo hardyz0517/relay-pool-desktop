@@ -163,6 +163,7 @@ export function CollectorAdvancedSettings() {
         <div className="grid gap-3 border-t border-border p-3 sm:grid-cols-2 lg:grid-cols-3">
           <NumberField label="余额周期" field="balanceIntervalMinutes" suffix="分钟" draft={draft} errors={errors} onChange={updateField} />
           <NumberField label="分组 / 倍率周期" field="groupRateIntervalMinutes" suffix="分钟" draft={draft} errors={errors} onChange={updateField} />
+          <NumberField label="官方状态周期" field="publishedStatusIntervalMinutes" suffix="分钟" draft={draft} errors={errors} onChange={updateField} />
           <NumberField label="价格周期" field="pricingRefreshIntervalMinutes" suffix="分钟" draft={draft} errors={errors} onChange={updateField} />
           <NumberField label="采集超时" field="collectorTimeoutSeconds" suffix="秒" draft={draft} errors={errors} onChange={updateField} />
           <NumberField label="采集并发数" field="collectorMaxConcurrency" draft={draft} errors={errors} onChange={updateField} />
@@ -201,7 +202,11 @@ function NumberField({
   const id = `collector-setting-${field}`;
   const errorId = `${id}-error`;
   const min = field === "collectorTimeoutSeconds" ? 3 : 1;
-  const max = field === "collectorMaxConcurrency" ? 8 : undefined;
+  const max = field === "collectorMaxConcurrency"
+    ? 8
+    : field === "publishedStatusIntervalMinutes"
+      ? 1440
+      : undefined;
   const error = errors[field];
 
   return (

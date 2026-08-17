@@ -125,6 +125,7 @@ import type {
   PricingGroupMonitorStatusInput,
   PricingGroupMonitorStatusWorkspace,
 } from "@/lib/types/pricingMonitoring";
+import type { StationPublishedStatusWorkspace } from "@/lib/types/stationPublishedStatus";
 import type {
   RuntimeDiagnosticsPageDto,
   RuntimeDiagnosticsQueryDto,
@@ -359,6 +360,10 @@ export type CollectorsDomainClient = {
   closeCaptureSession(stationId: string): Promise<CaptureSessionStatus>;
 };
 
+export type StationPublishedStatusDomainClient = {
+  getStationPublishedStatusWorkspace(stationId: string): Promise<StationPublishedStatusWorkspace>;
+};
+
 export type ProviderDraftsDomainClient = {
   createOrResume(input: { baseStationId: string | null; payload: ProviderDraftPayload }): Promise<ProviderDraft>;
   get(draftId: string): Promise<ProviderDraft>;
@@ -398,6 +403,7 @@ export type BackendClient = {
   readonly routing: RoutingDomainClient;
   readonly channels: ChannelsDomainClient;
   readonly collectors: CollectorsDomainClient;
+  readonly stationPublishedStatus?: StationPublishedStatusDomainClient;
   readonly providerDrafts?: ProviderDraftsDomainClient;
   readonly updater: UpdaterDomainClient;
   readonly runtime: RuntimeDomainClient;

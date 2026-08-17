@@ -1,4 +1,4 @@
-export type CollectorTaskType = "detect" | "balance" | "groups" | "full";
+export type CollectorTaskType = "detect" | "balance" | "groups" | "published_status" | "full";
 
 export type CollectorRunStatus =
   | "running"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { Button, EmptyState, useToast } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -26,6 +27,11 @@ import {
   type StationDetailLoadingAction,
   type StationDetailRefreshAction,
 } from "./components/StationDetailContent";
+import { StationPublishedStatusSection } from "./components/StationPublishedStatusSection";
+import {
+  invalidateStationPublishedStatusCollectionQueries,
+  useStationPublishedStatus,
+} from "./useStationPublishedStatus";
 
 type StationDetailPageProps = {
   stationId: string | null;
@@ -73,6 +79,8 @@ export function StationDetailPage({
   onOpenRoutingDeepLink,
 }: StationDetailPageProps) {
   const toast = useToast();
+  const queryClient = useQueryClient();
+  const publishedStatus = useStationPublishedStatus(stationId);
   const mountedRef = useRef(true);
   const loadRequestRef = useRef(0);
   const refreshRequestRef = useRef(0);
@@ -235,6 +243,9 @@ export function StationDetailPage({
       if (!isRefreshCurrent(stationId, requestId)) {
         return;
       }
+      if (action === "full") {
+        await invalidateStationPublishedStatusCollectionQueries(queryClient, stationId);
+      }
       const nextData = await loadDetail(stationId, "silent");
       if (!nextData || !isRefreshCurrent(stationId, requestId)) {
         return;
@@ -263,7 +274,7 @@ export function StationDetailPage({
         setLoadingAction(null);
       }
     }
-  }, [isRefreshCurrent, loadDetail, loadingAction, stationId, toast]);
+  }, [isRefreshCurrent, loadDetail, loadingAction, queryClient, stationId, toast]);
 
   const handleManualAuthorization = useCallback(async () => {
     if (!stationId || loadingAction) {
@@ -326,6 +337,18 @@ export function StationDetailPage({
       }
       onAuthorize={() => void handleManualAuthorization()}
       onRefresh={(action) => void handleRefresh(action)}
+      publishedStatusSection={
+        <StationPublishedStatusSection
+          stationName={viewModel.station.name}
+          workspace={publishedStatus.workspace}
+          isLoading={publishedStatus.isLoading}
+          isError={publishedStatus.isError}
+          isRefreshing={publishedStatus.isRefreshing}
+          isRefreshError={publishedStatus.isRefreshError}
+          onRefresh={publishedStatus.refresh}
+          onRetryWorkspace={publishedStatus.retryWorkspace}
+        />
+      }
     />
   );
 }

@@ -40,6 +40,7 @@ export type StationDetailContentProps = {
   onOpenRoutingDeepLink?: () => void;
   onAuthorize: () => void;
   onRefresh: (action: StationDetailRefreshAction) => void;
+  publishedStatusSection?: React.ReactNode;
 };
 
 const statusToneByDetailTone: Record<DetailTone, StatusTone> = {
@@ -109,6 +110,7 @@ export function StationDetailContent({
   onOpenRoutingDeepLink,
   onAuthorize,
   onRefresh,
+  publishedStatusSection,
 }: StationDetailContentProps) {
   const station = viewModel.station;
   const actionBusy = loadingAction !== null;
@@ -251,6 +253,8 @@ export function StationDetailContent({
           })}
         </div>
       </section>
+
+      {publishedStatusSection}
 
       <section className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">

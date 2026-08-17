@@ -44,6 +44,7 @@ import {
   getRequestDecisionTrace,
   getRuntimeStatus,
   getSettings,
+  getStationPublishedStatusWorkspace,
   getStationKeyCapabilities,
   getStationCredentials,
   getStationKeyHealth,
@@ -143,6 +144,7 @@ const settingsInput = {
   collectorIntervalMinutes: 5,
   balanceIntervalMinutes: 5,
   groupRateIntervalMinutes: 20,
+  publishedStatusIntervalMinutes: 5,
   pricingRefreshIntervalMinutes: 60,
   collectorTimeoutSeconds: 15,
   collectorMaxConcurrency: 3,
@@ -398,6 +400,14 @@ describe("generated settings/stations transport envelopes", () => {
     expect(transport.invoke.mock.calls.slice(-2)).toEqual([
       ["list_channel_monitors", { input: {} }],
       ["list_channel_monitor_templates", { input: {} }],
+    ]);
+  });
+
+  it("sends the published-status workspace read through its dedicated generated envelope", async () => {
+    await getStationPublishedStatusWorkspace({ stationId: "station-1" });
+
+    expect(transport.invoke.mock.calls.slice(-1)).toEqual([
+      ["get_station_published_status_workspace", { input: { stationId: "station-1" } }],
     ]);
   });
 

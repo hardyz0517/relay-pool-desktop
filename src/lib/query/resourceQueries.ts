@@ -5,6 +5,7 @@ import {
   listLatestCollectorSnapshots,
   listCollectorSnapshots,
 } from "@/lib/api/collector";
+import { getStationPublishedStatusWorkspace } from "@/lib/api/stationPublishedStatus";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
 import { listCurrentStationBalanceSnapshots, listModelBasePrices } from "@/lib/api/economics";
 import {
@@ -141,6 +142,16 @@ export const keyPoolQueryOptions = (refetchInterval: number | false = false) =>
     queryFn: listKeyPoolItems,
     staleTime: 5_000,
     refetchInterval,
+  });
+
+export const stationPublishedStatusQueryOptions = (stationId: string | null) =>
+  queryOptions({
+    queryKey: queryKeys.stationPublishedStatus(stationId ?? ""),
+    enabled: Boolean(stationId),
+    queryFn: () => getStationPublishedStatusWorkspace(stationId ?? ""),
+    staleTime: 5_000,
+    retry: false,
+    meta: { suppressGlobalErrorNotification: true },
   });
 
 export const modelBasePricesQueryOptions = () =>

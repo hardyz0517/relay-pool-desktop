@@ -87,6 +87,7 @@ function fixtureSettings() {
     collectorIntervalMinutes: 30,
     balanceIntervalMinutes: 5,
     groupRateIntervalMinutes: 20,
+    publishedStatusIntervalMinutes: 5,
     pricingRefreshIntervalMinutes: 60,
     collectorTimeoutSeconds: 15,
     collectorMaxConcurrency: 3,

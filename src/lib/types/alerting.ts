@@ -252,7 +252,7 @@ export const ALERT_EVENT_OPTIONS: readonly AlertingEventOption[] = [
   { value: "station_down", label: "站点不可用", description: "站点健康检查失败", defaultSeverity: "critical", configurable: true },
   { value: "balance_low", label: "余额偏低", description: "余额低于配置的阈值", defaultSeverity: "warning", configurable: true },
   { value: "balance_depleted", label: "余额耗尽", description: "余额已经耗尽", defaultSeverity: "critical", configurable: true },
-  { value: "group_missing", label: "分组缺失", description: "绑定的远程分组不存在", defaultSeverity: "warning", configurable: true },
+  { value: "group_missing", label: "分组缺失", description: "绑定的远程分组不存在", defaultSeverity: "info", configurable: true },
   { value: "key_group_unresolved", label: "密钥分组无法解析", description: "密钥无法解析到有效分组", defaultSeverity: "warning", configurable: true },
   { value: "price_expired", label: "价格已过期", description: "价格快照已过期", defaultSeverity: "warning", configurable: true },
   { value: "key_invalid", label: "密钥无效", description: "站点密钥校验失败", defaultSeverity: "critical", configurable: true },
@@ -267,6 +267,7 @@ export const ALERT_EVENT_OPTIONS: readonly AlertingEventOption[] = [
 ];
 
 export const AUDIT_ALERT_EVENT_TYPES: readonly AlertEventType[] = [
+  "group_missing",
   "group_added",
   "rate_changed",
   "group_rate_changed",

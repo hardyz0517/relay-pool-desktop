@@ -16,6 +16,7 @@ import {
 import { readError } from "@/lib/errors";
 import {
   alertingActivityQueryOptions,
+  alertingCurrentQueryOptions,
   alertingDeliveriesQueryOptions,
   alertingOccurrencesQueryOptions,
 } from "@/lib/queries/alertingQueries";
@@ -59,7 +60,7 @@ function createChangeCenterRoutingLink(event: ChangeCenterLinkEvent): ChangeCent
   return event.stationId ? { kind: "station", stationId: event.stationId, source: "change_center" } : null;
 }
 
-export type ChangeCenterView = "all" | "unread";
+export type ChangeCenterView = "all" | "unread" | "active";
 type Severity = "all" | "critical" | "warning" | "info";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
@@ -67,12 +68,30 @@ export const CHANGE_CENTER_DEFAULT_VIEW: ChangeCenterView = "all";
 export const CHANGE_CENTER_VIEW_OPTIONS: Array<{ value: ChangeCenterView; label: string }> = [
   { value: "all", label: "全部" },
   { value: "unread", label: "未读" },
+  { value: "active", label: "活动" },
 ];
 export const CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW = {
   all: "all",
   unread: "all",
+  active: "incidents",
 } as const satisfies Record<ChangeCenterView, "incidents" | "information" | "all">;
 export const CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW = CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW;
+
+function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
+  return {
+    ...incident,
+    recordType: "incident",
+    objectType: null,
+    objectId: null,
+    stationKeyId: null,
+    source: null,
+    reasonCode: null,
+    activityAtMs: incident.updatedAtMs,
+    oldValueJson: null,
+    newValueJson: null,
+    impactJson: null,
+  };
+}
 
 export function ChangeCenterPage({
   onOpenRoutingDeepLink,
@@ -97,6 +116,15 @@ export function ChangeCenterPage({
   const stationsQuery = useActivityQuery(stationsQueryOptions());
   const settingsQuery = useActivityQuery(settingsQueryOptions());
   const developerModeEnabled = settingsQuery.data?.developerModeEnabled ?? false;
+  const incidentQuery = useActivityQuery({
+    ...alertingCurrentQueryOptions({
+      severity: severity === "all" ? null : severity,
+      lifecycleState: view === "active" ? "active" : null,
+      cursor: pageCursors[page] ?? null,
+      limit: pageSize,
+    }),
+    enabled: view === "active",
+  });
   const activityQuery = useActivityQuery({
     ...alertingActivityQueryOptions({
       severity: severity === "all" ? null : severity,
@@ -105,14 +133,15 @@ export function ChangeCenterPage({
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
     }),
-    enabled: true,
+    enabled: view !== "active",
   });
+  const incidents = incidentQuery.data?.items ?? [];
   const activities = useMemo<AlertingActivity[]>(
-    () => activityQuery.data?.items ?? [],
-    [activityQuery.data?.items],
+    () => view === "active" ? incidents.map(toIncidentActivity) : (activityQuery.data?.items ?? []),
+    [activityQuery.data?.items, incidents, view],
   );
-  const pageData = activityQuery.data;
-  const activeQuery = activityQuery;
+  const pageData = view === "active" ? incidentQuery.data : activityQuery.data;
+  const activeQuery = view === "active" ? incidentQuery : activityQuery;
   const stationNames = useMemo(
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
@@ -217,7 +246,7 @@ export function ChangeCenterPage({
     try {
       const clearedCount = await clearAlertingActivity({
         severity: severity === "all" ? null : severity,
-        lifecycleState: null,
+        lifecycleState: view === "active" || view === "unread" ? view : null,
         recordScope: CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW[view],
       });
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
@@ -479,7 +508,7 @@ function formatAuditValue(value: string) {
 }
 
 function reasonLabel(value: string | null) {
-  return ({ group_added: "新增分组", group_rate_changed: "分组倍率变化", key_group_bound: "密钥已绑定分组", price_changed: "价格变化", model_added: "新增模型", model_removed: "模型移除" } as Record<string, string>)[value ?? ""] ?? value ?? "配置发生变化";
+  return ({ group_added: "新增分组", group_missing: "远程分组未找到", group_rate_changed: "分组倍率变化", key_group_bound: "密钥已绑定分组", price_changed: "价格变化", model_added: "新增模型", model_removed: "模型移除" } as Record<string, string>)[value ?? ""] ?? value ?? "配置发生变化";
 }
 
 function sourceLabel(value: string | null) {

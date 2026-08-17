@@ -126,7 +126,7 @@ export function RoutingStatusDiagnosticsPanel({
             ))}
             {scopedCandidates.length > 6 ? (
               <div className="text-xs text-muted-foreground">
-                还有 {scopedCandidates.length - 6} 个候选，完整排序请到“编辑”页调整。
+                还有 {scopedCandidates.length - 6} 个候选，完整排序请到“策略配置”页调整。
               </div>
             ) : null}
           </div>

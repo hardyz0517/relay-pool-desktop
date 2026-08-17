@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCcw, Upload } from "lucide-react";
 import { usePageQueryEnabled } from "@/app/navigation/PageVisibility";
 import { PageScaffold } from "@/components/shell/PageScaffold";
-import { Button, SegmentedControl, useToast } from "@/components/ui";
+import { SegmentedControl, useToast } from "@/components/ui";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { importRelayPoolToCCSwitch } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
@@ -142,10 +141,6 @@ export function RoutingPage({
     }
   }, [proxyActionPending, queryClient, toast, workspace]);
 
-  const handleRefresh = useCallback(() => {
-    void refreshRoutingQueries(queryClient);
-  }, [queryClient]);
-
   const handleImportToCCSwitch = useCallback(async () => {
     if (importingCCSwitch) return;
     setImportingCCSwitch(true);
@@ -174,31 +169,15 @@ export function RoutingPage({
       title="路由规则"
       actions={
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            disabled={importingCCSwitch}
-            variant="secondary"
-            onClick={() => void handleImportToCCSwitch()}
-          >
-            <Upload className="h-4 w-4" />
-            {importingCCSwitch ? "导入中" : "导入到 CCSwitch"}
-          </Button>
           <SegmentedControl
             ariaLabel="本地路由页面"
             value={activeTab}
             options={[
-              { value: "status", label: "状态" },
-              { value: "edit", label: "编辑" },
+              { value: "status", label: "概览" },
+              { value: "edit", label: "策略配置" },
             ]}
             onChange={setActiveTab}
           />
-          <Button
-            disabled={loading || proxyActionPending}
-            variant="secondary"
-            onClick={handleRefresh}
-          >
-            <RefreshCcw className="h-4 w-4" />
-            刷新
-          </Button>
         </div>
       }
     >
@@ -211,6 +190,8 @@ export function RoutingPage({
             nowMs={nowMs}
             proxyActionPending={proxyActionPending}
             onToggleProxy={() => void handleToggleProxy()}
+            importingCCSwitch={importingCCSwitch}
+            onImportToCCSwitch={() => void handleImportToCCSwitch()}
             deepLink={deepLink}
           />
           {developerModeEnabled ? (

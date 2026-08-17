@@ -9,6 +9,7 @@ export type CollectorFrequencyPreset =
 export type CollectorSettingsDraft = {
   balanceIntervalMinutes: string;
   groupRateIntervalMinutes: string;
+  publishedStatusIntervalMinutes: string;
   pricingRefreshIntervalMinutes: string;
   collectorTimeoutSeconds: string;
   collectorMaxConcurrency: string;
@@ -29,16 +30,19 @@ const FREQUENCY_PRESETS = {
   timely: {
     balanceIntervalMinutes: "2",
     groupRateIntervalMinutes: "10",
+    publishedStatusIntervalMinutes: "2",
     pricingRefreshIntervalMinutes: "30",
   },
   balanced: {
     balanceIntervalMinutes: "5",
     groupRateIntervalMinutes: "20",
+    publishedStatusIntervalMinutes: "5",
     pricingRefreshIntervalMinutes: "60",
   },
   resource_saver: {
     balanceIntervalMinutes: "15",
     groupRateIntervalMinutes: "60",
+    publishedStatusIntervalMinutes: "15",
     pricingRefreshIntervalMinutes: "180",
   },
 } as const;
@@ -49,6 +53,7 @@ export function createCollectorSettingsDraft(
   return {
     balanceIntervalMinutes: String(settings.balanceIntervalMinutes),
     groupRateIntervalMinutes: String(settings.groupRateIntervalMinutes),
+    publishedStatusIntervalMinutes: String(settings.publishedStatusIntervalMinutes),
     pricingRefreshIntervalMinutes: String(settings.pricingRefreshIntervalMinutes),
     collectorTimeoutSeconds: String(settings.collectorTimeoutSeconds),
     collectorMaxConcurrency: String(settings.collectorMaxConcurrency),
@@ -99,6 +104,13 @@ export function parseCollectorSettingsDraft(
   for (const field of intervalFields) {
     value[field] = parseInteger(draft[field], 1, Number.MAX_SAFE_INTEGER, errors, field);
   }
+  value.publishedStatusIntervalMinutes = parseInteger(
+    draft.publishedStatusIntervalMinutes,
+    1,
+    1440,
+    errors,
+    "publishedStatusIntervalMinutes",
+  );
   value.collectorTimeoutSeconds = parseInteger(
     draft.collectorTimeoutSeconds,
     3,

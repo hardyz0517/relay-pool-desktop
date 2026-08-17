@@ -12,7 +12,7 @@ export type CollectorSnapshot = {
   createdAt: string;
 };
 
-export type CollectorTaskType = "detect" | "balance" | "groups" | "full";
+export type CollectorTaskType = "detect" | "balance" | "groups" | "published_status" | "full";
 
 export type CollectorEndpointResult = {
   path: string;

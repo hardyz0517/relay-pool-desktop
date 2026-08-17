@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AlertingChangeActivity } from "@/lib/types/alerting";
+import { defaultAlertPolicy, isAuditAlertEvent, type AlertingChangeActivity } from "@/lib/types/alerting";
 import {
   CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW,
   CHANGE_CENTER_DEFAULT_VIEW,
@@ -7,8 +7,6 @@ import {
   CHANGE_CENTER_VIEW_OPTIONS,
   changeObjectTitle,
   changeSummary,
-  incidentSummary,
-  incidentTitle,
 } from "./ChangeCenterPage";
 
 function changeActivity(overrides: Partial<AlertingChangeActivity> = {}): AlertingChangeActivity {
@@ -47,13 +45,14 @@ function changeActivity(overrides: Partial<AlertingChangeActivity> = {}): Alerti
 describe("change center activity presentation", () => {
   it("defaults to the all view while remaining externally controllable", () => {
     expect(CHANGE_CENTER_DEFAULT_VIEW).toBe("all");
-    expect(CHANGE_CENTER_VIEW_OPTIONS.map((option) => option.value)).toEqual(["all", "unread"]);
+    expect(CHANGE_CENTER_VIEW_OPTIONS.map((option) => option.value)).toEqual(["all", "unread", "active"]);
   });
 
-  it("orders the views with all first and unread second", () => {
+  it("exposes history, unread, and active views in a stable order", () => {
     expect(CHANGE_CENTER_VIEW_OPTIONS).toEqual([
       { value: "all", label: "全部" },
       { value: "unread", label: "未读" },
+      { value: "active", label: "活动" },
     ]);
   });
 
@@ -61,6 +60,7 @@ describe("change center activity presentation", () => {
     expect(CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW).toEqual({
       all: "all",
       unread: "all",
+      active: "incidents",
     });
     expect(CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW).toEqual(CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW);
   });
@@ -88,23 +88,26 @@ describe("change center activity presentation", () => {
     }))).toBe("开发组 · 新增分组");
   });
 
-  it("names the missing group in informational incident titles", () => {
-    expect(incidentTitle({ eventType: "group_missing", groupName: "Claude Kiro 高速" }))
-      .toBe("分组缺失 · Claude Kiro 高速");
-  });
-
-  it("presents missing groups as information rather than an alert lifecycle", () => {
-    const summary = incidentSummary({
-      conditionKey: "station_group:station-1:group-1",
+  it("presents missing groups as an informational change without lifecycle state", () => {
+    const activity = changeActivity({
       eventType: "group_missing",
-      groupName: "Claude Cursor",
-      lifecycleState: "pending",
-      occurrenceCount: 1,
+      reasonCode: "group_missing",
       severity: "info",
       stationId: "station-1",
-    }, "TNTAPI");
+      newValueJson: JSON.stringify({ groupName: "Claude Cursor", status: "missing" }),
+    });
 
-    expect(summary).toBe("远程分组未找到");
-    expect(summary).not.toMatch(/检测中|已出现/);
+    expect(changeObjectTitle(activity, "TNTAPI")).toBe("TNTAPI · Claude Cursor");
+    expect(changeSummary(activity)).toBe("Claude Cursor · 远程分组未找到");
+  });
+
+  it("uses the same non-recovery policy defaults as other informational changes", () => {
+    expect(isAuditAlertEvent("group_missing")).toBe(true);
+    expect(defaultAlertPolicy("group_missing")).toMatchObject({
+      triggerMode: "immediate",
+      triggerCount: null,
+      recoveryCount: 1,
+      recoveryDurationSeconds: null,
+    });
   });
 });
