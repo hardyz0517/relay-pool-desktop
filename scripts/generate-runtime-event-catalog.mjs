@@ -40,6 +40,10 @@ function generateInto(outputDirectory) {
   );
 }
 
+function normalizeLineEndings(bytes) {
+  return Buffer.from(bytes.toString("utf8").replaceAll("\r\n", "\n"), "utf8");
+}
+
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "relay-pool-runtime-catalog-"));
 try {
   const first = path.join(temporaryRoot, "first");
@@ -47,8 +51,8 @@ try {
   generateInto(first);
   generateInto(second);
 
-  const firstBytes = fs.readFileSync(path.join(first, generatedName));
-  const secondBytes = fs.readFileSync(path.join(second, generatedName));
+  const firstBytes = normalizeLineEndings(fs.readFileSync(path.join(first, generatedName)));
+  const secondBytes = normalizeLineEndings(fs.readFileSync(path.join(second, generatedName)));
   assert.deepEqual(
     secondBytes,
     firstBytes,
@@ -59,7 +63,7 @@ try {
   if (check) {
     assert.ok(fs.existsSync(outputPath), `${trackedPath} is missing; run pnpm generate:runtime-event-catalog`);
     assert.deepEqual(
-      fs.readFileSync(outputPath),
+      normalizeLineEndings(fs.readFileSync(outputPath)),
       firstBytes,
       `${trackedPath} has drifted; run pnpm generate:runtime-event-catalog`,
     );
