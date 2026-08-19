@@ -451,6 +451,7 @@ pub(crate) struct AlertingIncidentPageDto {
     pub next_cursor: Option<AlertingCursorOutputDto>,
     pub active_count: i64,
     pub unseen_count: i64,
+    pub total_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -488,6 +489,7 @@ pub(crate) struct AlertingActivityPageDto {
     pub next_cursor: Option<AlertingCursorOutputDto>,
     pub active_count: i64,
     pub unseen_count: i64,
+    pub total_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -671,6 +673,7 @@ impl From<IncidentWorkspacePage> for AlertingIncidentPageDto {
             next_cursor: page.next_cursor.map(Into::into),
             active_count: page.active_count,
             unseen_count: page.unseen_count,
+            total_count: page.total_count,
         }
     }
 }
@@ -682,6 +685,7 @@ impl From<ActivityWorkspacePage> for AlertingActivityPageDto {
             next_cursor: page.next_cursor.map(Into::into),
             active_count: page.active_count,
             unseen_count: page.unseen_count,
+            total_count: page.total_count,
         }
     }
 }
@@ -917,7 +921,7 @@ export type AlertingIncidentSummaryDto = {
 export type AlertingCursorDto = { updatedAtMs: number; id: string };
 export type AlertingIncidentPageDto = {
   items: AlertingIncidentSummaryDto[]; nextCursor: AlertingCursorDto | null;
-  activeCount: number; unseenCount: number;
+  activeCount: number; unseenCount: number; totalCount: number;
 };
 export type AlertingActivityDto = {
   recordType: "incident" | "change"; id: string; eventType: string; severity: string;
@@ -931,7 +935,7 @@ export type AlertingActivityDto = {
 };
 export type AlertingActivityPageDto = {
   items: AlertingActivityDto[]; nextCursor: AlertingCursorDto | null;
-  activeCount: number; unseenCount: number;
+  activeCount: number; unseenCount: number; totalCount: number;
 };
 export type AlertingIncidentInputDto = { incidentId: string; episodeNumber: number };
 export type AlertingHistoryInputDto = AlertingIncidentInputDto & { cursor?: AlertingCursorDto | null; limit?: number };

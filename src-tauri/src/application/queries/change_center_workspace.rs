@@ -40,6 +40,7 @@ pub(crate) struct IncidentWorkspacePage {
     pub next_cursor: Option<IncidentCursor>,
     pub active_count: i64,
     pub unseen_count: i64,
+    pub total_count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +82,7 @@ pub(crate) struct ActivityWorkspacePage {
     pub next_cursor: Option<ActivityCursor>,
     pub active_count: i64,
     pub unseen_count: i64,
+    pub total_count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +172,7 @@ impl ChangeCenterWorkspaceQuery {
             )
             .await?;
         let page_limit = limit.clamp(1, 200) as usize;
+        let total_count = rows.first().map(|row| row.total_count).unwrap_or(0);
         let has_more = rows.len() > page_limit;
         let items = rows
             .into_iter()
@@ -188,6 +191,7 @@ impl ChangeCenterWorkspaceQuery {
             next_cursor,
             active_count,
             unseen_count,
+            total_count,
         })
     }
 
@@ -214,6 +218,7 @@ impl ChangeCenterWorkspaceQuery {
             )
             .await?;
         let page_limit = limit.clamp(1, 200) as usize;
+        let total_count = rows.first().map(|row| row.total_count).unwrap_or(0);
         let has_more = rows.len() > page_limit;
         let items = rows
             .into_iter()
@@ -232,6 +237,7 @@ impl ChangeCenterWorkspaceQuery {
             next_cursor,
             active_count,
             unseen_count,
+            total_count,
         })
     }
 
@@ -681,6 +687,7 @@ mod tests {
             .expect("first activity page");
         assert_eq!(first_page.active_count, 0);
         assert_eq!(first_page.unseen_count, 3);
+        assert_eq!(first_page.total_count, 3);
         assert_eq!(first_page.items.len(), 2);
         assert_eq!(first_page.items[0].record_type, "change");
         assert_eq!(first_page.items[0].event_type, "group_rate_changed");
@@ -694,6 +701,7 @@ mod tests {
             .await
             .expect("second activity page");
         assert_eq!(second_page.items.len(), 1);
+        assert_eq!(second_page.total_count, 3);
         assert_eq!(second_page.items[0].event_type, "group_added");
         assert!(second_page.next_cursor.is_none());
 
@@ -707,6 +715,7 @@ mod tests {
             .iter()
             .all(|item| item.record_type == "change"));
         assert_eq!(information_page.unseen_count, 3);
+        assert_eq!(information_page.total_count, 3);
 
         runtime
             .handle()
@@ -794,6 +803,7 @@ mod tests {
             .await
             .expect("first activity page");
         assert_eq!(first_page.active_count, 1);
+        assert_eq!(first_page.total_count, 3);
         assert_eq!(
             first_page
                 .items
@@ -807,6 +817,7 @@ mod tests {
             .list_activity(None, None, None, false, first_page.next_cursor.as_ref(), 2)
             .await
             .expect("second activity page");
+        assert_eq!(second_page.total_count, 3);
         assert_eq!(
             second_page
                 .items
@@ -890,6 +901,7 @@ mod tests {
             .expect("list current alerts");
 
         assert_eq!(page.active_count, 1);
+        assert_eq!(page.total_count, 1);
         assert_eq!(page.items.len(), 1);
         assert_eq!(
             page.items[0].condition_key,
@@ -965,6 +977,7 @@ mod tests {
             .expect("list active problems");
         assert!(active_page.items.is_empty());
         assert_eq!(active_page.active_count, 0);
+        assert_eq!(active_page.total_count, 0);
 
         runtime.close().await.expect("close runtime");
     }

@@ -5,7 +5,12 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
-import { CHANGE_CENTER_DEFAULT_VIEW, ChangeCenterPage, type ChangeCenterView } from "./ChangeCenterPage";
+import {
+  buildChangeCenterPageInfo,
+  CHANGE_CENTER_DEFAULT_VIEW,
+  ChangeCenterPage,
+  type ChangeCenterView,
+} from "./ChangeCenterPage";
 
 const queryCalls: Array<{ queryKey?: readonly unknown[]; enabled?: boolean }> = [];
 
@@ -25,7 +30,7 @@ vi.mock("@/lib/query/useActivityQuery", () => ({
       };
     }
     return {
-      data: { items: [], nextCursor: null, activeCount: 0, unseenCount: 0 },
+      data: { items: [], nextCursor: null, activeCount: 0, unseenCount: 0, totalCount: 0 },
       error: null,
       isFetching: false,
       isPending: false,
@@ -108,5 +113,14 @@ describe("ChangeCenterPage view retention", () => {
       queryKey: ["alertingActivity", expect.anything()],
       enabled: false,
     }));
+  });
+
+  it("keeps a requested page while its cursor query is loading", () => {
+    expect(buildChangeCenterPageInfo({
+      page: 7,
+      pageSize: 20,
+      totalCount: undefined,
+      itemCount: 0,
+    })).toMatchObject({ currentPage: 7, totalPages: 7 });
   });
 });

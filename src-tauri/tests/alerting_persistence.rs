@@ -19,9 +19,12 @@ async fn alerting_foundation_creates_contract_and_indexes() {
     .fetch_one(&mut connection)
     .await
     .expect("schema version");
-    // Schema 40 adds persistent attention state; schema 41 adds published-status facts;
-    // schema 42 normalizes legacy missing groups into informational changes.
-    assert_eq!(schema_version, 42);
+    let current_schema = MIGRATOR
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .expect("migration catalog is non-empty");
+    assert_eq!(schema_version, current_schema);
 
     let legacy_table_exists = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_events'",

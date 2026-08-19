@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Route, Trash2 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
@@ -65,6 +65,7 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
   const [pageSize, setPageSize] = useState(20);
   const [clearing, setClearing] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const appliedDeepLinkRef = useRef<string | null>(null);
 
   const pageInfo = useMemo(
     () => paginateRequestLogs(logs, page, pageSize),
@@ -79,14 +80,18 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
 
   useEffect(() => {
     if (!deepLink || deepLink.kind !== "request-log") {
+      appliedDeepLinkRef.current = null;
       return;
     }
+    const deepLinkKey = `${deepLink.sequence}:${deepLink.requestLogId}:${pageSize}`;
+    if (appliedDeepLinkRef.current === deepLinkKey) return;
     const index = logs.findIndex((log) => log.id === deepLink.requestLogId);
     if (index >= 0) {
+      appliedDeepLinkRef.current = deepLinkKey;
       setPage(Math.floor(index / pageSize) + 1);
     }
     setSelectedId(deepLink.requestLogId);
-  }, [deepLink?.sequence, logs, pageSize]);
+  }, [deepLink?.requestLogId, deepLink?.sequence, logs, pageSize]);
 
   async function refreshLogs(showSuccess = false) {
     setPage(1);

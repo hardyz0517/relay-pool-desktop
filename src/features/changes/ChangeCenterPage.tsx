@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, CheckCheck, ChevronDown, ChevronUp, MoreHorizontal, RefreshCw, Route, Search, Settings } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
@@ -25,7 +25,13 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { AlertingActivity, AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
-import { clearAlertingActivity, markAlertingSeen, markAllAlertingSeen } from "@/lib/api/alerting";
+import {
+  clearAlertingActivity,
+  listAlertingActivity,
+  listCurrentAlertingIncidents,
+  markAlertingSeen,
+  markAllAlertingSeen,
+} from "@/lib/api/alerting";
 import { collectorFailureTaskLabel } from "./collectorIncidentLabels";
 
 type ChangeCenterRoutingDeepLink = Extract<
@@ -70,12 +76,46 @@ export const CHANGE_CENTER_VIEW_OPTIONS: Array<{ value: ChangeCenterView; label:
   { value: "unread", label: "未读" },
   { value: "active", label: "活动" },
 ];
+
+export function changeCenterViewCountLabel(view: ChangeCenterView) {
+  return view === "all" ? "全部变更数" : view === "unread" ? "未读变更数" : "活动变更数";
+}
 export const CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW = {
   all: "all",
   unread: "all",
   active: "incidents",
 } as const satisfies Record<ChangeCenterView, "incidents" | "information" | "all">;
 export const CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW = CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW;
+
+export function buildChangeCenterPageInfo({
+  page,
+  pageSize,
+  totalCount,
+  itemCount,
+}: {
+  page: number;
+  pageSize: number;
+  totalCount: number | null | undefined;
+  itemCount: number;
+}) {
+  const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
+  const safePageSize = Number.isFinite(pageSize) ? Math.max(1, Math.floor(pageSize)) : 1;
+  // A cursor query has no page data during a page transition. Keep the
+  // requested page visible until the response supplies an authoritative count.
+  const totalPages = totalCount == null
+    ? safePage
+    : Math.max(1, Math.ceil(Math.max(0, totalCount) / safePageSize));
+  const currentPage = Math.min(safePage, totalPages);
+  const hasVisibleItems = itemCount > 0;
+
+  return {
+    currentPage,
+    totalPages,
+    startIndex: hasVisibleItems ? (currentPage - 1) * safePageSize + 1 : 0,
+    endIndex: hasVisibleItems ? Math.min(currentPage * safePageSize, totalCount ?? 0) : 0,
+    total: totalCount ?? 0,
+  };
+}
 
 function toIncidentActivity(incident: AlertingIncident): AlertingActivity {
   return {
@@ -108,6 +148,8 @@ export function ChangeCenterPage({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [pageCursors, setPageCursors] = useState<Record<number, AlertingCursor | null>>({ 1: null });
+  const [jumpingPage, setJumpingPage] = useState<number | null>(null);
+  const paginationRequestId = useRef(0);
   const [busyIncidentId, setBusyIncidentId] = useState<string | null>(null);
   const [isMarkingAllSeen, setIsMarkingAllSeen] = useState(false);
   const [isClearingAll, setIsClearingAll] = useState(false);
@@ -157,17 +199,33 @@ export function ChangeCenterPage({
     });
   }, [activities, query, view]);
   const pageInfo = useMemo(() => {
+    const summary = buildChangeCenterPageInfo({
+      page,
+      pageSize,
+      totalCount: pageData?.totalCount,
+      itemCount: filteredActivities.length,
+    });
     return {
-      currentPage: page,
-      totalPages: pageData?.nextCursor ? page + 1 : page,
-      startIndex: filteredActivities.length === 0 ? 0 : 1,
-      endIndex: filteredActivities.length,
-      total: filteredActivities.length,
+      ...summary,
       items: filteredActivities,
     };
-  }, [filteredActivities, pageData?.nextCursor, page]);
+  }, [filteredActivities, page, pageData?.totalCount, pageSize]);
   const shouldShowPagination =
     pageInfo.currentPage > 1 || pageInfo.total >= 20 || Boolean(pageData?.nextCursor);
+
+  function resetPagination() {
+    paginationRequestId.current += 1;
+    setJumpingPage(null);
+    setPage(1);
+    setPageCursors({ 1: null });
+  }
+
+  useEffect(() => {
+    if (pageData == null || activeQuery.isFetching) return;
+    if (page > pageInfo.totalPages) {
+      setPage(pageInfo.totalPages);
+    }
+  }, [activeQuery.isFetching, page, pageData, pageInfo.totalPages]);
 
   async function refresh(showSuccess = false) {
     try {
@@ -187,21 +245,75 @@ export function ChangeCenterPage({
       setInternalView(next);
     }
     onSelectedViewChange?.(next);
-    setPage(1);
-    setPageCursors({ 1: null });
+    resetPagination();
   }
 
   function changeSeverity(next: Severity) {
     setSeverity(next);
-    setPage(1);
-    setPageCursors({ 1: null });
+    resetPagination();
   }
 
-  function changePage(nextPage: number) {
-    if (nextPage > page && pageData?.nextCursor) {
-      setPageCursors((current) => ({ ...current, [nextPage]: pageData.nextCursor }));
+  async function changePage(nextPage: number) {
+    const safePage = Math.min(Math.max(1, Math.floor(nextPage)), pageInfo.totalPages);
+    const knownCursor = pageCursors[safePage];
+    if (knownCursor !== undefined) {
+      setPage(safePage);
+      return;
     }
-    setPage(nextPage);
+
+    const requestId = paginationRequestId.current;
+    const knownPages = Object.keys(pageCursors).map(Number).filter(Number.isFinite);
+    const anchorPage = Math.max(...knownPages);
+    let cursor = pageCursors[anchorPage] ?? null;
+    let rowsFetched = 0;
+    let nextCursors: Record<number, AlertingCursor | null> = {};
+    let hasMore = true;
+    setJumpingPage(safePage);
+
+    try {
+      while (anchorPage + Math.floor(rowsFetched / pageSize) < safePage && hasMore) {
+        const result = view === "active"
+          ? await listCurrentAlertingIncidents({
+              severity: severity === "all" ? null : severity,
+              lifecycleState: "active",
+              cursor,
+              limit: 200,
+            })
+          : await listAlertingActivity({
+              severity: severity === "all" ? null : severity,
+              recordType: null,
+              unreadOnly: view === "unread",
+              cursor,
+              limit: 200,
+            });
+
+        for (const [index, item] of result.items.entries()) {
+          const absoluteRow = rowsFetched + index + 1;
+          if (absoluteRow % pageSize !== 0) continue;
+          const targetPage = anchorPage + absoluteRow / pageSize;
+          nextCursors[targetPage] = {
+            updatedAtMs: "activityAtMs" in item ? item.activityAtMs : item.updatedAtMs,
+            id: "recordType" in item ? `${item.recordType}:${item.id}` : item.id,
+          };
+        }
+        rowsFetched += result.items.length;
+        hasMore = Boolean(result.nextCursor) && result.items.length > 0;
+        if (nextCursors[safePage] !== undefined) break;
+        cursor = result.nextCursor;
+      }
+
+      if (requestId !== paginationRequestId.current) return;
+      setPageCursors((current) => ({ ...current, ...nextCursors }));
+      if (nextCursors[safePage] !== undefined) {
+        setPage(safePage);
+      }
+    } catch (requestError) {
+      if (requestId === paginationRequestId.current) {
+        toast.error("跳转分页失败", readError(requestError));
+      }
+    } finally {
+      if (requestId === paginationRequestId.current) setJumpingPage(null);
+    }
   }
 
   async function markSeen(activity: AlertingActivity) {
@@ -252,8 +364,7 @@ export function ChangeCenterPage({
       await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
       await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
       setExpandedIncidentKey(null);
-      setPage(1);
-      setPageCursors({ 1: null });
+      resetPagination();
       toast.success(clearedCount > 0 ? `已清空 ${clearedCount} 条变更记录` : "没有可清空的变更记录");
     } catch (requestError) {
       toast.error("清空变更失败", readError(requestError));
@@ -280,7 +391,7 @@ export function ChangeCenterPage({
         <div className="grid gap-3 md:grid-cols-3">
           <SummaryTile label="活动问题" value={pageData?.activeCount ?? 0} />
           <SummaryTile label="未读提醒" value={pageData?.unseenCount ?? 0} />
-          <SummaryTile label="当前加载" value={activities.length} />
+          <SummaryTile label={changeCenterViewCountLabel(view)} value={pageData?.totalCount ?? 0} />
         </div>
         <div className="min-w-0">
           <div data-testid="change-center-toolbar-surface" className="rounded-[var(--surface-radius)] border border-border bg-surface shadow-[var(--surface-shadow)]">
@@ -290,7 +401,7 @@ export function ChangeCenterPage({
                 <SelectControl ariaLabel="严重度" className={inputClassName} value={severity} options={[{ value: "all", label: "全部类型" }, { value: "critical", label: "严重" }, { value: "warning", label: "警告" }, { value: "info", label: "信息" }]} onChange={changeSeverity} />
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
-                  <input aria-label="搜索问题" className={`${inputClassName} pl-8`} value={query} placeholder="搜索事件或站点" onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
+                  <input aria-label="搜索问题" className={`${inputClassName} pl-8`} value={query} placeholder="搜索事件或站点" onChange={(event) => { setQuery(event.target.value); resetPagination(); }} />
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -320,8 +431,8 @@ export function ChangeCenterPage({
             )}
           </div>
           {shouldShowPagination ? <div data-testid="change-center-pagination-surface" className="mt-4 flex min-h-12 flex-wrap items-center justify-between gap-3 border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
-            <div className="flex flex-wrap items-center gap-3"><span>第 {pageInfo.currentPage} 页：{pageInfo.startIndex}-{pageInfo.endIndex}</span><label className="flex items-center gap-2"><span>每页数量</span><select aria-label="每页数量" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); setPageCursors({ 1: null }); }} className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-ring">{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label></div>
-            <Pagination ariaLabel="变更中心分页" page={pageInfo.currentPage} totalPages={pageInfo.totalPages} disabled={activeQuery.isFetching} onPageChange={changePage} />
+            <div className="flex flex-wrap items-center gap-3"><span>第 {pageInfo.currentPage} 页：{pageInfo.startIndex}-{pageInfo.endIndex}</span><label className="flex items-center gap-2"><span>每页数量</span><select aria-label="每页数量" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); resetPagination(); }} className="h-8 rounded-[4px] border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-ring">{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label></div>
+            <Pagination ariaLabel="变更中心分页" page={pageInfo.currentPage} totalPages={pageInfo.totalPages} disabled={activeQuery.isFetching || jumpingPage != null} onPageChange={changePage} />
           </div> : null}
         </div>
       </div>
@@ -405,8 +516,8 @@ function StatusSlot({ seenAtMs, busy, onMarkSeen, routingLink, onOpenRoutingDeep
 }
 
 function SeverityDot({ severity }: { severity: AlertingActivity["severity"] }) {
-  const className = severity === "critical" ? "bg-danger-foreground" : severity === "warning" ? "bg-warning-foreground" : "bg-info-foreground";
-  return <span aria-label={severityLabel(severity)} title={severityLabel(severity)} className={`h-2 w-2 rounded-full ${className}`} />;
+  const className = severity === "critical" ? "bg-danger-foreground" : severity === "warning" ? "bg-warning-foreground" : "bg-change-info-dot";
+  return <span aria-label={severityLabel(severity)} title={severityLabel(severity)} className={`block h-[6px] w-[6px] shrink-0 rounded-full ${className}`} />;
 }
 
 function incidentObjectTitle(incident: AlertingIncident, stationName: string | null | undefined) {

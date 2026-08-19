@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
 
 const token = (name: string) => `hsl(var(--${name}) / <alpha-value>)`;
+const cssToken = (name: string) => `var(--${name})`;
 
 const config = {
   darkMode: ["class"],
@@ -33,6 +34,7 @@ const config = {
         "channel-health-foreground": token("channel-health-foreground"),
         "channel-health-emphasis": token("channel-health-emphasis"),
         "channel-health-bar": token("channel-health-bar"),
+        "change-info-dot": cssToken("change-info-dot"),
         "on-solid": token("on-solid"),
         primary: {
           DEFAULT: token("primary"),

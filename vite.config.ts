@@ -15,7 +15,7 @@ export default defineConfig({
     strictPort: true,
     watch: {
       ignored: [
-        "**/src-tauri/target/**",
+        "**/src-tauri/target*/**",
         "**/output/**",
         "**/.worktrees/**",
         "**/dist/**",

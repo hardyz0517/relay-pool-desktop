@@ -5,6 +5,7 @@ import {
   CHANGE_CENTER_DEFAULT_VIEW,
   CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW,
   CHANGE_CENTER_VIEW_OPTIONS,
+  changeCenterViewCountLabel,
   changeObjectTitle,
   changeSummary,
 } from "./ChangeCenterPage";
@@ -54,6 +55,12 @@ describe("change center activity presentation", () => {
       { value: "unread", label: "未读" },
       { value: "active", label: "活动" },
     ]);
+  });
+
+  it("labels the selected view count instead of the currently loaded page", () => {
+    expect(changeCenterViewCountLabel("all")).toBe("全部变更数");
+    expect(changeCenterViewCountLabel("unread")).toBe("未读变更数");
+    expect(changeCenterViewCountLabel("active")).toBe("活动变更数");
   });
 
   it("clears incidents and information according to the selected view", () => {

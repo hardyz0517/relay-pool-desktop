@@ -18,6 +18,7 @@ pub(crate) struct WorkspaceIncidentRow {
     pub updated_at_ms: i64,
     pub seen_at_ms: Option<i64>,
     pub snoozed_until_ms: Option<i64>,
+    pub total_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +61,7 @@ pub(crate) struct WorkspaceActivityRow {
     pub resolved_at_ms: Option<i64>,
     pub seen_at_ms: Option<i64>,
     pub snoozed_until_ms: Option<i64>,
+    pub total_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -135,22 +137,30 @@ impl WorkspaceStore {
                        NULL AS snoozed_until_ms
                 FROM change_event_occurrences o
                 WHERE o.incident_id IS NULL AND o.category = 'audit_change'
+            ), filtered AS (
+                SELECT record_type, id, activity_key, event_type, severity, station_id,
+                       object_type, object_id, station_key_id, source, reason_code,
+                       condition_key, lifecycle_state, episode_number, occurrence_count,
+                       activity_at_ms, last_observation_summary_json, old_value_json,
+                       new_value_json, impact_json, resolved_at_ms, seen_at_ms,
+                       snoozed_until_ms
+                FROM activity
+                WHERE (?1 IS NULL OR station_id = ?1)
+                  AND (?2 IS NULL OR severity = ?2)
+                  AND (?3 IS NULL OR record_type = ?3)
+                  AND (?4 = 0 OR (seen_at_ms IS NULL AND (
+                        record_type = 'change'
+                        OR lifecycle_state IN ('pending', 'open', 'recovering')
+                      )))
             )
             SELECT record_type, id, activity_key, event_type, severity, station_id,
                    object_type, object_id, station_key_id, source, reason_code,
                    condition_key, lifecycle_state, episode_number, occurrence_count,
                    activity_at_ms, last_observation_summary_json, old_value_json,
                    new_value_json, impact_json, resolved_at_ms, seen_at_ms,
-                   snoozed_until_ms
-            FROM activity
-            WHERE (?1 IS NULL OR station_id = ?1)
-              AND (?2 IS NULL OR severity = ?2)
-              AND (?3 IS NULL OR record_type = ?3)
-              AND (?4 = 0 OR (seen_at_ms IS NULL AND (
-                    record_type = 'change'
-                    OR lifecycle_state IN ('pending', 'open', 'recovering')
-                  )))
-              AND (?5 IS NULL OR activity_at_ms < ?5
+                   snoozed_until_ms, (SELECT COUNT(*) FROM filtered) AS total_count
+            FROM filtered
+            WHERE (?5 IS NULL OR activity_at_ms < ?5
                    OR (activity_at_ms = ?5 AND activity_key < ?6))
             ORDER BY activity_at_ms DESC, activity_key DESC
             LIMIT ?7",
@@ -216,28 +226,35 @@ impl WorkspaceStore {
     ) -> Result<(Vec<WorkspaceIncidentRow>, i64, i64), PersistenceError> {
         let limit = i64::from(limit.clamp(1, 200));
         let rows = sqlx::query(
-            "SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state,
-                    CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
-                    i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
-                    i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
-                    a.seen_at_ms, a.snoozed_until_ms
-             FROM change_incidents i
-             LEFT JOIN incident_attention a
-               ON a.incident_id = i.id AND a.episode_number = i.episode_number
-             WHERE (?1 IS NULL OR i.station_id = ?1)
-               AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
-               AND (
-                    ?3 IS NULL
-                    OR (?3 = 'active'
-                        AND i.lifecycle_state IN ('pending', 'open', 'recovering')
-                        AND CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END IN ('warning', 'critical'))
-                    OR (?3 = 'unread' AND i.lifecycle_state IN ('pending', 'open', 'recovering') AND a.seen_at_ms IS NULL)
-                    OR i.lifecycle_state = ?3
-               )
-               AND (?4 IS NULL OR i.updated_at_ms < ?4
-                    OR (i.updated_at_ms = ?4 AND i.id < ?5))
-             ORDER BY i.updated_at_ms DESC, i.id DESC
-             LIMIT ?6",
+            "WITH filtered AS (
+                SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state,
+                       CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
+                       i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
+                       i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
+                       a.seen_at_ms, a.snoozed_until_ms
+                FROM change_incidents i
+                LEFT JOIN incident_attention a
+                  ON a.incident_id = i.id AND a.episode_number = i.episode_number
+                WHERE (?1 IS NULL OR i.station_id = ?1)
+                  AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
+                  AND (
+                       ?3 IS NULL
+                       OR (?3 = 'active'
+                           AND i.lifecycle_state IN ('pending', 'open', 'recovering')
+                           AND CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END IN ('warning', 'critical'))
+                       OR (?3 = 'unread' AND i.lifecycle_state IN ('pending', 'open', 'recovering') AND a.seen_at_ms IS NULL)
+                       OR i.lifecycle_state = ?3
+                  )
+            )
+            SELECT id, condition_key, event_type, lifecycle_state, severity,
+                   station_id, episode_number, occurrence_count, last_seen_at_ms,
+                   last_observation_summary_json, resolved_at_ms, updated_at_ms,
+                   seen_at_ms, snoozed_until_ms, (SELECT COUNT(*) FROM filtered) AS total_count
+            FROM filtered
+            WHERE (?4 IS NULL OR updated_at_ms < ?4
+                   OR (updated_at_ms = ?4 AND id < ?5))
+            ORDER BY updated_at_ms DESC, id DESC
+            LIMIT ?6",
         )
         .bind(station_id)
         .bind(severity)
@@ -289,7 +306,7 @@ impl WorkspaceStore {
                     CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
                     i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
                     i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
-                    a.seen_at_ms, a.snoozed_until_ms
+                    a.seen_at_ms, a.snoozed_until_ms, 1 AS total_count
              FROM change_incidents i
              LEFT JOIN incident_attention a
                ON a.incident_id = i.id AND a.episode_number = i.episode_number
@@ -385,6 +402,7 @@ fn row_to_activity(row: sqlx::sqlite::SqliteRow) -> Result<WorkspaceActivityRow,
         resolved_at_ms: row.try_get("resolved_at_ms")?,
         seen_at_ms: row.try_get("seen_at_ms")?,
         snoozed_until_ms: row.try_get("snoozed_until_ms")?,
+        total_count: row.try_get("total_count")?,
     })
 }
 
@@ -404,6 +422,7 @@ fn row_to_incident(row: sqlx::sqlite::SqliteRow) -> Result<WorkspaceIncidentRow,
         updated_at_ms: row.try_get("updated_at_ms")?,
         seen_at_ms: row.try_get("seen_at_ms")?,
         snoozed_until_ms: row.try_get("snoozed_until_ms")?,
+        total_count: row.try_get("total_count")?,
     })
 }
 

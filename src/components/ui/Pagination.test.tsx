@@ -11,6 +11,8 @@ describe("Pagination", () => {
     expect(buildPaginationItems(1, 33)).toEqual([1, 2, 3, "ellipsis", 33]);
     expect(buildPaginationItems(8, 33)).toEqual([1, "ellipsis", 6, 7, 8, 9, 10, "ellipsis", 33]);
     expect(buildPaginationItems(33, 33)).toEqual([1, "ellipsis", 31, 32, 33]);
+    expect(buildPaginationItems(1, 412)).toEqual([1, 2, 3, "ellipsis", 412]);
+    expect(buildPaginationItems(Number.NaN, Number.POSITIVE_INFINITY)).toEqual([1]);
   });
 
   it("exposes numbered navigation and disabled boundary arrows", async () => {

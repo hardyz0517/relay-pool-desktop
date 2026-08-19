@@ -120,6 +120,7 @@ export type AlertingIncidentPage = {
   nextCursor: AlertingCursor | null;
   activeCount: number;
   unseenCount: number;
+  totalCount: number;
 };
 
 type AlertingActivityBase = {
@@ -162,6 +163,7 @@ export type AlertingActivityPage = {
   nextCursor: AlertingCursor | null;
   activeCount: number;
   unseenCount: number;
+  totalCount: number;
 };
 
 export type AlertingIncidentInput = { incidentId: string; episodeNumber: number };
