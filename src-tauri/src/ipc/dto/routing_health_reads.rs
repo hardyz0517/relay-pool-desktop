@@ -459,6 +459,8 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
                     "priority":10,
                     "schedulable":true,
                     "healthState":"ready",
+                    "score":null,
+                    "scoreDetails":null,
                     "group":{
                         "stableKey":"binding:group-1",
                         "displayName":"Group 1",

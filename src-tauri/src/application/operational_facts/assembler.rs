@@ -352,18 +352,7 @@ pub(crate) struct ModelAliasFact {
     record_revision: RecordRevision,
 }
 
-impl ModelAliasFact {
-    pub(crate) fn client_model(&self) -> &str {
-        &self.client_model
-    }
-
-    pub(crate) fn upstream_model(&self) -> &str {
-        &self.upstream_model
-    }
-    pub(crate) fn record_revision(&self) -> RecordRevision {
-        self.record_revision
-    }
-}
+impl ModelAliasFact {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OperationalFactBundle {
@@ -394,6 +383,7 @@ impl OperationalFactBundle {
         &self.settings_by_key
     }
 
+    #[cfg(test)]
     pub(crate) fn model_aliases(&self) -> &[ModelAliasFact] {
         &self.model_aliases
     }

@@ -6,8 +6,8 @@ const editTab = readFileSync("src/features/routing/LocalRoutingEditTab.tsx", "ut
 
 assert.match(editTab, /LocalRoutingSettingsEditor/);
 assert.match(editor, /loadRoutingPolicy/);
-assert.match(editor, /updateRoutingPolicy/);
-assert.match(editor, /expectedRevision/);
+assert.match(editor, /applyRoutingPolicyDocument/);
+assert.match(editor, /baseRevision/);
 for (const field of ["reliabilityWeight", "responsivenessWeight", "costWeight", "preferenceWeight"]) {
   assert.match(editor, new RegExp(field));
 }

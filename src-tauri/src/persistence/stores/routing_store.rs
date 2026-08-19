@@ -10,7 +10,6 @@ use crate::{
             CanonicalRoutingCandidate, DispatchAlgorithmSettings, ModelAlias, RoutingPolicy,
             RuntimeRoutingBalance, RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret,
             RuntimeRoutingSettings, StationKeyCapabilities, StationKeyHealth,
-            UpsertModelAliasInput,
         },
         routing_policy::RoutingPolicyConfigV1,
         stations::StationEndpointHealth,
@@ -144,12 +143,29 @@ impl RoutingStore {
         config
             .validate()
             .map_err(|_| PersistenceError::InvariantViolation("invalid routing policy".into()))?;
+        let global_proxy_mode = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key = 'collector_proxy_mode'",
+        )
+        .fetch_optional(read.connection())
+        .await?
+        .unwrap_or_else(|| "direct".to_string());
+        let global_proxy_url = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key = 'collector_proxy_url'",
+        )
+        .fetch_optional(read.connection())
+        .await?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
         Ok(RuntimeRoutingSettings {
             policy: RoutingPolicy::AutomaticBalanced,
             max_rate_multiplier: config.max_rate_multiplier,
             routing_group_scope: config.routing_group_filter,
             scheduler_config: DispatchAlgorithmSettings::default(),
             allow_depleted_fallback: config.allow_depleted_fallback,
+            outbound_proxy_mode: config.outbound_proxy_mode,
+            outbound_proxy_url: config.outbound_proxy_url,
+            global_proxy_mode,
+            global_proxy_url,
         })
     }
 
@@ -306,6 +322,7 @@ impl RoutingStore {
             .collect())
     }
 
+    #[cfg(test)]
     pub(crate) async fn list_model_alias_pairs(
         &self,
         read: &mut ReadSession,
@@ -340,67 +357,6 @@ impl RoutingStore {
         .fetch_all(read.connection())
         .await?;
         Ok(rows.into_iter().map(row_to_model_alias).collect())
-    }
-
-    pub(crate) async fn upsert_model_alias(
-        &self,
-        write: &mut WriteSession,
-        input: UpsertModelAliasInput,
-        id: &str,
-        now: &str,
-    ) -> Result<ModelAlias, PersistenceError> {
-        let client_model = input.client_model.trim();
-        let upstream_model = input.upstream_model.trim();
-        if client_model.is_empty() || upstream_model.is_empty() {
-            return Err(PersistenceError::ConstraintViolation);
-        }
-        let note = input.note.and_then(|note| {
-            let note = note.trim().to_string();
-            (!note.is_empty()).then_some(note)
-        });
-        sqlx::query(
-            r#"
-            INSERT INTO model_aliases (
-                id, client_model, upstream_model, enabled, note, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            ON CONFLICT(client_model, upstream_model) DO UPDATE SET
-                enabled = excluded.enabled,
-                note = excluded.note,
-                updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(id)
-        .bind(client_model)
-        .bind(upstream_model)
-        .bind(bool_to_i64(input.enabled))
-        .bind(note)
-        .bind(now)
-        .bind(now)
-        .execute(write.connection())
-        .await?;
-        let alias = model_alias_by_pair(write, client_model, upstream_model).await?;
-        sqlx::query(
-            "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance) VALUES (?1, 1, ?2, 'transactional_write') ON CONFLICT(scope) DO NOTHING",
-        )
-        .bind(format!("model_alias:{}", alias.id))
-        .bind(now.parse::<i64>().map_err(|_| {
-            PersistenceError::InvariantViolation("model alias timestamp is not numeric".into())
-        })?)
-        .execute(write.connection())
-        .await?;
-        Ok(alias)
-    }
-
-    pub(crate) async fn delete_model_alias(
-        &self,
-        write: &mut WriteSession,
-        id: &str,
-    ) -> Result<(), PersistenceError> {
-        sqlx::query("DELETE FROM model_aliases WHERE id = ?1")
-            .bind(id)
-            .execute(write.connection())
-            .await?;
-        Ok(())
     }
 
     pub(crate) async fn list_balance_snapshots(
@@ -805,26 +761,6 @@ async fn load_latest_station_concurrency_limits(
         .collect())
 }
 
-async fn model_alias_by_pair(
-    write: &mut WriteSession,
-    client_model: &str,
-    upstream_model: &str,
-) -> Result<ModelAlias, PersistenceError> {
-    let row = sqlx::query(
-        r#"
-        SELECT id, client_model, upstream_model, enabled, note, created_at, updated_at
-        FROM model_aliases
-        WHERE client_model = ?1 AND upstream_model = ?2
-        "#,
-    )
-    .bind(client_model)
-    .bind(upstream_model)
-    .fetch_optional(write.connection())
-    .await?
-    .ok_or(PersistenceError::NotFound)?;
-    Ok(row_to_model_alias(row))
-}
-
 async fn assert_station_endpoint_revision(
     write: &mut WriteSession,
     station_id: &str,
@@ -873,10 +809,6 @@ fn row_to_station_endpoint_health(row: sqlx::sqlite::SqliteRow) -> StationEndpoi
         error_summary: row.get("error_summary"),
         updated_at: row.get("updated_at"),
     }
-}
-
-fn bool_to_i64(value: bool) -> i64 {
-    i64::from(value)
 }
 
 fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> CanonicalRoutingCandidate {

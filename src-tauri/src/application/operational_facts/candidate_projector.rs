@@ -83,6 +83,7 @@ pub(crate) struct CandidateMultiplierProjection {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CandidatePricingProjection {
     pub(crate) basis: RoutingCostBasis,
+    pub(crate) rate_multiplier: Option<f64>,
     pub(crate) comparison_value: Option<f64>,
     pub(crate) reason: Option<&'static str>,
     pub(crate) currency: Option<String>,
@@ -274,6 +275,7 @@ pub(crate) fn project_route_candidate(
     };
     let pricing = CandidatePricingProjection {
         basis: candidate.pricing.basis,
+        rate_multiplier: multiplier_value,
         comparison_value: candidate.pricing.comparison_value,
         reason: candidate.pricing.reason,
         currency: candidate.pricing.currency,

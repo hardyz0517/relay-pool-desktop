@@ -49,11 +49,19 @@ export type RoutingPolicyConfigV1Dto = {
   affinityTtlSeconds: number;
   maxRateMultiplier?: number | null;
   routingGroupFilter?: RoutingGroupFilterDto;
+  outboundProxyMode: string;
+  outboundProxyUrl: string | null;
 };
 
 export type UpdateRoutingPolicyInputDto = {
   config: RoutingPolicyConfigV1Dto;
   expectedRevision: number | null;
+};
+
+export type ApplyRoutingPolicyDocumentInputDto = {
+  formatVersion: number;
+  baseRevision: number;
+  policy: RoutingPolicyConfigV1Dto;
 };
 
 export type RoutingPolicySnapshotDto = {

@@ -123,7 +123,9 @@ impl OperationalFactStore {
         .await?;
         query_count += 1;
 
-        let alias_rows = if options.include_model_catalog() {
+        let alias_rows = if !options.includes_legacy_aliases() {
+            Vec::new()
+        } else if options.include_model_catalog() {
             sqlx::query(
                 r#"
                 SELECT model_aliases.client_model, model_aliases.upstream_model,
@@ -156,7 +158,9 @@ impl OperationalFactStore {
         } else {
             Vec::new()
         };
-        query_count += 1;
+        if options.includes_legacy_aliases() {
+            query_count += 1;
+        }
 
         let candidates = candidate_rows
             .into_iter()

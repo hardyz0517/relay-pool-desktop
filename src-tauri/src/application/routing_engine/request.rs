@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use crate::models::model_mapping::EndpointKind;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RouteKind {
     Inference,
@@ -59,6 +61,14 @@ pub(crate) struct RouteRequestFacts {
     allow_depleted_fallback: bool,
     affinity_enabled: bool,
     admitted_at_ms: i64,
+    /// Client-facing model captured before mapping rewrites the execution
+    /// request. Planning uses this immutable value to resolve per-key
+    /// Profile/Binding variants; `requested_model` remains the upstream
+    /// model used by existing hard gates.
+    mapping_requested_model: Option<String>,
+    mapping_endpoint: Option<EndpointKind>,
+    model_mapping_revision: Option<i64>,
+    model_resolution_fence: Option<String>,
 }
 
 impl RouteRequestFacts {
@@ -122,6 +132,38 @@ impl RouteRequestFacts {
     pub(crate) fn admitted_at_ms(&self) -> i64 {
         self.admitted_at_ms
     }
+
+    pub(crate) fn with_model_mapping(
+        mut self,
+        mapping_revision: u64,
+        resolution_fence: impl Into<String>,
+    ) -> Self {
+        self.model_mapping_revision = i64::try_from(mapping_revision).ok();
+        self.model_resolution_fence = Some(resolution_fence.into());
+        self
+    }
+
+    pub(crate) fn model_mapping_revision(&self) -> Option<i64> {
+        self.model_mapping_revision
+    }
+
+    pub(crate) fn with_mapping_requested_model(mut self, model: Option<String>) -> Self {
+        self.mapping_requested_model = model;
+        self
+    }
+
+    pub(crate) fn with_mapping_endpoint(mut self, endpoint: EndpointKind) -> Self {
+        self.mapping_endpoint = Some(endpoint);
+        self
+    }
+
+    pub(crate) fn mapping_requested_model(&self) -> Option<&str> {
+        self.mapping_requested_model.as_deref()
+    }
+
+    pub(crate) fn mapping_endpoint(&self) -> Option<EndpointKind> {
+        self.mapping_endpoint
+    }
 }
 
 pub(crate) struct RouteRequestClassifier;
@@ -148,6 +190,10 @@ impl RouteRequestClassifier {
             allow_depleted_fallback: settings.allow_depleted_fallback,
             affinity_enabled: settings.affinity_enabled,
             admitted_at_ms,
+            model_mapping_revision: None,
+            model_resolution_fence: None,
+            mapping_requested_model: None,
+            mapping_endpoint: None,
         }
     }
 }

@@ -18,6 +18,7 @@ pub(crate) mod error;
 pub(crate) mod key_pool;
 pub(crate) mod local_proxy;
 pub(crate) mod model_aliases;
+pub(crate) mod model_mapping;
 pub(crate) mod operations;
 pub(crate) mod pricing;
 pub(crate) mod pricing_workspace;

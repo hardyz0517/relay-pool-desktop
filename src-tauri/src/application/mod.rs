@@ -11,6 +11,7 @@ pub(crate) mod data_migration;
 pub(crate) mod error;
 pub(crate) mod health_transitions;
 pub(crate) mod ids;
+pub(crate) mod model_mapping;
 pub(crate) mod monitoring;
 pub(crate) mod observation_ingestion;
 pub(crate) mod operational_facts;

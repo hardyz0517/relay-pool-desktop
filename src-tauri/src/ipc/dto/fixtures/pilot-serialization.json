@@ -2424,6 +2424,8 @@
             },
             "priority": 10,
             "schedulable": true,
+            "score": null,
+            "scoreDetails": null,
             "sourceRefs": {
               "endpointRevision": 1,
               "factVersionVector": "endpoint:1",

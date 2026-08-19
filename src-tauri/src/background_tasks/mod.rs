@@ -2,6 +2,7 @@ pub(crate) mod alerting_runner;
 pub mod blocking;
 pub mod exit;
 pub mod operation;
+pub(crate) mod policy_document_runner;
 pub(crate) mod routing_projection_runner;
 pub mod shutdown;
 pub mod status;

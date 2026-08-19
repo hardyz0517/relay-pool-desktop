@@ -39,6 +39,12 @@ export function updateRoutingPolicy(input: import("@/lib/types/routing").UpdateR
   return getActiveBackendClient().routing.updateRoutingPolicy(input);
 }
 
+export function applyRoutingPolicyDocument(
+  input: import("@/lib/types/routing").ApplyRoutingPolicyDocumentInput,
+) {
+  return getActiveBackendClient().routing.applyRoutingPolicyDocument(input);
+}
+
 export function loadRoutingWorkspaceSnapshot(input: RoutingWorkspaceSnapshotInput = {}) {
   return getActiveBackendClient().routing.loadRoutingWorkspaceSnapshot(input);
 }

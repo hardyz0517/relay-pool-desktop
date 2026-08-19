@@ -13,9 +13,10 @@ use std::{
 use crate::{
     application::{app_services::AppServices, pagination::PageLimit},
     models::{
+        model_mapping::{Action, Matcher, ModelMappingDocumentV1, ModelMappingRule, TargetRef},
         pricing::UpsertBalanceSnapshotInput,
         proxy::RequestLog,
-        routing::{StationKeyHealth, UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
+        routing::{StationKeyHealth, UpdateStationKeyCapabilitiesInput},
         station_keys::CreateStationKeyInput,
         stations::CreateStationInput,
     },
@@ -105,18 +106,42 @@ impl V2ProxyTestFixture {
             .expect("request logs")
     }
 
-    pub(crate) async fn upsert_model_alias(&self, client_model: &str, upstream_model: &str) {
+    pub(crate) async fn set_model_mapping(&self, client_model: &str, upstream_model: &str) {
+        crate::application::model_mapping::initialize_from_persistence(self.runtime.handle())
+            .await
+            .expect("model mapping snapshot");
+        let current = crate::application::model_mapping::current_document();
+        let document = ModelMappingDocumentV1 {
+            base_revision: current.base_revision,
+            policy: current.policy,
+            rules: vec![ModelMappingRule {
+                id: "proxy-test-model-mapping".to_string(),
+                priority: 100,
+                enabled: true,
+                matcher: Matcher::Exact {
+                    model: client_model.to_string(),
+                },
+                conditions: Default::default(),
+                action: Action::MapFixed {
+                    target: TargetRef::Literal {
+                        upstream_model: upstream_model.to_string(),
+                    },
+                },
+                note: Some("proxy test mapping".to_string()),
+                revision: 1,
+            }],
+            profiles: Vec::new(),
+            bindings: Vec::new(),
+            format_version: current.format_version,
+        };
         self.services
             .routing
-            .upsert_model_alias(UpsertModelAliasInput {
-                id: None,
-                client_model: client_model.to_string(),
-                upstream_model: upstream_model.to_string(),
-                enabled: true,
-                note: None,
-            })
+            .apply_model_mapping_document(
+                document,
+                crate::models::document_sync::TrustedDocumentSource::system(),
+            )
             .await
-            .expect("model alias");
+            .expect("model mapping document");
     }
 
     pub(crate) async fn seed_candidate(&self, upstream_base_url: &str) -> SeededV2Candidate {

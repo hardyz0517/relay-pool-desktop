@@ -4,11 +4,7 @@ use tauri::State;
 use crate::{
     application::command_facades::RoutingCommandFacade,
     commands::error,
-    ipc::dto::{
-        routing_health_reads::ModelAliasDto,
-        routing_mutations::{DeleteModelAliasInputDto, UpsertModelAliasInputDto},
-        EmptyInputDto,
-    },
+    ipc::dto::{routing_health_reads::ModelAliasDto, EmptyInputDto},
     observability::correlation,
 };
 
@@ -54,11 +50,10 @@ pub async fn upsert_model_alias(
         runtime_context_registry.inner(),
         runtime_context,
         async {
-            let input = UpsertModelAliasInputDto::parse(input)?.into_domain();
-            facade
-                .upsert_model_alias(input)
-                .await
-                .map_err(super::public_command_application_error)
+            let _ = (&facade, input);
+            Err(error::CommandError::unsupported_with_detail(
+                "Model aliases are read-only migration data; use model mapping rules.".to_string(),
+            ))
         },
     )
     .await
@@ -80,11 +75,10 @@ pub async fn delete_model_alias(
         runtime_context_registry.inner(),
         runtime_context,
         async {
-            let input = DeleteModelAliasInputDto::parse(input)?;
-            facade
-                .delete_model_alias(input.id)
-                .await
-                .map_err(super::public_command_application_error)
+            let _ = (&facade, input);
+            Err(error::CommandError::unsupported_with_detail(
+                "Model aliases are read-only migration data; use model mapping rules.".to_string(),
+            ))
         },
     )
     .await

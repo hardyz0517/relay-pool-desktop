@@ -30,6 +30,12 @@ pub struct RuntimeRoutingSettings {
     pub routing_group_scope: RoutingGroupFilter,
     pub scheduler_config: DispatchAlgorithmSettings,
     pub allow_depleted_fallback: bool,
+    /// Local routing's proxy override. `inherit` delegates to the global
+    /// network setting before station-level overrides are applied.
+    pub outbound_proxy_mode: String,
+    pub outbound_proxy_url: Option<String>,
+    pub global_proxy_mode: String,
+    pub global_proxy_url: Option<String>,
 }
 
 impl Default for RuntimeRoutingSettings {
@@ -40,6 +46,10 @@ impl Default for RuntimeRoutingSettings {
             routing_group_scope: RoutingGroupFilter::default(),
             scheduler_config: DispatchAlgorithmSettings::default(),
             allow_depleted_fallback: false,
+            outbound_proxy_mode: "inherit".to_string(),
+            outbound_proxy_url: None,
+            global_proxy_mode: "direct".to_string(),
+            global_proxy_url: None,
         }
     }
 }
@@ -257,16 +267,6 @@ pub struct ModelAlias {
     pub note: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpsertModelAliasInput {
-    pub id: Option<String>,
-    pub client_model: String,
-    pub upstream_model: String,
-    pub enabled: bool,
-    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

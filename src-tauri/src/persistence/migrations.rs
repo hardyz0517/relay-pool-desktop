@@ -300,10 +300,111 @@ pub(crate) fn migrator_through(
 mod tests {
     use std::borrow::Cow;
 
-    use sqlx::{migrate::Migrator, Row};
+    use sha2::{Digest, Sha384};
+    use sqlx::{migrate::Migrator, Connection, Row};
 
     use super::*;
     use crate::persistence::runtime::PersistenceRuntime;
+
+    #[test]
+    fn model_mapping_foundation_checksum_is_frozen() {
+        let mut hasher = Sha384::new();
+        hasher.update(include_bytes!(
+            "migrations/0043_model_mapping_foundation.sql"
+        ));
+        let checksum = hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        assert_eq!(
+            checksum,
+            "50E6BE4FA8D83EC81BAA9BA14DB48047EAFFD4CCBD01764C783AA24A126E7929CDD30C0E7C7844E8C35C636630E5C5F1"
+        );
+    }
+
+    #[tokio::test]
+    async fn schema_43_upgrade_applies_legacy_priority_repair() {
+        let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open sqlite");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut connection)
+            .await
+            .expect("enable foreign keys");
+        migrator_through(42)
+            .expect("schema 42 migrator")
+            .run(&mut connection)
+            .await
+            .expect("migrate schema 42");
+        sqlx::query(
+            "INSERT INTO model_aliases
+                (id, client_model, upstream_model, enabled, created_at, updated_at)
+             VALUES ('mapping-upgrade-alias', 'codex-upgrade', 'native-upgrade', 1, '1', '1')",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("insert legacy alias");
+
+        migrator_through(43)
+            .expect("schema 43 migrator")
+            .run(&mut connection)
+            .await
+            .expect("migrate schema 43");
+        sqlx::query(
+            "UPDATE model_mapping_rules SET priority = 0
+             WHERE id = 'legacy-model-alias-rule:636F6465782D75706772616465'",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("simulate legacy priority variant");
+        sqlx::query(
+            "UPDATE model_mapping_document_history
+             SET document_json = json_set(document_json, '$.rules[0].priority', 0)
+             WHERE revision = 1 AND source = 'migration'",
+        )
+        .execute(&mut connection)
+        .await
+        .expect("simulate legacy history variant");
+        let before_repair: i64 = sqlx::query_scalar(
+            "SELECT priority FROM model_mapping_rules
+             WHERE id = 'legacy-model-alias-rule:636F6465782D75706772616465'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("legacy priority before repair");
+        assert_eq!(before_repair, 0);
+
+        migrator()
+            .run(&mut connection)
+            .await
+            .expect("upgrade schema 43 to latest");
+        let after_repair: i64 = sqlx::query_scalar(
+            "SELECT priority FROM model_mapping_rules
+             WHERE id = 'legacy-model-alias-rule:636F6465782D75706772616465'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("legacy priority after repair");
+        assert_eq!(after_repair, 1);
+        let history_priority: i64 = sqlx::query_scalar(
+            "SELECT json_extract(document_json, '$.rules[0].priority')
+             FROM model_mapping_document_history
+             WHERE revision = 1 AND source = 'migration'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("history priority");
+        assert_eq!(history_priority, 1);
+        let current_schema: i64 = sqlx::query_scalar(
+            "SELECT schema_version FROM persistence_schema_compatibility
+             WHERE singleton_key = 1",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("current schema");
+        assert_eq!(current_schema, current_schema_version());
+    }
 
     #[tokio::test]
     async fn current_schema_seeds_builtin_monitor_templates_idempotently() {
@@ -504,7 +605,7 @@ mod tests {
             .expect("migration pool");
         assert_eq!(
             applied_schema_version(&pool).await.expect("schema version"),
-            42
+            current_schema_version()
         );
         for table in [
             "station_published_status_sources",

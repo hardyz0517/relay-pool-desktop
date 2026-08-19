@@ -99,6 +99,10 @@ impl TrustedTargetWriter {
                     upsert_setting(&mut transaction, row).await?;
                 } else if table_name == "routing_policy" {
                     upsert_routing_policy(&mut transaction, row).await?;
+                } else if table_name == "model_mapping_policies" {
+                    upsert_model_mapping_policy(&mut transaction, row).await?;
+                } else if table_name == "model_mapping_document_history" {
+                    upsert_model_mapping_history(&mut transaction, row).await?;
                 } else {
                     insert_row(&mut transaction, table_name, row).await?;
                 }
@@ -170,6 +174,20 @@ async fn rebuild_domain_revision_baseline(
         "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
          SELECT 'routing_policy', COALESCE(MAX(config_revision), 1), 0, 'baseline_snapshot'
          FROM routing_policy",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'model_mapping', COALESCE(MAX(revision), 1), 0, 'baseline_snapshot'
+         FROM model_mapping_policies",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    sqlx::query(
+        "INSERT INTO domain_revisions (scope, revision, updated_at_ms, provenance)
+         SELECT 'model_mapping_rule:' || id, MAX(revision, 1), 0, 'baseline_snapshot'
+         FROM model_mapping_rules",
     )
     .execute(&mut **transaction)
     .await?;
@@ -415,6 +433,49 @@ async fn upsert_routing_policy(
         }
     }
     builder.push(") ON CONFLICT(singleton_key) DO UPDATE SET config_json = excluded.config_json, config_revision = excluded.config_revision, policy_version = excluded.policy_version, system_version = excluded.system_version, status = excluded.status, created_at_ms = excluded.created_at_ms, updated_at_ms = excluded.updated_at_ms");
+    builder.build().execute(&mut **transaction).await?;
+    Ok(())
+}
+
+async fn upsert_model_mapping_policy(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    row: &PortableRow,
+) -> PortableValidationResult<()> {
+    let columns = [
+        "singleton_key",
+        "revision",
+        "unmatched_model_behavior",
+        "updated_at_ms",
+    ];
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "INSERT INTO model_mapping_policies (singleton_key, revision, unmatched_model_behavior, updated_at_ms) VALUES (",
+    );
+    {
+        let mut separated = builder.separated(", ");
+        for column in columns {
+            separated.push_bind(sqlite_text(row.get(column)));
+        }
+    }
+    builder.push(") ON CONFLICT(singleton_key) DO UPDATE SET revision = excluded.revision, unmatched_model_behavior = excluded.unmatched_model_behavior, updated_at_ms = excluded.updated_at_ms");
+    builder.build().execute(&mut **transaction).await?;
+    Ok(())
+}
+
+async fn upsert_model_mapping_history(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    row: &PortableRow,
+) -> PortableValidationResult<()> {
+    let columns = ["revision", "document_json", "source", "created_at_ms"];
+    let mut builder = QueryBuilder::<Sqlite>::new(
+        "INSERT INTO model_mapping_document_history (revision, document_json, source, created_at_ms) VALUES (",
+    );
+    {
+        let mut separated = builder.separated(", ");
+        for column in columns {
+            separated.push_bind(sqlite_text(row.get(column)));
+        }
+    }
+    builder.push(") ON CONFLICT(revision) DO UPDATE SET document_json = excluded.document_json, source = excluded.source, created_at_ms = excluded.created_at_ms");
     builder.build().execute(&mut **transaction).await?;
     Ok(())
 }

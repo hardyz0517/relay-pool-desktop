@@ -1,11 +1,14 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
+
+use sha2::{Digest, Sha256};
 
 use crate::{
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
         candidate_plan::RoutePlanPricingSnapshot,
-        intelligent_planner::plan_snapshot_with_budget,
-        model_alias::mapped_model,
+        intelligent_planner::{
+            candidate_score_breakdown_with_cost_basis, plan_snapshot_with_budget,
+        },
         planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
         request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
     },
@@ -47,6 +50,7 @@ use crate::{
         routing_policy::RoutingPolicyAggregate,
     },
     models::{
+        document_sync::TrustedDocumentSource,
         health::{
             HealthObservation, HealthObservationOutcome, HealthObservationSource,
             HealthWritebackMode, TrafficEquivalence,
@@ -55,17 +59,22 @@ use crate::{
         routing::{
             CanonicalRoutingCandidate, ModelAlias, RouteCandidateExplanation, RouteEndpointKind,
             RouteSimulationInput, RouteSimulationResult, RoutingGroupFilter,
-            RuntimeRoutingSettings, StationKeyHealth, UpsertModelAliasInput,
+            RuntimeRoutingSettings, StationKeyHealth,
         },
         stations::StationEndpointHealth,
     },
     persistence::{
+        error::PersistenceError,
         runtime::PersistenceHandle,
         stores::pricing_store::PricingStore,
         stores::request_outcome_store::RequestOutcomeStore,
         stores::routing_decisions::queries::RoutingDecisionQueries,
         stores::routing_policy_store::RoutingPolicyStore,
+        stores::routing_quality_store::RoutingQualityStore,
         stores::routing_store::{RoutingStore, StationEndpointProbeTarget},
+    },
+    services::policy_documents::{
+        canonical_json, decode_strict_json, PolicyDocumentCoordinator, PolicyDocumentError,
     },
 };
 
@@ -81,6 +90,69 @@ pub(crate) struct RoutingService {
 }
 
 impl RoutingService {
+    pub(crate) async fn apply_model_mapping_document(
+        &self,
+        document: crate::models::model_mapping::ModelMappingDocumentV1,
+        source: TrustedDocumentSource,
+    ) -> Result<crate::models::model_mapping::ModelMappingDocumentV1, ApplicationError> {
+        crate::application::model_mapping::persist_document(self.runtime.clone(), document, source)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub(crate) async fn restore_model_mapping_document(
+        &self,
+        document: crate::models::model_mapping::ModelMappingDocumentV1,
+        expected_revision: u64,
+    ) -> Result<crate::models::model_mapping::ModelMappingDocumentV1, ApplicationError> {
+        crate::application::model_mapping::persist_document_at_revision(
+            self.runtime.clone(),
+            document,
+            expected_revision,
+            TrustedDocumentSource::history_restore(),
+        )
+        .await
+        .map_err(ApplicationError::from)
+    }
+
+    pub(crate) async fn load_model_mapping_history_document(
+        &self,
+        revision: u64,
+    ) -> Result<Option<String>, ApplicationError> {
+        let revision =
+            i64::try_from(revision).map_err(|_| ApplicationError::ConstraintViolation)?;
+        let mut read = self.runtime.begin_read().await?;
+        let history = crate::persistence::stores::model_mapping_store::ModelMappingStore
+            .load_history_revision(read.connection(), revision)
+            .await
+            .map_err(ApplicationError::from)?;
+        Ok(history.map(|item| item.document_json))
+    }
+
+    pub(crate) async fn list_model_mapping_legacy_reviews(
+        &self,
+    ) -> Result<
+        Vec<crate::persistence::stores::model_mapping_store::StoredLegacyModelAliasReview>,
+        ApplicationError,
+    > {
+        let mut read = self.runtime.begin_read().await?;
+        crate::persistence::stores::model_mapping_store::ModelMappingStore
+            .list_legacy_reviews(read.connection())
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub(crate) async fn reconcile_model_mapping_document_sync(
+        &self,
+    ) -> Result<crate::application::model_mapping::ModelMappingDocumentSyncSnapshot, ApplicationError>
+    {
+        crate::application::model_mapping::reconcile_model_mapping_document_sync(
+            self.runtime.clone(),
+        )
+        .await
+        .map_err(ApplicationError::from)
+    }
+
     pub async fn list_recent_route_decisions(
         &self,
         input: RecentRouteDecisionsInput,
@@ -161,17 +233,45 @@ impl RoutingService {
         crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
         ApplicationError,
     > {
-        config
+        let base_revision = match expected_revision {
+            Some(revision) => revision,
+            None => self.load_routing_policy().await?.revision,
+        };
+        self.apply_routing_policy_document(
+            crate::models::routing_policy::RoutingPolicyDocumentV1 {
+                format_version:
+                    crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
+                base_revision,
+                policy: config,
+            },
+            TrustedDocumentSource::ui(),
+        )
+        .await
+    }
+
+    /// Apply a complete routing-policy document through the same trusted
+    /// source/CAS boundary used by file adapters. `base_revision` is the only
+    /// optimistic-concurrency input; source provenance is attached by the
+    /// internal adapter and cannot be supplied by IPC callers.
+    pub(crate) async fn apply_routing_policy_document(
+        &self,
+        document: crate::models::routing_policy::RoutingPolicyDocumentV1,
+        _source: TrustedDocumentSource,
+    ) -> Result<
+        crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+        ApplicationError,
+    > {
+        document
             .validate()
             .map_err(|_| ApplicationError::ConstraintViolation)?;
-        let value =
-            serde_json::to_value(&config).map_err(|_| ApplicationError::ConstraintViolation)?;
+        let value = serde_json::to_value(&document.policy)
+            .map_err(|_| ApplicationError::ConstraintViolation)?;
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut write = self.runtime.begin_write().await?;
         let stored = RoutingPolicyStore
             .save_compare_and_swap(
                 write.connection(),
-                expected_revision,
+                Some(document.base_revision),
                 &value,
                 "routing-policy-v1",
                 "routing-system-v1",
@@ -181,6 +281,21 @@ impl RoutingService {
             .await
             .map_err(ApplicationError::from)?;
         write.commit().await?;
+        // SQLite remains the active truth. The managed JSON mirror is updated
+        // only after the transaction commits, and a failed materialization is
+        // recorded in document-sync state without rolling back the policy.
+        sync_routing_policy_file(self.runtime.clone(), &stored, true).await?;
+        // A no-op CAS returns the current revision and must not emit a false
+        // invalidation. Every changed revision publishes only after commit.
+        if stored.revision != document.base_revision {
+            crate::application::queries::read_model_revision::publish_domain_revision_notice(
+                crate::application::queries::read_model_revision::DomainRevisionNotice::for_scope(
+                    "routing_policy",
+                    i64::try_from(stored.revision)
+                        .map_err(|_| ApplicationError::ConstraintViolation)?,
+                ),
+            );
+        }
         Ok(stored)
     }
 
@@ -210,9 +325,11 @@ impl RoutingService {
         let options = request
             .requested_model()
             .map(crate::models::operational::OperationalFactReadOptions::for_request_model)
-            .unwrap_or_else(
-                crate::models::operational::OperationalFactReadOptions::for_model_catalog,
-            );
+            .map(|options| options.without_legacy_aliases())
+            .unwrap_or_else(|| {
+                crate::models::operational::OperationalFactReadOptions::for_model_catalog()
+                    .without_legacy_aliases()
+            });
         let policy = aggregate.config;
         let builder = PlanningSnapshotBuilder;
         let mut snapshot = builder
@@ -260,30 +377,16 @@ impl RoutingService {
                         PricingRouteKind::Inference,
                         Some(&resolved),
                     );
-                    let value = resolution
-                        .pricing_rule
-                        .as_ref()
-                        .and_then(|rule| {
-                            rule.fixed_price
-                                .or(rule.input_price)
-                                .or(rule.output_price)
-                                .map(|price| {
-                                    price
-                                        * rule.rate_multiplier.unwrap_or(1.0)
-                                        * resolution.group_rate_multiplier.unwrap_or(1.0)
-                                })
-                        })
-                        .or_else(|| {
-                            resolution
-                                .model_base_price
-                                .as_ref()
-                                .and_then(|base| base.input_price)
-                        });
-                    candidate.cost_basis_points = value.and_then(
-                        crate::application::routing_engine::factors::cost_efficiency_from_comparable_value,
-                    );
+                    // The workspace score is a key-level routing signal. Use
+                    // the trusted effective multiplier as its stable cost
+                    // proxy instead of inventing a request price from one
+                    // input/output tariff.
+                    candidate.cost_basis_points = resolved
+                        .effective_rate_multiplier
+                        .and_then(crate::application::routing_engine::factors::cost_efficiency_from_multiplier);
                     candidate.pricing = RoutePlanPricingSnapshot {
                         basis: request_pricing.basis,
+                        rate_multiplier: resolved.effective_rate_multiplier,
                         currency: request_pricing.currency,
                         unit: request_pricing.unit,
                         estimated_input_price: request_pricing.estimated_input_price,
@@ -450,29 +553,107 @@ impl RoutingService {
         &self,
         input: RoutingWorkspaceSnapshotInput,
     ) -> Result<RoutingWorkspaceSnapshot, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        let settings = self.store.load_execution_settings(&mut read).await?;
-        let stored_policy = RoutingPolicyStore
-            .load(read.connection())
-            .await
-            .map_err(ApplicationError::from)?
-            .ok_or(ApplicationError::NotFound)?;
-        let policy_config = RoutingPolicyAggregate::from_stored(stored_policy)
-            .map_err(|_| ApplicationError::ConstraintViolation)?
-            .config;
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let request = route_request_facts_for_read_model(&settings, now_ms);
-        let candidates = self
-            .load_workspace_candidates_with_request_pricing_in_read(&mut read, &request)
-            .await?
-            .into_iter()
-            .map(|row| (row.candidate, row.pricing_context))
-            .collect::<Vec<_>>();
+        let (settings, policy_config, request, candidates) = {
+            let mut read = self.runtime.begin_read().await?;
+            let settings = self.store.load_execution_settings(&mut read).await?;
+            let stored_policy = RoutingPolicyStore
+                .load(read.connection())
+                .await
+                .map_err(ApplicationError::from)?
+                .ok_or(ApplicationError::NotFound)?;
+            let policy_config = RoutingPolicyAggregate::from_stored(stored_policy)
+                .map_err(|_| ApplicationError::ConstraintViolation)?
+                .config;
+            let request = route_request_facts_for_read_model(&settings, now_ms);
+            let candidates = self
+                .load_workspace_candidates_with_request_pricing_in_read(&mut read, &request)
+                .await?
+                .into_iter()
+                .map(|row| (row.candidate, row.pricing_context))
+                .collect::<Vec<_>>();
+            (settings, policy_config, request, candidates)
+        };
+        // Use the immutable planner snapshot as the score source so this
+        // read model stays aligned with the actual routing policy semantics.
+        let multiplier_by_key = candidates
+            .iter()
+            .filter_map(|(candidate, pricing)| {
+                let multiplier = pricing
+                    .as_ref()
+                    .and_then(|context| context.effective_rate_multiplier)
+                    .or_else(|| {
+                        let economics = candidate.economic_snapshot.as_ref()?;
+                        crate::application::operational_facts::pricing_projector::effective_rate_multiplier(
+                            economics.rate_multiplier,
+                            economics.credit_per_cny.unwrap_or(1.0),
+                        )
+                    })?;
+                Some((candidate.station_key_id.clone(), multiplier))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let score_by_key = self
+            .load_intelligent_planning_snapshot(
+                &request,
+                RuntimeOverlaySnapshot {
+                    runtime_instance_id: "routing-workspace".to_string(),
+                    runtime_revision: 1,
+                    candidate_set_revision: 1,
+                    in_flight: 0,
+                    max_concurrency: 1,
+                    affinity_station_key_id: None,
+                },
+            )
+            .await
+            .ok()
+            .flatten()
+            .map(|snapshot| {
+                snapshot
+                    .candidates
+                    .iter()
+                    .filter_map(|candidate| {
+                        let multiplier_cost_basis = multiplier_by_key
+                            .get(&candidate.station_key_id)
+                            .copied()
+                            .and_then(
+                                crate::application::routing_engine::factors::
+                                    cost_efficiency_from_multiplier,
+                            );
+                        candidate_score_breakdown_with_cost_basis(
+                            candidate,
+                            &policy_config,
+                            None,
+                            multiplier_cost_basis,
+                        )
+                        .map(|breakdown| (candidate.station_key_id.clone(), breakdown.into()))
+                    })
+                    .collect::<BTreeMap<_, _>>()
+            })
+            .unwrap_or_default();
+        let quality_summaries = {
+            let scopes = candidates
+                .iter()
+                .map(|(candidate, _)| format!("station_key:{}", candidate.station_key_id))
+                .collect::<Vec<_>>();
+            let mut read = self.runtime.begin_read().await?;
+            RoutingQualityStore
+                .load_summary_json(read.connection(), &scopes)
+                .await?
+                .into_iter()
+                .filter_map(|(scope, value)| {
+                    serde_json::from_value::<crate::application::quality_projection::QualitySummary>(value)
+                        .ok()
+                        .map(|summary| (scope, summary))
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
         Ok(workspace_snapshot_from_canonical_candidates(
             policy_config,
             settings.max_rate_multiplier,
             settings.routing_group_scope,
             candidates,
+            &score_by_key,
+            &quality_summaries,
             &request,
             input,
             now_ms,
@@ -560,6 +741,7 @@ impl RoutingService {
         Ok(unavailable_operational_detail(station_key_id))
     }
 
+    #[cfg(test)]
     pub(crate) async fn list_model_alias_pairs(
         &self,
     ) -> Result<Vec<(String, String)>, ApplicationError> {
@@ -574,32 +756,6 @@ impl RoutingService {
         let mut read = self.runtime.begin_read().await?;
         self.store
             .list_model_aliases(&mut read)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn upsert_model_alias(
-        &self,
-        input: UpsertModelAliasInput,
-    ) -> Result<ModelAlias, ApplicationError> {
-        let store = self.store;
-        let id = input
-            .id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-        let now = chrono::Utc::now().timestamp_millis().to_string();
-        self.runtime
-            .write(|write| {
-                Box::pin(async move { store.upsert_model_alias(write, input, &id, &now).await })
-            })
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn delete_model_alias(&self, id: String) -> Result<(), ApplicationError> {
-        let store = self.store;
-        self.runtime
-            .write(|write| Box::pin(async move { store.delete_model_alias(write, &id).await }))
             .await
             .map_err(Into::into)
     }
@@ -758,7 +914,6 @@ impl RoutingService {
     ) -> Result<RouteSimulationResult, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
         let settings = self.store.load_execution_settings(&mut read).await?;
-        let aliases = self.store.list_model_alias_pairs(&mut read).await?;
         drop(read);
 
         // The simulation accepts the canonical config for contract parity. The
@@ -771,13 +926,71 @@ impl RoutingService {
             .clone()
             .unwrap_or(settings.routing_group_scope);
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let mapped_model = mapped_model(input.model.as_deref(), &aliases);
+        let mapping_plan = input.model.clone().and_then(|requested| {
+            crate::application::model_mapping::resolve_request(
+                Some(requested),
+                mapping_endpoint_kind(&input.endpoint),
+                input.stream,
+                input.uses_tools,
+                input.uses_vision,
+                input.uses_reasoning,
+            )
+            .ok()
+        });
+        if mapping_plan.as_ref().is_some_and(|plan| {
+            matches!(
+                plan.disposition,
+                crate::application::model_mapping::Disposition::Reject
+            )
+        }) {
+            return Ok(RouteSimulationResult {
+                preview_policy_version: "intelligent_planner_v1".to_string(),
+                capacity_mode: "snapshot_only".to_string(),
+                selected_capacity_acquired: false,
+                selected_station_key_id: None,
+                selected_station_id: None,
+                mapped_model: None,
+                policy,
+                max_rate_multiplier,
+                routing_group_filter,
+                planner_error_code: Some("model_mapping_rejected".to_string()),
+                candidates: Vec::new(),
+                message: "Route simulation rejected request: model_mapping_rejected".to_string(),
+            });
+        }
+        let mapped_model = match mapping_plan.as_ref() {
+            Some(plan) => match plan.execution_target() {
+                Ok(target) => target.map(|target| target.route_model.clone()),
+                Err(error) => {
+                    return Ok(RouteSimulationResult {
+                        preview_policy_version: "intelligent_planner_v1".to_string(),
+                        capacity_mode: "snapshot_only".to_string(),
+                        selected_capacity_acquired: false,
+                        selected_station_key_id: None,
+                        selected_station_id: None,
+                        mapped_model: None,
+                        policy,
+                        max_rate_multiplier,
+                        routing_group_filter,
+                        planner_error_code: Some(error.code().to_string()),
+                        candidates: Vec::new(),
+                        message: "Route simulation cannot execute the model mapping plan."
+                            .to_string(),
+                    });
+                }
+            },
+            None => None,
+        };
         let validated_settings = validated_route_settings(&RuntimeRoutingSettings {
             policy: policy.clone(),
             max_rate_multiplier,
             routing_group_scope: routing_group_filter.clone(),
             scheduler_config: settings.scheduler_config.clone(),
             allow_depleted_fallback: settings.allow_depleted_fallback,
+            outbound_proxy_mode: settings.outbound_proxy_mode.clone(),
+            outbound_proxy_url: settings.outbound_proxy_url.clone(),
+            global_proxy_mode: settings.global_proxy_mode.clone(),
+            global_proxy_url: settings.global_proxy_url.clone(),
         });
         let request = RouteRequestClassifier::classify(
             CanonicalRouteRequest {
@@ -894,7 +1107,323 @@ impl RoutingService {
     }
 }
 
-#[derive(Debug, Clone)]
+fn routing_document_coordinator(runtime: &PersistenceHandle) -> PolicyDocumentCoordinator {
+    let root = runtime
+        .database_path()
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    PolicyDocumentCoordinator::shared(root)
+}
+
+fn routing_document_from_stored(
+    stored: &crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV1, PersistenceError> {
+    let policy = serde_json::from_value(stored.config.clone()).map_err(|error| {
+        PersistenceError::InvariantViolation(format!("routing policy config is invalid: {error}"))
+    })?;
+    let revision = u64::try_from(stored.revision).map_err(|_| {
+        PersistenceError::InvariantViolation("routing policy revision is invalid".into())
+    })?;
+    Ok(crate::models::routing_policy::RoutingPolicyDocumentV1 {
+        format_version: crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
+        base_revision: revision,
+        policy,
+    })
+}
+
+fn routing_document_digest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+async fn mark_routing_sync_error(
+    runtime: &PersistenceHandle,
+    code: &str,
+) -> Result<(), PersistenceError> {
+    let mut write = runtime.begin_write().await?;
+    crate::persistence::stores::document_sync_store::DocumentSyncStore
+        .mark_error(
+            write.connection(),
+            crate::models::document_sync::ROUTING_POLICY_DOCUMENT_KIND,
+            code,
+            chrono::Utc::now().timestamp_millis().max(0),
+        )
+        .await?;
+    write.commit().await
+}
+
+/// Publish the latest active policy as the desired target and materialize it
+/// through the shared coordinator. Existing external bytes are preserved only
+/// when `replace_existing` is false (startup/recovery); an explicit UI save
+/// owns the new revision and may replace the mirror atomically.
+pub(crate) async fn sync_routing_policy_file(
+    runtime: PersistenceHandle,
+    stored: &crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+    replace_existing: bool,
+) -> Result<(), PersistenceError> {
+    let document = routing_document_from_stored(stored)?;
+    document.validate().map_err(|error| {
+        PersistenceError::InvariantViolation(format!("routing policy document rejected: {error}"))
+    })?;
+    let canonical = canonical_json(&document)
+        .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
+    let digest = routing_document_digest(&canonical);
+    let kind = crate::models::document_sync::ROUTING_POLICY_DOCUMENT_KIND;
+    let coordinator = routing_document_coordinator(&runtime);
+    let _operation_guard = coordinator.acquire_operation_guard().await;
+    let revision_i64 = i64::try_from(document.base_revision).map_err(|_| {
+        PersistenceError::InvariantViolation("routing policy revision exceeds SQLite range".into())
+    })?;
+    let current_revision: i64 = {
+        let mut read = runtime.begin_read().await?;
+        sqlx::query_scalar("SELECT config_revision FROM routing_policy WHERE singleton_key = 1")
+            .fetch_one(read.connection())
+            .await?
+    };
+    if current_revision != revision_i64 {
+        return Ok(());
+    }
+    {
+        let mut write = runtime.begin_write().await?;
+        crate::persistence::stores::document_sync_store::DocumentSyncStore
+            .upsert_desired(
+                write.connection(),
+                kind,
+                document.base_revision,
+                Some(&digest),
+                chrono::Utc::now().timestamp_millis().max(0),
+            )
+            .await?;
+        write.commit().await?;
+    }
+    let previous_materialized_digest = {
+        let mut read = runtime.begin_read().await?;
+        crate::persistence::stores::document_sync_store::DocumentSyncStore
+            .load(read.connection(), kind)
+            .await?
+            .and_then(|sync| sync.materialized_canonical_digest)
+    };
+
+    let existing = coordinator
+        .files()
+        .read_once(crate::models::document_sync::DocumentKind::RoutingPolicy);
+    let should_materialize = match existing {
+        Err(PolicyDocumentError::Missing) => true,
+        Ok(observed)
+            if replace_existing
+                || observed.digest == digest
+                || previous_materialized_digest.as_deref() == Some(observed.digest.as_str()) =>
+        {
+            true
+        }
+        Ok(observed) => {
+            match decode_strict_json::<crate::models::routing_policy::RoutingPolicyDocumentV1>(
+                &observed.bytes,
+            ) {
+                Ok(incoming) => {
+                    let incoming_canonical = canonical_json(&incoming)
+                        .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
+                    if incoming_canonical == canonical {
+                        true
+                    } else {
+                        let mut write = runtime.begin_write().await?;
+                        crate::persistence::stores::document_sync_store::DocumentSyncStore
+                            .mark_external_change(
+                                write.connection(),
+                                kind,
+                                Some(&observed.digest),
+                                Some("external_change"),
+                                chrono::Utc::now().timestamp_millis().max(0),
+                            )
+                            .await?;
+                        write.commit().await?;
+                        false
+                    }
+                }
+                Err(_) => {
+                    mark_routing_sync_error(&runtime, "invalid_document").await?;
+                    false
+                }
+            }
+        }
+        Err(_) => {
+            mark_routing_sync_error(&runtime, "document_unavailable").await?;
+            false
+        }
+    };
+    if !should_materialize {
+        return Ok(());
+    }
+    let coordinator_result = coordinator.files().materialize(
+        crate::models::document_sync::DocumentKind::RoutingPolicy,
+        &canonical,
+    );
+    if coordinator_result.is_err() {
+        mark_routing_sync_error(&runtime, "materialization_failed").await?;
+        return Ok(());
+    }
+    // SQLite CAS and filesystem replacement are separate resources. A newer
+    // process may commit while this operation is publishing the old target;
+    // re-read the active fence and immediately materialize the current policy
+    // so a stale mirror does not survive until the periodic reconciliation.
+    let latest = {
+        let mut read = runtime.begin_read().await?;
+        RoutingPolicyStore
+            .load(read.connection())
+            .await?
+            .ok_or(PersistenceError::NotFound)?
+    };
+    if latest.revision != document.base_revision {
+        drop(_operation_guard);
+        Box::pin(sync_routing_policy_file(runtime, &latest, true)).await?;
+        return Ok(());
+    }
+    let mut write = runtime.begin_write().await?;
+    crate::persistence::stores::document_sync_store::DocumentSyncStore
+        .mark_materialized(
+            write.connection(),
+            kind,
+            document.base_revision,
+            Some(&digest),
+            chrono::Utc::now().timestamp_millis().max(0),
+        )
+        .await?;
+    write.commit().await
+}
+
+/// Startup reconciliation for routing policy. It creates a missing managed
+/// mirror and records an external change, but never lets a file silently
+/// replace the active SQLite aggregate during startup.
+pub(crate) async fn initialize_routing_policy_document_sync(
+    runtime: PersistenceHandle,
+) -> Result<(), PersistenceError> {
+    let stored = {
+        let mut read = runtime.begin_read().await?;
+        RoutingPolicyStore
+            .load(read.connection())
+            .await?
+            .ok_or(PersistenceError::NotFound)?
+    };
+    sync_routing_policy_file(runtime, &stored, false).await
+}
+
+/// Import a stable externally edited routing-policy document through the same
+/// aggregate CAS used by the UI. This adapter is intentionally separate from
+/// read-model reconciliation so querying workspace state cannot mutate the
+/// active policy. Invalid JSON, invalid policy values, or a stale base
+/// revision only update document-sync diagnostics and leave SQLite untouched.
+pub(crate) async fn reconcile_external_routing_policy_document(
+    runtime: PersistenceHandle,
+) -> Result<(), PersistenceError> {
+    use crate::models::document_sync::{DocumentKind, ROUTING_POLICY_DOCUMENT_KIND};
+
+    let (current_sync, current_policy) = {
+        let mut read = runtime.begin_read().await?;
+        let sync = crate::persistence::stores::document_sync_store::DocumentSyncStore
+            .load(read.connection(), ROUTING_POLICY_DOCUMENT_KIND)
+            .await?;
+        let policy = RoutingPolicyStore
+            .load(read.connection())
+            .await?
+            .ok_or(PersistenceError::NotFound)?;
+        (sync, policy)
+    };
+    let Some(current_sync) = current_sync else {
+        return Ok(());
+    };
+    let current_revision = u64::try_from(current_policy.revision).map_err(|_| {
+        PersistenceError::InvariantViolation("routing policy revision is invalid".into())
+    })?;
+    let coordinator = routing_document_coordinator(&runtime);
+    let stable = match coordinator.read_stable(DocumentKind::RoutingPolicy).await {
+        Ok(stable) => stable,
+        Err(PolicyDocumentError::Missing) => {
+            mark_routing_sync_error(&runtime, "document_missing").await?;
+            return Ok(());
+        }
+        Err(PolicyDocumentError::Unstable) => return Ok(()),
+        Err(_) => {
+            mark_routing_sync_error(&runtime, "document_unavailable").await?;
+            return Ok(());
+        }
+    };
+    if current_sync
+        .desired_canonical_digest
+        .as_deref()
+        .is_some_and(|digest| digest == stable.digest)
+    {
+        let mut write = runtime.begin_write().await?;
+        let _ = crate::persistence::stores::document_sync_store::DocumentSyncStore
+            .mark_materialized(
+                write.connection(),
+                ROUTING_POLICY_DOCUMENT_KIND,
+                current_sync.desired_revision,
+                Some(&stable.digest),
+                chrono::Utc::now().timestamp_millis().max(0),
+            )
+            .await?;
+        write.commit().await?;
+        return Ok(());
+    }
+    let document = match decode_strict_json::<crate::models::routing_policy::RoutingPolicyDocumentV1>(
+        &stable.bytes,
+    ) {
+        Ok(document) => document,
+        Err(_) => {
+            mark_routing_sync_error(&runtime, "invalid_document").await?;
+            return Ok(());
+        }
+    };
+    if document.base_revision != current_revision
+        || document.validate().is_err()
+        || crate::application::routing_policy::compile_config(
+            &document.policy,
+            document.base_revision,
+            &current_policy.policy_version,
+            &current_policy.system_version,
+        )
+        .is_err()
+    {
+        let mut write = runtime.begin_write().await?;
+        let _ = crate::persistence::stores::document_sync_store::DocumentSyncStore
+            .mark_external_change(
+                write.connection(),
+                ROUTING_POLICY_DOCUMENT_KIND,
+                Some(&stable.digest),
+                Some("revision_conflict"),
+                chrono::Utc::now().timestamp_millis().max(0),
+            )
+            .await?;
+        write.commit().await?;
+        return Ok(());
+    }
+    let service = RoutingService::new(runtime.clone());
+    match service
+        .apply_routing_policy_document(document, TrustedDocumentSource::file_watch())
+        .await
+    {
+        Ok(_) => {}
+        Err(ApplicationError::StaleRevision) => {
+            let mut mark = runtime.begin_write().await?;
+            let _ = crate::persistence::stores::document_sync_store::DocumentSyncStore
+                .mark_external_change(
+                    mark.connection(),
+                    ROUTING_POLICY_DOCUMENT_KIND,
+                    Some(&stable.digest),
+                    Some("revision_conflict"),
+                    chrono::Utc::now().timestamp_millis().max(0),
+                )
+                .await?;
+            mark.commit().await?;
+        }
+        Err(error) => {
+            return Err(PersistenceError::InvariantViolation(error.to_string()));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 struct SimulatedRouteCandidateProjection {
     station_name: String,
@@ -909,6 +1438,19 @@ fn route_kind_from_endpoint(endpoint: &RouteEndpointKind) -> RouteKind {
         RouteEndpointKind::ChatCompletions
         | RouteEndpointKind::Responses
         | RouteEndpointKind::Embeddings => RouteKind::Inference,
+    }
+}
+
+fn mapping_endpoint_kind(
+    endpoint: &RouteEndpointKind,
+) -> crate::models::model_mapping::EndpointKind {
+    match endpoint {
+        RouteEndpointKind::Models => crate::models::model_mapping::EndpointKind::Models,
+        RouteEndpointKind::ChatCompletions => {
+            crate::models::model_mapping::EndpointKind::ChatCompletions
+        }
+        RouteEndpointKind::Responses => crate::models::model_mapping::EndpointKind::Responses,
+        RouteEndpointKind::Embeddings => crate::models::model_mapping::EndpointKind::Embeddings,
     }
 }
 
@@ -1195,6 +1737,7 @@ mod tests {
         pricing::{PricingStatus, RequestKind},
         proxy::UpstreamApiFormat,
         routing::{RoutingPolicy, StationKeyCapabilities},
+        routing_policy::{RoutingPolicyConfigV1, RoutingPolicyDocumentV1},
     };
 
     #[tokio::test]
@@ -1212,6 +1755,44 @@ mod tests {
         runtime.close().await.expect("close persistence runtime");
     }
 
+    #[tokio::test]
+    async fn stale_routing_materialization_cannot_regress_newer_active_revision() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = crate::persistence::runtime::PersistenceRuntime::initialize_new(
+            &temp.path().join("routing.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let service = RoutingService::new(runtime.handle());
+        let baseline = service.load_routing_policy().await.expect("baseline");
+
+        let mut first_config = RoutingPolicyConfigV1::default();
+        first_config.max_candidates = 63;
+        let first = service
+            .save_routing_policy(first_config, Some(baseline.revision))
+            .await
+            .expect("first policy apply");
+
+        let mut second_config = RoutingPolicyConfigV1::default();
+        second_config.max_candidates = 62;
+        let second = service
+            .save_routing_policy(second_config, Some(first.revision))
+            .await
+            .expect("second policy apply");
+
+        // Simulate a delayed file-side continuation from the first commit.
+        sync_routing_policy_file(runtime.handle(), &first, true)
+            .await
+            .expect("stale materialization is ignored");
+        let bytes = std::fs::read(temp.path().join("config").join("routing-policy.json"))
+            .expect("managed routing document");
+        let materialized: RoutingPolicyDocumentV1 =
+            serde_json::from_slice(&bytes).expect("managed routing document decodes");
+        assert_eq!(materialized.base_revision, second.revision);
+        assert_eq!(materialized.policy.max_candidates, 62);
+        runtime.close().await.expect("close persistence runtime");
+    }
+
     #[test]
     fn simulation_explanation_uses_projection_plan_without_legacy_scheduler_fields() {
         let now_ms = 1_800_000_000_000;
@@ -1221,6 +1802,7 @@ mod tests {
             routing_group_scope: RoutingGroupFilter::AllGroups,
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
         let projected = vec![
@@ -1292,6 +1874,7 @@ mod tests {
             routing_group_scope: RoutingGroupFilter::AllGroups,
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         };
         let request = RouteRequestClassifier::classify(
             CanonicalRouteRequest {

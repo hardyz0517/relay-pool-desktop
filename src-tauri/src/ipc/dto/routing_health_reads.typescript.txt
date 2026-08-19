@@ -269,6 +269,8 @@ export type RoutingWorkspaceCandidateDto = {
   priority: number;
   schedulable: boolean;
   healthState: string;
+  score: number | null;
+  scoreDetails: RoutingCandidateScoreSnapshotDto | null;
   group: RoutingCandidateGroupSnapshotDto | null;
   multiplier: RoutingCandidateMultiplierSnapshotDto;
   capabilitySummary: RoutingCapabilitySummaryDto;
@@ -281,6 +283,52 @@ export type RoutingWorkspaceCandidateDto = {
   capacity: RoutingCandidateCapacitySnapshotDto;
   sourceRefs: RoutingCandidateSourceRefsDto;
   hardRejectionCodes: string[];
+};
+
+export type RoutingCandidateScoreFactorSnapshotDto = {
+  score: number;
+  weight: number;
+  contribution: number;
+  inputs: RoutingCandidateScoreInputSnapshotDto[];
+  windowDetails?: RoutingCandidateScoreWindowSnapshotDto | null;
+};
+
+export type RoutingCandidateScoreWindowSnapshotDto = {
+  recentObservationCount: number;
+  recentEffectiveMassBasisPoints: number;
+  recentSuccessMassBasisPoints: number;
+  recentFailureMassBasisPoints: number;
+  recentScore: number;
+  recentWeightBasisPoints: number;
+  recentResponsivenessWeightBasisPoints: number;
+  recentP95LatencyMs: number | null;
+  recentLatencyCoverageBasisPoints: number;
+  recentResponsivenessBasisPoints: number;
+  historicalObservationCount: number;
+  historicalEffectiveMassBasisPoints: number;
+  historicalSuccessMassBasisPoints: number;
+  historicalFailureMassBasisPoints: number;
+  historicalScore: number;
+  historicalWeightBasisPoints: number;
+  historicalResponsivenessWeightBasisPoints: number;
+  historicalP95LatencyMs: number | null;
+  historicalLatencyCoverageBasisPoints: number;
+  historicalResponsivenessBasisPoints: number;
+  historicalAgeWindowDays: number;
+  historicalHalfLifeDays: number;
+};
+
+export type RoutingCandidateScoreInputSnapshotDto = {
+  label: string;
+  value: string;
+};
+
+export type RoutingCandidateScoreSnapshotDto = {
+  total: number;
+  reliability: RoutingCandidateScoreFactorSnapshotDto;
+  responsiveness: RoutingCandidateScoreFactorSnapshotDto;
+  cost: RoutingCandidateScoreFactorSnapshotDto;
+  preference: RoutingCandidateScoreFactorSnapshotDto;
 };
 
 export type RoutingReadPageDto = {

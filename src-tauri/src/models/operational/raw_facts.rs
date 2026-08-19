@@ -3,6 +3,7 @@ pub(crate) struct OperationalFactReadOptions {
     candidate_limit: usize,
     requested_model: Option<String>,
     include_model_catalog: bool,
+    include_legacy_aliases: bool,
 }
 
 impl OperationalFactReadOptions {
@@ -11,6 +12,7 @@ impl OperationalFactReadOptions {
             candidate_limit: MAX_OPERATIONAL_CANDIDATES,
             requested_model: Some(model.into()),
             include_model_catalog: false,
+            include_legacy_aliases: true,
         }
     }
 
@@ -19,6 +21,7 @@ impl OperationalFactReadOptions {
             candidate_limit: MAX_OPERATIONAL_CANDIDATES,
             requested_model: None,
             include_model_catalog: true,
+            include_legacy_aliases: true,
         }
     }
 
@@ -38,6 +41,17 @@ impl OperationalFactReadOptions {
 
     pub(crate) fn include_model_catalog(&self) -> bool {
         self.include_model_catalog
+    }
+
+    /// Keeps legacy alias rows available to migration/audit readers while
+    /// allowing production planning to opt out of the retired table entirely.
+    pub(crate) fn without_legacy_aliases(mut self) -> Self {
+        self.include_legacy_aliases = false;
+        self
+    }
+
+    pub(crate) fn includes_legacy_aliases(&self) -> bool {
+        self.include_legacy_aliases
     }
 }
 

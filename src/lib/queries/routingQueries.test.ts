@@ -33,8 +33,10 @@ describe("routing query owner", () => {
         maxCandidates: 64,
         explorationShareBasisPoints: 500,
         allowDepletedFallback: false,
-        affinityEnabled: false,
-        affinityTtlSeconds: 300,
+         affinityEnabled: false,
+         affinityTtlSeconds: 300,
+         outboundProxyMode: "inherit",
+         outboundProxyUrl: null,
       },
       previewPolicyVersion: "intelligent_planner_v1",
       maxRateMultiplier: null,
@@ -77,6 +79,7 @@ describe("routing query owner", () => {
     getStationKeyHealth: vi.fn(),
     loadRoutingPolicy: vi.fn(),
     updateRoutingPolicy: vi.fn(),
+    applyRoutingPolicyDocument: vi.fn(),
     simulateRoute: vi.fn(async () => ({
       previewPolicyVersion: "intelligent_planner_v1",
       capacityMode: "snapshot_only",
@@ -91,6 +94,13 @@ describe("routing query owner", () => {
       candidates: [],
       message: "preview",
     })),
+    getModelMappingWorkspace: vi.fn(),
+    getModelMappingDocument: vi.fn(),
+    validateModelMappingDocument: vi.fn(),
+    applyModelMappingDocument: vi.fn(),
+    restoreModelMappingRevision: vi.fn(),
+    simulateModelMapping: vi.fn(),
+    resolveRequestMappingTrace: vi.fn(),
   } satisfies BackendClient["routing"];
 
   beforeEach(() => {

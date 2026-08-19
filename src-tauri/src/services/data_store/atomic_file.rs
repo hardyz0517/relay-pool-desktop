@@ -32,16 +32,33 @@ impl ApprovedLeaf {
         if !metadata.is_dir() || is_reparse_or_symlink(&metadata) {
             return Err(AtomicFileError::PathRejected);
         }
+        validate_parent_chain(parent)?;
         let canonical_parent = parent.canonicalize().map_err(AtomicFileError::Io)?;
-        Ok(Self {
+        let approved = Self {
             parent: parent.to_path_buf(),
             canonical_parent,
             leaf,
-        })
+        };
+        approved.target_metadata()?;
+        Ok(approved)
     }
 
     pub(crate) fn path(&self) -> PathBuf {
         self.parent.join(&self.leaf)
+    }
+
+    /// Reads the target without following a symlink/reparse point. A missing
+    /// leaf is allowed because `CreateNew` materialization uses the same
+    /// approved parent for its first publish.
+    pub(crate) fn target_metadata(&self) -> Result<Option<fs::Metadata>, AtomicFileError> {
+        match fs::symlink_metadata(self.path()) {
+            Ok(metadata) if metadata.is_file() && !is_reparse_or_symlink(&metadata) => {
+                Ok(Some(metadata))
+            }
+            Ok(_) => Err(AtomicFileError::PathRejected),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(AtomicFileError::Io(error)),
+        }
     }
 }
 
@@ -167,8 +184,9 @@ pub(crate) fn publish_prepared(
     {
         return Err(AtomicFileError::PathRejected);
     }
+    validate_prepared_file(prepared)?;
     sync_file(prepared)?;
-    match (target_path.exists(), mode) {
+    match (target.target_metadata()?.is_some(), mode) {
         (true, PublishMode::CreateNew) => return Err(AtomicFileError::AlreadyExists),
         (false, PublishMode::ReplaceExisting) => fs::rename(prepared, &target_path)?,
         (false, PublishMode::CreateNew) => fs::rename(prepared, &target_path)?,
@@ -199,12 +217,13 @@ pub(crate) fn replace_database_with_rollback(
     {
         return Err(AtomicFileError::PathRejected);
     }
-    if !active_path.is_file() || !prepared_replacement.is_file() {
+    if active.target_metadata()?.is_none() {
         return Err(AtomicFileError::Missing);
     }
-    if rollback_path.exists() {
+    if rollback.target_metadata()?.is_some() {
         return Err(AtomicFileError::AlreadyExists);
     }
+    validate_prepared_file(prepared_replacement)?;
 
     sync_file(prepared_replacement)?;
     sync_file(&active_path)?;
@@ -248,6 +267,31 @@ fn is_safe_leaf(leaf: &OsStr) -> bool {
         leaf_path.components().collect::<Vec<_>>().as_slice(),
         [Component::Normal(_)]
     )
+}
+
+fn validate_parent_chain(parent: &Path) -> Result<(), AtomicFileError> {
+    // Walk from the approved leaf toward the filesystem root.  Constructing
+    // a path one Windows prefix component at a time is not reliable for
+    // extended (`\\?\`) paths, while ancestor paths preserve the original
+    // namespace and can be checked directly with symlink_metadata.
+    for ancestor in parent.ancestors() {
+        let metadata = fs::symlink_metadata(ancestor).map_err(AtomicFileError::Io)?;
+        if !metadata.is_dir() || is_reparse_or_symlink(&metadata) {
+            return Err(AtomicFileError::PathRejected);
+        }
+        if ancestor.parent().is_none() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn validate_prepared_file(path: &Path) -> Result<(), AtomicFileError> {
+    let metadata = fs::symlink_metadata(path).map_err(AtomicFileError::Io)?;
+    if !metadata.is_file() || is_reparse_or_symlink(&metadata) {
+        return Err(AtomicFileError::PathRejected);
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -473,5 +517,37 @@ mod tests {
 
         assert!(matches!(error, super::AtomicFileError::PathRejected));
         assert!(!target.path().exists());
+    }
+
+    #[test]
+    fn approved_leaf_rejects_existing_directory_target() {
+        let root = tempfile::tempdir().expect("root");
+        std::fs::create_dir(root.path().join("config.json")).expect("target directory");
+
+        let error = ApprovedLeaf::approve(root.path(), "config.json")
+            .expect_err("a managed document target must be a regular file");
+        assert!(matches!(error, super::AtomicFileError::PathRejected));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn approved_leaf_rejects_symlink_target_and_parent() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("root");
+        let target_file = root.path().join("real.json");
+        std::fs::write(&target_file, b"outside").expect("target file");
+        symlink(&target_file, root.path().join("config.json")).expect("target symlink");
+        let target_error = ApprovedLeaf::approve(root.path(), "config.json")
+            .expect_err("symlink target must be rejected");
+        assert!(matches!(target_error, super::AtomicFileError::PathRejected));
+
+        let parent = root.path().join("managed");
+        let real_parent = root.path().join("real-parent");
+        std::fs::create_dir(&real_parent).expect("real parent");
+        symlink(&real_parent, &parent).expect("parent symlink");
+        let parent_error = ApprovedLeaf::approve(&parent, "config.json")
+            .expect_err("symlink parent must be rejected");
+        assert!(matches!(parent_error, super::AtomicFileError::PathRejected));
     }
 }

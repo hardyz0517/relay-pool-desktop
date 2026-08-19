@@ -316,14 +316,6 @@ pub(crate) fn request_application_restart<R: tauri::Runtime>(app: &tauri::AppHan
         );
         runtime_log.flush();
     }
-    #[cfg(dev)]
-    {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.eval("window.location.reload()");
-        }
-    }
-
-    #[cfg(not(dev))]
     app.request_restart();
 }
 
@@ -1107,6 +1099,20 @@ pub fn run() {
                             data_directory_port,
                             blocking_executor.clone(),
                         );
+                        tauri::async_runtime::block_on(
+                            application::model_mapping::initialize_from_persistence(
+                                runtime.handle(),
+                            ),
+                        )
+                        .map_err(|error| format!("failed to initialize model mapping: {error}"))?;
+                        tauri::async_runtime::block_on(
+                            application::routing::initialize_routing_policy_document_sync(
+                                runtime.handle(),
+                            ),
+                        )
+                        .map_err(|error| {
+                            format!("failed to initialize routing policy document: {error}")
+                        })?;
                         let settings = tauri::async_runtime::block_on(app_services.settings.load())
                             .map_err(|error| {
                                 format!("failed to load application settings: {error}")
@@ -1332,6 +1338,19 @@ pub fn run() {
                             .start(&routing_projection_task)
                             .map_err(|error| {
                                 format!("failed to start routing projection runner: {error}")
+                            })?;
+                        let policy_document_task =
+                            background_tasks::policy_document_runner::register_policy_document_task(
+                                &supervisor_handle,
+                                runtime.handle(),
+                            )
+                            .map_err(|error| {
+                                format!("failed to register policy document reconciler: {error}")
+                            })?;
+                        supervisor_handle
+                            .start(&policy_document_task)
+                            .map_err(|error| {
+                                format!("failed to start policy document reconciler: {error}")
                             })?;
                         let monitoring_runner_state =
                             services::monitoring::runner::MonitoringRunnerState::start(

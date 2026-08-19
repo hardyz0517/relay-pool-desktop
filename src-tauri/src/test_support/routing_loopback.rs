@@ -24,9 +24,14 @@ use crate::{
             UpdateStationKeyGroupBindingInput, UpsertStationGroupBindingInput,
             BINDING_KIND_STATION_GROUP, BINDING_STATUS_AVAILABLE,
         },
+        model_mapping::{
+            Action, FallbackTrigger, Matcher, ModelBindingSource, ModelMappingDocumentV1,
+            ModelMappingPolicy, ModelMappingRule, ModelOfferingBinding, ModelProfile,
+            ModelProfileStatus, TargetRef,
+        },
         pricing::UpsertBalanceSnapshotInput,
         proxy::RequestLog,
-        routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
+        routing::UpdateStationKeyCapabilitiesInput,
         settings::UpdateSettingsInput,
         station_keys::CreateStationKeyInput,
         stations::CreateStationInput,
@@ -467,17 +472,193 @@ impl RoutingLoopbackHarness {
     }
 
     pub async fn upsert_model_alias(&self, client_model: &str, upstream_model: &str) {
+        self.set_model_mappings(&[(client_model, upstream_model)])
+            .await;
+    }
+
+    pub async fn set_model_mappings(&self, mappings: &[(&str, &str)]) {
+        self.reload_model_mapping().await;
+        let current = crate::application::model_mapping::current_document();
+        let rules = mappings
+            .iter()
+            .enumerate()
+            .map(|(index, (client_model, upstream_model))| ModelMappingRule {
+                id: format!("loopback-model-map-{index}"),
+                priority: 100_u32.saturating_sub(index as u32),
+                enabled: true,
+                matcher: Matcher::Exact {
+                    model: (*client_model).to_string(),
+                },
+                conditions: Default::default(),
+                action: Action::MapFixed {
+                    target: TargetRef::Literal {
+                        upstream_model: (*upstream_model).to_string(),
+                    },
+                },
+                note: Some("loopback fixture".to_string()),
+                revision: 1,
+            })
+            .collect();
+        let document = ModelMappingDocumentV1 {
+            base_revision: current.base_revision,
+            rules,
+            ..current
+        };
+        self.set_model_mapping_document(document).await;
+    }
+
+    /// Applies a complete model-mapping document through the production
+    /// mutation path, then reloads the runtime snapshot used by the proxy.
+    ///
+    /// Loopback tests intentionally do not need to coordinate an exact
+    /// optimistic-concurrency revision. The helper rebases the fixture on the
+    /// current persisted document while preserving all other document fields.
+    pub async fn set_model_mapping_document(&self, mut document: ModelMappingDocumentV1) {
+        self.reload_model_mapping().await;
+        document.base_revision =
+            crate::application::model_mapping::current_document().base_revision;
         self.services
             .routing
-            .upsert_model_alias(UpsertModelAliasInput {
-                id: None,
-                client_model: client_model.to_string(),
+            .apply_model_mapping_document(
+                document,
+                crate::models::document_sync::TrustedDocumentSource::system(),
+            )
+            .await
+            .expect("model mapping document");
+        self.reload_model_mapping().await;
+    }
+
+    /// Installs a profile-target rule with optional key- and station-scoped
+    /// offerings. This keeps integration fixtures on the same document path
+    /// as the desktop control plane without exposing internal model types to
+    /// external integration-test crates.
+    pub async fn set_profile_model_mapping(
+        &self,
+        client_model: &str,
+        profile_id: &str,
+        default_upstream_model: &str,
+        key_binding: Option<(&str, &str)>,
+        station_binding: Option<(&str, &str)>,
+    ) {
+        let profile = ModelProfile {
+            id: profile_id.to_string(),
+            canonical_model: client_model.to_string(),
+            display_name: format!("Loopback profile {profile_id}"),
+            default_upstream_model: Some(default_upstream_model.to_string()),
+            status: ModelProfileStatus::Active,
+            note: None,
+            revision: 1,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let rule = ModelMappingRule {
+            id: format!("loopback-profile-rule-{profile_id}"),
+            priority: 100,
+            enabled: true,
+            matcher: Matcher::Exact {
+                model: client_model.to_string(),
+            },
+            conditions: Default::default(),
+            action: Action::MapFixed {
+                target: TargetRef::ModelProfile {
+                    model_profile_id: profile_id.to_string(),
+                },
+            },
+            note: Some("loopback profile fixture".to_string()),
+            revision: 1,
+        };
+        let mut bindings = Vec::new();
+        if let Some((station_key_id, upstream_model)) = key_binding {
+            bindings.push(ModelOfferingBinding {
+                id: format!("loopback-profile-key-binding-{profile_id}"),
+                model_profile_id: profile_id.to_string(),
+                station_key_id: Some(station_key_id.to_string()),
+                station_id: None,
                 upstream_model: upstream_model.to_string(),
+                source: ModelBindingSource::Manual,
                 enabled: true,
                 note: None,
+                revision: 1,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            });
+        }
+        if let Some((station_id, upstream_model)) = station_binding {
+            bindings.push(ModelOfferingBinding {
+                id: format!("loopback-profile-station-binding-{profile_id}"),
+                model_profile_id: profile_id.to_string(),
+                station_key_id: None,
+                station_id: Some(station_id.to_string()),
+                upstream_model: upstream_model.to_string(),
+                source: ModelBindingSource::Manual,
+                enabled: true,
+                note: None,
+                revision: 1,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            });
+        }
+        self.set_model_mapping_document(ModelMappingDocumentV1 {
+            format_version: 1,
+            base_revision: 0,
+            policy: ModelMappingPolicy::default(),
+            rules: vec![rule],
+            profiles: vec![profile],
+            bindings,
+        })
+        .await;
+    }
+
+    /// Installs a literal fallback chain. The chain is intentionally wired to
+    /// the pre-output retry trigger used by request execution so loopback
+    /// tests can assert target-rank progression and output commitment.
+    pub async fn set_model_fallback_mapping(&self, client_model: &str, upstream_models: &[&str]) {
+        assert!(
+            (2..=3).contains(&upstream_models.len()),
+            "loopback fallback fixtures require 2..=3 targets"
+        );
+        let current = {
+            self.reload_model_mapping().await;
+            crate::application::model_mapping::current_document()
+        };
+        let targets = upstream_models
+            .iter()
+            .map(|upstream_model| TargetRef::Literal {
+                upstream_model: (*upstream_model).to_string(),
             })
+            .collect();
+        self.set_model_mapping_document(ModelMappingDocumentV1 {
+            format_version: 1,
+            base_revision: current.base_revision,
+            policy: ModelMappingPolicy::default(),
+            rules: vec![ModelMappingRule {
+                id: "loopback-model-fallback".to_string(),
+                priority: 100,
+                enabled: true,
+                matcher: Matcher::Exact {
+                    model: client_model.to_string(),
+                },
+                conditions: Default::default(),
+                action: Action::MapFallbackChain {
+                    targets,
+                    fallback_trigger: FallbackTrigger::RetryExhaustedBeforeOutput,
+                },
+                note: Some("loopback fallback fixture".to_string()),
+                revision: 1,
+            }],
+            profiles: Vec::new(),
+            bindings: Vec::new(),
+        })
+        .await;
+    }
+
+    /// Reloads the production model-mapping snapshot after a fixture mutates
+    /// its normalized persistence rows.  The loopback harness intentionally
+    /// keeps this explicit so tests can assert startup/reload boundaries.
+    pub async fn reload_model_mapping(&self) {
+        crate::application::model_mapping::initialize_from_persistence(self.runtime.handle())
             .await
-            .expect("model alias");
+            .expect("model mapping snapshot");
     }
 
     pub async fn seed_balance(&self, station_id: &str, value: f64) {

@@ -543,6 +543,7 @@ mod tests {
                 routing_group_scope: RoutingGroupFilter::AllGroups,
                 scheduler_config: Default::default(),
                 allow_depleted_fallback: false,
+                ..Default::default()
             },
             60_000,
         );

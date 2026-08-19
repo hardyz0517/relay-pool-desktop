@@ -96,7 +96,7 @@ pub(crate) enum CatalogError {
 // The v1 catalog describes the post-alerting-cutover user schema. Historical
 // `change_events` is intentionally absent; the six alerting tables below are
 // the durable replacement and must be recognized by portable migration.
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 66;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 74;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -432,6 +432,91 @@ const STATION_KEY_CAPABILITIES_COLUMNS: &[&str] = &[
     "only_use_as_backup",
     "routing_tags_json",
     "updated_at",
+];
+
+const MODEL_MAPPING_POLICIES_COLUMNS: &[&str] = &[
+    "singleton_key",
+    "revision",
+    "unmatched_model_behavior",
+    "updated_at_ms",
+];
+const MODEL_MAPPING_RULES_COLUMNS: &[&str] = &[
+    "id",
+    "priority",
+    "enabled",
+    "matcher_kind",
+    "matcher_value",
+    "endpoint_conditions_json",
+    "stream_condition",
+    "tools_condition",
+    "vision_condition",
+    "reasoning_condition",
+    "action_kind",
+    "fallback_trigger",
+    "rejection_kind",
+    "rejection_message",
+    "note",
+    "created_at_ms",
+    "updated_at_ms",
+    "revision",
+];
+const MODEL_MAPPING_RULE_TARGETS_COLUMNS: &[&str] = &[
+    "id",
+    "rule_id",
+    "position",
+    "target_kind",
+    "literal_upstream_model",
+    "model_profile_id",
+];
+const MODEL_PROFILES_COLUMNS: &[&str] = &[
+    "id",
+    "canonical_model",
+    "display_name",
+    "default_upstream_model",
+    "status",
+    "note",
+    "created_at_ms",
+    "updated_at_ms",
+    "revision",
+];
+const MODEL_OFFERING_BINDINGS_COLUMNS: &[&str] = &[
+    "id",
+    "model_profile_id",
+    "station_key_id",
+    "station_id",
+    "upstream_model",
+    "source",
+    "enabled",
+    "note",
+    "created_at_ms",
+    "updated_at_ms",
+    "revision",
+];
+const LEGACY_MODEL_ALIAS_MIGRATION_REVIEWS_COLUMNS: &[&str] = &[
+    "id",
+    "legacy_alias_id",
+    "requested_model",
+    "selected_target",
+    "discarded_target",
+    "migration_status",
+    "created_at_ms",
+];
+const MODEL_MAPPING_DOCUMENT_HISTORY_COLUMNS: &[&str] =
+    &["revision", "document_json", "source", "created_at_ms"];
+const ROUTING_DOCUMENT_SYNC_COLUMNS: &[&str] = &[
+    "document_kind",
+    "desired_revision",
+    "desired_canonical_digest",
+    "materialized_revision",
+    "materialized_canonical_digest",
+    "sync_state",
+    "last_observed_raw_digest",
+    "last_error_code",
+    "retry_count",
+    "attempt_token",
+    "lease_owner",
+    "lease_expires_at_ms",
+    "updated_at_ms",
 ];
 
 const STATION_ENDPOINT_HEALTH_COLUMNS: &[&str] = &[
@@ -1434,6 +1519,11 @@ const ROUTING_CAPABILITY_MODEL_OBSERVATIONS_COLUMNS: &[&str] = &[
     "credential_revision",
     "endpoint_revision",
     "model_alias_revision",
+    "endpoint_kind",
+    "protocol_kind",
+    "identity_version",
+    "model_mapping_revision",
+    "model_resolution_fence",
     "verdict",
     "evidence_code",
     "classifier_profile_version",
@@ -1445,6 +1535,11 @@ const ROUTING_CAPABILITY_MODEL_VERDICTS_COLUMNS: &[&str] = &[
     "credential_revision",
     "endpoint_revision",
     "model_alias_revision",
+    "endpoint_kind",
+    "protocol_kind",
+    "identity_version",
+    "model_mapping_revision",
+    "model_resolution_fence",
     "verdict",
     "source_observation_id",
     "source_ingestion_sequence",
@@ -1826,6 +1921,18 @@ const ROUTING_QUALITY_RULES: &[FieldRule] = &[FieldRule {
     name: "summary_json",
     transform: FieldTransform::BoundedJson,
 }];
+const MODEL_MAPPING_RULES_RULES: &[FieldRule] = &[FieldRule {
+    name: "endpoint_conditions_json",
+    transform: FieldTransform::BoundedJson,
+}];
+const MODEL_MAPPING_DOCUMENT_HISTORY_RULES: &[FieldRule] = &[FieldRule {
+    name: "document_json",
+    transform: FieldTransform::BoundedJson,
+}];
+const ROUTING_DOCUMENT_SYNC_RULES: &[FieldRule] = &[FieldRule {
+    name: "attempt_token",
+    transform: FieldTransform::Exclude,
+}];
 
 // Existing channel monitor tables are declared here only to classify the current
 // database schema. Portable migration carries configuration only, never runtime fields.
@@ -1919,6 +2026,69 @@ const TABLES: &[TableCatalog] = &[
         true,
         STATION_KEY_CAPABILITIES_COLUMNS,
         JSON_RULES,
+    ),
+    table(
+        "model_mapping_policies",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Internal,
+        false,
+        MODEL_MAPPING_POLICIES_COLUMNS,
+        &[],
+    ),
+    table(
+        "model_mapping_rules",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        true,
+        MODEL_MAPPING_RULES_COLUMNS,
+        MODEL_MAPPING_RULES_RULES,
+    ),
+    table(
+        "model_profiles",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        true,
+        MODEL_PROFILES_COLUMNS,
+        &[],
+    ),
+    table(
+        "model_mapping_rule_targets",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        true,
+        MODEL_MAPPING_RULE_TARGETS_COLUMNS,
+        &[],
+    ),
+    table(
+        "model_offering_bindings",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        true,
+        MODEL_OFFERING_BINDINGS_COLUMNS,
+        &[],
+    ),
+    table(
+        "legacy_model_alias_migration_reviews",
+        TablePolicy::IncludeWithTransform,
+        DataCategory::CoreData,
+        DependencyStage::Routing,
+        false,
+        LEGACY_MODEL_ALIAS_MIGRATION_REVIEWS_COLUMNS,
+        &[],
+    ),
+    table(
+        "model_mapping_document_history",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        false,
+        MODEL_MAPPING_DOCUMENT_HISTORY_COLUMNS,
+        MODEL_MAPPING_DOCUMENT_HISTORY_RULES,
     ),
     table(
         "model_aliases",
@@ -2425,6 +2595,15 @@ const TABLES: &[TableCatalog] = &[
         false,
         ROUTING_CAPABILITY_MODEL_VERDICTS_COLUMNS,
         &[],
+    ),
+    table(
+        "routing_document_sync",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::Internal,
+        false,
+        ROUTING_DOCUMENT_SYNC_COLUMNS,
+        ROUTING_DOCUMENT_SYNC_RULES,
     ),
 ];
 

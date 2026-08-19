@@ -1029,6 +1029,7 @@ mod tests {
                 policy: crate::models::routing_policy::RoutingPolicyConfigV1::default(),
                 profile: crate::application::routing_engine::algorithm_profile::DispatchAlgorithmProfile::default(),
                 candidates: Vec::new(),
+                model_fallback_trigger: None,
                 runtime,
             }))
             })
@@ -1673,7 +1674,7 @@ data: [DONE]
         ]);
         let fixture = V2ProxyTestFixture::new().await;
         fixture
-            .upsert_model_alias("alias-model", "mapped-model")
+            .set_model_mapping("alias-model", "mapped-model")
             .await;
         fixture
             .seed_candidate_named(upstream.base_url.as_str(), "first", 0, "auto")

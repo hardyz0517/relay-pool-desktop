@@ -368,10 +368,23 @@ pub(crate) struct UnsupportedModelObservation {
     pub(crate) resolved_model: String,
     pub(crate) credential_revision: i64,
     pub(crate) endpoint_revision: i64,
+    /// Historical alias revision retained for provenance. It is deliberately
+    /// not part of the native capability identity written by this path.
     pub(crate) model_alias_revision: i64,
+    /// Endpoint/protocol labels are carried independently from model mapping
+    /// provenance. Current request lifecycle records do not yet expose these
+    /// labels, so the production bridge uses the explicit `unknown` value and
+    /// fails closed for future non-unknown identities until the planner can
+    /// provide matching labels.
+    pub(crate) endpoint_kind: String,
+    pub(crate) protocol_kind: String,
+    pub(crate) model_mapping_revision: Option<i64>,
+    pub(crate) model_resolution_fence: Option<String>,
     pub(crate) evidence_code: String,
     pub(crate) classifier_profile_version: String,
 }
+
+const NATIVE_MODEL_CAPABILITY_IDENTITY_VERSION: i64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RebuildProof {
@@ -441,9 +454,11 @@ impl RoutingHealthVerdictStore {
         Ok(true)
     }
 
-    /// Loads unsupported-model capability verdicts for the exact revision-
-    /// fenced candidate/model tuples supplied by the planner. One JSON bind
-    /// keeps statement count and SQLite variable use bounded.
+    /// Loads unsupported-model capability verdicts for the native model and
+    /// execution revision tuples supplied by the planner. The final tuple
+    /// slot is retained as a source-compatibility field for callers that still
+    /// carry `model_alias_revision`; it is not used for native identity.
+    /// One JSON bind keeps statement count and SQLite variable use bounded.
     pub(crate) async fn load_unsupported_model_batch(
         &self,
         connection: &mut SqliteConnection,
@@ -458,7 +473,7 @@ impl RoutingHealthVerdictStore {
         let json = serde_json::to_string(subjects)
             .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
         let rows = sqlx::query(
-            "WITH requested(station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision) AS (SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]'),json_extract(value,'$[2]'),json_extract(value,'$[3]'),json_extract(value,'$[4]') FROM json_each(?1)) SELECT v.station_key_id,v.resolved_model,v.credential_revision,v.endpoint_revision,v.model_alias_revision FROM requested r JOIN routing_capability_model_verdicts v ON v.station_key_id=r.station_key_id AND v.resolved_model=r.resolved_model AND v.credential_revision=r.credential_revision AND v.endpoint_revision=r.endpoint_revision AND v.model_alias_revision=r.model_alias_revision WHERE v.verdict='unsupported'",
+            "WITH requested(station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision) AS (SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]'),json_extract(value,'$[2]'),json_extract(value,'$[3]'),json_extract(value,'$[4]') FROM json_each(?1)) SELECT v.station_key_id,v.resolved_model,v.credential_revision,v.endpoint_revision,v.model_alias_revision FROM requested r JOIN routing_capability_model_verdicts v ON v.station_key_id=r.station_key_id AND v.resolved_model=r.resolved_model AND v.credential_revision=r.credential_revision AND v.endpoint_revision=r.endpoint_revision AND v.endpoint_kind='unknown' AND v.protocol_kind='unknown' AND v.identity_version >= 2 WHERE v.verdict='unsupported'",
         )
         .bind(json)
         .fetch_all(&mut *connection)
@@ -488,15 +503,23 @@ impl RoutingHealthVerdictStore {
             (observation.logical_request_id.as_str(), 160),
             (observation.station_key_id.as_str(), 160),
             (observation.resolved_model.as_str(), 256),
+            (observation.endpoint_kind.as_str(), 64),
+            (observation.protocol_kind.as_str(), 64),
             (observation.evidence_code.as_str(), 96),
             (observation.classifier_profile_version.as_str(), 96),
         ] {
             validate_text(value, max)?;
         }
+        if let Some(fence) = observation.model_resolution_fence.as_deref() {
+            validate_text(fence, 128)?;
+        }
         if now_ms < 0
             || observation.credential_revision <= 0
             || observation.endpoint_revision <= 0
             || observation.model_alias_revision <= 0
+            || observation
+                .model_mapping_revision
+                .is_some_and(|revision| revision <= 0)
         {
             return Err(PersistenceError::ConstraintViolation);
         }
@@ -509,6 +532,10 @@ impl RoutingHealthVerdictStore {
                 observation.credential_revision,
                 observation.endpoint_revision,
                 observation.model_alias_revision,
+                &observation.endpoint_kind,
+                &observation.protocol_kind,
+                observation.model_mapping_revision,
+                &observation.model_resolution_fence,
                 &observation.evidence_code,
                 &observation.classifier_profile_version,
             ))
@@ -522,21 +549,30 @@ impl RoutingHealthVerdictStore {
                 Ok(ScopedObservationApplyResult::Existing)
             } else { Err(PersistenceError::InvariantViolation("capability observation identity collision".into())) };
         }
-        sqlx::query("INSERT INTO routing_capability_model_observations (observation_id,payload_hash,logical_request_id,attempt_ordinal,station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision,verdict,evidence_code,classifier_profile_version,created_at_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'unsupported',?10,?11,?12)")
+        sqlx::query("INSERT INTO routing_capability_model_observations (observation_id,payload_hash,logical_request_id,attempt_ordinal,station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision,endpoint_kind,protocol_kind,identity_version,model_mapping_revision,model_resolution_fence,verdict,evidence_code,classifier_profile_version,created_at_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'unsupported',?15,?16,?17)")
             .bind(&observation.observation_id).bind(&payload_hash).bind(&observation.logical_request_id)
             .bind(i64::from(observation.attempt_ordinal)).bind(&observation.station_key_id)
             .bind(&observation.resolved_model).bind(observation.credential_revision)
             .bind(observation.endpoint_revision).bind(observation.model_alias_revision)
+            .bind(&observation.endpoint_kind).bind(&observation.protocol_kind)
+            .bind(NATIVE_MODEL_CAPABILITY_IDENTITY_VERSION)
+            .bind(observation.model_mapping_revision)
+            .bind(&observation.model_resolution_fence)
             .bind(&observation.evidence_code).bind(&observation.classifier_profile_version)
             .bind(now_ms).execute(&mut *connection).await?;
         let sequence: i64 = sqlx::query_scalar("SELECT last_insert_rowid()")
             .fetch_one(&mut *connection)
             .await?;
-        sqlx::query("INSERT INTO routing_capability_model_verdicts (station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision,verdict,source_observation_id,source_ingestion_sequence,projector_version,updated_at_ms) VALUES (?1,?2,?3,?4,?5,'unsupported',?6,?7,?8,?9) ON CONFLICT(station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision) DO UPDATE SET source_observation_id=excluded.source_observation_id,source_ingestion_sequence=excluded.source_ingestion_sequence,projector_version=excluded.projector_version,updated_at_ms=excluded.updated_at_ms WHERE excluded.source_ingestion_sequence > routing_capability_model_verdicts.source_ingestion_sequence")
+        sqlx::query("INSERT INTO routing_capability_model_verdicts (station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision,endpoint_kind,protocol_kind,identity_version,model_mapping_revision,model_resolution_fence,verdict,source_observation_id,source_ingestion_sequence,projector_version,updated_at_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'unsupported',?11,?12,?13,?14) ON CONFLICT(station_key_id,resolved_model,endpoint_kind,protocol_kind,credential_revision,endpoint_revision) WHERE identity_version >= 2 DO UPDATE SET model_alias_revision=excluded.model_alias_revision,model_mapping_revision=excluded.model_mapping_revision,model_resolution_fence=excluded.model_resolution_fence,source_observation_id=excluded.source_observation_id,source_ingestion_sequence=excluded.source_ingestion_sequence,projector_version=excluded.projector_version,updated_at_ms=excluded.updated_at_ms WHERE excluded.source_ingestion_sequence > routing_capability_model_verdicts.source_ingestion_sequence")
             .bind(&observation.station_key_id).bind(&observation.resolved_model)
             .bind(observation.credential_revision).bind(observation.endpoint_revision)
-            .bind(observation.model_alias_revision).bind(&observation.observation_id)
-            .bind(sequence).bind("capability_evidence_v1").bind(now_ms)
+            .bind(observation.model_alias_revision).bind(&observation.endpoint_kind)
+            .bind(&observation.protocol_kind)
+            .bind(NATIVE_MODEL_CAPABILITY_IDENTITY_VERSION)
+            .bind(observation.model_mapping_revision)
+            .bind(&observation.model_resolution_fence)
+            .bind(&observation.observation_id)
+            .bind(sequence).bind("capability_evidence_v2").bind(now_ms)
             .execute(&mut *connection).await?;
         Ok(ScopedObservationApplyResult::Applied)
     }
@@ -1399,6 +1435,10 @@ mod tests {
             credential_revision: 1,
             endpoint_revision: 1,
             model_alias_revision: 1,
+            endpoint_kind: "unknown".to_string(),
+            protocol_kind: "unknown".to_string(),
+            model_mapping_revision: Some(1),
+            model_resolution_fence: Some("mapping-fence-v1".to_string()),
             evidence_code: "model_unavailable".to_string(),
             classifier_profile_version: "rules-v1".to_string(),
         };
@@ -1444,7 +1484,7 @@ mod tests {
             1,
             "the next planning snapshot must exclude the exact learned tuple"
         );
-        for changed_revision in [(2, 1, 1), (1, 2, 1), (1, 1, 2)] {
+        for changed_revision in [(2, 1, 1), (1, 2, 1)] {
             let changed = vec![(
                 "key".to_string(),
                 "gpt-test".to_string(),
@@ -1458,6 +1498,72 @@ mod tests {
                 .unwrap()
                 .is_empty());
         }
+        let changed_mapping_revision = vec![("key".to_string(), "gpt-test".to_string(), 1, 1, 99)];
+        assert_eq!(
+            store
+                .load_unsupported_model_batch(&mut connection, &changed_mapping_revision)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "mapping revision is provenance and must not invalidate native capability identity"
+        );
+        let mut newer_mapping_observation = observation.clone();
+        newer_mapping_observation.observation_id = "model-unsupported-newer".to_string();
+        newer_mapping_observation.logical_request_id = "request-model-newer".to_string();
+        newer_mapping_observation.model_alias_revision = 99;
+        newer_mapping_observation.model_mapping_revision = Some(99);
+        newer_mapping_observation.model_resolution_fence = Some("mapping-fence-v99".to_string());
+        assert_eq!(
+            store
+                .apply_unsupported_model(&mut connection, &newer_mapping_observation, 102)
+                .await
+                .unwrap(),
+            ScopedObservationApplyResult::Applied
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM routing_capability_model_verdicts WHERE station_key_id = 'key' AND resolved_model = 'gpt-test'",
+            )
+            .fetch_one(&mut connection)
+            .await
+            .unwrap(),
+            1,
+            "mapping revision changes update one native identity instead of creating a new verdict"
+        );
+        let native_identity: (i64, String, String, i64, Option<i64>) = sqlx::query_as(
+            "SELECT identity_version, endpoint_kind, protocol_kind, model_alias_revision, model_mapping_revision FROM routing_capability_model_verdicts WHERE station_key_id = 'key' AND resolved_model = 'gpt-test'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        assert_eq!(native_identity.0, NATIVE_MODEL_CAPABILITY_IDENTITY_VERSION);
+        assert_eq!(native_identity.1, "unknown");
+        assert_eq!(native_identity.2, "unknown");
+        assert_eq!(native_identity.3, 99);
+        assert_eq!(native_identity.4, Some(99));
+
+        sqlx::query("INSERT INTO routing_capability_model_verdicts (station_key_id,resolved_model,credential_revision,endpoint_revision,model_alias_revision,verdict,source_observation_id,source_ingestion_sequence,projector_version,updated_at_ms) VALUES ('legacy-key','legacy-model',1,1,77,'unsupported','legacy-observation',1,'capability_evidence_v1',100)")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .load_unsupported_model_batch(
+                    &mut connection,
+                    &[(
+                        "legacy-key".to_string(),
+                        "legacy-model".to_string(),
+                        1,
+                        1,
+                        77,
+                    )]
+                )
+                .await
+                .unwrap()
+                .is_empty(),
+            "legacy alias-keyed rows are not consumed by native planner reads"
+        );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM routing_capability_model_verdicts WHERE resolved_model = 'manual-blocked-model'"

@@ -16,11 +16,9 @@ use crate::{
         routing::RoutingService,
     },
     models::{
+        document_sync::TrustedDocumentSource,
         pricing::BalanceSnapshot,
-        routing::{
-            ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyHealth,
-            UpsertModelAliasInput,
-        },
+        routing::{ModelAlias, RouteSimulationInput, RouteSimulationResult, StationKeyHealth},
         stations::{EndpointPingResult, StationEndpointHealth},
     },
     outbound::AsyncOutboundClient,
@@ -50,6 +48,51 @@ pub(crate) struct RoutingCommandFacade {
 }
 
 impl RoutingCommandFacade {
+    pub(crate) async fn apply_model_mapping_document(
+        &self,
+        document: crate::models::model_mapping::ModelMappingDocumentV1,
+        source: TrustedDocumentSource,
+    ) -> Result<crate::models::model_mapping::ModelMappingDocumentV1, ApplicationError> {
+        self.routing
+            .apply_model_mapping_document(document, source)
+            .await
+    }
+
+    pub(crate) async fn restore_model_mapping_document(
+        &self,
+        document: crate::models::model_mapping::ModelMappingDocumentV1,
+        expected_revision: u64,
+    ) -> Result<crate::models::model_mapping::ModelMappingDocumentV1, ApplicationError> {
+        self.routing
+            .restore_model_mapping_document(document, expected_revision)
+            .await
+    }
+
+    pub(crate) async fn load_model_mapping_history_document(
+        &self,
+        revision: u64,
+    ) -> Result<Option<String>, ApplicationError> {
+        self.routing
+            .load_model_mapping_history_document(revision)
+            .await
+    }
+
+    pub(crate) async fn list_model_mapping_legacy_reviews(
+        &self,
+    ) -> Result<
+        Vec<crate::persistence::stores::model_mapping_store::StoredLegacyModelAliasReview>,
+        ApplicationError,
+    > {
+        self.routing.list_model_mapping_legacy_reviews().await
+    }
+
+    pub(crate) async fn reconcile_model_mapping_document_sync(
+        &self,
+    ) -> Result<crate::application::model_mapping::ModelMappingDocumentSyncSnapshot, ApplicationError>
+    {
+        self.routing.reconcile_model_mapping_document_sync().await
+    }
+
     pub(crate) fn new(
         routing: Arc<RoutingService>,
         outbound: AsyncOutboundClient,
@@ -88,15 +131,19 @@ impl RoutingCommandFacade {
             .await
     }
 
-    pub(crate) async fn upsert_model_alias(
+    pub(crate) async fn apply_routing_policy_document(
         &self,
-        input: UpsertModelAliasInput,
-    ) -> Result<ModelAlias, ApplicationError> {
-        self.routing.upsert_model_alias(input).await
-    }
-
-    pub(crate) async fn delete_model_alias(&self, id: String) -> Result<(), ApplicationError> {
-        self.routing.delete_model_alias(id).await
+        document: crate::models::routing_policy::RoutingPolicyDocumentV1,
+    ) -> Result<
+        crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+        ApplicationError,
+    > {
+        self.routing
+            .apply_routing_policy_document(
+                document,
+                crate::models::document_sync::TrustedDocumentSource::ui(),
+            )
+            .await
     }
 
     pub(crate) async fn list_station_key_health(

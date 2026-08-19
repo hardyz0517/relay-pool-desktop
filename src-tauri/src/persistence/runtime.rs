@@ -37,9 +37,14 @@ pub(crate) struct PersistenceHandle {
     write_pool: SqlitePool,
     lifecycle: Arc<RuntimeLifecycle>,
     writes: Arc<WriteCoordinator>,
+    database_path: PathBuf,
 }
 
 impl PersistenceHandle {
+    pub(crate) fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
     #[cfg_attr(
         test,
         allow(
@@ -233,6 +238,7 @@ impl PersistenceRuntime {
                 write_pool,
                 lifecycle,
                 writes: Arc::new(WriteCoordinator::new()),
+                database_path: path.to_path_buf(),
             },
             database_path: path.to_path_buf(),
             compatibility,

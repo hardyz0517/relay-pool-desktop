@@ -167,7 +167,9 @@ async fn proxy_model_not_found_excludes_only_that_key_model_commitment_until_rev
         .seed_planning_candidate("key-model-b", "station-b", None, "gpt-upstream")
         .await;
     let routing = RoutingService::new(fixture.runtime().await.handle());
-    let request = planning_request("gpt-test");
+    // Legacy model aliases are no longer consumed by the production planner;
+    // exercise the native upstream model identity directly.
+    let request = planning_request("gpt-upstream");
 
     assert_eq!(
         planning_ids(&routing, &request).await,
@@ -1170,6 +1172,7 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
             routing_group_scope: RoutingGroupFilter::AllGroups,
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         }),
         123457,
     );

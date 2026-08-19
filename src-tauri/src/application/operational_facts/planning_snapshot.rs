@@ -1,4 +1,8 @@
 use crate::{
+    application::model_mapping::{
+        candidate_variants, resolve_for_candidate, CandidateModelVariant,
+        CandidateResolutionContext,
+    },
     application::routing_engine::{
         algorithm_profile::DispatchAlgorithmProfile,
         candidate_plan::RoutePlanPricingSnapshot,
@@ -85,6 +89,11 @@ impl PlanningSnapshotBuilder {
             facts.version_vector().max_key_revision(),
             facts.version_vector().max_settings_revision(),
             facts.version_vector().max_alias_revision(),
+            request.model_mapping_revision().unwrap_or_else(|| {
+                crate::application::model_mapping::current_configuration()
+                    .mapping_revision
+                    .min(i64::MAX as u64) as i64
+            }),
         ]
         .into_iter()
         .max()
@@ -94,11 +103,85 @@ impl PlanningSnapshotBuilder {
         // The raw query has a broader fixed upper bound to contain database
         // work. The policy is the actual planner limit, applied after hard
         // gates so an ineligible early row cannot starve a usable candidate.
-        let resolved_model = resolved_model(&facts, request);
+        let resolved_model = request
+            .requested_model()
+            .map(|model| (model.trim().to_string(), 1_i64));
+        let mapping_configuration = crate::application::model_mapping::current_configuration();
+        let mapping_facts = mapping_facts(request);
+        let mut mapping_fallback_trigger = None;
         let candidates = facts
             .candidates()
             .iter()
-            .map(|candidate| CandidateSnapshot {
+            .filter_map(|candidate| {
+                let resolved = resolve_candidate_mapping(
+                    &mapping_configuration,
+                    &mapping_facts,
+                    candidate,
+                    request,
+                );
+                let (candidate_variants, fallback_trigger) = match resolved {
+                    Ok(value) => value,
+                    Err(crate::application::model_mapping::ModelMappingResolutionError::ProfileHasNoOffering)
+                    | Err(crate::application::model_mapping::ModelMappingResolutionError::NoResolvedTargets) => {
+                        return None;
+                    }
+                    Err(_) => return None,
+                };
+                let candidate_variants = if unsupported_models.is_empty() {
+                    candidate_variants
+                } else {
+                    candidate_variants
+                        .into_iter()
+                        .filter(|variant| {
+                            !unsupported_models.contains(&(
+                                candidate.station_key_id().as_str().to_string(),
+                                variant.upstream_model.clone(),
+                                candidate.credential().record_revision().get(),
+                                candidate.endpoint().endpoint_ref().revision().get(),
+                                1_i64,
+                            ))
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let candidate_variants = candidate_variants
+                    .into_iter()
+                    .filter(|variant| {
+                        candidate_hard_eligible(
+                            candidate,
+                            request,
+                            &policy,
+                            Some(variant.upstream_model.as_str()),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let candidate_variants = candidate_variants
+                    .into_iter()
+                    .filter(|variant| {
+                        candidate_model_scoped_admitted(
+                            candidate,
+                            &variant.upstream_model,
+                            &scoped_verdicts,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                if request.requested_model().is_some()
+                    && candidate_variants.is_empty()
+                    && !matches!(request.route_kind(), RouteKind::ModelCatalog)
+                {
+                    return None;
+                }
+                if mapping_fallback_trigger.is_none() {
+                    mapping_fallback_trigger = fallback_trigger;
+                }
+                let resolved_model_for_candidate = candidate_variants
+                    .first()
+                    .map(|variant| (variant.upstream_model.clone(), 1_i64));
+                let resolved_model = resolved_model_for_candidate.or_else(|| resolved_model.clone());
+                let candidate_model_for_gates = candidate_variants
+                    .first()
+                    .map(|variant| variant.upstream_model.clone())
+                    .or_else(|| request.requested_model().map(ToOwned::to_owned));
+                Some(CandidateSnapshot {
                 station_key_id: candidate.station_key_id().as_str().to_string(),
                 station_id: candidate.station_id().as_str().to_string(),
                 endpoint_revision: candidate.endpoint().endpoint_ref().revision().get(),
@@ -113,6 +196,7 @@ impl PlanningSnapshotBuilder {
                     .as_ref()
                     .map(|(_, revision)| *revision)
                     .unwrap_or(1),
+                model_variants: candidate_variants.clone(),
                 capacity_domain: resolved_model.as_ref().and_then(|(model, _)| {
                     ProviderCapacityDomain::from_trusted_identity(
                         candidate.capacity_provider_family()?,
@@ -126,9 +210,12 @@ impl PlanningSnapshotBuilder {
                     .capacity_domain_revision()
                     .map(|revision| revision.get()),
                 credential_available: candidate.credential().available(),
-                hard_eligible: candidate_hard_eligible(candidate, request, &policy)
-                    && candidate_scoped_admitted(candidate, request, &facts, &scoped_verdicts)
-                    && candidate_capability_admitted(candidate, request, &unsupported_models),
+                hard_eligible: candidate_hard_eligible(
+                    candidate,
+                    request,
+                    &policy,
+                    candidate_model_for_gates.as_deref(),
+                ) && candidate_scoped_admitted(candidate, &scoped_verdicts),
                 backup_only: candidate.backup_only(),
                 depleted: candidate_is_depleted(candidate),
                 capability_basis_points: 10_000,
@@ -170,6 +257,7 @@ impl PlanningSnapshotBuilder {
                     format!("station:{}", candidate.station_id().as_str()),
                     format!("key:{}", candidate.station_key_id().as_str()),
                 ],
+                })
             })
             .filter(|candidate| candidate.hard_eligible)
             .take(usize::from(policy.max_candidates))
@@ -181,6 +269,7 @@ impl PlanningSnapshotBuilder {
             policy,
             profile,
             candidates,
+            model_fallback_trigger: mapping_fallback_trigger,
             runtime,
         };
         snapshot
@@ -190,44 +279,94 @@ impl PlanningSnapshotBuilder {
     }
 }
 
+fn mapping_facts(request: &RouteRequestFacts) -> crate::models::model_mapping::ModelRequestFacts {
+    crate::models::model_mapping::ModelRequestFacts {
+        requested_model: request
+            .mapping_requested_model()
+            .or_else(|| request.requested_model())
+            .map(ToOwned::to_owned),
+        endpoint: request
+            .mapping_endpoint()
+            .unwrap_or(crate::models::model_mapping::EndpointKind::Responses),
+        stream: request.stream(),
+        tools: request.uses_tools(),
+        vision: request.uses_vision(),
+        reasoning: request.uses_reasoning(),
+    }
+}
+
+fn resolve_candidate_mapping(
+    configuration: &crate::application::model_mapping::CompiledModelMappingConfiguration,
+    facts: &crate::models::model_mapping::ModelRequestFacts,
+    candidate: &super::assembler::OperationalCandidateFact,
+    request: &RouteRequestFacts,
+) -> Result<
+    (
+        Vec<CandidateModelVariant>,
+        Option<crate::models::model_mapping::FallbackTrigger>,
+    ),
+    crate::application::model_mapping::ModelMappingResolutionError,
+> {
+    let endpoint = facts.endpoint;
+    let context = CandidateResolutionContext {
+        station_key_id: candidate.station_key_id().as_str(),
+        station_id: candidate.station_id().as_str(),
+        endpoint,
+        credential_revision: candidate.credential().record_revision().get() as u64,
+        endpoint_revision: candidate.endpoint().endpoint_ref().revision().get() as u64,
+    };
+    let plan = resolve_for_candidate(configuration, facts, context)?;
+    let fallback_trigger = plan.fallback_trigger;
+    let variants = candidate_variants(&plan, context);
+    // A mapping bypass or missing model has no target variant. Preserve the
+    // legacy snapshot shape so catalog/read-model callers remain eligible.
+    if variants.is_empty() && request.requested_model().is_some() {
+        return Err(
+            crate::application::model_mapping::ModelMappingResolutionError::NoResolvedTargets,
+        );
+    }
+    Ok((variants, fallback_trigger))
+}
+
 fn capability_subjects_for_planning(
     facts: &super::assembler::OperationalFactBundle,
     request: &RouteRequestFacts,
 ) -> Vec<(String, String, i64, i64, i64)> {
-    let Some((resolved_model, alias_revision)) = resolved_model(facts, request) else {
-        return Vec::new();
-    };
-    facts
-        .candidates()
-        .iter()
-        .map(|candidate| {
-            (
+    let configuration = crate::application::model_mapping::current_configuration();
+    let mapping_facts = mapping_facts(request);
+    // The fifth tuple slot is a legacy provenance column. Native capability
+    // identity is the station key + upstream model + execution revisions, so
+    // mapping revisions must never partition capability facts.
+    let native_identity_revision = 1_i64;
+    let mut subjects = Vec::new();
+    for candidate in facts.candidates() {
+        let variants =
+            resolve_candidate_mapping(&configuration, &mapping_facts, candidate, request)
+                .ok()
+                .map(|(variants, _)| variants)
+                .unwrap_or_default();
+        let models = if variants.is_empty() {
+            request
+                .requested_model()
+                .map(|model| vec![model.to_string()])
+                .unwrap_or_default()
+        } else {
+            variants
+                .into_iter()
+                .map(|variant| variant.upstream_model)
+                .collect()
+        };
+        for model in models {
+            subjects.push((
                 candidate.station_key_id().as_str().to_string(),
-                resolved_model.clone(),
+                model,
                 candidate.credential().record_revision().get(),
                 candidate.endpoint().endpoint_ref().revision().get(),
-                alias_revision,
-            )
-        })
-        .collect()
-}
-
-fn candidate_capability_admitted(
-    candidate: &super::assembler::OperationalCandidateFact,
-    request: &RouteRequestFacts,
-    unsupported: &std::collections::BTreeSet<(String, String, i64, i64, i64)>,
-) -> bool {
-    if request.requested_model().is_none() {
-        return true;
+                native_identity_revision,
+            ));
+        }
     }
-    // `unsupported` was loaded only for this request's resolved model and
-    // alias revision, so candidate identity and execution revisions are the
-    // remaining exact fence here.
-    !unsupported.iter().any(|(key, _, credential, endpoint, _)| {
-        key == candidate.station_key_id().as_str()
-            && *credential == candidate.credential().record_revision().get()
-            && *endpoint == candidate.endpoint().endpoint_ref().revision().get()
-    })
+    subjects
 }
 
 fn candidate_is_depleted(candidate: &super::assembler::OperationalCandidateFact) -> bool {
@@ -246,6 +385,7 @@ fn candidate_hard_eligible(
     candidate: &super::assembler::OperationalCandidateFact,
     request: &RouteRequestFacts,
     policy: &RoutingPolicyConfigV1,
+    model_override: Option<&str>,
 ) -> bool {
     if !candidate.credential().available() {
         return false;
@@ -258,7 +398,7 @@ fn candidate_hard_eligible(
             candidate.supports_chat_completions() || candidate.supports_responses()
         }
     };
-    let model = request.requested_model();
+    let model = model_override;
     let model_ok = model.is_none_or(|model| {
         !candidate
             .model_blocklist()
@@ -321,7 +461,7 @@ fn scoped_subjects_for_planning(
                     .map_err(|_| PlanningSnapshotBuildError::Invalid("group health scope"))?,
             );
         }
-        if let Some((upstream, alias_revision)) = resolved_model(facts, request) {
+        for upstream in candidate_native_models(candidate, request) {
             subjects.push(
                 ScopedHealthSubject::model_on_key(
                     station_id,
@@ -330,7 +470,7 @@ fn scoped_subjects_for_planning(
                     candidate.endpoint().sanitized_origin().as_str(),
                     credential_revision,
                     endpoint_revision,
-                    alias_revision,
+                    1,
                 )
                 .map_err(|_| PlanningSnapshotBuildError::Invalid("model health scope"))?,
             );
@@ -341,8 +481,6 @@ fn scoped_subjects_for_planning(
 
 fn candidate_scoped_admitted(
     candidate: &super::assembler::OperationalCandidateFact,
-    request: &RouteRequestFacts,
-    facts: &super::assembler::OperationalFactBundle,
     verdicts: &std::collections::BTreeMap<
         (String, FailureDimension),
         crate::persistence::stores::routing_health_verdict_store::ScopedHealthVerdictRow,
@@ -373,17 +511,6 @@ fn candidate_scoped_admitted(
             revision.get(),
         ));
     }
-    if let Some((upstream, alias_revision)) = resolved_model(facts, request) {
-        subjects.push(ScopedHealthSubject::model_on_key(
-            candidate.station_id().as_str(),
-            candidate.station_key_id().as_str(),
-            &upstream,
-            candidate.endpoint().sanitized_origin().as_str(),
-            candidate.credential().record_revision().get(),
-            candidate.endpoint().endpoint_ref().revision().get(),
-            alias_revision,
-        ));
-    }
     subjects.into_iter().all(|subject| {
         subject.ok().is_none_or(|subject| {
             verdicts
@@ -394,25 +521,52 @@ fn candidate_scoped_admitted(
     })
 }
 
-fn resolved_model(
-    facts: &super::assembler::OperationalFactBundle,
+fn candidate_model_scoped_admitted(
+    candidate: &super::assembler::OperationalCandidateFact,
+    upstream_model: &str,
+    verdicts: &std::collections::BTreeMap<
+        (String, FailureDimension),
+        crate::persistence::stores::routing_health_verdict_store::ScopedHealthVerdictRow,
+    >,
+) -> bool {
+    ScopedHealthSubject::model_on_key(
+        candidate.station_id().as_str(),
+        candidate.station_key_id().as_str(),
+        upstream_model,
+        candidate.endpoint().sanitized_origin().as_str(),
+        candidate.credential().record_revision().get(),
+        candidate.endpoint().endpoint_ref().revision().get(),
+        1,
+    )
+    .ok()
+    .is_none_or(|subject| {
+        verdicts
+            .iter()
+            .filter(|((scope, _), _)| scope == subject.scope())
+            .all(|(_, row)| row.verdict == DurableHealthVerdict::Degraded)
+    })
+}
+
+fn candidate_native_models(
+    candidate: &super::assembler::OperationalCandidateFact,
     request: &RouteRequestFacts,
-) -> Option<(String, i64)> {
-    let requested = request.requested_model()?;
-    facts
-        .model_aliases()
-        .iter()
-        .find(|alias| {
-            alias.client_model().eq_ignore_ascii_case(requested)
-                || alias.upstream_model().eq_ignore_ascii_case(requested)
+) -> Vec<String> {
+    let configuration = crate::application::model_mapping::current_configuration();
+    let facts = mapping_facts(request);
+    resolve_candidate_mapping(&configuration, &facts, candidate, request)
+        .ok()
+        .map(|(variants, _)| {
+            variants
+                .into_iter()
+                .map(|variant| variant.upstream_model)
+                .collect()
         })
-        .map(|alias| {
-            (
-                alias.upstream_model().to_string(),
-                alias.record_revision().get(),
-            )
+        .unwrap_or_else(|| {
+            request
+                .requested_model()
+                .map(|model| vec![model.trim().to_string()])
+                .unwrap_or_default()
         })
-        .or_else(|| Some((requested.to_string(), 1)))
 }
 
 fn candidate_matches_group_scope(
@@ -514,6 +668,7 @@ mod tests {
             &candidate,
             &test_request(GroupFilterMode::Any, None),
             &RoutingPolicyConfigV1::default(),
+            Some("gpt-4.1"),
         ));
         candidate.set_durable_health_for_planning_test(
             None,
@@ -523,6 +678,7 @@ mod tests {
             &candidate,
             &test_request(GroupFilterMode::Any, None),
             &RoutingPolicyConfigV1::default(),
+            Some("gpt-4.1"),
         ));
     }
 

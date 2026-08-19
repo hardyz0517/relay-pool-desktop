@@ -3,6 +3,477 @@ mod support;
 use support::routing_loopback::{LoopbackUpstream, RoutingLoopbackHarness, ScriptedResponse};
 
 #[tokio::test]
+async fn model_mapping_rewrites_chat_responses_and_embeddings_upstream_bodies() {
+    let upstream = LoopbackUpstream::script(vec![
+        ScriptedResponse::Json(
+            br#"{"id":"chatcmpl-model-map","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"chat ok"},"finish_reason":"stop"}]}"#.to_vec(),
+        ),
+        ScriptedResponse::Json(
+            br#"{"id":"resp-model-map","object":"response","output":[],"status":"completed"}"#.to_vec(),
+        ),
+        ScriptedResponse::Json(
+            br#"{"object":"list","data":[{"object":"embedding","embedding":[0.1],"index":0}],"model":"embedding-native"}"#.to_vec(),
+        ),
+    ]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let _candidate = harness
+        .seed_candidate(&upstream.base_url, "model-map", 0)
+        .await;
+    harness
+        .set_model_mappings(&[
+            ("client-chat-model", "chat-native-model"),
+            ("client-responses-model", "responses-native-model"),
+            ("client-embedding-model", "embedding-native-model"),
+        ])
+        .await;
+
+    let proxy = harness.start_proxy().await;
+    let chat = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-chat-model",
+                "messages": [{"role": "user", "content": "hi"}]
+            }),
+        )
+        .await;
+    assert_eq!(chat.status, reqwest::StatusCode::OK, "{}", chat.body_text());
+
+    let responses = proxy
+        .post_json(
+            "/v1/responses",
+            serde_json::json!({
+                "model": "client-responses-model",
+                "input": "hi"
+            }),
+        )
+        .await;
+    assert_eq!(
+        responses.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        responses.body_text()
+    );
+
+    let embeddings = proxy
+        .post_json(
+            "/v1/embeddings",
+            serde_json::json!({
+                "model": "client-embedding-model",
+                "input": "hi"
+            }),
+        )
+        .await;
+    assert_eq!(
+        embeddings.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        embeddings.body_text()
+    );
+
+    upstream.wait_for_requests(3);
+    let captured = upstream.captured_requests();
+    assert_eq!(captured.len(), 3);
+
+    let chat_body: serde_json::Value =
+        serde_json::from_slice(&captured[0].body).expect("chat body");
+    assert_eq!(captured[0].path_and_query, "/v1/chat/completions");
+    assert_eq!(chat_body["model"], "chat-native-model");
+
+    let responses_body: serde_json::Value =
+        serde_json::from_slice(&captured[1].body).expect("responses body");
+    assert_eq!(captured[1].path_and_query, "/v1/responses");
+    assert_eq!(responses_body["model"], "responses-native-model");
+
+    let embeddings_body: serde_json::Value =
+        serde_json::from_slice(&captured[2].body).expect("embeddings body");
+    assert_eq!(captured[2].path_and_query, "/v1/embeddings");
+    assert_eq!(embeddings_body["model"], "embedding-native-model");
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn model_mapping_profile_precedence_rewrites_upstream_model_through_proxy() {
+    let upstream = LoopbackUpstream::script(vec![
+        ScriptedResponse::Json(
+            br#"{"id":"profile-key","object":"chat.completion","choices":[]}"#.to_vec(),
+        ),
+        ScriptedResponse::Json(
+            br#"{"id":"profile-station","object":"chat.completion","choices":[]}"#.to_vec(),
+        ),
+        ScriptedResponse::Json(
+            br#"{"id":"profile-default","object":"chat.completion","choices":[]}"#.to_vec(),
+        ),
+    ]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let candidate = harness
+        .seed_candidate(&upstream.base_url, "profile-precedence", 0)
+        .await;
+
+    let proxy = harness.start_proxy().await;
+
+    harness
+        .set_profile_model_mapping(
+            "client-profile-model",
+            "profile-precedence",
+            "native-profile-default",
+            Some((&candidate.station_key_id, "native-key-binding")),
+            Some((&candidate.station_id, "native-station-binding")),
+        )
+        .await;
+    let key_response = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-profile-model",
+                "messages": [{"role": "user", "content": "key"}]
+            }),
+        )
+        .await;
+    assert_eq!(key_response.status, reqwest::StatusCode::OK);
+
+    harness
+        .set_profile_model_mapping(
+            "client-profile-model",
+            "profile-precedence",
+            "native-profile-default",
+            None,
+            Some((&candidate.station_id, "native-station-binding")),
+        )
+        .await;
+    let station_response = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-profile-model",
+                "messages": [{"role": "user", "content": "station"}]
+            }),
+        )
+        .await;
+    assert_eq!(station_response.status, reqwest::StatusCode::OK);
+
+    harness
+        .set_profile_model_mapping(
+            "client-profile-model",
+            "profile-precedence",
+            "native-profile-default",
+            None,
+            None,
+        )
+        .await;
+    let default_response = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-profile-model",
+                "messages": [{"role": "user", "content": "default"}]
+            }),
+        )
+        .await;
+    assert_eq!(default_response.status, reqwest::StatusCode::OK);
+
+    upstream.wait_for_requests(3);
+    let captured = upstream.captured_requests();
+    assert_eq!(captured.len(), 3);
+    let models = captured
+        .iter()
+        .map(|request| {
+            serde_json::from_slice::<serde_json::Value>(&request.body)
+                .expect("upstream request body")["model"]
+                .as_str()
+                .expect("upstream model")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        models,
+        vec![
+            "native-key-binding",
+            "native-station-binding",
+            "native-profile-default"
+        ]
+    );
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn model_mapping_fallback_rewrites_target_before_output_for_json() {
+    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
+        status: 429,
+        reason: "Too Many Requests",
+    }]);
+    let fallback = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+        br#"{"id":"fallback-json","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"json ok"}}]}"#.to_vec(),
+    )]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let primary_candidate = harness
+        .seed_candidate(&primary.base_url, "model-fallback-primary", 0)
+        .await;
+    let fallback_candidate = harness
+        .seed_candidate(&fallback.base_url, "model-fallback-backup", 10_000)
+        .await;
+    harness
+        .update_candidate_capabilities(
+            &primary_candidate,
+            support_only_model("native-primary-model"),
+        )
+        .await;
+    harness
+        .update_candidate_capabilities(
+            &fallback_candidate,
+            support_only_model("native-fallback-model"),
+        )
+        .await;
+    harness
+        .set_model_fallback_mapping(
+            "client-fallback-model",
+            &["native-primary-model", "native-fallback-model"],
+        )
+        .await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-fallback-model",
+                "messages": [{"role": "user", "content": "json"}]
+            }),
+        )
+        .await;
+    assert_eq!(
+        response.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        response.body_text()
+    );
+    assert!(response.body_text().contains("json ok"));
+    primary.wait_for_requests(1);
+    fallback.wait_for_requests(1);
+    let primary_body: serde_json::Value =
+        serde_json::from_slice(&primary.captured_requests()[0].body).expect("primary body");
+    let fallback_body: serde_json::Value =
+        serde_json::from_slice(&fallback.captured_requests()[0].body).expect("fallback body");
+    assert_eq!(primary_body["model"], "native-primary-model");
+    assert_eq!(fallback_body["model"], "native-fallback-model");
+
+    for _ in 0..100 {
+        if harness
+            .request_log_summaries()
+            .await
+            .first()
+            .is_some_and(|log| log.fallback_count == 1 && log.attempt_count == Some(2))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let logs = harness.request_log_summaries().await;
+    let log = logs.first().expect("request log");
+    assert_eq!(log.fallback_count, 1);
+    assert_eq!(log.attempt_count, Some(2));
+    let attempts = harness.attempt_terminal_summaries(&log.id).await;
+    assert_eq!(attempts.len(), 2);
+    assert!(!attempts[0].output_committed);
+    assert!(attempts[1].output_committed);
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn model_mapping_fallback_rewrites_target_before_output_for_stream() {
+    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
+        status: 429,
+        reason: "Too Many Requests",
+    }]);
+    let fallback = LoopbackUpstream::script(vec![ScriptedResponse::Raw {
+        status: 200,
+        reason: "OK",
+        content_type: "text/event-stream",
+        body: br#"data: {"id":"fallback-stream","object":"chat.completion.chunk","choices":[{"delta":{"content":"stream ok"},"finish_reason":null}]}
+
+data: {"id":"fallback-stream","object":"chat.completion.chunk","choices":[],"finish_reason":"stop"}
+
+data: [DONE]
+
+"#
+            .to_vec(),
+    }]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let primary_candidate = harness
+        .seed_candidate(&primary.base_url, "stream-fallback-primary", 0)
+        .await;
+    let fallback_candidate = harness
+        .seed_candidate(&fallback.base_url, "stream-fallback-backup", 10_000)
+        .await;
+    harness
+        .update_candidate_capabilities(
+            &primary_candidate,
+            support_only_model("native-primary-model"),
+        )
+        .await;
+    harness
+        .update_candidate_capabilities(
+            &fallback_candidate,
+            support_only_model("native-fallback-model"),
+        )
+        .await;
+    harness
+        .set_model_fallback_mapping(
+            "client-fallback-model",
+            &["native-primary-model", "native-fallback-model"],
+        )
+        .await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-fallback-model",
+                "messages": [{"role": "user", "content": "stream"}],
+                "stream": true
+            }),
+        )
+        .await;
+    assert_eq!(
+        response.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        response.body_text()
+    );
+    assert!(response.body_text().contains("stream ok"));
+    primary.wait_for_requests(1);
+    fallback.wait_for_requests(1);
+    let primary_body: serde_json::Value =
+        serde_json::from_slice(&primary.captured_requests()[0].body).expect("primary body");
+    let fallback_body: serde_json::Value =
+        serde_json::from_slice(&fallback.captured_requests()[0].body).expect("fallback body");
+    assert_eq!(primary_body["model"], "native-primary-model");
+    assert_eq!(fallback_body["model"], "native-fallback-model");
+
+    for _ in 0..100 {
+        if harness
+            .request_log_summaries()
+            .await
+            .first()
+            .is_some_and(|log| log.fallback_count == 1 && log.attempt_count == Some(2))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let logs = harness.request_log_summaries().await;
+    let log = logs.first().expect("request log");
+    assert_eq!(log.fallback_count, 1);
+    assert_eq!(log.attempt_count, Some(2));
+    let attempts = harness.attempt_terminal_summaries(&log.id).await;
+    assert_eq!(attempts.len(), 2);
+    assert!(!attempts[0].output_committed);
+    assert!(attempts[1].output_committed);
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn model_mapping_stream_output_commitment_blocks_fallback_after_partial_delta() {
+    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Raw {
+        status: 200,
+        reason: "OK",
+        content_type: "text/event-stream",
+        body: br#"data: {"id":"partial-stream","object":"chat.completion.chunk","choices":[{"delta":{"content":"partial"},"finish_reason":null}]}
+
+data: {"error":{"message":"stream broke after output","type":"server_error","code":"upstream_error"}}
+
+"#
+            .to_vec(),
+    }]);
+    let fallback = LoopbackUpstream::script(vec![ScriptedResponse::Raw {
+        status: 200,
+        reason: "OK",
+        content_type: "text/event-stream",
+        body: br#"data: {"id":"fallback-stream","object":"chat.completion.chunk","choices":[{"delta":{"content":"fallback"},"finish_reason":null}]}
+
+data: {"id":"fallback-stream","object":"chat.completion.chunk","choices":[],"finish_reason":"stop"}
+
+data: [DONE]
+
+"#
+            .to_vec(),
+    }]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let primary_candidate = harness
+        .seed_candidate(&primary.base_url, "stream-commit-primary", 0)
+        .await;
+    let fallback_candidate = harness
+        .seed_candidate(&fallback.base_url, "stream-commit-backup", 10_000)
+        .await;
+    harness
+        .update_candidate_capabilities(
+            &primary_candidate,
+            support_only_model("native-primary-model"),
+        )
+        .await;
+    harness
+        .update_candidate_capabilities(
+            &fallback_candidate,
+            support_only_model("native-fallback-model"),
+        )
+        .await;
+    harness
+        .set_model_fallback_mapping(
+            "client-fallback-model",
+            &["native-primary-model", "native-fallback-model"],
+        )
+        .await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "client-fallback-model",
+                "messages": [{"role": "user", "content": "partial"}],
+                "stream": true
+            }),
+        )
+        .await;
+    assert!(
+        response.body_text().contains("partial"),
+        "partial upstream output must reach the client: {}",
+        response.body_text()
+    );
+    primary.wait_for_requests(1);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(
+        fallback.captured_requests().len(),
+        0,
+        "fallback must not be called after output commitment"
+    );
+
+    for _ in 0..100 {
+        if harness
+            .request_log_summaries()
+            .await
+            .first()
+            .is_some_and(|log| log.attempt_count == Some(1))
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let logs = harness.request_log_summaries().await;
+    let log = logs.first().expect("request log");
+    assert_eq!(log.fallback_count, 0);
+    assert_eq!(log.attempt_count, Some(1));
+    let attempts = harness.attempt_terminal_summaries(&log.id).await;
+    assert_eq!(attempts.len(), 1);
+    assert!(
+        attempts[0].output_committed,
+        "partial stream output must commit the attempt before EOF failure"
+    );
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
 async fn auth_failure_then_backup_success_persists_dual_terminal_outcome() {
     let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
         status: 429,
@@ -156,12 +627,6 @@ async fn model_not_found_writes_exact_capability_verdict_excludes_next_snapshot_
         .await;
     harness
         .update_candidate_capabilities(&unrelated_candidate, support_only_model("other-model"))
-        .await;
-    harness
-        .upsert_model_alias("fixture-model", "fixture-model")
-        .await;
-    harness
-        .upsert_model_alias("other-model", "other-model")
         .await;
 
     let proxy = harness.start_proxy().await;

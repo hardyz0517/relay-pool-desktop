@@ -44,6 +44,7 @@ use super::{
 use crate::{
     application::{
         credentials::ExecutionCredentialResolver,
+        model_mapping,
         operational_facts::target_resolver::{
             ExecutionTargetHandle, ExecutionTargetRef, ExecutionTargetResolver,
             LeasedSelectedTarget, RequestBodyIdentity, TargetProtocolProfile,
@@ -63,7 +64,6 @@ use crate::{
             candidate_plan::{RoutePlanCandidate, RoutePlanPricingSnapshot},
             capacity::CompositeCapacityRegistry,
             failure_domains::CapacityDomainCommitment,
-            model_alias,
             request::{
                 CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind,
                 RouteRequestClassifier, RouteRequestFacts, ValidatedLocalRouteSettings,
@@ -237,23 +237,101 @@ impl ExecutionEngine {
             return self.execute_usage(request).await;
         }
 
-        let aliases = self
-            .repository
-            .load_model_alias_pairs()
-            .await
-            .map_err(|error| internal_failure(format!("load model aliases failed: {error}")))?;
+        // Model catalogs are a control-plane aggregation endpoint. They must
+        // never be filtered, rejected, or rewritten by inference mapping rules.
+        if matches!(request.endpoint, RouteEndpointKind::Models) {
+            let execution_settings =
+                self.repository
+                    .load_execution_settings()
+                    .await
+                    .map_err(|error| {
+                        internal_failure(format!("load routing settings failed: {error}"))
+                    })?;
+            let route_facts =
+                route_request_facts(&request, &execution_settings, request_started_at_ms, None);
+            let (planning_snapshot, snapshot) = self
+                .load_route_snapshots(&request, &execution_settings, route_facts.clone(), None)
+                .await?;
+            return self
+                .execute_models(
+                    request,
+                    route_facts,
+                    snapshot,
+                    planning_snapshot,
+                    &execution_settings,
+                    None,
+                    request_started_at_ms,
+                    precommit_started,
+                )
+                .await;
+        }
+
         let execution_settings = self
             .repository
             .load_execution_settings()
             .await
             .map_err(|error| internal_failure(format!("load routing settings failed: {error}")))?;
-        let mapped_model = model_alias::mapped_model(request.model.as_deref(), &aliases);
+        let resolved_model_plan = model_mapping::resolve_request(
+            request.model.clone(),
+            mapping_endpoint_kind(&request.endpoint),
+            request.stream,
+            request.requirements.uses_tools,
+            request.requirements.uses_vision,
+            request.requirements.uses_reasoning,
+        )
+        .map_err(|error| match error {
+            model_mapping::ModelMappingResolutionError::InvalidModelName => ProxyFailure::new(
+                ProxyFailureCode::RequestBodyInvalid,
+                FailureSource::Local,
+                RetryClass::Never,
+                StatusCode::BAD_REQUEST,
+                "requested model is invalid",
+            ),
+            model_mapping::ModelMappingResolutionError::TargetRequiresCandidateContext
+            | model_mapping::ModelMappingResolutionError::ProfileNotFound
+            | model_mapping::ModelMappingResolutionError::ProfileHasNoOffering
+            | model_mapping::ModelMappingResolutionError::NoResolvedTargets => ProxyFailure::new(
+                ProxyFailureCode::RequestBodyInvalid,
+                FailureSource::Local,
+                RetryClass::Never,
+                StatusCode::BAD_REQUEST,
+                "model mapping target cannot be resolved for this request",
+            ),
+        })?;
+        model_mapping::record_request_trace(&request.request_id, &resolved_model_plan);
+        if matches!(
+            resolved_model_plan.disposition,
+            model_mapping::Disposition::Reject
+        ) {
+            return Err(model_mapping_rejection_failure(&resolved_model_plan));
+        }
+        // Candidate projection owns the rank-aware target expansion. The
+        // request entry point only seeds hard gates with rank zero; it must
+        // not collapse a fallback chain or reject it as a multi-target plan.
+        let mapped_model = resolved_model_plan
+            .target_models
+            .first()
+            .map(|target| target.route_model.clone())
+            .or_else(|| {
+                request
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(ToOwned::to_owned)
+            });
         let route_facts = route_request_facts(
             &request,
             &execution_settings,
             request_started_at_ms,
             mapped_model.as_deref(),
-        );
+        )
+        .with_model_mapping(
+            resolved_model_plan.mapping_revision,
+            resolved_model_plan.model_resolution_fence.clone(),
+        )
+        .with_mapping_requested_model(request.model.clone())
+        .with_mapping_endpoint(mapping_endpoint_kind(&request.endpoint));
         let (mut planning_snapshot, mut snapshot) = self
             .load_route_snapshots(
                 &request,
@@ -262,21 +340,6 @@ impl ExecutionEngine {
                 mapped_model.as_deref(),
             )
             .await?;
-        if matches!(request.endpoint, RouteEndpointKind::Models) {
-            return self
-                .execute_models(
-                    request,
-                    route_facts,
-                    snapshot,
-                    planning_snapshot,
-                    &execution_settings,
-                    mapped_model,
-                    request_started_at_ms,
-                    precommit_started,
-                )
-                .await;
-        }
-
         // Per-request DecisionTraceProfileV1 record; in-memory ring only.
         let mut decision_trace = DecisionTraceBuilder::new(&request.request_id).ok();
 
@@ -394,6 +457,10 @@ impl ExecutionEngine {
                 None,
             );
             let candidate = selected.candidate.clone();
+            let candidate_model = candidate
+                .resolved_upstream_model
+                .as_deref()
+                .or(mapped_model.as_deref());
             let is_capacity_cross_domain_fallback = selected.is_capacity_cross_domain_fallback;
             let attempt_started_at_ms = now_millis_for_services() as i64;
             let attempt_started = Instant::now();
@@ -409,7 +476,7 @@ impl ExecutionEngine {
                     &snapshot.targets,
                     &planning_snapshot,
                     &request,
-                    mapped_model.as_deref(),
+                    candidate_model,
                 )
                 .await;
             let original_commitment = target.as_ref().ok().map(|target| target.commitment.clone());
@@ -428,11 +495,11 @@ impl ExecutionEngine {
                 let target = target?;
                 let prepared = self
                     .attempts
-                    .attempt(&request, &target, mapped_model.as_deref())
+                    .attempt(&request, &target, candidate_model)
                     .await?;
                 let upstream_headers_ms = attempt_started.elapsed().as_millis() as i64;
                 let prepared = self
-                    .bootstrap_stream(prepared, &request, &target, mapped_model.as_deref())
+                    .bootstrap_stream(prepared, &request, &target, candidate_model)
                     .await?;
                 Ok((prepared, upstream_headers_ms))
             })
@@ -444,7 +511,7 @@ impl ExecutionEngine {
                     Ok((prepared, upstream_headers_ms)) => {
                         controller
                             .record_actual_terminal_for_station_key(
-                                candidate.station_key_id.clone(),
+                                candidate.routing_identity(),
                                 ActualAttemptTerminal::Succeeded,
                             )
                             .map_err(|failure| {
@@ -454,7 +521,7 @@ impl ExecutionEngine {
                         self.bind_success_affinity(
                             &request,
                             &execution_settings,
-                            mapped_model.as_deref(),
+                            candidate_model,
                             &candidate,
                             &planning_snapshot.policy,
                             now_millis_for_services() as i64,
@@ -529,7 +596,7 @@ impl ExecutionEngine {
                             };
                             controller
                                 .record_actual_terminal_for_station_key(
-                                    candidate.station_key_id.clone(),
+                                    candidate.routing_identity(),
                                     ActualAttemptTerminal::RetrySameTargetCapacity,
                                 )
                                 .map_err(|failure| {
@@ -648,7 +715,7 @@ impl ExecutionEngine {
                                     &current_targets,
                                     &planning_snapshot,
                                     &request,
-                                    mapped_model.as_deref(),
+                                    candidate_model,
                                 )
                                 .await;
                             attempt_result = tokio::time::timeout(remaining, async {
@@ -665,16 +732,11 @@ impl ExecutionEngine {
                                 .map_err(execution_target_failure)?;
                                 let prepared = self
                                     .attempts
-                                    .attempt(&request, &target, mapped_model.as_deref())
+                                    .attempt(&request, &target, candidate_model)
                                     .await?;
                                 let headers_ms = retry_started.elapsed().as_millis() as i64;
                                 let prepared = self
-                                    .bootstrap_stream(
-                                        prepared,
-                                        &request,
-                                        &target,
-                                        mapped_model.as_deref(),
-                                    )
+                                    .bootstrap_stream(prepared, &request, &target, candidate_model)
                                     .await?;
                                 Ok((prepared, headers_ms))
                             })
@@ -706,7 +768,7 @@ impl ExecutionEngine {
                             );
                             controller
                                 .record_actual_terminal_for_station_key(
-                                    candidate.station_key_id.clone(),
+                                    candidate.routing_identity(),
                                     ActualAttemptTerminal::RetrySameTargetCapacity,
                                 )
                                 .map_err(|failure| {
@@ -729,7 +791,7 @@ impl ExecutionEngine {
                             break 'attempts;
                         }
                         let terminal_result = controller.record_actual_terminal_for_station_key(
-                            candidate.station_key_id.clone(),
+                            candidate.routing_identity(),
                             if decision == RetryDecision::NextCandidate {
                                 ActualAttemptTerminal::FailedBeforeCommit
                             } else {
@@ -1096,7 +1158,7 @@ impl ExecutionEngine {
                     last_failure = Some(failure);
                     controller
                         .record_actual_terminal_for_station_key(
-                            candidate.station_key_id.clone(),
+                            candidate.routing_identity(),
                             ActualAttemptTerminal::FailedBeforeCommit,
                         )
                         .map_err(|failure| {
@@ -1136,7 +1198,7 @@ impl ExecutionEngine {
                                 .await?;
                                 controller
                                     .record_actual_terminal_for_station_key(
-                                        candidate.station_key_id.clone(),
+                                        candidate.routing_identity(),
                                         ActualAttemptTerminal::Succeeded,
                                     )
                                     .map_err(|failure| {
@@ -1162,7 +1224,7 @@ impl ExecutionEngine {
                                 last_failure = Some(failure);
                                 controller
                                     .record_actual_terminal_for_station_key(
-                                        candidate.station_key_id.clone(),
+                                        candidate.routing_identity(),
                                         ActualAttemptTerminal::FailedBeforeCommit,
                                     )
                                     .map_err(|failure| {
@@ -1190,7 +1252,7 @@ impl ExecutionEngine {
                             last_failure = Some(failure);
                             controller
                                 .record_actual_terminal_for_station_key(
-                                    candidate.station_key_id.clone(),
+                                    candidate.routing_identity(),
                                     ActualAttemptTerminal::FailedBeforeCommit,
                                 )
                                 .map_err(|failure| {
@@ -1216,7 +1278,7 @@ impl ExecutionEngine {
                     last_failure = Some(failure);
                     controller
                         .record_actual_terminal_for_station_key(
-                            candidate.station_key_id.clone(),
+                            candidate.routing_identity(),
                             ActualAttemptTerminal::FailedBeforeCommit,
                         )
                         .map_err(|failure| {
@@ -1955,6 +2017,38 @@ fn internal_failure(message: impl Into<String>) -> ProxyFailure {
     )
 }
 
+fn model_mapping_rejection_failure(plan: &model_mapping::ResolvedModelPlan) -> ProxyFailure {
+    let (code, status, message) = match plan.rejection_kind {
+        Some(crate::models::model_mapping::RejectionKind::UnsupportedModel) => (
+            ProxyFailureCode::UpstreamModelUnavailable,
+            StatusCode::NOT_FOUND,
+            "requested model is not available under the active mapping policy",
+        ),
+        Some(crate::models::model_mapping::RejectionKind::PolicyDenied) => (
+            ProxyFailureCode::RoutePolicyRejected,
+            StatusCode::FORBIDDEN,
+            "request rejected by the active model mapping policy",
+        ),
+        Some(crate::models::model_mapping::RejectionKind::ClientNotAllowed) => (
+            ProxyFailureCode::RequestBodyInvalid,
+            StatusCode::BAD_REQUEST,
+            "request is not allowed by the active model mapping policy",
+        ),
+        None => (
+            ProxyFailureCode::RoutePolicyRejected,
+            StatusCode::FORBIDDEN,
+            "request rejected by the active model mapping policy",
+        ),
+    };
+    ProxyFailure::new(
+        code,
+        FailureSource::Routing,
+        RetryClass::Never,
+        status,
+        message,
+    )
+}
+
 fn routing_configuration_required_failure() -> ProxyFailure {
     ProxyFailure::new(
         ProxyFailureCode::RouteConfigRequired,
@@ -2022,6 +2116,19 @@ fn route_request_facts(
         },
         admitted_at_ms,
     )
+}
+
+fn mapping_endpoint_kind(
+    endpoint: &RouteEndpointKind,
+) -> crate::models::model_mapping::EndpointKind {
+    match endpoint {
+        RouteEndpointKind::Models => crate::models::model_mapping::EndpointKind::Models,
+        RouteEndpointKind::ChatCompletions => {
+            crate::models::model_mapping::EndpointKind::ChatCompletions
+        }
+        RouteEndpointKind::Responses => crate::models::model_mapping::EndpointKind::Responses,
+        RouteEndpointKind::Embeddings => crate::models::model_mapping::EndpointKind::Embeddings,
+    }
 }
 
 fn affinity_lookups(
@@ -3003,12 +3110,14 @@ mod tests {
             group_revision: None,
             resolved_upstream_model: None,
             model_alias_revision: 1,
+            model_variant: None,
             capacity_domain: None,
             capacity_domain_revision: None,
             priority: 0,
             tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
             pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot {
                 basis: crate::application::operational_facts::pricing_projector::RoutingCostBasis::Unpriced,
+                rate_multiplier: None,
                 currency: None,
                 unit: None,
                 estimated_input_price: None,
@@ -3428,6 +3537,7 @@ mod tests {
                     group_revision: None,
                     resolved_upstream_model: Some("gpt-test".to_string()),
                     model_alias_revision: 1,
+                    model_variants: Vec::new(),
                     capacity_domain: fixture_capacity_domain(&candidate.station_key_id),
                     capacity_domain_revision: fixture_capacity_domain(&candidate.station_key_id)
                         .as_ref()
@@ -3464,6 +3574,7 @@ mod tests {
                         profile
                     },
                     candidates,
+                    model_fallback_trigger: None,
                     runtime,
                 }))
             })
@@ -3498,12 +3609,14 @@ mod tests {
                         group_revision: candidate.group_revision,
                         resolved_upstream_model: candidate.resolved_upstream_model.clone(),
                         model_alias_revision: candidate.model_alias_revision,
+                        model_variant: candidate.model_variants.first().cloned(),
                         capacity_domain: candidate.capacity_domain.clone(),
                         capacity_domain_revision: candidate.capacity_domain_revision,
                         priority: 0,
                         tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
                         pricing: crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot {
                             basis: crate::application::operational_facts::pricing_projector::RoutingCostBasis::Unpriced,
+                            rate_multiplier: None,
                             currency: None,
                             unit: None,
                             estimated_input_price: None,

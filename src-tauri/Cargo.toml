@@ -66,6 +66,7 @@ thiserror = "2"
 tracing = "0.1"
 uuid = { version = "1", features = ["v7", "rng"] }
 sha2 = "0.10"
+notify = "8.2"
 subtle = "2"
 tauri = { version = "2", default-features = false, features = [] }
 tauri-plugin-notification = "2.3.3"

@@ -111,7 +111,7 @@ function checkManifestOwnersAndForbiddenEdges() {
   assert.match(executionRepository, /OperationalRouteSnapshot[\s\S]*Vec<RoutePlanCandidate>/u, "execution snapshot must expose an execution-only candidate index");
   assert.doesNotMatch(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /production_policy/u, "workspace read model must not expose legacy policy enum truth");
   assert.match(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /policy_config: RoutingPolicyConfigV1/u, "workspace read model must expose canonical policy config");
-  assert.match(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /updateRoutingPolicy/u);
+  assert.match(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /applyRoutingPolicyDocument/u);
   assert.doesNotMatch(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /schedulerAdvancedSettings|updateSettings/u);
 }
 

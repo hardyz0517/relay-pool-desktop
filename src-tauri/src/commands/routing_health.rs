@@ -12,7 +12,10 @@ use crate::{
             RoutingWorkspaceSnapshotInputDto, StationEndpointHealthDto, StationKeyHealthDto,
             StationKeyOperationalDetailDto, StationKeyOperationalDetailInputDto,
         },
-        routing_mutations::{RoutingPolicySnapshotDto, UpdateRoutingPolicyInputDto},
+        routing_mutations::{
+            ApplyRoutingPolicyDocumentInputDto, RoutingPolicySnapshotDto,
+            UpdateRoutingPolicyInputDto,
+        },
         EmptyInputDto,
     },
     observability::correlation,
@@ -101,6 +104,48 @@ pub async fn update_routing_policy(
             let config = input.config.into_domain()?;
             let stored = facade
                 .save_routing_policy(config, input.expected_revision)
+                .await
+                .map_err(super::public_command_application_error)?;
+            let config: crate::models::routing_policy::RoutingPolicyConfigV1 =
+                serde_json::from_value(stored.config)
+                    .map_err(|_| error::CommandError::internal(None))?;
+            Ok(RoutingPolicySnapshotDto {
+                config: config.into(),
+                revision: stored.revision,
+                policy_version: stored.policy_version,
+                system_version: stored.system_version,
+                status: stored.status,
+                updated_at_ms: stored.updated_at_ms,
+            })
+        },
+    )
+    .await
+}
+
+/// Apply a complete routing-policy document. The command keeps source
+/// provenance internal and uses `document.baseRevision` as the sole CAS
+/// precondition; the legacy field-level command above delegates to the same
+/// service for compatibility.
+#[tauri::command]
+pub async fn apply_routing_policy_document(
+    facade: State<'_, RoutingCommandFacade>,
+    input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<RoutingPolicySnapshotDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "apply_routing_policy_document",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ApplyRoutingPolicyDocumentInputDto::parse(input)?;
+            let document = input.into_domain()?;
+            let stored = facade
+                .apply_routing_policy_document(document)
                 .await
                 .map_err(super::public_command_application_error)?;
             let config: crate::models::routing_policy::RoutingPolicyConfigV1 =

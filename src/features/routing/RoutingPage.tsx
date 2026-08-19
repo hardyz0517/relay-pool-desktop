@@ -45,7 +45,7 @@ export function RoutingPage({
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions());
   const keyPoolItemsQuery = useActivityQuery({
     ...keyPoolQueryOptions(),
-    enabled: activeTab === "edit",
+    enabled: queryEnabled,
   });
   const routingSnapshotQuery = useActivityQuery({
     queryKey: routingQueryKeys.workspaceSnapshot({ limit: 50 }),
@@ -174,7 +174,7 @@ export function RoutingPage({
             value={activeTab}
             options={[
               { value: "status", label: "概览" },
-              { value: "edit", label: "策略配置" },
+              { value: "edit", label: "设置" },
             ]}
             onChange={setActiveTab}
           />
@@ -186,6 +186,7 @@ export function RoutingPage({
           <LocalRoutingStatusTab
             loading={loading}
             workspace={workspace}
+            keyPoolItems={keyPoolItemsQuery.data}
             maxRateMultiplier={routingSnapshotQuery.data?.maxRateMultiplier}
             nowMs={nowMs}
             proxyActionPending={proxyActionPending}
@@ -207,9 +208,6 @@ export function RoutingPage({
         </div>
       ) : activeTab === "edit" ? (
         <LocalRoutingEditTab
-          loading={loading || keyPoolItemsQuery.isPending}
-          keyPoolItems={keyPoolItemsQuery.data}
-          workspace={workspace}
         />
       ) : null}
     </PageScaffold>

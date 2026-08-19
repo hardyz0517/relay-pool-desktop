@@ -14,6 +14,7 @@ use crate::application::routing_engine::{
     planning_snapshot::PlanningSnapshot,
     request::{RouteProgress, RouteRequestFacts},
 };
+use crate::models::model_mapping::FallbackTrigger;
 
 #[cfg(test)]
 use crate::application::routing_engine::candidate_plan::RoutePlanPricingSnapshot;
@@ -36,15 +37,15 @@ fn ordered_planned_candidates(plan: &RoutePlan) -> Vec<&PlannedCandidate> {
     if let Some(selected) = plan
         .candidates
         .iter()
-        .find(|candidate| candidate.station_key_id == plan.dispatch.selected_id)
+        .find(|candidate| candidate.routing_identity == plan.dispatch.selected_id)
     {
         ordered.push(selected);
     }
     ordered.extend(plan.candidates.iter().filter(|candidate| {
-        candidate.tier == best_tier && candidate.station_key_id != plan.dispatch.selected_id
+        candidate.tier == best_tier && candidate.routing_identity != plan.dispatch.selected_id
     }));
     ordered.extend(plan.candidates.iter().filter(|candidate| {
-        candidate.tier != best_tier && candidate.station_key_id != plan.dispatch.selected_id
+        candidate.tier != best_tier && candidate.routing_identity != plan.dispatch.selected_id
     }));
     ordered
 }
@@ -73,12 +74,14 @@ fn route_plan_candidate_from_projection(
         group_revision: None,
         resolved_upstream_model: None,
         model_alias_revision: 1,
+        model_variant: planned.variant.clone(),
         capacity_domain: None,
         capacity_domain_revision: None,
         priority: projected.priority,
         tier,
         pricing: RoutePlanPricingSnapshot {
             basis: projected.pricing.basis,
+            rate_multiplier: projected.pricing.rate_multiplier,
             currency: projected.pricing.currency.clone(),
             unit: projected.pricing.unit.clone(),
             estimated_input_price: projected.pricing.estimated_input_price,
@@ -162,8 +165,12 @@ pub struct RouteAdmissionCoordinator {
     pass_capacity: PlanningRoundCapacityState,
     retry_budget: RetryBudgetRegistry,
     fallback_policy: FallbackPolicy,
+    model_fallback_trigger: Option<FallbackTrigger>,
+    model_fallback_rank_limit: Option<u16>,
     fallback_blocked: Option<AdmissionFailureKind>,
     max_attempts: Option<u32>,
+    candidate_target_ranks: BTreeMap<String, u16>,
+    attempted_model_target_ranks: BTreeSet<u16>,
     candidate_failure_domains: BTreeMap<String, Vec<String>>,
     excluded_failure_domains: BTreeSet<String>,
     excluded_capacity_domains: BTreeSet<CapacityDomainCommitment>,
@@ -202,8 +209,12 @@ impl RouteAdmissionCoordinator {
             pass_capacity: PlanningRoundCapacityState::default(),
             retry_budget,
             fallback_policy: settings.fallback_policy,
+            model_fallback_trigger: None,
+            model_fallback_rank_limit: None,
             fallback_blocked: None,
             max_attempts: None,
+            candidate_target_ranks: BTreeMap::new(),
+            attempted_model_target_ranks: BTreeSet::new(),
             candidate_failure_domains: BTreeMap::new(),
             excluded_failure_domains: BTreeSet::new(),
             excluded_capacity_domains: BTreeSet::new(),
@@ -247,22 +258,55 @@ impl RouteAdmissionCoordinator {
                 "planning_snapshot_required",
             )
         })?;
+        self.model_fallback_trigger = planning_snapshot.model_fallback_trigger;
+        self.candidate_target_ranks = planning_snapshot
+            .candidates
+            .iter()
+            .flat_map(|candidate| {
+                if candidate.model_variants.is_empty() {
+                    vec![(candidate.station_key_id.clone(), 0_u16)]
+                } else {
+                    candidate
+                        .model_variants
+                        .iter()
+                        .map(|variant| (variant.identity_key(), variant.target_rank))
+                        .collect()
+                }
+            })
+            .collect();
         self.candidate_failure_domains = planning_snapshot
             .candidates
             .iter()
-            .map(|candidate| {
-                (
-                    candidate.station_key_id.clone(),
-                    candidate.failure_domains.clone(),
-                )
+            .flat_map(|candidate| {
+                let identities = if candidate.model_variants.is_empty() {
+                    vec![candidate.station_key_id.clone()]
+                } else {
+                    candidate
+                        .model_variants
+                        .iter()
+                        .map(crate::application::model_mapping::CandidateModelVariant::identity_key)
+                        .collect()
+                };
+                identities
+                    .into_iter()
+                    .map(|identity| (identity, candidate.failure_domains.clone()))
+                    .collect::<Vec<_>>()
             })
             .collect();
         let mut working_snapshot = planning_snapshot.clone();
         working_snapshot.candidates.retain(|candidate| {
-            !self
-                .progress
-                .view()
-                .excludes_station_key(&candidate.station_key_id)
+            let all_variants_attempted = if candidate.model_variants.is_empty() {
+                self.progress
+                    .view()
+                    .excludes_station_key(&candidate.station_key_id)
+            } else {
+                candidate.model_variants.iter().all(|variant| {
+                    self.progress
+                        .view()
+                        .excludes_station_key(&variant.identity_key())
+                })
+            };
+            !all_variants_attempted
                 && !candidate_uses_excluded_failure_domain(
                     candidate,
                     &self.excluded_failure_domains,
@@ -291,11 +335,47 @@ impl RouteAdmissionCoordinator {
             return Err(self.failure(AdmissionFailureKind::AttemptLimit, "attempt_limit_reached"));
         }
 
-        for planned in ordered_planned_candidates(&plan) {
+        let best_target_rank = plan
+            .candidates
+            .iter()
+            .map(|candidate| candidate.target_rank)
+            .min()
+            .unwrap_or(0);
+        if !model_fallback_rank_allowed(self.model_fallback_rank_limit, best_target_rank) {
+            return Err(self.failure(
+                AdmissionFailureKind::AttemptLimit,
+                "model_fallback_rank_limit_reached",
+            ));
+        }
+        if self.model_fallback_trigger == Some(FallbackTrigger::RetryExhaustedBeforeOutput)
+            && best_target_rank > 0
+            && !retry_exhausted_fallback_is_open(
+                &planning_snapshot.candidates,
+                &self.progress.view(),
+                &self.attempted_model_target_ranks,
+            )
+        {
+            // A retry-only chain cannot activate merely because rank zero was
+            // removed by a durable health/capability gate. It needs an actual
+            // pre-output terminal attempt on a rank-zero target; otherwise
+            // this request has no eligible target under the configured policy.
+            return Err(self.failure(
+                AdmissionFailureKind::NoEligible,
+                "fallback_requires_rank_zero_attempt",
+            ));
+        }
+        // Model fallback is a rank-level policy. Capacity misses and scoring
+        // must not silently jump to a lower-priority native model in the same
+        // admission pass; the next rank becomes eligible only after the
+        // current rank has produced a terminal exclusion.
+        for planned in ordered_planned_candidates(&plan)
+            .into_iter()
+            .filter(|planned| planned.target_rank == best_target_rank)
+        {
             let candidate = if let Some(base) = input
                 .execution_candidates
                 .iter()
-                .find(|candidate| candidate.station_key_id == planned.station_key_id)
+                .find(|candidate| candidate.routing_identity() == planned.routing_identity)
             {
                 let mut candidate = base.clone();
                 candidate.tier = match planned.tier {
@@ -326,6 +406,12 @@ impl RouteAdmissionCoordinator {
                     .iter()
                     .find(|raw| raw.station_key_id == candidate.station_key_id)
                     .and_then(|raw| raw.capacity_domain_revision);
+                candidate.model_variant = planned.variant.clone();
+                candidate.resolved_upstream_model = planned
+                    .variant
+                    .as_ref()
+                    .map(|variant| variant.upstream_model.clone())
+                    .or(candidate.resolved_upstream_model);
                 candidate
             } else {
                 return Err(self.failure(
@@ -500,7 +586,7 @@ impl RouteAdmissionCoordinator {
         selected: SelectedRoute,
         outcome: ActualAttemptTerminal,
     ) -> Result<(), AdmissionFailure> {
-        let station_key_id = selected.candidate.station_key_id.clone();
+        let station_key_id = selected.candidate.routing_identity();
         drop(selected);
         self.record_actual_terminal_for_station_key(station_key_id, outcome)
     }
@@ -516,9 +602,29 @@ impl RouteAdmissionCoordinator {
                     .extend(domains.iter().cloned());
             }
         }
-        self.progress.record_actual_attempt(station_key_id);
+        self.progress.record_actual_attempt(&station_key_id);
+        if let Some(target_rank) = self.candidate_target_ranks.get(&station_key_id) {
+            self.attempted_model_target_ranks.insert(*target_rank);
+        }
         self.pass_capacity.clear();
         self.trace_event(AdmissionTransition::AttemptTerminal, outcome.as_code());
+        if self.model_fallback_trigger == Some(FallbackTrigger::NoEligibleTarget)
+            && outcome == ActualAttemptTerminal::FailedBeforeCommit
+        {
+            // `no_eligible_target` is a qualification fallback, not a
+            // transport-error fallback. Once a target has been attempted and
+            // failed before output, keep trying other candidates in that
+            // rank but never descend to a lower model.
+            let target_rank = self
+                .candidate_target_ranks
+                .get(&station_key_id)
+                .copied()
+                .unwrap_or(0);
+            self.model_fallback_rank_limit = Some(tighten_model_fallback_rank_limit(
+                self.model_fallback_rank_limit,
+                target_rank,
+            ));
+        }
         if self.capacity_cross_domain_consumed {
             self.fallback_blocked = Some(AdmissionFailureKind::AttemptLimit);
         }
@@ -847,6 +953,32 @@ fn miss_observation(failure: &CapacityAcquireFailure) -> CapacityMissObservation
     }
 }
 
+fn retry_exhausted_fallback_is_open(
+    candidates: &[crate::application::routing_engine::planning_snapshot::CandidateSnapshot],
+    progress: &crate::application::routing_engine::request::RouteProgressView,
+    attempted_target_ranks: &BTreeSet<u16>,
+) -> bool {
+    if attempted_target_ranks.contains(&0) {
+        return true;
+    }
+    candidates.iter().any(|candidate| {
+        if candidate.model_variants.is_empty() {
+            return progress.excludes_station_key(&candidate.station_key_id);
+        }
+        candidate.model_variants.iter().any(|variant| {
+            variant.target_rank == 0 && progress.excludes_station_key(&variant.identity_key())
+        })
+    })
+}
+
+fn model_fallback_rank_allowed(rank_limit: Option<u16>, target_rank: u16) -> bool {
+    rank_limit.is_none_or(|rank_limit| target_rank <= rank_limit)
+}
+
+fn tighten_model_fallback_rank_limit(current: Option<u16>, failed_rank: u16) -> u16 {
+    current.map_or(failed_rank, |current| current.min(failed_rank))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,6 +995,7 @@ mod tests {
             group_revision: None,
             resolved_upstream_model: Some("test-model".to_string()),
             model_alias_revision: 1,
+            model_variants: Vec::new(),
             capacity_domain: None,
             capacity_domain_revision: None,
             credential_available: true,
@@ -890,5 +1023,75 @@ mod tests {
             &candidate(&["station:other", "key:key-b"]),
             &excluded,
         ));
+    }
+
+    #[test]
+    fn retry_only_fallback_requires_an_actual_rank_zero_attempt() {
+        let candidates = vec![candidate(&[])];
+        let mut progress = RouteProgress::new(1_000);
+        let attempted = BTreeSet::new();
+        assert!(!retry_exhausted_fallback_is_open(
+            &candidates,
+            &progress.view(),
+            &attempted,
+        ));
+
+        progress.record_actual_attempt("key");
+        assert!(retry_exhausted_fallback_is_open(
+            &candidates,
+            &progress.view(),
+            &attempted,
+        ));
+    }
+
+    #[test]
+    fn retry_only_fallback_tracks_rank_zero_variant_identity() {
+        let mut rank_zero = candidate(&[]);
+        rank_zero.model_variants = vec![crate::application::model_mapping::CandidateModelVariant {
+            station_key_id: "key".to_string(),
+            station_id: "station".to_string(),
+            upstream_model: "native".to_string(),
+            target_rank: 0,
+            binding_revision: None,
+            model_resolution_fence: "mapping-fence".to_string(),
+            endpoint: crate::models::model_mapping::EndpointKind::Responses,
+            credential_revision: 1,
+            endpoint_revision: 1,
+        }];
+        let candidates = vec![rank_zero];
+        let mut progress = RouteProgress::new(1_000);
+        let attempted = BTreeSet::new();
+        assert!(!retry_exhausted_fallback_is_open(
+            &candidates,
+            &progress.view(),
+            &attempted,
+        ));
+        progress.record_actual_attempt(candidates[0].model_variants[0].identity_key());
+        assert!(retry_exhausted_fallback_is_open(
+            &candidates,
+            &progress.view(),
+            &attempted,
+        ));
+    }
+
+    #[test]
+    fn retry_only_fallback_survives_rank_zero_snapshot_rebuild() {
+        let candidates = vec![candidate(&[])];
+        let progress = RouteProgress::new(1_000).view();
+        let attempted = BTreeSet::from([0_u16]);
+        assert!(retry_exhausted_fallback_is_open(
+            &candidates,
+            &progress,
+            &attempted,
+        ));
+    }
+
+    #[test]
+    fn no_eligible_fallback_keeps_same_rank_and_blocks_lower_ranks() {
+        assert!(model_fallback_rank_allowed(Some(0), 0));
+        assert!(!model_fallback_rank_allowed(Some(0), 1));
+        assert_eq!(tighten_model_fallback_rank_limit(None, 0), 0);
+        assert_eq!(tighten_model_fallback_rank_limit(Some(1), 0), 0);
+        assert_eq!(tighten_model_fallback_rank_limit(Some(0), 1), 0);
     }
 }

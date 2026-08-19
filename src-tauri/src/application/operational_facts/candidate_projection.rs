@@ -756,6 +756,7 @@ mod tests {
             routing_group_scope: RoutingGroupFilter::GroupBindingId("binding-gpt".to_string()),
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
         let candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot {
@@ -809,6 +810,7 @@ mod tests {
             routing_group_scope: RoutingGroupFilter::GroupType(PricingGroupType::Gpt),
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
         let candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot {
@@ -843,6 +845,7 @@ mod tests {
             routing_group_scope: RoutingGroupFilter::AllGroups,
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
         let candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot {
@@ -880,6 +883,7 @@ mod tests {
             routing_group_scope: RoutingGroupFilter::AllGroups,
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         };
         let request = route_request_facts_for_read_model(&settings, now_ms);
         let mut candidate = runtime_candidate(RuntimeRoutingEconomicSnapshot::default());
@@ -917,6 +921,7 @@ mod tests {
             routing_group_scope: RoutingGroupFilter::AllGroups,
             scheduler_config: Default::default(),
             allow_depleted_fallback: false,
+            ..Default::default()
         };
         let request = RouteRequestClassifier::classify(
             CanonicalRouteRequest {

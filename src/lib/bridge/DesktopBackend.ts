@@ -102,6 +102,13 @@ import {
   loadRoutingPolicy as loadRoutingPolicyBinding,
   loadRoutingWorkspaceSnapshot as loadRoutingWorkspaceSnapshotBinding,
   listModelAliases as listModelAliasesBinding,
+  getModelMappingWorkspace as getModelMappingWorkspaceBinding,
+  getModelMappingDocument as getModelMappingDocumentBinding,
+  validateModelMappingDocument as validateModelMappingDocumentBinding,
+  applyModelMappingDocument as applyModelMappingDocumentBinding,
+  restoreModelMappingRevision as restoreModelMappingRevisionBinding,
+  simulateModelMapping as simulateModelMappingBinding,
+  resolveRequestMappingTrace as resolveRequestMappingTraceBinding,
   listMonitoringCapabilities as listMonitoringCapabilitiesBinding,
   listModelBasePrices as listModelBasePricesBinding,
   listPricingRules as listPricingRulesBinding,
@@ -137,6 +144,7 @@ import {
   scanProviderDraftRemoteKeys as scanProviderDraftRemoteKeysBinding,
   simulateRoute as simulateRouteBinding,
   updateRoutingPolicy as updateRoutingPolicyBinding,
+  applyRoutingPolicyDocument as applyRoutingPolicyDocumentBinding,
   unbindRemoteStationKey as unbindRemoteStationKeyBinding,
   updateLocalAccessKey as updateLocalAccessKeyBinding,
   upsertBalanceSnapshot as upsertBalanceSnapshotBinding,
@@ -498,6 +506,18 @@ export class DesktopBackend implements BackendClient {
     updateStationKeyCapabilities: (input: Parameters<BackendClient["routing"]["updateStationKeyCapabilities"]>[0]) =>
       updateStationKeyCapabilitiesBinding(input),
     listModelAliases: () => listModelAliasesBinding(),
+    getModelMappingWorkspace: () => getModelMappingWorkspaceBinding(),
+    getModelMappingDocument: () => getModelMappingDocumentBinding(),
+    validateModelMappingDocument: (input: Parameters<BackendClient["routing"]["validateModelMappingDocument"]>[0]) =>
+      validateModelMappingDocumentBinding(input),
+    applyModelMappingDocument: (input: Parameters<BackendClient["routing"]["applyModelMappingDocument"]>[0]) =>
+      applyModelMappingDocumentBinding(input),
+    restoreModelMappingRevision: (input: Parameters<BackendClient["routing"]["restoreModelMappingRevision"]>[0]) =>
+      restoreModelMappingRevisionBinding(input),
+    simulateModelMapping: (input: Parameters<BackendClient["routing"]["simulateModelMapping"]>[0]) =>
+      simulateModelMappingBinding(input),
+    resolveRequestMappingTrace: (requestLogId: string) =>
+      resolveRequestMappingTraceBinding({ requestLogId }),
     upsertModelAlias: (input: Parameters<BackendClient["routing"]["upsertModelAlias"]>[0]) =>
       upsertModelAliasBinding(input),
     deleteModelAlias: (id: string) => deleteModelAliasBinding({ id }),
@@ -505,6 +525,8 @@ export class DesktopBackend implements BackendClient {
     loadRoutingPolicy: () => loadRoutingPolicyBinding(),
     updateRoutingPolicy: (input: Parameters<BackendClient["routing"]["updateRoutingPolicy"]>[0]) =>
       updateRoutingPolicyBinding(input),
+    applyRoutingPolicyDocument: (input: Parameters<BackendClient["routing"]["applyRoutingPolicyDocument"]>[0]) =>
+      applyRoutingPolicyDocumentBinding(input),
     loadRoutingWorkspaceSnapshot: (input = {}) => loadRoutingWorkspaceSnapshotBinding(input),
     loadRoutingRuntimeOverlay: () => loadRoutingRuntimeOverlayBinding(),
     listRecentRouteDecisions: (input = {}) => listRecentRouteDecisionsBinding(input),

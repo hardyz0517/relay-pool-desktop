@@ -1,6 +1,7 @@
 #[cfg(test)]
 use std::collections::BTreeMap;
 
+use crate::application::model_mapping::CandidateModelVariant;
 use crate::application::operational_facts::pricing_projector::RoutingCostBasis;
 #[cfg(test)]
 use crate::application::operational_facts::{
@@ -44,6 +45,7 @@ pub struct RoutePlanCandidate {
     pub group_revision: Option<i64>,
     pub resolved_upstream_model: Option<String>,
     pub model_alias_revision: i64,
+    pub model_variant: Option<CandidateModelVariant>,
     pub capacity_domain: Option<CapacityDomainCommitment>,
     pub capacity_domain_revision: Option<i64>,
     pub priority: i64,
@@ -52,9 +54,19 @@ pub struct RoutePlanCandidate {
     pub evidence: Vec<DecisionEvidence>,
 }
 
+impl RoutePlanCandidate {
+    pub(crate) fn routing_identity(&self) -> String {
+        self.model_variant
+            .as_ref()
+            .map(CandidateModelVariant::identity_key)
+            .unwrap_or_else(|| self.station_key_id.clone())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RoutePlanPricingSnapshot {
     pub basis: RoutingCostBasis,
+    pub rate_multiplier: Option<f64>,
     pub currency: Option<String>,
     pub unit: Option<String>,
     pub estimated_input_price: Option<f64>,
@@ -69,6 +81,7 @@ impl RoutePlanPricingSnapshot {
     pub(crate) fn unpriced(status_label: impl Into<String>) -> Self {
         Self {
             basis: RoutingCostBasis::Unpriced,
+            rate_multiplier: None,
             currency: None,
             unit: None,
             estimated_input_price: None,
@@ -362,12 +375,14 @@ fn plan_candidate(
         group_revision: None,
         resolved_upstream_model: None,
         model_alias_revision: 1,
+        model_variant: None,
         capacity_domain: None,
         capacity_domain_revision: None,
         priority: candidate.priority,
         tier,
         pricing: RoutePlanPricingSnapshot {
             basis: candidate.pricing.basis,
+            rate_multiplier: candidate.pricing.rate_multiplier,
             currency: candidate.pricing.currency.clone(),
             unit: candidate.pricing.unit.clone(),
             estimated_input_price: candidate.pricing.estimated_input_price,

@@ -32,12 +32,14 @@ import type {
   RoutingPolicyConfigV1Dto,
   RoutingPolicySnapshotDto,
   UpdateRoutingPolicyInputDto,
+  ApplyRoutingPolicyDocumentInputDto,
 } from "@/lib/bridge/generated";
 
 export type RoutingPolicy = RoutingPolicyDto;
 export type RoutingPolicyConfigV1 = RoutingPolicyConfigV1Dto;
 export type RoutingPolicySnapshot = RoutingPolicySnapshotDto;
 export type UpdateRoutingPolicyInput = UpdateRoutingPolicyInputDto;
+export type ApplyRoutingPolicyDocumentInput = ApplyRoutingPolicyDocumentInputDto;
 export type RouteEndpointKind = RouteEndpointKindDto;
 export type PricingGroupType = PricingGroupTypeDto;
 export type RoutingGroupFilter = RoutingGroupFilterDto;

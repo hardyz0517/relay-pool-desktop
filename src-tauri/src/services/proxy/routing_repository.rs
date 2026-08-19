@@ -8,6 +8,7 @@ use crate::{
         routing_engine::{admission::CandidateAdmissionProfile, request::RouteRequestFacts},
     },
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
+    services::outbound::resolve_routing_proxy_config,
 };
 
 use crate::application::routing_engine::candidate_plan::RoutePlanCandidate;
@@ -53,12 +54,6 @@ pub(crate) trait RoutingRepository: Send + Sync {
         request: RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
     ) -> futures_util::future::BoxFuture<'static, Result<Option<PlanningSnapshot>, String>>;
-
-    fn load_model_alias_pairs(
-        &self,
-    ) -> futures_util::future::BoxFuture<'static, Result<Vec<(String, String)>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
 
     fn load_execution_settings(
         &self,
@@ -108,18 +103,6 @@ impl RoutingRepository for RoutingExecutionRepository {
         })
     }
 
-    fn load_model_alias_pairs(
-        &self,
-    ) -> futures_util::future::BoxFuture<'static, Result<Vec<(String, String)>, String>> {
-        let routing = self.routing.clone();
-        Box::pin(async move {
-            routing
-                .list_model_alias_pairs()
-                .await
-                .map_err(|error| format!("load V2 model aliases failed: {error}"))
-        })
-    }
-
     fn load_execution_settings(
         &self,
     ) -> futures_util::future::BoxFuture<'static, Result<RoutingExecutionSettings, String>> {
@@ -151,6 +134,10 @@ impl RoutingRepository for RoutingExecutionRepository {
     ) -> futures_util::future::BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
         let routing = self.routing.clone();
         Box::pin(async move {
+            let execution_settings = routing
+                .load_execution_settings()
+                .await
+                .map_err(|error| format!("load routing proxy settings failed: {error}"))?;
             let station_key_ids = planning_snapshot
                 .candidates
                 .iter()
@@ -162,13 +149,16 @@ impl RoutingRepository for RoutingExecutionRepository {
                 .map_err(|error| format!("load operational target refs failed: {error}"))?;
             let targets = target_rows
                 .into_iter()
-                .map(|target| (target.station_key_id.clone(), target))
+                .map(|mut target| {
+                    apply_effective_proxy_config(&mut target, &execution_settings);
+                    (target.station_key_id.clone(), target)
+                })
                 .collect::<BTreeMap<_, _>>();
             let mut profiles = BTreeMap::new();
             let candidates = planning_snapshot
                 .candidates
                 .iter()
-                .map(|candidate| {
+                .flat_map(|candidate| {
                     let target = targets.get(&candidate.station_key_id);
                     profiles.insert(
                         candidate.station_key_id.clone(),
@@ -190,7 +180,18 @@ impl RoutingRepository for RoutingExecutionRepository {
                             half_open_probe_id: None,
                         },
                     );
-                    RoutePlanCandidate {
+                    let variants = if candidate.model_variants.is_empty() {
+                        vec![None]
+                    } else {
+                        candidate
+                            .model_variants
+                            .iter()
+                            .cloned()
+                            .map(Some)
+                            .collect::<Vec<_>>()
+                    };
+                    variants.into_iter().map(move |variant| {
+                        RoutePlanCandidate {
                         station_key_id: candidate.station_key_id.clone(),
                         station_id: candidate.station_id.clone(),
                         endpoint_revision: candidate.endpoint_revision,
@@ -198,15 +199,20 @@ impl RoutingRepository for RoutingExecutionRepository {
                         account_revision: candidate.account_revision,
                         group_binding_id: candidate.group_binding_id.clone(),
                         group_revision: candidate.group_revision,
-                        resolved_upstream_model: candidate.resolved_upstream_model.clone(),
+                        resolved_upstream_model: variant
+                            .as_ref()
+                            .map(|value| value.upstream_model.clone())
+                            .or_else(|| candidate.resolved_upstream_model.clone()),
                         model_alias_revision: candidate.model_alias_revision,
+                        model_variant: variant,
                         capacity_domain: candidate.capacity_domain.clone(),
                         capacity_domain_revision: candidate.capacity_domain_revision,
                         priority: 0,
                         tier: crate::application::routing_engine::candidate_plan::AvailabilityTier::Primary,
                         pricing: candidate.pricing.clone(),
                         evidence: vec![],
-                    }
+                        }
+                    })
                 })
                 .collect::<Vec<_>>();
             Ok(OperationalRouteSnapshot {
@@ -225,13 +231,37 @@ impl RoutingRepository for RoutingExecutionRepository {
     ) -> futures_util::future::BoxFuture<'static, Result<Option<ExecutionTargetRef>, String>> {
         let routing = self.routing.clone();
         Box::pin(async move {
-            routing
+            let execution_settings = routing
+                .load_execution_settings()
+                .await
+                .map_err(|error| format!("load routing proxy settings failed: {error}"))?;
+            let mut target = routing
                 .load_operational_execution_target_refs(vec![station_key_id])
                 .await
                 .map_err(|error| format!("reload operational target ref failed: {error}"))
-                .map(|mut targets| targets.pop())
+                .map(|mut targets| targets.pop())?;
+            if let Some(target) = target.as_mut() {
+                apply_effective_proxy_config(target, &execution_settings);
+            }
+            Ok(target)
         })
     }
+}
+
+fn apply_effective_proxy_config(
+    target: &mut ExecutionTargetRef,
+    settings: &RoutingExecutionSettings,
+) {
+    let resolved = resolve_routing_proxy_config(
+        &target.collector_proxy_mode,
+        target.collector_proxy_url.clone(),
+        &settings.outbound_proxy_mode,
+        settings.outbound_proxy_url.clone(),
+        &settings.global_proxy_mode,
+        settings.global_proxy_url.clone(),
+    );
+    target.collector_proxy_mode = resolved.mode;
+    target.collector_proxy_url = resolved.url;
 }
 
 #[cfg(test)]
@@ -302,6 +332,7 @@ mod tests {
                 routing_group_scope: RoutingGroupFilter::AllGroups,
                 scheduler_config: Default::default(),
                 allow_depleted_fallback: false,
+                ..Default::default()
             }),
             123458,
         );

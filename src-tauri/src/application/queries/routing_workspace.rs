@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::{
     application::{
         operational_facts::pricing_projector::{
             effective_rate_multiplier, request_cost_comparison_context, PricingRouteKind,
         },
-        routing_engine::request::RouteRequestFacts,
+        quality_projection::QualitySummary,
+        routing_engine::{
+            intelligent_planner::CandidateScoreBreakdown, request::RouteRequestFacts,
+        },
     },
     models::{
         pricing::ResolvedPricingContext,
@@ -71,6 +75,9 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) priority: i64,
     pub(crate) schedulable: bool,
     pub(crate) health_state: String,
+    /// Normalized utility score (0..=10000) from the active routing policy.
+    pub(crate) score: Option<u16>,
+    pub(crate) score_details: Option<RoutingCandidateScoreSnapshot>,
     pub(crate) group: Option<RoutingCandidateGroupSnapshot>,
     pub(crate) multiplier: RoutingCandidateMultiplierSnapshot,
     pub(crate) capability_summary: RoutingCapabilitySummary,
@@ -83,6 +90,128 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) capacity: RoutingCandidateCapacitySnapshot,
     pub(crate) source_refs: RoutingCandidateSourceRefs,
     pub(crate) hard_rejection_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateScoreFactorSnapshot {
+    pub(crate) score: u16,
+    pub(crate) weight: u16,
+    pub(crate) contribution: u16,
+    pub(crate) inputs: Vec<RoutingCandidateScoreInputSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) window_details: Option<RoutingCandidateScoreWindowSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateScoreInputSnapshot {
+    pub(crate) label: String,
+    pub(crate) value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateScoreWindowSnapshot {
+    pub(crate) recent_observation_count: u64,
+    pub(crate) recent_effective_mass_basis_points: u64,
+    pub(crate) recent_success_mass_basis_points: u64,
+    pub(crate) recent_failure_mass_basis_points: u64,
+    pub(crate) recent_score: u16,
+    pub(crate) recent_weight_basis_points: u16,
+    pub(crate) recent_responsiveness_weight_basis_points: u16,
+    pub(crate) recent_p95_latency_ms: Option<u32>,
+    pub(crate) recent_latency_coverage_basis_points: u16,
+    pub(crate) recent_responsiveness_basis_points: u16,
+    pub(crate) historical_observation_count: u64,
+    pub(crate) historical_effective_mass_basis_points: u64,
+    pub(crate) historical_success_mass_basis_points: u64,
+    pub(crate) historical_failure_mass_basis_points: u64,
+    pub(crate) historical_score: u16,
+    pub(crate) historical_weight_basis_points: u16,
+    pub(crate) historical_responsiveness_weight_basis_points: u16,
+    pub(crate) historical_p95_latency_ms: Option<u32>,
+    pub(crate) historical_latency_coverage_basis_points: u16,
+    pub(crate) historical_responsiveness_basis_points: u16,
+    pub(crate) historical_age_window_days: u16,
+    pub(crate) historical_half_life_days: u16,
+}
+
+impl From<&crate::application::quality_projection::QualitySummary>
+    for RoutingCandidateScoreWindowSnapshot
+{
+    fn from(summary: &crate::application::quality_projection::QualitySummary) -> Self {
+        let has_responsiveness_weights = summary.recent_responsiveness_weight_basis_points > 0
+            || summary.historical_responsiveness_weight_basis_points > 0;
+        Self {
+            recent_observation_count: summary.recent_observation_count,
+            recent_effective_mass_basis_points: summary.recent_effective_mass_basis_points,
+            recent_success_mass_basis_points: summary.recent_success_mass_basis_points,
+            recent_failure_mass_basis_points: summary.recent_failure_mass_basis_points,
+            recent_score: summary.recent_reliability_basis_points,
+            recent_weight_basis_points: summary.recent_reliability_weight_basis_points,
+            recent_responsiveness_weight_basis_points: if has_responsiveness_weights {
+                summary.recent_responsiveness_weight_basis_points
+            } else {
+                summary.recent_reliability_weight_basis_points
+            },
+            recent_p95_latency_ms: summary.recent_p95_latency_ms,
+            recent_latency_coverage_basis_points: summary.recent_latency_coverage_basis_points,
+            recent_responsiveness_basis_points: summary.recent_responsiveness_basis_points,
+            historical_observation_count: summary.historical_observation_count,
+            historical_effective_mass_basis_points: summary.historical_effective_mass_basis_points,
+            historical_success_mass_basis_points: summary.historical_success_mass_basis_points,
+            historical_failure_mass_basis_points: summary.historical_failure_mass_basis_points,
+            historical_score: summary.historical_reliability_basis_points,
+            historical_weight_basis_points: summary.historical_reliability_weight_basis_points,
+            historical_responsiveness_weight_basis_points: if has_responsiveness_weights {
+                summary.historical_responsiveness_weight_basis_points
+            } else {
+                summary.historical_reliability_weight_basis_points
+            },
+            historical_p95_latency_ms: summary.historical_p95_latency_ms,
+            historical_latency_coverage_basis_points: summary
+                .historical_latency_coverage_basis_points,
+            historical_responsiveness_basis_points: summary.historical_responsiveness_basis_points,
+            historical_age_window_days: summary.historical_age_window_days,
+            historical_half_life_days: summary.historical_half_life_days,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateScoreSnapshot {
+    pub(crate) total: u16,
+    pub(crate) reliability: RoutingCandidateScoreFactorSnapshot,
+    pub(crate) responsiveness: RoutingCandidateScoreFactorSnapshot,
+    pub(crate) cost: RoutingCandidateScoreFactorSnapshot,
+    pub(crate) preference: RoutingCandidateScoreFactorSnapshot,
+}
+
+impl From<CandidateScoreBreakdown> for RoutingCandidateScoreSnapshot {
+    fn from(breakdown: CandidateScoreBreakdown) -> Self {
+        let [reliability, responsiveness, cost, preference] = breakdown.factors;
+        Self {
+            total: breakdown.total,
+            reliability: factor_snapshot(reliability),
+            responsiveness: factor_snapshot(responsiveness),
+            cost: factor_snapshot(cost),
+            preference: factor_snapshot(preference),
+        }
+    }
+}
+
+fn factor_snapshot(
+    factor: crate::application::routing_engine::fixed_point::FactorContribution,
+) -> RoutingCandidateScoreFactorSnapshot {
+    RoutingCandidateScoreFactorSnapshot {
+        score: factor.score.get(),
+        weight: factor.weight.get(),
+        contribution: factor.contribution.get(),
+        inputs: Vec::new(),
+        window_details: None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +299,8 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
     max_rate_multiplier: Option<f64>,
     routing_group_filter: RoutingGroupFilter,
     candidates: Vec<(CanonicalRoutingCandidate, Option<ResolvedPricingContext>)>,
+    scores: &BTreeMap<String, RoutingCandidateScoreSnapshot>,
+    quality_summaries: &BTreeMap<String, QualitySummary>,
     request: &RouteRequestFacts,
     input: RoutingWorkspaceSnapshotInput,
     generated_at_ms: i64,
@@ -184,7 +315,15 @@ pub(crate) fn workspace_snapshot_from_canonical_candidates(
     let mut ordered_candidates = candidates
         .into_iter()
         .map(|(candidate, pricing)| {
-            candidate_from_canonical(candidate, pricing, request, generated_at_ms)
+            let score_details = scores.get(&candidate.station_key_id).cloned();
+            candidate_from_canonical(
+                candidate,
+                pricing,
+                request,
+                generated_at_ms,
+                score_details,
+                quality_summaries,
+            )
         })
         .collect::<Vec<_>>();
     ordered_candidates.sort_by(|left, right| {
@@ -301,7 +440,120 @@ fn candidate_from_canonical(
     pricing: Option<ResolvedPricingContext>,
     request: &RouteRequestFacts,
     generated_at_ms: i64,
+    score_details: Option<RoutingCandidateScoreSnapshot>,
+    quality_summaries: &BTreeMap<String, QualitySummary>,
 ) -> RoutingWorkspaceCandidate {
+    let score_details = score_details.map(|mut details| {
+        let quality_summary = quality_summaries
+            .get(&format!("station_key:{}", candidate.station_key_id))
+            .filter(|summary| {
+                summary.recent_observation_count > 0 || summary.historical_observation_count > 0
+            });
+        if let Some(summary) = quality_summary {
+            let window_details = Some(summary.into());
+            details.reliability.window_details = window_details.clone();
+            details.responsiveness.window_details = window_details;
+            details.reliability.inputs = vec![
+                score_input(
+                    "近24小时成功",
+                    format_mass_value(summary.recent_success_mass_basis_points),
+                ),
+                score_input(
+                    "近24小时失败",
+                    format_mass_value(summary.recent_failure_mass_basis_points),
+                ),
+                score_input(
+                    "历史成功（衰减后）",
+                    format_mass_value(summary.historical_success_mass_basis_points),
+                ),
+                score_input(
+                    "历史失败（衰减后）",
+                    format_mass_value(summary.historical_failure_mass_basis_points),
+                ),
+                score_input("先验", "2 成功 + 2 失败"),
+            ];
+            details.responsiveness.inputs = vec![
+                score_input(
+                    "近24小时 P95",
+                    format_latency_value(summary.recent_p95_latency_ms),
+                ),
+                score_input(
+                    "历史 P95",
+                    format_latency_value(summary.historical_p95_latency_ms),
+                ),
+                score_input(
+                    "近24小时延迟覆盖",
+                    format_basis_points(summary.recent_latency_coverage_basis_points),
+                ),
+                score_input(
+                    "历史延迟覆盖",
+                    format_basis_points(summary.historical_latency_coverage_basis_points),
+                ),
+                score_input("延迟上限", "120000 ms"),
+            ];
+        } else {
+            // Keep the pre-projection aggregate as a first-run compatibility
+            // path; once the quality projector catches up, the window data
+            // above becomes the only source shown to users.
+            details.reliability.inputs = vec![
+                score_input(
+                    "成功请求",
+                    candidate
+                        .health
+                        .as_ref()
+                        .map(|health| health.success_count.max(0).to_string())
+                        .unwrap_or_else(|| "暂无数据".to_string()),
+                ),
+                score_input(
+                    "失败请求",
+                    candidate
+                        .health
+                        .as_ref()
+                        .map(|health| health.failure_count.max(0).to_string())
+                        .unwrap_or_else(|| "暂无数据".to_string()),
+                ),
+                score_input("先验", "2 成功 + 2 失败"),
+            ];
+            details.responsiveness.inputs = vec![
+                score_input(
+                    "最近平均延迟",
+                    candidate
+                        .health
+                        .as_ref()
+                        .and_then(|health| health.avg_latency_ms)
+                        .map(|value| format!("{value} ms"))
+                        .unwrap_or_else(|| "暂无数据".to_string()),
+                ),
+                score_input("延迟上限", "120000 ms"),
+            ];
+        }
+        details.cost.inputs = vec![
+            score_input(
+                "密钥有效倍率",
+                pricing
+                    .as_ref()
+                    .and_then(|value| value.effective_rate_multiplier)
+                    .or_else(|| {
+                        let economics = candidate.economic_snapshot.as_ref()?;
+                        effective_rate_multiplier(
+                            economics.rate_multiplier,
+                            economics.credit_per_cny.unwrap_or(1.0),
+                        )
+                    })
+                    .map(|value| format!("{value:.4}x"))
+                    .unwrap_or_else(|| "暂无数据".to_string()),
+            ),
+            score_input("倍率代理成本分", format_basis_points(details.cost.score)),
+        ];
+        details.preference.inputs = vec![
+            score_input("候选优先级", candidate.priority.to_string()),
+            score_input(
+                "优先级换算分",
+                format_basis_points(details.preference.score),
+            ),
+        ];
+        details
+    });
     let group = candidate.economic_snapshot.as_ref().and_then(|economics| {
         let stable_key = economics
             .group_binding_id
@@ -342,10 +594,14 @@ fn candidate_from_canonical(
         crate::application::routing_engine::request::RouteKind::Inference => pricing
             .as_ref()
             .and_then(|context| context.effective_rate_multiplier),
-        crate::application::routing_engine::request::RouteKind::ModelCatalog => candidate
-            .economic_snapshot
-            .as_ref()
-            .and_then(|economics| economics.rate_multiplier),
+        crate::application::routing_engine::request::RouteKind::ModelCatalog => {
+            candidate.economic_snapshot.as_ref().and_then(|economics| {
+                effective_rate_multiplier(
+                    economics.rate_multiplier,
+                    economics.credit_per_cny.unwrap_or(1.0),
+                )
+            })
+        }
     };
     let multiplier = multiplier.or_else(|| {
         let economics = candidate.economic_snapshot.as_ref()?;
@@ -462,6 +718,8 @@ fn candidate_from_canonical(
         // eligibility. `hard_rejection_codes` owns the latter.
         schedulable: candidate.schedulable,
         health_state,
+        score: score_details.as_ref().map(|details| details.total),
+        score_details,
         group,
         multiplier: RoutingCandidateMultiplierSnapshot {
             status: multiplier
@@ -580,6 +838,41 @@ fn candidate_from_canonical(
         },
         hard_rejection_codes,
     }
+}
+
+fn score_input(
+    label: impl Into<String>,
+    value: impl Into<String>,
+) -> RoutingCandidateScoreInputSnapshot {
+    RoutingCandidateScoreInputSnapshot {
+        label: label.into(),
+        value: value.into(),
+    }
+}
+
+fn format_mass_value(value: u64) -> String {
+    let tenths = value.saturating_mul(10).saturating_add(5_000) / 10_000;
+    if tenths % 10 == 0 {
+        format!("{} 次", tenths / 10)
+    } else {
+        format!("{}.{} 次", tenths / 10, tenths % 10)
+    }
+}
+
+fn format_latency_value(value: Option<u32>) -> String {
+    value
+        .map(|value| {
+            if value >= 1_000 {
+                format!("{:.2} s", value as f64 / 1_000.0)
+            } else {
+                format!("{value} ms")
+            }
+        })
+        .unwrap_or_else(|| "暂无数据".to_string())
+}
+
+fn format_basis_points(value: u16) -> String {
+    format!("{}%", value as f64 / 100.0)
 }
 
 fn candidate_matches_group_scope(

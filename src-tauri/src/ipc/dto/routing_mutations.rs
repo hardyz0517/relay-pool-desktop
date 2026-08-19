@@ -5,19 +5,18 @@ use serde_json::Value;
 
 #[cfg(test)]
 use crate::models::routing::{ModelAlias, StationKeyCapabilities};
-use crate::models::{
-    routing::{UpdateStationKeyCapabilitiesInput, UpsertModelAliasInput},
-    stations::EndpointPingResult,
-};
+use crate::models::{routing::UpdateStationKeyCapabilitiesInput, stations::EndpointPingResult};
 
 use crate::models::routing::RoutingGroupFilter;
 use crate::models::routing_policy::RoutingPolicyConfigV1;
+use crate::models::routing_policy::RoutingPolicyDocumentV1;
 
 use super::{invalid_input, TypeDescriptor};
 
 const MAX_ID_BYTES: usize = 128;
 const MAX_MODEL_BYTES: usize = 256;
 const MAX_TAG_BYTES: usize = 128;
+#[cfg(test)]
 const MAX_NOTE_BYTES: usize = 4_096;
 const MAX_MODEL_LIST_ITEMS: usize = 256;
 const MAX_ROUTING_TAGS: usize = 64;
@@ -38,6 +37,14 @@ pub struct RoutingPolicyConfigV1Dto {
     pub max_rate_multiplier: Option<f64>,
     #[serde(default)]
     pub routing_group_filter: RoutingGroupFilter,
+    #[serde(default = "default_outbound_proxy_mode")]
+    pub outbound_proxy_mode: String,
+    #[serde(default)]
+    pub outbound_proxy_url: Option<String>,
+}
+
+fn default_outbound_proxy_mode() -> String {
+    "inherit".to_string()
 }
 
 impl From<RoutingPolicyConfigV1> for RoutingPolicyConfigV1Dto {
@@ -55,6 +62,8 @@ impl From<RoutingPolicyConfigV1> for RoutingPolicyConfigV1Dto {
             affinity_ttl_seconds: value.affinity_ttl_seconds,
             max_rate_multiplier: value.max_rate_multiplier,
             routing_group_filter: value.routing_group_filter,
+            outbound_proxy_mode: value.outbound_proxy_mode,
+            outbound_proxy_url: value.outbound_proxy_url,
         }
     }
 }
@@ -76,11 +85,40 @@ impl RoutingPolicyConfigV1Dto {
             affinity_ttl_seconds: self.affinity_ttl_seconds,
             max_rate_multiplier: self.max_rate_multiplier,
             routing_group_filter: self.routing_group_filter,
+            outbound_proxy_mode: self.outbound_proxy_mode,
+            outbound_proxy_url: self.outbound_proxy_url,
         };
         config.validate().map_err(|_| {
             invalid_input("config", "invalid_policy", "The routing policy is invalid.")
         })?;
         Ok(config)
+    }
+}
+
+/// Complete routing-policy document envelope. `baseRevision` is the only
+/// optimistic-concurrency field; source provenance is attached by the command
+/// owner and is intentionally absent from this consumer DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApplyRoutingPolicyDocumentInputDto {
+    pub format_version: u16,
+    pub base_revision: u64,
+    pub policy: RoutingPolicyConfigV1Dto,
+}
+
+impl ApplyRoutingPolicyDocumentInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        parse_value(value)
+    }
+
+    pub fn into_domain(
+        self,
+    ) -> Result<RoutingPolicyDocumentV1, crate::commands::error::CommandError> {
+        Ok(RoutingPolicyDocumentV1 {
+            format_version: self.format_version,
+            base_revision: self.base_revision,
+            policy: self.policy.into_domain()?,
+        })
     }
 }
 
@@ -148,10 +186,15 @@ impl TryFrom<EndpointPingResult> for EndpointPingResultDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[expect(
+    dead_code,
+    reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=legacy alias mutation commands and generated descriptors are retired"
+)]
 pub struct DeleteModelAliasInputDto {
     pub id: String,
 }
 
+#[cfg(test)]
 impl DeleteModelAliasInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
@@ -230,6 +273,10 @@ impl UpdateStationKeyCapabilitiesInputDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[expect(
+    dead_code,
+    reason = "contract=ipc-dto-type-descriptor; owner=ipc; remove_when=legacy alias mutation commands and generated descriptors are retired"
+)]
 pub struct UpsertModelAliasInputDto {
     pub id: Option<String>,
     pub client_model: String,
@@ -238,6 +285,7 @@ pub struct UpsertModelAliasInputDto {
     pub note: Option<String>,
 }
 
+#[cfg(test)]
 impl UpsertModelAliasInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
@@ -255,16 +303,6 @@ impl UpsertModelAliasInputDto {
             validate_text("note", note, MAX_NOTE_BYTES, true)?;
         }
         Ok(input)
-    }
-
-    pub fn into_domain(self) -> UpsertModelAliasInput {
-        UpsertModelAliasInput {
-            id: self.id,
-            client_model: self.client_model,
-            upstream_model: self.upstream_model,
-            enabled: self.enabled,
-            note: self.note,
-        }
     }
 }
 

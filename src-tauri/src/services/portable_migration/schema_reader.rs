@@ -61,6 +61,13 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_group_rate_records_comparison",
     "idx_group_rate_records_station_checked",
     "idx_model_aliases_client_upstream",
+    "idx_model_mapping_rules_runtime",
+    "idx_model_mapping_rules_one_default",
+    "idx_model_mapping_rule_targets_order",
+    "idx_model_bindings_profile_key",
+    "idx_model_bindings_profile_station",
+    "idx_model_bindings_lookup",
+    "idx_legacy_model_alias_reviews_status",
     "idx_model_base_prices_selection",
     "idx_notification_deliveries_delivery_key",
     "idx_notification_deliveries_incident_episode_created",
@@ -97,6 +104,8 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_routing_health_observations_scope_cursor",
     "idx_routing_health_verdicts_planner",
     "idx_routing_capability_model_planner",
+    "idx_routing_capability_model_native_identity",
+    "idx_routing_capability_model_native_identity_v2",
 ];
 
 const IGNORED_DERIVED_TABLES_V1: &[&str] = &[
@@ -552,7 +561,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
-        assert_eq!(fingerprint.index_count, 67);
+        assert_eq!(fingerprint.index_count, 76);
     }
 
     #[tokio::test]

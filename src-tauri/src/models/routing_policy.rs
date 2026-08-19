@@ -1,5 +1,23 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+/// Versioned managed-file envelope for the active routing policy aggregate.
+/// The envelope keeps the CAS revision next to the user-editable policy so a
+/// file import cannot accidentally overwrite a newer SQLite revision.
+pub(crate) const ROUTING_POLICY_DOCUMENT_FORMAT_VERSION: u16 = 1;
+const DEFAULT_OUTBOUND_PROXY_MODE: &str = "inherit";
+
+fn default_outbound_proxy_mode() -> String {
+    DEFAULT_OUTBOUND_PROXY_MODE.to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RoutingPolicyDocumentV1 {
+    pub(crate) format_version: u16,
+    pub(crate) base_revision: u64,
+    pub(crate) policy: RoutingPolicyConfigV1,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PricingGroupType {
@@ -112,6 +130,12 @@ pub(crate) struct RoutingPolicyConfigV1 {
     pub max_rate_multiplier: Option<f64>,
     #[serde(default)]
     pub routing_group_filter: RoutingGroupFilter,
+    /// The outbound proxy for requests sent through the local routing gateway.
+    /// `inherit` resolves to the global network setting at execution time.
+    #[serde(default = "default_outbound_proxy_mode")]
+    pub outbound_proxy_mode: String,
+    #[serde(default)]
+    pub outbound_proxy_url: Option<String>,
 }
 
 impl Default for RoutingPolicyConfigV1 {
@@ -129,6 +153,8 @@ impl Default for RoutingPolicyConfigV1 {
             affinity_ttl_seconds: 300,
             max_rate_multiplier: None,
             routing_group_filter: RoutingGroupFilter::AllGroups,
+            outbound_proxy_mode: DEFAULT_OUTBOUND_PROXY_MODE.to_string(),
+            outbound_proxy_url: None,
         }
     }
 }
@@ -147,10 +173,76 @@ impl RoutingPolicyConfigV1 {
             || self
                 .max_rate_multiplier
                 .is_some_and(|value| !value.is_finite() || value < 0.0)
+            || !matches!(
+                self.outbound_proxy_mode
+                    .trim()
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "inherit" | "direct" | "system" | "manual"
+            )
+            || (self.outbound_proxy_mode.eq_ignore_ascii_case("manual")
+                && self
+                    .outbound_proxy_url
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty()))
+            || self.outbound_proxy_url.as_deref().is_some_and(|value| {
+                let value = value.trim();
+                !(value.starts_with("http://")
+                    || value.starts_with("https://")
+                    || value.starts_with("socks5://")
+                    || value.starts_with("socks5h://"))
+            })
             || (self.affinity_enabled && !(1..=86_400).contains(&self.affinity_ttl_seconds))
         {
             return Err("invalid routing policy");
         }
         Ok(())
+    }
+}
+
+impl Default for RoutingPolicyDocumentV1 {
+    fn default() -> Self {
+        Self {
+            format_version: ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
+            base_revision: 0,
+            policy: RoutingPolicyConfigV1::default(),
+        }
+    }
+}
+
+impl RoutingPolicyDocumentV1 {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.format_version != ROUTING_POLICY_DOCUMENT_FORMAT_VERSION || self.base_revision == 0
+        {
+            return Err("invalid routing policy document envelope");
+        }
+        self.policy.validate()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_document_requires_positive_revision_and_current_format() {
+        let mut document = RoutingPolicyDocumentV1::default();
+        assert!(document.validate().is_err());
+        document.base_revision = 1;
+        assert!(document.validate().is_ok());
+        document.format_version = ROUTING_POLICY_DOCUMENT_FORMAT_VERSION + 1;
+        assert!(document.validate().is_err());
+    }
+
+    #[test]
+    fn managed_document_uses_camel_case_envelope() {
+        let value = serde_json::to_value(RoutingPolicyDocumentV1 {
+            base_revision: 4,
+            ..RoutingPolicyDocumentV1::default()
+        })
+        .expect("serialize document");
+        assert!(value.get("formatVersion").is_some());
+        assert!(value.get("baseRevision").is_some());
+        assert!(value.get("format_version").is_none());
     }
 }

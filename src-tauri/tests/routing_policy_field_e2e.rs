@@ -5,7 +5,7 @@ use support::routing_loopback::{
 };
 
 #[tokio::test]
-async fn model_alias_allowlist_and_backup_field_shape_real_route_execution() {
+async fn model_mapping_allowlist_and_backup_field_shape_real_route_execution() {
     let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
         br#"{"id":"chatcmpl-backup","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"backup"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#
             .to_vec(),
@@ -17,7 +17,7 @@ async fn model_alias_allowlist_and_backup_field_shape_real_route_execution() {
     let harness = RoutingLoopbackHarness::new().await;
     harness.set_routing_strategy("backup_only").await;
     harness
-        .upsert_model_alias("client-loopback-model", "upstream-loopback-model")
+        .set_model_mappings(&[("client-loopback-model", "upstream-loopback-model")])
         .await;
     let backup_candidate = harness
         .seed_candidate(&backup.base_url, "backup-policy", 0)

@@ -35,6 +35,32 @@ pub fn resolve_proxy_config(
     }
 }
 
+/// Resolves the three-level proxy precedence used by local routing:
+/// station override -> local routing override -> global network setting.
+/// Each layer may use `inherit`, while the global setting is always concrete.
+pub fn resolve_routing_proxy_config(
+    station_mode: &str,
+    station_url: Option<String>,
+    local_mode: &str,
+    local_url: Option<String>,
+    global_mode: &str,
+    global_url: Option<String>,
+) -> ProxyConfig {
+    let local_mode = normalize_proxy_mode(local_mode, true);
+    let local = if local_mode == "inherit" {
+        ProxyConfig {
+            mode: normalize_proxy_mode(global_mode, false),
+            url: normalize_proxy_url(global_url),
+        }
+    } else {
+        ProxyConfig {
+            mode: local_mode,
+            url: normalize_proxy_url(local_url),
+        }
+    };
+    resolve_proxy_config(station_mode, station_url, &local.mode, local.url)
+}
+
 pub(crate) fn current_system_proxy_url() -> Option<String> {
     current_windows_system_proxy_url()
 }
@@ -114,6 +140,35 @@ mod tests {
     #[test]
     fn station_direct_overrides_global_manual_proxy() {
         let proxy = resolve_proxy_config(
+            "direct",
+            None,
+            "manual",
+            Some("http://127.0.0.1:7890".to_string()),
+        );
+
+        assert_eq!(proxy, ProxyConfig::direct());
+    }
+
+    #[test]
+    fn routing_proxy_inheritance_resolves_global_for_station_and_local_defaults() {
+        let proxy = resolve_routing_proxy_config(
+            "inherit",
+            None,
+            "inherit",
+            None,
+            "manual",
+            Some("http://127.0.0.1:7890".to_string()),
+        );
+
+        assert_eq!(proxy.mode, "manual");
+        assert_eq!(proxy.url.as_deref(), Some("http://127.0.0.1:7890"));
+    }
+
+    #[test]
+    fn routing_proxy_explicit_direct_overrides_inherited_global_proxy() {
+        let proxy = resolve_routing_proxy_config(
+            "inherit",
+            None,
             "direct",
             None,
             "manual",

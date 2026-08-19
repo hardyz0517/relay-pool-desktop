@@ -1,3 +1,4 @@
+use crate::application::model_mapping::CandidateModelVariant;
 use crate::models::routing_policy::RoutingPolicyConfigV1;
 
 use super::{
@@ -12,9 +13,18 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PlannedCandidate {
     pub(crate) station_key_id: String,
+    pub(crate) routing_identity: String,
+    pub(crate) target_rank: u16,
+    pub(crate) variant: Option<CandidateModelVariant>,
     pub(crate) tier: AvailabilityTier,
     pub(crate) utility: UtilityScore,
     pub(crate) contributions: [FactorContribution; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CandidateScoreBreakdown {
+    pub(crate) total: u16,
+    pub(crate) factors: [FactorContribution; 4],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,26 +64,40 @@ pub(crate) fn plan_snapshot_with_budget(
     let mut planned = snapshot
         .candidates
         .iter()
-        .filter_map(|candidate| {
-            planned_candidate(
-                candidate,
-                &snapshot.policy,
-                snapshot.runtime.affinity_station_key_id.as_deref(),
-            )
+        .flat_map(|candidate| {
+            let variants = if candidate.model_variants.is_empty() {
+                vec![None]
+            } else {
+                candidate.model_variants.iter().cloned().map(Some).collect()
+            };
+            variants.into_iter().filter_map(move |variant| {
+                planned_candidate(
+                    candidate,
+                    variant,
+                    &snapshot.policy,
+                    snapshot.runtime.affinity_station_key_id.as_deref(),
+                )
+            })
         })
         .collect::<Vec<_>>();
     if planned.is_empty() {
         return Err(PlannerError::NoEligibleCandidate);
     }
     planned.sort_by(|left, right| {
-        right
-            .utility
-            .value()
-            .cmp(&left.utility.value())
+        left.target_rank
+            .cmp(&right.target_rank)
+            .then_with(|| right.utility.value().cmp(&left.utility.value()))
             .then_with(|| left.station_key_id.cmp(&right.station_key_id))
+            .then_with(|| left.routing_identity.cmp(&right.routing_identity))
     });
+    let best_rank = planned
+        .iter()
+        .map(|candidate| candidate.target_rank)
+        .min()
+        .expect("not empty");
     let best_tier = planned
         .iter()
+        .filter(|candidate| candidate.target_rank == best_rank)
         .map(|candidate| candidate.tier)
         .min()
         .expect("not empty");
@@ -83,7 +107,8 @@ pub(crate) fn plan_snapshot_with_budget(
     // lower-priority unknown here can reserve budget and then produce an empty
     // dispatch set even though the request has eligible candidates.
     let unknown_exists = planned.iter().any(|candidate| {
-        candidate.tier == best_tier
+        candidate.target_rank == best_rank
+            && candidate.tier == best_tier
             && snapshot
                 .candidates
                 .iter()
@@ -102,7 +127,7 @@ pub(crate) fn plan_snapshot_with_budget(
         .unwrap_or(ExplorationLane::Exploit);
     let dispatch_candidates = planned
         .iter()
-        .filter(|candidate| candidate.tier == best_tier)
+        .filter(|candidate| candidate.target_rank == best_rank && candidate.tier == best_tier)
         .filter(|candidate| {
             lane != ExplorationLane::Explore
                 || snapshot
@@ -112,13 +137,19 @@ pub(crate) fn plan_snapshot_with_budget(
                     .is_some_and(|raw| raw.cost_basis_points.is_none())
         })
         .map(|candidate| DispatchCandidate {
-            id: candidate.station_key_id.clone(),
+            id: candidate.routing_identity.clone(),
             utility: candidate.utility.value(),
             tier: candidate.tier,
             failure_domains: snapshot
                 .candidates
                 .iter()
-                .find(|raw| raw.station_key_id == candidate.station_key_id)
+                .find(|raw| {
+                    raw.station_key_id == candidate.station_key_id
+                        && (raw.model_variants.is_empty()
+                            || raw.model_variants.iter().any(|variant| {
+                                variant.identity_key() == candidate.routing_identity
+                            }))
+                })
                 .map(|raw| raw.failure_domains.clone())
                 .unwrap_or_default(),
         })
@@ -129,9 +160,12 @@ pub(crate) fn plan_snapshot_with_budget(
         .then(|| snapshot.runtime.affinity_station_key_id.as_deref())
         .flatten()
         .and_then(|affinity_id| {
+            let affinity_prefix = format!("{affinity_id}\u{1f}");
             dispatch_candidates
                 .iter()
-                .find(|candidate| candidate.id == affinity_id)
+                .find(|candidate| {
+                    candidate.id == affinity_id || candidate.id.starts_with(&affinity_prefix)
+                })
                 .cloned()
         });
     let mut dispatch = if let Some(affinity_candidate) = affinity_dispatch {
@@ -162,6 +196,7 @@ pub(crate) fn plan_snapshot_with_budget(
 
 fn planned_candidate(
     candidate: &CandidateSnapshot,
+    variant: Option<CandidateModelVariant>,
     policy: &RoutingPolicyConfigV1,
     affinity_station_key_id: Option<&str>,
 ) -> Option<PlannedCandidate> {
@@ -182,6 +217,63 @@ fn planned_candidate(
     if candidate.capability_basis_points == 0 {
         return None;
     }
+    let (total, contributions) =
+        weighted_score_components(candidate, policy, affinity_station_key_id, None)?;
+    let target_rank = variant.as_ref().map(|value| value.target_rank).unwrap_or(0);
+    let routing_identity = variant
+        .as_ref()
+        .map(CandidateModelVariant::identity_key)
+        .unwrap_or_else(|| candidate.station_key_id.clone());
+    Some(PlannedCandidate {
+        station_key_id: candidate.station_key_id.clone(),
+        routing_identity,
+        target_rank,
+        variant,
+        tier,
+        utility: UtilityScore::new(total),
+        contributions,
+    })
+}
+
+/// Returns the same normalized utility score used by the planner. Read models
+/// use this helper to present the active policy score without reimplementing
+/// factor and weight semantics in the UI layer.
+pub(crate) fn candidate_utility_score(
+    candidate: &CandidateSnapshot,
+    policy: &RoutingPolicyConfigV1,
+    affinity_station_key_id: Option<&str>,
+) -> Option<u16> {
+    if !candidate.hard_eligible || candidate.capability_basis_points == 0 {
+        return None;
+    }
+    candidate_score_breakdown_with_cost_basis(candidate, policy, affinity_station_key_id, None)
+        .map(|breakdown| breakdown.total)
+}
+
+pub(crate) fn candidate_score_breakdown_with_cost_basis(
+    candidate: &CandidateSnapshot,
+    policy: &RoutingPolicyConfigV1,
+    affinity_station_key_id: Option<&str>,
+    cost_basis_override: Option<u16>,
+) -> Option<CandidateScoreBreakdown> {
+    weighted_score_components(
+        candidate,
+        policy,
+        affinity_station_key_id,
+        cost_basis_override,
+    )
+    .map(|(score, factors)| CandidateScoreBreakdown {
+        total: score.get(),
+        factors,
+    })
+}
+
+fn weighted_score_components(
+    candidate: &CandidateSnapshot,
+    policy: &RoutingPolicyConfigV1,
+    affinity_station_key_id: Option<&str>,
+    cost_basis_override: Option<u16>,
+) -> Option<(BasisPoints, [FactorContribution; 4])> {
     let preference = if policy.affinity_enabled
         && affinity_station_key_id == Some(candidate.station_key_id.as_str())
     {
@@ -192,7 +284,7 @@ fn planned_candidate(
     let scores = [
         candidate.reliability_basis_points,
         candidate.responsiveness_basis_points,
-        cost_score(candidate.cost_basis_points).get(),
+        cost_score(cost_basis_override.or(candidate.cost_basis_points)).get(),
         preference,
     ];
     let weights = [
@@ -213,12 +305,7 @@ fn planned_candidate(
             contribution,
         }
     });
-    Some(PlannedCandidate {
-        station_key_id: candidate.station_key_id.clone(),
-        tier,
-        utility: UtilityScore::new(total),
-        contributions,
-    })
+    Some((total, contributions))
 }
 
 #[cfg(test)]
@@ -246,6 +333,7 @@ mod tests {
                 group_revision: None,
                 resolved_upstream_model: Some("gpt-test".into()),
                 model_alias_revision: 1,
+                model_variants: Vec::new(),
                 capacity_domain: None,
                 capacity_domain_revision: None,
                 credential_available: true,
@@ -260,6 +348,7 @@ mod tests {
                 preference_basis_points: 5_000,
                 failure_domains: vec!["station-a".into()],
             }],
+            model_fallback_trigger: None,
             runtime: RuntimeOverlaySnapshot {
                 runtime_instance_id: "runtime-1".into(),
                 runtime_revision: 1,
@@ -300,6 +389,7 @@ mod tests {
                     group_revision: None,
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
+                    model_variants: Vec::new(),
                     capacity_domain: None,
                     capacity_domain_revision: None,
                     credential_available: true,
@@ -324,6 +414,7 @@ mod tests {
                     group_revision: None,
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
+                    model_variants: Vec::new(),
                     capacity_domain: None,
                     capacity_domain_revision: None,
                     credential_available: true,
@@ -339,6 +430,7 @@ mod tests {
                     failure_domains: vec![],
                 },
             ],
+            model_fallback_trigger: None,
             runtime: RuntimeOverlaySnapshot {
                 runtime_instance_id: "runtime".into(),
                 runtime_revision: 1,
@@ -377,6 +469,7 @@ mod tests {
                     group_revision: None,
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
+                    model_variants: Vec::new(),
                     capacity_domain: None,
                     capacity_domain_revision: None,
                     credential_available: true,
@@ -401,6 +494,7 @@ mod tests {
                     group_revision: None,
                     resolved_upstream_model: Some("gpt-test".into()),
                     model_alias_revision: 1,
+                    model_variants: Vec::new(),
                     capacity_domain: None,
                     capacity_domain_revision: None,
                     credential_available: true,
@@ -416,6 +510,7 @@ mod tests {
                     failure_domains: vec![],
                 },
             ],
+            model_fallback_trigger: None,
             runtime: RuntimeOverlaySnapshot {
                 runtime_instance_id: "runtime".into(),
                 runtime_revision: 1,

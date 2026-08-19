@@ -200,6 +200,7 @@ mod tests {
                 group_revision: None,
                 resolved_upstream_model: Some("gpt-test".into()),
                 model_alias_revision: 1,
+                model_variants: Vec::new(),
                 capacity_domain: None,
                 capacity_domain_revision: None,
                 credential_available: true,
@@ -214,6 +215,7 @@ mod tests {
                 preference_basis_points: 5_000,
                 failure_domains: vec!["st".into()],
             }],
+            model_fallback_trigger: None,
             runtime: RuntimeOverlaySnapshot {
                 runtime_instance_id: "r".into(),
                 runtime_revision: 1,

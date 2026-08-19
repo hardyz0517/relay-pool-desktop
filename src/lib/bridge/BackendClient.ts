@@ -119,6 +119,17 @@ import type {
   UpdateStationKeyCapabilitiesInput,
   UpsertModelAliasInput,
 } from "@/lib/types/routing";
+import type {
+  ApplyModelMappingDocumentInputDto,
+  ModelMappingDocumentDto,
+  ModelMappingSimulationResultDto,
+  ModelMappingTraceDto,
+  ModelMappingValidationResultDto,
+  ModelMappingWorkspaceDto,
+  RestoreModelMappingRevisionInputDto,
+  SimulateModelMappingInputDto,
+  ValidateModelMappingDocumentInputDto,
+} from "@/lib/types/modelMapping";
 import type { AppUpdateCheckResult, DownloadProgress } from "@/lib/types/updater";
 import type { AlertingDomainClient } from "@/lib/types/alerting";
 import type {
@@ -304,6 +315,7 @@ export type RoutingDomainClient = {
   listStationKeyHealth(): Promise<StationKeyHealth[]>;
   loadRoutingPolicy(): Promise<import("./generated").RoutingPolicySnapshotDto>;
   updateRoutingPolicy(input: import("./generated").UpdateRoutingPolicyInputDto): Promise<import("./generated").RoutingPolicySnapshotDto>;
+  applyRoutingPolicyDocument(input: import("./generated").ApplyRoutingPolicyDocumentInputDto): Promise<import("./generated").RoutingPolicySnapshotDto>;
   loadRoutingWorkspaceSnapshot(input?: RoutingWorkspaceSnapshotInput): Promise<RoutingWorkspaceSnapshot>;
   loadRoutingRuntimeOverlay(): Promise<RoutingRuntimeOverlay>;
   listRecentRouteDecisions(input?: RecentRouteDecisionsInput): Promise<RecentRouteDecisionsPage>;
@@ -311,6 +323,13 @@ export type RoutingDomainClient = {
   getRequestDecisionTrace(requestLogId: string): Promise<RequestDecisionTrace>;
   getStationKeyHealth(stationKeyId: string): Promise<StationKeyHealth>;
   simulateRoute(input: RouteSimulationInput): Promise<RouteSimulationResult>;
+  getModelMappingWorkspace(): Promise<ModelMappingWorkspaceDto>;
+  getModelMappingDocument(): Promise<ModelMappingDocumentDto>;
+  validateModelMappingDocument(input: ValidateModelMappingDocumentInputDto): Promise<ModelMappingValidationResultDto>;
+  applyModelMappingDocument(input: ApplyModelMappingDocumentInputDto): Promise<ModelMappingWorkspaceDto>;
+  restoreModelMappingRevision(input: RestoreModelMappingRevisionInputDto): Promise<ModelMappingWorkspaceDto>;
+  simulateModelMapping(input: SimulateModelMappingInputDto): Promise<ModelMappingSimulationResultDto>;
+  resolveRequestMappingTrace(requestLogId: string): Promise<ModelMappingTraceDto>;
 };
 
 export type ChannelMonitoringWorkspace = {

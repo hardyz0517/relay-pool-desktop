@@ -49,8 +49,10 @@ describe("routing backend cutover", () => {
         maxCandidates: 64,
         explorationShareBasisPoints: 500,
         allowDepletedFallback: false,
-        affinityEnabled: false,
-        affinityTtlSeconds: 300,
+         affinityEnabled: false,
+         affinityTtlSeconds: 300,
+         outboundProxyMode: "inherit",
+         outboundProxyUrl: null,
       },
       previewPolicyVersion: "intelligent_planner_v1",
       maxRateMultiplier: null,
@@ -103,10 +105,11 @@ describe("routing backend cutover", () => {
       updatedAt: "now",
     })),
     loadRoutingPolicy: vi.fn(async () => ({
-      config: { version: 1, reliabilityWeight: 4000, responsivenessWeight: 2500, costWeight: 2000, preferenceWeight: 1500, maxCandidates: 64, explorationShareBasisPoints: 500, allowDepletedFallback: false, affinityEnabled: false, affinityTtlSeconds: 300 },
+       config: { version: 1, reliabilityWeight: 4000, responsivenessWeight: 2500, costWeight: 2000, preferenceWeight: 1500, maxCandidates: 64, explorationShareBasisPoints: 500, allowDepletedFallback: false, affinityEnabled: false, affinityTtlSeconds: 300, outboundProxyMode: "inherit", outboundProxyUrl: null },
       revision: 1, policyVersion: "routing-policy-v1", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 0,
     })),
     updateRoutingPolicy: vi.fn(),
+    applyRoutingPolicyDocument: vi.fn(),
     simulateRoute: vi.fn(async (input) => ({
       previewPolicyVersion: "intelligent_planner_v1",
       capacityMode: "snapshot_only",
@@ -121,6 +124,13 @@ describe("routing backend cutover", () => {
       candidates: [],
       message: "ok",
     })),
+    getModelMappingWorkspace: vi.fn(),
+    getModelMappingDocument: vi.fn(),
+    validateModelMappingDocument: vi.fn(),
+    applyModelMappingDocument: vi.fn(),
+    restoreModelMappingRevision: vi.fn(),
+    simulateModelMapping: vi.fn(),
+    resolveRequestMappingTrace: vi.fn(),
   };
 
   beforeEach(() => {
@@ -173,8 +183,10 @@ describe("routing backend cutover", () => {
         maxCandidates: 64,
         explorationShareBasisPoints: 500,
         allowDepletedFallback: false,
-        affinityEnabled: false,
-        affinityTtlSeconds: 300,
+         affinityEnabled: false,
+         affinityTtlSeconds: 300,
+         outboundProxyMode: "inherit",
+         outboundProxyUrl: null,
       },
     } as const;
 

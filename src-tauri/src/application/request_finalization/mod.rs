@@ -532,6 +532,14 @@ async fn apply_durable_attempt_effect(
                         credential_revision: write.credential_revision,
                         endpoint_revision: write.endpoint_revision,
                         model_alias_revision: write.model_alias_revision,
+                        endpoint_kind: "unknown".to_string(),
+                        protocol_kind: "unknown".to_string(),
+                        // Mapping revision is provenance, never native capability
+                        // identity. The legacy column remains nullable for old
+                        // records, while v2 facts are keyed by native model and
+                        // execution revisions only.
+                        model_mapping_revision: None,
+                        model_resolution_fence: None,
                         evidence_code: evidence_code.clone(),
                         classifier_profile_version: classifier_profile_version.clone(),
                     },

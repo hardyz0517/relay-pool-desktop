@@ -15,7 +15,6 @@ pub(crate) mod fixed_point;
 #[cfg(test)]
 pub mod hierarchical_preview;
 pub(crate) mod intelligent_planner;
-pub(crate) mod model_alias;
 pub(crate) mod planning_snapshot;
 pub(crate) mod request;
 #[cfg(test)]

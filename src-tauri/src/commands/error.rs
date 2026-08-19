@@ -487,6 +487,30 @@ mod tests {
     }
 
     #[test]
+    fn rejects_secret_url_and_query_in_conflict_details() {
+        for (resource, current_revision) in [
+            ("https://provider.example/v1", None),
+            ("mapping", Some("revision?token=fake")),
+            ("mapping", Some("Authorization: Bearer fake")),
+        ] {
+            assert!(
+                CommandError::try_new(
+                    CommandErrorCode::Conflict,
+                    "The resource changed before this operation completed.",
+                    false,
+                    Some(PublicErrorDetails::Conflict {
+                        resource: resource.to_string(),
+                        current_revision: current_revision.map(str::to_string),
+                    }),
+                    None,
+                )
+                .is_err(),
+                "sensitive conflict details must fail closed"
+            );
+        }
+    }
+
+    #[test]
     fn unsupported_detail_falls_back_when_it_fails_public_error_validation() {
         let error = CommandError::unsupported_with_detail(
             "Sub2API response included an access token".to_string(),

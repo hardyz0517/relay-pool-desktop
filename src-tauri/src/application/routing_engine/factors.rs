@@ -67,6 +67,14 @@ pub(crate) fn cost_efficiency_from_comparable_value(value: f64) -> Option<u16> {
     Some(((10_000_u64 * 1_000_000_u64) / denominator) as u16)
 }
 
+/// Converts a trusted effective key multiplier into a stable cost proxy.
+/// 1.0 is neutral (50%); lower multipliers score better and higher
+/// multipliers score lower. This is a routing proxy, not a token-price
+/// estimate.
+pub(crate) fn cost_efficiency_from_multiplier(value: f64) -> Option<u16> {
+    cost_efficiency_from_comparable_value(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,5 +102,13 @@ mod tests {
         let expensive = cost_efficiency_from_comparable_value(10.0).unwrap();
         assert!(cheap > expensive);
         assert_eq!(cost_efficiency_from_comparable_value(0.0), Some(10_000));
+    }
+
+    #[test]
+    fn multiplier_proxy_is_neutral_at_one_and_rewards_lower_rates() {
+        assert_eq!(cost_efficiency_from_multiplier(1.0), Some(5_000));
+        assert!(cost_efficiency_from_multiplier(0.075).unwrap() > 5_000);
+        assert!(cost_efficiency_from_multiplier(2.0).unwrap() < 5_000);
+        assert_eq!(cost_efficiency_from_multiplier(f64::NAN), None);
     }
 }

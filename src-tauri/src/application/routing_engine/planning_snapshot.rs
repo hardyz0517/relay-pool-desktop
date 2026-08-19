@@ -1,3 +1,5 @@
+use crate::application::model_mapping::CandidateModelVariant;
+use crate::models::model_mapping::FallbackTrigger;
 use crate::models::routing_policy::RoutingPolicyConfigV1;
 
 use super::{
@@ -16,6 +18,10 @@ pub(crate) struct CandidateSnapshot {
     pub(crate) group_revision: Option<i64>,
     pub(crate) resolved_upstream_model: Option<String>,
     pub(crate) model_alias_revision: i64,
+    /// All model variants resolved from the same immutable mapping snapshot.
+    /// Empty is retained for compatibility with old test fixtures and means
+    /// the candidate has one implicit variant from `resolved_upstream_model`.
+    pub(crate) model_variants: Vec<CandidateModelVariant>,
     /// Opaque commitment from explicit station_capacity_domains facts. A
     /// missing value prohibits cross-domain capacity fallback.
     pub(crate) capacity_domain: Option<CapacityDomainCommitment>,
@@ -55,6 +61,7 @@ pub(crate) struct PlanningSnapshot {
     pub(crate) policy: RoutingPolicyConfigV1,
     pub(crate) profile: DispatchAlgorithmProfile,
     pub(crate) candidates: Vec<CandidateSnapshot>,
+    pub(crate) model_fallback_trigger: Option<FallbackTrigger>,
     pub(crate) runtime: RuntimeOverlaySnapshot,
 }
 
@@ -105,6 +112,13 @@ impl PlanningSnapshot {
                 .flatten()
                 .any(|value| !value.is_finite() || value < 0.0)
                 || candidate.preference_basis_points > 10_000
+                || candidate.model_variants.iter().any(|variant| {
+                    variant.station_key_id != candidate.station_key_id
+                        || variant.station_id != candidate.station_id
+                        || variant.upstream_model.is_empty()
+                        || variant.credential_revision <= 0
+                        || variant.endpoint_revision <= 0
+                })
         }) {
             return Err("planning snapshot contains invalid or unavailable candidate");
         }
