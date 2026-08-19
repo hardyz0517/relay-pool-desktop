@@ -1,7 +1,14 @@
 #[path = "../src/models/operational/mod.rs"]
 mod operational_model;
 
+#[path = "../src/models/model_mapping.rs"]
+mod model_mapping_model;
+
 mod models {
+    pub(crate) mod model_mapping {
+        pub(crate) use crate::model_mapping_model::*;
+    }
+
     pub(crate) mod operational {
         pub(crate) use crate::operational_model::*;
     }

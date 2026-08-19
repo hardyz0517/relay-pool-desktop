@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("local routing candidate rows", () => {
-  it("renders health as a dedicated column in edit and status tables", async () => {
+  it("renders health in edit and policy score in the status table", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -56,7 +56,7 @@ describe("local routing candidate rows", () => {
     expect(headerLabels(headers[2])).toEqual([
       "候选密钥",
       "参与状态",
-      "健康状态",
+      "密钥评分",
       "有效倍率",
       "余额",
       "冷却",
@@ -72,10 +72,100 @@ describe("local routing candidate rows", () => {
 
     const row = headers[1];
     const participationCell = metricCell(row, "参与状态");
-    const healthCell = metricCell(row, "健康状态");
+    const healthCell = metricCell(headers[1], "健康状态");
+    const scoreCell = metricCell(headers[3], "密钥评分");
     expect(participationCell.textContent).toContain("可参与");
     expect(participationCell.textContent).not.toContain("未知");
     expect(healthCell.textContent).toContain("未知");
+    expect(scoreCell.textContent).toContain("—");
+
+    await act(async () => {
+      (headers[3].querySelector('button[aria-label*="评分计算"]') as HTMLButtonElement).click();
+    });
+    expect(document.body.textContent).toContain("暂无评分明细");
+
+    await act(async () => root.unmount());
+  });
+
+  it("formats the backend utility score as a compact percentage-like value", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <LocalRoutingStatusCandidateRow
+          candidate={candidate({ score: 8_575 })}
+          order={1}
+          nowMs={0}
+        />,
+      );
+    });
+
+    expect(metricCell(host.firstElementChild!, "密钥评分").textContent).toContain("86 分");
+    await act(async () => root.unmount());
+  });
+
+  it("opens the score calculation dialog from the score cell", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <LocalRoutingStatusCandidateRow
+          candidate={candidate({
+            score: 8_510,
+            scoreDetails: {
+              total: 8_510,
+              reliability: { score: 9_000, weight: 4_000, contribution: 3_600, inputs: [{ label: "成功请求", value: "19" }] },
+              responsiveness: { score: 8_000, weight: 2_500, contribution: 2_000, inputs: [{ label: "最近平均延迟", value: "240 ms" }] },
+              cost: { score: 9_302, weight: 2_000, contribution: 1_860, inputs: [{ label: "密钥有效倍率", value: "0.0750x" }, { label: "倍率代理成本分", value: "93.0%" }] },
+              preference: { score: 7_000, weight: 1_500, contribution: 1_050, inputs: [{ label: "候选优先级", value: "3000" }] },
+            },
+          })}
+          order={1}
+          nowMs={0}
+        />,
+      );
+    });
+
+    await act(async () => {
+      (host.querySelector('button[aria-label*="评分计算"]') as HTMLButtonElement).click();
+    });
+    expect(document.body.textContent).toContain("评分因子");
+    expect(document.body.textContent).toContain("可靠性");
+    expect(document.body.textContent).toContain("根据历史成功率计算");
+    expect(document.body.textContent).toContain("成功请求 19");
+    expect(document.body.textContent).toContain("密钥有效倍率 0.0750x");
+    expect(document.body.textContent).not.toContain("成功次数 + 先验成功");
+    const detailButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent === "查看计算详情",
+    );
+    expect(detailButton).toBeTruthy();
+    await act(async () => {
+      detailButton?.click();
+    });
+    expect(document.body.textContent).toContain("成功次数 + 先验成功");
+    const secondDetailButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent === "查看计算详情" && button !== detailButton,
+    );
+    await act(async () => {
+      secondDetailButton?.click();
+    });
+    expect(document.body.textContent).toContain("最近延迟 / 延迟上限");
+    for (let index = 0; index < 2; index += 1) {
+      const nextDetailButton = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent === "查看计算详情",
+      );
+      await act(async () => {
+        nextDetailButton?.click();
+      });
+    }
+    expect(document.body.textContent).toContain("候选优先级");
+    expect(document.body.textContent).toContain("240 ms");
+    expect(document.body.textContent).toContain("倍率代理成本分");
+    expect(document.body.textContent).toContain("最终评分");
 
     await act(async () => root.unmount());
   });
@@ -141,6 +231,8 @@ function candidate(overrides: Partial<LocalRoutingCandidate> = {}): LocalRouting
     enabled: true,
     schedulable: true,
     healthState: "unknown",
+    score: null,
+    scoreDetails: null,
     currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,

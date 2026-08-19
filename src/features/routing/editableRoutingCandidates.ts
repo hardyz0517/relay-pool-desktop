@@ -25,6 +25,8 @@ function fallbackCandidate(
       : item.consecutiveFailures > 0
         ? "degraded"
         : "unknown",
+    score: null,
+    scoreDetails: null,
     currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,

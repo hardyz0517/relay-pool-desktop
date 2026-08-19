@@ -4,82 +4,26 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "@/components/ui";
-import type { KeyPoolItem } from "@/lib/types/stationKeys";
-import type { RoutingCandidateView, RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import { LocalRoutingEditTab } from "./LocalRoutingEditTab";
 
-const mocks = vi.hoisted(() => ({
-  dragEnd: null as ((event: unknown) => Promise<void>) | null,
-  reorderKeyPool: vi.fn(),
-}));
-
-vi.mock("@dnd-kit/core", () => ({
-  closestCenter: vi.fn(),
-  DndContext: ({ children, onDragEnd }: { children: unknown; onDragEnd: (event: unknown) => Promise<void> }) => {
-    mocks.dragEnd = onDragEnd;
-    return children;
-  },
-  KeyboardSensor: vi.fn(),
-  PointerSensor: vi.fn(),
-  useSensor: vi.fn(() => ({})),
-  useSensors: vi.fn(() => []),
-}));
-
-vi.mock("@dnd-kit/sortable", () => ({
-  sortableKeyboardCoordinates: vi.fn(),
-  SortableContext: ({ children }: { children: unknown }) => children,
-  useSortable: vi.fn(() => ({
-    attributes: {},
-    listeners: {},
-    setNodeRef: vi.fn(),
-    transform: null,
-    transition: undefined,
-    isDragging: false,
-  })),
-  verticalListSortingStrategy: {},
-}));
-
-vi.mock("@dnd-kit/utilities", () => ({
-  CSS: { Transform: { toString: vi.fn(() => undefined) } },
-}));
-
-vi.mock("@/lib/api/stationKeys", () => ({
-  reorderKeyPool: mocks.reorderKeyPool,
-}));
-
 vi.mock("./LocalRoutingSettingsEditor", () => ({
-  LocalRoutingSettingsEditor: () => null,
+  LocalRoutingSettingsEditor: () => <div data-testid="routing-settings" />,
 }));
 
-vi.mock("./LocalRoutingCandidateRow", () => ({
-  LocalRoutingCandidateHeader: () => null,
-  LocalRoutingCandidateRow: ({
-    candidate,
-    order,
-  }: {
-    candidate: RoutingCandidateView;
-    order: number;
-  }) => <div data-candidate-id={candidate.stationKeyId}>{order}</div>,
+vi.mock("./ModelMappingPanel", () => ({
+  ModelMappingPanel: () => <div data-testid="model-mapping" />,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 afterEach(() => {
   document.body.innerHTML = "";
-  mocks.dragEnd = null;
-  mocks.reorderKeyPool.mockReset();
   vi.restoreAllMocks();
 });
 
 describe("LocalRoutingEditTab", () => {
-  it("publishes a saved reorder and invalidates both routing read models", async () => {
-    const initial = workspace([candidate("key-1"), candidate("key-2")]);
-    const keyPoolItems = [keyPoolItem("key-3"), keyPoolItem("key-2"), keyPoolItem("key-1")];
-    mocks.reorderKeyPool.mockResolvedValue([]);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+  it("keeps candidate ordering out of the settings page", async () => {
+    const queryClient = new QueryClient();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -88,147 +32,18 @@ describe("LocalRoutingEditTab", () => {
       root.render(
         <QueryClientProvider client={queryClient}>
           <ToastProvider>
-            <LocalRoutingEditTab loading={false} keyPoolItems={keyPoolItems} workspace={initial} />
+            <LocalRoutingEditTab />
           </ToastProvider>
         </QueryClientProvider>,
       );
     });
 
-    const candidateSection = document.querySelector<HTMLElement>(
-      'section[aria-labelledby="local-routing-edit-candidates-title"]',
-    );
-    expect(candidateSection).not.toBeNull();
-    expect(candidateSection?.querySelector(".shadow-surface")).toBeNull();
-    expect(candidateSection?.querySelector(".p-4")).toBeNull();
-
-    await act(async () => {
-      await mocks.dragEnd?.({ active: { id: "key-1" }, over: { id: "key-3" } });
-    });
-
-    expect(mocks.reorderKeyPool).toHaveBeenCalledWith(["key-2", "key-3", "key-1"]);
-    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["routing"] });
-
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("keeps the edit preview order aligned with refreshed status candidates", async () => {
-    const keyPoolItems = [keyPoolItem("key-3"), keyPoolItem("key-2"), keyPoolItem("key-1")];
-    const initial = workspace([candidate("key-1"), candidate("key-2")]);
-    const refreshed = workspace([candidate("key-2"), candidate("key-1")]);
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const host = document.createElement("div");
-    document.body.append(host);
-    const root = createRoot(host);
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <ToastProvider>
-            <LocalRoutingEditTab loading={false} keyPoolItems={keyPoolItems} workspace={initial} />
-          </ToastProvider>
-        </QueryClientProvider>,
-      );
-    });
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={queryClient}>
-          <ToastProvider>
-            <LocalRoutingEditTab loading={false} keyPoolItems={keyPoolItems} workspace={refreshed} />
-          </ToastProvider>
-        </QueryClientProvider>,
-      );
-    });
-    expect(Array.from(host.querySelectorAll("[data-candidate-id]")).map((node) => node.getAttribute("data-candidate-id"))).toEqual([
-      "key-2",
-      "key-1",
-      "key-3",
-    ]);
+    expect(host.querySelector('[data-testid="routing-settings"]')).toBeTruthy();
+    expect(host.querySelector('[data-testid="model-mapping"]')).toBeTruthy();
+    expect(host.textContent).not.toContain("候选预览与顺序修正");
+    expect(host.querySelector('[aria-label="调整候选顺序"]')).toBeNull();
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 });
-
-function keyPoolItem(id: string): KeyPoolItem {
-  return {
-    id,
-    stationId: "station-1",
-    stationName: "Station",
-    name: id,
-    enabled: true,
-    priority: 0,
-    schedulable: true,
-    cooldownUntil: null,
-    consecutiveFailures: 0,
-  } as KeyPoolItem;
-}
-
-function candidate(stationKeyId: string): RoutingCandidateView {
-  return {
-    stationKeyId,
-    stationId: "station-1",
-    stationName: "Station",
-    keyName: stationKeyId,
-    endpoint: "chat_completions",
-    priority: 0,
-    enabled: true,
-    schedulable: true,
-    healthState: "ready",
-    currentConcurrency: null,
-    lastSuccessAt: null,
-    lastFailureAt: null,
-    cooldownUntil: null,
-    routingGroupScope: "all_groups",
-    routingGroupMatch: true,
-    previewEligible: true,
-    previewRejectReasons: [],
-    facts: [],
-  };
-}
-
-function workspace(candidates: RoutingCandidateView[]): RoutingWorkspaceView {
-  return {
-    proxyStatus: {
-      running: false,
-      lifecycle: "stopped",
-      bindAddr: "127.0.0.1",
-      port: 1431,
-      startedAt: null,
-      lastError: null,
-      activeRequests: 0,
-      requestCount: 0,
-    },
-    settings: {
-      enabled: true,
-      bindAddr: "127.0.0.1",
-      port: 1431,
-      endpoint: "chat_completions",
-      policy: {
-        version: 1,
-        reliabilityWeight: 4000,
-        responsivenessWeight: 2500,
-        costWeight: 2000,
-        preferenceWeight: 1500,
-        maxCandidates: 64,
-        explorationShareBasisPoints: 500,
-        allowDepletedFallback: false,
-        affinityEnabled: false,
-        affinityTtlSeconds: 300,
-      },
-      maxRateMultiplier: null,
-      routingGroupFilter: "all_groups",
-      fallbackEnabled: true,
-      previewKind: "baseline_eligibility",
-    },
-    summary: {
-      candidateCount: candidates.length,
-      previewEligibleCandidateCount: candidates.length,
-      previewExcludedCandidateCount: 0,
-      cooldownCandidateCount: 0,
-      lastDecisionAt: null,
-    },
-    candidates,
-    latestDecision: null,
-  };
-}
