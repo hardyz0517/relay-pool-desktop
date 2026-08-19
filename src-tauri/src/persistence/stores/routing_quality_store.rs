@@ -14,6 +14,45 @@ pub(crate) struct RoutingCheckpointCursor {
 }
 
 impl RoutingQualityStore {
+    pub(crate) async fn load_summary_json(
+        &self,
+        connection: &mut SqliteConnection,
+        scopes: &[String],
+    ) -> Result<BTreeMap<String, Value>, PersistenceError> {
+        let mut result = BTreeMap::new();
+        for scope in scopes.iter().take(1024) {
+            let row =
+                sqlx::query("SELECT summary_json FROM routing_quality_summaries WHERE scope = ?1")
+                    .bind(scope)
+                    .fetch_optional(&mut *connection)
+                    .await?;
+            if let Some(row) = row {
+                let json = row.get::<String, _>("summary_json");
+                let value = serde_json::from_str(&json).map_err(|error| {
+                    PersistenceError::InvariantViolation(format!(
+                        "routing quality summary is invalid: {error}"
+                    ))
+                })?;
+                result.insert(scope.clone(), value);
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) async fn list_summary_scopes(
+        &self,
+        connection: &mut SqliteConnection,
+    ) -> Result<Vec<String>, PersistenceError> {
+        let rows =
+            sqlx::query("SELECT scope FROM routing_quality_summaries ORDER BY scope LIMIT 1024")
+                .fetch_all(&mut *connection)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| row.get::<String, _>("scope"))
+            .collect())
+    }
+
     pub async fn load_health_axes(
         &self,
         connection: &mut SqliteConnection,

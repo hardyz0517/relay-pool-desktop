@@ -16,6 +16,8 @@ function candidate(overrides: Partial<RoutingCandidateView> = {}): RoutingCandid
     enabled: true,
     schedulable: true,
     healthState: "ready",
+    score: null,
+    scoreDetails: null,
     currentConcurrency: null,
     lastSuccessAt: null,
     lastFailureAt: null,

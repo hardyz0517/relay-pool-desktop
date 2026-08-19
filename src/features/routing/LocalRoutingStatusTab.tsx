@@ -3,6 +3,7 @@ import { Button, Dialog, EmptyState, MetricPanel, SectionCard, useToast } from "
 import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
 import type { RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
+import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import type { RouteCandidateExplanation, RouteEndpointKind, RouteSimulationResult, RoutingGroupFilter } from "@/lib/types/routing";
 import { readError } from "@/lib/errors";
 import { getLocalAccessKey } from "@/lib/api/settings";
@@ -14,13 +15,11 @@ import {
   buildLatestDecisionDisplay,
   formatRoutingDecisionTime,
 } from "./localRoutingStatusViewModel";
-import {
-  LocalRoutingStatusCandidateHeader,
-  LocalRoutingStatusCandidateRow,
-} from "./LocalRoutingStatusCandidateRow";
+import { RoutingCandidateOrderPanel } from "./RoutingCandidateOrderPanel";
 
 type LocalRoutingStatusTabProps = {
   workspace: RoutingWorkspaceView | null;
+  keyPoolItems: readonly KeyPoolItem[] | undefined;
   maxRateMultiplier?: number | null;
   loading: boolean;
   nowMs: number;
@@ -42,6 +41,7 @@ const routeMetricValueClassName = "text-[20px] leading-6 text-foreground";
 
 export function LocalRoutingStatusTab({
   workspace,
+  keyPoolItems,
   maxRateMultiplier,
   loading,
   nowMs,
@@ -233,39 +233,13 @@ export function LocalRoutingStatusTab({
         ]}
       />
 
-      <section aria-labelledby="local-routing-candidates-title">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h2
-            id="local-routing-candidates-title"
-            className="text-sm font-semibold text-foreground"
-          >
-            {candidateHeading}
-          </h2>
-          <span className="text-xs text-muted-foreground">
-            {workspace.summary.candidateCount} 个密钥
-          </span>
-        </div>
-        {workspace.candidates.length === 0 ? (
-          <EmptyState
-            title="暂无候选密钥"
-            description="当前配置下没有可预览的路由密钥。"
-          />
-        ) : (
-          <div className="overflow-hidden rounded-[var(--surface-radius)] border border-border bg-surface">
-            <LocalRoutingStatusCandidateHeader />
-            <div className="divide-y divide-border">
-              {workspace.candidates.map((candidate, index) => (
-                <LocalRoutingStatusCandidateRow
-                  key={candidate.stationKeyId}
-                  candidate={candidate}
-                  order={index + 1}
-                  nowMs={nowMs}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </section>
+      <RoutingCandidateOrderPanel
+        workspace={workspace}
+        keyPoolItems={keyPoolItems}
+        loading={loading}
+        nowMs={nowMs}
+        heading={candidateHeading}
+      />
       <Dialog open={decisionDetailsOpen} title="最近决策原因" description={latestDecisionId ?? "暂无最近决策"} onClose={() => setDecisionDetailsOpen(false)}>
         <div className="grid gap-2 p-4 text-sm">
           <div>状态：{workspace.latestDecision?.status ?? "unavailable"}</div><div>原因：{workspace.latestDecision?.reason || "暂无说明"}</div><div>路由策略：{workspace.latestDecision?.policy ?? "暂无记录"}</div>

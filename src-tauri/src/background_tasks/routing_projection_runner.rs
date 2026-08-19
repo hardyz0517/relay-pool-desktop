@@ -5,7 +5,7 @@ use crate::background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, Tas
 
 use crate::{
     application::quality_projection::{
-        rebuild_quality_summary_with_checkpoint, BetaPrior, QUALITY_PROJECTOR_VERSION,
+        rebuild_quality_summary_at, BetaPrior, QUALITY_PROJECTOR_VERSION,
     },
     models::routing_observation::RoutingObservation,
     persistence::{
@@ -18,11 +18,14 @@ use crate::{
 };
 
 #[cfg(test)]
+use crate::application::quality_projection::rebuild_quality_summary_with_checkpoint;
+#[cfg(test)]
 use crate::application::quality_projection::QualitySummary;
 
 pub(crate) const MAX_ROUTING_PROJECTION_BATCH: usize = 256;
 pub const ROUTING_PROJECTION_TASK_ID: &str = "routing-projection-v1";
 const ROUTING_PROJECTION_CURSOR_SCOPE: &str = "__routing_projection_ingestion_cursor__";
+const STALE_REFRESH_INTERVAL_MS: i64 = 60_000;
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,12 +93,25 @@ pub fn register_routing_projection_task(
             TaskSpec::new(task_id.clone(), "routing_projection_v1", move |context: TaskRunContext| {
                 let runtime = runtime.clone();
                 Box::pin(async move {
+                    let mut last_stale_refresh_ms = 0_i64;
                     loop {
                         tokio::select! {
                             _ = context.cancellation_token.cancelled() => return Err(TaskFailure::cancelled()),
                             _ = tokio::time::sleep(Duration::from_millis(1_000)) => {}
                         }
-                        if let Err(error) = project_once(&runtime, &context.cancellation_token).await {
+                        let now_ms = chrono::Utc::now().timestamp_millis().max(0);
+                        let refresh_stale = now_ms.saturating_sub(last_stale_refresh_ms)
+                            >= STALE_REFRESH_INTERVAL_MS;
+                        if refresh_stale {
+                            last_stale_refresh_ms = now_ms;
+                        }
+                        if let Err(_error) = project_once(
+                            &runtime,
+                            &context.cancellation_token,
+                            refresh_stale,
+                        )
+                        .await
+                        {
                             crate::observability::runtime::bootstrap::emit(
                                 crate::services::proxy::runtime_events::routing_projection_tick_failed(),
                             );
@@ -113,13 +129,15 @@ pub fn register_routing_projection_task(
 async fn project_once(
     runtime: &PersistenceHandle,
     cancellation: &CancellationToken,
+    refresh_stale: bool,
 ) -> Result<(), crate::persistence::error::PersistenceError> {
     if cancellation.is_cancelled() {
         return Ok(());
     }
     let observation_store = RoutingObservationStore;
     let quality_store = RoutingQualityStore;
-    let (observations, scoped_histories) = {
+    let now_ms = chrono::Utc::now().timestamp_millis().max(0);
+    let (observations, scoped_histories, previous_checkpoint) = {
         let mut read = runtime.begin_read().await?;
         let checkpoint = quality_store
             .load_checkpoint_cursor(
@@ -140,6 +158,7 @@ async fn project_once(
                 },
             )
             .transpose()?;
+        let previous_checkpoint = checkpoint.clone();
         let observations = observation_store
             .list_after(read.connection(), checkpoint, MAX_ROUTING_PROJECTION_BATCH)
             .await?;
@@ -147,6 +166,9 @@ async fn project_once(
             .iter()
             .map(observation_scope)
             .collect::<Vec<_>>();
+        if refresh_stale {
+            scopes.extend(quality_store.list_summary_scopes(read.connection()).await?);
+        }
         scopes.sort();
         scopes.dedup();
         let mut scoped_histories = Vec::with_capacity(scopes.len());
@@ -161,7 +183,7 @@ async fn project_once(
                     .await?,
             ));
         }
-        (observations, scoped_histories)
+        (observations, scoped_histories, previous_checkpoint)
     };
     if scoped_histories.is_empty() {
         return Ok(());
@@ -169,27 +191,32 @@ async fn project_once(
     let ingestion_cursor = observations
         .last()
         .map(|observation| (observation.order.ingested_at_ms, observation.id.clone()))
-        .ok_or_else(|| {
-            crate::persistence::error::PersistenceError::InvariantViolation(
-                "routing projection batch had scopes without observations".into(),
-            )
-        })?;
-    let ingestion_checkpoint = u64::try_from(ingestion_cursor.0).map_err(|_| {
-        crate::persistence::error::PersistenceError::InvariantViolation(
-            "routing projection ingestion checkpoint is negative".into(),
-        )
-    })?;
-    let now_ms = chrono::Utc::now().timestamp_millis().max(0);
+        .map(|cursor| {
+            u64::try_from(cursor.0)
+                .map(|sequence| (sequence, cursor.1))
+                .map_err(|_| {
+                    crate::persistence::error::PersistenceError::InvariantViolation(
+                        "routing projection ingestion checkpoint is negative".into(),
+                    )
+                })
+        })
+        .transpose()?;
+    let ingestion_checkpoint = ingestion_cursor
+        .as_ref()
+        .map(|cursor| cursor.0)
+        .or(previous_checkpoint.and_then(|cursor| u64::try_from(cursor.0).ok()))
+        .unwrap_or(1);
     let mut write = runtime.begin_write().await?;
     for (scope, history) in scoped_histories {
         if cancellation.is_cancelled() {
             return Ok(());
         }
-        let summary = rebuild_quality_summary_with_checkpoint(
+        let summary = rebuild_quality_summary_at(
             &scope,
             &history,
             BetaPrior::default(),
             ingestion_checkpoint,
+            now_ms,
         );
         let json = serde_json::to_value(&summary).map_err(|error| {
             crate::persistence::error::PersistenceError::InvariantViolation(error.to_string())
@@ -219,7 +246,7 @@ async fn project_once(
                 &summary.scope,
                 "latency",
                 summary.checkpoint_sequence.max(1),
-                summary.latency_coverage_basis_points,
+                summary.responsiveness_basis_points,
                 now_ms,
             )
             .await?;
@@ -239,18 +266,20 @@ async fn project_once(
     // The cursor is advanced in the same transaction as every derived row. A
     // failed projection therefore retries the exact uncommitted ingestion range
     // instead of starving all observations after the first batch.
-    quality_store
-        .save_checkpoint(
-            write.connection(),
-            ROUTING_PROJECTION_TASK_ID,
-            QUALITY_PROJECTOR_VERSION,
-            ROUTING_PROJECTION_CURSOR_SCOPE,
-            ingestion_checkpoint,
-            "ready",
-            Some(ingestion_cursor.1.as_str()),
-            now_ms,
-        )
-        .await?;
+    if let Some((sequence, item_id)) = ingestion_cursor {
+        quality_store
+            .save_checkpoint(
+                write.connection(),
+                ROUTING_PROJECTION_TASK_ID,
+                QUALITY_PROJECTOR_VERSION,
+                ROUTING_PROJECTION_CURSOR_SCOPE,
+                sequence,
+                "ready",
+                Some(item_id.as_str()),
+                now_ms,
+            )
+            .await?;
+    }
     write.commit().await
 }
 
