@@ -16,6 +16,8 @@
 
 智能路由当前以 [`specs/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](specs/INTELLIGENT_ROUTING_ENGINE_SPEC.md) 为目标规格，以 [`plans/2026-08-05-intelligent-routing-engine-upgrade.md`](plans/2026-08-05-intelligent-routing-engine-upgrade.md) 为总体实施记录。上游错误分类与重试的收口范围见 [`plans/2026-08-13-upstream-error-classification-retry-closure.md`](plans/2026-08-13-upstream-error-classification-retry-closure.md)，传输边界见 [`specs/2026-08-13-reliable-transport-send-phase-spike.md`](specs/2026-08-13-reliable-transport-send-phase-spike.md)。
 
+本次重试、故障转移、健康冷却与熔断控制面升级的待评审目标规格见 [`specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md`](specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md)；在正式接受前，它不替代当前实现事实。
+
 路由策略的 VS Code 风格设置体验、受管 JSON 文档、并发与恢复控制面以 [`specs/ROUTING_POLICY_CONFIGURATION_SYSTEM_SPEC.md`](specs/ROUTING_POLICY_CONFIGURATION_SYSTEM_SPEC.md) 为当前实现规范，执行记录见 [`plans/2026-08-17-routing-policy-configuration-system.md`](plans/2026-08-17-routing-policy-configuration-system.md)；SQLite 策略聚合仍是唯一事实来源，受管 JSON 由共享 document coordinator 作为镜像和外部输入入口。
 
 模型映射的当前实现契约见 [`proposals/MODEL_MAPPING_STRATEGY_SPEC.md`](proposals/MODEL_MAPPING_STRATEGY_SPEC.md)，实施记录见 [`plans/2026-08-17-model-mapping-strategy-implementation.md`](plans/2026-08-17-model-mapping-strategy-implementation.md)。Phase 1、Phase 2、bounded Phase 3 runtime，以及 routing-policy 的完整 document apply、typed trusted source context 和共享 coordinator 已实现并可手测；legacy mutation 的通知收口、legacy alias 退役、watcher 的发布资格和 release/live-provider qualification 仍按 [`audits/model-mapping-control-plane-gap.md`](audits/model-mapping-control-plane-gap.md) 管理。
