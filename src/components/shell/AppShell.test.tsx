@@ -31,11 +31,11 @@ describe("AppShell change-center unread badge", () => {
     mockedUseQuery.mockReset();
   });
 
-  function renderShell(unseenCount: number) {
+  function renderShell(totalCount: number) {
     mockedUseQuery.mockImplementation((options) => {
       const queryName = options.queryKey[0];
       if (queryName === "alertingActivity") {
-        return { data: { unseenCount } } as ReturnType<typeof useQuery>;
+        return { data: { totalCount } } as ReturnType<typeof useQuery>;
       }
       if (queryName === "proxyStatus") {
         return { data: { running: false } } as ReturnType<typeof useQuery>;
@@ -59,19 +59,19 @@ describe("AppShell change-center unread badge", () => {
     });
   }
 
-  it("shows unread information in the change-center badge", () => {
+  it("shows unread changes in the change-center badge", () => {
     renderShell(2);
 
     const changesButton = host.querySelector('[data-navigation-route-id="changes"]');
     expect(changesButton?.querySelector('[aria-label="2 条未读变更"]')?.textContent).toBe("2");
     expect(mockedUseQuery).toHaveBeenCalledWith(
       expect.objectContaining({
-        queryKey: ["alertingActivity", { limit: 1 }],
+        queryKey: ["alertingActivity", { limit: 1, recordType: "change", unreadOnly: true }],
       }),
     );
   });
 
-  it("hides the badge when alerts and information are all read", () => {
+  it("hides the badge when no unread changes exist, regardless of active issues", () => {
     renderShell(0);
 
     const changesButton = host.querySelector('[data-navigation-route-id="changes"]');

@@ -93,6 +93,7 @@ pub(crate) struct CollectorApplyRequest {
 pub(crate) struct CaptureSnapshotRequest {
     pub station_id: String,
     pub endpoint_revision: i64,
+    pub task_type: String,
     pub status: String,
     pub summary_json: Value,
     pub normalized_json: Value,
@@ -437,6 +438,7 @@ impl CollectorService {
         if request.station_id.trim().is_empty()
             || request.endpoint_revision < 1
             || request.event_count < 0
+            || !matches!(request.task_type.as_str(), "full" | "recharge")
             || !matches!(
                 request.status.as_str(),
                 "success" | "partial" | "failed" | "manual_required" | "needs_confirmation"
@@ -493,7 +495,7 @@ impl CollectorService {
                                 endpoint_revision: request.endpoint_revision,
                                 parent_run_id: None,
                                 adapter: "webview".to_string(),
-                                task_type: "full".to_string(),
+                                task_type: request.task_type.clone(),
                                 started_at: now.clone(),
                             },
                         )
@@ -1476,6 +1478,7 @@ fn group_transition_observation(
             "groupName": current.group_name,
             "status": current.binding_status,
             "groupKeyHash": current.group_key_hash,
+            "effectiveRateMultiplier": current.effective_rate_multiplier,
         })
         .to_string(),
         observed_at_ms,
@@ -1791,7 +1794,7 @@ mod tests {
                 binding_status: BINDING_STATUS_AVAILABLE.to_string(),
                 default_rate_multiplier: None,
                 user_rate_multiplier: None,
-                effective_rate_multiplier: None,
+                effective_rate_multiplier: Some(0.07),
                 source: "collector".to_string(),
             },
         };
@@ -1803,6 +1806,8 @@ mod tests {
             audit.condition_key.as_str(),
             "station_group:station-1:group-hash"
         );
+        let summary: Value = serde_json::from_str(&audit.summary_json).expect("group summary");
+        assert_eq!(summary["effectiveRateMultiplier"], json!(0.07));
 
         let available_current = transition.current.clone();
         let mut missing_current = available_current.clone();
@@ -2401,6 +2406,7 @@ mod tests {
         CaptureSnapshotRequest {
             station_id: station_id.to_string(),
             endpoint_revision,
+            task_type: "full".to_string(),
             status: "success".to_string(),
             summary_json: json!({ "status": "success" }),
             normalized_json: json!({ "status": "success", "groups": [] }),

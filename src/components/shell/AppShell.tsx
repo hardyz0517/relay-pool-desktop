@@ -25,7 +25,11 @@ export function AppShell({
   navigationSequence,
   onRouteChange,
 }: AppShellProps) {
-  const { data: alertingPage } = useQuery(alertingActivityQueryOptions({ limit: 1 }));
+  const { data: unreadChangePage } = useQuery(alertingActivityQueryOptions({
+    recordType: "change",
+    unreadOnly: true,
+    limit: 1,
+  }));
   const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
   const { data: settings = null } = useQuery(settingsQueryOptions());
 
@@ -45,7 +49,7 @@ export function AppShell({
     }
   }, [activeRouteId, onRouteChange, settings]);
 
-  const changeUnreadCount = alertingPage?.unseenCount ?? 0;
+  const changeUnreadCount = unreadChangePage?.totalCount ?? 0;
   const proxyRunning = proxyStatus?.running ?? false;
 
   useLayoutEffect(() => {

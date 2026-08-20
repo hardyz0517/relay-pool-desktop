@@ -57,6 +57,7 @@ pub(crate) struct WorkspaceActivityRow {
     pub last_observation_summary_json: Option<String>,
     pub old_value_json: Option<String>,
     pub new_value_json: Option<String>,
+    pub group_effective_rate_multiplier: Option<f64>,
     pub impact_json: Option<String>,
     pub resolved_at_ms: Option<i64>,
     pub seen_at_ms: Option<i64>,
@@ -111,6 +112,7 @@ impl WorkspaceStore {
                        i.updated_at_ms AS activity_at_ms,
                        i.last_observation_summary_json AS last_observation_summary_json,
                        NULL AS old_value_json, NULL AS new_value_json, NULL AS impact_json,
+                       NULL AS group_effective_rate_multiplier,
                        i.resolved_at_ms AS resolved_at_ms,
                        a.seen_at_ms AS seen_at_ms,
                        a.snoozed_until_ms AS snoozed_until_ms
@@ -133,16 +135,23 @@ impl WorkspaceStore {
                        o.old_value_json AS old_value_json,
                        o.new_value_json AS new_value_json,
                        o.impact_json AS impact_json,
+                       CASE WHEN o.event_type = 'group_added'
+                            THEN binding.effective_rate_multiplier ELSE NULL END
+                            AS group_effective_rate_multiplier,
                        NULL AS resolved_at_ms, o.seen_at_ms AS seen_at_ms,
                        NULL AS snoozed_until_ms
                 FROM change_event_occurrences o
+                LEFT JOIN station_group_bindings binding
+                  ON binding.id = o.object_id
+                 AND o.object_type = 'station_group_binding'
                 WHERE o.incident_id IS NULL AND o.category = 'audit_change'
             ), filtered AS (
                 SELECT record_type, id, activity_key, event_type, severity, station_id,
                        object_type, object_id, station_key_id, source, reason_code,
                        condition_key, lifecycle_state, episode_number, occurrence_count,
                        activity_at_ms, last_observation_summary_json, old_value_json,
-                       new_value_json, impact_json, resolved_at_ms, seen_at_ms,
+                       new_value_json, group_effective_rate_multiplier, impact_json,
+                       resolved_at_ms, seen_at_ms,
                        snoozed_until_ms
                 FROM activity
                 WHERE (?1 IS NULL OR station_id = ?1)
@@ -157,7 +166,8 @@ impl WorkspaceStore {
                    object_type, object_id, station_key_id, source, reason_code,
                    condition_key, lifecycle_state, episode_number, occurrence_count,
                    activity_at_ms, last_observation_summary_json, old_value_json,
-                   new_value_json, impact_json, resolved_at_ms, seen_at_ms,
+                   new_value_json, group_effective_rate_multiplier, impact_json,
+                   resolved_at_ms, seen_at_ms,
                    snoozed_until_ms, (SELECT COUNT(*) FROM filtered) AS total_count
             FROM filtered
             WHERE (?5 IS NULL OR activity_at_ms < ?5
@@ -398,6 +408,7 @@ fn row_to_activity(row: sqlx::sqlite::SqliteRow) -> Result<WorkspaceActivityRow,
         last_observation_summary_json: row.try_get("last_observation_summary_json")?,
         old_value_json: row.try_get("old_value_json")?,
         new_value_json: row.try_get("new_value_json")?,
+        group_effective_rate_multiplier: row.try_get("group_effective_rate_multiplier")?,
         impact_json: row.try_get("impact_json")?,
         resolved_at_ms: row.try_get("resolved_at_ms")?,
         seen_at_ms: row.try_get("seen_at_ms")?,

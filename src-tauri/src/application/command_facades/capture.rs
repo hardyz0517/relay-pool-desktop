@@ -658,6 +658,7 @@ impl CaptureCommandFacade {
             .record_capture_snapshot(CaptureSnapshotRequest {
                 station_id: station_id.to_string(),
                 endpoint_revision: commit.endpoint_revision,
+                task_type: "full".to_string(),
                 status,
                 summary_json: summary,
                 normalized_json: normalized,

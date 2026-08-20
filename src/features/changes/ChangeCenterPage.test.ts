@@ -5,6 +5,7 @@ import {
   CHANGE_CENTER_DEFAULT_VIEW,
   CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW,
   CHANGE_CENTER_VIEW_OPTIONS,
+  changeAddedGroupRate,
   changeCenterViewCountLabel,
   changeObjectTitle,
   changeSummary,
@@ -93,6 +94,19 @@ describe("change center activity presentation", () => {
       reasonCode: "group_added",
       newValueJson: JSON.stringify({ groupName: "开发组", status: "available" }),
     }))).toBe("开发组 · 新增分组");
+  });
+
+  it("shows the effective multiplier for newly discovered groups", () => {
+    expect(changeAddedGroupRate(changeActivity({
+      eventType: "group_added",
+      reasonCode: "group_added",
+      newValueJson: JSON.stringify({ groupName: "开发组", effectiveRateMultiplier: 0.07 }),
+    }))).toBe("0.07");
+    expect(changeAddedGroupRate(changeActivity({
+      eventType: "group_added",
+      reasonCode: "group_added",
+      newValueJson: JSON.stringify({ groupName: "开发组" }),
+    }))).toBeNull();
   });
 
   it("presents missing groups as an informational change without lifecycle state", () => {

@@ -494,11 +494,12 @@ export function incidentSummary(
 function ChangeRow({ activity, stationName, busy, developerModeEnabled, expanded, onToggle, onMarkSeen, onOpenRoutingDeepLink }: { activity: Extract<AlertingActivity, { recordType: "change" }>; stationName: string | null | undefined; busy: boolean; developerModeEnabled: boolean; expanded: boolean; onToggle: () => void; onMarkSeen: () => void; onOpenRoutingDeepLink?: (link: ChangeCenterRoutingDeepLink) => void }) {
   const routingLink = createChangeCenterRoutingLink(activity);
   const rateTransition = changeRateTransition(activity);
+  const addedGroupRate = changeAddedGroupRate(activity);
   return <div className="group bg-surface">
     <div className={`grid min-h-[60px] w-full items-center gap-3 pl-3 pr-2 py-2 text-left ${developerModeEnabled ? "grid-cols-[28px_8px_minmax(0,1fr)_96px_28px]" : "grid-cols-[8px_minmax(0,1fr)_96px_28px]"}`}>
       {developerModeEnabled ? <IconButton className="h-7 w-7 text-muted-foreground" label={expanded ? "收起变更" : "展开变更"} onClick={onToggle}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</IconButton> : null}
       <SeverityDot severity={activity.severity} />
-      <div className="min-w-0"><div className={`truncate text-[13px] ${activity.seenAtMs == null ? "font-semibold" : "font-medium"} text-foreground`}>{changeObjectTitle(activity, stationName)}</div><div className="truncate text-xs text-muted-foreground">{eventLabel(activity.eventType)}{rateTransition ? <> <span className="font-semibold text-foreground">{rateTransition.oldValue} → {rateTransition.newValue}</span></> : activity.eventType === "group_added" ? null : <> · {changeSummary(activity)}</>}</div></div>
+      <div className="min-w-0"><div className={`truncate text-[13px] ${activity.seenAtMs == null ? "font-semibold" : "font-medium"} text-foreground`}>{changeObjectTitle(activity, stationName)}</div><div className="truncate text-xs text-muted-foreground">{eventLabel(activity.eventType)}{rateTransition ? <> <span className="font-semibold text-foreground">{rateTransition.oldValue} → {rateTransition.newValue}</span></> : activity.eventType === "group_added" ? addedGroupRate != null ? <> · 倍率 <span className="font-semibold text-foreground">{addedGroupRate}</span></> : null : <> · {changeSummary(activity)}</>}</div></div>
       <div className="flex w-[96px] items-center justify-end whitespace-nowrap text-xs text-muted-foreground"><span>{formatChangeTime(activity.activityAtMs)}</span></div>
       <StatusSlot seenAtMs={activity.seenAtMs} busy={busy} onMarkSeen={onMarkSeen} routingLink={routingLink} onOpenRoutingDeepLink={onOpenRoutingDeepLink} />
     </div>
@@ -537,6 +538,11 @@ function changeRateTransition(activity: Extract<AlertingActivity, { recordType: 
   const oldValue = scalarValue(details?.oldEffectiveRateMultiplier);
   const newValue = scalarValue(details?.newEffectiveRateMultiplier);
   return oldValue && newValue ? { oldValue, newValue } : null;
+}
+
+export function changeAddedGroupRate(activity: Extract<AlertingActivity, { recordType: "change" }>) {
+  if (activity.eventType !== "group_added") return null;
+  return scalarValue(parseAuditObject(activity.newValueJson)?.effectiveRateMultiplier);
 }
 
 function ChangeDetail({ activity }: { activity: Extract<AlertingActivity, { recordType: "change" }> }) {

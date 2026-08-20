@@ -412,7 +412,15 @@ fn activity_summary_from_row(
         row.last_observation_summary_json.as_deref().unwrap_or("{}"),
     );
     let old_value_json = sanitized_activity_json(&row.event_type, row.old_value_json.as_deref());
-    let new_value_json = sanitized_activity_json(&row.event_type, row.new_value_json.as_deref());
+    let new_value_json = sanitized_activity_json(
+        &row.event_type,
+        activity_json_with_group_rate(
+            &row.event_type,
+            row.new_value_json.as_deref(),
+            row.group_effective_rate_multiplier,
+        )
+        .as_deref(),
+    );
     let impact_json = sanitized_activity_json(&row.event_type, row.impact_json.as_deref());
     let group_name = row
         .last_observation_summary_json
@@ -455,6 +463,7 @@ fn sanitized_activity_json(event_type: &str, encoded: Option<&str>) -> Option<St
         "groupName",
         "status",
         "groupKeyHash",
+        "effectiveRateMultiplier",
         "oldEffectiveRateMultiplier",
         "newEffectiveRateMultiplier",
         "model",
@@ -497,6 +506,30 @@ fn sanitized_activity_json(event_type: &str, encoded: Option<&str>) -> Option<St
         _ => return None,
     };
     serde_json::to_string(&sanitized).ok()
+}
+
+fn activity_json_with_group_rate(
+    event_type: &str,
+    encoded: Option<&str>,
+    effective_rate_multiplier: Option<f64>,
+) -> Option<String> {
+    if event_type != "group_added" || effective_rate_multiplier.is_none() {
+        return encoded.map(str::to_string);
+    }
+    let mut values = match encoded.and_then(|value| serde_json::from_str(value).ok()) {
+        Some(serde_json::Value::Object(values)) => values,
+        _ => serde_json::Map::new(),
+    };
+    let should_fill = values
+        .get("effectiveRateMultiplier")
+        .is_none_or(serde_json::Value::is_null);
+    if should_fill {
+        values.insert(
+            "effectiveRateMultiplier".to_string(),
+            serde_json::json!(effective_rate_multiplier),
+        );
+    }
+    serde_json::to_string(&serde_json::Value::Object(values)).ok()
 }
 
 fn sanitized_activity_scalar(value: serde_json::Value) -> Option<serde_json::Value> {
@@ -619,7 +652,10 @@ fn delivery_summary_from_row(
 mod tests {
     use std::sync::Arc;
 
-    use super::{collector_failed_task_types_from_summary, ChangeCenterWorkspaceQuery};
+    use super::{
+        activity_json_with_group_rate, collector_failed_task_types_from_summary,
+        sanitized_activity_json, ChangeCenterWorkspaceQuery,
+    };
     use crate::{
         application::{clock::SystemClock, ids::UuidV7Generator, stations::StationService},
         models::stations::CreateStationInput,
@@ -643,7 +679,7 @@ mod tests {
                             "change-1",
                             "group_added",
                             100_i64,
-                            r#"{"groupName":"default","status":"available"}"#,
+                            r#"{"groupName":"default","status":"available","effectiveRateMultiplier":0.07}"#,
                         ),
                         (
                             "change-2",
@@ -703,6 +739,10 @@ mod tests {
         assert_eq!(second_page.items.len(), 1);
         assert_eq!(second_page.total_count, 3);
         assert_eq!(second_page.items[0].event_type, "group_added");
+        assert_eq!(
+            second_page.items[0].new_value_json.as_deref(),
+            Some(r#"{"effectiveRateMultiplier":0.07,"groupName":"default","status":"available"}"#)
+        );
         assert!(second_page.next_cursor.is_none());
 
         let information_page = query
@@ -747,6 +787,104 @@ mod tests {
             .all(|item| item.record_type == "change"));
         assert!(unread_page.items.iter().any(|item| item.id == "change-1"));
 
+        runtime.close().await.expect("close runtime");
+    }
+
+    #[test]
+    fn activity_json_keeps_new_group_effective_multiplier() {
+        assert_eq!(
+            sanitized_activity_json(
+                "group_added",
+                Some(
+                    r#"{"groupName":"default","effectiveRateMultiplier":0.07,"secret":"redacted"}"#
+                ),
+            )
+            .as_deref(),
+            Some(r#"{"effectiveRateMultiplier":0.07,"groupName":"default"}"#)
+        );
+        assert_eq!(
+            activity_json_with_group_rate(
+                "group_added",
+                Some(r#"{"groupName":"default","status":"available"}"#),
+                Some(0.07),
+            )
+            .as_deref(),
+            Some(r#"{"effectiveRateMultiplier":0.07,"groupName":"default","status":"available"}"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn activity_feed_fills_missing_new_group_multiplier_from_binding() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temp.path().join("activity-group-rate.sqlite3"))
+                .await
+                .expect("runtime");
+        let station = StationService::new(
+            runtime.handle(),
+            Arc::new(SystemClock),
+            Arc::new(UuidV7Generator),
+        )
+        .create(CreateStationInput {
+            name: "Group rate fixture".to_string(),
+            station_type: "sub2api".to_string(),
+            website_url: "https://group-rate.example".to_string(),
+            api_base_url: "https://group-rate.example/v1".to_string(),
+            api_key: String::new(),
+            collector_proxy_mode: "inherit".to_string(),
+            collector_proxy_url: None,
+            enabled: true,
+            credit_per_cny: 1.0,
+            low_balance_threshold_cny: None,
+            collection_interval_minutes: 30,
+            note: None,
+        })
+        .await
+        .expect("station");
+        runtime
+            .handle()
+            .write(|write| {
+                let station_id = station.id.clone();
+                Box::pin(async move {
+                    sqlx::query(
+                        "INSERT INTO station_group_bindings (
+                            id, station_id, binding_kind, group_key_hash, group_name,
+                            binding_status, effective_rate_multiplier, confidence,
+                            created_at, updated_at
+                         ) VALUES ('binding-1', ?1, 'station_group', 'hash-1', 'default',
+                                   'available', 0.07, 0.5, '0', '0')",
+                    )
+                    .bind(&station_id)
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query(
+                        "INSERT INTO change_event_occurrences (
+                            id, source_observation_key, event_type, category,
+                            observation_kind, severity, object_type, object_id, station_id,
+                            source, reason_code, new_value_json, observed_at_ms, created_at_ms
+                         ) VALUES ('group-added-1', 'fixture:group-added-1', 'group_added',
+                                   'audit_change', 'change', 'info', 'station_group_binding',
+                                   'binding-1', ?1, 'collector', 'group_added',
+                                   '{\"groupName\":\"default\"}', 100, 100)",
+                    )
+                    .bind(&station_id)
+                    .execute(write.connection())
+                    .await?;
+                    Ok::<(), PersistenceError>(())
+                })
+            })
+            .await
+            .expect("activity fixtures");
+
+        let page = ChangeCenterWorkspaceQuery::new(runtime.handle())
+            .list_activity(None, None, None, false, None, 10)
+            .await
+            .expect("activity page");
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(
+            page.items[0].new_value_json.as_deref(),
+            Some(r#"{"effectiveRateMultiplier":0.07,"groupName":"default"}"#)
+        );
         runtime.close().await.expect("close runtime");
     }
 
