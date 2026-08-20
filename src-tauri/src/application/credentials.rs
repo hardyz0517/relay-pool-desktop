@@ -769,7 +769,7 @@ impl CredentialService {
                 || (credentials.token_expires_at.is_none()
                     && matches!(
                         credentials.session_source.as_str(),
-                        "manual_token" | "webview_capture"
+                        "manual_token" | "password_login" | "webview_capture"
                     )));
         let cookie_ready = cookie.is_some()
             && credentials

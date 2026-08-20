@@ -106,6 +106,153 @@ impl V2CollectorSourceAdapter {
     }
 }
 
+/// Resolve a session that can be injected into the temporary recharge WebView.
+///
+/// The normal collector can authenticate inline while it is making an API
+/// request. A browser scan needs the same session before the first document is
+/// loaded, so this helper performs the existing password login probe once,
+/// persists the redacted session metadata through the credential service, and
+/// resolves it again from the canonical store.
+pub(crate) async fn resolve_station_session_for_browser(
+    source: &V2CollectorSourceAdapter,
+    outbound: &AsyncOutboundClient,
+    station_id: String,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+) -> Result<ResolvedSession, ApplicationError> {
+    let current = source
+        .credentials
+        .resolve_station_session(
+            station_id.clone(),
+            crate::services::time::now_millis_for_services() as i64,
+        )
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    if browser_session_is_usable(&current) {
+        return Ok(current);
+    }
+
+    let station = source
+        .collectors
+        .station_for_collection(&station_id)
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    let credentials = source
+        .credentials
+        .get_station_credentials(station_id.clone())
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    let Some(username) = credentials
+        .login_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(current);
+    };
+    let Some(password) = source
+        .credentials
+        .get_station_login_password(station_id.clone())
+        .await
+        .map_err(|_| ApplicationError::Internal)?
+        .map(|secret| {
+            String::from_utf8(secret.as_bytes().to_vec()).map_err(|_| ApplicationError::Internal)
+        })
+        .transpose()?
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(current);
+    };
+    let settings = source
+        .settings
+        .load()
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    let proxy_config = crate::services::outbound::resolve_proxy_config(
+        &station.collector_proxy_mode,
+        station.collector_proxy_url.clone(),
+        &settings.collector_proxy_mode,
+        settings.collector_proxy_url,
+    );
+    let proxy =
+        proxy_policy_from_collector_config(proxy_config).map_err(|_| ApplicationError::Internal)?;
+    let login_base_url = if station.station_type.eq_ignore_ascii_case("sub2api") {
+        station.api_base_url.as_str()
+    } else {
+        station.website_url.as_str()
+    };
+    let attempt = match login_probe::probe_login(
+        outbound,
+        &station.station_type,
+        login_base_url,
+        username,
+        &password,
+        proxy,
+        cancellation,
+        correlation_id,
+    )
+    .await
+    {
+        Ok(attempt) => attempt,
+        Err(error) => {
+            return Ok(ResolvedSession::manual_required(
+                crate::services::secrets::mask::redact_text(&error),
+            ));
+        }
+    };
+
+    let Some(session) = attempt.session else {
+        return Ok(ResolvedSession::manual_required(
+            attempt
+                .manual_required
+                .or(attempt.login_message)
+                .unwrap_or_else(|| "stored login did not return a usable session".to_string()),
+        ));
+    };
+    source
+        .credentials
+        .persist_station_session_if_revision(
+            PersistStationSessionInput {
+                station_id: station_id.clone(),
+                access_token: session.access_token,
+                refresh_token: session.refresh_token,
+                cookie: session.cookie,
+                newapi_user_id: session.newapi_user_id,
+                token_expires_at: None,
+                session_expires_at: None,
+                session_source: "password_login".to_string(),
+                session_user_agent: credentials.session_user_agent,
+            },
+            station.endpoint_revision,
+        )
+        .await
+        .map_err(|_| ApplicationError::Internal)?;
+    source
+        .credentials
+        .resolve_station_session(
+            station_id,
+            crate::services::time::now_millis_for_services() as i64,
+        )
+        .await
+        .map_err(|_| ApplicationError::Internal)
+}
+
+fn browser_session_is_usable(session: &ResolvedSession) -> bool {
+    session.message.is_none()
+        && session
+            .newapi_user_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && (session
+            .cookie
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || session
+                .access_token
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()))
+}
+
 impl CollectorSourcePort for V2CollectorSourceAdapter {
     fn station_for_collector(&self, station_id: &str) -> Result<Station, String> {
         tauri::async_runtime::block_on(self.collectors.station_for_collection(station_id))
@@ -1111,6 +1258,7 @@ pub(crate) async fn finish_station_login_probe_v2(
                 "Save both the login username and password before testing login.".to_string(),
             ),
             newapi_session: None,
+            session: None,
         }
     } else {
         login_probe::probe_login(

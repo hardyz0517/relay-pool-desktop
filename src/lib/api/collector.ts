@@ -21,6 +21,10 @@ export function collectStationTask(stationId: string, taskType: CollectorTaskTyp
   return getActiveBackendClient().collectors.collectStationTask(stationId, taskType);
 }
 
+export function scanStationRecharge(stationId: string) {
+  return getActiveBackendClient().collectors.scanStationRecharge(stationId);
+}
+
 export function testStationLogin(stationId: string) {
   return getActiveBackendClient().collectors.testStationLogin(stationId);
 }

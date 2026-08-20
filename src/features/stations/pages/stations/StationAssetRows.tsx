@@ -1,7 +1,7 @@
 import type { DraggableAttributes } from "@dnd-kit/core";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Clock3, Edit3, GripVertical, RefreshCw, Route, ShieldCheck, Trash2 } from "lucide-react";
+import { Clock3, Edit3, GripVertical, RefreshCw, Route, ShieldCheck, Trash2, WalletCards } from "lucide-react";
 import { IconButton } from "@/components/ui";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
@@ -38,6 +38,7 @@ export type StationAssetListRowProps = {
   onDelete: (station: Station) => void;
   onOpenRoutingDeepLink?: (link: StationRoutingDeepLink) => void;
   onOpenWebsite: (station: Station) => void;
+  onRecharge?: (station: Station) => void;
   onRefreshBalance: (station: Station) => void;
 };
 
@@ -77,6 +78,7 @@ export function StationAssetListRow({
   onDelete,
   onOpenRoutingDeepLink,
   onOpenWebsite,
+  onRecharge,
   onRefreshBalance,
 }: StationAssetListRowProps) {
   const station = row.station;
@@ -191,6 +193,11 @@ export function StationAssetListRow({
         <IconButton className="text-muted-foreground hover:text-foreground" label={`编辑 ${station.name}`} onClick={() => onEdit(station)}>
           <Edit3 className="h-4 w-4" />
         </IconButton>
+        {onRecharge ? (
+          <IconButton className="text-muted-foreground hover:bg-selected hover:text-primary" label={`充值 ${station.name}`} onClick={() => onRecharge(station)}>
+            <WalletCards className="h-4 w-4" />
+          </IconButton>
+        ) : null}
         {supportsManualAuthorization(station) && (
           <IconButton
             className={cn(

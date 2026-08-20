@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "125b5b52aa4256c4b6641cff0632544e4ce6bb3c4977b9e7f1e3854882e0dc13";
+    "b17953f1423b69fccab21605e8467eced6f8af2db674510ad47be4e9d5190f60";
 
 #[cfg_attr(
     not(test),
@@ -251,6 +251,7 @@ macro_rules! ipc_command_registry {
             detect_station_info => $crate::commands::station_collection::detect_station_info,
             collect_station_info => $crate::commands::station_collection::collect_station_info,
             collect_station_task => $crate::commands::station_collection::collect_station_task,
+            scan_station_recharge => $crate::commands::station_collection::scan_station_recharge,
             test_station_login => $crate::commands::station_collection::test_station_login,
             test_station_login_input => $crate::commands::station_collection::test_station_login_input,
             detect_sub2api_station => $crate::commands::station_collection::detect_sub2api_station,
@@ -748,6 +749,7 @@ fn command_contract(name: &str) -> CommandContract {
         | "collect_sub2api_station"
         | "detect_station_info"
         | "collect_station_info"
+        | "scan_station_recharge"
         | "test_station_login" => migrated_mutation(
             "CollectorStationIdInputDto",
             "CollectorRunResultDto",
@@ -1547,6 +1549,10 @@ export function collectStationTask(input: StationCollectorTaskInputDto): Promise
   return invokeNonIdempotent<CollectorRunResultDto>("collect_station_task", { input });
 }
 
+export function scanStationRecharge(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
+  return invokeNonIdempotent<CollectorRunResultDto>("scan_station_recharge", { input });
+}
+
 export function testStationLogin(input: CollectorStationIdInputDto): Promise<CollectorRunResultDto> {
   return invokeNonIdempotent<CollectorRunResultDto>("test_station_login", { input });
 }
@@ -2283,6 +2289,7 @@ mod tests {
             "detect_station_info",
             "collect_station_info",
             "collect_station_task",
+            "scan_station_recharge",
             "test_station_login",
         ] {
             let contract = command_contract(name);
@@ -2770,6 +2777,7 @@ mod tests {
             ("collect_sub2api_station", "CollectorRunResultDto"),
             ("detect_station_info", "CollectorRunResultDto"),
             ("collect_station_info", "CollectorRunResultDto"),
+            ("scan_station_recharge", "CollectorRunResultDto"),
             ("collect_station_task", "CollectorRunResultDto"),
             ("test_station_login", "CollectorRunResultDto"),
         ] {

@@ -8,6 +8,7 @@ dist-ssr/
 
 # Tauri / Rust build output
 target/
+target-codex-*/
 src-tauri/target/
 target-codex-red*/
 /output/

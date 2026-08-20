@@ -156,6 +156,33 @@ pub async fn collect_station_task(
 }
 
 #[tauri::command]
+pub async fn scan_station_recharge(
+    app: tauri::AppHandle,
+    facade: State<'_, StationCollectionCommandFacade>,
+    input: Value,
+
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<CollectorRunResultDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "scan_station_recharge",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = CollectorStationIdInputDto::parse(input)?;
+            facade
+                .scan_station_recharge(&app, input.station_id)
+                .await
+                .map_err(public_station_collection_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn test_station_login(
     facade: State<'_, StationCollectionCommandFacade>,
     input: Value,

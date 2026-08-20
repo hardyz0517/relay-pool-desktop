@@ -1,4 +1,5 @@
 import { AlertTriangle } from "lucide-react";
+import { createPortal } from "react-dom";
 import { Button } from "./button";
 
 type ConfirmDialogProps = {
@@ -26,8 +27,8 @@ export function ConfirmDialog({
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/45 p-4 backdrop-blur-[1px]">
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim/45 p-4 backdrop-blur-[1px]">
       <div className="w-full max-w-sm rounded-[var(--surface-radius)] border border-border bg-surface px-5 py-5 shadow-dialog">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-danger-foreground">
@@ -52,6 +53,7 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

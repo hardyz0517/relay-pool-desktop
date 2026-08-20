@@ -179,6 +179,7 @@ commands.allow = [
   "detect_station_info",
   "collect_station_info",
   "collect_station_task",
+  "scan_station_recharge",
   "test_station_login",
   "test_station_login_input",
   "detect_sub2api_station",

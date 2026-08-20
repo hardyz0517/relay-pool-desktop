@@ -14,6 +14,9 @@ use crate::{
 };
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(20);
+// A password probe may try several compatible Sub2API contracts. The
+// per-request timeout must not multiply into an unbounded UI operation.
+const LOGIN_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const SUB2API_LOGIN_PATHS: [&str; 3] = ["/api/v1/auth/login", "/auth/login", "/api/login"];
 const SUB2API_LOGIN_FIELDS: [&str; 3] = ["email", "username", "user"];
 
@@ -23,6 +26,15 @@ pub(crate) struct LoginProbeAttempt {
     pub login_message: Option<String>,
     pub manual_required: Option<String>,
     pub newapi_session: Option<NewApiPasswordSession>,
+    pub session: Option<LoginProbeSession>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoginProbeSession {
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub cookie: Option<String>,
+    pub newapi_user_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -150,6 +162,7 @@ async fn probe_newapi_login(
         proxy,
         cancellation,
         correlation_id,
+        LOGIN_TIMEOUT,
     )
     .await?;
     let status = response.status.as_u16();
@@ -174,6 +187,7 @@ async fn probe_newapi_login(
             login_message: Some("NewAPI login requires manual verification".to_string()),
             manual_required: Some("manual_session_required".to_string()),
             newapi_session: None,
+            session: None,
         });
     }
     let user_id = newapi_user_id(&body)
@@ -187,13 +201,21 @@ async fn probe_newapi_login(
                 "NewAPI login succeeded but the response had no usable Cookie".to_string(),
             ),
             newapi_session: None,
+            session: None,
         });
+    };
+    let session = LoginProbeSession {
+        access_token: None,
+        refresh_token: None,
+        cookie: Some(cookie.clone()),
+        newapi_user_id: Some(user_id.clone()),
     };
     Ok(LoginProbeAttempt {
         credential_present: true,
         login_message: Some("NewAPI login succeeded".to_string()),
         manual_required: None,
         newapi_session: Some(NewApiPasswordSession { user_id, cookie }),
+        session: Some(session),
     })
 }
 
@@ -206,8 +228,21 @@ async fn probe_sub2api_login(
     cancellation: CancellationToken,
     correlation_id: Option<String>,
 ) -> Result<LoginProbeAttempt, String> {
+    let deadline = tokio::time::Instant::now() + LOGIN_PROBE_TIMEOUT;
     for path in SUB2API_LOGIN_PATHS {
         for field in SUB2API_LOGIN_FIELDS {
+            let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now())
+            else {
+                return Ok(LoginProbeAttempt {
+                    credential_present: false,
+                    login_message: Some("login probe timed out".to_string()),
+                    manual_required: Some(
+                        "station login probe exceeded its bounded time budget".to_string(),
+                    ),
+                    newapi_session: None,
+                    session: None,
+                });
+            };
             let url = build_management_url(website_url, path)?;
             let response = execute_login_request(
                 outbound,
@@ -216,16 +251,34 @@ async fn probe_sub2api_login(
                 proxy.clone(),
                 cancellation.clone(),
                 correlation_id.clone(),
+                remaining.min(LOGIN_TIMEOUT),
             )
             .await?;
             let status = response.status.as_u16();
             let body = response_body_json(&response.body);
+            let set_cookies = response
+                .headers
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
             if let Some(token) = extract_token(&body) {
                 return Ok(LoginProbeAttempt {
                     credential_present: !token.trim().is_empty(),
                     login_message: Some(format!("login token received from {path}")),
                     manual_required: None,
                     newapi_session: None,
+                    session: Some(LoginProbeSession {
+                        access_token: Some(token),
+                        refresh_token: extract_refresh_token(&body),
+                        cookie: normalize_set_cookie_headers(&set_cookies),
+                        // Sub2API's SPA route guard requires both auth_token
+                        // and auth_user. Reuse the existing persisted user-id
+                        // slot so browser scans can restore that identity
+                        // without storing the full login response.
+                        newapi_user_id: extract_user_id(&body),
+                    }),
                 });
             }
             if is_region_restricted_login(&body, status) {
@@ -237,6 +290,7 @@ async fn probe_sub2api_login(
                             .to_string(),
                     ),
                     newapi_session: None,
+                    session: None,
                 });
             }
             if needs_manual_login(&body, status) {
@@ -247,6 +301,7 @@ async fn probe_sub2api_login(
                         "captcha, 2FA, or another interactive login step is required".to_string(),
                     ),
                     newapi_session: None,
+                    session: None,
                 });
             }
             if response.status.is_success() {
@@ -259,6 +314,7 @@ async fn probe_sub2api_login(
                         "the login response contained no usable token".to_string(),
                     ),
                     newapi_session: None,
+                    session: None,
                 });
             }
         }
@@ -270,6 +326,7 @@ async fn probe_sub2api_login(
             "credentials were rejected or the login contract changed".to_string(),
         ),
         newapi_session: None,
+        session: None,
     })
 }
 
@@ -280,6 +337,7 @@ async fn execute_login_request(
     proxy: ProxyPolicy,
     cancellation: CancellationToken,
     correlation_id: Option<String>,
+    timeout: Duration,
 ) -> Result<crate::outbound::OutboundResponse, String> {
     let policy = OutboundHeaderPolicy::provider_default();
     let mut headers = OutboundHeaders::new();
@@ -304,7 +362,7 @@ async fn execute_login_request(
         headers,
         body: serde_json::to_vec(&payload).map_err(|error| error.to_string())?,
         proxy,
-        budget: RequestBudget::from_now(LOGIN_TIMEOUT),
+        budget: RequestBudget::from_now(timeout),
         retry_policy: OutboundRetryPolicy::Never,
     };
     outbound
@@ -315,6 +373,17 @@ async fn execute_login_request(
 
 fn response_body_json(body: &[u8]) -> Value {
     serde_json::from_slice::<Value>(body).unwrap_or(Value::Null)
+}
+
+fn extract_refresh_token(value: &Value) -> Option<String> {
+    value
+        .get("refresh_token")
+        .or_else(|| value.get("refreshToken"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| value.get("data").and_then(extract_refresh_token))
 }
 
 fn normalize_set_cookie_headers(headers: &[String]) -> Option<String> {
@@ -333,6 +402,18 @@ fn newapi_user_id(value: &Value) -> Option<String> {
         .pointer("/data/id")
         .or_else(|| value.get("id"))
         .and_then(string_or_i64)
+}
+
+fn extract_user_id(value: &Value) -> Option<String> {
+    [
+        value.pointer("/user/id"),
+        value.pointer("/data/user/id"),
+        value.pointer("/data/id"),
+        value.get("id"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(string_or_i64)
 }
 
 fn string_or_i64(value: &Value) -> Option<String> {
@@ -415,6 +496,10 @@ mod tests {
             extract_token(&json!({"data": {"access_token": "fresh-token"}})).as_deref(),
             Some("fresh-token")
         );
+        assert_eq!(
+            extract_user_id(&json!({"data": {"user": {"id": 42}}})).as_deref(),
+            Some("42")
+        );
         assert!(needs_manual_login(
             &json!({"reason": "GEETEST_VERIFICATION_FAILED"}),
             400
@@ -432,6 +517,7 @@ mod tests {
             login_message: Some("login token received from /api/v1/auth/login".to_string()),
             manual_required: None,
             newapi_session: None,
+            session: None,
         });
 
         assert_eq!(result.status, "success");

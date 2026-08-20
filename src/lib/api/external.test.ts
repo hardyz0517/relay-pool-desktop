@@ -43,4 +43,5 @@ describe("external URL backend cutover", () => {
 
     expect(stations.openStationWebsite).toHaveBeenCalledWith("https://example.test");
   });
+
 });

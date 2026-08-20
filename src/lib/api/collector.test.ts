@@ -8,6 +8,7 @@ import {
   closeCaptureSession,
   collectStationInfo,
   collectStationTask,
+  scanStationRecharge,
   collectSub2apiStation,
   detectStationInfo,
   detectSub2apiStation,
@@ -30,6 +31,7 @@ describe("collector backend cutover", () => {
     detectStationInfo: vi.fn(async () => runResult()),
     collectStationInfo: vi.fn(async () => runResult()),
     collectStationTask: vi.fn(async () => runResult()),
+    scanStationRecharge: vi.fn(async () => runResult()),
     testStationLogin: vi.fn(async () => runResult()),
     testStationLoginInput: vi.fn(async () => ({
       status: "success",
@@ -72,6 +74,7 @@ describe("collector backend cutover", () => {
     await detectStationInfo("station-1");
     await collectStationInfo("station-1");
     await collectStationTask("station-1", "full");
+    await scanStationRecharge("station-1");
     await testStationLogin("station-1");
     await testStationLoginInput(loginInput);
     await listCollectorSnapshots("station-1");
@@ -90,6 +93,7 @@ describe("collector backend cutover", () => {
     expect(collectors.detectStationInfo).toHaveBeenCalledWith("station-1");
     expect(collectors.collectStationInfo).toHaveBeenCalledWith("station-1");
     expect(collectors.collectStationTask).toHaveBeenCalledWith("station-1", "full");
+    expect(collectors.scanStationRecharge).toHaveBeenCalledWith("station-1");
     expect(collectors.testStationLogin).toHaveBeenCalledWith("station-1");
     expect(collectors.testStationLoginInput).toHaveBeenCalledWith(loginInput);
     expect(collectors.listCollectorSnapshots).toHaveBeenCalledWith("station-1");

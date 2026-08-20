@@ -366,6 +366,7 @@ export type CollectorsDomainClient = {
   detectStationInfo(stationId: string): Promise<CollectorRunResult>;
   collectStationInfo(stationId: string): Promise<CollectorRunResult>;
   collectStationTask(stationId: string, taskType: CollectorTaskType): Promise<CollectorRunResult>;
+  scanStationRecharge(stationId: string): Promise<CollectorRunResult>;
   testStationLogin(stationId: string): Promise<CollectorRunResult>;
   testStationLoginInput(input: StationLoginTestInput): Promise<StationLoginTestResult>;
   listCollectorSnapshots(stationId: string): Promise<CollectorSnapshot[]>;

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator_version": 1,
   "ipc_contract_version": 1,
-  "contract_hash": "125b5b52aa4256c4b6641cff0632544e4ce6bb3c4977b9e7f1e3854882e0dc13",
+  "contract_hash": "b17953f1423b69fccab21605e8467eced6f8af2db674510ad47be4e9d5190f60",
   "commands": [
     {
       "name": "activate_data_store_candidate",
@@ -1707,6 +1707,17 @@
       "mutation_kind": "idempotent",
       "transport_retry": false,
       "result_unknown": false,
+      "runtime_validation": "rust_dto_pre_application"
+    },
+    {
+      "name": "scan_station_recharge",
+      "transport": "ordinary",
+      "input_schema_hash": "08e5b676bfd39c5d4107a185f30d66f6475773d99a97718a26a625d8ef2c1847",
+      "output_schema_hash": "b6d0584d6be8970ba56ce84988117c43250212cdb0e84fe2689151f6c3aa07b1",
+      "error_schema_hash": "e635ad2de79bccb75fbb7b58560d4962cb3c675734048858e7957303dd6c3b05",
+      "mutation_kind": "non_idempotent",
+      "transport_retry": false,
+      "result_unknown": true,
       "runtime_validation": "rust_dto_pre_application"
     },
     {

@@ -10,6 +10,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+import { useState } from "react";
 import { Edit3, Plus, RefreshCw, X } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
 import { Button, ConfirmDialog, EmptyState, IconButton, SelectControl, StatusBadge } from "@/components/ui";
@@ -20,11 +21,13 @@ import {
 } from "./stationAssetViewModels";
 import { SortableStationAssetListRow, StationAssetListRow } from "./pages/stations/StationAssetRows";
 import { DetailBody, StationDialogs } from "./pages/stations/StationDialogs";
+import { RechargeDialog } from "./components/RechargeDialog";
 import {
   useStationsPageController,
   type StationsPageControllerOptions,
 } from "./useStationsPageController";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
+import type { Station } from "@/lib/types/stations";
 
 type StationRoutingDeepLink = Extract<RoutingDeepLink, { kind: "station" }> & {
   source: "station_endpoint_health";
@@ -104,6 +107,7 @@ export function StationsPage({
     stations,
   } = useStationsPageController(controllerOptions);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const [rechargeStation, setRechargeStation] = useState<Station | null>(null);
 
   return (
     <PageScaffold
@@ -185,6 +189,7 @@ export function StationsPage({
                         onOpenRoutingDeepLink={onOpenRoutingDeepLink}
                         onOpen={openDetail}
                         onOpenWebsite={handleOpenWebsite}
+                        onRecharge={setRechargeStation}
                         onRefreshBalance={(station) => void handleRefreshBalance(station)}
                       />
                     );
@@ -206,6 +211,7 @@ export function StationsPage({
                     onOpenRoutingDeepLink={() => undefined}
                     onOpen={() => undefined}
                     onOpenWebsite={() => undefined}
+                    onRecharge={() => undefined}
                     onRefreshBalance={() => undefined}
                   />
                 ) : null}
@@ -301,6 +307,14 @@ export function StationsPage({
           saving={saving}
         />
       )}
+      <RechargeDialog
+        station={rechargeStation}
+        onClose={() => setRechargeStation(null)}
+        onAuthorize={(target) => void handleManualAuthorization(target)}
+        onOpenUrl={async (url) => {
+          await handleOpenWebsite({ ...rechargeStation!, websiteUrl: url });
+        }}
+      />
       <ConfirmDialog
         open={pendingDeleteStation !== null}
         title="删除中转站"
