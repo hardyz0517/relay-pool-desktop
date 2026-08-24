@@ -110,8 +110,8 @@ function checkManifestOwnersAndForbiddenEdges() {
   assert.doesNotMatch(executionRepository, /RouteCandidateProjection|load_runtime_candidates_with_request_pricing/u, "production execution repository must not rebuild legacy candidate projections");
   assert.match(executionRepository, /OperationalRouteSnapshot[\s\S]*Vec<RoutePlanCandidate>/u, "execution snapshot must expose an execution-only candidate index");
   assert.doesNotMatch(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /production_policy/u, "workspace read model must not expose legacy policy enum truth");
-  assert.match(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /policy_config: RoutingPolicyConfigV1/u, "workspace read model must expose canonical policy config");
-  assert.match(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /applyRoutingPolicyDocument/u);
+  assert.match(readSource("src-tauri/src/application/queries/routing_workspace.rs"), /policy_config: RoutingPolicyConfigV2/u, "workspace read model must expose the active canonical policy config");
+  assert.match(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /useRoutingPolicyDraft/u, "routing editor must use the shared draft/CAS owner");
   assert.doesNotMatch(readSource("src/features/routing/LocalRoutingSettingsEditor.tsx"), /schedulerAdvancedSettings|updateSettings/u);
 }
 

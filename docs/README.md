@@ -16,7 +16,15 @@
 
 智能路由当前以 [`specs/INTELLIGENT_ROUTING_ENGINE_SPEC.md`](specs/INTELLIGENT_ROUTING_ENGINE_SPEC.md) 为目标规格，以 [`plans/2026-08-05-intelligent-routing-engine-upgrade.md`](plans/2026-08-05-intelligent-routing-engine-upgrade.md) 为总体实施记录。上游错误分类与重试的收口范围见 [`plans/2026-08-13-upstream-error-classification-retry-closure.md`](plans/2026-08-13-upstream-error-classification-retry-closure.md)，传输边界见 [`specs/2026-08-13-reliable-transport-send-phase-spike.md`](specs/2026-08-13-reliable-transport-send-phase-spike.md)。
 
-本次重试、故障转移、健康冷却与熔断控制面升级的待评审目标规格见 [`specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md`](specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md)；在正式接受前，它不替代当前实现事实。
+本次重试、故障转移、健康冷却与熔断控制面首版规范见 [`specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md`](specs/INTELLIGENT_ROUTING_RETRY_FAILOVER_CONFIGURATION_SPEC.md)，实施拆分见 [`plans/2026-08-20-intelligent-routing-retry-failover-configuration.md`](plans/2026-08-20-intelligent-routing-retry-failover-configuration.md)。首版已实施；proxy 请求链路的规划 I/O deadline、`/models` 只读适配器、非 proxy caller-owned deadline context、V2 protection profile、Credential-scoped error-rate admission bridge、bounded durable attempt summary、重启后有界决策事件、Credential-scoped 真实 outbound Half-Open probe 编排、并发 lease-race strict refresh、按模型保护状态查询和 Provider/failure-domain 基础聚合诊断已完成聚焦收口。reducer/read-model 支持更多 health scope 不等于 proxy 已为这些 scope 提供 probe resolver；probe 只由真实用户请求触发，不自动制造 synthetic Provider 请求；完整历史步骤时间线和 raw IPC 重复键检测仍按兼容边界保留为后续扩展。
+
+传输 timeout 的“后续新请求热加载”已接入 proxy runtime、ingress、execution 和 upstream client pool；保存后由运行时发布新快照，在途请求继续使用旧快照。边界与验收记录见 [`plans/2026-08-23-transport-timeout-hot-reload.md`](plans/2026-08-23-transport-timeout-hot-reload.md)。
+
+路由职责/生命周期收敛已分阶段实施：policy mutation 已统一经过 `RoutingPolicyMutationCoordinator`，proxy execution 已改用窄的 `RoutingExecutionReadPort` 和 typed error，process runtime state 已拆为 capacity/retry、activity、diagnostics 三个内部 owner；`RoutingService` 仍作为 query、model mapping、endpoint orchestration 的过渡 owner，尚未进行无证据的全面拆分。范围和后续门槛见 [`plans/2026-08-23-routing-ownership-lifecycle-cleanup.md`](plans/2026-08-23-routing-ownership-lifecycle-cleanup.md)。
+
+当前审计收口与维护计划见 [`plans/2026-08-21-routing-retry-failover-hardening.md`](plans/2026-08-21-routing-retry-failover-hardening.md)。该计划只处理模型透传、诊断一致性、profile 回归证据、typed protection 读取 owner 和文档收口，不包含发布或安装包验证。
+
+Task 0 基线与 owner 删除台账见 [`audits/2026-08-20-routing-retry-failover-baseline.md`](audits/2026-08-20-routing-retry-failover-baseline.md) 和 [`audits/routing-retry-failover-deletion-ledger.md`](audits/routing-retry-failover-deletion-ledger.md)。
 
 路由策略的 VS Code 风格设置体验、受管 JSON 文档、并发与恢复控制面以 [`specs/ROUTING_POLICY_CONFIGURATION_SYSTEM_SPEC.md`](specs/ROUTING_POLICY_CONFIGURATION_SYSTEM_SPEC.md) 为当前实现规范，执行记录见 [`plans/2026-08-17-routing-policy-configuration-system.md`](plans/2026-08-17-routing-policy-configuration-system.md)；SQLite 策略聚合仍是唯一事实来源，受管 JSON 由共享 document coordinator 作为镜像和外部输入入口。
 

@@ -54,7 +54,6 @@
             "read_config"
         ],
         "services::proxy::response_body": [
-            "downstream_disconnected_failure",
             "dual_terminal_buffered_lifecycle_finalizing_stream",
             "dual_terminal_lifecycle_finalizing_stream_with_idle_timeout_and_diagnostic_memory"
         ]
@@ -4194,11 +4193,6 @@
         {
             "from": "services::proxy::execution",
             "to": "models::routing_policy",
-            "temporary": false
-        },
-        {
-            "from": "application::alerting::attention_service",
-            "to": "models::alerting",
             "temporary": false
         },
         {

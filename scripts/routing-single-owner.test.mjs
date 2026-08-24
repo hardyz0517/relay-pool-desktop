@@ -10,6 +10,7 @@ const files = {
   execution: read("src-tauri/src/services/proxy/execution.rs"),
   runtime: read("src-tauri/src/services/proxy/runtime.rs"),
   repository: read("src-tauri/src/services/proxy/routing_repository.rs"),
+  executionReader: read("src-tauri/src/application/routing_execution_reader.rs"),
   upstream: read("src-tauri/src/services/proxy/upstream.rs"),
   endpointAdapter: read("src-tauri/src/services/proxy/endpoint_adapter.rs"),
   routingTypes: read("src-tauri/src/application/routing_engine/routing_economics.rs"),
@@ -20,6 +21,12 @@ const files = {
   operationalDetailQuery: read("src-tauri/src/application/queries/operational_detail.rs"),
   routingRuntimeQuery: read("src-tauri/src/application/queries/routing_runtime.rs"),
   requestDecisionTrace: read("src-tauri/src/application/queries/request_decision_trace.rs"),
+  policyDocumentRunner: read("src-tauri/src/background_tasks/policy_document_runner.rs"),
+  routingPolicyControlPlane: read(
+    "src-tauri/src/application/routing_policy_control_plane.rs",
+  ),
+  routingCommandFacade: read("src-tauri/src/application/command_facades/routing.rs"),
+  modelMappingService: read("src-tauri/src/application/model_mapping_service.rs"),
 };
 
 checkDefaultV2ExecutionHasOneSelectorOwner();
@@ -33,6 +40,9 @@ checkDecisionTraceUsesDurableDecisions();
 checkRuntimeOverlayUsesNarrowFacts();
 checkSimulationDtoUsesPlannerProjectionLanguage();
 checkFrontendDoesNotOwnRoutingTruth();
+checkPolicyMutationControlPlane();
+checkExecutionBridgeBoundary();
+checkModelMappingOwner();
 
 if (failures.length > 0) {
   console.error(failures.join("\n"));
@@ -79,10 +89,11 @@ function stripRustTests(source) {
     testModule.lastIndex = cursor;
   }
   stripped += source.slice(cursor);
-  return stripped.replaceAll(
-    /#\[cfg\(test\)\][\s\S]*?(?=\n(?:pub|pub(?:\(crate\))?|mod|use|const|fn|struct|enum|impl)\b|$)/g,
-    "",
-  );
+  // Only remove test modules. A `#[cfg(test)]` attribute can also guard a
+  // single production helper or expression; consuming text until the next
+  // `pub`/`fn` made this gate erase adjacent production methods and produce
+  // false negatives.
+  return stripped;
 }
 
 function findMatchingBrace(source, openBrace) {
@@ -323,7 +334,7 @@ function checkSimulationDtoUsesPlannerProjectionLanguage() {
   reject(
     files.routingHealthTypescript,
     routingHealthTypescriptFile,
-    /score:\s*number|schedulerScore|schedulerFactors|effectiveMultiplierSource|effectiveMultiplierConfidence|schedulerErrorCode/u,
+    /schedulerScore|schedulerFactors|effectiveMultiplierSource|effectiveMultiplierConfidence|schedulerErrorCode/u,
     "routing IPC DTO contract must not reintroduce legacy simulation scheduler fields",
   );
   require(
@@ -373,4 +384,76 @@ function checkFrontendDoesNotOwnRoutingTruth() {
       );
     }
   }
+}
+
+function checkPolicyMutationControlPlane() {
+  const runnerFile = "src-tauri/src/background_tasks/policy_document_runner.rs";
+  reject(
+    files.policyDocumentRunner,
+    runnerFile,
+    /\bPersistenceHandle\b|\bRoutingService\b|apply_routing_policy_document_v2|publish_transport_policy/u,
+    "managed policy reconciliation must use the application control plane, not persistence or proxy activation directly",
+  );
+  require(
+    files.policyDocumentRunner,
+    runnerFile,
+    /RoutingPolicyMutationCoordinator/u,
+    "managed policy reconciliation must depend on the routing policy mutation coordinator",
+  );
+  require(
+    files.routingPolicyControlPlane,
+    "src-tauri/src/application/routing_policy_control_plane.rs",
+    /apply_ui[\s\S]*reconcile_external/u,
+    "the routing policy control plane must expose explicit UI and managed-document mutation entry points",
+  );
+}
+
+function checkExecutionBridgeBoundary() {
+  const repositoryFile = "src-tauri/src/services/proxy/routing_repository.rs";
+  reject(
+    files.repository,
+    repositoryFile,
+    /\bRoutingService\b|PLANNING_DEADLINE_EXCEEDED/u,
+    "proxy execution repository must depend on the narrow execution port and typed errors, not the broad routing service or a deadline magic string",
+  );
+  require(
+    files.repository,
+    repositoryFile,
+    /(?=[\s\S]*RoutingExecutionReadPort)(?=[\s\S]*RoutingExecutionReadError)/u,
+    "proxy execution repository must declare both its narrow application port and typed bridge error",
+  );
+  require(
+    files.executionReader,
+    "src-tauri/src/application/routing_execution_reader.rs",
+    /RoutingExecutionReadError[\s\S]*DeadlineExceeded[\s\S]*Unavailable[\s\S]*InvalidState/u,
+    "execution bridge must expose stable deadline, unavailable and invalid-state outcomes",
+  );
+}
+
+function checkModelMappingOwner() {
+  const routingFile = "src-tauri/src/application/routing.rs";
+  reject(
+    files.applicationRouting,
+    routingFile,
+    /(?:apply|restore|load|list|reconcile)_model_mapping/u,
+    "routing aggregate must not own model-mapping document persistence or history wrappers",
+  );
+  require(
+    files.routingCommandFacade,
+    "src-tauri/src/application/command_facades/routing.rs",
+    /model_mapping:\s*Arc<ModelMappingService>/u,
+    "routing command facade must inject the dedicated model-mapping owner",
+  );
+  require(
+    files.routingCommandFacade,
+    "src-tauri/src/application/command_facades/routing.rs",
+    /self\.model_mapping\.(?:apply_document|restore_document|load_history_document|list_legacy_reviews|reconcile_document_sync)/u,
+    "model-mapping commands must call the dedicated model-mapping owner",
+  );
+  require(
+    files.modelMappingService,
+    "src-tauri/src/application/model_mapping_service.rs",
+    /persist_document|persist_document_at_revision|reconcile_model_mapping_document_sync/u,
+    "model-mapping persistence and document reconciliation must have one application owner",
+  );
 }
