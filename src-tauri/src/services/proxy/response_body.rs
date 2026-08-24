@@ -155,8 +155,16 @@ fn dual_terminal_finalizing_stream(
     enforce_stream_protocol: bool,
 ) -> ByteStream {
     let request = DownstreamRequestFinalizationLease::new(request_terminal, request_lease);
-    let selected_attempt = selected_attempt
-        .map(|(reservation, context)| UpstreamAttemptFinalizationLease::new(reservation, context));
+    let selected_attempt = selected_attempt.map(|(reservation, context)| {
+        let probe_scope = context.probe_scope.clone();
+        let probe_state_revision = context.probe_state_revision;
+        UpstreamAttemptFinalizationLease::new(
+            reservation,
+            context,
+            probe_scope,
+            probe_state_revision,
+        )
+    });
     finalizing_stream_with_target(
         stream,
         FinalizationState::Lifecycle(record),
@@ -581,20 +589,6 @@ fn failure_source_label(source: FailureSource) -> &'static str {
         FailureSource::Downstream => "downstream",
         FailureSource::Internal => "internal",
     }
-}
-
-#[expect(
-    dead_code,
-    reason = "contract=local-proxy.downstream-disconnect; owner=services/proxy; remove_when=response body handling drops downstream disconnect classification"
-)]
-pub(crate) fn downstream_disconnected_failure() -> ProxyFailure {
-    ProxyFailure::new(
-        ProxyFailureCode::DownstreamDisconnected,
-        FailureSource::Downstream,
-        RetryClass::AfterCommitStop,
-        http::StatusCode::BAD_GATEWAY,
-        "downstream disconnected",
-    )
 }
 
 #[cfg(test)]
@@ -2001,6 +1995,8 @@ data: [DONE]
                     resolved_upstream_model: None,
                     model_alias_revision: 1,
                     started_at_ms: received_at_ms,
+                    probe_scope: None,
+                    probe_state_revision: None,
                 };
                 Some((reservation, context))
             } else {
@@ -2063,6 +2059,8 @@ data: [DONE]
             resolved_upstream_model: None,
             model_alias_revision: 1,
             started_at_ms,
+            probe_scope: None,
+            probe_state_revision: None,
         }
     }
 

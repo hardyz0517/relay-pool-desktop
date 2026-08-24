@@ -873,10 +873,14 @@ mod tests {
                 resolved_upstream_model: None,
                 model_alias_revision: 1,
                 started_at_ms: 2,
+                probe_scope: None,
+                probe_state_revision: None,
             },
             terminal: AttemptTerminal::Succeeded,
             output_committed: true,
             terminal_at_ms: 3,
+            probe_scope: None,
+            probe_state_revision: None,
         });
         assert!(
             attempt_ack

@@ -375,6 +375,8 @@ fn attempt_record() -> AttemptTerminalRecord {
         }),
         output_committed: false,
         terminal_at_ms: 3,
+        probe_scope: None,
+        probe_state_revision: None,
     }
 }
 
@@ -420,5 +422,7 @@ fn attempt_context() -> AttemptContext {
         resolved_upstream_model: None,
         model_alias_revision: 1,
         started_at_ms: 2,
+        probe_scope: None,
+        probe_state_revision: None,
     }
 }

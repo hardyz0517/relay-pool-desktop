@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crate::application::alerting::{
     delivery_worker::DeliveryWorker, policy_service::PolicyService, reconcile::AlertingReconciler,
-    retention_worker::AlertingRetentionWorker,
+    retention_worker::AlertingRetentionWorker, AlertingReadModelUpdatePublisher,
 };
 use crate::background_tasks::{TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor};
 use crate::persistence::runtime::PersistenceHandle;
@@ -19,18 +19,26 @@ pub(crate) fn register_alerting_runtime_task(
     supervisor: &TaskSupervisor,
     runtime: PersistenceHandle,
     desktop_adapter: Arc<dyn DesktopNotificationAdapter>,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
 ) -> Result<TaskId, String> {
     let task_id = TaskId::from(ALERTING_RUNTIME_TASK_ID);
     let worker_runtime = runtime.clone();
     let reconcile_runtime = runtime.clone();
     let retention_runtime = runtime;
     let desktop_adapter = desktop_adapter.clone();
+    let alerting_updates = alerting_updates.clone();
     supervisor
         .register(
             TaskSpec::new(task_id.clone(), "alerting_runtime_v1", move |context: TaskRunContext| {
                 let delivery = DeliveryWorker::new(worker_runtime.clone());
-                let reconciler = AlertingReconciler::new(reconcile_runtime.clone());
-                let retention = AlertingRetentionWorker::new(retention_runtime.clone());
+                let reconciler = AlertingReconciler::new(
+                    reconcile_runtime.clone(),
+                    alerting_updates.clone(),
+                );
+                let retention = AlertingRetentionWorker::new(
+                    retention_runtime.clone(),
+                    alerting_updates.clone(),
+                );
                 let policy_service = PolicyService::new(reconcile_runtime.clone());
                 let desktop_adapter = desktop_adapter.clone();
                 Box::pin(async move {

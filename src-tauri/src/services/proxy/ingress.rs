@@ -29,12 +29,12 @@ use super::{
         },
         writer::{LifecycleWriter, WriterAdmissionError},
     },
-    limits::{BodyBudget, BodyBudgetError, ProxyServerLimits, RequestLease},
+    limits::{BodyBudget, BodyBudgetError, ProxyStartupResourceLimits, RequestLease},
     local_auth::{self, AuthDecision},
     observability::RequestObservation,
     request::{
         CanonicalProxyRequest, ProxyHttpResponse, ProxyResponsePayload, RequestLifecycleAdmission,
-        RequestRequirements,
+        RequestRequirements, RequestTimingContext,
     },
 };
 
@@ -58,13 +58,14 @@ pub(crate) trait IngressExecutor: Send + Sync {
 
 pub(crate) struct IngressState {
     local_access_key: String,
-    limits: ProxyServerLimits,
+    limits: ProxyStartupResourceLimits,
     body_budget: BodyBudget,
     request_semaphore: Arc<Semaphore>,
     active_requests: Arc<AtomicU32>,
     request_count: Arc<AtomicU64>,
     executor: Arc<dyn IngressExecutor>,
     lifecycle_writer: Option<LifecycleWriter>,
+    transport_policy_store: super::transport_policy::TransportPolicyStore,
 }
 
 impl IngressState {
@@ -72,7 +73,7 @@ impl IngressState {
     #[cfg(test)]
     pub(crate) fn new(
         local_access_key: impl Into<String>,
-        limits: ProxyServerLimits,
+        limits: ProxyStartupResourceLimits,
         executor: Arc<dyn IngressExecutor>,
     ) -> Self {
         Self::with_active_requests(
@@ -85,13 +86,34 @@ impl IngressState {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn with_active_requests(
         local_access_key: impl Into<String>,
-        limits: ProxyServerLimits,
+        limits: ProxyStartupResourceLimits,
         executor: Arc<dyn IngressExecutor>,
         active_requests: Arc<AtomicU32>,
         request_count: Arc<AtomicU64>,
         lifecycle_writer: Option<LifecycleWriter>,
+    ) -> Self {
+        Self::with_active_requests_and_policy(
+            local_access_key,
+            limits,
+            executor,
+            active_requests,
+            request_count,
+            lifecycle_writer,
+            super::transport_policy::TransportPolicyStore::default(),
+        )
+    }
+
+    pub(crate) fn with_active_requests_and_policy(
+        local_access_key: impl Into<String>,
+        limits: ProxyStartupResourceLimits,
+        executor: Arc<dyn IngressExecutor>,
+        active_requests: Arc<AtomicU32>,
+        request_count: Arc<AtomicU64>,
+        lifecycle_writer: Option<LifecycleWriter>,
+        transport_policy_store: super::transport_policy::TransportPolicyStore,
     ) -> Self {
         Self {
             local_access_key: local_access_key.into(),
@@ -102,6 +124,7 @@ impl IngressState {
             limits,
             executor,
             lifecycle_writer,
+            transport_policy_store,
         }
     }
 }
@@ -125,6 +148,9 @@ async fn handle(
     headers: HeaderMap,
     body: Body,
 ) -> Response<Body> {
+    // Start the monotonic request budget before any local admission, body
+    // buffering, lifecycle write, or route planning work.
+    let request_timing = RequestTimingContext::now(now_millis());
     let Some(request_lease) = acquire_request_lease(&state) else {
         return failure_response(proxy_failure(
             ProxyFailureCode::LocalProxyBusy,
@@ -169,12 +195,19 @@ async fn handle(
         }
     }
 
+    // Freeze one immutable transport policy for this request. Later publishes
+    // affect only requests that have not reached this point yet.
+    let transport_policy = state.transport_policy_store.load();
+    let request_deadline = transport_policy.request_deadline;
+    let request_timing = request_timing.with_deadline(request_deadline);
+
     let route = route_disposition(&method, uri.path());
     let lifecycle_context = request_lifecycle_context(
         &request_id,
         &method,
         uri.path(),
         route_context_endpoint(&route),
+        request_timing.started_at_ms,
     );
     let record_start = !is_balance_query_path(uri.path());
     let content_length = headers
@@ -192,13 +225,17 @@ async fn handle(
             lifecycle_context,
             record_start,
             RequestLogAnnotations::default(),
+            request_timing,
             failure,
         )
         .await;
         return with_cors(failure_response(failure), &request_id, cors_origin);
     }
+    let body_deadline = request_deadline
+        .checked_sub(request_timing.started_at.elapsed())
+        .unwrap_or_default();
     let body = match timeout(
-        state.limits.body_timeout,
+        state.limits.body_timeout.min(body_deadline),
         to_bytes(body, state.limits.max_body_bytes + 1),
     )
     .await
@@ -215,6 +252,7 @@ async fn handle(
                 lifecycle_context,
                 record_start,
                 RequestLogAnnotations::default(),
+                request_timing,
                 failure,
             )
             .await;
@@ -232,22 +270,32 @@ async fn handle(
                 lifecycle_context,
                 record_start,
                 RequestLogAnnotations::default(),
+                request_timing,
                 failure,
             )
             .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
         Err(_) => {
-            let failure = proxy_failure(
-                ProxyFailureCode::RequestBodyTimeout,
-                StatusCode::REQUEST_TIMEOUT,
-                "request body timed out",
-            );
+            let failure = if request_timing.started_at.elapsed() >= request_deadline {
+                proxy_failure(
+                    ProxyFailureCode::RouteDeadlineExceeded,
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "local request deadline exceeded",
+                )
+            } else {
+                proxy_failure(
+                    ProxyFailureCode::RequestBodyTimeout,
+                    StatusCode::REQUEST_TIMEOUT,
+                    "request body timed out",
+                )
+            };
             let failure = persist_ingress_failure(
                 &state,
                 lifecycle_context,
                 record_start,
                 RequestLogAnnotations::default(),
+                request_timing,
                 failure,
             )
             .await;
@@ -262,6 +310,7 @@ async fn handle(
                 lifecycle_context,
                 record_start,
                 RequestLogAnnotations::default(),
+                request_timing,
                 failure,
             )
             .await;
@@ -287,6 +336,7 @@ async fn handle(
                 lifecycle_context,
                 record_start,
                 start_annotations,
+                request_timing,
                 failure,
             )
             .await;
@@ -303,40 +353,62 @@ async fn handle(
                 lifecycle_context,
                 record_start,
                 start_annotations,
+                request_timing,
                 failure,
             )
             .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
     };
-    let body_budget = match state.body_budget.acquire(body.len()).await {
-        Ok(lease) => lease,
-        Err(BodyBudgetError::InsufficientCapacity) => {
-            let failure = proxy_failure(
-                ProxyFailureCode::LocalProxyMemoryBusy,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "local proxy body budget is exhausted",
-            );
+    let body_budget = match timeout(
+        request_deadline
+            .checked_sub(request_timing.started_at.elapsed())
+            .unwrap_or_default(),
+        state.body_budget.acquire(body.len()),
+    )
+    .await
+    {
+        Ok(Ok(lease)) => lease,
+        Ok(Err(BodyBudgetError::InsufficientCapacity)) | Err(_) => {
+            let failure = if request_timing.started_at.elapsed() >= request_deadline {
+                proxy_failure(
+                    ProxyFailureCode::RouteDeadlineExceeded,
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "local request deadline exceeded",
+                )
+            } else {
+                proxy_failure(
+                    ProxyFailureCode::LocalProxyMemoryBusy,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "local proxy body budget is exhausted",
+                )
+            };
             let failure = persist_ingress_failure(
                 &state,
                 lifecycle_context,
                 record_start,
                 start_annotations,
+                request_timing,
                 failure,
             )
             .await;
             return with_cors(failure_response(failure), &request_id, cors_origin);
         }
     };
-    let lifecycle_admission =
-        match admit_request_lifecycle(&state, lifecycle_context, record_start, start_annotations)
-            .await
-        {
-            Ok(admission) => admission,
-            Err(failure) => {
-                return with_cors(failure_response(failure), &request_id, cors_origin);
-            }
-        };
+    let lifecycle_admission = match admit_request_lifecycle(
+        &state,
+        lifecycle_context,
+        record_start,
+        start_annotations,
+        request_timing,
+    )
+    .await
+    {
+        Ok(admission) => admission,
+        Err(failure) => {
+            return with_cors(failure_response(failure), &request_id, cors_origin);
+        }
+    };
     let canonical = CanonicalProxyRequest::new(
         request_id.clone(),
         uri.path().to_string(),
@@ -353,7 +425,9 @@ async fn handle(
         lifecycle_admission,
         body_budget,
         request_lease,
-    );
+    )
+    .with_request_timing(request_timing)
+    .with_transport_policy(transport_policy);
     match state.executor.execute(canonical).await {
         Ok(response) => with_cors(proxy_response(response), &request_id, cors_origin),
         Err(failure) => with_cors(failure_response(failure), &request_id, cors_origin),
@@ -365,6 +439,7 @@ fn request_lifecycle_context(
     method: &Method,
     path: &str,
     endpoint: impl Into<String>,
+    received_at_ms: i64,
 ) -> RequestContextSnapshot {
     let endpoint = endpoint.into();
     RequestContextSnapshot {
@@ -376,7 +451,7 @@ fn request_lifecycle_context(
         },
         local_path: path.to_string(),
         endpoint,
-        received_at_ms: now_millis(),
+        received_at_ms,
     }
 }
 
@@ -431,6 +506,7 @@ async fn admit_request_lifecycle(
     context: RequestContextSnapshot,
     record_start: bool,
     annotations: RequestLogAnnotations,
+    request_timing: RequestTimingContext,
 ) -> Result<Option<RequestLifecycleAdmission>, ProxyFailure> {
     let Some(writer) = state.lifecycle_writer.as_ref() else {
         return Ok(None);
@@ -452,10 +528,23 @@ async fn admit_request_lifecycle(
     } else {
         request_reservation.send_start_with_annotations(start_record, annotations)
     };
-    start_ack
-        .await
-        .map_err(|_| lifecycle_unavailable_failure("request-start ack dropped"))?
-        .map_err(lifecycle_write_failure)?;
+    let remaining = request_timing
+        .deadline
+        .unwrap_or_else(|| state.transport_policy_store.load().request_deadline)
+        .checked_sub(request_timing.started_at.elapsed())
+        .unwrap_or_default();
+    match timeout(remaining, start_ack).await {
+        Ok(Ok(Ok(_))) => {}
+        Ok(Ok(Err(error))) => return Err(lifecycle_write_failure(error)),
+        Ok(Err(_)) => return Err(lifecycle_unavailable_failure("request-start ack dropped")),
+        Err(_) => {
+            return Err(proxy_failure(
+                ProxyFailureCode::RouteDeadlineExceeded,
+                StatusCode::GATEWAY_TIMEOUT,
+                "local request deadline exceeded during lifecycle admission",
+            ));
+        }
+    }
     Ok(Some(RequestLifecycleAdmission { context, terminal }))
 }
 
@@ -464,12 +553,16 @@ async fn persist_ingress_failure(
     context: RequestContextSnapshot,
     record_start: bool,
     annotations: RequestLogAnnotations,
+    request_timing: RequestTimingContext,
     failure: ProxyFailure,
 ) -> ProxyFailure {
-    let admission = match admit_request_lifecycle(state, context, record_start, annotations).await {
-        Ok(admission) => admission,
-        Err(admission_failure) => return admission_failure,
-    };
+    let admission =
+        match admit_request_lifecycle(state, context, record_start, annotations, request_timing)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(admission_failure) => return admission_failure,
+        };
     finalize_ingress_failure(admission, &failure).await;
     failure
 }
@@ -751,7 +844,7 @@ mod tests {
     use http::{Method, Request, StatusCode};
     use tower::ServiceExt;
 
-    use crate::services::proxy::limits::ProxyServerLimits;
+    use crate::services::proxy::limits::ProxyStartupResourceLimits;
 
     use super::*;
 
@@ -854,7 +947,7 @@ mod tests {
 
     #[tokio::test]
     async fn ingress_enforces_body_and_global_memory_limits() {
-        let state = test_state_with_limits(ProxyServerLimits {
+        let state = test_state_with_limits(ProxyStartupResourceLimits {
             max_body_bytes: 4,
             max_buffered_body_bytes: 4,
             ..test_limits()
@@ -876,7 +969,7 @@ mod tests {
 
     #[tokio::test]
     async fn ingress_times_out_while_reading_request_body() {
-        let state = test_state_with_limits(ProxyServerLimits {
+        let state = test_state_with_limits(ProxyStartupResourceLimits {
             body_timeout: Duration::from_millis(10),
             ..test_limits()
         });
@@ -894,6 +987,31 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
         assert_eq!(error_code(response).await, "request_body_timeout");
+    }
+
+    #[tokio::test]
+    async fn ingress_deadline_covers_body_read_before_execution() {
+        let state = test_state_with_limits_and_deadline(
+            ProxyStartupResourceLimits {
+                body_timeout: Duration::from_secs(1),
+                ..test_limits()
+            },
+            Duration::from_millis(10),
+        );
+        let app = test_router(state);
+        let body = Body::from_stream(stream::pending::<Result<Bytes, std::io::Error>>());
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/responses")
+            .header("authorization", "Bearer relay-local-secret")
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(error_code(response).await, "route_deadline_exceeded");
     }
 
     #[tokio::test]
@@ -1054,21 +1172,51 @@ mod tests {
         test_state_with_limits(test_limits())
     }
 
-    fn test_state_with_limits(limits: ProxyServerLimits) -> TestIngressState {
+    fn test_state_with_limits(limits: ProxyStartupResourceLimits) -> TestIngressState {
+        test_state_with_limits_and_policy(
+            limits,
+            super::super::transport_policy::TransportPolicyStore::default(),
+        )
+    }
+
+    fn test_state_with_limits_and_deadline(
+        limits: ProxyStartupResourceLimits,
+        deadline: Duration,
+    ) -> TestIngressState {
+        let mut policy =
+            (*super::super::transport_policy::TransportPolicyStore::default().load()).clone();
+        policy.request_deadline = deadline;
+        let store = super::super::transport_policy::TransportPolicyStore::new(policy)
+            .expect("test transport policy");
+        test_state_with_limits_and_policy(limits, store)
+    }
+
+    fn test_state_with_limits_and_policy(
+        limits: ProxyStartupResourceLimits,
+        policy: super::super::transport_policy::TransportPolicyStore,
+    ) -> TestIngressState {
         let captured = Arc::new(Mutex::new(None));
         let executor = Arc::new(CapturingExecutor {
             captured: Arc::clone(&captured),
         });
         TestIngressState {
-            state: Arc::new(IngressState::new("relay-local-secret", limits, executor)),
+            state: Arc::new(IngressState::with_active_requests_and_policy(
+                "relay-local-secret",
+                limits,
+                executor,
+                Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                None,
+                policy,
+            )),
             captured,
         }
     }
 
-    fn test_limits() -> ProxyServerLimits {
-        ProxyServerLimits {
+    fn test_limits() -> ProxyStartupResourceLimits {
+        ProxyStartupResourceLimits {
             body_timeout: Duration::from_secs(1),
-            ..ProxyServerLimits::default()
+            ..ProxyStartupResourceLimits::default()
         }
     }
 

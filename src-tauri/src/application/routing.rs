@@ -1,6 +1,11 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use sha2::{Digest, Sha256};
+
+/// Bounded budget for top-level local read-model operations that invoke the
+/// planner without an ingress request. Proxy traffic supplies its own
+/// ingress-owned absolute deadline instead.
+const NON_PROXY_PLANNING_DEADLINE: Duration = Duration::from_secs(5);
 
 use crate::{
     application::routing_engine::{
@@ -10,11 +15,14 @@ use crate::{
             candidate_score_breakdown_with_cost_basis, plan_snapshot_with_budget,
         },
         planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
-        request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
+        request::{
+            CanonicalRouteRequest, PlanningRequestContext, RouteKind, RouteRequestClassifier,
+        },
     },
     application::{
         credentials::SecretRef,
         error::ApplicationError,
+        error_rate_protection::ErrorRateProtectionService,
         health_transitions::HealthTransitionService,
         operational_facts::{
             candidate_projection::{
@@ -32,10 +40,9 @@ use crate::{
                 operational_detail_from_projection, unavailable_operational_detail,
                 StationKeyOperationalDetail,
             },
-            request_decision_trace::{
-                decision_cursor, decision_trace_from_decision, decision_trace_from_durable_outcome,
-                recent_route_decisions_from_page, RecentRouteDecisionsInput,
-                RecentRouteDecisionsPage, RequestDecisionTrace,
+            routing_protection::{
+                project_routing_protection_status_with_reducer_and_domains, CapacityProtectionFact,
+                FailureDomainCandidateFact, RoutingProtectionStatus,
             },
             routing_runtime::{
                 monitoring_target_snapshots_from_facts, runtime_overlay_from_candidates,
@@ -57,9 +64,9 @@ use crate::{
         },
         pricing::{BalanceSnapshot, ResolvedPricingContext},
         routing::{
-            CanonicalRoutingCandidate, ModelAlias, RouteCandidateExplanation, RouteEndpointKind,
+            CanonicalRoutingCandidate, RouteCandidateExplanation, RouteEndpointKind,
             RouteSimulationInput, RouteSimulationResult, RoutingGroupFilter,
-            RuntimeRoutingSettings, StationKeyHealth,
+            RuntimeRoutingSettings,
         },
         stations::StationEndpointHealth,
     },
@@ -67,8 +74,6 @@ use crate::{
         error::PersistenceError,
         runtime::PersistenceHandle,
         stores::pricing_store::PricingStore,
-        stores::request_outcome_store::RequestOutcomeStore,
-        stores::routing_decisions::queries::RoutingDecisionQueries,
         stores::routing_policy_store::RoutingPolicyStore,
         stores::routing_quality_store::RoutingQualityStore,
         stores::routing_store::{RoutingStore, StationEndpointProbeTarget},
@@ -87,111 +92,15 @@ pub struct CanonicalRoutingCandidateWithPricing {
 pub(crate) struct RoutingService {
     runtime: PersistenceHandle,
     store: RoutingStore,
+    error_rate: ErrorRateProtectionService,
 }
 
 impl RoutingService {
-    pub(crate) async fn apply_model_mapping_document(
-        &self,
-        document: crate::models::model_mapping::ModelMappingDocumentV1,
-        source: TrustedDocumentSource,
-    ) -> Result<crate::models::model_mapping::ModelMappingDocumentV1, ApplicationError> {
-        crate::application::model_mapping::persist_document(self.runtime.clone(), document, source)
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub(crate) async fn restore_model_mapping_document(
-        &self,
-        document: crate::models::model_mapping::ModelMappingDocumentV1,
-        expected_revision: u64,
-    ) -> Result<crate::models::model_mapping::ModelMappingDocumentV1, ApplicationError> {
-        crate::application::model_mapping::persist_document_at_revision(
-            self.runtime.clone(),
-            document,
-            expected_revision,
-            TrustedDocumentSource::history_restore(),
-        )
-        .await
-        .map_err(ApplicationError::from)
-    }
-
-    pub(crate) async fn load_model_mapping_history_document(
-        &self,
-        revision: u64,
-    ) -> Result<Option<String>, ApplicationError> {
-        let revision =
-            i64::try_from(revision).map_err(|_| ApplicationError::ConstraintViolation)?;
-        let mut read = self.runtime.begin_read().await?;
-        let history = crate::persistence::stores::model_mapping_store::ModelMappingStore
-            .load_history_revision(read.connection(), revision)
-            .await
-            .map_err(ApplicationError::from)?;
-        Ok(history.map(|item| item.document_json))
-    }
-
-    pub(crate) async fn list_model_mapping_legacy_reviews(
-        &self,
-    ) -> Result<
-        Vec<crate::persistence::stores::model_mapping_store::StoredLegacyModelAliasReview>,
-        ApplicationError,
-    > {
-        let mut read = self.runtime.begin_read().await?;
-        crate::persistence::stores::model_mapping_store::ModelMappingStore
-            .list_legacy_reviews(read.connection())
-            .await
-            .map_err(ApplicationError::from)
-    }
-
-    pub(crate) async fn reconcile_model_mapping_document_sync(
-        &self,
-    ) -> Result<crate::application::model_mapping::ModelMappingDocumentSyncSnapshot, ApplicationError>
-    {
-        crate::application::model_mapping::reconcile_model_mapping_document_sync(
-            self.runtime.clone(),
-        )
-        .await
-        .map_err(ApplicationError::from)
-    }
-
-    pub async fn list_recent_route_decisions(
-        &self,
-        input: RecentRouteDecisionsInput,
-    ) -> Result<RecentRouteDecisionsPage, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        let page = RoutingDecisionQueries
-            .list_decisions(
-                read.connection(),
-                decision_cursor(input.cursor.as_deref()).as_ref(),
-                input.limit.unwrap_or(50).clamp(1, 200) as u32,
-            )
-            .await
-            .map_err(ApplicationError::from)?;
-        Ok(recent_route_decisions_from_page(page))
-    }
-
-    pub async fn get_request_decision_trace(
-        &self,
-        decision_id: String,
-    ) -> Result<RequestDecisionTrace, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        if let Some(summary) = RequestOutcomeStore
-            .routing_outcome_summary(read.connection(), &decision_id)
-            .await
-            .map_err(ApplicationError::from)?
-        {
-            return Ok(decision_trace_from_durable_outcome(summary));
-        }
-        let queries = RoutingDecisionQueries;
-        let summary = queries
-            .get_decision(read.connection(), &decision_id)
-            .await
-            .map_err(ApplicationError::from)?
-            .ok_or(ApplicationError::NotFound)?;
-        let candidates = queries
-            .list_candidate_details(read.connection(), &summary.id, 500)
-            .await
-            .map_err(ApplicationError::from)?;
-        Ok(decision_trace_from_decision(summary, candidates))
+    pub(crate) fn routing_policy_config_directory(&self) -> Option<std::path::PathBuf> {
+        self.runtime
+            .database_path()
+            .parent()
+            .map(|root| root.join("config"))
     }
 
     pub(crate) async fn load_execution_settings(
@@ -204,10 +113,33 @@ impl RoutingService {
             .map_err(Into::into)
     }
 
+    /// Compatibility read used only by the proxy execution bridge for the
+    /// local usage response. Command/query callers use their dedicated read
+    /// owners; keeping this narrow bridge method avoids coupling proxy
+    /// startup to the command facade while its balance port is migrated.
+    pub(crate) async fn list_balance_snapshots(
+        &self,
+    ) -> Result<Vec<BalanceSnapshot>, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        self.store
+            .list_balance_snapshots(&mut read)
+            .await
+            .map_err(Into::into)
+    }
+
+    #[cfg(test)]
     pub(crate) fn new(runtime: PersistenceHandle) -> Self {
+        Self::new_with_error_rate(runtime, ErrorRateProtectionService::disabled())
+    }
+
+    pub(crate) fn new_with_error_rate(
+        runtime: PersistenceHandle,
+        error_rate: ErrorRateProtectionService,
+    ) -> Self {
         Self {
             runtime,
             store: RoutingStore,
+            error_rate,
         }
     }
 
@@ -225,37 +157,144 @@ impl RoutingService {
             .ok_or(ApplicationError::NotFound)
     }
 
-    pub(crate) async fn save_routing_policy(
-        &self,
-        config: crate::models::routing_policy::RoutingPolicyConfigV1,
-        expected_revision: Option<u64>,
-    ) -> Result<
-        crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
-        ApplicationError,
-    > {
-        let base_revision = match expected_revision {
-            Some(revision) => revision,
-            None => self.load_routing_policy().await?.revision,
-        };
-        self.apply_routing_policy_document(
-            crate::models::routing_policy::RoutingPolicyDocumentV1 {
-                format_version:
-                    crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
-                base_revision,
-                policy: config,
-            },
-            TrustedDocumentSource::ui(),
-        )
-        .await
+    pub(crate) async fn refresh_protection_configuration(&self) -> Result<(), ApplicationError> {
+        let stored = self.load_routing_policy().await?;
+        let policy =
+            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
+                .map_err(|_| ApplicationError::ConstraintViolation)?;
+        self.error_rate
+            .set_enabled(policy.protection_profile.enabled);
+        Ok(())
     }
 
-    /// Apply a complete routing-policy document through the same trusted
-    /// source/CAS boundary used by file adapters. `base_revision` is the only
-    /// optimistic-concurrency input; source provenance is attached by the
-    /// internal adapter and cannot be supplied by IPC callers.
-    pub(crate) async fn apply_routing_policy_document(
+    pub(crate) async fn get_routing_protection_status(
         &self,
-        document: crate::models::routing_policy::RoutingPolicyDocumentV1,
+        generated_at_ms: i64,
+        capacity: &[CapacityProtectionFact],
+        runtime_capacity_available: bool,
+        requested_model: Option<&str>,
+    ) -> Result<RoutingProtectionStatus, ApplicationError> {
+        let mut read = self.runtime.begin_read().await?;
+        let durable =
+            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
+                .load_active_all(read.connection())
+                .await
+                .map_err(ApplicationError::from)?;
+        let protection_enabled = self.load_protection_enabled(&mut read).await?;
+        let reducer_statuses = if protection_enabled {
+            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
+                .load_health_protection_statuses(read.connection(), generated_at_ms.max(0))
+                .await
+                .map_err(ApplicationError::from)?
+        } else {
+            Vec::new()
+        };
+        let legacy = self
+            .store
+            .list_station_key_health(&mut read)
+            .await
+            .map_err(ApplicationError::from)?;
+        let domain_facts = self
+            .store
+            .load_runtime_candidates(&mut read)
+            .await
+            .map_err(ApplicationError::from)?
+            .into_iter()
+            .map(|candidate| FailureDomainCandidateFact {
+                provider_family: candidate.capacity_provider_family,
+                deployment_identity: candidate.capacity_deployment_identity,
+                region_identity: candidate.capacity_region_identity,
+                revision: candidate.capacity_domain_revision,
+                schedulable: candidate.schedulable,
+            })
+            .collect::<Vec<_>>();
+        Ok(project_routing_protection_status_with_reducer_and_domains(
+            generated_at_ms.max(0),
+            &durable,
+            &legacy,
+            capacity,
+            runtime_capacity_available,
+            &reducer_statuses,
+            &domain_facts,
+            requested_model,
+        ))
+    }
+
+    pub(crate) async fn load_health_protection_statuses(
+        &self,
+        now_ms: i64,
+    ) -> Result<Vec<crate::application::health_protection::HealthProtectionStatus>, ApplicationError>
+    {
+        let mut read = self.runtime.begin_read().await?;
+        let enabled = self.load_protection_enabled(&mut read).await?;
+        if !enabled {
+            return Ok(Vec::new());
+        }
+        crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
+            .load_health_protection_statuses(read.connection(), now_ms.max(0))
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    async fn load_protection_enabled(
+        &self,
+        read: &mut crate::persistence::ReadSession,
+    ) -> Result<bool, ApplicationError> {
+        let stored = RoutingPolicyStore
+            .load(read.connection())
+            .await
+            .map_err(ApplicationError::from)?
+            .ok_or(ApplicationError::NotFound)?;
+        let policy =
+            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
+                .map_err(|_| ApplicationError::ConstraintViolation)?;
+        Ok(policy.protection_profile.enabled)
+    }
+
+    pub(crate) async fn begin_health_protection_probe(
+        &self,
+        scope: crate::application::health_protection::HealthProtectionScope,
+        now_ms: i64,
+    ) -> Result<
+        Option<crate::application::health_protection::HealthProtectionProbe>,
+        ApplicationError,
+    > {
+        let store =
+            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .begin_health_protection_probe(write.connection(), &scope, now_ms.max(0))
+                        .await
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub(crate) async fn cancel_health_protection_probe(
+        &self,
+        probe: crate::application::health_protection::HealthProtectionProbe,
+        now_ms: i64,
+    ) -> Result<bool, ApplicationError> {
+        let store =
+            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move {
+                    store
+                        .cancel_health_protection_probe(write.connection(), &probe, now_ms.max(0))
+                        .await
+                })
+            })
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    pub(crate) async fn apply_routing_policy_document_v2(
+        &self,
+        document: crate::models::routing_policy::RoutingPolicyDocumentV2,
         _source: TrustedDocumentSource,
     ) -> Result<
         crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
@@ -273,7 +312,7 @@ impl RoutingService {
                 write.connection(),
                 Some(document.base_revision),
                 &value,
-                "routing-policy-v1",
+                "routing-policy-v2",
                 "routing-system-v1",
                 "active",
                 now_ms,
@@ -285,6 +324,8 @@ impl RoutingService {
         // only after the transaction commits, and a failed materialization is
         // recorded in document-sync state without rolling back the policy.
         sync_routing_policy_file(self.runtime.clone(), &stored, true).await?;
+        self.error_rate
+            .set_enabled(document.policy.protection_profile.enabled);
         // A no-op CAS returns the current revision and must not emit a false
         // invalidation. Every changed revision publishes only after commit.
         if stored.revision != document.base_revision {
@@ -299,6 +340,15 @@ impl RoutingService {
         Ok(stored)
     }
 
+    pub(crate) async fn reconcile_external_routing_policy_document(
+        &self,
+    ) -> Result<
+        Option<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy>,
+        PersistenceError,
+    > {
+        reconcile_external_routing_policy_document(self.runtime.clone(), self).await
+    }
+
     /// Build the production planner input from one read transaction. The
     /// policy aggregate is deliberately read here, at the application
     /// boundary, so the proxy never parses settings or assembles candidates
@@ -307,6 +357,45 @@ impl RoutingService {
         &self,
         request: &crate::application::routing_engine::request::RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
+        context: PlanningRequestContext,
+    ) -> Result<Option<PlanningSnapshot>, ApplicationError> {
+        self.load_intelligent_planning_snapshot_with_probe(
+            request,
+            runtime,
+            context,
+            None,
+            crate::application::health_protection::HealthProbeAdmissionMode::Normal,
+        )
+        .await
+    }
+
+    pub(crate) async fn load_intelligent_planning_snapshot_with_probe(
+        &self,
+        request: &crate::application::routing_engine::request::RouteRequestFacts,
+        runtime: RuntimeOverlaySnapshot,
+        context: PlanningRequestContext,
+        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
+        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
+    ) -> Result<Option<PlanningSnapshot>, ApplicationError> {
+        tokio::time::timeout_at(
+            tokio::time::Instant::from_std(context.deadline()),
+            self.load_intelligent_planning_snapshot_within_deadline(
+                request,
+                runtime,
+                health_probe,
+                health_probe_mode,
+            ),
+        )
+        .await
+        .map_err(|_| ApplicationError::DeadlineExceeded)?
+    }
+
+    async fn load_intelligent_planning_snapshot_within_deadline(
+        &self,
+        request: &crate::application::routing_engine::request::RouteRequestFacts,
+        runtime: RuntimeOverlaySnapshot,
+        health_probe: Option<crate::application::health_protection::HealthProtectionProbe>,
+        health_probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
     ) -> Result<Option<PlanningSnapshot>, ApplicationError> {
         let mut read = self.runtime.begin_read().await?;
         let stored = RoutingPolicyStore
@@ -320,7 +409,7 @@ impl RoutingService {
         let aggregate = RoutingPolicyAggregate::from_stored(stored)
             .map_err(|_| ApplicationError::ConstraintViolation)?;
         let compiled = aggregate
-            .compile()
+            .compile_v2()
             .map_err(|_| ApplicationError::ConstraintViolation)?;
         let options = request
             .requested_model()
@@ -330,17 +419,40 @@ impl RoutingService {
                 crate::models::operational::OperationalFactReadOptions::for_model_catalog()
                     .without_legacy_aliases()
             });
-        let policy = aggregate.config;
+        let policy = aggregate.policy.clone();
         let builder = PlanningSnapshotBuilder;
+        // Protection activation is part of the immutable policy snapshot;
+        // the service only supplies the typed adapter and bounded history
+        // settings. This keeps a stale process-local default from overriding
+        // the policy revision selected for this request.
+        let error_rate_admission = self
+            .error_rate
+            .admission_config_for_policy(compiled.protection_enabled);
+        let error_rate_statuses = if error_rate_admission.enabled {
+            crate::persistence::stores::routing_health_verdict_store::RoutingHealthVerdictStore
+                .load_health_protection_statuses(
+                    read.connection(),
+                    chrono::Utc::now().timestamp_millis().max(0),
+                )
+                .await
+                .map_err(ApplicationError::from)?
+        } else {
+            Vec::new()
+        };
         let mut snapshot = builder
             .build(
                 &mut read,
                 &options,
                 policy,
                 routing_policy_revision,
+                compiled.attempt_budget,
                 DispatchAlgorithmProfile::default(),
                 runtime,
                 request,
+                error_rate_admission,
+                &error_rate_statuses,
+                health_probe.as_ref(),
+                health_probe_mode,
             )
             .await
             .map_err(|error| {
@@ -553,6 +665,10 @@ impl RoutingService {
         &self,
         input: RoutingWorkspaceSnapshotInput,
     ) -> Result<RoutingWorkspaceSnapshot, ApplicationError> {
+        // Read-model callers own a bounded budget at their application
+        // boundary. The same absolute context is reused for every planning
+        // read in this operation; each helper must not restart it.
+        let planning_context = PlanningRequestContext::from_now(NON_PROXY_PLANNING_DEADLINE);
         let now_ms = chrono::Utc::now().timestamp_millis();
         let (settings, policy_config, request, candidates) = {
             let mut read = self.runtime.begin_read().await?;
@@ -562,9 +678,9 @@ impl RoutingService {
                 .await
                 .map_err(ApplicationError::from)?
                 .ok_or(ApplicationError::NotFound)?;
-            let policy_config = RoutingPolicyAggregate::from_stored(stored_policy)
-                .map_err(|_| ApplicationError::ConstraintViolation)?
-                .config;
+            let aggregate = RoutingPolicyAggregate::from_stored(stored_policy)
+                .map_err(|_| ApplicationError::ConstraintViolation)?;
+            let policy_config = aggregate.policy.clone();
             let request = route_request_facts_for_read_model(&settings, now_ms);
             let candidates = self
                 .load_workspace_candidates_with_request_pricing_in_read(&mut read, &request)
@@ -592,7 +708,7 @@ impl RoutingService {
                 Some((candidate.station_key_id.clone(), multiplier))
             })
             .collect::<BTreeMap<_, _>>();
-        let score_by_key = self
+        let planning_snapshot = match self
             .load_intelligent_planning_snapshot(
                 &request,
                 RuntimeOverlaySnapshot {
@@ -603,10 +719,19 @@ impl RoutingService {
                     max_concurrency: 1,
                     affinity_station_key_id: None,
                 },
+                planning_context,
             )
             .await
-            .ok()
-            .flatten()
+        {
+            Ok(snapshot) => snapshot,
+            // A local workspace read may tolerate an unavailable planner
+            // snapshot, but it must not hide the caller-owned deadline.
+            Err(ApplicationError::DeadlineExceeded) => {
+                return Err(ApplicationError::DeadlineExceeded)
+            }
+            Err(_) => None,
+        };
+        let score_by_key = planning_snapshot
             .map(|snapshot| {
                 snapshot
                     .candidates
@@ -741,77 +866,6 @@ impl RoutingService {
         Ok(unavailable_operational_detail(station_key_id))
     }
 
-    #[cfg(test)]
-    pub(crate) async fn list_model_alias_pairs(
-        &self,
-    ) -> Result<Vec<(String, String)>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_model_alias_pairs(&mut read)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn list_model_aliases(&self) -> Result<Vec<ModelAlias>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_model_aliases(&mut read)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn list_balance_snapshots(
-        &self,
-    ) -> Result<Vec<BalanceSnapshot>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_balance_snapshots(&mut read)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn list_balance_snapshots_for_station(
-        &self,
-        station_id: &str,
-    ) -> Result<Vec<BalanceSnapshot>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_balance_snapshots_for_station(&mut read, station_id)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn list_station_key_health(
-        &self,
-    ) -> Result<Vec<StationKeyHealth>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_station_key_health(&mut read)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn station_key_health_by_id(
-        &self,
-        station_key_id: &str,
-    ) -> Result<StationKeyHealth, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .station_key_health_by_id(&mut read, station_key_id)
-            .await
-            .map_err(Into::into)
-    }
-
-    pub(crate) async fn list_station_endpoint_health(
-        &self,
-    ) -> Result<Vec<StationEndpointHealth>, ApplicationError> {
-        let mut read = self.runtime.begin_read().await?;
-        self.store
-            .list_station_endpoint_health(&mut read)
-            .await
-            .map_err(Into::into)
-    }
-
     pub(crate) async fn station_endpoint_probe_target(
         &self,
         station_id: &str,
@@ -912,6 +966,10 @@ impl RoutingService {
         &self,
         input: RouteSimulationInput,
     ) -> Result<RouteSimulationResult, ApplicationError> {
+        // Simulation is a local read-model operation, so it creates one
+        // bounded context at its command boundary and carries that absolute
+        // deadline through settings, planning and projection work.
+        let planning_context = PlanningRequestContext::from_now(NON_PROXY_PLANNING_DEADLINE);
         let mut read = self.runtime.begin_read().await?;
         let settings = self.store.load_execution_settings(&mut read).await?;
         drop(read);
@@ -1016,6 +1074,7 @@ impl RoutingService {
                     max_concurrency: 1,
                     affinity_station_key_id: None,
                 },
+                planning_context,
             )
             .await?
             .ok_or(ApplicationError::ConstraintViolation)?;
@@ -1118,14 +1177,18 @@ fn routing_document_coordinator(runtime: &PersistenceHandle) -> PolicyDocumentCo
 
 fn routing_document_from_stored(
     stored: &crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
-) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV1, PersistenceError> {
-    let policy = serde_json::from_value(stored.config.clone()).map_err(|error| {
-        PersistenceError::InvariantViolation(format!("routing policy config is invalid: {error}"))
-    })?;
+) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV2, PersistenceError> {
+    let policy =
+        crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
+            .map_err(|error| {
+                PersistenceError::InvariantViolation(format!(
+                    "routing policy config is invalid: {error:?}"
+                ))
+            })?;
     let revision = u64::try_from(stored.revision).map_err(|_| {
         PersistenceError::InvariantViolation("routing policy revision is invalid".into())
     })?;
-    Ok(crate::models::routing_policy::RoutingPolicyDocumentV1 {
+    Ok(crate::models::routing_policy::RoutingPolicyDocumentV2 {
         format_version: crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
         base_revision: revision,
         policy,
@@ -1153,6 +1216,44 @@ async fn mark_routing_sync_error(
     write.commit().await
 }
 
+/// Decode historical and active managed-document shapes at the file
+/// boundary, then normalize the result to the active V2 document shape.
+fn decode_routing_document(
+    bytes: &[u8],
+) -> Result<crate::models::routing_policy::RoutingPolicyDocumentV2, PolicyDocumentError> {
+    let value = decode_strict_json::<serde_json::Value>(bytes)?;
+    let policy_version = value
+        .get("policy")
+        .and_then(|policy| policy.get("version"))
+        .and_then(serde_json::Value::as_u64);
+    match policy_version {
+        Some(2) => {
+            let document = serde_json::from_value::<
+                crate::models::routing_policy::RoutingPolicyDocumentV2,
+            >(value)
+            .map_err(|error| PolicyDocumentError::InvalidJson(error.to_string()))?;
+            document
+                .validate()
+                .map_err(|error| PolicyDocumentError::InvalidJson(format!("{error:?}")))?;
+            Ok(document)
+        }
+        Some(1) => {
+            let legacy = serde_json::from_value::<
+                crate::models::routing_policy::RoutingPolicyDocumentV1,
+            >(value)
+            .map_err(|error| PolicyDocumentError::InvalidJson(error.to_string()))?;
+            crate::models::routing_policy::RoutingPolicyDocumentV2::from_v1(&legacy)
+                .map_err(|error| PolicyDocumentError::InvalidJson(format!("{error:?}")))
+        }
+        Some(version) => Err(PolicyDocumentError::InvalidJson(format!(
+            "unsupported routing policy version {version}"
+        ))),
+        None => Err(PolicyDocumentError::InvalidJson(
+            "routing policy version is missing".into(),
+        )),
+    }
+}
+
 /// Publish the latest active policy as the desired target and materialize it
 /// through the shared coordinator. Existing external bytes are preserved only
 /// when `replace_existing` is false (startup/recovery); an explicit UI save
@@ -1164,7 +1265,7 @@ pub(crate) async fn sync_routing_policy_file(
 ) -> Result<(), PersistenceError> {
     let document = routing_document_from_stored(stored)?;
     document.validate().map_err(|error| {
-        PersistenceError::InvariantViolation(format!("routing policy document rejected: {error}"))
+        PersistenceError::InvariantViolation(format!("routing policy document rejected: {error:?}"))
     })?;
     let canonical = canonical_json(&document)
         .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
@@ -1217,36 +1318,32 @@ pub(crate) async fn sync_routing_policy_file(
         {
             true
         }
-        Ok(observed) => {
-            match decode_strict_json::<crate::models::routing_policy::RoutingPolicyDocumentV1>(
-                &observed.bytes,
-            ) {
-                Ok(incoming) => {
-                    let incoming_canonical = canonical_json(&incoming)
-                        .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
-                    if incoming_canonical == canonical {
-                        true
-                    } else {
-                        let mut write = runtime.begin_write().await?;
-                        crate::persistence::stores::document_sync_store::DocumentSyncStore
-                            .mark_external_change(
-                                write.connection(),
-                                kind,
-                                Some(&observed.digest),
-                                Some("external_change"),
-                                chrono::Utc::now().timestamp_millis().max(0),
-                            )
-                            .await?;
-                        write.commit().await?;
-                        false
-                    }
-                }
-                Err(_) => {
-                    mark_routing_sync_error(&runtime, "invalid_document").await?;
+        Ok(observed) => match decode_routing_document(&observed.bytes) {
+            Ok(incoming) => {
+                let incoming_canonical = canonical_json(&incoming)
+                    .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
+                if incoming_canonical == canonical {
+                    true
+                } else {
+                    let mut write = runtime.begin_write().await?;
+                    crate::persistence::stores::document_sync_store::DocumentSyncStore
+                        .mark_external_change(
+                            write.connection(),
+                            kind,
+                            Some(&observed.digest),
+                            Some("external_change"),
+                            chrono::Utc::now().timestamp_millis().max(0),
+                        )
+                        .await?;
+                    write.commit().await?;
                     false
                 }
             }
-        }
+            Err(_) => {
+                mark_routing_sync_error(&runtime, "invalid_document").await?;
+                false
+            }
+        },
         Err(_) => {
             mark_routing_sync_error(&runtime, "document_unavailable").await?;
             false
@@ -1315,7 +1412,11 @@ pub(crate) async fn initialize_routing_policy_document_sync(
 /// revision only update document-sync diagnostics and leave SQLite untouched.
 pub(crate) async fn reconcile_external_routing_policy_document(
     runtime: PersistenceHandle,
-) -> Result<(), PersistenceError> {
+    service: &RoutingService,
+) -> Result<
+    Option<crate::persistence::stores::routing_policy_store::StoredRoutingPolicy>,
+    PersistenceError,
+> {
     use crate::models::document_sync::{DocumentKind, ROUTING_POLICY_DOCUMENT_KIND};
 
     let (current_sync, current_policy) = {
@@ -1330,7 +1431,7 @@ pub(crate) async fn reconcile_external_routing_policy_document(
         (sync, policy)
     };
     let Some(current_sync) = current_sync else {
-        return Ok(());
+        return Ok(None);
     };
     let current_revision = u64::try_from(current_policy.revision).map_err(|_| {
         PersistenceError::InvariantViolation("routing policy revision is invalid".into())
@@ -1340,12 +1441,12 @@ pub(crate) async fn reconcile_external_routing_policy_document(
         Ok(stable) => stable,
         Err(PolicyDocumentError::Missing) => {
             mark_routing_sync_error(&runtime, "document_missing").await?;
-            return Ok(());
+            return Ok(None);
         }
-        Err(PolicyDocumentError::Unstable) => return Ok(()),
+        Err(PolicyDocumentError::Unstable) => return Ok(None),
         Err(_) => {
             mark_routing_sync_error(&runtime, "document_unavailable").await?;
-            return Ok(());
+            return Ok(None);
         }
     };
     if current_sync
@@ -1364,20 +1465,18 @@ pub(crate) async fn reconcile_external_routing_policy_document(
             )
             .await?;
         write.commit().await?;
-        return Ok(());
+        return Ok(None);
     }
-    let document = match decode_strict_json::<crate::models::routing_policy::RoutingPolicyDocumentV1>(
-        &stable.bytes,
-    ) {
+    let document = match decode_routing_document(&stable.bytes) {
         Ok(document) => document,
         Err(_) => {
             mark_routing_sync_error(&runtime, "invalid_document").await?;
-            return Ok(());
+            return Ok(None);
         }
     };
     if document.base_revision != current_revision
         || document.validate().is_err()
-        || crate::application::routing_policy::compile_config(
+        || crate::application::routing_policy::compile_config_v2(
             &document.policy,
             document.base_revision,
             &current_policy.policy_version,
@@ -1396,14 +1495,13 @@ pub(crate) async fn reconcile_external_routing_policy_document(
             )
             .await?;
         write.commit().await?;
-        return Ok(());
+        return Ok(None);
     }
-    let service = RoutingService::new(runtime.clone());
-    match service
-        .apply_routing_policy_document(document, TrustedDocumentSource::file_watch())
+    let stored = match service
+        .apply_routing_policy_document_v2(document, TrustedDocumentSource::file_watch())
         .await
     {
-        Ok(_) => {}
+        Ok(stored) => Some(stored),
         Err(ApplicationError::StaleRevision) => {
             let mut mark = runtime.begin_write().await?;
             let _ = crate::persistence::stores::document_sync_store::DocumentSyncStore
@@ -1416,12 +1514,13 @@ pub(crate) async fn reconcile_external_routing_policy_document(
                 )
                 .await?;
             mark.commit().await?;
+            None
         }
         Err(error) => {
             return Err(PersistenceError::InvariantViolation(error.to_string()));
         }
-    }
-    Ok(())
+    };
+    Ok(stored)
 }
 
 #[cfg(test)]
@@ -1726,18 +1825,22 @@ fn simulation_explanation(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
     use crate::application::operational_facts::{
         candidate_projection::route_projection_from_runtime_candidate,
         pricing_projector::RoutingCostBasis,
     };
     use crate::application::routing_engine::hierarchical_preview::{plan_route, PlanningInput};
-    use crate::application::routing_engine::request::{PlanningRoundContext, RouteProgress};
+    use crate::application::routing_engine::request::{
+        PlanningRequestContext, PlanningRoundContext, RouteProgress,
+    };
     use crate::models::{
         pricing::{PricingStatus, RequestKind},
         proxy::UpstreamApiFormat,
         routing::{RoutingPolicy, StationKeyCapabilities},
-        routing_policy::{RoutingPolicyConfigV1, RoutingPolicyDocumentV1},
+        routing_policy::{RoutingPolicyConfigV1, RoutingPolicyDocumentV2},
     };
 
     #[tokio::test]
@@ -1756,6 +1859,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn planning_snapshot_rejects_an_expired_caller_deadline() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let runtime = crate::persistence::runtime::PersistenceRuntime::initialize_new(
+            &temp.path().join("routing.sqlite3"),
+        )
+        .await
+        .expect("runtime");
+        let service = RoutingService::new(runtime.handle());
+        let settings = RuntimeRoutingSettings::default();
+        let request =
+            route_request_facts_for_read_model(&settings, chrono::Utc::now().timestamp_millis());
+
+        let result = service
+            .load_intelligent_planning_snapshot(
+                &request,
+                RuntimeOverlaySnapshot {
+                    runtime_instance_id: "expired-context".to_string(),
+                    runtime_revision: 1,
+                    candidate_set_revision: 1,
+                    in_flight: 0,
+                    max_concurrency: 1,
+                    affinity_station_key_id: None,
+                },
+                PlanningRequestContext::from_deadline(Instant::now() - Duration::from_millis(1)),
+            )
+            .await;
+
+        assert!(matches!(result, Err(ApplicationError::DeadlineExceeded)));
+        runtime.close().await.expect("close persistence runtime");
+    }
+
+    #[tokio::test]
     async fn stale_routing_materialization_cannot_regress_newer_active_revision() {
         let temp = tempfile::tempdir().expect("tempdir");
         let runtime = crate::persistence::runtime::PersistenceRuntime::initialize_new(
@@ -1769,14 +1904,30 @@ mod tests {
         let mut first_config = RoutingPolicyConfigV1::default();
         first_config.max_candidates = 63;
         let first = service
-            .save_routing_policy(first_config, Some(baseline.revision))
+            .apply_routing_policy_document_v2(
+                RoutingPolicyDocumentV2 {
+                    format_version:
+                        crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
+                    base_revision: baseline.revision,
+                    policy: first_config.into(),
+                },
+                TrustedDocumentSource::ui(),
+            )
             .await
             .expect("first policy apply");
 
         let mut second_config = RoutingPolicyConfigV1::default();
         second_config.max_candidates = 62;
         let second = service
-            .save_routing_policy(second_config, Some(first.revision))
+            .apply_routing_policy_document_v2(
+                RoutingPolicyDocumentV2 {
+                    format_version:
+                        crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
+                    base_revision: first.revision,
+                    policy: second_config.into(),
+                },
+                TrustedDocumentSource::ui(),
+            )
             .await
             .expect("second policy apply");
 
@@ -1786,7 +1937,7 @@ mod tests {
             .expect("stale materialization is ignored");
         let bytes = std::fs::read(temp.path().join("config").join("routing-policy.json"))
             .expect("managed routing document");
-        let materialized: RoutingPolicyDocumentV1 =
+        let materialized: RoutingPolicyDocumentV2 =
             serde_json::from_slice(&bytes).expect("managed routing document decodes");
         assert_eq!(materialized.base_revision, second.revision);
         assert_eq!(materialized.policy.max_candidates, 62);
@@ -1960,6 +2111,10 @@ mod tests {
             station_key_id: station_key_id.to_string(),
             station_id: station_id.to_string(),
             station_type: "newapi".to_string(),
+            capacity_provider_family: None,
+            capacity_deployment_identity: None,
+            capacity_region_identity: None,
+            capacity_domain_revision: None,
             station_account_concurrency_limit: None,
             station_endpoint_revision: priority,
             sanitized_origin: format!("https://{station_key_id}.example.test"),

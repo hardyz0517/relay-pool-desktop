@@ -458,6 +458,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
+    use crate::models::routing_policy::{RoutingPolicyDocumentV1, RoutingPolicyDocumentV2};
 
     #[derive(Debug, Deserialize, PartialEq, Eq)]
     #[serde(deny_unknown_fields)]
@@ -491,6 +492,101 @@ mod tests {
                 base_revision: 1
             }
         );
+    }
+
+    #[test]
+    fn strict_routing_policy_document_rejects_duplicate_unknown_and_invalid_version_shapes() {
+        let document = RoutingPolicyDocumentV2 {
+            base_revision: 1,
+            ..RoutingPolicyDocumentV2::default()
+        };
+        let value = serde_json::to_string(&document).expect("routing document JSON");
+        let duplicate = value.replacen(
+            "\"formatVersion\":1,",
+            "\"formatVersion\":1,\"formatVersion\":1,",
+            1,
+        );
+        assert!(matches!(
+            decode_strict_json::<RoutingPolicyDocumentV2>(duplicate.as_bytes()),
+            Err(PolicyDocumentError::DuplicateKey)
+        ));
+
+        let mut unknown = serde_json::to_value(&document).expect("routing document value");
+        unknown["policy"]["futureField"] = Value::Bool(true);
+        assert!(decode_strict_json::<RoutingPolicyDocumentV2>(
+            serde_json::to_string(&unknown)
+                .expect("unknown field JSON")
+                .as_bytes()
+        )
+        .is_err());
+
+        let mut future = serde_json::to_value(&document).expect("routing document value");
+        future["policy"]["version"] = Value::from(3_u16);
+        let decoded = decode_strict_json::<RoutingPolicyDocumentV2>(
+            serde_json::to_string(&future)
+                .expect("future version JSON")
+                .as_bytes(),
+        )
+        .expect("shape is strict but version validation is domain-owned");
+        assert!(decoded.validate().is_err());
+
+        let mut invalid = serde_json::to_value(&document).expect("routing document value");
+        invalid["policy"]["retryFailover"]["maxTotalAttempts"] = Value::from(0_u16);
+        let decoded = decode_strict_json::<RoutingPolicyDocumentV2>(
+            serde_json::to_string(&invalid)
+                .expect("invalid policy JSON")
+                .as_bytes(),
+        )
+        .expect("shape remains complete");
+        assert!(decoded.validate().is_err());
+    }
+
+    #[test]
+    fn strict_legacy_routing_document_does_not_apply_storage_defaults() {
+        let document = RoutingPolicyDocumentV1 {
+            base_revision: 1,
+            ..RoutingPolicyDocumentV1::default()
+        };
+        for field in [
+            "maxRateMultiplier",
+            "routingGroupFilter",
+            "outboundProxyMode",
+            "outboundProxyUrl",
+        ] {
+            let mut missing = serde_json::to_value(&document).expect("legacy document value");
+            missing["policy"]
+                .as_object_mut()
+                .expect("legacy policy object")
+                .remove(field);
+            assert!(
+                decode_strict_json::<RoutingPolicyDocumentV1>(
+                    serde_json::to_string(&missing)
+                        .expect("missing field JSON")
+                        .as_bytes()
+                )
+                .is_err(),
+                "missing legacy public field {field} must fail closed"
+            );
+        }
+
+        let mut unknown = serde_json::to_value(&document).expect("legacy document value");
+        unknown["policy"]["futureField"] = Value::Bool(true);
+        assert!(decode_strict_json::<RoutingPolicyDocumentV1>(
+            serde_json::to_string(&unknown)
+                .expect("unknown field JSON")
+                .as_bytes()
+        )
+        .is_err());
+
+        // Storage serde names are not a second public document spelling.
+        let mut storage_shape = serde_json::to_value(&document).expect("legacy document value");
+        storage_shape["policy"]["max_rate_multiplier"] = Value::Null;
+        assert!(decode_strict_json::<RoutingPolicyDocumentV1>(
+            serde_json::to_string(&storage_shape)
+                .expect("storage-shaped JSON")
+                .as_bytes()
+        )
+        .is_err());
     }
 
     #[tokio::test]

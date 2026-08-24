@@ -698,7 +698,11 @@ fn default_request_acceptance(class: FailureClass) -> RequestAcceptance {
         | FailureClass::QuotaExhausted
         | FailureClass::RuntimeConcurrencyLimited
         | FailureClass::ModelUnavailable
-        | FailureClass::CapabilityMismatch => RequestAcceptance::RejectedBeforeAcceptance,
+        | FailureClass::CapabilityMismatch
+        // Planning/admission deadlines are exhausted before downstream
+        // output is committed. Keep them out of the PossiblyAccepted bucket
+        // so lifecycle and health evidence remain replay-safe.
+        | FailureClass::Deadline => RequestAcceptance::RejectedBeforeAcceptance,
         FailureClass::Upstream5xx
         | FailureClass::Transport
         | FailureClass::Timeout

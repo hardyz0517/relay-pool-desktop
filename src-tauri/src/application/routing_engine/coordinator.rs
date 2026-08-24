@@ -188,7 +188,12 @@ mod tests {
             snapshot_id: "s".into(),
             durable_revision: 1,
             routing_policy_revision: 1,
-            policy: RoutingPolicyConfigV1::default(),
+            policy: RoutingPolicyConfigV1::default().into(),
+            attempt_budget: crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
+                1,
+                &crate::models::routing_policy::RetryFailoverPolicyV2::default(),
+            )
+            .expect("attempt budget"),
             profile: DispatchAlgorithmProfile::default(),
             candidates: vec![CandidateSnapshot {
                 station_key_id: "a".into(),

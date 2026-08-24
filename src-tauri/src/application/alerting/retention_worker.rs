@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use super::AlertingReadModelUpdatePublisher;
 use crate::persistence::{
     error::PersistenceError,
     runtime::PersistenceHandle,
@@ -10,11 +13,18 @@ use crate::persistence::{
 #[derive(Clone)]
 pub(crate) struct AlertingRetentionWorker {
     runtime: PersistenceHandle,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
 }
 
 impl AlertingRetentionWorker {
-    pub(crate) fn new(runtime: PersistenceHandle) -> Self {
-        Self { runtime }
+    pub(crate) fn new(
+        runtime: PersistenceHandle,
+        alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
+    ) -> Self {
+        Self {
+            runtime,
+            alerting_updates,
+        }
     }
 
     pub(crate) async fn run_once(
@@ -33,7 +43,8 @@ impl AlertingRetentionWorker {
             now_ms.saturating_sub(i64::from(occurrence_retention_days).saturating_mul(86_400_000));
         let delivery_cutoff =
             now_ms.saturating_sub(i64::from(delivery_retention_days).saturating_mul(86_400_000));
-        self.runtime
+        let report = self
+            .runtime
             .write(|write| {
                 Box::pin(async move {
                     let deliveries = DeliveryStore
@@ -54,7 +65,11 @@ impl AlertingRetentionWorker {
                     })
                 })
             })
-            .await
+            .await?;
+        if report.occurrences_deleted > 0 || report.resolved_incidents_deleted > 0 {
+            self.alerting_updates.notify_after_commit();
+        }
+        Ok(report)
     }
 }
 

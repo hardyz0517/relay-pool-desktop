@@ -5,6 +5,7 @@ export type RoutingGroupFilterDto = "all_groups" | "ungrouped_only" | { group_bi
 export type RoutingStationKeyIdInputDto = { stationKeyId: string };
 export type RoutingWorkspaceSnapshotInputDto = { limit?: number | null; cursor?: string | null };
 export type RecentRouteDecisionsInputDto = { limit?: number | null; cursor?: string | null };
+export type ErrorRateHistoryInputDto = { beforeMs?: number | null; limit?: number | null };
 export type StationKeyOperationalDetailInputDto = { stationKeyId: string };
 export type RequestDecisionTraceInputDto = { requestLogId: string };
 export type RoutingCapacityReadModeDto = "snapshot_only";
@@ -12,8 +13,33 @@ export type RoutingReadModelStatusDto = "available" | "unavailable";
 export type RouteDecisionReadModelStatusDto = "available" | "unavailable";
 export type OperationalDetailReadModelStatusDto = "available" | "unavailable";
 export type RequestDecisionTraceStatusDto = "durable_summary" | "runtime_trace" | "legacy_summary" | "trace_unavailable";
+export type RequestDecisionDetailAvailabilityDto = "detailed" | "summary_only" | "unavailable";
+export type RequestDecisionActionDto = "retry_same_target" | "wait_then_replan" | "try_different_failure_domain" | "stop_request";
 export type RequestDecisionTimelineKindDto = "legacy_summary" | "planning_round" | "slot_wait" | "attempt_protocol" | "fallback" | "downstream_delivery" | "cost_aggregate" | "unavailable";
 export type RequestDecisionTimelineStatusDto = "available" | "legacy_summary" | "unavailable" | "skipped";
+export type HealthProtectionScopeKindDto = "credential" | "account" | "endpoint" | "model" | "capacity_domain";
+export type HealthProtectionFailureCodeDto = "connect_failure" | "first_byte_timeout" | "upstream_5xx" | "rate_limited" | "capacity_exhausted" | "endpoint_unavailable" | "unknown";
+export type ErrorRateHistoryOutcomeDto = "success" | "failure";
+export type HealthProtectionTransitionCodeDto = "ignored_duplicate" | "observed" | "opened" | "probe_succeeded" | "closed" | "reopened";
+export type ErrorRateHistoryEventDto = {
+  observedAtMs: number;
+  scopeKind: HealthProtectionScopeKindDto;
+  scopeCommitment: string;
+  outcome: ErrorRateHistoryOutcomeDto;
+  failureCode: HealthProtectionFailureCodeDto | null;
+  sampleCount: number;
+  failureCount: number;
+  failureRatePercent: number;
+  transition: HealthProtectionTransitionCodeDto | null;
+};
+export type ErrorRateHistoryPageDto = {
+  version: string;
+  enabled: boolean;
+  detailAvailable: boolean;
+  events: ErrorRateHistoryEventDto[];
+  nextBeforeMs: number | null;
+  droppedEvents: number;
+};
 
 export type StationKeyCapabilitiesDto = {
   stationKeyId: string;
@@ -129,6 +155,7 @@ export type RecentRouteDecisionSummaryDto = {
   costStatus: string | null;
   estimatedTotalCost: number | null;
   costCurrency: string | null;
+  occurredAtMs: number | null;
 };
 
 export type RecentRouteDecisionsPageDto = {
@@ -172,6 +199,14 @@ export type RequestDecisionTimelineItemDto = {
   title: string;
   summary: string;
   detailCode: string;
+  detailAvailability: RequestDecisionDetailAvailabilityDto;
+  explanationKey: string | null;
+  action: RequestDecisionActionDto | null;
+  attemptOrdinal: number | null;
+  remainingAttempts: number | null;
+  remainingWaitBudgetMs: number | null;
+  policyRevision: number | null;
+  failureDomain: string | null;
   routePolicy: string | null;
   routeReason: string | null;
   stationKeyId: string | null;
@@ -188,7 +223,10 @@ export type RequestDecisionTraceDto = {
   traceVersion: string;
   requestLogId: string;
   status: RequestDecisionTraceStatusDto;
+  detailAvailability: RequestDecisionDetailAvailabilityDto;
   reason: string;
+  explanationKey: string | null;
+  policyRevision: number | null;
   legacySummary: LegacyDecisionSummaryDto | null;
   timeline: RequestDecisionTimelineItemDto[];
   planningRounds: unknown[];
@@ -218,6 +256,17 @@ export type RoutingCandidateSourceRefsDto = {
   snapshotId: string;
   factVersionVector: string;
   projectorVersion: string;
+};
+
+export type RoutingCandidateFailureDomainSnapshotDto = {
+  kind: "capacity_domain";
+  resolution: "not_configured" | "invalid_identity" | "model_required" | "resolved";
+  providerFamily: string | null;
+  deploymentIdentity: string | null;
+  regionIdentity: string | null;
+  revision: number | null;
+  commitment: string | null;
+  explanationKey: string;
 };
 
 export type RoutingCandidateGroupSnapshotDto = {
@@ -281,6 +330,7 @@ export type RoutingWorkspaceCandidateDto = {
   balanceValue: number | null;
   balanceCurrency: string | null;
   capacity: RoutingCandidateCapacitySnapshotDto;
+  failureDomain: RoutingCandidateFailureDomainSnapshotDto;
   sourceRefs: RoutingCandidateSourceRefsDto;
   hardRejectionCodes: string[];
 };
@@ -340,7 +390,7 @@ export type RoutingReadPageDto = {
 export type RoutingWorkspaceSnapshotDto = {
   readModelVersion: string;
   generatedAtMs: number;
-  policyConfig: RoutingPolicyConfigV1Dto;
+  policyConfig: RoutingPolicyConfigV2Dto;
   previewPolicyVersion: string;
   maxRateMultiplier: number | null;
   routingGroupFilter: RoutingGroupFilterDto;
@@ -365,4 +415,54 @@ export type RoutingRuntimeOverlayDto = {
   sampledAtMs: number;
   revision: number;
   candidates: RoutingRuntimeCandidateOverlayDto[];
+};
+
+export type ProtectionPersistenceKindDto = "durable" | "legacy_compatibility" | "runtime_capacity";
+export type ProtectionStateDto = "no_protection" | "degraded" | "cooldown" | "blocked" | "open" | "half_open" | "unavailable";
+export type ProtectionReadModelStatusDto = "available" | "unavailable";
+export type ProtectionStatusEntryDto = {
+  scope: string;
+  scopeKind: string | null;
+  state: ProtectionStateDto;
+  explanationKey: string;
+  persistenceKind: ProtectionPersistenceKindDto | null;
+  cooldownUntilMs: number | null;
+  cooldownRemainingMs: number | null;
+  recentFailureCode: string | null;
+  updatedAtMs: number | null;
+  detailAvailable: boolean;
+};
+export type RoutingFailureDomainDiagnosticDto = {
+  commitment: string | null;
+  resolution: "not_configured" | "invalid_identity" | "model_required" | "resolved";
+  providerFamily: string | null;
+  deploymentIdentity: string | null;
+  regionIdentity: string | null;
+  revision: number | null;
+  candidateCount: number;
+  schedulableCandidateCount: number;
+  status: ProtectionStateDto;
+  persistenceKind: ProtectionPersistenceKindDto | null;
+  recentFailureCode: string | null;
+  explanationKey: string;
+};
+export type RoutingProtectionStatusDto = {
+  statusVersion: string;
+  generatedAtMs: number;
+  entries: ProtectionStatusEntryDto[];
+  failureDomains?: RoutingFailureDomainDiagnosticDto[];
+  readModelStatus: ProtectionReadModelStatusDto;
+  timeouts: ProxyTimeoutFactsDto | null;
+};
+
+export type RoutingProtectionStatusInputDto = {
+  model?: string | null;
+};
+export type ProxyTimeoutFactsDto = {
+  connectSeconds: number;
+  firstByteSeconds: number;
+  precommitSeconds: number;
+  bufferedExecutionSeconds: number;
+  streamIdleSeconds: number;
+  owner: string;
 };

@@ -418,7 +418,9 @@ mod tests {
             .list_rules(&mut connection, false)
             .await
             .expect("rules");
-        assert_eq!(rules.len(), 2);
+        // The oversized legacy client model is retained for review instead
+        // of producing a destination rule ID beyond its bounded schema.
+        assert_eq!(rules.len(), 1);
         assert!(rules
             .iter()
             .all(|rule| rule.id.len() <= 192 && rule.matcher_value.is_some()));
@@ -435,11 +437,12 @@ mod tests {
             targets[0].literal_upstream_model.as_deref(),
             Some("native-test")
         );
-        assert!(store
+        let reviews = store
             .list_legacy_reviews(&mut connection)
             .await
-            .expect("reviews")
-            .is_empty());
+            .expect("reviews");
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].migration_status, "invalid");
         let history = store.list_history(&mut connection).await.expect("history");
         assert_eq!(history.len(), 1);
         assert!(history[0].document_json.contains("native-test"));

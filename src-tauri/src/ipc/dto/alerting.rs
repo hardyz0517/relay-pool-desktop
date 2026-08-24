@@ -271,6 +271,7 @@ pub(crate) struct AlertingCurrentInputDto {
     pub station_id: Option<String>,
     pub severity: Option<String>,
     pub lifecycle_state: Option<String>,
+    pub search: Option<String>,
     pub cursor: Option<AlertingCursorDto>,
     pub limit: Option<u32>,
 }
@@ -283,6 +284,7 @@ pub(crate) struct AlertingActivityInputDto {
     pub record_type: Option<AlertingActivityRecordType>,
     #[serde(default)]
     pub unread_only: bool,
+    pub search: Option<String>,
     pub cursor: Option<AlertingCursorDto>,
     pub limit: Option<u32>,
 }
@@ -542,7 +544,7 @@ pub(crate) struct AlertingDeliveryPageDto {
 
 impl AlertingCurrentInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
-        serde_json::from_value(value).map_err(|_| {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
             crate::commands::error::CommandError::try_new(
                 crate::commands::error::CommandErrorCode::InvalidInput,
                 "The alerting query is invalid.",
@@ -551,7 +553,15 @@ impl AlertingCurrentInputDto {
                 None,
             )
             .expect("bounded alerting validation error")
-        })
+        })?;
+        if input
+            .search
+            .as_ref()
+            .is_some_and(|value| value.trim().len() > 160)
+        {
+            return Err(invalid());
+        }
+        Ok(input)
     }
 }
 
@@ -559,6 +569,10 @@ impl AlertingActivityInputDto {
     pub fn parse(value: serde_json::Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = serde_json::from_value(value).map_err(|_| invalid())?;
         if input.limit.is_some_and(|value| value == 0 || value > 200)
+            || input
+                .search
+                .as_ref()
+                .is_some_and(|value| value.trim().len() > 160)
             || input
                 .cursor
                 .as_ref()
@@ -881,12 +895,13 @@ export type AlertingSettingsInputDto = Omit<AlertingSettingsDto, "revision" | "u
 };
 export type AlertingCurrentInputDto = {
   stationId?: string | null; severity?: AlertSeverity | null;
-  lifecycleState?: string | null; cursor?: AlertingCursorDto | null; limit?: number;
+  lifecycleState?: string | null; search?: string | null;
+  cursor?: AlertingCursorDto | null; limit?: number;
 };
 export type AlertingActivityInputDto = {
   stationId?: string | null; severity?: AlertSeverity | null;
   recordType?: "incident" | "change" | null;
-  unreadOnly?: boolean;
+  unreadOnly?: boolean; search?: string | null;
   cursor?: AlertingCursorDto | null; limit?: number;
 };
 export type AlertingMarkSeenInputDto =
@@ -980,9 +995,13 @@ mod tests {
     #[test]
     fn activity_and_clear_inputs_accept_record_scopes() {
         assert!(AlertingActivityInputDto::parse(serde_json::json!({
-            "recordType": "change", "unreadOnly": true, "limit": 20
+            "recordType": "change", "unreadOnly": true, "search": "kedaya", "limit": 20
         }))
         .is_ok());
+        assert!(AlertingActivityInputDto::parse(serde_json::json!({
+            "search": "x".repeat(161)
+        }))
+        .is_err());
         assert!(AlertingMarkSeenInputDto::parse(serde_json::json!({
             "incidentId": "incident-1", "episodeNumber": 1
         }))

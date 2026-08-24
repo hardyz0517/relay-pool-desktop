@@ -3,11 +3,17 @@ use crate::persistence::{
     stores::alerting::workspace::WorkspaceStore,
 };
 use crate::{
-    application::alerting::{AlertingIngress, ObservationIngress},
+    application::alerting::{
+        AlertingIngress, AlertingReadModelUpdatePublisher, NoopAlertingReadModelUpdatePublisher,
+        ObservationIngress,
+    },
     models::alerting::{AlertEventType, ConditionKey, ObservationKind, Severity},
     persistence::stores::alerting::{IncidentStore, LegacyCollectorFailureGroup},
 };
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IncidentCursor {
@@ -144,11 +150,32 @@ pub(crate) struct DeliveryHistoryPage {
 #[derive(Clone)]
 pub(crate) struct ChangeCenterWorkspaceQuery {
     runtime: PersistenceHandle,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
 }
 
 impl ChangeCenterWorkspaceQuery {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=alerting.read-model-update-test-constructor; owner=application/queries/change_center_workspace; remove_when=all non-desktop compositions inject a read-model update publisher"
+        )
+    )]
     pub(crate) fn new(runtime: PersistenceHandle) -> Self {
-        Self { runtime }
+        Self::new_with_alerting_read_model_updates(
+            runtime,
+            Arc::new(NoopAlertingReadModelUpdatePublisher),
+        )
+    }
+
+    pub(crate) fn new_with_alerting_read_model_updates(
+        runtime: PersistenceHandle,
+        alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
+    ) -> Self {
+        Self {
+            runtime,
+            alerting_updates,
+        }
     }
 
     pub(crate) async fn list_current(
@@ -156,6 +183,7 @@ impl ChangeCenterWorkspaceQuery {
         station_id: Option<&str>,
         severity: Option<&str>,
         lifecycle_state: Option<&str>,
+        search: Option<&str>,
         cursor: Option<&IncidentCursor>,
         limit: u32,
     ) -> Result<IncidentWorkspacePage, PersistenceError> {
@@ -167,6 +195,7 @@ impl ChangeCenterWorkspaceQuery {
                 station_id,
                 severity,
                 lifecycle_state,
+                search,
                 cursor.map(|value| (value.updated_at_ms, value.id.as_str())),
                 limit,
             )
@@ -201,6 +230,7 @@ impl ChangeCenterWorkspaceQuery {
         severity: Option<&str>,
         record_type: Option<&str>,
         unread_only: bool,
+        search: Option<&str>,
         cursor: Option<&ActivityCursor>,
         limit: u32,
     ) -> Result<ActivityWorkspacePage, PersistenceError> {
@@ -213,6 +243,7 @@ impl ChangeCenterWorkspaceQuery {
                 severity,
                 record_type,
                 unread_only,
+                search,
                 cursor.map(|value| (value.activity_at_ms, value.id.as_str())),
                 limit,
             )
@@ -250,23 +281,27 @@ impl ChangeCenterWorkspaceQuery {
             .map_err(|_| PersistenceError::ConstraintViolation)?;
         let incident_store = IncidentStore;
         let alerting = AlertingIngress::new(self.runtime.clone());
-        self.runtime
+        let changes = self
+            .runtime
             .write(|write| {
                 Box::pin(async move {
-                    incident_store
+                    let mut changes = incident_store
                         .resolve_orphaned_station_incidents(write, now_ms)
                         .await?;
                     for group in incident_store
                         .legacy_collector_failure_groups(write)
                         .await?
                     {
-                        alerting
-                            .record_in_session(
-                                write,
-                                legacy_collector_failure_observation(&group, now_ms)?,
-                            )
-                            .await?;
-                        incident_store
+                        changes += u64::from(
+                            alerting
+                                .record_in_session(
+                                    write,
+                                    legacy_collector_failure_observation(&group, now_ms)?,
+                                )
+                                .await?
+                                .inserted,
+                        );
+                        changes += incident_store
                             .resolve_legacy_collector_child_incidents(
                                 write,
                                 &group.station_id,
@@ -274,10 +309,13 @@ impl ChangeCenterWorkspaceQuery {
                             )
                             .await?;
                     }
-                    Ok(())
+                    Ok(changes)
                 })
             })
             .await?;
+        if changes > 0 {
+            self.alerting_updates.notify_after_commit();
+        }
         Ok(())
     }
 
@@ -718,7 +756,7 @@ mod tests {
 
         let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
         let first_page = query
-            .list_activity(None, None, None, false, None, 2)
+            .list_activity(None, None, None, false, None, None, 2)
             .await
             .expect("first activity page");
         assert_eq!(first_page.active_count, 0);
@@ -733,7 +771,15 @@ mod tests {
         assert_eq!(first_page.items[1].severity, "info");
 
         let second_page = query
-            .list_activity(None, None, None, false, first_page.next_cursor.as_ref(), 2)
+            .list_activity(
+                None,
+                None,
+                None,
+                false,
+                None,
+                first_page.next_cursor.as_ref(),
+                2,
+            )
             .await
             .expect("second activity page");
         assert_eq!(second_page.items.len(), 1);
@@ -746,7 +792,7 @@ mod tests {
         assert!(second_page.next_cursor.is_none());
 
         let information_page = query
-            .list_activity(None, None, Some("change"), false, None, 10)
+            .list_activity(None, None, Some("change"), false, None, None, 10)
             .await
             .expect("informational activity page");
         assert_eq!(information_page.items.len(), 3);
@@ -772,7 +818,7 @@ mod tests {
             .await
             .expect("mark informational fixture read");
         let unread_page = query
-            .list_activity(None, None, None, true, None, 10)
+            .list_activity(None, None, None, true, None, None, 10)
             .await
             .expect("unread activity page");
         assert_eq!(unread_page.items.len(), 2);
@@ -851,7 +897,7 @@ mod tests {
                             id, station_id, binding_kind, group_key_hash, group_name,
                             binding_status, effective_rate_multiplier, confidence,
                             created_at, updated_at
-                         ) VALUES ('binding-1', ?1, 'station_group', 'hash-1', 'default',
+                         ) VALUES ('binding-key-1', ?1, 'station_group', 'hash-1', 'default',
                                    'available', 0.07, 0.5, '0', '0')",
                     )
                     .bind(&station_id)
@@ -864,7 +910,7 @@ mod tests {
                             source, reason_code, new_value_json, observed_at_ms, created_at_ms
                          ) VALUES ('group-added-1', 'fixture:group-added-1', 'group_added',
                                    'audit_change', 'change', 'info', 'station_group_binding',
-                                   'binding-1', ?1, 'collector', 'group_added',
+                                   'binding-key-1', ?1, 'collector', 'group_added',
                                    '{\"groupName\":\"default\"}', 100, 100)",
                     )
                     .bind(&station_id)
@@ -877,7 +923,7 @@ mod tests {
             .expect("activity fixtures");
 
         let page = ChangeCenterWorkspaceQuery::new(runtime.handle())
-            .list_activity(None, None, None, false, None, 10)
+            .list_activity(None, None, None, false, None, None, 10)
             .await
             .expect("activity page");
         assert_eq!(page.items.len(), 1);
@@ -885,6 +931,19 @@ mod tests {
             page.items[0].new_value_json.as_deref(),
             Some(r#"{"effectiveRateMultiplier":0.07,"groupName":"default"}"#)
         );
+        let searched_page = ChangeCenterWorkspaceQuery::new(runtime.handle())
+            .list_activity(None, None, None, false, Some("rate fixture"), None, 10)
+            .await
+            .expect("searched activity page");
+        assert_eq!(searched_page.total_count, 1);
+        assert_eq!(searched_page.items.len(), 1);
+        assert_eq!(searched_page.items[0].id, "group-added-1");
+        let internal_key_search = ChangeCenterWorkspaceQuery::new(runtime.handle())
+            .list_activity(None, None, None, false, Some("ke"), None, 10)
+            .await
+            .expect("internal key search");
+        assert_eq!(internal_key_search.total_count, 0);
+        assert!(internal_key_search.items.is_empty());
         runtime.close().await.expect("close runtime");
     }
 
@@ -937,7 +996,7 @@ mod tests {
 
         let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
         let first_page = query
-            .list_activity(None, None, None, false, None, 2)
+            .list_activity(None, None, None, false, None, None, 2)
             .await
             .expect("first activity page");
         assert_eq!(first_page.active_count, 1);
@@ -952,7 +1011,15 @@ mod tests {
         );
 
         let second_page = query
-            .list_activity(None, None, None, false, first_page.next_cursor.as_ref(), 2)
+            .list_activity(
+                None,
+                None,
+                None,
+                false,
+                None,
+                first_page.next_cursor.as_ref(),
+                2,
+            )
             .await
             .expect("second activity page");
         assert_eq!(second_page.total_count, 3);
@@ -1034,7 +1101,7 @@ mod tests {
             .expect("legacy incidents");
 
         let page = ChangeCenterWorkspaceQuery::new(runtime.handle())
-            .list_current(None, None, Some("active"), None, 100)
+            .list_current(None, None, Some("active"), None, None, 100)
             .await
             .expect("list current alerts");
 
@@ -1098,7 +1165,7 @@ mod tests {
 
         let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
         let information_page = query
-            .list_activity(None, Some("info"), Some("change"), false, None, 10)
+            .list_activity(None, Some("info"), Some("change"), false, None, None, 10)
             .await
             .expect("list missing group information");
         assert_eq!(information_page.items.len(), 1);
@@ -1110,7 +1177,7 @@ mod tests {
         );
 
         let active_page = query
-            .list_current(None, None, Some("active"), None, 10)
+            .list_current(None, None, Some("active"), None, None, 10)
             .await
             .expect("list active problems");
         assert!(active_page.items.is_empty());

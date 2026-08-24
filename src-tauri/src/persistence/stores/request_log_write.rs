@@ -1,3 +1,5 @@
+use crate::application::health_protection::HealthProtectionScope;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RequestStartWrite {
     pub request_id: String,
@@ -13,8 +15,10 @@ pub(crate) struct RequestStartWrite {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AttemptHealthUpdate {
     Success,
+    ProbeSuccess,
     ObserveFailure,
     Cooldown { retry_after_ms: Option<i64> },
+    ProbeFailure { retry_after_ms: Option<i64> },
     HardFail,
     Neutral,
 }
@@ -89,6 +93,8 @@ pub(crate) struct AttemptTerminalWrite {
     pub sanitized_detail: Option<String>,
     pub output_committed: bool,
     pub terminal_at_ms: i64,
+    pub probe_scope: Option<HealthProtectionScope>,
+    pub probe_state_revision: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

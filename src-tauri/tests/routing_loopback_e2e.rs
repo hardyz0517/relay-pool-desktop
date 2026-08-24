@@ -841,6 +841,355 @@ async fn group_subscription_failure_blocks_exact_group_and_group_revision_recove
     harness.stop_proxy().await;
 }
 
+#[tokio::test]
+async fn retry_policy_black_box_max_total_attempts_bounds_outbound_and_trace_profile() {
+    let primary = LoopbackUpstream::script(vec![ScriptedResponse::Status {
+        status: 429,
+        reason: "Too Many Requests",
+    }]);
+    let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+        br#"{"id":"should-not-run","object":"chat.completion","choices":[]}"#.to_vec(),
+    )]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let _primary_candidate = harness
+        .seed_candidate(&primary.base_url, "budget-primary", 0)
+        .await;
+    let _backup_candidate = harness
+        .seed_candidate(&backup.base_url, "budget-backup", 10_000)
+        .await;
+    harness.set_retry_failover_policy(1, 0, 2_000, true).await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json_with_idempotency_key(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "gpt-loopback",
+                "messages": [{"role": "user", "content": "attempt budget"}]
+            }),
+            "loopback-attempt-budget",
+        )
+        .await;
+    assert_eq!(response.status, reqwest::StatusCode::TOO_MANY_REQUESTS);
+    primary.wait_for_requests(1);
+    assert_eq!(backup.captured_requests().len(), 0);
+
+    let log = wait_for_latest_log(&harness, "failed").await;
+    assert_eq!(log.attempt_count, Some(1));
+    assert_eq!(log.fallback_count, 0);
+    let lifecycle = harness.request_lifecycle_status(&log.id).await;
+    assert_eq!(lifecycle.terminal_kind.as_deref(), Some("failed"));
+    assert_eq!(
+        lifecycle.terminal_code.as_deref(),
+        Some("upstream_rate_limited")
+    );
+    let trace = harness.decision_trace_event_summaries(&log.id).await;
+    assert_profile_trace(&trace, "profile_total_1_same_0_wait_2000_cross_1");
+    assert!(trace.iter().any(|event| {
+        event.kind == "canonical_failure"
+            && event.detail.as_deref().is_some_and(|detail| {
+                detail.contains("action_stop_request") && detail.contains("remaining_0")
+            })
+    }));
+
+    assert_eq!(primary.captured_requests().len(), 1);
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn retry_policy_same_target_capacity_limit_controls_outbound_and_trace_profile() {
+    let upstream = LoopbackUpstream::script(vec![
+        capacity_response(),
+        ScriptedResponse::Json(
+            br#"{"id":"capacity-recovered","object":"chat.completion","choices":[]}"#.to_vec(),
+        ),
+    ]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let candidate = harness
+        .seed_candidate(&upstream.base_url, "same-target", 0)
+        .await;
+    harness
+        .set_candidate_station_type(&candidate, "openai")
+        .await;
+    harness
+        .set_candidate_upstream_api_format(&candidate, "openai_chat_completions")
+        .await;
+    harness
+        .set_candidate_capacity_domain(&candidate, "openai", Some("same-target"), None)
+        .await;
+    harness.set_retry_failover_policy(4, 1, 2_000, true).await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json_with_idempotency_key(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "gpt-loopback",
+                "messages": [{"role": "user", "content": "same target"}]
+            }),
+            "loopback-same-target-retry",
+        )
+        .await;
+    assert_eq!(
+        response.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        response.body_text()
+    );
+    upstream.wait_for_requests(2);
+    assert_eq!(upstream.captured_requests().len(), 2);
+    let log = wait_for_log_attempt_count(&harness, "success", 2).await;
+    assert_eq!(log.attempt_count, Some(2));
+    assert_eq!(log.fallback_count, 1);
+    let trace = harness.decision_trace_event_summaries(&log.id).await;
+    assert_profile_trace(&trace, "profile_total_4_same_1_wait_2000_cross_1");
+    assert_eq!(
+        trace
+            .iter()
+            .filter(|event| event.code == "capacity_same_target_retry")
+            .count(),
+        1
+    );
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn retry_policy_wait_budget_suppresses_capacity_retry_and_records_effective_budget() {
+    let upstream = LoopbackUpstream::script(vec![capacity_response()]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let candidate = harness
+        .seed_candidate(&upstream.base_url, "wait-budget", 0)
+        .await;
+    harness
+        .set_candidate_station_type(&candidate, "openai")
+        .await;
+    harness
+        .set_candidate_upstream_api_format(&candidate, "openai_chat_completions")
+        .await;
+    harness
+        .set_candidate_capacity_domain(&candidate, "openai", Some("wait-budget"), None)
+        .await;
+    harness.set_retry_failover_policy(4, 2, 0, true).await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json_with_idempotency_key(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "gpt-loopback",
+                "messages": [{"role": "user", "content": "wait budget"}]
+            }),
+            "loopback-wait-budget",
+        )
+        .await;
+    assert_eq!(response.status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    upstream.wait_for_requests(1);
+    assert_eq!(upstream.captured_requests().len(), 1);
+    let log = wait_for_latest_log(&harness, "failed").await;
+    assert_eq!(log.attempt_count, Some(1));
+    let lifecycle = harness.request_lifecycle_status(&log.id).await;
+    assert_eq!(
+        lifecycle.terminal_code.as_deref(),
+        Some("upstream_overloaded")
+    );
+    let trace = harness.decision_trace_event_summaries(&log.id).await;
+    assert_profile_trace(&trace, "profile_total_4_same_2_wait_0_cross_1");
+    assert!(trace.iter().any(|event| {
+        event.code == "capacity_same_domain_fallback_suppressed"
+            || event
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("budget_0"))
+    }));
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn retry_policy_wait_budget_exhaustion_still_allows_cross_capacity_domain_fallback() {
+    let primary = LoopbackUpstream::script(vec![capacity_response()]);
+    let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+        br#"{"id":"cross-domain-recovered","object":"chat.completion","choices":[]}"#.to_vec(),
+    )]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let primary_candidate = harness
+        .seed_candidate(&primary.base_url, "wait-cross-primary", 0)
+        .await;
+    let backup_candidate = harness
+        .seed_candidate(&backup.base_url, "wait-cross-backup", 10_000)
+        .await;
+    for candidate in [&primary_candidate, &backup_candidate] {
+        harness
+            .set_candidate_station_type(candidate, "openai")
+            .await;
+        harness
+            .set_candidate_upstream_api_format(candidate, "openai_chat_completions")
+            .await;
+    }
+    harness
+        .set_candidate_capacity_domain(&primary_candidate, "openai", Some("primary"), None)
+        .await;
+    harness
+        .set_candidate_capacity_domain(&backup_candidate, "openai", Some("backup"), None)
+        .await;
+    harness.set_retry_failover_policy(4, 1, 0, true).await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json_with_idempotency_key(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "gpt-loopback",
+                "messages": [{"role": "user", "content": "wait then cross"}]
+            }),
+            "loopback-wait-budget-cross-domain",
+        )
+        .await;
+    assert_eq!(
+        response.status,
+        reqwest::StatusCode::OK,
+        "{}",
+        response.body_text()
+    );
+    primary.wait_for_requests(1);
+    backup.wait_for_requests(1);
+    assert_eq!(primary.captured_requests().len(), 1);
+    assert_eq!(backup.captured_requests().len(), 1);
+
+    let log = wait_for_log_attempt_count(&harness, "success", 2).await;
+    assert_eq!(log.attempt_count, Some(2));
+    assert_eq!(log.fallback_count, 1);
+    let trace = harness.decision_trace_event_summaries(&log.id).await;
+    assert!(trace.iter().any(|event| {
+        event.detail.as_deref().is_some_and(|detail| {
+            event.code == "capacity_retry_wait_budget_exhausted" && detail.contains("budget_0")
+        })
+    }));
+    assert!(trace
+        .iter()
+        .any(|event| event.code == "capacity_cross_domain_fallback"));
+    harness.stop_proxy().await;
+}
+
+#[tokio::test]
+async fn retry_policy_disabling_cross_capacity_domain_fallback_keeps_backup_uncalled() {
+    let primary = LoopbackUpstream::script(vec![capacity_response()]);
+    let backup = LoopbackUpstream::script(vec![ScriptedResponse::Json(
+        br#"{"id":"cross-domain-should-not-run","object":"chat.completion","choices":[]}"#.to_vec(),
+    )]);
+    let harness = RoutingLoopbackHarness::new().await;
+    let primary_candidate = harness
+        .seed_candidate(&primary.base_url, "cross-primary", 0)
+        .await;
+    let backup_candidate = harness
+        .seed_candidate(&backup.base_url, "cross-backup", 10_000)
+        .await;
+    for candidate in [&primary_candidate, &backup_candidate] {
+        harness
+            .set_candidate_station_type(candidate, "openai")
+            .await;
+        harness
+            .set_candidate_upstream_api_format(candidate, "openai_chat_completions")
+            .await;
+    }
+    harness
+        .set_candidate_capacity_domain(&primary_candidate, "openai", Some("shared"), None)
+        .await;
+    harness
+        .set_candidate_capacity_domain(&backup_candidate, "openai", Some("backup"), None)
+        .await;
+    harness.set_retry_failover_policy(4, 0, 2_000, false).await;
+
+    let proxy = harness.start_proxy().await;
+    let response = proxy
+        .post_json_with_idempotency_key(
+            "/v1/chat/completions",
+            serde_json::json!({
+                "model": "gpt-loopback",
+                "messages": [{"role": "user", "content": "cross domain"}]
+            }),
+            "loopback-cross-domain",
+        )
+        .await;
+    assert_eq!(response.status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    primary.wait_for_requests(1);
+    assert_eq!(backup.captured_requests().len(), 0);
+    let log = wait_for_latest_log(&harness, "failed").await;
+    assert_eq!(log.attempt_count, Some(1));
+    assert_eq!(log.fallback_count, 0);
+    let trace = harness.decision_trace_event_summaries(&log.id).await;
+    assert_profile_trace(&trace, "profile_total_4_same_0_wait_2000_cross_0");
+    assert!(
+        trace
+            .iter()
+            .any(|event| event.code == "capacity_same_domain_fallback_suppressed"),
+        "expected same-domain suppression event, got {trace:?}"
+    );
+    harness.stop_proxy().await;
+}
+
+fn capacity_response() -> ScriptedResponse {
+    ScriptedResponse::Raw {
+        status: 400,
+        reason: "Bad Request",
+        content_type: "application/json",
+        body: br#"{"error":{"code":"SERVER_IS_OVERLOADED","type":"server_error","message":"Selected model is at capacity. Please try again later."}}"#
+            .to_vec(),
+    }
+}
+
+async fn wait_for_latest_log(
+    harness: &RoutingLoopbackHarness,
+    status: &str,
+) -> support::routing_loopback::RequestLogSummary {
+    for _ in 0..200 {
+        if let Some(log) = harness
+            .request_log_summaries()
+            .await
+            .into_iter()
+            .find(|log| log.status == status)
+        {
+            return log;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for request log status {status}");
+}
+
+async fn wait_for_log_attempt_count(
+    harness: &RoutingLoopbackHarness,
+    status: &str,
+    attempt_count: i64,
+) -> support::routing_loopback::RequestLogSummary {
+    for _ in 0..200 {
+        if let Some(log) = harness
+            .request_log_summaries()
+            .await
+            .into_iter()
+            .find(|log| log.status == status && log.attempt_count == Some(attempt_count))
+        {
+            return log;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for request log status {status} and attempt count {attempt_count}");
+}
+
+fn assert_profile_trace(
+    events: &[support::routing_loopback::DecisionTraceEventSummary],
+    profile: &str,
+) {
+    assert!(
+        events.iter().any(|event| {
+            event.kind == "attempt_start"
+                && event
+                    .detail
+                    .as_deref()
+                    .is_some_and(|detail| detail == profile)
+        }),
+        "missing effective profile trace {profile}; events={events:?}"
+    );
+}
+
 fn support_only_model(model: &str) -> support::routing_loopback::CandidateCapabilityConfig {
     support::routing_loopback::CandidateCapabilityConfig {
         model_allowlist: vec![model.to_string()],

@@ -90,8 +90,15 @@ pub(crate) async fn reconcile_startup_interrupted_batch(
             insert_trace_incomplete_attempt_costs(connection, &request_id, now_ms).await?;
         report.decisions_marked_trace_incomplete +=
             mark_route_decision_trace_incomplete(connection, &request_id, now_ms).await?;
-        report.requests_interrupted +=
-            interrupt_request_log(connection, &request_id, now_ms).await?;
+        let interrupted = interrupt_request_log(connection, &request_id, now_ms).await?;
+        report.requests_interrupted += interrupted;
+        if interrupted > 0 {
+            // Startup reconciliation is itself the terminal owner for a
+            // request whose process died before the normal outbox projection.
+            // Materialize the same redacted summary/event contract so the
+            // request detail query remains useful after restart.
+            materialize_interrupted_outcome(connection, &request_id).await?;
+        }
         last_request_id = Some(request_id);
     }
     record_reconciliation_progress(
@@ -191,6 +198,70 @@ async fn interrupt_request_log(
     .await?
     .rows_affected();
     Ok(updated)
+}
+
+async fn materialize_interrupted_outcome(
+    connection: &mut SqliteConnection,
+    request_id: &str,
+) -> Result<(), PersistenceError> {
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO request_routing_outcome_summaries (
+            request_id, profile_version, terminal_kind, terminal_code,
+            classification, confidence, evidence_source, request_accepted,
+            send_phase, replay_disposition, billing_state, retry_disposition,
+            effect_summary, failure_domain_commitment_version,
+            failure_domain_commitment_digest, attempt_count, fallback_count,
+            terminal_at_ms
+        )
+        SELECT l.request_id, 'routing_outcome_v1', 'interrupted',
+               'startup_interrupted', 'local', 'confirmed', 'local',
+               'unknown', 'unknown', 'stopped_uncertain', 'possibly_billed',
+               'fail_closed', 'none', NULL, NULL,
+               COALESCE(
+                   l.attempt_count,
+                   (SELECT COUNT(*) FROM request_attempts a
+                    WHERE a.request_id = l.request_id),
+                   0
+               ),
+               COALESCE(l.fallback_count, 0), l.terminal_at_ms
+        FROM request_logs l
+        WHERE l.request_id = ?
+          AND l.terminal_kind = 'interrupted'
+        "#,
+    )
+    .bind(request_id)
+    .execute(&mut *connection)
+    .await?;
+
+    // Keep the lifecycle event bounded by the same per-request cap as normal
+    // finalization.  INSERT OR IGNORE makes startup reconciliation idempotent
+    // if a process is interrupted again while the repair is running.
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO request_decision_events (
+            request_id, event_key, sequence, occurred_at_ms, event_kind,
+            detail_code, attempt_ordinal, retry_disposition, output_committed
+        )
+        SELECT l.request_id, 'request_finalized',
+               COALESCE((
+                   SELECT MAX(e.sequence) + 1
+                   FROM request_decision_events e
+                   WHERE e.request_id = l.request_id
+               ), 0),
+               l.terminal_at_ms, 'request_finalized', 'startup_interrupted',
+               NULL, 'stop_request', 0
+        FROM request_logs l
+        WHERE l.request_id = ?
+          AND l.terminal_kind = 'interrupted'
+          AND (SELECT COUNT(*) FROM request_decision_events e
+               WHERE e.request_id = l.request_id) < 64
+        "#,
+    )
+    .bind(request_id)
+    .execute(&mut *connection)
+    .await?;
+    Ok(())
 }
 
 async fn mark_reconciliation_completed(

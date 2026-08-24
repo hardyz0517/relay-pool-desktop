@@ -4,7 +4,7 @@ use crate::{
     models::{
         proxy::{normalize_proxy_mode, normalize_proxy_url},
         routing::{DispatchAlgorithmSettings, RoutingGroupFilter},
-        routing_policy::RoutingPolicyConfigV1,
+        routing_policy::RoutingPolicyConfigV2,
         secrets::mask_secret,
         settings::{AppSettings, UpdateSettingsInput},
     },
@@ -208,6 +208,10 @@ impl SettingsStore {
                 "developer_mode_enabled",
                 update.input.developer_mode_enabled.to_string(),
             ),
+            (
+                "show_decision_explanation",
+                update.input.show_decision_explanation.to_string(),
+            ),
             ("tray_behavior", tray_behavior),
         ];
         for (key, value) in values {
@@ -321,6 +325,12 @@ async fn settings_from_connection(
         developer_mode_enabled: parse_setting_or_default(
             &mut *connection,
             "developer_mode_enabled",
+            "false",
+        )
+        .await?,
+        show_decision_explanation: parse_setting_or_default(
+            &mut *connection,
+            "show_decision_explanation",
             "false",
         )
         .await?,
@@ -484,9 +494,10 @@ async fn canonical_policy_projection(
             routing_group_filter: RoutingGroupFilter::AllGroups,
         });
     };
-    let config = serde_json::from_str::<RoutingPolicyConfigV1>(&config_json)
+    let config = serde_json::from_str::<serde_json::Value>(&config_json)
         .map_err(|_| invalid_persisted_setting())?;
-    config.validate().map_err(|_| invalid_persisted_setting())?;
+    let config = RoutingPolicyConfigV2::from_stored_value(&config)
+        .map_err(|_| invalid_persisted_setting())?;
     Ok(CanonicalPolicyProjection {
         allow_depleted_fallback: config.allow_depleted_fallback,
         max_rate_multiplier: config.max_rate_multiplier,
@@ -577,6 +588,7 @@ fn is_supported_setting_key(key: &str) -> bool {
             | "collector_timeout_seconds"
             | "collector_max_concurrency"
             | "developer_mode_enabled"
+            | "show_decision_explanation"
             | "tray_behavior"
     )
 }

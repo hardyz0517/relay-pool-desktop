@@ -1,5 +1,5 @@
 use crate::application::model_mapping::CandidateModelVariant;
-use crate::models::routing_policy::RoutingPolicyConfigV1;
+use crate::models::routing_policy::RoutingPolicyConfigV2;
 
 use super::{
     dispatch::{weighted_rendezvous, DispatchCandidate, DispatchDecision},
@@ -197,7 +197,7 @@ pub(crate) fn plan_snapshot_with_budget(
 fn planned_candidate(
     candidate: &CandidateSnapshot,
     variant: Option<CandidateModelVariant>,
-    policy: &RoutingPolicyConfigV1,
+    policy: &RoutingPolicyConfigV2,
     affinity_station_key_id: Option<&str>,
 ) -> Option<PlannedCandidate> {
     if !candidate.hard_eligible {
@@ -235,24 +235,9 @@ fn planned_candidate(
     })
 }
 
-/// Returns the same normalized utility score used by the planner. Read models
-/// use this helper to present the active policy score without reimplementing
-/// factor and weight semantics in the UI layer.
-pub(crate) fn candidate_utility_score(
-    candidate: &CandidateSnapshot,
-    policy: &RoutingPolicyConfigV1,
-    affinity_station_key_id: Option<&str>,
-) -> Option<u16> {
-    if !candidate.hard_eligible || candidate.capability_basis_points == 0 {
-        return None;
-    }
-    candidate_score_breakdown_with_cost_basis(candidate, policy, affinity_station_key_id, None)
-        .map(|breakdown| breakdown.total)
-}
-
 pub(crate) fn candidate_score_breakdown_with_cost_basis(
     candidate: &CandidateSnapshot,
-    policy: &RoutingPolicyConfigV1,
+    policy: &RoutingPolicyConfigV2,
     affinity_station_key_id: Option<&str>,
     cost_basis_override: Option<u16>,
 ) -> Option<CandidateScoreBreakdown> {
@@ -270,7 +255,7 @@ pub(crate) fn candidate_score_breakdown_with_cost_basis(
 
 fn weighted_score_components(
     candidate: &CandidateSnapshot,
-    policy: &RoutingPolicyConfigV1,
+    policy: &RoutingPolicyConfigV2,
     affinity_station_key_id: Option<&str>,
     cost_basis_override: Option<u16>,
 ) -> Option<(BasisPoints, [FactorContribution; 4])> {
@@ -321,7 +306,13 @@ mod tests {
             snapshot_id: "snapshot-1".into(),
             durable_revision: 1,
             routing_policy_revision: 1,
-            policy: RoutingPolicyConfigV1::default(),
+            policy: RoutingPolicyConfigV2::default(),
+            attempt_budget:
+                crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
+                    1,
+                    &crate::models::routing_policy::RetryFailoverPolicyV2::default(),
+                )
+                .expect("attempt budget"),
             profile: DispatchAlgorithmProfile::default(),
             candidates: vec![CandidateSnapshot {
                 station_key_id: "key-a".into(),
@@ -366,7 +357,7 @@ mod tests {
 
     #[test]
     fn affinity_is_an_explicit_preference_correction() {
-        let mut policy = RoutingPolicyConfigV1::default();
+        let mut policy = RoutingPolicyConfigV2::default();
         policy.reliability_weight = 0;
         policy.responsiveness_weight = 0;
         policy.cost_weight = 0;
@@ -377,6 +368,12 @@ mod tests {
             durable_revision: 1,
             routing_policy_revision: 1,
             policy,
+            attempt_budget:
+                crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
+                    1,
+                    &crate::models::routing_policy::RetryFailoverPolicyV2::default(),
+                )
+                .expect("attempt budget"),
             profile: DispatchAlgorithmProfile::default(),
             candidates: vec![
                 CandidateSnapshot {
@@ -456,7 +453,13 @@ mod tests {
             snapshot_id: "mixed-cost-tiers".into(),
             durable_revision: 1,
             routing_policy_revision: 1,
-            policy: RoutingPolicyConfigV1::default(),
+            policy: RoutingPolicyConfigV2::default(),
+            attempt_budget:
+                crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
+                    1,
+                    &crate::models::routing_policy::RetryFailoverPolicyV2::default(),
+                )
+                .expect("attempt budget"),
             profile,
             candidates: vec![
                 CandidateSnapshot {

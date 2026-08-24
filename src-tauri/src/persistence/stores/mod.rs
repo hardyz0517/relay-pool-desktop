@@ -20,6 +20,7 @@ pub(crate) mod request_log_write;
 pub(crate) mod request_outcome_store;
 pub(crate) mod request_terminal_outbox;
 pub(crate) mod routing_decisions;
+pub(crate) mod routing_error_rate_history_store;
 pub(crate) mod routing_health_verdict_store;
 pub(crate) mod routing_observation_store;
 pub(crate) mod routing_policy_store;

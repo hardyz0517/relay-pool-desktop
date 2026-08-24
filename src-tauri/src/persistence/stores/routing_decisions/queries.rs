@@ -13,6 +13,8 @@ pub(crate) struct RoutingDecisionCursor {
 pub(crate) struct RoutingDecisionSummaryRow {
     pub(crate) id: String,
     pub(crate) request_id: String,
+    pub(crate) request_log_id: Option<String>,
+    pub(crate) model: Option<String>,
     pub(crate) decided_at_ms: i64,
     pub(crate) ordering_profile: String,
     pub(crate) selected_station_key_id: Option<String>,
@@ -53,12 +55,19 @@ impl RoutingDecisionQueries {
     ) -> Result<Option<RoutingDecisionSummaryRow>, PersistenceError> {
         let row = sqlx::query(
             r#"
-            SELECT id, request_id, decided_at_ms, ordering_profile,
-                   selected_station_key_id, selected_station_id, candidate_count,
-                   candidate_detail_count, candidate_detail_truncated,
-                   rejection_counts_json, trace_status
-            FROM route_decisions
-            WHERE id = ?1
+            SELECT d.id AS id, d.request_id AS request_id,
+                   l.id AS request_log_id, l.model AS model,
+                   d.decided_at_ms AS decided_at_ms, d.ordering_profile AS ordering_profile,
+                   d.selected_station_key_id AS selected_station_key_id,
+                   d.selected_station_id AS selected_station_id,
+                   d.candidate_count AS candidate_count,
+                   d.candidate_detail_count AS candidate_detail_count,
+                   d.candidate_detail_truncated AS candidate_detail_truncated,
+                   d.rejection_counts_json AS rejection_counts_json,
+                   d.trace_status AS trace_status
+            FROM route_decisions AS d
+            LEFT JOIN request_logs AS l ON l.request_id = d.request_id
+            WHERE d.id = ?1 OR l.id = ?1 OR d.request_id = ?1
             "#,
         )
         .bind(decision_id)
@@ -78,13 +87,20 @@ impl RoutingDecisionQueries {
         let rows = if let Some(cursor) = cursor {
             sqlx::query(
                 r#"
-                SELECT id, request_id, decided_at_ms, ordering_profile,
-                       selected_station_key_id, selected_station_id,
-                       candidate_count, candidate_detail_count,
-                       candidate_detail_truncated, rejection_counts_json, trace_status
-                FROM route_decisions
-                WHERE decided_at_ms < ?1 OR (decided_at_ms = ?1 AND id < ?2)
-                ORDER BY decided_at_ms DESC, id DESC
+                SELECT d.id AS id, d.request_id AS request_id,
+                       l.id AS request_log_id, l.model AS model,
+                       d.decided_at_ms AS decided_at_ms, d.ordering_profile AS ordering_profile,
+                       d.selected_station_key_id AS selected_station_key_id,
+                       d.selected_station_id AS selected_station_id,
+                       d.candidate_count AS candidate_count,
+                       d.candidate_detail_count AS candidate_detail_count,
+                       d.candidate_detail_truncated AS candidate_detail_truncated,
+                       d.rejection_counts_json AS rejection_counts_json,
+                       d.trace_status AS trace_status
+                FROM route_decisions AS d
+                LEFT JOIN request_logs AS l ON l.request_id = d.request_id
+                WHERE d.decided_at_ms < ?1 OR (d.decided_at_ms = ?1 AND d.id < ?2)
+                ORDER BY d.decided_at_ms DESC, d.id DESC
                 LIMIT ?3
                 "#,
             )
@@ -96,12 +112,19 @@ impl RoutingDecisionQueries {
         } else {
             sqlx::query(
                 r#"
-                SELECT id, request_id, decided_at_ms, ordering_profile,
-                       selected_station_key_id, selected_station_id,
-                       candidate_count, candidate_detail_count,
-                       candidate_detail_truncated, rejection_counts_json, trace_status
-                FROM route_decisions
-                ORDER BY decided_at_ms DESC, id DESC
+                SELECT d.id AS id, d.request_id AS request_id,
+                       l.id AS request_log_id, l.model AS model,
+                       d.decided_at_ms AS decided_at_ms, d.ordering_profile AS ordering_profile,
+                       d.selected_station_key_id AS selected_station_key_id,
+                       d.selected_station_id AS selected_station_id,
+                       d.candidate_count AS candidate_count,
+                       d.candidate_detail_count AS candidate_detail_count,
+                       d.candidate_detail_truncated AS candidate_detail_truncated,
+                       d.rejection_counts_json AS rejection_counts_json,
+                       d.trace_status AS trace_status
+                FROM route_decisions AS d
+                LEFT JOIN request_logs AS l ON l.request_id = d.request_id
+                ORDER BY d.decided_at_ms DESC, d.id DESC
                 LIMIT ?1
                 "#,
             )
@@ -162,6 +185,8 @@ fn summary_from_row(
     Ok(RoutingDecisionSummaryRow {
         id: row.get("id"),
         request_id: row.get("request_id"),
+        request_log_id: row.get("request_log_id"),
+        model: row.get("model"),
         decided_at_ms: row.get("decided_at_ms"),
         ordering_profile: row.get("ordering_profile"),
         selected_station_key_id: row.get("selected_station_key_id"),

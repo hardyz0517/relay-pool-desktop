@@ -33,6 +33,7 @@ use crate::{
         proxy::RequestLog,
         routing::UpdateStationKeyCapabilitiesInput,
         settings::UpdateSettingsInput,
+        station_capacity_domains::UpsertStationCapacityDomainInput,
         station_keys::CreateStationKeyInput,
         stations::CreateStationInput,
     },
@@ -293,6 +294,48 @@ impl RoutingLoopbackHarness {
             .expect("set routing strategy");
     }
 
+    /// Applies the request-local retry/failover controls through the same
+    /// versioned CAS boundary used by the routing settings UI.  Loopback
+    /// scenarios must not mutate the policy row directly because that would
+    /// bypass the compiler and revision fence exercised by production.
+    pub async fn set_retry_failover_policy(
+        &self,
+        max_total_attempts: u16,
+        max_same_target_capacity_retries: u16,
+        capacity_retry_wait_budget_ms: u32,
+        allow_cross_capacity_domain_fallback: bool,
+    ) {
+        let stored = self
+            .services
+            .routing
+            .load_routing_policy()
+            .await
+            .expect("load routing policy");
+        let mut policy =
+            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
+                .expect("decode routing policy as v2");
+        policy.retry_failover = crate::models::routing_policy::RetryFailoverPolicyV2 {
+            version: crate::models::routing_policy::RETRY_FAILOVER_POLICY_VERSION_V2,
+            max_total_attempts,
+            max_same_target_capacity_retries,
+            capacity_retry_wait_budget_seconds: f64::from(capacity_retry_wait_budget_ms) / 1_000.0,
+            allow_cross_capacity_domain_fallback,
+        };
+        self.services
+            .routing
+            .apply_routing_policy_document_v2(
+                crate::models::routing_policy::RoutingPolicyDocumentV2 {
+                    format_version:
+                        crate::models::routing_policy::ROUTING_POLICY_DOCUMENT_FORMAT_VERSION,
+                    base_revision: stored.revision,
+                    policy,
+                },
+                crate::models::document_sync::TrustedDocumentSource::ui(),
+            )
+            .await
+            .expect("apply retry/failover policy");
+    }
+
     pub async fn update_candidate_capabilities(
         &self,
         candidate: &SeededCandidate,
@@ -368,6 +411,26 @@ impl RoutingLoopbackHarness {
             })
             .await
             .expect("set loopback candidate station type");
+    }
+
+    pub async fn set_candidate_capacity_domain(
+        &self,
+        candidate: &SeededCandidate,
+        provider_family: &str,
+        deployment_identity: Option<&str>,
+        region_identity: Option<&str>,
+    ) {
+        self.services
+            .station_capacity_domains
+            .upsert(UpsertStationCapacityDomainInput {
+                station_id: candidate.station_id.clone(),
+                expected_revision: 0,
+                provider_family: provider_family.to_string(),
+                deployment_identity: deployment_identity.map(ToString::to_string),
+                region_identity: region_identity.map(ToString::to_string),
+            })
+            .await
+            .expect("set loopback candidate capacity domain");
     }
 
     pub async fn bind_candidate_to_group(
@@ -518,8 +581,8 @@ impl RoutingLoopbackHarness {
         document.base_revision =
             crate::application::model_mapping::current_document().base_revision;
         self.services
-            .routing
-            .apply_model_mapping_document(
+            .model_mapping
+            .apply_document(
                 document,
                 crate::models::document_sync::TrustedDocumentSource::system(),
             )
@@ -776,6 +839,28 @@ impl RoutingLoopbackHarness {
         .collect()
     }
 
+    pub async fn decision_trace_event_summaries(
+        &self,
+        request_log_id: &str,
+    ) -> Vec<DecisionTraceEventSummary> {
+        self.proxy
+            .decision_trace_for_request(request_log_id)
+            .await
+            .map(|trace| {
+                trace
+                    .events
+                    .into_iter()
+                    .map(|event| DecisionTraceEventSummary {
+                        kind: event.kind.as_str().to_string(),
+                        code: event.code,
+                        ordinal: event.ordinal,
+                        detail: event.detail,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub async fn attempt_cost_count(&self, request_log_id: &str) -> i64 {
         let mut read = self
             .runtime
@@ -936,9 +1021,11 @@ impl RoutingLoopbackHarness {
         let routing_repository: Arc<
             dyn crate::services::proxy::routing_repository::RoutingRepository,
         > = Arc::new(
-            crate::services::proxy::routing_repository::RoutingExecutionRepository::new(
-                self.services.routing.as_ref().clone(),
-            ),
+            crate::services::proxy::routing_repository::RoutingExecutionRepository::new(Arc::new(
+                crate::application::routing_execution_reader::RoutingExecutionReader::new(
+                    self.services.routing.clone(),
+                ),
+            )),
         );
         let lifecycle_store: Arc<
             dyn crate::services::proxy::lifecycle::ports::RequestLifecycleStore,
@@ -974,6 +1061,7 @@ impl RoutingLoopbackHarness {
                 collector_max_concurrency: settings.collector_max_concurrency,
                 allow_depleted_fallback: settings.allow_depleted_fallback,
                 developer_mode_enabled: settings.developer_mode_enabled,
+                show_decision_explanation: settings.show_decision_explanation,
                 tray_behavior: Some(settings.tray_behavior),
             })
             .await
@@ -996,6 +1084,23 @@ impl ProxyEndpoint {
         let response = reqwest::Client::new()
             .post(format!("{}{}", self.base_url, path))
             .bearer_auth(&self.local_access_key)
+            .json(&body)
+            .send()
+            .await
+            .expect("proxy request");
+        LoopbackHttpResponse::from_response(response).await
+    }
+
+    pub async fn post_json_with_idempotency_key(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+        idempotency_key: &str,
+    ) -> LoopbackHttpResponse {
+        let response = reqwest::Client::new()
+            .post(format!("{}{}", self.base_url, path))
+            .bearer_auth(&self.local_access_key)
+            .header("Idempotency-Key", idempotency_key)
             .json(&body)
             .send()
             .await
@@ -1072,6 +1177,14 @@ pub struct AttemptTerminalSummary {
     pub failure_kind: Option<String>,
     pub public_code: Option<String>,
     pub output_committed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionTraceEventSummary {
+    pub kind: String,
+    pub code: String,
+    pub ordinal: u32,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

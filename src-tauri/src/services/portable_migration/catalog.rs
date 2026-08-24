@@ -96,7 +96,7 @@ pub(crate) enum CatalogError {
 // The v1 catalog describes the post-alerting-cutover user schema. Historical
 // `change_events` is intentionally absent; the six alerting tables below are
 // the durable replacement and must be recognized by portable migration.
-pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 74;
+pub(crate) const EXPECTED_USER_TABLE_COUNT_V1: usize = 78;
 
 pub(crate) fn migration_data_catalog() -> &'static [TableCatalog] {
     TABLES
@@ -128,6 +128,7 @@ pub(crate) fn setting_policy(key: &str) -> Option<SettingPolicy> {
         | "collector_timeout_seconds"
         | "collector_max_concurrency"
         | "developer_mode_enabled"
+        | "show_decision_explanation"
         | "tray_behavior" => Some(SettingPolicy::Include),
         "default_routing_strategy"
         | "default_routing_group_filter"
@@ -802,6 +803,33 @@ const REQUEST_ROUTING_OUTCOME_SUMMARIES_COLUMNS: &[&str] = &[
     "fallback_count",
     "terminal_at_ms",
 ];
+const REQUEST_DECISION_EVENTS_COLUMNS: &[&str] = &[
+    "request_id",
+    "event_key",
+    "sequence",
+    "occurred_at_ms",
+    "event_kind",
+    "detail_code",
+    "attempt_ordinal",
+    "retry_disposition",
+    "output_committed",
+];
+const ROUTING_ERROR_RATE_HISTORY_COLUMNS: &[&str] = &[
+    "ingestion_sequence",
+    "observation_id",
+    "observed_at_ms",
+    "scope_kind",
+    "scope_commitment",
+    "outcome",
+    "failure_code",
+    "sample_count",
+    "failure_count",
+    "failure_rate_percent",
+    "transition",
+    "created_at_ms",
+];
+const ROUTING_ERROR_RATE_HISTORY_META_COLUMNS: &[&str] =
+    &["singleton_key", "dropped_events", "updated_at_ms"];
 const ROUTING_LIFECYCLE_RECONCILIATION_PROGRESS_COLUMNS: &[&str] = &[
     "singleton_key",
     "last_request_id",
@@ -1508,6 +1536,26 @@ const ROUTING_HEALTH_PROJECTOR_STATE_COLUMNS: &[&str] = &[
     "watermark_observation_id",
     "updated_at_ms",
 ];
+const ROUTING_HEALTH_PROTECTION_STATE_COLUMNS: &[&str] = &[
+    "singleton_key",
+    "profile_version",
+    "profile_json",
+    "snapshot_version",
+    "snapshot_json",
+    "content_hash",
+    "generated_at_ms",
+    "updated_at_ms",
+];
+const ROUTING_HEALTH_PROTECTION_STATE_RULES: &[FieldRule] = &[
+    FieldRule {
+        name: "profile_json",
+        transform: FieldTransform::Exclude,
+    },
+    FieldRule {
+        name: "snapshot_json",
+        transform: FieldTransform::Exclude,
+    },
+];
 const ROUTING_CAPABILITY_MODEL_OBSERVATIONS_COLUMNS: &[&str] = &[
     "ingestion_sequence",
     "observation_id",
@@ -2199,6 +2247,33 @@ const TABLES: &[TableCatalog] = &[
         &[],
     ),
     table(
+        "request_decision_events",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        REQUEST_DECISION_EVENTS_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_error_rate_history",
+        TablePolicy::OptionalHistory,
+        DataCategory::History,
+        DependencyStage::History,
+        true,
+        ROUTING_ERROR_RATE_HISTORY_COLUMNS,
+        &[],
+    ),
+    table(
+        "routing_error_rate_history_meta",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_ERROR_RATE_HISTORY_META_COLUMNS,
+        &[],
+    ),
+    table(
         "request_terminal_outbox",
         TablePolicy::Reset,
         DataCategory::DeviceRuntimeState,
@@ -2577,6 +2652,15 @@ const TABLES: &[TableCatalog] = &[
         false,
         ROUTING_HEALTH_PROJECTOR_STATE_COLUMNS,
         &[],
+    ),
+    table(
+        "routing_health_protection_state",
+        TablePolicy::Reset,
+        DataCategory::DeviceRuntimeState,
+        DependencyStage::History,
+        false,
+        ROUTING_HEALTH_PROTECTION_STATE_COLUMNS,
+        ROUTING_HEALTH_PROTECTION_STATE_RULES,
     ),
     table(
         "routing_capability_model_observations",

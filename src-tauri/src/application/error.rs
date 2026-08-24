@@ -20,6 +20,8 @@ pub(crate) enum ApplicationError {
     IncompatibleSchema,
     #[error("commit outcome unknown")]
     CommitOutcomeUnknown,
+    #[error("deadline exceeded")]
+    DeadlineExceeded,
     #[error("internal failure")]
     Internal,
 }

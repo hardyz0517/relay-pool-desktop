@@ -201,6 +201,7 @@ pub async fn list_alerting_incidents(
                     input.station_id.as_deref(),
                     input.severity.as_deref(),
                     input.lifecycle_state.as_deref(),
+                    input.search.as_deref(),
                     cursor.as_ref(),
                     input.limit.unwrap_or(50),
                 )
@@ -241,6 +242,7 @@ pub async fn list_alerting_activity(
                     input.severity.as_deref(),
                     input.record_type.map(|value| value.as_str()),
                     input.unread_only,
+                    input.search.as_deref(),
                     cursor.as_ref(),
                     input.limit.unwrap_or(50),
                 )

@@ -365,6 +365,7 @@ mod tests {
                     collector_max_concurrency: 3,
                     allow_depleted_fallback: false,
                     developer_mode_enabled: true,
+                    show_decision_explanation: false,
                     tray_behavior: None,
                 })
                 .await

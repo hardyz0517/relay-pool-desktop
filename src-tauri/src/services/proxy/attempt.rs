@@ -36,13 +36,22 @@ use crate::{
 pub(crate) struct UpstreamAttemptFinalizationLease {
     reservation: AttemptWriteReservation,
     context: AttemptContext,
+    probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
+    probe_state_revision: Option<u64>,
 }
 
 impl UpstreamAttemptFinalizationLease {
-    pub(crate) fn new(reservation: AttemptWriteReservation, context: AttemptContext) -> Self {
+    pub(crate) fn new(
+        reservation: AttemptWriteReservation,
+        context: AttemptContext,
+        probe_scope: Option<crate::application::health_protection::HealthProtectionScope>,
+        probe_state_revision: Option<u64>,
+    ) -> Self {
         Self {
             reservation,
             context,
+            probe_scope,
+            probe_state_revision,
         }
     }
 }
@@ -107,6 +116,8 @@ impl DualTerminalFinalizationLease {
                             terminal,
                             output_committed,
                             terminal_at_ms: now_millis_for_services() as i64,
+                            probe_scope: attempt.probe_scope,
+                            probe_state_revision: attempt.probe_state_revision,
                         },
                         attempt.reservation,
                     )

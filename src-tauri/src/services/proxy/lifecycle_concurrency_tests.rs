@@ -76,7 +76,7 @@ async fn lifecycle_stream_capacity_is_released_when_client_drops_body() {
     let runtime = ProxyRuntimeState::for_tests();
     let mut config = fixture.config(0);
     config.limits.max_in_flight_requests = 1;
-    config.limits.stream_idle_timeout = Duration::from_secs(30);
+    config.transport_policy.stream_idle_timeout = Duration::from_secs(30);
     let started = runtime.start(config).await.expect("start runtime");
     let client = reqwest::Client::new();
 

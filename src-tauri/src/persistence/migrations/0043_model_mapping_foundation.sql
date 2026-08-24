@@ -215,6 +215,10 @@ WITH ranked AS (
       AND trim(upstream_model) <> ''
       AND length(CAST(trim(client_model) AS BLOB)) <= 512
       AND length(CAST(trim(upstream_model) AS BLOB)) <= 512
+      -- The generated rule/target IDs encode client_model as hex and are
+      -- bounded to 192 bytes by the destination schema. Keep oversized
+      -- legacy aliases in the review table instead of aborting migration.
+      AND length(CAST(hex(trim(client_model)) AS BLOB)) <= 160
       AND instr(trim(client_model), char(0)) = 0
       AND instr(trim(client_model), char(10)) = 0
       AND instr(trim(client_model), char(13)) = 0
@@ -259,6 +263,7 @@ WITH ranked AS (
       AND trim(upstream_model) <> ''
       AND length(CAST(trim(client_model) AS BLOB)) <= 512
       AND length(CAST(trim(upstream_model) AS BLOB)) <= 512
+      AND length(CAST(hex(trim(client_model)) AS BLOB)) <= 160
       AND instr(trim(client_model), char(0)) = 0
       AND instr(trim(client_model), char(10)) = 0
       AND instr(trim(client_model), char(13)) = 0
@@ -322,6 +327,7 @@ SELECT
         WHEN trim(client_model) = '' OR trim(upstream_model) = ''
           OR length(CAST(trim(client_model) AS BLOB)) > 512
           OR length(CAST(trim(upstream_model) AS BLOB)) > 512
+          OR length(CAST(hex(trim(client_model)) AS BLOB)) > 160
           OR instr(trim(client_model), char(0)) > 0
           OR instr(trim(client_model), char(10)) > 0
           OR instr(trim(client_model), char(13)) > 0
@@ -341,6 +347,7 @@ WHERE enabled = 0
    OR trim(upstream_model) = ''
    OR length(CAST(trim(client_model) AS BLOB)) > 512
    OR length(CAST(trim(upstream_model) AS BLOB)) > 512
+   OR length(CAST(hex(trim(client_model)) AS BLOB)) > 160
    OR instr(trim(client_model), char(0)) > 0
    OR instr(trim(client_model), char(10)) > 0
    OR instr(trim(client_model), char(13)) > 0

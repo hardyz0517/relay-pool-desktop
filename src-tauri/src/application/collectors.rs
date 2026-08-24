@@ -9,7 +9,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     application::{
-        alerting::{AlertingIngress, ObservationIngress},
+        alerting::{
+            AlertingIngress, AlertingReadModelUpdatePublisher,
+            NoopAlertingReadModelUpdatePublisher, ObservationIngress,
+        },
         clock::Clock,
         error::ApplicationError,
         ids::IdGenerator,
@@ -187,6 +190,7 @@ pub(crate) struct CollectorService {
     published_status: StationPublishedStatusStore,
     stations: StationCatalogStore,
     alerting: AlertingIngress,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
 }
 
 impl CollectorService {
@@ -215,10 +219,31 @@ impl CollectorService {
         })
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=alerting.read-model-update-test-constructor; owner=application/collectors; remove_when=all non-desktop compositions inject a read-model update publisher"
+        )
+    )]
     pub(crate) fn new(
         runtime: PersistenceHandle,
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
+    ) -> Self {
+        Self::new_with_alerting_read_model_updates(
+            runtime,
+            clock,
+            ids,
+            Arc::new(NoopAlertingReadModelUpdatePublisher),
+        )
+    }
+
+    pub(crate) fn new_with_alerting_read_model_updates(
+        runtime: PersistenceHandle,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
     ) -> Self {
         Self {
             runtime: runtime.clone(),
@@ -228,6 +253,7 @@ impl CollectorService {
             published_status: StationPublishedStatusStore,
             stations: StationCatalogStore,
             alerting: AlertingIngress::new(runtime.clone()),
+            alerting_updates,
         }
     }
 
@@ -318,7 +344,8 @@ impl CollectorService {
         // not collapsed into the first occurrence for this binding.
         let source_observation_key = self.ids.next_id();
 
-        self.runtime
+        let (binding, alerting_changed) = self
+            .runtime
             .write(move |write| {
                 Box::pin(async move {
                     collectors
@@ -327,18 +354,27 @@ impl CollectorService {
                     let stored = collectors
                         .upsert_station_group_binding(write, &binding)
                         .await?;
-                    if let Some(observation) = group_transition_observation(
+                    let alerting_changed = if let Some(observation) = group_transition_observation(
                         &stored.transition,
                         &binding.now,
                         &source_observation_key,
                     ) {
-                        alerting.record_in_session(write, observation).await?;
-                    }
-                    Ok(stored.binding)
+                        alerting
+                            .record_in_session(write, observation)
+                            .await?
+                            .inserted
+                    } else {
+                        false
+                    };
+                    Ok((stored.binding, alerting_changed))
                 })
             })
             .await
-            .map_err(Into::into)
+            .map_err(ApplicationError::from)?;
+        if alerting_changed {
+            self.alerting_updates.notify_after_commit();
+        }
+        Ok(binding)
     }
 
     pub(crate) async fn list_group_rate_records(
@@ -584,7 +620,8 @@ impl CollectorService {
         let published_status = self.published_status;
         let alerting = self.alerting.clone();
 
-        self.runtime
+        let (outcome, alerting_changed) = self
+            .runtime
             .write(move |write| {
                 Box::pin(async move {
                     if let Some(existing) =
@@ -598,7 +635,7 @@ impl CollectorService {
                                 ),
                             );
                         }
-                        return Ok(existing.outcome.into());
+                        return Ok((existing.outcome.into(), false));
                     }
 
                     collectors
@@ -842,18 +879,22 @@ impl CollectorService {
                         )
                         .await?;
 
+                    let mut alerting_changed = false;
                     for transition in group_transitions.values() {
                         if let Some(observation) =
                             group_transition_observation(transition, &now, &run_id)
                         {
-                            alerting.record_in_session(write, observation).await?;
+                            alerting_changed |= alerting
+                                .record_in_session(write, observation)
+                                .await?
+                                .inserted;
                         }
                     }
                     for transition in rate_transitions
                         .iter()
                         .filter(|transition| transition.old_effective_rate_multiplier.is_some())
                     {
-                        alerting
+                        alerting_changed |= alerting
                             .record_in_session(
                                 write,
                                 rate_change_observation(
@@ -863,7 +904,8 @@ impl CollectorService {
                                     &now,
                                 ),
                             )
-                            .await?;
+                            .await?
+                            .inserted;
                     }
 
                     // A full collection owns the lifecycle of its child tasks. Child
@@ -874,7 +916,7 @@ impl CollectorService {
                             .emits_collector_observation
                             && should_emit_collector_observation(request.parent_run_id.as_deref());
                     if emit_collector_observation
-                        && matches!(request.status.as_str(), "success" | "partial" | "failed")
+                        && should_record_collector_observation(&request.status)
                     {
                         let failed_task_types =
                             collector_failed_task_types(&collectors, write, &request).await?;
@@ -883,7 +925,7 @@ impl CollectorService {
                         } else {
                             ObservationKind::Abnormal
                         };
-                        alerting
+                        alerting_changed |= alerting
                             .record_in_session(
                                 write,
                                 collector_observation(
@@ -895,7 +937,8 @@ impl CollectorService {
                                     &now,
                                 ),
                             )
-                            .await?;
+                            .await?
+                            .inserted;
                     }
 
                     collectors
@@ -944,11 +987,15 @@ impl CollectorService {
                             },
                         )
                         .await?;
-                    Ok(stored.into())
+                    Ok((stored.into(), alerting_changed))
                 })
             })
             .await
-            .map_err(Into::into)
+            .map_err(ApplicationError::from)?;
+        if alerting_changed {
+            self.alerting_updates.notify_after_commit();
+        }
+        Ok(outcome)
     }
 }
 
@@ -1578,6 +1625,13 @@ fn should_emit_collector_observation(parent_run_id: Option<&str>) -> bool {
     parent_run_id.is_none()
 }
 
+/// A manual authorization result is a known station state, not a collector
+/// failure. It must still flow through the observation projector so it can
+/// clear a failure incident left by an earlier run.
+fn should_record_collector_observation(status: &str) -> bool {
+    matches!(status, "success" | "partial" | "failed" | "manual_required")
+}
+
 async fn collector_failed_task_types(
     collectors: &CollectorStore,
     write: &mut crate::persistence::WriteSession,
@@ -1843,6 +1897,15 @@ mod tests {
     fn child_collection_runs_do_not_create_duplicate_collector_incidents() {
         assert!(should_emit_collector_observation(None));
         assert!(!should_emit_collector_observation(Some("full-run-1")));
+    }
+
+    #[test]
+    fn manual_authorization_results_are_recorded_for_collector_recovery() {
+        assert!(should_record_collector_observation("manual_required"));
+        assert!(should_record_collector_observation("success"));
+        assert!(should_record_collector_observation("partial"));
+        assert!(should_record_collector_observation("failed"));
+        assert!(!should_record_collector_observation("unsupported"));
     }
 
     #[test]
@@ -2349,6 +2412,12 @@ mod tests {
                 &request,
             ),
             vec!["balance".to_string()]
+        );
+
+        request.status = "manual_required".to_string();
+        request.manual_action_required = true;
+        assert!(
+            merge_collector_failed_task_types(vec!["groups".to_string()], &request,).is_empty()
         );
 
         request.task_type = "full".to_string();

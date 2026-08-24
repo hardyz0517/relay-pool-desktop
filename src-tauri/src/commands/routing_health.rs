@@ -6,20 +6,39 @@ use crate::{
     commands::error,
     ipc::dto::{
         routing_health_reads::{
-            RecentRouteDecisionsInputDto, RecentRouteDecisionsPageDto, RequestDecisionTraceDto,
-            RequestDecisionTraceInputDto, RouteSimulationInputDto, RouteSimulationResultDto,
-            RoutingRuntimeOverlayDto, RoutingStationKeyIdInputDto, RoutingWorkspaceSnapshotDto,
-            RoutingWorkspaceSnapshotInputDto, StationEndpointHealthDto, StationKeyHealthDto,
-            StationKeyOperationalDetailDto, StationKeyOperationalDetailInputDto,
+            ErrorRateHistoryInputDto, ErrorRateHistoryPageDto, RecentRouteDecisionsInputDto,
+            RecentRouteDecisionsPageDto, RequestDecisionTraceDto, RequestDecisionTraceInputDto,
+            RouteSimulationInputDto, RouteSimulationResultDto, RoutingProtectionStatusDto,
+            RoutingProtectionStatusInputDto, RoutingRuntimeOverlayDto, RoutingStationKeyIdInputDto,
+            RoutingWorkspaceSnapshotDto, RoutingWorkspaceSnapshotInputDto,
+            StationEndpointHealthDto, StationKeyHealthDto, StationKeyOperationalDetailDto,
+            StationKeyOperationalDetailInputDto,
         },
         routing_mutations::{
-            ApplyRoutingPolicyDocumentInputDto, RoutingPolicySnapshotDto,
-            UpdateRoutingPolicyInputDto,
+            ApplyRoutingPolicyDocumentInputDto, RoutingDocumentSyncDto, RoutingPolicySnapshotDto,
         },
         EmptyInputDto,
     },
     observability::correlation,
 };
+
+fn routing_policy_snapshot(
+    stored: crate::persistence::stores::routing_policy_store::StoredRoutingPolicy,
+    document_sync: Option<crate::persistence::stores::document_sync_store::StoredDocumentSync>,
+) -> Result<RoutingPolicySnapshotDto, error::CommandError> {
+    let config =
+        crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&stored.config)
+            .map_err(|_| error::CommandError::internal(None))?;
+    Ok(RoutingPolicySnapshotDto {
+        config: config.into(),
+        revision: stored.revision,
+        policy_version: stored.policy_version,
+        system_version: stored.system_version,
+        status: stored.status,
+        updated_at_ms: stored.updated_at_ms,
+        document_sync: document_sync.map(RoutingDocumentSyncDto::from),
+    })
+}
 
 #[tauri::command]
 pub async fn list_station_key_health(
@@ -48,6 +67,31 @@ pub async fn list_station_key_health(
 }
 
 #[tauri::command]
+pub async fn get_routing_protection_status(
+    facade: State<'_, RoutingCommandFacade>,
+    input: Value,
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<RoutingProtectionStatusDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "get_routing_protection_status",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = RoutingProtectionStatusInputDto::parse(input)?;
+            facade
+                .get_routing_protection_status(input.model.as_deref())
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn load_routing_policy(
     facade: State<'_, RoutingCommandFacade>,
     input: Value,
@@ -68,55 +112,11 @@ pub async fn load_routing_policy(
                 .load_routing_policy()
                 .await
                 .map_err(super::public_command_application_error)?;
-            let config: crate::models::routing_policy::RoutingPolicyConfigV1 =
-                serde_json::from_value(stored.config)
-                    .map_err(|_| error::CommandError::internal(None))?;
-            Ok(RoutingPolicySnapshotDto {
-                config: config.into(),
-                revision: stored.revision,
-                policy_version: stored.policy_version,
-                system_version: stored.system_version,
-                status: stored.status,
-                updated_at_ms: stored.updated_at_ms,
-            })
-        },
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn update_routing_policy(
-    facade: State<'_, RoutingCommandFacade>,
-    input: Value,
-
-    runtime_context_registry: tauri::State<
-        '_,
-        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
-    >,
-    runtime_context: Option<serde_json::Value>,
-) -> Result<RoutingPolicySnapshotDto, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context(
-        "update_routing_policy",
-        runtime_context_registry.inner(),
-        runtime_context,
-        async {
-            let input = UpdateRoutingPolicyInputDto::parse(input)?;
-            let config = input.config.into_domain()?;
-            let stored = facade
-                .save_routing_policy(config, input.expected_revision)
+            let document_sync = facade
+                .load_routing_policy_document_sync()
                 .await
                 .map_err(super::public_command_application_error)?;
-            let config: crate::models::routing_policy::RoutingPolicyConfigV1 =
-                serde_json::from_value(stored.config)
-                    .map_err(|_| error::CommandError::internal(None))?;
-            Ok(RoutingPolicySnapshotDto {
-                config: config.into(),
-                revision: stored.revision,
-                policy_version: stored.policy_version,
-                system_version: stored.system_version,
-                status: stored.status,
-                updated_at_ms: stored.updated_at_ms,
-            })
+            routing_policy_snapshot(stored, document_sync)
         },
     )
     .await
@@ -124,8 +124,7 @@ pub async fn update_routing_policy(
 
 /// Apply a complete routing-policy document. The command keeps source
 /// provenance internal and uses `document.baseRevision` as the sole CAS
-/// precondition; the legacy field-level command above delegates to the same
-/// service for compatibility.
+/// precondition.
 #[tauri::command]
 pub async fn apply_routing_policy_document(
     facade: State<'_, RoutingCommandFacade>,
@@ -145,20 +144,14 @@ pub async fn apply_routing_policy_document(
             let input = ApplyRoutingPolicyDocumentInputDto::parse(input)?;
             let document = input.into_domain()?;
             let stored = facade
-                .apply_routing_policy_document(document)
+                .apply_routing_policy_document_v2(document)
                 .await
                 .map_err(super::public_command_application_error)?;
-            let config: crate::models::routing_policy::RoutingPolicyConfigV1 =
-                serde_json::from_value(stored.config)
-                    .map_err(|_| error::CommandError::internal(None))?;
-            Ok(RoutingPolicySnapshotDto {
-                config: config.into(),
-                revision: stored.revision,
-                policy_version: stored.policy_version,
-                system_version: stored.system_version,
-                status: stored.status,
-                updated_at_ms: stored.updated_at_ms,
-            })
+            let document_sync = facade
+                .load_routing_policy_document_sync()
+                .await
+                .map_err(super::public_command_application_error)?;
+            routing_policy_snapshot(stored, document_sync)
         },
     )
     .await
@@ -235,6 +228,31 @@ pub async fn list_recent_route_decisions(
             let input = RecentRouteDecisionsInputDto::parse(input)?.into_domain();
             facade
                 .list_recent_route_decisions(input)
+                .await
+                .map_err(super::public_command_application_error)
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn list_error_rate_history(
+    facade: State<'_, RoutingCommandFacade>,
+    input: Value,
+    runtime_context_registry: tauri::State<
+        '_,
+        crate::ipc::dto::runtime_context::RuntimeContextRegistry,
+    >,
+    runtime_context: Option<serde_json::Value>,
+) -> Result<ErrorRateHistoryPageDto, error::CommandError> {
+    correlation::in_command_scope_with_runtime_context(
+        "list_error_rate_history",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ErrorRateHistoryInputDto::parse(input)?;
+            facade
+                .list_error_rate_history(input.before_ms, input.limit.unwrap_or(50))
                 .await
                 .map_err(super::public_command_application_error)
         },

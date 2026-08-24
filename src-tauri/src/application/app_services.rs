@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use super::{
+    alerting::AlertingReadModelUpdatePublisher,
     clock::{Clock, SystemClock},
     collectors::CollectorService,
     credentials::{CredentialService, CredentialVault},
     data_directory::{DataDirectoryPort, DataDirectoryService},
+    error_rate_protection::ErrorRateProtectionService,
     ids::{IdGenerator, UuidV7Generator},
+    model_mapping_service::ModelMappingService,
     monitoring::MonitoringService,
     pricing::{BuiltinModelBasePriceCatalog, PricingService},
     provider_drafts::ProviderDraftService,
@@ -18,6 +21,8 @@ use super::{
     request_finalization::RequestFinalizationService,
     request_logs::RequestLogService,
     routing::RoutingService,
+    routing_diagnostics_reader::RoutingDiagnosticsReader,
+    routing_policy_read::RoutingPolicyReadService,
     settings::SettingsService,
     station_capacity_domains::StationCapacityDomainService,
     stations::StationService,
@@ -32,6 +37,9 @@ pub(crate) struct AppServices {
     pub(crate) credentials: Arc<CredentialService>,
     pub(crate) collectors: Arc<CollectorService>,
     pub(crate) routing: Arc<RoutingService>,
+    pub(crate) routing_policy_read: Arc<RoutingPolicyReadService>,
+    pub(crate) model_mapping: Arc<ModelMappingService>,
+    pub(crate) routing_diagnostics: Arc<RoutingDiagnosticsReader>,
     pub(crate) request_finalization: Arc<RequestFinalizationService>,
     pub(crate) request_logs: Arc<RequestLogService>,
     pub(crate) monitoring: Arc<MonitoringService>,
@@ -56,6 +64,7 @@ impl AppServices {
         blocking: BlockingExecutor,
         credential_vault: Arc<dyn CredentialVault>,
         builtin_price_catalog: Arc<dyn BuiltinModelBasePriceCatalog>,
+        alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
     ) -> Self {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let ids: Arc<dyn IdGenerator> = Arc::new(UuidV7Generator);
@@ -78,11 +87,13 @@ impl AppServices {
             clock.clone(),
             ids.clone(),
         ));
+        let error_rate_protection = ErrorRateProtectionService::disabled();
         Self::new(
-            Arc::new(StationService::new(
+            Arc::new(StationService::new_with_alerting_read_model_updates(
                 runtime.clone(),
                 clock.clone(),
                 ids.clone(),
+                Arc::clone(&alerting_updates),
             )),
             Arc::new(StationCapacityDomainService::new(
                 runtime.clone(),
@@ -95,18 +106,32 @@ impl AppServices {
                 clock.clone(),
                 ids.clone(),
             )),
-            Arc::new(CollectorService::new(
+            Arc::new(CollectorService::new_with_alerting_read_model_updates(
                 runtime.clone(),
                 clock.clone(),
                 ids.clone(),
+                alerting_updates,
             )),
-            Arc::new(RoutingService::new(runtime.clone())),
-            Arc::new(RequestFinalizationService::new(runtime.clone())),
+            Arc::new(RoutingService::new_with_error_rate(
+                runtime.clone(),
+                error_rate_protection.clone(),
+            )),
+            Arc::new(RoutingPolicyReadService::new(runtime.clone())),
+            Arc::new(ModelMappingService::new(runtime.clone())),
+            Arc::new(RoutingDiagnosticsReader::new(
+                runtime.clone(),
+                error_rate_protection.clone(),
+            )),
+            Arc::new(RequestFinalizationService::new_with_error_rate(
+                runtime.clone(),
+                error_rate_protection.clone(),
+            )),
             Arc::new(RequestLogService::new(runtime.clone())),
-            Arc::new(MonitoringService::new(
+            Arc::new(MonitoringService::new_with_error_rate(
                 runtime.clone(),
                 clock.clone(),
                 ids.clone(),
+                error_rate_protection.clone(),
             )),
             Arc::new(PricingService::new(
                 runtime.clone(),
@@ -137,6 +162,9 @@ impl AppServices {
         credentials: Arc<CredentialService>,
         collectors: Arc<CollectorService>,
         routing: Arc<RoutingService>,
+        routing_policy_read: Arc<RoutingPolicyReadService>,
+        model_mapping: Arc<ModelMappingService>,
+        routing_diagnostics: Arc<RoutingDiagnosticsReader>,
         request_finalization: Arc<RequestFinalizationService>,
         request_logs: Arc<RequestLogService>,
         monitoring: Arc<MonitoringService>,
@@ -158,6 +186,9 @@ impl AppServices {
             credentials,
             collectors,
             routing,
+            routing_policy_read,
+            model_mapping,
+            routing_diagnostics,
             request_finalization,
             request_logs,
             monitoring,

@@ -32,6 +32,7 @@ pub struct AppSettings {
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
+    pub show_decision_explanation: bool,
     pub tray_behavior: String,
     pub data_dir: String,
     pub pending_data_dir: Option<String>,
@@ -90,6 +91,8 @@ pub struct UpdateSettingsInput {
     )]
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
+    #[serde(default)]
+    pub show_decision_explanation: bool,
     pub tray_behavior: Option<String>,
 }
 

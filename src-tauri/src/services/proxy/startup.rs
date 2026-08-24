@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
-    application::app_services::AppServices,
+    application::{app_services::AppServices, routing_execution_reader::RoutingExecutionReader},
     models::proxy::ProxyStatus,
     services::proxy::{
         lifecycle::ports::RequestLifecycleStore,
         routing_repository::{RoutingExecutionRepository, RoutingRepository},
+        transport_policy::TransportPolicySnapshot,
     },
 };
 
@@ -35,12 +36,26 @@ pub(crate) async fn start_from_v2_persisted_settings(
         .reconcile_startup_interrupted_request_lifecycle()
         .await
         .map_err(|error| format!("startup request lifecycle reconciliation failed: {error:?}"))?;
+    let stored_policy = services
+        .routing_policy_read
+        .load_routing_policy()
+        .await
+        .map_err(|error| format!("startup routing policy load failed: {error:?}"))?;
+    let policy = crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(
+        &stored_policy.config,
+    )
+    .map_err(|error| format!("startup routing policy invalid: {error:?}"))?;
+    let transport_policy = TransportPolicySnapshot::from_timeout_policy(
+        &policy.timeout_policy,
+        stored_policy.revision,
+        super::limits::ProxyStartupResourceLimits::default().upstream_pool_idle_timeout,
+    )
+    .map_err(|error| format!("startup transport policy invalid: {error:?}"))?;
     proxy
-        .start(config_from_v2_services(
-            services,
-            local_access_key,
-            settings.local_proxy_port,
-        ))
+        .start(
+            config_from_v2_services(services, local_access_key, settings.local_proxy_port)
+                .with_transport_policy(transport_policy),
+        )
         .await
 }
 
@@ -49,9 +64,9 @@ pub(crate) fn config_from_v2_services(
     local_access_key: String,
     port: u16,
 ) -> ProxyStartConfig {
-    let routing_repository: Arc<dyn RoutingRepository> = Arc::new(RoutingExecutionRepository::new(
-        services.routing.as_ref().clone(),
-    ));
+    let execution_reader = Arc::new(RoutingExecutionReader::new(services.routing.clone()));
+    let routing_repository: Arc<dyn RoutingRepository> =
+        Arc::new(RoutingExecutionRepository::new(execution_reader));
     let lifecycle_store: Arc<dyn RequestLifecycleStore> = services.request_finalization.clone();
     ProxyStartConfig::new_v2(
         routing_repository,
@@ -116,6 +131,7 @@ mod tests {
                 collector_max_concurrency: settings.collector_max_concurrency,
                 allow_depleted_fallback: settings.allow_depleted_fallback,
                 developer_mode_enabled: settings.developer_mode_enabled,
+                show_decision_explanation: settings.show_decision_explanation,
                 tray_behavior: Some(settings.tray_behavior),
             })
             .await

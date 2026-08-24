@@ -461,6 +461,8 @@ mod tests {
             outcome,
             latency_ms: Some(100),
             evidence_mass_basis_points: 10_000,
+            probe_scope: None,
+            probe_state_revision: None,
         }
     }
 

@@ -18,7 +18,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::limits::ProxyServerLimits;
+use super::limits::ProxyStartupResourceLimits;
 
 pub struct RunningServer {
     pub local_addr: SocketAddr,
@@ -41,7 +41,7 @@ impl RunningServer {
 
 pub async fn spawn_server(
     port: u16,
-    limits: ProxyServerLimits,
+    limits: ProxyStartupResourceLimits,
     app: Router,
     active_requests: Arc<AtomicU32>,
     request_count: Arc<AtomicU64>,

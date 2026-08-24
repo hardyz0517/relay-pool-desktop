@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use crate::{
     application::{
         alerting::policy_service::{AlertingSettings, PolicyService},
-        alerting::{AlertingIngress, ObservationIngress},
+        alerting::{AlertingIngress, AlertingReadModelUpdatePublisher, ObservationIngress},
         error::ApplicationError,
         queries::change_center_workspace::{
             ActivityCursor, ActivityWorkspacePage, ChangeCenterWorkspaceQuery, DeliveryCursor,
@@ -19,15 +21,23 @@ pub(crate) struct AlertingCommandFacade {
     workspace: ChangeCenterWorkspaceQuery,
     ingress: AlertingIngress,
     policy_service: PolicyService,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
 }
 
 impl AlertingCommandFacade {
-    pub(crate) fn new(runtime: PersistenceHandle) -> Self {
+    pub(crate) fn new(
+        runtime: PersistenceHandle,
+        alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
+    ) -> Self {
         Self {
-            workspace: ChangeCenterWorkspaceQuery::new(runtime.clone()),
+            workspace: ChangeCenterWorkspaceQuery::new_with_alerting_read_model_updates(
+                runtime.clone(),
+                Arc::clone(&alerting_updates),
+            ),
             ingress: AlertingIngress::new(runtime.clone()),
             policy_service: PolicyService::new(runtime.clone()),
             runtime,
+            alerting_updates,
         }
     }
 
@@ -97,11 +107,12 @@ impl AlertingCommandFacade {
         station_id: Option<&str>,
         severity: Option<&str>,
         lifecycle_state: Option<&str>,
+        search: Option<&str>,
         cursor: Option<&IncidentCursor>,
         limit: u32,
     ) -> Result<IncidentWorkspacePage, ApplicationError> {
         self.workspace
-            .list_current(station_id, severity, lifecycle_state, cursor, limit)
+            .list_current(station_id, severity, lifecycle_state, search, cursor, limit)
             .await
             .map_err(Into::into)
     }
@@ -112,6 +123,7 @@ impl AlertingCommandFacade {
         severity: Option<&str>,
         record_type: Option<&str>,
         unread_only: bool,
+        search: Option<&str>,
         cursor: Option<&ActivityCursor>,
         limit: u32,
     ) -> Result<ActivityWorkspacePage, ApplicationError> {
@@ -121,6 +133,7 @@ impl AlertingCommandFacade {
                 severity,
                 record_type,
                 unread_only,
+                search,
                 cursor,
                 limit,
             )
@@ -169,7 +182,11 @@ impl AlertingCommandFacade {
         &self,
         input: ObservationIngress,
     ) -> Result<bool, ApplicationError> {
-        Ok(self.ingress.record(input).await?.inserted)
+        let inserted = self.ingress.record(input).await?.inserted;
+        if inserted {
+            self.alerting_updates.notify_after_commit();
+        }
+        Ok(inserted)
     }
 
     pub(crate) async fn mark_seen(
@@ -205,7 +222,9 @@ impl AlertingCommandFacade {
                 })
             })
             .await
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+        self.alerting_updates.notify_after_commit();
+        Ok(())
     }
 
     pub(crate) async fn mark_information_seen(
@@ -228,7 +247,9 @@ impl AlertingCommandFacade {
                 })
             })
             .await
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+        self.alerting_updates.notify_after_commit();
+        Ok(())
     }
 
     pub(crate) async fn mark_all_seen(
@@ -239,7 +260,8 @@ impl AlertingCommandFacade {
         mark_information: bool,
         now_ms: i64,
     ) -> Result<u64, ApplicationError> {
-        self.runtime
+        let marked = self
+            .runtime
             .write(|write| {
                 Box::pin(async move {
                     let incidents = if mark_incidents {
@@ -265,7 +287,11 @@ impl AlertingCommandFacade {
                 })
             })
             .await
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+        if marked > 0 {
+            self.alerting_updates.notify_after_commit();
+        }
+        Ok(marked)
     }
 
     pub(crate) async fn resolve_all_active(
@@ -275,7 +301,8 @@ impl AlertingCommandFacade {
         now_ms: i64,
     ) -> Result<u64, ApplicationError> {
         let incident_store = crate::persistence::stores::alerting::IncidentStore;
-        self.runtime
+        let resolved = self
+            .runtime
             .write(|write| {
                 Box::pin(async move {
                     incident_store
@@ -284,7 +311,11 @@ impl AlertingCommandFacade {
                 })
             })
             .await
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+        if resolved > 0 {
+            self.alerting_updates.notify_after_commit();
+        }
+        Ok(resolved)
     }
 
     pub(crate) async fn clear_activity(
@@ -298,7 +329,8 @@ impl AlertingCommandFacade {
         let incident_store = crate::persistence::stores::alerting::IncidentStore;
         let occurrence_store = crate::persistence::stores::alerting::OccurrenceStore;
         let lifecycle_state = lifecycle_state.map(str::to_owned);
-        self.runtime
+        let cleared = self
+            .runtime
             .write(|write| {
                 Box::pin(async move {
                     let cleared_incidents = if clear_incidents {
@@ -329,7 +361,11 @@ impl AlertingCommandFacade {
                 })
             })
             .await
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+        if cleared > 0 {
+            self.alerting_updates.notify_after_commit();
+        }
+        Ok(cleared)
     }
 
     pub(crate) async fn snooze(
@@ -370,7 +406,9 @@ impl AlertingCommandFacade {
                 })
             })
             .await
-            .map_err(ApplicationError::from)
+            .map_err(ApplicationError::from)?;
+        self.alerting_updates.notify_after_commit();
+        Ok(())
     }
 }
 
@@ -417,4 +455,85 @@ pub(crate) fn parse_observation(
         observed_at_ms,
         fact_fresh_until_ms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    use crate::{
+        application::alerting::AlertingReadModelUpdatePublisher,
+        models::alerting::{AlertEventType, ConditionKey, ObservationKind, Severity},
+        persistence::runtime::PersistenceRuntime,
+    };
+
+    use super::{AlertingCommandFacade, ObservationIngress};
+
+    #[derive(Default)]
+    struct RecordingAlertingUpdates {
+        notifications: AtomicUsize,
+    }
+
+    impl RecordingAlertingUpdates {
+        fn count(&self) -> usize {
+            self.notifications.load(Ordering::SeqCst)
+        }
+    }
+
+    impl AlertingReadModelUpdatePublisher for RecordingAlertingUpdates {
+        fn notify_after_commit(&self) {
+            self.notifications.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn change_observation(source_observation_key: &str) -> ObservationIngress {
+        ObservationIngress {
+            source_observation_key: source_observation_key.to_string(),
+            event_type: AlertEventType::AuditChange,
+            condition_key: ConditionKey::new("global:fixture:audit-change".to_string())
+                .expect("fixture condition key"),
+            kind: ObservationKind::Change,
+            severity: Severity::Info,
+            object_type: "global".to_string(),
+            object_id: None,
+            station_id: None,
+            station_key_id: None,
+            source: "fixture".to_string(),
+            reason_code: Some("fixture_change".to_string()),
+            summary_json: "{}".to_string(),
+            observed_at_ms: 100,
+            fact_fresh_until_ms: 100,
+        }
+    }
+
+    #[tokio::test]
+    async fn publishes_after_a_committed_read_model_change_but_not_for_a_duplicate() {
+        let temporary = tempfile::tempdir().expect("tempdir");
+        let runtime =
+            PersistenceRuntime::initialize_new(&temporary.path().join("alerting.sqlite3"))
+                .await
+                .expect("runtime");
+        crate::services::data_store::alerting_upgrade::run_durable_upgrade(&runtime.handle(), 100)
+            .await
+            .expect("complete alerting upgrade");
+        let updates = Arc::new(RecordingAlertingUpdates::default());
+        let facade = AlertingCommandFacade::new(runtime.handle(), updates.clone());
+
+        assert!(facade
+            .record_observation(change_observation("fixture-change-1"))
+            .await
+            .expect("record change"));
+        assert_eq!(updates.count(), 1);
+
+        assert!(!facade
+            .record_observation(change_observation("fixture-change-1"))
+            .await
+            .expect("repeat change"));
+        assert_eq!(updates.count(), 1);
+
+        runtime.close().await.expect("close runtime");
+    }
 }

@@ -4,22 +4,30 @@
 //! correctness boundary. This task provides the bounded digest reconciliation
 //! fallback for both document kinds after startup, resume, or a missed event.
 
-use std::{path::Path, time::Duration};
+use std::{path::Path, sync::Arc, time::Duration};
 
+use futures_util::future::BoxFuture;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 use crate::background_tasks::{
     RestartPolicy, TaskFailure, TaskId, TaskRunContext, TaskSpec, TaskSupervisor,
 };
-use crate::persistence::runtime::PersistenceHandle;
+use crate::{
+    application::routing_policy_control_plane::RoutingPolicyMutationCoordinator,
+    persistence::error::PersistenceError,
+};
 
 pub const POLICY_DOCUMENT_TASK_ID: &str = "policy-document-reconciliation-v1";
 const RECONCILIATION_INTERVAL: Duration = Duration::from_secs(30);
 
+pub(crate) type ModelMappingReconcile =
+    Arc<dyn Fn() -> BoxFuture<'static, Result<(), PersistenceError>> + Send + Sync>;
+
 pub fn register_policy_document_task(
     supervisor: &TaskSupervisor,
-    runtime: PersistenceHandle,
+    model_mapping_reconcile: ModelMappingReconcile,
+    policy: Arc<RoutingPolicyMutationCoordinator>,
 ) -> Result<TaskId, String> {
     let task_id = TaskId::from(POLICY_DOCUMENT_TASK_ID);
     supervisor
@@ -28,9 +36,15 @@ pub fn register_policy_document_task(
                 task_id.clone(),
                 "policy_document_reconciliation_v1",
                 move |context: TaskRunContext| {
-                    let runtime = runtime.clone();
+                    let model_mapping_reconcile = model_mapping_reconcile.clone();
+                    let policy = policy.clone();
                     Box::pin(async move {
-                        run_reconciliation_loop(&runtime, &context.cancellation_token).await
+                        run_reconciliation_loop(
+                            &model_mapping_reconcile,
+                            &policy,
+                            &context.cancellation_token,
+                        )
+                        .await
                     })
                 },
             )
@@ -47,13 +61,11 @@ pub fn register_policy_document_task(
 }
 
 async fn run_reconciliation_loop(
-    runtime: &PersistenceHandle,
+    model_mapping_reconcile: &ModelMappingReconcile,
+    policy: &RoutingPolicyMutationCoordinator,
     cancellation: &tokio_util::sync::CancellationToken,
 ) -> Result<(), TaskFailure> {
-    let config_dir = runtime
-        .database_path()
-        .parent()
-        .map(|root| root.join("config"));
+    let config_dir = policy.config_directory();
     let (event_tx, mut event_rx) = mpsc::channel::<Result<Event, notify::Error>>(64);
     let mut watcher = config_dir
         .as_deref()
@@ -72,7 +84,9 @@ async fn run_reconciliation_loop(
                         watcher = start_watcher(directory, event_tx.clone());
                     }
                 }
-                reconcile_once(runtime).await.map_err(|error| TaskFailure::transient(error.to_string()))?;
+                reconcile_once(model_mapping_reconcile, policy)
+                    .await
+                    .map_err(|error| TaskFailure::transient(error.to_string()))?;
             }
             event = event_rx.recv() => {
                 match event {
@@ -83,7 +97,9 @@ async fn run_reconciliation_loop(
                         // wakeup, reconcile immediately, and rebuild the native
                         // watcher so later edits regain low-latency handling.
                         watcher = restart_watcher(config_dir.as_deref(), event_tx.clone());
-                        reconcile_once(runtime).await.map_err(|error| TaskFailure::transient(error.to_string()))?;
+                        reconcile_once(model_mapping_reconcile, policy)
+                            .await
+                            .map_err(|error| TaskFailure::transient(error.to_string()))?;
                     }
                     Some(Ok(_event)) => {
                         // Coalesce bursty rename/modify events and wait for an
@@ -91,7 +107,9 @@ async fn run_reconciliation_loop(
                         // for stability.
                         tokio::time::sleep(Duration::from_millis(750)).await;
                         while event_rx.try_recv().is_ok() {}
-                        reconcile_once(runtime).await.map_err(|error| TaskFailure::transient(error.to_string()))?;
+                        reconcile_once(model_mapping_reconcile, policy)
+                            .await
+                            .map_err(|error| TaskFailure::transient(error.to_string()))?;
                     }
                 }
             }
@@ -131,12 +149,11 @@ fn start_watcher(
 }
 
 async fn reconcile_once(
-    runtime: &PersistenceHandle,
+    model_mapping_reconcile: &ModelMappingReconcile,
+    policy: &RoutingPolicyMutationCoordinator,
 ) -> Result<(), crate::persistence::error::PersistenceError> {
-    crate::application::model_mapping::reconcile_external_model_mapping_document(runtime.clone())
-        .await?;
-    crate::application::routing::reconcile_external_routing_policy_document(runtime.clone())
-        .await?;
+    model_mapping_reconcile().await?;
+    policy.reconcile_external().await?;
     Ok(())
 }
 

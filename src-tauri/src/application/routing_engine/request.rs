@@ -1,6 +1,50 @@
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    time::{Duration, Instant},
+};
 
 use crate::models::model_mapping::EndpointKind;
+
+/// Caller-owned monotonic deadline for planning and route-snapshot I/O.
+///
+/// This context intentionally stores the absolute deadline rather than a
+/// duration.  A proxy replan can therefore reuse the ingress anchor without
+/// silently starting a fresh budget, while read-model callers must choose an
+/// explicit bounded budget at their own boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PlanningRequestContext {
+    deadline: Instant,
+}
+
+impl PlanningRequestContext {
+    pub(crate) fn from_deadline(deadline: Instant) -> Self {
+        Self { deadline }
+    }
+
+    pub(crate) fn from_started_at(started_at: Instant, budget: Duration) -> Self {
+        Self::from_deadline(started_at + budget)
+    }
+
+    pub(crate) fn from_now(budget: Duration) -> Self {
+        Self::from_deadline(Instant::now() + budget)
+    }
+
+    pub(crate) fn deadline(self) -> Instant {
+        self.deadline
+    }
+}
+
+#[cfg(test)]
+mod planning_context_tests {
+    use super::*;
+
+    #[test]
+    fn context_keeps_the_caller_owned_absolute_deadline() {
+        let started = Instant::now();
+        let context = PlanningRequestContext::from_started_at(started, Duration::from_secs(3));
+        assert_eq!(context.deadline(), started + Duration::from_secs(3));
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RouteKind {

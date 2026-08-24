@@ -10,6 +10,32 @@ use super::request_log_write::RequestRoutingOutcomeSummaryWrite;
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct RequestOutcomeStore;
 
+pub(crate) const MAX_DURABLE_DECISION_EVENTS: u16 = 64;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutingDecisionEventWrite {
+    pub(crate) request_id: String,
+    pub(crate) event_key: String,
+    pub(crate) occurred_at_ms: i64,
+    pub(crate) event_kind: String,
+    pub(crate) detail_code: String,
+    pub(crate) attempt_ordinal: Option<u16>,
+    pub(crate) retry_disposition: Option<String>,
+    pub(crate) output_committed: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutingDecisionEventRow {
+    pub(crate) event_key: String,
+    pub(crate) sequence: i64,
+    pub(crate) occurred_at_ms: i64,
+    pub(crate) event_kind: String,
+    pub(crate) detail_code: String,
+    pub(crate) attempt_ordinal: Option<i64>,
+    pub(crate) retry_disposition: Option<String>,
+    pub(crate) output_committed: Option<bool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttemptCostWrite {
     pub(crate) request_id: String,
@@ -56,7 +82,146 @@ pub(crate) struct RoutingOutcomeSummaryRow {
     pub(crate) terminal_at_ms: i64,
 }
 
+/// Redacted, bounded facts projected from the durable attempt lifecycle. This
+/// is intentionally not a second trace writer: request_attempts remains the
+/// single source of historical attempt truth, and callers decide how much of
+/// it can be exposed in the read model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoutingAttemptTraceRow {
+    pub(crate) ordinal: i64,
+    pub(crate) terminal_kind: String,
+    pub(crate) retry_disposition: Option<String>,
+    pub(crate) public_code: Option<String>,
+    pub(crate) output_committed: bool,
+    pub(crate) started_at_ms: i64,
+    pub(crate) terminal_at_ms: i64,
+}
+
 impl RequestOutcomeStore {
+    /// Append one immutable, redacted lifecycle milestone. Event keys are the
+    /// idempotency identity; sequence is allocated inside the caller's write
+    /// transaction so a retry cannot create a second terminal timeline.
+    pub(crate) async fn insert_decision_event(
+        &self,
+        connection: &mut SqliteConnection,
+        record: &RoutingDecisionEventWrite,
+    ) -> Result<InsertAck, PersistenceError> {
+        validate_decision_event(record)?;
+        if let Some(existing) =
+            decision_event_by_key(connection, &record.request_id, &record.event_key).await?
+        {
+            if !existing_matches(&existing, record) {
+                return Err(PersistenceError::InvariantViolation(
+                    "duplicate durable decision event does not match canonical record".to_string(),
+                ));
+            }
+            return Ok(InsertAck { inserted: false });
+        }
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM request_decision_events WHERE request_id = ?")
+                .bind(&record.request_id)
+                .fetch_one(&mut *connection)
+                .await?;
+        if count >= i64::from(MAX_DURABLE_DECISION_EVENTS) {
+            return Err(PersistenceError::InvariantViolation(
+                "durable decision event limit exceeded".to_string(),
+            ));
+        }
+        let sequence: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(sequence), -1) + 1
+             FROM request_decision_events WHERE request_id = ?",
+        )
+        .bind(&record.request_id)
+        .fetch_one(&mut *connection)
+        .await?;
+        sqlx::query(
+            "INSERT INTO request_decision_events (
+                request_id, event_key, sequence, occurred_at_ms, event_kind,
+                detail_code, attempt_ordinal, retry_disposition, output_committed
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&record.request_id)
+        .bind(&record.event_key)
+        .bind(sequence)
+        .bind(record.occurred_at_ms)
+        .bind(&record.event_kind)
+        .bind(&record.detail_code)
+        .bind(record.attempt_ordinal.map(i64::from))
+        .bind(record.retry_disposition.as_deref())
+        .bind(record.output_committed.map(i64::from))
+        .execute(&mut *connection)
+        .await?;
+        Ok(InsertAck { inserted: true })
+    }
+
+    pub(crate) async fn routing_decision_events(
+        &self,
+        connection: &mut SqliteConnection,
+        request_id: &str,
+        limit: u16,
+    ) -> Result<Vec<RoutingDecisionEventRow>, PersistenceError> {
+        let rows = sqlx::query(
+            "SELECT event_key, sequence, occurred_at_ms, event_kind, detail_code,
+                    attempt_ordinal, retry_disposition, output_committed
+             FROM request_decision_events
+             WHERE request_id = ?
+             ORDER BY sequence ASC
+             LIMIT ?",
+        )
+        .bind(request_id)
+        .bind(i64::from(limit.clamp(1, MAX_DURABLE_DECISION_EVENTS)))
+        .fetch_all(&mut *connection)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RoutingDecisionEventRow {
+                event_key: row.get("event_key"),
+                sequence: row.get("sequence"),
+                occurred_at_ms: row.get("occurred_at_ms"),
+                event_kind: row.get("event_kind"),
+                detail_code: row.get("detail_code"),
+                attempt_ordinal: row.get("attempt_ordinal"),
+                retry_disposition: row.get("retry_disposition"),
+                output_committed: row
+                    .get::<Option<i64>, _>("output_committed")
+                    .map(|value| value != 0),
+            })
+            .collect())
+    }
+
+    pub(crate) async fn routing_attempt_trace(
+        &self,
+        connection: &mut SqliteConnection,
+        request_id: &str,
+        limit: u16,
+    ) -> Result<Vec<RoutingAttemptTraceRow>, PersistenceError> {
+        let rows = sqlx::query(
+            "SELECT ordinal, terminal_kind, retry_disposition, public_code,
+                    output_committed, started_at_ms, terminal_at_ms
+             FROM request_attempts
+             WHERE request_id = ?
+             ORDER BY ordinal ASC
+             LIMIT ?",
+        )
+        .bind(request_id)
+        .bind(i64::from(limit.clamp(1, 4)))
+        .fetch_all(&mut *connection)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| RoutingAttemptTraceRow {
+                ordinal: row.get("ordinal"),
+                terminal_kind: row.get("terminal_kind"),
+                retry_disposition: row.get("retry_disposition"),
+                public_code: row.get("public_code"),
+                output_committed: row.get::<i64, _>("output_committed") != 0,
+                started_at_ms: row.get("started_at_ms"),
+                terminal_at_ms: row.get("terminal_at_ms"),
+            })
+            .collect())
+    }
+
     pub(crate) async fn routing_outcome_summary(
         &self,
         connection: &mut SqliteConnection,
@@ -270,6 +435,75 @@ impl RequestOutcomeStore {
     }
 }
 
+fn validate_decision_event(record: &RoutingDecisionEventWrite) -> Result<(), PersistenceError> {
+    let valid_token = |value: &str, max: usize| {
+        !value.is_empty()
+            && value.len() <= max
+            && value.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'_' | b'-' | b':')
+            })
+    };
+    if !valid_token(&record.event_key, 96)
+        || !valid_token(&record.event_kind, 48)
+        || !valid_token(&record.detail_code, 96)
+        || record.attempt_ordinal.is_some_and(|ordinal| ordinal >= 16)
+        || record
+            .retry_disposition
+            .as_deref()
+            .is_some_and(|value| !valid_token(value, 48))
+    {
+        return Err(PersistenceError::InvariantViolation(
+            "durable decision event contains unsafe or oversized fields".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn decision_event_by_key(
+    connection: &mut SqliteConnection,
+    request_id: &str,
+    event_key: &str,
+) -> Result<Option<RoutingDecisionEventRow>, PersistenceError> {
+    let row = sqlx::query(
+        "SELECT event_key, sequence, occurred_at_ms, event_kind, detail_code,
+                    attempt_ordinal, retry_disposition, output_committed
+             FROM request_decision_events WHERE request_id = ? AND event_key = ?",
+    )
+    .bind(request_id)
+    .bind(event_key)
+    .fetch_optional(&mut *connection)
+    .await?;
+    Ok(row.map(|row| RoutingDecisionEventRow {
+        event_key: row.get("event_key"),
+        sequence: row.get("sequence"),
+        occurred_at_ms: row.get("occurred_at_ms"),
+        event_kind: row.get("event_kind"),
+        detail_code: row.get("detail_code"),
+        attempt_ordinal: row.get("attempt_ordinal"),
+        retry_disposition: row.get("retry_disposition"),
+        output_committed: row
+            .get::<Option<i64>, _>("output_committed")
+            .map(|value| value != 0),
+    }))
+}
+
+fn existing_matches(
+    existing: &RoutingDecisionEventRow,
+    record: &RoutingDecisionEventWrite,
+) -> bool {
+    existing.event_key == record.event_key
+        // The first durable event owns its audit timestamp. Retries may reach
+        // this boundary after the caller clock advances; event identity is
+        // the redacted decision payload, not that non-semantic timestamp.
+        && existing.event_kind == record.event_kind
+        && existing.detail_code == record.detail_code
+        && existing.attempt_ordinal == record.attempt_ordinal.map(i64::from)
+        && existing.retry_disposition == record.retry_disposition
+        && existing.output_committed == record.output_committed
+}
+
 fn validate_attempt_cost(record: &AttemptCostWrite) -> Result<(), PersistenceError> {
     let priced = record.cost_status == "priced";
     if priced
@@ -282,6 +516,31 @@ fn validate_attempt_cost(record: &AttemptCostWrite) -> Result<(), PersistenceErr
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn durable_event_tokens_reject_secrets_and_dynamic_text() {
+        let record = RoutingDecisionEventWrite {
+            request_id: "request-1".to_string(),
+            event_key: "event-1".to_string(),
+            occurred_at_ms: 1,
+            event_kind: "failure_classified".to_string(),
+            detail_code: "AuthorizationBearerSecret".to_string(),
+            attempt_ordinal: None,
+            retry_disposition: None,
+            output_committed: None,
+        };
+        assert!(validate_decision_event(&record).is_err());
+
+        let mut record = record;
+        record.detail_code = "failure_classified".to_string();
+        record.retry_disposition = Some("Authorization Bearer Secret".to_string());
+        assert!(validate_decision_event(&record).is_err());
+    }
 }
 
 fn validate_request_aggregate(record: &RequestCostAggregateWrite) -> Result<(), PersistenceError> {

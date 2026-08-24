@@ -26,6 +26,7 @@ pub(crate) mod runtime_events;
 pub mod server;
 pub mod startup;
 pub mod startup_auto_start;
+pub(crate) mod transport_policy;
 pub mod upstream;
 
 #[cfg(test)]

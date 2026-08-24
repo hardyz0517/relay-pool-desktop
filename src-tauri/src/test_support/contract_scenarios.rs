@@ -337,6 +337,8 @@ fn attempt_context(request_id: &str, ordinal: u16) -> AttemptContext {
         resolved_upstream_model: None,
         model_alias_revision: 1,
         started_at_ms: 2,
+        probe_scope: None,
+        probe_state_revision: None,
     }
 }
 

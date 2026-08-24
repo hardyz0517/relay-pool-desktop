@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     models::alerting::{
         AlertEventType, AlertPolicy, Incident, LifecycleState, PolicyMatchContext, Severity,
@@ -10,7 +12,10 @@ use crate::{
     },
 };
 
-use super::{policy_resolver::PolicyResolver, policy_service::AlertingSettings};
+use super::{
+    policy_resolver::PolicyResolver, policy_service::AlertingSettings,
+    AlertingReadModelUpdatePublisher,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReconcileCursor {
@@ -48,16 +53,21 @@ pub(crate) struct AlertingReconciler {
     delivery_store: DeliveryStore,
     resolver: PolicyResolver,
     limits: ReconcileLimits,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
 }
 
 impl AlertingReconciler {
-    pub(crate) fn new(runtime: PersistenceHandle) -> Self {
+    pub(crate) fn new(
+        runtime: PersistenceHandle,
+        alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
+    ) -> Self {
         Self {
             runtime,
             incident_store: IncidentStore,
             delivery_store: DeliveryStore,
             resolver: PolicyResolver,
             limits: ReconcileLimits::default(),
+            alerting_updates,
         }
     }
 
@@ -181,6 +191,9 @@ impl AlertingReconciler {
         } else {
             None
         };
+        if updated > 0 || suppressed > 0 {
+            self.alerting_updates.notify_after_commit();
+        }
         Ok(ReconcilePage {
             examined,
             updated,

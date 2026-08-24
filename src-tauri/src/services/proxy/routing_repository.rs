@@ -1,11 +1,18 @@
 use std::collections::BTreeMap;
 
 use crate::{
+    application::health_protection::{
+        HealthProbeAdmissionMode, HealthProtectionProbe, HealthProtectionScope,
+        HealthProtectionStatus,
+    },
     application::{
         operational_facts::target_resolver::ExecutionTargetRef,
-        routing::RoutingService,
         routing_engine::planning_snapshot::{PlanningSnapshot, RuntimeOverlaySnapshot},
-        routing_engine::{admission::CandidateAdmissionProfile, request::RouteRequestFacts},
+        routing_engine::{
+            admission::CandidateAdmissionProfile,
+            request::{PlanningRequestContext, RouteRequestFacts},
+        },
+        routing_execution_reader::{RoutingExecutionReadError, RoutingExecutionReadPort},
     },
     models::{pricing::BalanceSnapshot, routing::RuntimeRoutingSettings},
     services::outbound::resolve_routing_proxy_config,
@@ -36,42 +43,66 @@ pub(crate) struct OperationalRouteSnapshot {
 
 #[derive(Clone)]
 pub(crate) struct RoutingExecutionRepository {
-    routing: RoutingService,
+    execution: std::sync::Arc<dyn RoutingExecutionReadPort>,
 }
 
 impl RoutingExecutionRepository {
-    pub(crate) fn new(routing: RoutingService) -> Self {
-        Self { routing }
+    pub(crate) fn new(execution: std::sync::Arc<dyn RoutingExecutionReadPort>) -> Self {
+        Self { execution }
     }
 }
 
 pub(crate) trait RoutingRepository: Send + Sync {
     /// Loads the canonical immutable planning input for one request. `None`
     /// means the V1 policy aggregate has not been configured yet; callers must
-    /// keep that state distinct from an empty candidate set.
+    /// keep that state distinct from an empty candidate set. `context` is
+    /// caller-owned and absolute: replans must reuse it rather than starting
+    /// another request budget.
+    #[cfg(test)]
     fn load_planning_snapshot(
         &self,
         request: RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
-    ) -> futures_util::future::BoxFuture<'static, Result<Option<PlanningSnapshot>, String>>;
+        context: PlanningRequestContext,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
+    >;
+
+    fn load_planning_snapshot_with_probe(
+        &self,
+        request: RouteRequestFacts,
+        runtime: RuntimeOverlaySnapshot,
+        context: PlanningRequestContext,
+        probe: Option<HealthProtectionProbe>,
+        probe_mode: HealthProbeAdmissionMode,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
+    >;
 
     fn load_execution_settings(
         &self,
-    ) -> futures_util::future::BoxFuture<'static, Result<RoutingExecutionSettings, String>> {
-        Box::pin(async { Ok(RoutingExecutionSettings::default()) })
-    }
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<RoutingExecutionSettings, RoutingExecutionReadError>,
+    >;
 
     fn load_balance_snapshots(
         &self,
-    ) -> futures_util::future::BoxFuture<'static, Result<Vec<BalanceSnapshot>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Vec<BalanceSnapshot>, RoutingExecutionReadError>,
+    >;
 
     fn load_operational_route_snapshot(
         &self,
         request: RouteRequestFacts,
         planning_snapshot: PlanningSnapshot,
-    ) -> futures_util::future::BoxFuture<'static, Result<OperationalRouteSnapshot, String>>;
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<OperationalRouteSnapshot, RoutingExecutionReadError>,
+    >;
 
     /// Reloads the authoritative execution row for a retry. The immutable
     /// planning snapshot remains the expected commitment; this fresh read is
@@ -79,74 +110,110 @@ pub(crate) trait RoutingRepository: Send + Sync {
     fn load_current_execution_target(
         &self,
         station_key_id: String,
-    ) -> futures_util::future::BoxFuture<'static, Result<Option<ExecutionTargetRef>, String>> {
-        Box::pin(async move {
-            Err(format!(
-                "current execution target reload is unavailable for {station_key_id}"
-            ))
-        })
-    }
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<ExecutionTargetRef>, RoutingExecutionReadError>,
+    >;
+
+    /// Returns the durable health protection projection used to decide whether
+    /// a real request may consume a Half-Open probe lease. The default keeps
+    /// lightweight test repositories fail-closed and does not invent health.
+    fn load_health_protection_statuses(
+        &self,
+        _now_ms: i64,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Vec<HealthProtectionStatus>, RoutingExecutionReadError>,
+    >;
+
+    /// Reserves one durable, revision-fenced probe. Reservation is atomic and
+    /// never performs network I/O; the caller must attach the returned fence
+    /// to a real request observation.
+    fn begin_health_protection_probe(
+        &self,
+        _scope: HealthProtectionScope,
+        _now_ms: i64,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<HealthProtectionProbe>, RoutingExecutionReadError>,
+    >;
+
+    /// Releases a reserved probe when no outbound attempt was started. The
+    /// application/store implementation is revision-fenced and idempotent.
+    fn cancel_health_protection_probe(
+        &self,
+        _probe: HealthProtectionProbe,
+        _now_ms: i64,
+    ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>>;
 }
 
 impl RoutingRepository for RoutingExecutionRepository {
+    #[cfg(test)]
     fn load_planning_snapshot(
         &self,
         request: RouteRequestFacts,
         runtime: RuntimeOverlaySnapshot,
-    ) -> futures_util::future::BoxFuture<'static, Result<Option<PlanningSnapshot>, String>> {
-        let routing = self.routing.clone();
-        Box::pin(async move {
-            routing
-                .load_intelligent_planning_snapshot(&request, runtime)
-                .await
-                .map_err(|error| format!("load intelligent planning snapshot failed: {error}"))
-        })
+        context: PlanningRequestContext,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
+    > {
+        self.execution
+            .load_planning_snapshot(request, runtime, context)
+    }
+
+    fn load_planning_snapshot_with_probe(
+        &self,
+        request: RouteRequestFacts,
+        runtime: RuntimeOverlaySnapshot,
+        context: PlanningRequestContext,
+        probe: Option<HealthProtectionProbe>,
+        probe_mode: HealthProbeAdmissionMode,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<PlanningSnapshot>, RoutingExecutionReadError>,
+    > {
+        self.execution
+            .load_planning_snapshot_with_probe(request, runtime, context, probe, probe_mode)
     }
 
     fn load_execution_settings(
         &self,
-    ) -> futures_util::future::BoxFuture<'static, Result<RoutingExecutionSettings, String>> {
-        let routing = self.routing.clone();
-        Box::pin(async move {
-            routing
-                .load_execution_settings()
-                .await
-                .map_err(|error| format!("load V2 routing execution settings failed: {error}"))
-        })
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<RoutingExecutionSettings, RoutingExecutionReadError>,
+    > {
+        self.execution.load_execution_settings()
     }
 
     fn load_balance_snapshots(
         &self,
-    ) -> futures_util::future::BoxFuture<'static, Result<Vec<BalanceSnapshot>, String>> {
-        let routing = self.routing.clone();
-        Box::pin(async move {
-            routing
-                .list_balance_snapshots()
-                .await
-                .map_err(|error| format!("load V2 balance snapshots failed: {error}"))
-        })
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Vec<BalanceSnapshot>, RoutingExecutionReadError>,
+    > {
+        self.execution.load_balance_snapshots()
     }
 
     fn load_operational_route_snapshot(
         &self,
         _request: RouteRequestFacts,
         planning_snapshot: PlanningSnapshot,
-    ) -> futures_util::future::BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
-        let routing = self.routing.clone();
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<OperationalRouteSnapshot, RoutingExecutionReadError>,
+    > {
+        let execution = self.execution.clone();
         Box::pin(async move {
-            let execution_settings = routing
-                .load_execution_settings()
-                .await
-                .map_err(|error| format!("load routing proxy settings failed: {error}"))?;
+            let execution_settings = execution.load_execution_settings().await?;
             let station_key_ids = planning_snapshot
                 .candidates
                 .iter()
                 .map(|candidate| candidate.station_key_id.clone())
                 .collect::<Vec<_>>();
-            let target_rows = routing
+            let target_rows = execution
                 .load_operational_execution_target_refs(station_key_ids)
-                .await
-                .map_err(|error| format!("load operational target refs failed: {error}"))?;
+                .await?;
             let targets = target_rows
                 .into_iter()
                 .map(|mut target| {
@@ -228,23 +295,51 @@ impl RoutingRepository for RoutingExecutionRepository {
     fn load_current_execution_target(
         &self,
         station_key_id: String,
-    ) -> futures_util::future::BoxFuture<'static, Result<Option<ExecutionTargetRef>, String>> {
-        let routing = self.routing.clone();
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<ExecutionTargetRef>, RoutingExecutionReadError>,
+    > {
+        let execution = self.execution.clone();
         Box::pin(async move {
-            let execution_settings = routing
-                .load_execution_settings()
-                .await
-                .map_err(|error| format!("load routing proxy settings failed: {error}"))?;
-            let mut target = routing
+            let execution_settings = execution.load_execution_settings().await?;
+            let mut target = execution
                 .load_operational_execution_target_refs(vec![station_key_id])
                 .await
-                .map_err(|error| format!("reload operational target ref failed: {error}"))
                 .map(|mut targets| targets.pop())?;
             if let Some(target) = target.as_mut() {
                 apply_effective_proxy_config(target, &execution_settings);
             }
             Ok(target)
         })
+    }
+
+    fn load_health_protection_statuses(
+        &self,
+        now_ms: i64,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Vec<HealthProtectionStatus>, RoutingExecutionReadError>,
+    > {
+        self.execution.load_health_protection_statuses(now_ms)
+    }
+
+    fn begin_health_protection_probe(
+        &self,
+        scope: HealthProtectionScope,
+        now_ms: i64,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Option<HealthProtectionProbe>, RoutingExecutionReadError>,
+    > {
+        self.execution.begin_health_protection_probe(scope, now_ms)
+    }
+
+    fn cancel_health_protection_probe(
+        &self,
+        probe: HealthProtectionProbe,
+        now_ms: i64,
+    ) -> futures_util::future::BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
+        self.execution.cancel_health_protection_probe(probe, now_ms)
     }
 }
 
@@ -336,7 +431,11 @@ mod tests {
             }),
             123458,
         );
-        let repository = RoutingExecutionRepository::new(fixture.services.routing.as_ref().clone());
+        let repository = RoutingExecutionRepository::new(std::sync::Arc::new(
+            crate::application::routing_execution_reader::RoutingExecutionReader::new(
+                fixture.services.routing.clone(),
+            ),
+        ));
 
         let planning_snapshot = RoutingRepository::load_planning_snapshot(
             &repository,
@@ -349,6 +448,7 @@ mod tests {
                 max_concurrency: 64,
                 affinity_station_key_id: None,
             },
+            PlanningRequestContext::from_now(std::time::Duration::from_secs(5)),
         )
         .await
         .expect("planning snapshot")

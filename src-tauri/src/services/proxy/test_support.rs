@@ -78,9 +78,11 @@ impl V2ProxyTestFixture {
         let routing_repository: Arc<
             dyn crate::services::proxy::routing_repository::RoutingRepository,
         > = Arc::new(
-            crate::services::proxy::routing_repository::RoutingExecutionRepository::new(
-                self.services.routing.as_ref().clone(),
-            ),
+            crate::services::proxy::routing_repository::RoutingExecutionRepository::new(Arc::new(
+                crate::application::routing_execution_reader::RoutingExecutionReader::new(
+                    self.services.routing.clone(),
+                ),
+            )),
         );
         let lifecycle_store: Arc<
             dyn crate::services::proxy::lifecycle::ports::RequestLifecycleStore,
@@ -135,8 +137,8 @@ impl V2ProxyTestFixture {
             format_version: current.format_version,
         };
         self.services
-            .routing
-            .apply_model_mapping_document(
+            .model_mapping
+            .apply_document(
                 document,
                 crate::models::document_sync::TrustedDocumentSource::system(),
             )
@@ -293,7 +295,7 @@ impl V2ProxyTestFixture {
 
     pub(crate) async fn station_key_health(&self, station_key_id: &str) -> StationKeyHealth {
         self.services
-            .routing
+            .routing_diagnostics
             .station_key_health_by_id(station_key_id)
             .await
             .expect("station key health")

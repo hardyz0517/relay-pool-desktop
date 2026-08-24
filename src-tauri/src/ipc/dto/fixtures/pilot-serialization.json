@@ -48,6 +48,7 @@
           "topK": 7,
           "ttft": 0.5
         },
+        "showDecisionExplanation": false,
         "trayBehavior": "close_to_tray"
       }
     },
@@ -104,6 +105,7 @@
         "pricingRefreshIntervalMinutes": 60,
         "publishedStatusIntervalMinutes": 5,
         "schedulerAdvancedSettings": null,
+        "showDecisionExplanation": false,
         "trayBehavior": null
       },
       "output": {
@@ -151,6 +153,7 @@
           "topK": 7,
           "ttft": 0.5
         },
+        "showDecisionExplanation": false,
         "trayBehavior": "close_to_tray"
       }
     },
@@ -2344,6 +2347,8 @@
         "requestLogId": "request-log-1"
       },
       "output": {
+        "detailAvailability": "summary_only",
+        "explanationKey": "legacy_summary_only_before_cutover",
         "legacySummary": {
           "fallbackCount": 0,
           "routePolicy": "cost_stable_first",
@@ -2352,10 +2357,12 @@
           "stationKeyId": "key-1"
         },
         "planningRounds": [],
+        "policyRevision": null,
         "reason": "legacy_summary_only_before_cutover",
         "requestLogId": "request-log-1",
         "status": "legacy_summary",
-        "traceVersion": "request_decision_trace_v1"
+        "timeline": [],
+        "traceVersion": "request_decision_trace_v2"
       }
     },
     {

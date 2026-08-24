@@ -1091,14 +1091,27 @@ pub fn run() {
                         );
                         let outbound_client = work_runtime.outbound.clone();
                         let supervisor_handle = work_runtime.supervisor.clone();
-                        let app_services = app_composition::compose_app_services(
+                        let alerting_updates: Arc<
+                            dyn application::alerting::AlertingReadModelUpdatePublisher,
+                        > = Arc::new(
+                            services::alerting::TauriAlertingReadModelUpdatePublisher::new(
+                                app.handle().clone(),
+                            ),
+                        );
+                        let app_services = app_composition::compose_app_services_with_alerting_read_model_updates(
                             runtime.handle(),
                             device_keys.clone(),
                             active_data_dir.display().to_string(),
                             None,
                             data_directory_port,
                             blocking_executor.clone(),
+                            Arc::clone(&alerting_updates),
                         );
+                        let routing_policy_mutations =
+                            app_composition::compose_routing_policy_mutation_coordinator(
+                                &app_services,
+                                Arc::clone(&proxy_runtime),
+                            );
                         tauri::async_runtime::block_on(
                             application::model_mapping::initialize_from_persistence(
                                 runtime.handle(),
@@ -1117,6 +1130,12 @@ pub fn run() {
                             .map_err(|error| {
                                 format!("failed to load application settings: {error}")
                             })?;
+                        tauri::async_runtime::block_on(
+                            app_services.routing.refresh_protection_configuration(),
+                        )
+                        .map_err(|error| {
+                            format!("failed to load routing protection configuration: {error}")
+                        })?;
                         #[cfg(all(feature = "runtime-logging-windows-smoke", debug_assertions))]
                         let settings = if std::env::var_os(
                             "RELAY_POOL_RUNTIME_LOGGING_SMOKE_ROOT",
@@ -1147,6 +1166,7 @@ pub fn run() {
                                     collector_max_concurrency: settings.collector_max_concurrency,
                                     allow_depleted_fallback: settings.allow_depleted_fallback,
                                     developer_mode_enabled: true,
+                                    show_decision_explanation: settings.show_decision_explanation,
                                     tray_behavior: Some(settings.tray_behavior.clone()),
                                 },
                             ))
@@ -1163,6 +1183,7 @@ pub fn run() {
                             );
                         app.manage(app_composition::compose_alerting_command_facade(
                             runtime.handle(),
+                            Arc::clone(&alerting_updates),
                         ));
                         app.state::<application::data_migration::PortableMigrationCommandFacade>()
                             .configure_ready_services(
@@ -1200,6 +1221,7 @@ pub fn run() {
                                 &app_services,
                                 outbound_client.clone(),
                                 Arc::clone(&proxy_runtime),
+                                Arc::clone(&routing_policy_mutations),
                             );
                         let request_logs_command_facade =
                             app_composition::compose_request_logs_command_facade(&app_services);
@@ -1317,6 +1339,7 @@ pub fn run() {
                                         app.handle().clone(),
                                     ),
                                 ),
+                                Arc::clone(&alerting_updates),
                             )
                             .map_err(|error| {
                                 format!("failed to register alerting runtime: {error}")
@@ -1342,7 +1365,17 @@ pub fn run() {
                         let policy_document_task =
                             background_tasks::policy_document_runner::register_policy_document_task(
                                 &supervisor_handle,
-                                runtime.handle(),
+                                Arc::new({
+                                    let runtime = runtime.handle();
+                                    move || {
+                                        Box::pin(
+                                            application::model_mapping::reconcile_external_model_mapping_document(
+                                                runtime.clone(),
+                                            ),
+                                        )
+                                    }
+                                }),
+                                Arc::clone(&routing_policy_mutations),
                             )
                             .map_err(|error| {
                                 format!("failed to register policy document reconciler: {error}")

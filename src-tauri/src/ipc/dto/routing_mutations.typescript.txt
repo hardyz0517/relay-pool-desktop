@@ -53,22 +53,74 @@ export type RoutingPolicyConfigV1Dto = {
   outboundProxyUrl: string | null;
 };
 
-export type UpdateRoutingPolicyInputDto = {
-  config: RoutingPolicyConfigV1Dto;
-  expectedRevision: number | null;
+export type RetryFailoverPolicyV2Dto = {
+  version: number;
+  maxTotalAttempts: number;
+  maxSameTargetCapacityRetries: number;
+  capacityRetryWaitBudgetSeconds: number;
+  allowCrossCapacityDomainFallback: boolean;
+};
+
+export type ProtectionProfileConfigV2Dto = {
+  version: number;
+  enabled: boolean;
+  windowMaxSamples: number;
+  windowSeconds: number;
+  minSamples: number;
+  failureThresholdPercent: number;
+  halfOpenSuccessesToClose: number;
+};
+
+export type TimeoutPolicyV2Dto = {
+  version: number;
+  connectSeconds: number;
+  firstByteSeconds: number;
+  precommitSeconds: number;
+  bufferedExecutionSeconds: number;
+  streamIdleSeconds: number;
+};
+
+export type RoutingPolicyConfigV2Dto = {
+  version: number;
+  reliabilityWeight: number;
+  responsivenessWeight: number;
+  costWeight: number;
+  preferenceWeight: number;
+  maxCandidates: number;
+  explorationShareBasisPoints: number;
+  allowDepletedFallback: boolean;
+  affinityEnabled: boolean;
+  affinityTtlSeconds: number;
+  maxRateMultiplier: number | null;
+  routingGroupFilter: RoutingGroupFilterDto;
+  outboundProxyMode: string;
+  outboundProxyUrl: string | null;
+  retryFailover: RetryFailoverPolicyV2Dto;
+  protectionProfile: ProtectionProfileConfigV2Dto;
+  timeoutPolicy: TimeoutPolicyV2Dto;
 };
 
 export type ApplyRoutingPolicyDocumentInputDto = {
   formatVersion: number;
   baseRevision: number;
-  policy: RoutingPolicyConfigV1Dto;
+  policy: RoutingPolicyConfigV2Dto;
 };
 
 export type RoutingPolicySnapshotDto = {
-  config: RoutingPolicyConfigV1Dto;
+  config: RoutingPolicyConfigV2Dto;
   revision: number;
   policyVersion: string;
   systemVersion: string;
   status: string;
+  updatedAtMs: number;
+  documentSync: RoutingDocumentSyncDto | null;
+};
+
+export type RoutingDocumentSyncDto = {
+  state: "synchronized" | "pending_materialization" | "external_change" | "error";
+  desiredRevision: number;
+  materializedRevision: number | null;
+  lastErrorCode: string | null;
+  retryCount: number;
   updatedAtMs: number;
 };

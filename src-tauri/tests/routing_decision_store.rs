@@ -65,6 +65,18 @@ async fn test_pool() -> SqlitePool {
     .execute(&pool)
     .await
     .expect("migration");
+    sqlx::query(
+        r#"
+        CREATE TABLE request_logs (
+            id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL UNIQUE,
+            model TEXT
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("request logs");
     pool
 }
 
@@ -163,6 +175,44 @@ async fn writer_truncates_candidate_details_but_keeps_summary_and_priority_repre
     assert!(details
         .iter()
         .any(|row| row.retained_reason == "primary_rejection_representative"));
+}
+
+#[tokio::test]
+async fn decision_summary_uses_request_log_id_and_model_when_ids_differ() {
+    let pool = test_pool().await;
+    let mut connection = connection(&pool).await;
+    RoutingDecisionWriter
+        .upsert_decision(
+            &mut connection,
+            &decision("decision-a", 10_000, vec![candidate(1)]),
+            10_001,
+        )
+        .await
+        .expect("write");
+    sqlx::query("INSERT INTO request_logs (id, request_id, model) VALUES (?1, ?2, ?3)")
+        .bind("log-a")
+        .bind("request-decision-a")
+        .bind("gpt-test")
+        .execute(&mut *connection)
+        .await
+        .expect("request log");
+
+    let page = RoutingDecisionQueries
+        .list_decisions(&mut connection, None, 10)
+        .await
+        .expect("page");
+    let summary = &page.rows[0];
+    assert_eq!(summary.id, "decision-a");
+    assert_eq!(summary.request_id, "request-decision-a");
+    assert_eq!(summary.request_log_id.as_deref(), Some("log-a"));
+    assert_eq!(summary.model.as_deref(), Some("gpt-test"));
+
+    let by_request_log = RoutingDecisionQueries
+        .get_decision(&mut connection, "log-a")
+        .await
+        .expect("lookup")
+        .expect("decision");
+    assert_eq!(by_request_log.id, "decision-a");
 }
 
 #[tokio::test]

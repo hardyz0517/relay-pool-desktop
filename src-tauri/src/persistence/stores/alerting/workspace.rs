@@ -92,17 +92,23 @@ impl WorkspaceStore {
         severity: Option<&str>,
         record_type: Option<&str>,
         unread_only: bool,
+        search: Option<&str>,
         cursor: Option<(i64, &str)>,
         limit: u32,
     ) -> Result<(Vec<WorkspaceActivityRow>, i64, i64), PersistenceError> {
         let limit = i64::from(limit.clamp(1, 200));
+        let search = search.map(str::trim).filter(|value| !value.is_empty());
         let rows = sqlx::query(
             "WITH activity AS (
                 SELECT 'incident' AS record_type, i.id AS id,
                        'incident:' || i.id AS activity_key,
                        i.event_type AS event_type,
                        CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
-                       i.station_id AS station_id, i.object_type AS object_type,
+                       i.station_id AS station_id, s.name AS station_name,
+                       CASE WHEN json_valid(i.last_observation_summary_json)
+                            THEN json_extract(i.last_observation_summary_json, '$.groupName')
+                            ELSE NULL END AS group_name,
+                       i.object_type AS object_type,
                        i.object_id AS object_id, i.station_key_id AS station_key_id,
                        NULL AS source, NULL AS reason_code,
                        i.condition_key AS condition_key,
@@ -119,13 +125,23 @@ impl WorkspaceStore {
                 FROM change_incidents i
                 LEFT JOIN incident_attention a
                   ON a.incident_id = i.id AND a.episode_number = i.episode_number
+                LEFT JOIN stations s ON s.id = i.station_id
 
                 UNION ALL
 
                 SELECT 'change' AS record_type, o.id AS id,
                        'change:' || o.id AS activity_key,
                        o.event_type AS event_type, 'info' AS severity,
-                       o.station_id AS station_id, o.object_type AS object_type,
+                       o.station_id AS station_id, s.name AS station_name,
+                       COALESCE(
+                           CASE WHEN json_valid(o.new_value_json)
+                                THEN json_extract(o.new_value_json, '$.groupName') END,
+                           CASE WHEN json_valid(o.old_value_json)
+                                THEN json_extract(o.old_value_json, '$.groupName') END,
+                           CASE WHEN json_valid(o.impact_json)
+                                THEN json_extract(o.impact_json, '$.groupName') END
+                       ) AS group_name,
+                       o.object_type AS object_type,
                        o.object_id AS object_id, o.station_key_id AS station_key_id,
                        o.source AS source, o.reason_code AS reason_code,
                        o.condition_key AS condition_key,
@@ -141,12 +157,14 @@ impl WorkspaceStore {
                        NULL AS resolved_at_ms, o.seen_at_ms AS seen_at_ms,
                        NULL AS snoozed_until_ms
                 FROM change_event_occurrences o
+                LEFT JOIN stations s ON s.id = o.station_id
                 LEFT JOIN station_group_bindings binding
                   ON binding.id = o.object_id
                  AND o.object_type = 'station_group_binding'
                 WHERE o.incident_id IS NULL AND o.category = 'audit_change'
             ), filtered AS (
                 SELECT record_type, id, activity_key, event_type, severity, station_id,
+                       station_name, group_name,
                        object_type, object_id, station_key_id, source, reason_code,
                        condition_key, lifecycle_state, episode_number, occurrence_count,
                        activity_at_ms, last_observation_summary_json, old_value_json,
@@ -161,6 +179,9 @@ impl WorkspaceStore {
                         record_type = 'change'
                         OR lifecycle_state IN ('pending', 'open', 'recovering')
                       )))
+                  AND (?5 IS NULL OR instr(lower(
+                        COALESCE(station_name, '') || ' ' || COALESCE(group_name, '')
+                      ), lower(?5)) > 0)
             )
             SELECT record_type, id, activity_key, event_type, severity, station_id,
                    object_type, object_id, station_key_id, source, reason_code,
@@ -170,15 +191,16 @@ impl WorkspaceStore {
                    resolved_at_ms, seen_at_ms,
                    snoozed_until_ms, (SELECT COUNT(*) FROM filtered) AS total_count
             FROM filtered
-            WHERE (?5 IS NULL OR activity_at_ms < ?5
-                   OR (activity_at_ms = ?5 AND activity_key < ?6))
+            WHERE (?6 IS NULL OR activity_at_ms < ?6
+                   OR (activity_at_ms = ?6 AND activity_key < ?7))
             ORDER BY activity_at_ms DESC, activity_key DESC
-            LIMIT ?7",
+            LIMIT ?8",
         )
         .bind(station_id)
         .bind(severity)
         .bind(record_type)
         .bind(unread_only)
+        .bind(search)
         .bind(cursor.map(|value| value.0))
         .bind(cursor.map(|value| value.1))
         .bind(limit + 1)
@@ -231,20 +253,24 @@ impl WorkspaceStore {
         station_id: Option<&str>,
         severity: Option<&str>,
         lifecycle_state: Option<&str>,
+        search: Option<&str>,
         cursor: Option<(i64, &str)>,
         limit: u32,
     ) -> Result<(Vec<WorkspaceIncidentRow>, i64, i64), PersistenceError> {
         let limit = i64::from(limit.clamp(1, 200));
+        let search = search.map(str::trim).filter(|value| !value.is_empty());
         let rows = sqlx::query(
             "WITH filtered AS (
                 SELECT i.id, i.condition_key, i.event_type, i.lifecycle_state,
                        CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END AS severity,
-                       i.station_id, i.episode_number, i.occurrence_count, i.last_seen_at_ms,
+                       i.station_id, s.name AS station_name, i.episode_number,
+                       i.occurrence_count, i.last_seen_at_ms,
                        i.last_observation_summary_json, i.resolved_at_ms, i.updated_at_ms,
                        a.seen_at_ms, a.snoozed_until_ms
                 FROM change_incidents i
                 LEFT JOIN incident_attention a
                   ON a.incident_id = i.id AND a.episode_number = i.episode_number
+                LEFT JOIN stations s ON s.id = i.station_id
                 WHERE (?1 IS NULL OR i.station_id = ?1)
                   AND (?2 IS NULL OR CASE WHEN i.event_type = 'group_missing' THEN 'info' ELSE i.severity END = ?2)
                   AND (
@@ -255,20 +281,30 @@ impl WorkspaceStore {
                        OR (?3 = 'unread' AND i.lifecycle_state IN ('pending', 'open', 'recovering') AND a.seen_at_ms IS NULL)
                        OR i.lifecycle_state = ?3
                   )
+                  AND (?4 IS NULL OR instr(lower(
+                        COALESCE(s.name, '') || ' ' ||
+                        COALESCE(
+                            CASE WHEN json_valid(i.last_observation_summary_json)
+                                 THEN json_extract(i.last_observation_summary_json, '$.groupName')
+                                 ELSE NULL END,
+                            ''
+                        )
+                      ), lower(?4)) > 0)
             )
             SELECT id, condition_key, event_type, lifecycle_state, severity,
                    station_id, episode_number, occurrence_count, last_seen_at_ms,
                    last_observation_summary_json, resolved_at_ms, updated_at_ms,
                    seen_at_ms, snoozed_until_ms, (SELECT COUNT(*) FROM filtered) AS total_count
             FROM filtered
-            WHERE (?4 IS NULL OR updated_at_ms < ?4
-                   OR (updated_at_ms = ?4 AND id < ?5))
+            WHERE (?5 IS NULL OR updated_at_ms < ?5
+                   OR (updated_at_ms = ?5 AND id < ?6))
             ORDER BY updated_at_ms DESC, id DESC
-            LIMIT ?6",
+            LIMIT ?7",
         )
         .bind(station_id)
         .bind(severity)
         .bind(lifecycle_state)
+        .bind(search)
         .bind(cursor.map(|value| value.0))
         .bind(cursor.map(|value| value.1))
         .bind(limit + 1)

@@ -174,6 +174,38 @@ async fn startup_reconciliation_marks_in_progress_requests_trace_incomplete_with
     assert_eq!(cost.get::<String, _>(2), "missing_usage");
     assert_eq!(cost.get::<Option<i64>, _>(3), None);
 
+    let outcome = sqlx::query(
+        "SELECT terminal_kind, terminal_code, classification, request_accepted,
+                replay_disposition, billing_state, retry_disposition,
+                attempt_count, fallback_count
+         FROM request_routing_outcome_summaries WHERE request_id = 'req-reconcile'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("durable interrupted outcome");
+    assert_eq!(outcome.get::<String, _>(0), "interrupted");
+    assert_eq!(outcome.get::<String, _>(1), "startup_interrupted");
+    assert_eq!(outcome.get::<String, _>(2), "local");
+    assert_eq!(outcome.get::<String, _>(3), "unknown");
+    assert_eq!(outcome.get::<String, _>(4), "stopped_uncertain");
+    assert_eq!(outcome.get::<String, _>(5), "possibly_billed");
+    assert_eq!(outcome.get::<String, _>(6), "fail_closed");
+    assert_eq!(outcome.get::<i64, _>(7), 1);
+    assert_eq!(outcome.get::<i64, _>(8), 0);
+
+    let event = sqlx::query(
+        "SELECT event_kind, detail_code, retry_disposition, output_committed
+         FROM request_decision_events
+         WHERE request_id = 'req-reconcile' AND event_key = 'request_finalized'",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .expect("durable interrupted terminal event");
+    assert_eq!(event.get::<String, _>(0), "request_finalized");
+    assert_eq!(event.get::<String, _>(1), "startup_interrupted");
+    assert_eq!(event.get::<String, _>(2), "stop_request");
+    assert_eq!(event.get::<i64, _>(3), 0);
+
     let rerun = reconcile_startup_interrupted_batch(&mut connection, 6_000, 16)
         .await
         .expect("rerun reconciliation");

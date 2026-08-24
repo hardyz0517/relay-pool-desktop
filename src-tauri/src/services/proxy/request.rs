@@ -1,16 +1,43 @@
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
 use http::{HeaderMap, StatusCode};
+use std::time::{Duration, Instant};
 
 use crate::models::routing::{RouteEndpointKind, RoutingGroupFilter};
 
 use super::{
     lifecycle::{request::RequestContextSnapshot, writer::RequestTerminalReservation},
     limits::{BodyBudgetLease, RequestLease},
+    transport_policy::TransportPolicySnapshot,
 };
 
 pub type ByteStream =
     BoxStream<'static, Result<Bytes, crate::services::proxy::error::ProxyFailure>>;
+
+/// Monotonic and wall-clock anchors captured when the local request first
+/// enters ingress. The monotonic anchor owns deadline accounting; the wall
+/// clock value is only used for lifecycle/trace timestamps.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RequestTimingContext {
+    pub(crate) started_at: Instant,
+    pub(crate) started_at_ms: i64,
+    pub(crate) deadline: Option<Duration>,
+}
+
+impl RequestTimingContext {
+    pub(crate) fn now(started_at_ms: i64) -> Self {
+        Self {
+            started_at: Instant::now(),
+            started_at_ms,
+            deadline: None,
+        }
+    }
+
+    pub(crate) fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RequestRequirements {
@@ -33,6 +60,8 @@ pub struct CanonicalProxyRequest {
     pub idempotency_key: Option<String>,
     pub session_hash: Option<String>,
     pub previous_response_id: Option<String>,
+    request_timing: RequestTimingContext,
+    transport_policy: std::sync::Arc<TransportPolicySnapshot>,
     lifecycle_admission: Option<RequestLifecycleAdmission>,
     _body_budget: BodyBudgetLease,
     request_lease: Option<RequestLease>,
@@ -75,10 +104,37 @@ impl CanonicalProxyRequest {
             idempotency_key,
             session_hash,
             previous_response_id,
+            request_timing: RequestTimingContext::now(
+                crate::services::time::now_millis_for_services() as i64,
+            ),
+            transport_policy: std::sync::Arc::new(TransportPolicySnapshot::default()),
             lifecycle_admission,
             _body_budget: body_budget,
             request_lease: Some(request_lease),
         }
+    }
+
+    /// Replace the constructor fallback with the ingress anchor. Direct
+    /// test/control-plane callers still get a valid local anchor from `new`.
+    pub(crate) fn with_request_timing(mut self, timing: RequestTimingContext) -> Self {
+        self.request_timing = timing;
+        self
+    }
+
+    pub(crate) fn request_timing(&self) -> RequestTimingContext {
+        self.request_timing
+    }
+
+    pub(crate) fn with_transport_policy(
+        mut self,
+        transport_policy: std::sync::Arc<TransportPolicySnapshot>,
+    ) -> Self {
+        self.transport_policy = transport_policy;
+        self
+    }
+
+    pub(crate) fn transport_policy(&self) -> &std::sync::Arc<TransportPolicySnapshot> {
+        &self.transport_policy
     }
 
     pub(crate) fn take_lifecycle_admission(&mut self) -> Option<RequestLifecycleAdmission> {

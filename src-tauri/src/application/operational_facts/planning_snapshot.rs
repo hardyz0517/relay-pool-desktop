@@ -1,4 +1,9 @@
 use crate::{
+    application::error_rate_protection::{
+        candidate_health_scopes, scoped_admission_verdict_for_probe_candidate,
+        scoped_admission_verdict_with_probe, ErrorRateAdmissionConfigV1,
+    },
+    application::health_protection::{HealthProbeAdmissionMode, HealthProtectionStatus},
     application::model_mapping::{
         candidate_variants, resolve_for_candidate, CandidateModelVariant,
         CandidateResolutionContext,
@@ -13,7 +18,8 @@ use crate::{
         failure_domains::ProviderCapacityDomain,
         request::{GroupFilterMode, RouteKind, RouteRequestFacts},
     },
-    models::routing_policy::RoutingPolicyConfigV1,
+    application::routing_policy::AttemptBudgetProfileV1,
+    models::routing_policy::RoutingPolicyConfigV2,
     persistence::stores::routing_health_verdict_store::{
         DurableHealthVerdict, FailureDimension, RoutingHealthVerdictStore, ScopedHealthSubject,
     },
@@ -45,11 +51,16 @@ impl PlanningSnapshotBuilder {
         &self,
         read: &mut ReadSession,
         options: &OperationalFactReadOptions,
-        policy: RoutingPolicyConfigV1,
+        policy: RoutingPolicyConfigV2,
         routing_policy_revision: u64,
+        attempt_budget: AttemptBudgetProfileV1,
         profile: DispatchAlgorithmProfile,
         runtime: RuntimeOverlaySnapshot,
         request: &RouteRequestFacts,
+        error_rate_admission: ErrorRateAdmissionConfigV1,
+        error_rate_statuses: &[HealthProtectionStatus],
+        health_probe: Option<&crate::application::health_protection::HealthProtectionProbe>,
+        health_probe_mode: HealthProbeAdmissionMode,
     ) -> Result<PlanningSnapshot, PlanningSnapshotBuildError> {
         let reader = OperationalFactReader::new(OperationalFactStore);
         let facts = reader.load_bundle(read, options).await?;
@@ -181,7 +192,35 @@ impl PlanningSnapshotBuilder {
                     .first()
                     .map(|variant| variant.upstream_model.clone())
                     .or_else(|| request.requested_model().map(ToOwned::to_owned));
-                Some(CandidateSnapshot {
+                let hard_eligible = candidate_hard_eligible(
+                    candidate,
+                    request,
+                    &policy,
+                    candidate_model_for_gates.as_deref(),
+                );
+                let base_hard_eligible = hard_eligible
+                    && candidate_scoped_admitted(candidate, &scoped_verdicts, false);
+                let error_rate_admitted = error_rate_candidate_admitted(
+                    candidate,
+                    error_rate_admission.clone(),
+                    error_rate_statuses,
+                    health_probe,
+                );
+                // An expired durable Open entry may be retained only so the
+                // execution coordinator can discover it and atomically reserve
+                // a Half-Open lease. It must remain planner-ineligible until
+                // the second snapshot carries that exact revision fence.
+                let probe_discovery_candidate = hard_eligible
+                    && candidate_scoped_admitted(candidate, &scoped_verdicts, true)
+                    && !error_rate_admitted
+                    && health_probe.is_none()
+                    && health_probe_mode == HealthProbeAdmissionMode::Normal
+                    && error_rate_probe_discovery_allowed(
+                        candidate,
+                        error_rate_admission.clone(),
+                        error_rate_statuses,
+                    );
+                Some((CandidateSnapshot {
                 station_key_id: candidate.station_key_id().as_str().to_string(),
                 station_id: candidate.station_id().as_str().to_string(),
                 endpoint_revision: candidate.endpoint().endpoint_ref().revision().get(),
@@ -210,12 +249,7 @@ impl PlanningSnapshotBuilder {
                     .capacity_domain_revision()
                     .map(|revision| revision.get()),
                 credential_available: candidate.credential().available(),
-                hard_eligible: candidate_hard_eligible(
-                    candidate,
-                    request,
-                    &policy,
-                    candidate_model_for_gates.as_deref(),
-                ) && candidate_scoped_admitted(candidate, &scoped_verdicts),
+                hard_eligible: base_hard_eligible && error_rate_admitted,
                 backup_only: candidate.backup_only(),
                 depleted: candidate_is_depleted(candidate),
                 capability_basis_points: 10_000,
@@ -257,9 +291,12 @@ impl PlanningSnapshotBuilder {
                     format!("station:{}", candidate.station_id().as_str()),
                     format!("key:{}", candidate.station_key_id().as_str()),
                 ],
-                })
+                }, probe_discovery_candidate))
             })
-            .filter(|candidate| candidate.hard_eligible)
+            .filter(|(candidate, probe_discovery_candidate)| {
+                candidate.hard_eligible || *probe_discovery_candidate
+            })
+            .map(|(candidate, _)| candidate)
             .take(usize::from(policy.max_candidates))
             .collect();
         let snapshot = PlanningSnapshot {
@@ -267,6 +304,7 @@ impl PlanningSnapshotBuilder {
             durable_revision,
             routing_policy_revision,
             policy,
+            attempt_budget,
             profile,
             candidates,
             model_fallback_trigger: mapping_fallback_trigger,
@@ -384,7 +422,7 @@ fn candidate_is_depleted(candidate: &super::assembler::OperationalCandidateFact)
 fn candidate_hard_eligible(
     candidate: &super::assembler::OperationalCandidateFact,
     request: &RouteRequestFacts,
-    policy: &RoutingPolicyConfigV1,
+    policy: &RoutingPolicyConfigV2,
     model_override: Option<&str>,
 ) -> bool {
     if !candidate.credential().available() {
@@ -479,13 +517,77 @@ fn scoped_subjects_for_planning(
     Ok(subjects)
 }
 
+fn error_rate_candidate_admitted(
+    candidate: &super::assembler::OperationalCandidateFact,
+    config: ErrorRateAdmissionConfigV1,
+    statuses: &[HealthProtectionStatus],
+    health_probe: Option<&crate::application::health_protection::HealthProtectionProbe>,
+) -> bool {
+    if !config.enabled {
+        return true;
+    }
+    let Some(scopes) = candidate_health_scopes(
+        candidate.station_id().as_str(),
+        candidate.station_key_id().as_str(),
+        candidate.endpoint().endpoint_ref().revision().get(),
+    ) else {
+        return false;
+    };
+    let admitted = scopes.iter().all(|scope| {
+        let matching_probe = config
+            .probe
+            .as_ref()
+            .or(health_probe)
+            .filter(|probe| probe.scope == *scope);
+        scoped_admission_verdict_with_probe(statuses, scope, matching_probe).is_admitted()
+    });
+    admitted
+}
+
+fn error_rate_probe_discovery_allowed(
+    candidate: &super::assembler::OperationalCandidateFact,
+    config: ErrorRateAdmissionConfigV1,
+    statuses: &[HealthProtectionStatus],
+) -> bool {
+    if !config.enabled || config.probe.is_some() {
+        return false;
+    }
+    let Some(scopes) = candidate_health_scopes(
+        candidate.station_id().as_str(),
+        candidate.station_key_id().as_str(),
+        candidate.endpoint().endpoint_ref().revision().get(),
+    ) else {
+        return false;
+    };
+    let discovered = scopes.iter().any(|scope| {
+        scoped_admission_verdict_for_probe_candidate(statuses, scope)
+            .is_admitted()
+            && statuses.iter().any(|status| {
+                status.scope == *scope
+                    && status.persistence_kind
+                        == crate::application::health_protection::HealthProtectionPersistenceKind::Durable
+                    && status.state
+                        == crate::application::health_protection::HealthProtectionState::Open
+                    && status.cooldown_remaining_ms == Some(0)
+            })
+    });
+    discovered
+}
+
 fn candidate_scoped_admitted(
     candidate: &super::assembler::OperationalCandidateFact,
     verdicts: &std::collections::BTreeMap<
         (String, FailureDimension),
         crate::persistence::stores::routing_health_verdict_store::ScopedHealthVerdictRow,
     >,
+    ignore_endpoint: bool,
 ) -> bool {
+    let endpoint_scope = ScopedHealthSubject::endpoint(
+        candidate.station_id().as_str(),
+        candidate.endpoint().endpoint_ref().revision().get(),
+    )
+    .ok()
+    .map(|subject| subject.scope().to_string());
     let mut subjects = vec![
         ScopedHealthSubject::credential(
             candidate.station_id().as_str(),
@@ -513,6 +615,9 @@ fn candidate_scoped_admitted(
     }
     subjects.into_iter().all(|subject| {
         subject.ok().is_none_or(|subject| {
+            if ignore_endpoint && endpoint_scope.as_deref() == Some(subject.scope()) {
+                return true;
+            }
             verdicts
                 .iter()
                 .filter(|((scope, _), _)| scope == subject.scope())
@@ -625,6 +730,7 @@ fn _source_contract<S: OperationalFactSource>() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::error_rate_protection::admission_scope;
 
     #[test]
     fn builder_type_is_bound_to_the_operational_source() {
@@ -667,7 +773,7 @@ mod tests {
         assert!(candidate_hard_eligible(
             &candidate,
             &test_request(GroupFilterMode::Any, None),
-            &RoutingPolicyConfigV1::default(),
+            &RoutingPolicyConfigV2::default(),
             Some("gpt-4.1"),
         ));
         candidate.set_durable_health_for_planning_test(
@@ -677,8 +783,48 @@ mod tests {
         assert!(candidate_hard_eligible(
             &candidate,
             &test_request(GroupFilterMode::Any, None),
-            &RoutingPolicyConfigV1::default(),
+            &RoutingPolicyConfigV2::default(),
             Some("gpt-4.1"),
+        ));
+    }
+
+    #[test]
+    fn error_rate_admission_is_disabled_by_default_and_fail_closed_when_open() {
+        let candidate = test_candidate(None, None, None);
+        let statuses = Vec::new();
+        assert!(error_rate_candidate_admitted(
+            &candidate,
+            ErrorRateAdmissionConfigV1::disabled(),
+            &statuses,
+            None,
+        ));
+
+        let scope = admission_scope(
+            crate::application::health_protection::HealthProtectionScopeKind::Credential,
+            candidate.station_key_id().as_str(),
+        );
+        let status = crate::application::health_protection::HealthProtectionStatus {
+            version: crate::application::health_protection::HEALTH_PROTECTION_VERSION.to_string(),
+            scope,
+            state: crate::application::health_protection::HealthProtectionState::Open,
+            persistence_kind:
+                crate::application::health_protection::HealthProtectionPersistenceKind::Durable,
+            state_revision: 1,
+            opened_at_ms: Some(10),
+            cooldown_until_ms: Some(100),
+            cooldown_remaining_ms: Some(90),
+            half_open_probe_in_flight: false,
+            recent_failure_code: None,
+            sample_count: 5,
+            failure_rate_percent: 100,
+            updated_at_ms: 10,
+            detail_available: true,
+        };
+        assert!(!error_rate_candidate_admitted(
+            &candidate,
+            ErrorRateAdmissionConfigV1::enabled(),
+            &[status],
+            None,
         ));
     }
 

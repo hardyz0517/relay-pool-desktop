@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
-    application::{clock::Clock, error::ApplicationError, ids::IdGenerator},
+    application::{
+        alerting::{AlertingReadModelUpdatePublisher, NoopAlertingReadModelUpdatePublisher},
+        clock::Clock,
+        error::ApplicationError,
+        ids::IdGenerator,
+    },
     models::stations::{CreateStationInput, Station, UpdateStationInput},
     persistence::{
         runtime::PersistenceHandle,
@@ -18,19 +23,42 @@ pub(crate) struct StationService {
     clock: Arc<dyn Clock>,
     ids: Arc<dyn IdGenerator>,
     store: StationCatalogStore,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
 }
 
 impl StationService {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "contract=alerting.read-model-update-test-constructor; owner=application/stations; remove_when=all non-desktop compositions inject a read-model update publisher"
+        )
+    )]
     pub(crate) fn new(
         runtime: PersistenceHandle,
         clock: Arc<dyn Clock>,
         ids: Arc<dyn IdGenerator>,
+    ) -> Self {
+        Self::new_with_alerting_read_model_updates(
+            runtime,
+            clock,
+            ids,
+            Arc::new(NoopAlertingReadModelUpdatePublisher),
+        )
+    }
+
+    pub(crate) fn new_with_alerting_read_model_updates(
+        runtime: PersistenceHandle,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+        alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
     ) -> Self {
         Self {
             runtime,
             clock,
             ids,
             store: StationCatalogStore,
+            alerting_updates,
         }
     }
 
@@ -99,7 +127,9 @@ impl StationService {
                 })
             })
             .await
-            .map_err(Into::into)
+            .map_err(ApplicationError::from)?;
+        self.alerting_updates.notify_after_commit();
+        Ok(())
     }
 
     pub(crate) async fn reorder(
@@ -332,7 +362,7 @@ mod tests {
 
         let query = ChangeCenterWorkspaceQuery::new(runtime.handle());
         let page = query
-            .list_current(None, None, Some("active"), None, 100)
+            .list_current(None, None, Some("active"), None, None, 100)
             .await
             .expect("list current alerts");
         assert!(page.items.is_empty());

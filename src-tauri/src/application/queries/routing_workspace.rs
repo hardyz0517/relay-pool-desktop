@@ -8,13 +8,14 @@ use crate::{
         },
         quality_projection::QualitySummary,
         routing_engine::{
-            intelligent_planner::CandidateScoreBreakdown, request::RouteRequestFacts,
+            failure_domains::ProviderCapacityDomain, intelligent_planner::CandidateScoreBreakdown,
+            request::RouteRequestFacts,
         },
     },
     models::{
         pricing::ResolvedPricingContext,
         routing::{CanonicalRoutingCandidate, RoutingGroupFilter, RuntimeRoutingBalance},
-        routing_policy::RoutingPolicyConfigV1,
+        routing_policy::RoutingPolicyConfigV2,
     },
 };
 
@@ -39,7 +40,7 @@ pub(crate) struct RoutingWorkspaceSnapshotInput {
 pub(crate) struct RoutingWorkspaceSnapshot {
     pub(crate) read_model_version: &'static str,
     pub(crate) generated_at_ms: i64,
-    pub(crate) policy_config: RoutingPolicyConfigV1,
+    pub(crate) policy_config: RoutingPolicyConfigV2,
     pub(crate) preview_policy_version: &'static str,
     pub(crate) max_rate_multiplier: Option<f64>,
     pub(crate) routing_group_filter: RoutingGroupFilter,
@@ -88,8 +89,42 @@ pub(crate) struct RoutingWorkspaceCandidate {
     pub(crate) balance_value: Option<f64>,
     pub(crate) balance_currency: Option<String>,
     pub(crate) capacity: RoutingCandidateCapacitySnapshot,
+    /// Trusted capacity-domain configuration facts. This is deliberately
+    /// separate from runtime protection status: a configured identity is not
+    /// proof that the provider is open, half-open, or currently failing.
+    pub(crate) failure_domain: RoutingCandidateFailureDomainSnapshot,
     pub(crate) source_refs: RoutingCandidateSourceRefs,
     pub(crate) hard_rejection_codes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RoutingCandidateFailureDomainSnapshot {
+    pub(crate) kind: RoutingFailureDomainKind,
+    pub(crate) resolution: RoutingFailureDomainResolution,
+    pub(crate) provider_family: Option<String>,
+    pub(crate) deployment_identity: Option<String>,
+    pub(crate) region_identity: Option<String>,
+    pub(crate) revision: Option<i64>,
+    /// Present only when the current read-model request has a concrete model
+    /// and the trusted identity can be converted to the canonical commitment.
+    pub(crate) commitment: Option<String>,
+    pub(crate) explanation_key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RoutingFailureDomainKind {
+    CapacityDomain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RoutingFailureDomainResolution {
+    NotConfigured,
+    InvalidIdentity,
+    ModelRequired,
+    Resolved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,7 +330,7 @@ pub(crate) struct RoutingCandidateSourceRefs {
 }
 
 pub(crate) fn workspace_snapshot_from_canonical_candidates(
-    policy_config: RoutingPolicyConfigV1,
+    policy_config: RoutingPolicyConfigV2,
     max_rate_multiplier: Option<f64>,
     routing_group_filter: RoutingGroupFilter,
     candidates: Vec<(CanonicalRoutingCandidate, Option<ResolvedPricingContext>)>,
@@ -378,16 +413,128 @@ fn depleted_rank(value: Option<f64>, status: Option<&str>) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{candidate_matches_group_scope, depleted_rank, RoutingCandidateGroupSnapshot};
+    use super::{
+        candidate_matches_group_scope, depleted_rank, failure_domain_snapshot,
+        RoutingCandidateGroupSnapshot, RoutingFailureDomainResolution,
+    };
     use crate::application::routing_engine::request::{
         CanonicalRouteRequest, GroupFilterMode, OrderingProfile, RouteKind, RouteRequestClassifier,
         ValidatedLocalRouteSettings,
     };
+    use crate::models::{
+        proxy::UpstreamApiFormat,
+        routing::{CanonicalRoutingCandidate, StationKeyCapabilities},
+    };
+
+    fn request(
+        model: Option<&str>,
+    ) -> crate::application::routing_engine::request::RouteRequestFacts {
+        RouteRequestClassifier::classify(
+            CanonicalRouteRequest {
+                route_kind: RouteKind::Inference,
+                requested_model: model.map(ToOwned::to_owned),
+                stream: false,
+                uses_tools: false,
+                uses_vision: false,
+                uses_reasoning: false,
+                untrusted_headers: Vec::new(),
+            },
+            ValidatedLocalRouteSettings {
+                ordering_profile: OrderingProfile::PriorityFirst,
+                max_rate_multiplier: None,
+                group_filter_mode: GroupFilterMode::Any,
+                required_group_stable_key: None,
+                preferred_models: Vec::new(),
+                required_tags: Vec::new(),
+                allow_depleted_fallback: false,
+                affinity_enabled: false,
+            },
+            1_800_000_000_000,
+        )
+    }
+
+    fn candidate() -> CanonicalRoutingCandidate {
+        CanonicalRoutingCandidate {
+            station_key_id: "key-1".into(),
+            station_id: "station-1".into(),
+            station_type: "newapi".into(),
+            capacity_provider_family: Some("OpenAI".into()),
+            capacity_deployment_identity: Some("primary".into()),
+            capacity_region_identity: Some("US".into()),
+            capacity_domain_revision: Some(3),
+            station_account_concurrency_limit: None,
+            station_endpoint_revision: 1,
+            sanitized_origin: "https://station.example.test".into(),
+            upstream_api_format: UpstreamApiFormat::CustomOpenAiCompatible,
+            routing_order: None,
+            priority: 1,
+            max_concurrency: 4,
+            load_factor: None,
+            schedulable: true,
+            collector_proxy_mode: "inherit".into(),
+            collector_proxy_url: None,
+            station_name: "Station".into(),
+            key_name: "Key".into(),
+            capabilities: StationKeyCapabilities {
+                station_key_id: "key-1".into(),
+                supports_chat_completions: true,
+                supports_responses: true,
+                supports_embeddings: false,
+                supports_stream: true,
+                supports_tools: false,
+                supports_vision: false,
+                supports_reasoning: false,
+                model_allowlist: Vec::new(),
+                model_blocklist: Vec::new(),
+                preferred_models: Vec::new(),
+                only_use_as_backup: false,
+                routing_tags: Vec::new(),
+                updated_at: "1".into(),
+            },
+            health: None,
+            balance_snapshot: None,
+            economic_snapshot: None,
+            api_key: None,
+            api_key_secret: None,
+        }
+    }
 
     #[test]
     fn negative_balance_is_always_in_the_depleted_display_tier() {
         assert_eq!(depleted_rank(Some(-0.05), Some("normal")), 1);
         assert_eq!(depleted_rank(Some(0.06), Some("normal")), 0);
+    }
+
+    #[test]
+    fn configured_capacity_identity_is_projected_without_claiming_runtime_health() {
+        let projected = failure_domain_snapshot(&candidate(), &request(Some("gpt-test")));
+        assert_eq!(
+            projected.resolution,
+            RoutingFailureDomainResolution::Resolved
+        );
+        assert_eq!(projected.provider_family.as_deref(), Some("OpenAI"));
+        assert_eq!(projected.deployment_identity.as_deref(), Some("primary"));
+        assert_eq!(projected.region_identity.as_deref(), Some("US"));
+        assert_eq!(projected.revision, Some(3));
+        assert!(projected
+            .commitment
+            .as_deref()
+            .is_some_and(|value| value.starts_with("v1:")));
+        assert_eq!(projected.explanation_key, "routing.failure_domain.resolved");
+    }
+
+    #[test]
+    fn configured_capacity_identity_requires_model_before_commitment() {
+        let projected = failure_domain_snapshot(&candidate(), &request(None));
+        assert_eq!(
+            projected.resolution,
+            RoutingFailureDomainResolution::ModelRequired
+        );
+        assert!(projected.commitment.is_none());
+        assert_eq!(
+            projected.explanation_key,
+            "routing.failure_domain.model_required"
+        );
     }
 
     #[test]
@@ -443,6 +590,7 @@ fn candidate_from_canonical(
     score_details: Option<RoutingCandidateScoreSnapshot>,
     quality_summaries: &BTreeMap<String, QualitySummary>,
 ) -> RoutingWorkspaceCandidate {
+    let failure_domain = failure_domain_snapshot(&candidate, request);
     let score_details = score_details.map(|mut details| {
         let quality_summary = quality_summaries
             .get(&format!("station_key:{}", candidate.station_key_id))
@@ -814,6 +962,7 @@ fn candidate_from_canonical(
             in_flight: in_flight,
             acquired: false,
         },
+        failure_domain,
         source_refs: RoutingCandidateSourceRefs {
             station_key_id: candidate.station_key_id,
             station_id: candidate.station_id,
@@ -837,6 +986,90 @@ fn candidate_from_canonical(
             projector_version: "routing_workspace_canonical_v1".to_string(),
         },
         hard_rejection_codes,
+    }
+}
+
+fn failure_domain_snapshot(
+    candidate: &CanonicalRoutingCandidate,
+    request: &RouteRequestFacts,
+) -> RoutingCandidateFailureDomainSnapshot {
+    let provider_family = candidate
+        .capacity_provider_family
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let deployment_identity = candidate
+        .capacity_deployment_identity
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let region_identity = candidate
+        .capacity_region_identity
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let revision = candidate.capacity_domain_revision;
+
+    let Some(provider) = provider_family.clone() else {
+        return RoutingCandidateFailureDomainSnapshot {
+            kind: RoutingFailureDomainKind::CapacityDomain,
+            resolution: RoutingFailureDomainResolution::NotConfigured,
+            provider_family: None,
+            deployment_identity: None,
+            region_identity: None,
+            revision: None,
+            commitment: None,
+            explanation_key: "routing.failure_domain.not_configured".to_string(),
+        };
+    };
+
+    let Some(model) = request.requested_model() else {
+        return RoutingCandidateFailureDomainSnapshot {
+            kind: RoutingFailureDomainKind::CapacityDomain,
+            resolution: RoutingFailureDomainResolution::ModelRequired,
+            provider_family: Some(provider),
+            deployment_identity,
+            region_identity,
+            revision,
+            commitment: None,
+            explanation_key: "routing.failure_domain.model_required".to_string(),
+        };
+    };
+
+    let domain = ProviderCapacityDomain::from_trusted_identity(
+        provider.as_str(),
+        model,
+        deployment_identity.as_deref(),
+        region_identity.as_deref(),
+    );
+    let Some(domain) = domain else {
+        return RoutingCandidateFailureDomainSnapshot {
+            kind: RoutingFailureDomainKind::CapacityDomain,
+            resolution: RoutingFailureDomainResolution::InvalidIdentity,
+            provider_family: Some(provider),
+            deployment_identity,
+            region_identity,
+            revision,
+            commitment: None,
+            explanation_key: "routing.failure_domain.invalid_identity".to_string(),
+        };
+    };
+    let commitment = domain.commitment();
+    RoutingCandidateFailureDomainSnapshot {
+        kind: RoutingFailureDomainKind::CapacityDomain,
+        resolution: RoutingFailureDomainResolution::Resolved,
+        provider_family: Some(provider),
+        deployment_identity,
+        region_identity,
+        revision,
+        commitment: Some(format!(
+            "v{}:{}",
+            commitment.schema_version, commitment.digest_hex
+        )),
+        explanation_key: "routing.failure_domain.resolved".to_string(),
     }
 }
 

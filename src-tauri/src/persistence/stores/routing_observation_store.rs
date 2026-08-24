@@ -1,6 +1,7 @@
 use serde_json::Value;
 use sqlx::{Row, SqliteConnection};
 
+use crate::application::health_protection::HealthProtectionScope;
 use crate::models::routing_observation::{
     ObservationOrder, ObservationOutcome, ObservationScope, ObservationSource, RoutingObservation,
     TrafficEquivalence,
@@ -163,6 +164,14 @@ fn row_to_observation(
     let evidence: Value = serde_json::from_str(&row.get::<String, _>("evidence_json"))
         .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
     let endpoint_revision = evidence.get("endpoint_revision").and_then(Value::as_i64);
+    let probe_scope = evidence
+        .get("probe_scope")
+        .cloned()
+        .filter(|value| !value.is_null())
+        .map(serde_json::from_value::<HealthProtectionScope>)
+        .transpose()
+        .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
+    let probe_state_revision = evidence.get("probe_state_revision").and_then(Value::as_u64);
     Ok(RoutingObservation {
         id: row.get("id"),
         order: ObservationOrder {
@@ -194,6 +203,8 @@ fn row_to_observation(
             row.get::<Option<i64>, _>("mass_basis_points").unwrap_or(0),
         )
         .map_err(|_| PersistenceError::InvariantViolation("invalid observation mass".into()))?,
+        probe_scope,
+        probe_state_revision,
     })
 }
 

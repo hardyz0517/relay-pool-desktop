@@ -4,10 +4,23 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 
-use crate::persistence::error::PersistenceError;
+use crate::{
+    application::error_rate_protection::{
+        transition_code, ErrorRateHistoryEventV1, ErrorRateProtectionConfigV1,
+    },
+    application::health_protection::{
+        HealthProtectionObservation, HealthProtectionObservationOutcome,
+        HealthProtectionPersistenceKind, HealthProtectionProbe, HealthProtectionProfileV1,
+        HealthProtectionReducer, HealthProtectionScope, HealthProtectionScopeKind,
+        HealthProtectionSnapshotV1,
+    },
+    persistence::error::PersistenceError,
+    persistence::stores::routing_error_rate_history_store::RoutingErrorRateHistoryStore,
+};
 
 pub(crate) const SCOPED_HEALTH_PROJECTOR_VERSION: &str = "scoped-health-projector-v1";
 const MAX_BATCH_SUBJECTS: usize = 4_096;
+const HEALTH_PROTECTION_STATE_MAX_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -351,6 +364,7 @@ pub(crate) struct ScopedHealthVerdictRow {
     pub(crate) verdict: DurableHealthVerdict,
     pub(crate) cooldown_until_ms: Option<i64>,
     pub(crate) evidence_code: String,
+    pub(crate) updated_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,6 +412,37 @@ pub(crate) struct RebuildProof {
 pub(crate) struct RoutingHealthVerdictStore;
 
 impl RoutingHealthVerdictStore {
+    async fn health_protection_profile(
+        &self,
+        connection: &mut SqliteConnection,
+    ) -> Result<HealthProtectionProfileV1, PersistenceError> {
+        let config_json: Option<String> =
+            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
+                .fetch_optional(&mut *connection)
+                .await?;
+        let Some(config_json) = config_json else {
+            return HealthProtectionProfileV1::from_policy_config(
+                &crate::models::routing_policy::ProtectionProfileConfigV2::default(),
+            )
+            .map_err(|_| {
+                PersistenceError::InvariantViolation(
+                    "invalid default health protection policy profile".into(),
+                )
+            });
+        };
+        let value: serde_json::Value = serde_json::from_str(&config_json).map_err(|_| {
+            PersistenceError::InvariantViolation("routing policy JSON is invalid".into())
+        })?;
+        let policy =
+            crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(&value)
+                .map_err(|_| {
+                    PersistenceError::InvariantViolation("routing policy is invalid".into())
+                })?;
+        HealthProtectionProfileV1::from_policy_config(&policy.protection_profile).map_err(|_| {
+            PersistenceError::InvariantViolation("invalid health protection policy profile".into())
+        })
+    }
+
     /// Ensures the active projection was built by this store's current
     /// projector. A mismatch is repaired through a shadow generation, so
     /// planners never observe an empty table during a rebuild.
@@ -644,11 +689,12 @@ impl RoutingHealthVerdictStore {
             .await?;
         } else {
             sqlx::query(
-                "DELETE FROM routing_health_verdicts WHERE generation_id = ?1 AND scope = ?2 AND failure_dimension = ?3",
+                "DELETE FROM routing_health_verdicts WHERE generation_id = ?1 AND scope = ?2 AND failure_dimension = ?3 AND source_ingestion_sequence < ?4",
             )
             .bind(&active_generation)
             .bind(observation.subject.scope())
             .bind(observation.dimension.as_str())
+            .bind(ingestion_sequence)
             .execute(&mut *connection)
             .await?;
         }
@@ -661,7 +707,441 @@ impl RoutingHealthVerdictStore {
         .bind(now_ms)
         .execute(&mut *connection)
         .await?;
+        // The reducer metadata is written in this same caller-owned
+        // transaction. The immutable observation and scoped verdict remain
+        // the only durable health evidence/projection owners.
+        self.apply_health_protection_state(connection, observation, ingested_at_ms)
+            .await?;
         Ok(ScopedObservationApplyResult::Applied)
+    }
+
+    /// Applies a low-cardinality error-rate observation to the single durable
+    /// reducer and writes its diagnostic event in the caller-owned transaction.
+    /// The existing scoped verdict tables remain the owner for explicit
+    /// credential/account/endpoint verdicts; this path only owns the reducer
+    /// window and its bounded history.
+    pub(crate) async fn apply_error_rate_observation(
+        &self,
+        connection: &mut SqliteConnection,
+        observation: HealthProtectionObservation,
+        mut history_event: ErrorRateHistoryEventV1,
+        history_observation_id: &str,
+        config: &ErrorRateProtectionConfigV1,
+        now_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if !config.enabled {
+            return Ok(());
+        }
+        let mut reducer = match self.load_health_protection_reducer(connection).await? {
+            Some(reducer) => reducer,
+            None => {
+                let mut reducer = HealthProtectionReducer::new(
+                    self.health_protection_profile(connection).await?,
+                    HealthProtectionPersistenceKind::Durable,
+                )
+                .map_err(|_| {
+                    PersistenceError::InvariantViolation(
+                        "invalid default health protection profile".into(),
+                    )
+                })?;
+                self.rebuild_health_protection_state(connection, &mut reducer)
+                    .await?;
+                reducer
+            }
+        };
+        let transition = match reducer.observe(observation) {
+            Ok(transition) => Some(transition_code(transition)),
+            // A late event or an observation arriving while a scope is Open
+            // is still valuable history, but must not be allowed to mutate or
+            // fail the durable protection state.
+            Err(
+                crate::application::health_protection::HealthProtectionError::ProbeNotAllowed
+                | crate::application::health_protection::HealthProtectionError::StaleObservation,
+            ) => None,
+            Err(error) => {
+                return Err(PersistenceError::InvariantViolation(format!(
+                    "error-rate reducer rejected observation: {error:?}"
+                )))
+            }
+        };
+        history_event.transition = transition;
+        if transition.is_some() {
+            self.save_health_protection_reducer(connection, &reducer, now_ms)
+                .await?;
+        }
+        RoutingErrorRateHistoryStore
+            .append(
+                connection,
+                history_event,
+                history_observation_id,
+                config,
+                now_ms,
+            )
+            .await
+            .map(|_| ())
+    }
+
+    /// Load the durable reducer snapshot for read models and startup checks.
+    /// A malformed or future snapshot fails closed instead of silently
+    /// discarding protection state.
+    pub(crate) async fn load_health_protection_reducer(
+        &self,
+        connection: &mut SqliteConnection,
+    ) -> Result<Option<HealthProtectionReducer>, PersistenceError> {
+        let row = sqlx::query(
+            "SELECT profile_version, profile_json, snapshot_version, snapshot_json, content_hash FROM routing_health_protection_state WHERE singleton_key = 1",
+        )
+        .fetch_optional(&mut *connection)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let profile_version: String = row.get("profile_version");
+        let profile_json: String = row.get("profile_json");
+        let snapshot_version: String = row.get("snapshot_version");
+        let snapshot_json: String = row.get("snapshot_json");
+        let content_hash: String = row.get("content_hash");
+        if profile_json.len() > HEALTH_PROTECTION_STATE_MAX_BYTES
+            || snapshot_json.len() > HEALTH_PROTECTION_STATE_MAX_BYTES
+            || content_hash
+                != hex_digest([profile_json.as_bytes(), snapshot_json.as_bytes()].concat())
+        {
+            return Err(PersistenceError::InvariantViolation(
+                "routing health protection snapshot integrity check failed".into(),
+            ));
+        }
+        let profile: HealthProtectionProfileV1 =
+            serde_json::from_str(&profile_json).map_err(|_| {
+                PersistenceError::InvariantViolation("invalid health protection profile".into())
+            })?;
+        let snapshot: HealthProtectionSnapshotV1 =
+            serde_json::from_str(&snapshot_json).map_err(|_| {
+                PersistenceError::InvariantViolation("invalid health protection snapshot".into())
+            })?;
+        if profile_version != profile.version || snapshot_version != snapshot.version {
+            return Err(PersistenceError::InvariantViolation(
+                "routing health protection snapshot version mismatch".into(),
+            ));
+        }
+        if snapshot.persistence_kind != HealthProtectionPersistenceKind::Durable {
+            return Err(PersistenceError::InvariantViolation(
+                "runtime health protection snapshot cannot be restored as durable state".into(),
+            ));
+        }
+        let mut reducer = HealthProtectionReducer::restore(profile, snapshot).map_err(|_| {
+            PersistenceError::InvariantViolation("invalid health protection snapshot state".into())
+        })?;
+        reducer
+            .reconfigure(self.health_protection_profile(connection).await?)
+            .map_err(|_| {
+                PersistenceError::InvariantViolation(
+                    "invalid health protection policy profile".into(),
+                )
+            })?;
+        Ok(Some(reducer))
+    }
+
+    pub(crate) async fn load_health_protection_statuses(
+        &self,
+        connection: &mut SqliteConnection,
+        now_ms: i64,
+    ) -> Result<Vec<crate::application::health_protection::HealthProtectionStatus>, PersistenceError>
+    {
+        let Some(mut reducer) = self.load_health_protection_reducer(connection).await? else {
+            return Ok(Vec::new());
+        };
+        reducer.statuses(now_ms.max(0)).map_err(|_| {
+            PersistenceError::InvariantViolation(
+                "health protection status projection failed".into(),
+            )
+        })
+    }
+
+    /// Atomically reserves the single Half-Open probe for a durable scope.
+    /// The returned fence is caller-owned and must be attached to the next
+    /// real, replay-safe observation; this method never performs network I/O.
+    pub(crate) async fn begin_health_protection_probe(
+        &self,
+        connection: &mut SqliteConnection,
+        scope: &HealthProtectionScope,
+        now_ms: i64,
+    ) -> Result<Option<HealthProtectionProbe>, PersistenceError> {
+        let Some(mut reducer) = self.load_health_protection_reducer(connection).await? else {
+            return Ok(None);
+        };
+        let probe = match reducer.begin_probe(scope, now_ms.max(0)) {
+            Ok(probe) => probe,
+            Err(crate::application::health_protection::HealthProtectionError::ProbeNotAllowed)
+            | Err(
+                crate::application::health_protection::HealthProtectionError::ProbeAlreadyInFlight,
+            )
+            | Err(crate::application::health_protection::HealthProtectionError::ScopeNotFound) => {
+                return Ok(None)
+            }
+            Err(error) => {
+                return Err(PersistenceError::InvariantViolation(format!(
+                    "health protection probe reservation rejected: {error:?}"
+                )))
+            }
+        };
+        self.save_health_protection_reducer(connection, &reducer, now_ms.max(0))
+            .await?;
+        Ok(Some(probe))
+    }
+
+    /// Releases a probe that never crossed the outbound-attempt boundary.
+    /// The reducer bumps its revision so a late terminal record cannot apply
+    /// to a subsequently reserved probe.
+    pub(crate) async fn cancel_health_protection_probe(
+        &self,
+        connection: &mut SqliteConnection,
+        probe: &HealthProtectionProbe,
+        now_ms: i64,
+    ) -> Result<bool, PersistenceError> {
+        let Some(mut reducer) = self.load_health_protection_reducer(connection).await? else {
+            return Ok(false);
+        };
+        let cancelled = reducer
+            .cancel_probe(probe.clone(), now_ms.max(0))
+            .map_err(|error| {
+                PersistenceError::InvariantViolation(format!(
+                    "health protection probe cancellation rejected: {error:?}"
+                ))
+            })?;
+        if cancelled {
+            self.save_health_protection_reducer(connection, &reducer, now_ms.max(0))
+                .await?;
+        }
+        Ok(cancelled)
+    }
+
+    /// Applies the result of a previously fenced probe in the same caller
+    /// transaction. Stale or duplicate results cannot mutate a newer cycle.
+    #[cfg(test)]
+    pub(crate) async fn apply_health_protection_probe(
+        &self,
+        connection: &mut SqliteConnection,
+        observation: HealthProtectionObservation,
+        now_ms: i64,
+    ) -> Result<crate::application::health_protection::HealthProtectionTransition, PersistenceError>
+    {
+        if !observation.probe {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let Some(mut reducer) = self.load_health_protection_reducer(connection).await? else {
+            return Err(PersistenceError::InvariantViolation(
+                "probe result has no durable health protection state".into(),
+            ));
+        };
+        let transition = reducer.observe(observation).map_err(|error| {
+            PersistenceError::InvariantViolation(format!(
+                "health protection probe result rejected: {error:?}"
+            ))
+        })?;
+        self.save_health_protection_reducer(connection, &reducer, now_ms.max(0))
+            .await?;
+        Ok(transition)
+    }
+
+    pub(crate) async fn ensure_health_protection_state(
+        &self,
+        connection: &mut SqliteConnection,
+        now_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if self
+            .load_health_protection_reducer(connection)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        let mut reducer = HealthProtectionReducer::new(
+            self.health_protection_profile(connection).await?,
+            HealthProtectionPersistenceKind::Durable,
+        )
+        .map_err(|_| {
+            PersistenceError::InvariantViolation("invalid default health protection profile".into())
+        })?;
+        self.rebuild_health_protection_state(connection, &mut reducer)
+            .await?;
+        self.save_health_protection_reducer(connection, &reducer, now_ms)
+            .await
+    }
+
+    async fn apply_health_protection_state(
+        &self,
+        connection: &mut SqliteConnection,
+        observation: &ScopedHealthObservation,
+        observed_at_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        let mut reducer = match self.load_health_protection_reducer(connection).await? {
+            Some(reducer) => reducer,
+            None => {
+                let mut reducer = HealthProtectionReducer::new(
+                    self.health_protection_profile(connection).await?,
+                    HealthProtectionPersistenceKind::Durable,
+                )
+                .map_err(|_| {
+                    PersistenceError::InvariantViolation(
+                        "invalid default health protection profile".into(),
+                    )
+                })?;
+                self.rebuild_health_protection_state(connection, &mut reducer)
+                    .await?;
+                reducer
+            }
+        };
+        let scope =
+            health_protection_scope(observation.subject.scope_kind, observation.subject.scope())?;
+        match observation.verdict {
+            None => {
+                reducer
+                    .apply_durable_recovery(
+                        scope,
+                        observation.observation_id.clone(),
+                        observed_at_ms,
+                    )
+                    .map_err(|_| {
+                        PersistenceError::InvariantViolation(
+                            "health protection recovery rejected".into(),
+                        )
+                    })?;
+            }
+            Some(verdict) => {
+                let opens = matches!(
+                    verdict,
+                    DurableHealthVerdict::Cooldown | DurableHealthVerdict::Blocked
+                );
+                let outcome = HealthProtectionObservationOutcome::Failure(
+                    crate::application::health_protection::failure_code_from_label(
+                        &observation.evidence_code,
+                    ),
+                );
+                reducer
+                    .apply_durable_verdict(
+                        HealthProtectionObservation {
+                            id: observation.observation_id.clone(),
+                            scope,
+                            observed_at_ms,
+                            outcome,
+                            probe: false,
+                            probe_state_revision: None,
+                            retry_after_ms: observation
+                                .cooldown_until_ms
+                                .map(|until| until.saturating_sub(observed_at_ms).max(0)),
+                        },
+                        opens,
+                    )
+                    .map_err(|_| {
+                        PersistenceError::InvariantViolation(
+                            "health protection verdict rejected".into(),
+                        )
+                    })?;
+            }
+        }
+        self.save_health_protection_reducer(connection, &reducer, observed_at_ms)
+            .await
+    }
+
+    async fn rebuild_health_protection_state(
+        &self,
+        connection: &mut SqliteConnection,
+        reducer: &mut HealthProtectionReducer,
+    ) -> Result<(), PersistenceError> {
+        let rows = sqlx::query(
+            "SELECT observation_id, scope, scope_kind, ingested_at_ms, verdict, cooldown_until_ms, evidence_code FROM routing_health_observations ORDER BY ingestion_sequence ASC",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        if rows.len() > 65_536 {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        for row in rows {
+            let scope_kind = parse_scope_kind(&row.get::<String, _>("scope_kind"))?;
+            let scope = health_protection_scope(scope_kind, &row.get::<String, _>("scope"))?;
+            let observed_at_ms: i64 = row.get("ingested_at_ms");
+            let observation_id: String = row.get("observation_id");
+            let verdict = row.get::<Option<String>, _>("verdict");
+            if let Some(verdict) = verdict {
+                let parsed = DurableHealthVerdict::parse(&verdict)?;
+                let opens = matches!(
+                    parsed,
+                    DurableHealthVerdict::Cooldown | DurableHealthVerdict::Blocked
+                );
+                reducer
+                    .apply_durable_verdict(
+                        HealthProtectionObservation {
+                            id: observation_id,
+                            scope,
+                            observed_at_ms,
+                            outcome: HealthProtectionObservationOutcome::Failure(
+                                crate::application::health_protection::failure_code_from_label(
+                                    &row.get::<String, _>("evidence_code"),
+                                ),
+                            ),
+                            probe: false,
+                            probe_state_revision: None,
+                            retry_after_ms: row
+                                .get::<Option<i64>, _>("cooldown_until_ms")
+                                .map(|until| until.saturating_sub(observed_at_ms).max(0)),
+                        },
+                        opens,
+                    )
+                    .map_err(|_| {
+                        PersistenceError::InvariantViolation(
+                            "health protection rebuild rejected".into(),
+                        )
+                    })?;
+            } else {
+                reducer
+                    .apply_durable_recovery(scope, observation_id, observed_at_ms)
+                    .map_err(|_| {
+                        PersistenceError::InvariantViolation(
+                            "health protection rebuild recovery rejected".into(),
+                        )
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn save_health_protection_reducer(
+        &self,
+        connection: &mut SqliteConnection,
+        reducer: &HealthProtectionReducer,
+        now_ms: i64,
+    ) -> Result<(), PersistenceError> {
+        if reducer.persistence_kind() != HealthProtectionPersistenceKind::Durable {
+            return Err(PersistenceError::InvariantViolation(
+                "only durable health protection state may be persisted".into(),
+            ));
+        }
+        let profile_json = serde_json::to_string(reducer.profile()).map_err(|_| {
+            PersistenceError::InvariantViolation("health protection profile encode failed".into())
+        })?;
+        let snapshot = reducer.snapshot(now_ms.max(0));
+        let snapshot_json = serde_json::to_string(&snapshot).map_err(|_| {
+            PersistenceError::InvariantViolation("health protection snapshot encode failed".into())
+        })?;
+        if profile_json.len() > HEALTH_PROTECTION_STATE_MAX_BYTES
+            || snapshot_json.len() > HEALTH_PROTECTION_STATE_MAX_BYTES
+        {
+            return Err(PersistenceError::ConstraintViolation);
+        }
+        let content_hash = hex_digest([profile_json.as_bytes(), snapshot_json.as_bytes()].concat());
+        sqlx::query(
+            "INSERT INTO routing_health_protection_state (singleton_key, profile_version, profile_json, snapshot_version, snapshot_json, content_hash, generated_at_ms, updated_at_ms) VALUES (1,?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(singleton_key) DO UPDATE SET profile_version=excluded.profile_version, profile_json=excluded.profile_json, snapshot_version=excluded.snapshot_version, snapshot_json=excluded.snapshot_json, content_hash=excluded.content_hash, generated_at_ms=excluded.generated_at_ms, updated_at_ms=excluded.updated_at_ms",
+        )
+        .bind(&reducer.profile().version)
+        .bind(profile_json)
+        .bind(&snapshot.version)
+        .bind(snapshot_json)
+        .bind(content_hash)
+        .bind(snapshot.generated_at_ms)
+        .bind(now_ms.max(0))
+        .execute(&mut *connection)
+        .await?;
+        Ok(())
     }
 
     /// One SQL statement for any bounded candidate set. JSON input consumes a
@@ -685,7 +1165,7 @@ impl RoutingHealthVerdictStore {
         let json = serde_json::to_string(&unique)
             .map_err(|error| PersistenceError::InvariantViolation(error.to_string()))?;
         let rows = sqlx::query(
-            "WITH requested(scope) AS (SELECT value FROM json_each(?1)) SELECT v.scope, v.scope_kind, v.failure_dimension, v.verdict, v.cooldown_until_ms, v.evidence_code FROM requested r JOIN routing_health_projector_state state ON state.singleton_key = 1 JOIN routing_health_verdicts v ON v.generation_id = state.active_generation_id AND v.scope = r.scope",
+            "WITH requested(scope) AS (SELECT value FROM json_each(?1)) SELECT v.scope, v.scope_kind, v.failure_dimension, v.verdict, v.cooldown_until_ms, v.evidence_code, v.updated_at_ms FROM requested r JOIN routing_health_projector_state state ON state.singleton_key = 1 JOIN routing_health_verdicts v ON v.generation_id = state.active_generation_id AND v.scope = r.scope",
         )
         .bind(json)
         .fetch_all(&mut *connection)
@@ -705,8 +1185,36 @@ impl RoutingHealthVerdictStore {
                         verdict: DurableHealthVerdict::parse(&row.get::<String, _>("verdict"))?,
                         cooldown_until_ms: row.get("cooldown_until_ms"),
                         evidence_code: row.get("evidence_code"),
+                        updated_at_ms: row.get("updated_at_ms"),
                     },
                 ))
+            })
+            .collect()
+    }
+
+    /// Load the bounded active projection for the protection read model. The
+    /// projector is already bounded by its ingestion policy; this method only
+    /// exposes the active generation and never scans historical generations.
+    pub(crate) async fn load_active_all(
+        &self,
+        connection: &mut SqliteConnection,
+    ) -> Result<Vec<ScopedHealthVerdictRow>, PersistenceError> {
+        let rows = sqlx::query(
+            "SELECT v.scope, v.scope_kind, v.failure_dimension, v.verdict, v.cooldown_until_ms, v.evidence_code, v.updated_at_ms FROM routing_health_projector_state state JOIN routing_health_verdicts v ON v.generation_id = state.active_generation_id WHERE state.singleton_key = 1 ORDER BY v.scope ASC, v.failure_dimension ASC",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ScopedHealthVerdictRow {
+                    subject_scope: row.get::<String, _>("scope"),
+                    scope_kind: parse_scope_kind(&row.get::<String, _>("scope_kind"))?,
+                    dimension: parse_failure_dimension(&row.get::<String, _>("failure_dimension"))?,
+                    verdict: DurableHealthVerdict::parse(&row.get::<String, _>("verdict"))?,
+                    cooldown_until_ms: row.get("cooldown_until_ms"),
+                    evidence_code: row.get("evidence_code"),
+                    updated_at_ms: row.get("updated_at_ms"),
+                })
             })
             .collect()
     }
@@ -961,6 +1469,21 @@ fn parse_failure_dimension(value: &str) -> Result<FailureDimension, PersistenceE
     }
 }
 
+fn health_protection_scope(
+    scope_kind: HealthScopeKind,
+    commitment: &str,
+) -> Result<HealthProtectionScope, PersistenceError> {
+    let kind = match scope_kind {
+        HealthScopeKind::StationKeyCredential => HealthProtectionScopeKind::Credential,
+        HealthScopeKind::StationAccount => HealthProtectionScopeKind::Account,
+        HealthScopeKind::StationGroup => HealthProtectionScopeKind::Group,
+        HealthScopeKind::StationEndpoint => HealthProtectionScopeKind::Endpoint,
+        HealthScopeKind::ModelOnKey => HealthProtectionScopeKind::Model,
+    };
+    HealthProtectionScope::new(kind, commitment.to_string())
+        .map_err(|_| PersistenceError::ConstraintViolation)
+}
+
 fn hex_digest(value: impl AsRef<[u8]>) -> String {
     format!("{:x}", Sha256::digest(value.as_ref()))
 }
@@ -970,6 +1493,13 @@ mod tests {
     use sqlx::{Connection, Executor, SqliteConnection};
 
     use super::*;
+    use crate::application::error_rate_protection::{
+        ErrorRateHistoryEventV1, ErrorRateHistoryOutcome, ErrorRateProtectionConfigV1,
+        HealthProtectionTransitionCode,
+    };
+    use crate::application::health_protection::{
+        HealthProtectionFailureCode, HealthProtectionState,
+    };
     use crate::persistence::migrations::migrator;
 
     async fn connection() -> SqliteConnection {
@@ -981,6 +1511,42 @@ mod tests {
             .await
             .expect("migrate current schema");
         connection
+    }
+
+    fn error_rate_input(
+        id: &str,
+        at_ms: i64,
+        scope: HealthProtectionScope,
+        outcome: HealthProtectionObservationOutcome,
+    ) -> (HealthProtectionObservation, ErrorRateHistoryEventV1) {
+        let failure_code = outcome.failure_code();
+        let failed = outcome.is_failure();
+        (
+            HealthProtectionObservation {
+                id: id.to_string(),
+                scope: scope.clone(),
+                observed_at_ms: at_ms,
+                outcome,
+                probe: false,
+                probe_state_revision: None,
+                retry_after_ms: None,
+            },
+            ErrorRateHistoryEventV1 {
+                observed_at_ms: at_ms,
+                scope_kind: scope.kind,
+                scope_commitment: scope.commitment,
+                outcome: if failed {
+                    ErrorRateHistoryOutcome::Failure
+                } else {
+                    ErrorRateHistoryOutcome::Success
+                },
+                failure_code,
+                sample_count: 1,
+                failure_count: usize::from(failed),
+                failure_rate_percent: if failed { 100 } else { 0 },
+                transition: None,
+            },
+        )
     }
 
     fn observation(
@@ -1091,6 +1657,175 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cursor, (1_002, "observation-2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_clear_a_projection_from_a_newer_ingestion_source() {
+        let mut connection = connection().await;
+        let store = RoutingHealthVerdictStore;
+        let subject = ScopedHealthSubject::credential("station", "key", 1).unwrap();
+        let blocked = observation(
+            "newer-verdict",
+            1,
+            subject.clone(),
+            Some(DurableHealthVerdict::Blocked),
+        );
+        store
+            .apply_observation(&mut connection, &blocked, 1_000)
+            .await
+            .unwrap();
+
+        // Model a projection source that was committed after the recovery's
+        // source but became visible before the recovery transaction ran.
+        sqlx::query(
+            "UPDATE routing_health_verdicts SET source_ingestion_sequence = 99 WHERE scope = ?1",
+        )
+        .bind(subject.scope())
+        .execute(&mut connection)
+        .await
+        .unwrap();
+
+        let recovery = observation("older-recovery", 2, subject.clone(), None);
+        store
+            .apply_observation(&mut connection, &recovery, 1_001)
+            .await
+            .unwrap();
+
+        let rows = store
+            .load_active_batch(&mut connection, &[subject])
+            .await
+            .unwrap();
+        let key = (
+            blocked.subject.scope().to_string(),
+            FailureDimension::Credential,
+        );
+        assert_eq!(rows[&key].verdict, DurableHealthVerdict::Blocked);
+    }
+
+    #[tokio::test]
+    async fn durable_reducer_state_is_written_once_and_restored_from_snapshot() {
+        let mut connection = connection().await;
+        let store = RoutingHealthVerdictStore;
+        let subject = ScopedHealthSubject::endpoint("station", 1).unwrap();
+        let blocked = observation(
+            "reducer-blocked",
+            1,
+            subject.clone(),
+            Some(DurableHealthVerdict::Blocked),
+        );
+        store
+            .apply_observation(&mut connection, &blocked, 1_000)
+            .await
+            .unwrap();
+        let snapshot_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM routing_health_protection_state")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+        assert_eq!(snapshot_count, 1);
+        let statuses = store
+            .load_health_protection_statuses(&mut connection, 1_001)
+            .await
+            .unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(
+            statuses[0].state,
+            crate::application::health_protection::HealthProtectionState::Open
+        );
+        assert_eq!(
+            statuses[0].persistence_kind,
+            crate::application::health_protection::HealthProtectionPersistenceKind::Durable
+        );
+
+        let recovery = observation("reducer-recovery", 2, subject, None);
+        store
+            .apply_observation(&mut connection, &recovery, 1_002)
+            .await
+            .unwrap();
+        let restored = store
+            .load_health_protection_reducer(&mut connection)
+            .await
+            .unwrap()
+            .expect("durable reducer snapshot");
+        let restored_statuses = {
+            let mut reducer = restored;
+            reducer.statuses(1_003).unwrap()
+        };
+        assert_eq!(
+            restored_statuses[0].state,
+            crate::application::health_protection::HealthProtectionState::Closed
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_or_future_reducer_snapshot_fails_closed() {
+        let mut connection = connection().await;
+        let store = RoutingHealthVerdictStore;
+        let subject = ScopedHealthSubject::endpoint("station", 1).unwrap();
+        store
+            .apply_observation(
+                &mut connection,
+                &observation(
+                    "snapshot-integrity",
+                    1,
+                    subject,
+                    Some(DurableHealthVerdict::Blocked),
+                ),
+                1_000,
+            )
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE routing_health_protection_state SET snapshot_version = 'health_protection_future' WHERE singleton_key = 1",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        assert!(matches!(
+            store.load_health_protection_reducer(&mut connection).await,
+            Err(PersistenceError::InvariantViolation(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn observation_and_reducer_snapshot_share_caller_transaction() {
+        let mut connection = connection().await;
+        let store = RoutingHealthVerdictStore;
+        let subject = ScopedHealthSubject::endpoint("station", 1).unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        store
+            .apply_observation(
+                &mut connection,
+                &observation(
+                    "atomic-health-state",
+                    1,
+                    subject,
+                    Some(DurableHealthVerdict::Blocked),
+                ),
+                1_000,
+            )
+            .await
+            .unwrap();
+        sqlx::query("ROLLBACK")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        let observation_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_health_observations WHERE observation_id = 'atomic-health-state'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        let state_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM routing_health_protection_state")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+        assert_eq!(observation_count, 0);
+        assert_eq!(state_count, 0);
     }
 
     #[tokio::test]
@@ -1574,5 +2309,263 @@ mod tests {
             0,
             "manual model blocklists are configuration and never become learned verdicts"
         );
+    }
+
+    #[tokio::test]
+    async fn error_rate_history_and_reducer_transition_are_atomic_and_restartable() {
+        let mut connection = connection().await;
+        let store = RoutingHealthVerdictStore;
+        let config = ErrorRateProtectionConfigV1 {
+            enabled: true,
+            history_max_events: 3,
+            history_retention_ms: 10_000,
+            ..Default::default()
+        };
+        let scope = HealthProtectionScope::from_untrusted(
+            HealthProtectionScopeKind::Endpoint,
+            "https://provider.invalid/v1?token=secret",
+        );
+        for index in 0..5_i64 {
+            let (input, event) = error_rate_input(
+                &format!("rate-{index}"),
+                index + 1,
+                scope.clone(),
+                HealthProtectionObservationOutcome::Failure(
+                    HealthProtectionFailureCode::Upstream5xx,
+                ),
+            );
+            store
+                .apply_error_rate_observation(
+                    &mut connection,
+                    input,
+                    event,
+                    &format!("rate-{index}"),
+                    &config,
+                    index + 1,
+                )
+                .await
+                .expect("apply error-rate observation");
+        }
+        let history = RoutingErrorRateHistoryStore
+            .list_page(&mut connection, None, 20, &config, 20)
+            .await
+            .expect("list durable history");
+        assert_eq!(history.events.len(), 3);
+        assert!(history.dropped_events >= 2);
+        assert_eq!(
+            history.events.last().and_then(|event| event.transition),
+            Some(HealthProtectionTransitionCode::Opened)
+        );
+        let statuses = store
+            .load_health_protection_statuses(&mut connection, 20)
+            .await
+            .expect("load reducer status");
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].state, HealthProtectionState::Open);
+        assert!(statuses[0]
+            .scope
+            .commitment
+            .chars()
+            .all(|value| value.is_ascii_hexdigit()));
+
+        let restored = store
+            .load_health_protection_reducer(&mut connection)
+            .await
+            .expect("restore reducer")
+            .expect("durable reducer");
+        assert_eq!(restored.snapshot(20).generated_at_ms, 20);
+
+        sqlx::query("BEGIN")
+            .execute(&mut connection)
+            .await
+            .expect("begin rollback transaction");
+        let (input, event) = error_rate_input(
+            "rolled-back",
+            21,
+            scope,
+            HealthProtectionObservationOutcome::Success,
+        );
+        store
+            .apply_error_rate_observation(&mut connection, input, event, "rolled-back", &config, 21)
+            .await
+            .expect("apply in transaction");
+        sqlx::query("ROLLBACK")
+            .execute(&mut connection)
+            .await
+            .expect("rollback transaction");
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_error_rate_history WHERE observation_id = 'rolled-back'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .expect("count rolled-back history");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn durable_probe_reservation_is_single_use_and_revision_fenced() {
+        let mut connection = connection().await;
+        let store = RoutingHealthVerdictStore;
+        let config = ErrorRateProtectionConfigV1 {
+            enabled: true,
+            history_max_events: 16,
+            history_retention_ms: 10_000,
+            ..Default::default()
+        };
+        let scope = HealthProtectionScope::from_untrusted(
+            HealthProtectionScopeKind::Endpoint,
+            "https://provider.invalid/probe?secret=redacted",
+        );
+        for index in 0..5_i64 {
+            let (input, event) = error_rate_input(
+                &format!("probe-open-{index}"),
+                index + 1,
+                scope.clone(),
+                HealthProtectionObservationOutcome::Failure(
+                    HealthProtectionFailureCode::EndpointUnavailable,
+                ),
+            );
+            store
+                .apply_error_rate_observation(
+                    &mut connection,
+                    input,
+                    event,
+                    &format!("probe-open-{index}"),
+                    &config,
+                    index + 1,
+                )
+                .await
+                .expect("open durable scope");
+        }
+        let first = store
+            .begin_health_protection_probe(&mut connection, &scope, 31_000)
+            .await
+            .expect("reserve probe")
+            .expect("cooldown expired");
+        assert!(store
+            .begin_health_protection_probe(&mut connection, &scope, 31_000)
+            .await
+            .expect("second reservation")
+            .is_none());
+        let statuses = store
+            .load_health_protection_statuses(&mut connection, 31_000)
+            .await
+            .expect("load half-open status");
+        assert_eq!(statuses[0].state, HealthProtectionState::HalfOpen);
+        assert!(statuses[0].half_open_probe_in_flight);
+
+        let mut stale = HealthProtectionObservation {
+            id: "probe-stale".to_string(),
+            scope: scope.clone(),
+            observed_at_ms: 31_000,
+            outcome: HealthProtectionObservationOutcome::Success,
+            probe: true,
+            probe_state_revision: Some(first.state_revision.saturating_add(1)),
+            retry_after_ms: None,
+        };
+        assert!(store
+            .apply_health_protection_probe(&mut connection, stale.clone(), 31_000)
+            .await
+            .is_err());
+        stale.probe_state_revision = Some(first.state_revision);
+        assert_eq!(
+            store
+                .apply_health_protection_probe(&mut connection, stale, 31_000)
+                .await
+                .expect("consume current probe"),
+            crate::application::health_protection::HealthProtectionTransition::ProbeSucceeded
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_probe_cancellation_releases_slot_without_recording_sample() {
+        let mut connection = connection().await;
+        let store = RoutingHealthVerdictStore;
+        let config = ErrorRateProtectionConfigV1 {
+            enabled: true,
+            history_max_events: 16,
+            history_retention_ms: 10_000,
+            ..Default::default()
+        };
+        let scope = HealthProtectionScope::from_untrusted(
+            HealthProtectionScopeKind::Endpoint,
+            "https://provider.invalid/cancel?secret=redacted",
+        );
+        for index in 0..5_i64 {
+            let (input, event) = error_rate_input(
+                &format!("cancel-open-{index}"),
+                index + 1,
+                scope.clone(),
+                HealthProtectionObservationOutcome::Failure(
+                    HealthProtectionFailureCode::EndpointUnavailable,
+                ),
+            );
+            store
+                .apply_error_rate_observation(
+                    &mut connection,
+                    input,
+                    event,
+                    &format!("cancel-open-{index}"),
+                    &config,
+                    index + 1,
+                )
+                .await
+                .expect("open durable scope");
+        }
+        let first = store
+            .begin_health_protection_probe(&mut connection, &scope, 31_000)
+            .await
+            .expect("reserve probe")
+            .expect("cooldown expired");
+        let history_count_before: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_error_rate_history WHERE scope_commitment = ?1",
+        )
+        .bind(&scope.commitment)
+        .fetch_one(&mut connection)
+        .await
+        .expect("history count before cancel");
+        assert!(store
+            .cancel_health_protection_probe(&mut connection, &first, 31_001)
+            .await
+            .expect("cancel probe"));
+        let status = store
+            .load_health_protection_statuses(&mut connection, 31_001)
+            .await
+            .expect("status")
+            .into_iter()
+            .find(|status| status.scope == scope)
+            .expect("scope status");
+        assert_eq!(status.state, HealthProtectionState::HalfOpen);
+        assert!(!status.half_open_probe_in_flight);
+        let history_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routing_error_rate_history WHERE scope_commitment = ?1",
+        )
+        .bind(&scope.commitment)
+        .fetch_one(&mut connection)
+        .await
+        .expect("history count");
+        assert_eq!(history_count, history_count_before);
+        assert!(store
+            .apply_health_protection_probe(
+                &mut connection,
+                HealthProtectionObservation {
+                    id: "cancelled-late".to_string(),
+                    scope: scope.clone(),
+                    observed_at_ms: 31_001,
+                    outcome: HealthProtectionObservationOutcome::Success,
+                    probe: true,
+                    probe_state_revision: Some(first.state_revision),
+                    retry_after_ms: None,
+                },
+                31_001,
+            )
+            .await
+            .is_err());
+        let next = store
+            .begin_health_protection_probe(&mut connection, &scope, 31_001)
+            .await
+            .expect("reserve next probe")
+            .expect("half-open slot available");
+        assert!(next.state_revision > first.state_revision);
     }
 }

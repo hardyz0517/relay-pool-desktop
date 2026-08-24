@@ -1,4 +1,5 @@
 use super::request::AttemptId;
+use crate::application::health_protection::HealthProtectionScope;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttemptContext {
@@ -13,6 +14,11 @@ pub(crate) struct AttemptContext {
     pub resolved_upstream_model: Option<String>,
     pub model_alias_revision: i64,
     pub started_at_ms: i64,
+    /// The exact durable Half-Open scope leased for this attempt.  The
+    /// revision alone is only a fence and cannot identify Credential versus
+    /// Endpoint probes when a request is finalized asynchronously.
+    pub probe_scope: Option<HealthProtectionScope>,
+    pub probe_state_revision: Option<u64>,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -77,6 +83,26 @@ pub(crate) enum AttemptFailureKind {
 pub(crate) enum RetryDisposition {
     TryNextCandidate,
     StopRequest,
+}
+
+/// Project the canonical retry intent into the legacy lifecycle record shape.
+///
+/// `RetryDisposition` is intentionally a compatibility projection: it records
+/// whether the request lifecycle may continue, while the canonical retry
+/// intent and the execution action carry the user-visible reason and replay
+/// details. Keeping this conversion here gives every producer one owner and
+/// prevents lifecycle records from becoming a second retry planner.
+pub(crate) fn project_retry_disposition(
+    retry: crate::application::request_finalization::failure::RetryDisposition,
+) -> RetryDisposition {
+    use crate::application::request_finalization::failure::RetryDisposition as CanonicalRetry;
+
+    match retry {
+        CanonicalRetry::RetrySameTarget
+        | CanonicalRetry::TryDifferentFailureDomain
+        | CanonicalRetry::WaitThenReplan => RetryDisposition::TryNextCandidate,
+        CanonicalRetry::StopRequest => RetryDisposition::StopRequest,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,6 +213,10 @@ pub(crate) struct AttemptTerminalRecord {
     pub terminal: AttemptTerminal,
     pub output_committed: bool,
     pub terminal_at_ms: i64,
+    /// Copied from the context so terminal writers never have to reconstruct
+    /// a probe identity from mutable candidate facts.
+    pub probe_scope: Option<HealthProtectionScope>,
+    pub probe_state_revision: Option<u64>,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -276,6 +306,8 @@ impl AttemptLifecycle {
             terminal,
             output_committed,
             terminal_at_ms,
+            probe_scope: self.context.probe_scope.clone(),
+            probe_state_revision: self.context.probe_state_revision,
         })
     }
 
@@ -290,6 +322,7 @@ impl AttemptLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::request_finalization::failure::RetryDisposition as CanonicalRetry;
 
     fn attempt() -> AttemptLifecycle {
         AttemptLifecycle::new(AttemptContext {
@@ -304,6 +337,8 @@ mod tests {
             resolved_upstream_model: None,
             model_alias_revision: 1,
             started_at_ms: 1,
+            probe_scope: None,
+            probe_state_revision: None,
         })
     }
 
@@ -342,5 +377,25 @@ mod tests {
             .expect("terminal");
         assert_eq!(failure.retry, RetryDisposition::TryNextCandidate);
         assert_eq!(failure.health, HealthEffect::ObserveFailure);
+    }
+
+    #[test]
+    fn canonical_retry_projection_has_one_compatibility_mapping() {
+        assert_eq!(
+            project_retry_disposition(CanonicalRetry::RetrySameTarget),
+            RetryDisposition::TryNextCandidate
+        );
+        assert_eq!(
+            project_retry_disposition(CanonicalRetry::WaitThenReplan),
+            RetryDisposition::TryNextCandidate
+        );
+        assert_eq!(
+            project_retry_disposition(CanonicalRetry::TryDifferentFailureDomain),
+            RetryDisposition::TryNextCandidate
+        );
+        assert_eq!(
+            project_retry_disposition(CanonicalRetry::StopRequest),
+            RetryDisposition::StopRequest
+        );
     }
 }

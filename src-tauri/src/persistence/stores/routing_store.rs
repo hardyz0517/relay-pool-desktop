@@ -11,7 +11,7 @@ use crate::{
             RuntimeRoutingBalance, RuntimeRoutingEconomicSnapshot, RuntimeRoutingSecret,
             RuntimeRoutingSettings, StationKeyCapabilities, StationKeyHealth,
         },
-        routing_policy::RoutingPolicyConfigV1,
+        routing_policy::RoutingPolicyConfigV2,
         stations::StationEndpointHealth,
     },
     persistence::{
@@ -138,10 +138,9 @@ impl RoutingStore {
         .fetch_optional(read.connection())
         .await?
         .ok_or(PersistenceError::NotFound)?;
-        let config = serde_json::from_str::<RoutingPolicyConfigV1>(&config_json)
+        let config = serde_json::from_str::<serde_json::Value>(&config_json)
             .map_err(|_| PersistenceError::InvariantViolation("invalid routing policy".into()))?;
-        config
-            .validate()
+        let config = RoutingPolicyConfigV2::from_stored_value(&config)
             .map_err(|_| PersistenceError::InvariantViolation("invalid routing policy".into()))?;
         let global_proxy_mode = sqlx::query_scalar::<_, String>(
             "SELECT value FROM settings WHERE key = 'collector_proxy_mode'",
@@ -817,6 +816,11 @@ fn row_to_runtime_candidate(row: sqlx::sqlite::SqliteRow) -> CanonicalRoutingCan
         station_key_id: station_key_id.clone(),
         station_id: row.get(runtime_candidate_column::STATION_ID),
         station_type: row.get(runtime_candidate_column::STATION_TYPE),
+        capacity_provider_family: row.get(runtime_candidate_column::CAPACITY_PROVIDER_FAMILY),
+        capacity_deployment_identity: row
+            .get(runtime_candidate_column::CAPACITY_DEPLOYMENT_IDENTITY),
+        capacity_region_identity: row.get(runtime_candidate_column::CAPACITY_REGION_IDENTITY),
+        capacity_domain_revision: row.get(runtime_candidate_column::CAPACITY_DOMAIN_REVISION),
         station_account_concurrency_limit: None,
         station_endpoint_revision: row.get(runtime_candidate_column::ENDPOINT_REVISION),
         sanitized_origin: crate::models::station_endpoints::sanitized_api_base_url_for_trace(
@@ -941,6 +945,10 @@ mod runtime_candidate_column {
     pub(super) const STATION_ID: usize = 1;
     pub(super) const STATION_TYPE: usize = 2;
     // Capacity-domain fields occupy 3..=6 in `load_runtime_candidates`.
+    pub(super) const CAPACITY_PROVIDER_FAMILY: usize = 3;
+    pub(super) const CAPACITY_DEPLOYMENT_IDENTITY: usize = 4;
+    pub(super) const CAPACITY_REGION_IDENTITY: usize = 5;
+    pub(super) const CAPACITY_DOMAIN_REVISION: usize = 6;
     pub(super) const STATION_CREDIT_PER_CNY: usize = 7;
     pub(super) const ENDPOINT_REVISION: usize = 8;
     pub(super) const API_BASE_URL: usize = 9;

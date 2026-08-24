@@ -7,7 +7,7 @@ use super::dashboard_metrics_rollup::{
     clear_dashboard_metric_rollups, record_request_finish_rollup, record_request_start_rollup,
 };
 use super::request_log_write::{AttemptTerminalWrite, RequestStartWrite, RequestTerminalWrite};
-use super::request_outcome_store::RequestOutcomeStore;
+use super::request_outcome_store::{RequestOutcomeStore, RoutingDecisionEventWrite};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct RequestLogStore;
@@ -134,6 +134,21 @@ impl RequestLogStore {
         if inserted > 0 {
             record_request_start_rollup(session.connection(), record).await?;
         }
+        RequestOutcomeStore
+            .insert_decision_event(
+                session.connection(),
+                &RoutingDecisionEventWrite {
+                    request_id: record.request_id.clone(),
+                    event_key: "request_started".to_string(),
+                    occurred_at_ms: record.received_at_ms,
+                    event_kind: "request_started".to_string(),
+                    detail_code: "request_started".to_string(),
+                    attempt_ordinal: None,
+                    retry_disposition: None,
+                    output_committed: None,
+                },
+            )
+            .await?;
         Ok(RequestStartPersistenceResult {
             inserted: inserted > 0,
         })
@@ -156,6 +171,7 @@ impl RequestLogStore {
                     "duplicate attempt terminal does not match canonical record".to_string(),
                 ));
             }
+            append_attempt_decision_events(session.connection(), record).await?;
             return Ok(AttemptPersistenceResult {
                 inserted: false,
                 health_applied: false,
@@ -189,6 +205,8 @@ impl RequestLogStore {
         .execute(session.connection())
         .await?;
 
+        append_attempt_decision_events(session.connection(), record).await?;
+
         Ok(AttemptPersistenceResult {
             inserted: true,
             health_applied: false,
@@ -211,10 +229,129 @@ impl RequestLogStore {
                 &record.routing_outcome,
             )
             .await?;
+        RequestOutcomeStore
+            .insert_decision_event(
+                session.connection(),
+                &RoutingDecisionEventWrite {
+                    request_id: record.request_id.clone(),
+                    event_key: "request_finalized".to_string(),
+                    occurred_at_ms: record.terminal_at_ms,
+                    event_kind: "request_finalized".to_string(),
+                    detail_code: safe_decision_code(record.terminal_code.as_deref()),
+                    attempt_ordinal: record.selected_attempt_ordinal,
+                    retry_disposition: Some(normalize_retry_disposition(
+                        &record.routing_outcome.retry_disposition,
+                    )),
+                    output_committed: Some(record.protocol_completed),
+                },
+            )
+            .await?;
         if finalized {
             record_request_finish_rollup(session.connection(), record).await?;
         }
         Ok(RequestTerminalPersistenceResult { finalized })
+    }
+}
+
+async fn append_attempt_decision_events(
+    connection: &mut sqlx::SqliteConnection,
+    record: &AttemptTerminalWrite,
+) -> Result<(), PersistenceError> {
+    let key_prefix = format!("{}", record.ordinal);
+    RequestOutcomeStore
+        .insert_decision_event(
+            connection,
+            &RoutingDecisionEventWrite {
+                request_id: record.request_id.clone(),
+                event_key: format!("attempt_started:{key_prefix}"),
+                occurred_at_ms: record.started_at_ms,
+                event_kind: "attempt_started".to_string(),
+                detail_code: "attempt_started".to_string(),
+                attempt_ordinal: Some(record.ordinal),
+                retry_disposition: None,
+                output_committed: None,
+            },
+        )
+        .await?;
+    RequestOutcomeStore
+        .insert_decision_event(
+            connection,
+            &RoutingDecisionEventWrite {
+                request_id: record.request_id.clone(),
+                event_key: format!("attempt_terminal:{key_prefix}"),
+                occurred_at_ms: record.terminal_at_ms,
+                // A stream can have committed downstream output and still
+                // terminate with an upstream/protocol failure.  Durable
+                // event kind must follow the canonical attempt terminal, not
+                // the replay-safety bit alone; otherwise post-commit errors
+                // are displayed as successful attempts after restart.
+                event_kind: if record.terminal_kind == "succeeded" && record.output_committed {
+                    "attempt_succeeded".to_string()
+                } else {
+                    "failure_classified".to_string()
+                },
+                detail_code: safe_decision_code(record.public_code.as_deref()),
+                attempt_ordinal: Some(record.ordinal),
+                retry_disposition: record
+                    .retry_disposition
+                    .as_deref()
+                    .map(normalize_retry_disposition),
+                output_committed: Some(record.output_committed),
+            },
+        )
+        .await?;
+    if record
+        .retry_disposition
+        .as_deref()
+        .is_some_and(|value| !value.eq_ignore_ascii_case("stoprequest"))
+    {
+        RequestOutcomeStore
+            .insert_decision_event(
+                connection,
+                &RoutingDecisionEventWrite {
+                    request_id: record.request_id.clone(),
+                    event_key: format!("retry_scheduled:{key_prefix}"),
+                    occurred_at_ms: record.terminal_at_ms,
+                    event_kind: "retry_scheduled".to_string(),
+                    detail_code: "retry_scheduled".to_string(),
+                    attempt_ordinal: Some(record.ordinal),
+                    retry_disposition: record
+                        .retry_disposition
+                        .as_deref()
+                        .map(normalize_retry_disposition),
+                    output_committed: Some(record.output_committed),
+                },
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+fn safe_decision_code(value: Option<&str>) -> String {
+    let value = value.unwrap_or("attempt_terminal");
+    if !value.is_empty()
+        && value.len() <= 96
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b':')
+        })
+    {
+        value.to_string()
+    } else {
+        "attempt_terminal".to_string()
+    }
+}
+
+fn normalize_retry_disposition(value: &str) -> String {
+    if value.eq_ignore_ascii_case("trynextcandidate")
+        || value.eq_ignore_ascii_case("retry_same_target")
+    {
+        "try_next_candidate".to_string()
+    } else if value.eq_ignore_ascii_case("stoprequest")
+        || value.eq_ignore_ascii_case("stop_request")
+    {
+        "stop_request".to_string()
+    } else {
+        "retry_continue".to_string()
     }
 }
 
@@ -517,6 +654,7 @@ mod v2_tests {
     };
 
     use super::RequestLogStore;
+    use crate::persistence::stores::request_outcome_store::RequestOutcomeStore;
 
     async fn runtime() -> PersistenceRuntime {
         let root = tempfile::tempdir().expect("tempdir");
@@ -568,6 +706,8 @@ mod v2_tests {
             sanitized_detail: None,
             output_committed: true,
             terminal_at_ms: 1100,
+            probe_scope: None,
+            probe_state_revision: None,
         }
     }
 
@@ -657,6 +797,112 @@ mod v2_tests {
                 .inserted
         );
         second.commit().await.expect("commit");
+    }
+
+    #[tokio::test]
+    async fn durable_decision_events_are_ordered_and_survive_runtime_restart() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("initialize runtime");
+        let store = RequestLogStore;
+        seed_attempt_owner(&runtime).await;
+        let record = start_record("req-events");
+        let mut start = runtime.begin_write().await.expect("start write");
+        store
+            .start_request(&mut start, &record, 1000)
+            .await
+            .expect("start request");
+        start.commit().await.expect("start commit");
+        let attempt = attempt_record("req-events");
+        let mut attempt_write = runtime.begin_write().await.expect("attempt write");
+        store
+            .finish_attempt(&mut attempt_write, &attempt)
+            .await
+            .expect("attempt terminal");
+        attempt_write.commit().await.expect("attempt commit");
+        let terminal = terminal_record("req-events");
+        let mut finish = runtime.begin_write().await.expect("finish write");
+        if let Err(error) = store.finish_request(&mut finish, &terminal).await {
+            panic!("request terminal: {error:?}");
+        }
+        finish.commit().await.expect("finish commit");
+        let expected = vec![
+            "request_started",
+            "attempt_started",
+            "attempt_succeeded",
+            "request_finalized",
+        ];
+        let mut read = runtime.begin_read().await.expect("read");
+        let events = RequestOutcomeStore
+            .routing_decision_events(read.connection(), "req-events", 64)
+            .await
+            .expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.event_kind.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(events
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence));
+        drop(read);
+        runtime.close().await.expect("close runtime");
+
+        let restarted = PersistenceRuntime::open_current(&path)
+            .await
+            .expect("restart runtime");
+        let mut read = restarted.begin_read().await.expect("restart read");
+        let restored = RequestOutcomeStore
+            .routing_decision_events(read.connection(), "req-events", 64)
+            .await
+            .expect("restored events");
+        assert_eq!(restored, events);
+        drop(read);
+        restarted.close().await.expect("close restarted runtime");
+    }
+
+    #[tokio::test]
+    async fn post_commit_failed_attempt_is_not_persisted_as_success_event() {
+        let runtime = runtime().await;
+        let store = RequestLogStore;
+        seed_attempt_owner(&runtime).await;
+        let record = start_record("req-post-commit");
+        let mut start = runtime.begin_write().await.expect("start write");
+        store
+            .start_request(&mut start, &record, 1000)
+            .await
+            .expect("start request");
+        start.commit().await.expect("start commit");
+
+        let mut attempt = attempt_record("req-post-commit");
+        attempt.terminal_kind = "failed".to_string();
+        attempt.public_code = Some("stream_interrupted".to_string());
+        attempt.retry_disposition = Some("StopRequest".to_string());
+        attempt.output_committed = true;
+        let mut write = runtime.begin_write().await.expect("attempt write");
+        store
+            .finish_attempt(&mut write, &attempt)
+            .await
+            .expect("post-commit attempt");
+        write.commit().await.expect("attempt commit");
+
+        let mut read = runtime.begin_read().await.expect("read");
+        let events = RequestOutcomeStore
+            .routing_decision_events(read.connection(), "req-post-commit", 64)
+            .await
+            .expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.event_kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["request_started", "attempt_started", "failure_classified"]
+        );
+        assert_eq!(events[2].output_committed, Some(true));
     }
 
     #[tokio::test]

@@ -22,7 +22,7 @@ use crate::{
                 request::PendingFinalRequestRecord,
                 writer::{LifecycleWriter, LifecycleWriterWorker, WriterAdmissionError},
             },
-            limits::ProxyServerLimits,
+            limits::ProxyStartupResourceLimits,
             request::{ProxyHttpResponse, ProxyResponsePayload},
             response_body::{
                 dual_terminal_buffered_lifecycle_finalizing_stream,
@@ -30,6 +30,7 @@ use crate::{
             },
             routing_repository::RoutingRepository,
             server::{self, RunningServer},
+            transport_policy::{TransportPolicySnapshot, TransportPolicyStore},
             upstream::UpstreamClientPool,
         },
         time::now_millis_for_services,
@@ -44,7 +45,8 @@ pub struct ProxyStartConfig {
     pub(crate) lifecycle_store: Arc<dyn RequestLifecycleStore>,
     pub(crate) local_access_key: String,
     pub(crate) port: u16,
-    pub(crate) limits: ProxyServerLimits,
+    pub(crate) limits: ProxyStartupResourceLimits,
+    pub(crate) transport_policy: TransportPolicySnapshot,
 }
 
 impl ProxyStartConfig {
@@ -61,8 +63,17 @@ impl ProxyStartConfig {
             lifecycle_store,
             local_access_key,
             port,
-            limits: ProxyServerLimits::default(),
+            limits: ProxyStartupResourceLimits::default(),
+            transport_policy: TransportPolicySnapshot::default(),
         }
+    }
+
+    pub(crate) fn with_transport_policy(
+        mut self,
+        transport_policy: TransportPolicySnapshot,
+    ) -> Self {
+        self.transport_policy = transport_policy;
+        self
     }
 }
 
@@ -70,6 +81,8 @@ pub struct ProxyRuntimeState {
     v2: tokio::sync::Mutex<V2RuntimeInner>,
     lifecycle_operation: tokio::sync::Mutex<()>,
     status_snapshot: RwLock<ProxyStatus>,
+    effective_limits: RwLock<ProxyStartupResourceLimits>,
+    transport_policy_store: TransportPolicyStore,
 }
 
 impl RoutingRuntimeActivity for ProxyRuntimeState {
@@ -101,11 +114,38 @@ impl Default for ProxyRuntimeState {
             v2: tokio::sync::Mutex::new(V2RuntimeInner::default()),
             lifecycle_operation: tokio::sync::Mutex::new(()),
             status_snapshot: RwLock::new(default_status(0)),
+            effective_limits: RwLock::new(ProxyStartupResourceLimits::default()),
+            transport_policy_store: TransportPolicyStore::default(),
         }
     }
 }
 
 impl ProxyRuntimeState {
+    pub(crate) fn transport_policy_snapshot(&self) -> Arc<TransportPolicySnapshot> {
+        self.transport_policy_store.load()
+    }
+
+    pub(crate) async fn publish_transport_policy(
+        &self,
+        snapshot: TransportPolicySnapshot,
+    ) -> Result<bool, String> {
+        let _operation = self.lifecycle_operation.lock().await;
+        self.transport_policy_store
+            .publish_if_newer(snapshot)
+            .map_err(|error| format!("publish transport policy failed: {error:?}"))
+    }
+
+    pub(crate) async fn capacity_protection_facts(
+        &self,
+        now_ms: i64,
+    ) -> Option<Vec<crate::application::queries::routing_protection::CapacityProtectionFact>> {
+        let inner = self.v2.lock().await;
+        inner
+            .routing_runtime
+            .as_ref()
+            .map(|runtime| runtime.capacity_retry_registry().protection_facts(now_ms))
+    }
+
     pub(crate) async fn active_for_station(
         &self,
         station_type: &str,
@@ -240,6 +280,10 @@ impl ProxyRuntimeState {
             crate::services::proxy::runtime_events::lifecycle_start_started(),
         );
         let _operation = self.lifecycle_operation.lock().await;
+        *self
+            .effective_limits
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = config.limits.clone();
         {
             let inner = self.v2.lock().await;
             if let Some(server) = inner.server.as_ref() {
@@ -259,6 +303,10 @@ impl ProxyRuntimeState {
                 ));
             }
         }
+
+        self.transport_policy_store
+            .install(config.transport_policy.clone())
+            .map_err(|error| format!("invalid transport execution policy: {error:?}"))?;
 
         self.publish_status(ProxyStatus {
             running: false,
@@ -286,8 +334,10 @@ impl ProxyRuntimeState {
         let request_count = Arc::new(AtomicU64::new(0));
         let repository = Arc::clone(&config.routing_repository);
         let credential_resolver = Arc::clone(&config.credential_resolver);
-        let upstream_pool = UpstreamClientPool::new(
-            config.limits.clone(),
+        let transport_policy = self.transport_policy_store.load();
+        let upstream_pool = UpstreamClientPool::new_with_transport_policy(
+            (*transport_policy).clone(),
+            config.limits.max_buffered_body_bytes,
             routing_runtime.diagnostic_memory_budget(),
         )
         .map_err(|failure| {
@@ -314,17 +364,18 @@ impl ProxyRuntimeState {
             repository,
             credential_resolver,
             upstream_pool,
-            config.limits.clone(),
+            (*transport_policy).clone(),
             lifecycle_writer.clone(),
             Arc::clone(&routing_runtime),
         ));
-        let ingress_state = Arc::new(IngressState::with_active_requests(
+        let ingress_state = Arc::new(IngressState::with_active_requests_and_policy(
             local_access_key,
             config.limits.clone(),
             executor,
             Arc::clone(&active_requests),
             Arc::clone(&request_count),
             Some(lifecycle_writer),
+            self.transport_policy_store.clone(),
         ));
         let app = ingress::router(ingress_state);
         match server::spawn_server(
@@ -524,7 +575,6 @@ struct V2RuntimeInner {
 
 struct ProxyExecutor {
     engine: ExecutionEngine,
-    stream_idle_timeout: std::time::Duration,
     lifecycle_writer: LifecycleWriter,
 }
 
@@ -533,22 +583,20 @@ impl ProxyExecutor {
         repository: Arc<dyn RoutingRepository>,
         credential_resolver: Arc<dyn ExecutionCredentialResolver>,
         upstream_pool: UpstreamClientPool,
-        limits: ProxyServerLimits,
+        transport_policy: TransportPolicySnapshot,
         lifecycle_writer: LifecycleWriter,
         routing_runtime: Arc<super::routing_runtime::RoutingRuntimeState>,
     ) -> Self {
         let attempts = Arc::new(UpstreamAttemptExecutor::new(upstream_pool));
-        let stream_idle_timeout = limits.stream_idle_timeout;
         Self {
-            engine: ExecutionEngine::new_with_limits_and_lifecycle(
+            engine: ExecutionEngine::new_with_transport_policy_and_lifecycle(
                 repository,
                 credential_resolver,
                 attempts,
-                &limits,
+                transport_policy,
                 lifecycle_writer.clone(),
                 routing_runtime,
             ),
-            stream_idle_timeout,
             lifecycle_writer,
         }
     }
@@ -562,7 +610,7 @@ impl IngressExecutor for ProxyExecutor {
         let proxy_correlation = correlation::CorrelationId::for_proxy_request(&request.request_id);
         let lifecycle_writer = self.lifecycle_writer.clone();
         let engine = self.engine.clone();
-        let stream_idle_timeout = self.stream_idle_timeout;
+        let stream_idle_timeout = request.transport_policy().stream_idle_timeout;
         let Some(admission) = request.take_lifecycle_admission() else {
             return Box::pin(correlation::in_scope(
                 "proxy.request",
@@ -840,7 +888,7 @@ fn dual_cost_finalization(
     )
 }
 
-fn lifecycle_writer_capacity(limits: &ProxyServerLimits) -> usize {
+fn lifecycle_writer_capacity(limits: &ProxyStartupResourceLimits) -> usize {
     limits
         .max_in_flight_requests
         .saturating_mul(4)
@@ -926,6 +974,7 @@ mod tests {
         application::credentials::{
             ExecutionCredentialError, ExecutionCredentialResolver, SecretBytes, SecretRef,
         },
+        application::routing_execution_reader::RoutingExecutionReadError,
         models::{pricing::UpsertPricingRuleInput, routing::RouteEndpointKind},
         services::proxy::{
             lifecycle::{
@@ -1010,15 +1059,51 @@ mod tests {
     }
 
     impl RoutingRepository for CorrelationCapturingRepository {
-        fn load_planning_snapshot(
+        fn load_planning_snapshot_with_probe(
             &self,
-            _request: crate::application::routing_engine::request::RouteRequestFacts,
+            request: crate::application::routing_engine::request::RouteRequestFacts,
             runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
+            context: crate::application::routing_engine::request::PlanningRequestContext,
+            _probe: Option<crate::application::health_protection::HealthProtectionProbe>,
+            _probe_mode: crate::application::health_protection::HealthProbeAdmissionMode,
         ) -> BoxFuture<
             'static,
             Result<
                 Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
-                String,
+                RoutingExecutionReadError,
+            >,
+        > {
+            self.load_planning_snapshot(request, runtime, context)
+        }
+
+        fn load_execution_settings(
+            &self,
+        ) -> BoxFuture<
+            'static,
+            Result<crate::models::routing::RuntimeRoutingSettings, RoutingExecutionReadError>,
+        > {
+            Box::pin(async { Ok(crate::models::routing::RuntimeRoutingSettings::default()) })
+        }
+
+        fn load_balance_snapshots(
+            &self,
+        ) -> BoxFuture<
+            'static,
+            Result<Vec<crate::models::pricing::BalanceSnapshot>, RoutingExecutionReadError>,
+        > {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn load_planning_snapshot(
+            &self,
+            _request: crate::application::routing_engine::request::RouteRequestFacts,
+            runtime: crate::application::routing_engine::planning_snapshot::RuntimeOverlaySnapshot,
+            _context: crate::application::routing_engine::request::PlanningRequestContext,
+        ) -> BoxFuture<
+            'static,
+            Result<
+                Option<crate::application::routing_engine::planning_snapshot::PlanningSnapshot>,
+                RoutingExecutionReadError,
             >,
         > {
             Box::pin(async move {
@@ -1026,7 +1111,12 @@ mod tests {
                 snapshot_id: "correlation-test-planning-snapshot".to_string(),
                 durable_revision: 1,
                 routing_policy_revision: 1,
-                policy: crate::models::routing_policy::RoutingPolicyConfigV1::default(),
+                policy: crate::models::routing_policy::RoutingPolicyConfigV2::default(),
+                attempt_budget: crate::application::routing_policy::AttemptBudgetProfileV1::from_policy(
+                    1,
+                    &crate::models::routing_policy::RetryFailoverPolicyV2::default(),
+                )
+                .expect("attempt budget"),
                 profile: crate::application::routing_engine::algorithm_profile::DispatchAlgorithmProfile::default(),
                 candidates: Vec::new(),
                 model_fallback_trigger: None,
@@ -1039,7 +1129,8 @@ mod tests {
             &self,
             _request: crate::application::routing_engine::request::RouteRequestFacts,
             _planning_snapshot: crate::application::routing_engine::planning_snapshot::PlanningSnapshot,
-        ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, String>> {
+        ) -> BoxFuture<'static, Result<OperationalRouteSnapshot, RoutingExecutionReadError>>
+        {
             let captured = Arc::clone(&self.captured);
             Box::pin(async move {
                 *captured.lock().expect("captured correlation lock") =
@@ -1051,6 +1142,54 @@ mod tests {
                     legacy_candidates: Vec::new(),
                 })
             })
+        }
+
+        fn load_current_execution_target(
+            &self,
+            _station_key_id: String,
+        ) -> BoxFuture<
+            'static,
+            Result<
+                Option<crate::application::operational_facts::target_resolver::ExecutionTargetRef>,
+                RoutingExecutionReadError,
+            >,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn load_health_protection_statuses(
+            &self,
+            _now_ms: i64,
+        ) -> BoxFuture<
+            'static,
+            Result<
+                Vec<crate::application::health_protection::HealthProtectionStatus>,
+                RoutingExecutionReadError,
+            >,
+        > {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+
+        fn begin_health_protection_probe(
+            &self,
+            _scope: crate::application::health_protection::HealthProtectionScope,
+            _now_ms: i64,
+        ) -> BoxFuture<
+            'static,
+            Result<
+                Option<crate::application::health_protection::HealthProtectionProbe>,
+                RoutingExecutionReadError,
+            >,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn cancel_health_protection_probe(
+            &self,
+            _probe: crate::application::health_protection::HealthProtectionProbe,
+            _now_ms: i64,
+        ) -> BoxFuture<'static, Result<bool, RoutingExecutionReadError>> {
+            Box::pin(async { Ok(false) })
         }
     }
 
@@ -1072,9 +1211,12 @@ mod tests {
         let repository = Arc::new(CorrelationCapturingRepository {
             captured: Arc::clone(&captured),
         });
-        let limits = ProxyServerLimits::default();
-        let upstream_pool = UpstreamClientPool::new(
-            limits.clone(),
+        let limits = ProxyStartupResourceLimits::default();
+        let transport_policy =
+            TransportPolicySnapshot::from_limits(&limits).expect("test transport policy");
+        let upstream_pool = UpstreamClientPool::new_with_transport_policy(
+            transport_policy.clone(),
+            limits.max_buffered_body_bytes,
             crate::services::proxy::diagnostic_memory::DiagnosticMemoryBudget::new(
                 32 * 1024 * 1024,
             ),
@@ -1092,7 +1234,7 @@ mod tests {
             repository,
             Arc::new(TestCredentialResolver),
             upstream_pool,
-            limits,
+            transport_policy,
             writer.clone(),
             Arc::new(crate::services::proxy::routing_runtime::RoutingRuntimeState::new(64, 1)),
         );
@@ -1981,7 +2123,7 @@ data: [DONE]
         fixture.seed_candidate(upstream.base_url.as_str()).await;
         let runtime = ProxyRuntimeState::for_tests();
         let mut config = fixture.config(0);
-        config.limits.precommit_timeout = Duration::from_millis(250);
+        config.transport_policy.request_deadline = Duration::from_millis(250);
         let started = runtime.start(config).await.expect("start v2");
 
         let request_started = std::time::Instant::now();
@@ -1998,7 +2140,7 @@ data: [DONE]
         runtime.stop(started.port).await.unwrap();
 
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "{body}");
-        assert_eq!(body["error"]["code"], "route_wait_timeout");
+        assert_eq!(body["error"]["code"], "route_deadline_exceeded");
         assert!(
             elapsed < Duration::from_secs(2),
             "configured precommit timeout was ignored: {elapsed:?}"

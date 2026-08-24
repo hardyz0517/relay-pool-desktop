@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::application::health_protection::HealthProtectionScope;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum ObservationSource {
     RealRequest,
@@ -48,6 +50,15 @@ pub(crate) struct RoutingObservation {
     pub outcome: ObservationOutcome,
     pub latency_ms: Option<u32>,
     pub evidence_mass_basis_points: u16,
+    /// Present only when a real user request consumed an explicit durable
+    /// Half-Open probe lease. The lease revision is a fence, not an identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_state_revision: Option<u64>,
+    /// Exact scope used by a real-request Half-Open probe. The revision is
+    /// only a fencing token; this field prevents endpoint probes from being
+    /// accidentally interpreted as credential probes during ingestion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_scope: Option<HealthProtectionScope>,
 }
 impl RoutingObservation {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {

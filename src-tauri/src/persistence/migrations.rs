@@ -319,7 +319,7 @@ mod tests {
             .collect::<String>();
         assert_eq!(
             checksum,
-            "50E6BE4FA8D83EC81BAA9BA14DB48047EAFFD4CCBD01764C783AA24A126E7929CDD30C0E7C7844E8C35C636630E5C5F1"
+            "3D6D2CFC7A8708FB1FBF7F5053EBBB7A151C01AD6A23C9CDE7AF95A8C64589DF6D061CDD60BFDEF7F4FBE75E2A5080BF"
         );
     }
 
@@ -483,6 +483,330 @@ mod tests {
             None
         );
         assert!(!root.path().join("backups").exists());
+    }
+
+    #[tokio::test]
+    async fn schema_50_materializes_v1_routing_rows_without_changing_revision() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 49).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        let v1 = r#"{
+            "version":1,
+            "reliability_weight":4000,
+            "responsiveness_weight":2500,
+            "cost_weight":2000,
+            "preference_weight":1500,
+            "max_candidates":32,
+            "exploration_share_basis_points":500,
+            "allow_depleted_fallback":false,
+            "affinity_enabled":false,
+            "affinity_ttl_seconds":300,
+            "max_rate_multiplier":null,
+            "routing_group_filter":"all_groups",
+            "outbound_proxy_mode":"inherit",
+            "outbound_proxy_url":null
+        }"#;
+        sqlx::query(
+            "UPDATE routing_policy SET config_json = ?1, policy_version = 'routing-policy-v1', config_revision = 7 WHERE singleton_key = 1",
+        )
+        .bind(v1)
+        .execute(&pool)
+        .await
+        .expect("legacy active row");
+        sqlx::query("UPDATE domain_revisions SET revision = 7 WHERE scope = 'routing_policy'")
+            .execute(&pool)
+            .await
+            .expect("legacy policy revision");
+        sqlx::query(
+            "INSERT OR REPLACE INTO routing_policy_history (config_revision, config_json, policy_version, system_version, status, created_at_ms) VALUES (7, ?1, 'routing-policy-v1', 'intelligent-routing-engine', 'active', 0)",
+        )
+        .bind(v1)
+        .execute(&pool)
+        .await
+        .expect("legacy history row");
+
+        migrator_through(50)
+            .expect("schema 50 migrator")
+            .run(&pool)
+            .await
+            .expect("schema 50 migration");
+        let active: String =
+            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("active policy");
+        let history: String = sqlx::query_scalar(
+            "SELECT config_json FROM routing_policy_history WHERE config_revision = 7",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("policy history");
+        for json in [active, history] {
+            let value: serde_json::Value = serde_json::from_str(&json).expect("valid V2 JSON");
+            assert_eq!(value["version"], 2);
+            assert_eq!(value["maxCandidates"], 32);
+            assert_eq!(value["retryFailover"]["maxTotalAttempts"], 4);
+            assert_eq!(value["retryFailover"]["maxSameTargetCapacityRetries"], 2);
+            assert_eq!(value["retryFailover"]["capacityRetryWaitBudgetMs"], 2000);
+            assert_eq!(
+                value["retryFailover"]["allowCrossCapacityDomainFallback"],
+                true
+            );
+        }
+        let revision: i64 = sqlx::query_scalar(
+            "SELECT config_revision FROM routing_policy WHERE singleton_key = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("active revision");
+        assert_eq!(revision, 7, "materialization must not create a policy edit");
+        let policy_version: String =
+            sqlx::query_scalar("SELECT policy_version FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("policy version");
+        assert_eq!(policy_version, "routing-policy-v2");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn schema_50_leaves_wrong_typed_v1_rows_for_typed_recovery() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 49).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        let malformed = r#"{
+            "version":1,
+            "reliability_weight":4000,
+            "responsiveness_weight":2500,
+            "cost_weight":2000,
+            "preference_weight":1500,
+            "max_candidates":32,
+            "exploration_share_basis_points":500,
+            "allow_depleted_fallback":"false",
+            "affinity_enabled":false,
+            "affinity_ttl_seconds":300
+        }"#;
+        sqlx::query(
+            "UPDATE routing_policy SET config_json = ?1, policy_version = 'routing-policy-v1' WHERE singleton_key = 1",
+        )
+        .bind(malformed)
+        .execute(&pool)
+        .await
+        .expect("malformed active row");
+
+        migrator_through(50)
+            .expect("schema 50 migrator")
+            .run(&pool)
+            .await
+            .expect("schema 50 migration");
+        let config_json: String =
+            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("active policy");
+        assert_eq!(config_json, malformed);
+        let policy_version: String =
+            sqlx::query_scalar("SELECT policy_version FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("policy version");
+        assert_eq!(policy_version, "routing-policy-v1");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn schema_52_materializes_missing_protection_profile_on_existing_v2_rows() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 51).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        let v2_without_profile = serde_json::json!({
+            "version": 2,
+            "reliabilityWeight": 4000,
+            "responsivenessWeight": 2500,
+            "costWeight": 2000,
+            "preferenceWeight": 1500,
+            "maxCandidates": 32,
+            "explorationShareBasisPoints": 500,
+            "allowDepletedFallback": false,
+            "affinityEnabled": false,
+            "affinityTtlSeconds": 300,
+            "maxRateMultiplier": null,
+            "routingGroupFilter": "all_groups",
+            "outboundProxyMode": "inherit",
+            "outboundProxyUrl": null,
+            "retryFailover": {
+                "version": 1,
+                "maxTotalAttempts": 4,
+                "maxSameTargetCapacityRetries": 2,
+                "capacityRetryWaitBudgetMs": 2000,
+                "allowCrossCapacityDomainFallback": true
+            }
+        });
+        let v2_json = serde_json::to_string(&v2_without_profile).expect("V2 JSON");
+        sqlx::query("UPDATE routing_policy SET config_json = ?1, policy_version = 'routing-policy-v2' WHERE singleton_key = 1")
+            .bind(&v2_json)
+            .execute(&pool)
+            .await
+            .expect("legacy V2 active row");
+        sqlx::query(
+            "INSERT OR REPLACE INTO routing_policy_history (config_revision, config_json, policy_version, system_version, status, created_at_ms) VALUES (8, ?1, 'routing-policy-v2', 'intelligent-routing-engine', 'active', 0)",
+        )
+        .bind(&v2_json)
+        .execute(&pool)
+        .await
+        .expect("legacy V2 history row");
+        let mut explicit_profile = v2_without_profile.clone();
+        explicit_profile["protectionProfile"] = serde_json::json!({
+            "version": 1,
+            "enabled": true,
+            "windowMaxSamples": 8,
+            "windowMs": 10000,
+            "minSamples": 2,
+            "failureThresholdPercent": 40,
+            "halfOpenSuccessesToClose": 3
+        });
+        sqlx::query(
+            "INSERT OR REPLACE INTO routing_policy_history (config_revision, config_json, policy_version, system_version, status, created_at_ms) VALUES (9, ?1, 'routing-policy-v2', 'intelligent-routing-engine', 'active', 0)",
+        )
+        .bind(serde_json::to_string(&explicit_profile).expect("explicit profile JSON"))
+        .execute(&pool)
+        .await
+        .expect("explicit V2 history row");
+
+        migrator_through(52)
+            .expect("schema 52 migrator")
+            .run(&pool)
+            .await
+            .expect("schema 52 migration");
+        for json in [
+            sqlx::query_scalar::<_, String>(
+                "SELECT config_json FROM routing_policy WHERE singleton_key = 1",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("active policy"),
+            sqlx::query_scalar::<_, String>(
+                "SELECT config_json FROM routing_policy_history WHERE config_revision = 8",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("history policy"),
+        ] {
+            let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+            assert_eq!(value["version"], 2);
+            assert_eq!(value["protectionProfile"]["version"], 1);
+            assert_eq!(value["protectionProfile"]["enabled"], false);
+            assert_eq!(value["protectionProfile"]["windowMaxSamples"], 64);
+            assert_eq!(value["protectionProfile"]["windowMs"], 300000);
+        }
+        let preserved: String = sqlx::query_scalar(
+            "SELECT config_json FROM routing_policy_history WHERE config_revision = 9",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("preserved explicit profile");
+        let preserved: serde_json::Value = serde_json::from_str(&preserved).expect("valid JSON");
+        assert_eq!(preserved["protectionProfile"]["enabled"], true);
+        assert_eq!(preserved["protectionProfile"]["windowMaxSamples"], 8);
+        let revision: i64 = sqlx::query_scalar(
+            "SELECT config_revision FROM routing_policy WHERE singleton_key = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("active revision");
+        assert_eq!(revision, 1, "materialization must not create a policy edit");
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn schema_54_converts_active_and_history_policy_durations_to_seconds() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join("relay-pool-v2.sqlite3");
+        initialize_database_through(&path, 53).await;
+        let pool = migration_pool_existing(&path)
+            .await
+            .expect("migration pool");
+        let current: String =
+            sqlx::query_scalar("SELECT config_json FROM routing_policy WHERE singleton_key = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("current policy");
+        let mut legacy: serde_json::Value =
+            serde_json::from_str(&current).expect("legacy policy JSON");
+        legacy["retryFailover"]["capacityRetryWaitBudgetMs"] = serde_json::json!(750);
+        legacy["protectionProfile"]["windowMs"] = serde_json::json!(300_500);
+        legacy["timeoutPolicy"]["connectMs"] = serde_json::json!(1_250);
+        legacy["timeoutPolicy"]["firstByteMs"] = serde_json::json!(30_500);
+        legacy["timeoutPolicy"]["precommitMs"] = serde_json::json!(60_250);
+        legacy["timeoutPolicy"]["bufferedExecutionMs"] = serde_json::json!(300_750);
+        legacy["timeoutPolicy"]["streamIdleMs"] = serde_json::json!(90_125);
+        let legacy_json = serde_json::to_string(&legacy).expect("legacy policy serialization");
+        sqlx::query(
+            "UPDATE routing_policy SET config_json = ?1, config_revision = 17 WHERE singleton_key = 1",
+        )
+        .bind(&legacy_json)
+        .execute(&pool)
+        .await
+        .expect("legacy active policy");
+        sqlx::query(
+            "INSERT OR REPLACE INTO routing_policy_history (config_revision, config_json, policy_version, system_version, status, created_at_ms) VALUES (18, ?1, 'routing-policy-v2', 'intelligent-routing-engine', 'active', 0)",
+        )
+        .bind(&legacy_json)
+        .execute(&pool)
+        .await
+        .expect("legacy history policy");
+
+        migrator_through(54)
+            .expect("schema 54 migrator")
+            .run(&pool)
+            .await
+            .expect("schema 54 migration");
+        for json in [
+            sqlx::query_scalar::<_, String>(
+                "SELECT config_json FROM routing_policy WHERE singleton_key = 1",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("migrated active policy"),
+            sqlx::query_scalar::<_, String>(
+                "SELECT config_json FROM routing_policy_history WHERE config_revision = 18",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("migrated history policy"),
+        ] {
+            let value: serde_json::Value = serde_json::from_str(&json).expect("migrated JSON");
+            assert_eq!(value["retryFailover"]["version"], 2);
+            assert_eq!(
+                value["retryFailover"]["capacityRetryWaitBudgetSeconds"],
+                0.75
+            );
+            assert!(value["retryFailover"]["capacityRetryWaitBudgetMs"].is_null());
+            assert_eq!(value["protectionProfile"]["version"], 2);
+            assert_eq!(value["protectionProfile"]["windowSeconds"], 300.5);
+            assert!(value["protectionProfile"]["windowMs"].is_null());
+            assert_eq!(value["timeoutPolicy"]["version"], 2);
+            assert_eq!(value["timeoutPolicy"]["connectSeconds"], 1.25);
+            assert_eq!(value["timeoutPolicy"]["streamIdleSeconds"], 90.125);
+            assert!(value["timeoutPolicy"]["connectMs"].is_null());
+        }
+        let revision: i64 = sqlx::query_scalar(
+            "SELECT config_revision FROM routing_policy WHERE singleton_key = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("active revision");
+        assert_eq!(revision, 17, "unit migration must not create a policy edit");
+        pool.close().await;
     }
 
     #[tokio::test]

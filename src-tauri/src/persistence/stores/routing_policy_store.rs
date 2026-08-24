@@ -1,7 +1,7 @@
 use serde_json::Value;
 use sqlx::{Connection, Row, SqliteConnection};
 
-use crate::models::routing_policy::RoutingPolicyConfigV1;
+use crate::models::routing_policy::{RoutingPolicyConfigV1, RoutingPolicyConfigV2};
 use crate::persistence::error::PersistenceError;
 use crate::persistence::stores::domain_revision_store::DomainRevisionStore;
 
@@ -182,10 +182,18 @@ fn validate_policy_input(
     {
         return Err(PersistenceError::ConstraintViolation);
     }
-    let typed = serde_json::from_value::<RoutingPolicyConfigV1>(config.clone())
-        .map_err(|_| PersistenceError::ConstraintViolation)?;
-    typed
-        .validate()
-        .map_err(|_| PersistenceError::ConstraintViolation)?;
+    if config.get("version").and_then(Value::as_u64) == Some(2) {
+        let typed = serde_json::from_value::<RoutingPolicyConfigV2>(config.clone())
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
+        typed
+            .validate()
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
+    } else {
+        let typed = serde_json::from_value::<RoutingPolicyConfigV1>(config.clone())
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
+        typed
+            .validate()
+            .map_err(|_| PersistenceError::ConstraintViolation)?;
+    }
     Ok(())
 }

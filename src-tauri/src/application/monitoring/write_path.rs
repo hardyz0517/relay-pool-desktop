@@ -1,4 +1,5 @@
 use crate::{
+    application::error_rate_protection::ErrorRateProtectionService,
     application::health_transitions::HealthTransitionService,
     application::observation_ingestion::ObservationIngestion,
     models::{
@@ -31,7 +32,7 @@ use super::{
     recorder::{BufferedExecution, RecordedAttempt, RecordedTargetResult},
 };
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct MonitoringExecutionCommitter {
     executions: MonitoringExecutionRepository,
     health: HealthTransitionService,
@@ -40,11 +41,19 @@ pub(crate) struct MonitoringExecutionCommitter {
 }
 
 impl MonitoringExecutionCommitter {
+    #[expect(
+        dead_code,
+        reason = "contract=monitoring.test-constructor; owner=application/monitoring; remove_when=all test fixtures compose the explicit error-rate adapter"
+    )]
     pub(crate) fn new() -> Self {
+        Self::new_with_error_rate(ErrorRateProtectionService::disabled())
+    }
+
+    pub(crate) fn new_with_error_rate(error_rate: ErrorRateProtectionService) -> Self {
         Self {
             executions: MonitoringExecutionRepository,
             health: HealthTransitionService::new(),
-            observations: ObservationIngestion::new(),
+            observations: ObservationIngestion::with_error_rate(error_rate),
             retention: MonitoringRetentionRepository,
         }
     }
@@ -194,6 +203,8 @@ fn routing_observation_from_health(
             .latency_ms
             .and_then(|value| u32::try_from(value).ok()),
         evidence_mass_basis_points: 5_000,
+        probe_scope: None,
+        probe_state_revision: None,
     }
 }
 

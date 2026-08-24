@@ -349,6 +349,14 @@ pub struct CanonicalRoutingCandidate {
     pub station_key_id: String,
     pub station_id: String,
     pub station_type: String,
+    /// Trusted, non-secret provider capacity identity. These values are
+    /// intentionally separate from endpoint and credential identity so the
+    /// routing read model can explain correlated capacity failures without
+    /// exposing URLs or secrets.
+    pub capacity_provider_family: Option<String>,
+    pub capacity_deployment_identity: Option<String>,
+    pub capacity_region_identity: Option<String>,
+    pub capacity_domain_revision: Option<i64>,
     pub station_account_concurrency_limit: Option<i64>,
     pub station_endpoint_revision: i64,
     pub sanitized_origin: String,

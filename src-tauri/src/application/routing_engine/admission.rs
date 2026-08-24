@@ -14,6 +14,7 @@ use crate::application::routing_engine::{
     planning_snapshot::PlanningSnapshot,
     request::{RouteProgress, RouteRequestFacts},
 };
+use crate::application::routing_policy::AttemptBudgetProfileV1;
 use crate::models::model_mapping::FallbackTrigger;
 
 #[cfg(test)]
@@ -27,7 +28,6 @@ use crate::application::routing_engine::{
 };
 
 const MAX_RUNTIME_ONLY_REPLANS: u32 = 8;
-const DEFAULT_MAX_ATTEMPTS: u32 = 4;
 
 fn ordered_planned_candidates(plan: &RoutePlan) -> Vec<&PlannedCandidate> {
     let Some(best_tier) = plan.candidates.iter().map(|candidate| candidate.tier).min() else {
@@ -152,6 +152,7 @@ pub struct AdmissionSettings {
     pub initial_runtime_overlay_revision: u64,
     pub initial_durable_generation: u64,
     pub fallback_policy: FallbackPolicy,
+    pub attempt_budget: AttemptBudgetProfileV1,
 }
 
 #[derive(Debug)]
@@ -212,7 +213,7 @@ impl RouteAdmissionCoordinator {
             model_fallback_trigger: None,
             model_fallback_rank_limit: None,
             fallback_blocked: None,
-            max_attempts: None,
+            max_attempts: Some(settings.attempt_budget.max_total_attempts),
             candidate_target_ranks: BTreeMap::new(),
             attempted_model_target_ranks: BTreeSet::new(),
             candidate_failure_domains: BTreeMap::new(),
@@ -330,7 +331,9 @@ impl RouteAdmissionCoordinator {
         if eligible_count == 0 {
             return Err(self.failure(AdmissionFailureKind::NoEligible, "no_eligible_candidate"));
         }
-        let max_attempts = *self.max_attempts.get_or_insert(DEFAULT_MAX_ATTEMPTS);
+        let max_attempts = self
+            .max_attempts
+            .expect("attempt budget is required by admission settings");
         if self.progress.view().attempt_count >= max_attempts {
             return Err(self.failure(AdmissionFailureKind::AttemptLimit, "attempt_limit_reached"));
         }
@@ -647,6 +650,24 @@ impl RouteAdmissionCoordinator {
         }
         self.excluded_capacity_domains.insert(domain);
         true
+    }
+
+    /// Excludes every candidate carrying a canonical failure-domain label.
+    /// This is deliberately request-local: a refreshed planning snapshot is
+    /// allowed to add candidates, but it can never resurrect a domain already
+    /// ruled out by this request.
+    pub fn exclude_failure_domain(&mut self, domain: impl Into<String>) -> bool {
+        let domain = domain.into();
+        if domain.is_empty() {
+            return false;
+        }
+        self.excluded_failure_domains.insert(domain)
+    }
+
+    pub fn excluded_failure_domain_count(&self) -> u16 {
+        self.excluded_failure_domains
+            .len()
+            .min(usize::from(u16::MAX)) as u16
     }
 
     #[cfg(test)]

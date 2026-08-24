@@ -20,12 +20,15 @@ use super::{
     diagnostic_memory::{DiagnosticMemoryBudget, DiagnosticMemoryPermit},
     endpoint_adapter::PreparedUpstreamRequest,
     error::{FailureSource, ProxyFailure, ProxyFailureCode, RetryClass},
-    limits::ProxyServerLimits,
     protocol::TransportMode,
     redact_error_message,
     request::ByteStream,
     request_send::RequestSendPhase,
+    transport_policy::{TransportPolicySnapshot, UpstreamClientConfigFingerprint},
 };
+
+#[cfg(test)]
+use super::limits::ProxyStartupResourceLimits;
 
 // reqwest's response stream yields an owned Bytes chunk before our capture loop can
 // inspect it. Reserve one maximum decoded chunk in addition to the retained body so
@@ -40,9 +43,11 @@ const HTTP_DIAGNOSTIC_RETAINED_CAPACITY_BYTES: usize =
 
 #[derive(Clone)]
 pub(crate) struct UpstreamClientPool {
-    direct: Arc<reqwest::Client>,
-    proxied: Arc<RwLock<HashMap<ProxyRoute, Arc<reqwest::Client>>>>,
-    limits: ProxyServerLimits,
+    clients:
+        Arc<RwLock<HashMap<(ProxyRoute, UpstreamClientConfigFingerprint), Arc<reqwest::Client>>>>,
+    #[cfg(test)]
+    transport_policy: TransportPolicySnapshot,
+    max_buffered_body_bytes: usize,
     diagnostic_memory: DiagnosticMemoryBudget,
 }
 
@@ -94,36 +99,72 @@ impl fmt::Debug for UpstreamAttempt {
 }
 
 impl UpstreamClientPool {
+    #[cfg(test)]
     pub(crate) fn new(
-        limits: ProxyServerLimits,
+        limits: ProxyStartupResourceLimits,
         diagnostic_memory: DiagnosticMemoryBudget,
     ) -> Result<Self, ProxyFailure> {
+        let transport_policy = TransportPolicySnapshot::from_limits(&limits).map_err(|error| {
+            internal_proxy_failure(format!("invalid transport policy: {error:?}"))
+        })?;
+        Self::new_with_transport_policy(
+            transport_policy,
+            limits.max_buffered_body_bytes,
+            diagnostic_memory,
+        )
+    }
+
+    pub(crate) fn new_with_transport_policy(
+        transport_policy: TransportPolicySnapshot,
+        max_buffered_body_bytes: usize,
+        diagnostic_memory: DiagnosticMemoryBudget,
+    ) -> Result<Self, ProxyFailure> {
+        transport_policy.validate().map_err(|error| {
+            internal_proxy_failure(format!("invalid transport policy: {error:?}"))
+        })?;
         Ok(Self {
-            direct: Arc::new(build_client(&ProxyRoute::Direct, &limits)?),
-            proxied: Arc::new(RwLock::new(HashMap::new())),
-            limits,
+            clients: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(test)]
+            transport_policy,
+            max_buffered_body_bytes,
             diagnostic_memory,
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn client(
         &self,
         route: &ProxyRoute,
     ) -> Result<Arc<reqwest::Client>, ProxyFailure> {
-        if matches!(route, ProxyRoute::Direct) {
-            return Ok(Arc::clone(&self.direct));
-        }
+        self.client_for_policy(route, &self.transport_policy).await
+    }
 
-        if let Some(client) = self.proxied.read().await.get(route).cloned() {
+    async fn client_for_policy(
+        &self,
+        route: &ProxyRoute,
+        transport_policy: &TransportPolicySnapshot,
+    ) -> Result<Arc<reqwest::Client>, ProxyFailure> {
+        let fingerprint = transport_policy.client_config_fingerprint();
+        let key = (route.clone(), fingerprint);
+        if let Some(client) = self.clients.read().await.get(&key).cloned() {
             return Ok(client);
         }
-
-        let mut clients = self.proxied.write().await;
-        if let Some(client) = clients.get(route).cloned() {
+        let mut clients = self.clients.write().await;
+        if let Some(client) = clients.get(&key).cloned() {
             return Ok(client);
         }
-        let client = Arc::new(build_client(route, &self.limits)?);
-        clients.insert(route.clone(), Arc::clone(&client));
+        let client = Arc::new(build_client(route, transport_policy)?);
+        clients.insert(key, Arc::clone(&client));
+        // Keep old generations alive for in-flight requests while preventing
+        // repeated policy edits from growing the process without bound. The
+        // map is intentionally unordered, so eviction does not promise FIFO.
+        const MAX_CLIENT_GENERATIONS: usize = 32;
+        while clients.len() > MAX_CLIENT_GENERATIONS {
+            let Some(oldest) = clients.keys().next().cloned() else {
+                break;
+            };
+            clients.remove(&oldest);
+        }
         Ok(client)
     }
 
@@ -131,10 +172,21 @@ impl UpstreamClientPool {
         self.diagnostic_memory.clone()
     }
 
+    #[cfg(test)]
     pub(crate) async fn send_resolved(
         &self,
         prepared: PreparedUpstreamRequest,
         target: &ExecutionTargetHandle,
+    ) -> Result<UpstreamAttempt, ProxyFailure> {
+        self.send_resolved_with_policy(prepared, target, &self.transport_policy)
+            .await
+    }
+
+    pub(crate) async fn send_resolved_with_policy(
+        &self,
+        prepared: PreparedUpstreamRequest,
+        target: &ExecutionTargetHandle,
+        transport_policy: &TransportPolicySnapshot,
     ) -> Result<UpstreamAttempt, ProxyFailure> {
         let result = self
             .send_with_parts(
@@ -145,6 +197,7 @@ impl UpstreamClientPool {
                 target.api_key.as_bytes(),
                 &target.station_id,
                 target.endpoint_revision,
+                transport_policy,
             )
             .await;
         if result.is_err() {
@@ -164,10 +217,11 @@ impl UpstreamClientPool {
         api_key: &[u8],
         station_id: &str,
         endpoint_revision: i64,
+        transport_policy: &TransportPolicySnapshot,
     ) -> Result<UpstreamAttempt, ProxyFailure> {
         let route = ProxyRoute::from_candidate_parts(collector_proxy_mode, collector_proxy_url)?;
         let url = build_api_url(api_base_url, &prepared.path).map_err(internal_proxy_failure)?;
-        let client = self.client(&route).await?;
+        let client = self.client_for_policy(&route, transport_policy).await?;
         let method = reqwest::Method::from_bytes(prepared.method.as_str().as_bytes())
             .map_err(|error| internal_proxy_failure(format!("invalid upstream method: {error}")))?;
         let mut request = client.request(method, url);
@@ -212,16 +266,20 @@ impl UpstreamClientPool {
                 // controls the body length and could otherwise make one attempt retain an
                 // unbounded allocation.
                 let body_limit = if status.is_success() {
-                    self.limits.max_buffered_body_bytes
+                    self.max_buffered_body_bytes
                 } else {
                     MAX_ERROR_BODY_BYTES
                 };
-                let captured = capture_bounded_body(
-                    response,
-                    body_limit,
-                    (!status.is_success()).then_some(&self.diagnostic_memory),
+                let captured = tokio::time::timeout(
+                    transport_policy.buffered_execution_timeout,
+                    capture_bounded_body(
+                        response,
+                        body_limit,
+                        (!status.is_success()).then_some(&self.diagnostic_memory),
+                    ),
                 )
-                .await?;
+                .await
+                .map_err(|_| upstream_buffered_body_timeout_failure())??;
                 let body = match captured {
                     CapturedBody::Complete {
                         body,
@@ -359,12 +417,12 @@ impl ProxyRoute {
 
 fn build_client(
     route: &ProxyRoute,
-    limits: &ProxyServerLimits,
+    transport_policy: &TransportPolicySnapshot,
 ) -> Result<reqwest::Client, ProxyFailure> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(limits.upstream_connect_timeout)
-        .pool_idle_timeout(Some(limits.stream_idle_timeout))
+        .connect_timeout(transport_policy.connect_timeout)
+        .pool_idle_timeout(Some(transport_policy.upstream_pool_idle_timeout))
         // Diagnostic capture is bounded in wire bytes. Keep automatic content
         // decoding disabled even if a future reqwest feature set enables it;
         // decoded-body admission would require a separate resource contract.
@@ -460,6 +518,18 @@ fn upstream_buffered_body_too_large_failure(limit: usize) -> ProxyFailure {
     failure.with_request_send_phase(RequestSendPhase::ResponseStarted)
 }
 
+fn upstream_buffered_body_timeout_failure() -> ProxyFailure {
+    let mut failure = ProxyFailure::new(
+        ProxyFailureCode::UpstreamStreamFailed,
+        FailureSource::Upstream,
+        RetryClass::AfterCommitStop,
+        StatusCode::GATEWAY_TIMEOUT,
+        "upstream buffered response timed out",
+    );
+    failure.internal_detail = Some("buffered_execution_timeout".to_string());
+    failure.with_request_send_phase(RequestSendPhase::ResponseStarted)
+}
+
 fn upstream_response_body_failure(error: reqwest::Error) -> ProxyFailure {
     upstream_stream_failure(error).with_request_send_phase(RequestSendPhase::ResponseStarted)
 }
@@ -515,7 +585,7 @@ mod tests {
         services::proxy::{
             endpoint_adapter::PreparedUpstreamRequest,
             error::ProxyFailureCode,
-            limits::ProxyServerLimits,
+            limits::ProxyStartupResourceLimits,
             protocol::{
                 CompletionPolicy, DownstreamTransform, ResponsePlan, TransportMode,
                 UpstreamProtocol,
@@ -727,7 +797,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_buffered_response_uses_its_separate_configured_limit() {
-        let limits = ProxyServerLimits {
+        let limits = ProxyStartupResourceLimits {
             max_buffered_body_bytes: 32,
             ..test_limits()
         };
@@ -861,15 +931,12 @@ mod tests {
         }
     }
 
-    fn test_limits() -> ProxyServerLimits {
-        ProxyServerLimits::default()
+    fn test_limits() -> ProxyStartupResourceLimits {
+        ProxyStartupResourceLimits::default()
     }
 
-    fn short_limits() -> ProxyServerLimits {
-        ProxyServerLimits {
-            upstream_connect_timeout: Duration::from_millis(50),
-            ..ProxyServerLimits::default()
-        }
+    fn short_limits() -> ProxyStartupResourceLimits {
+        ProxyStartupResourceLimits::default()
     }
 
     impl UpstreamAttempt {

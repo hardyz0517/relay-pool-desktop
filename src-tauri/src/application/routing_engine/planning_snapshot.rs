@@ -1,6 +1,7 @@
 use crate::application::model_mapping::CandidateModelVariant;
+use crate::application::routing_policy::AttemptBudgetProfileV1;
 use crate::models::model_mapping::FallbackTrigger;
-use crate::models::routing_policy::RoutingPolicyConfigV1;
+use crate::models::routing_policy::RoutingPolicyConfigV2;
 
 use super::{
     algorithm_profile::DispatchAlgorithmProfile, candidate_plan::RoutePlanPricingSnapshot,
@@ -58,7 +59,10 @@ pub(crate) struct PlanningSnapshot {
     pub(crate) snapshot_id: String,
     pub(crate) durable_revision: u64,
     pub(crate) routing_policy_revision: u64,
-    pub(crate) policy: RoutingPolicyConfigV1,
+    pub(crate) policy: RoutingPolicyConfigV2,
+    /// Request-local reliability budget compiled with the policy revision.
+    /// Replanning must not reconstruct or reset this value.
+    pub(crate) attempt_budget: AttemptBudgetProfileV1,
     pub(crate) profile: DispatchAlgorithmProfile,
     pub(crate) candidates: Vec<CandidateSnapshot>,
     pub(crate) model_fallback_trigger: Option<FallbackTrigger>,
@@ -70,6 +74,7 @@ impl PlanningSnapshot {
         if self.snapshot_id.is_empty()
             || self.durable_revision == 0
             || self.routing_policy_revision == 0
+            || self.attempt_budget.policy_revision != self.routing_policy_revision
             || self.candidates.len() > usize::from(self.policy.max_candidates)
             || self.runtime.runtime_instance_id.is_empty()
             || self.runtime.runtime_revision == 0
@@ -78,7 +83,9 @@ impl PlanningSnapshot {
         {
             return Err("invalid planning snapshot");
         }
-        self.policy.validate()?;
+        self.policy
+            .validate()
+            .map_err(|_| "invalid planning policy")?;
         self.profile.validate()?;
         if self.candidates.iter().any(|candidate| {
             candidate.station_key_id.is_empty()

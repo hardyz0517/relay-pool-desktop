@@ -86,6 +86,9 @@ const TRUSTED_INDEXES_V1: &[&str] = &[
     "idx_request_attempts_station_key_terminal",
     "idx_request_logs_created",
     "idx_request_routing_outcome_summaries_terminal",
+    "idx_request_decision_events_timeline",
+    "idx_routing_error_rate_history_timeline",
+    "idx_routing_error_rate_history_scope",
     "idx_request_terminal_outbox_replay",
     "idx_routing_attempt_costs_request",
     "idx_routing_observations_ingestion_order",
@@ -561,7 +564,7 @@ mod tests {
 
         assert_eq!(fingerprint.sha256, fixture);
         assert_eq!(fingerprint.table_count, EXPECTED_USER_TABLE_COUNT_V1);
-        assert_eq!(fingerprint.index_count, 76);
+        assert_eq!(fingerprint.index_count, 79);
     }
 
     #[tokio::test]

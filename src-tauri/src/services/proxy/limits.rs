@@ -10,8 +10,13 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const BODY_BUDGET_UNIT_BYTES: usize = 1024;
 
+/// Limits that are fixed when the local proxy is started.
+///
+/// Request transport timeouts are deliberately not part of this type. They
+/// belong to [`TransportPolicySnapshot`] and can be replaced for subsequent
+/// requests without rebuilding the listener or its resource semaphores.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProxyServerLimits {
+pub struct ProxyStartupResourceLimits {
     pub max_connections: usize,
     pub max_in_flight_requests: usize,
     pub max_header_bytes: usize,
@@ -19,15 +24,13 @@ pub struct ProxyServerLimits {
     pub max_buffered_body_bytes: usize,
     pub header_timeout: Duration,
     pub body_timeout: Duration,
-    pub upstream_connect_timeout: Duration,
-    pub upstream_first_byte_timeout: Duration,
-    pub precommit_timeout: Duration,
-    pub buffered_execution_timeout: Duration,
-    pub stream_idle_timeout: Duration,
+    /// Connection-pool idle eviction is client infrastructure, not the
+    /// user-facing stream idle deadline. It is fixed for a proxy generation.
+    pub upstream_pool_idle_timeout: Duration,
     pub shutdown_timeout: Duration,
 }
 
-impl Default for ProxyServerLimits {
+impl Default for ProxyStartupResourceLimits {
     fn default() -> Self {
         Self {
             max_connections: 64,
@@ -37,11 +40,7 @@ impl Default for ProxyServerLimits {
             max_buffered_body_bytes: 128 * 1024 * 1024,
             header_timeout: Duration::from_secs(10),
             body_timeout: Duration::from_secs(30),
-            upstream_connect_timeout: Duration::from_secs(10),
-            upstream_first_byte_timeout: Duration::from_secs(30),
-            precommit_timeout: Duration::from_secs(60),
-            buffered_execution_timeout: Duration::from_secs(300),
-            stream_idle_timeout: Duration::from_secs(90),
+            upstream_pool_idle_timeout: Duration::from_secs(90),
             shutdown_timeout: Duration::from_secs(30),
         }
     }
@@ -132,7 +131,7 @@ mod tests {
 
     use tokio::sync::Semaphore;
 
-    use super::{BodyBudget, ProxyServerLimits, RequestLease};
+    use super::{BodyBudget, ProxyStartupResourceLimits, RequestLease};
 
     #[tokio::test]
     async fn body_budget_holds_bytes_until_last_request_owner_drops() {
@@ -163,7 +162,7 @@ mod tests {
 
     #[test]
     fn proxy_server_limits_match_the_approved_budget() {
-        let limits = ProxyServerLimits::default();
+        let limits = ProxyStartupResourceLimits::default();
         assert_eq!(limits.max_connections, 64);
         assert_eq!(limits.max_in_flight_requests, 32);
         assert_eq!(limits.max_header_bytes, 64 * 1024);
@@ -171,11 +170,7 @@ mod tests {
         assert_eq!(limits.max_buffered_body_bytes, 128 * 1024 * 1024);
         assert_eq!(limits.header_timeout, Duration::from_secs(10));
         assert_eq!(limits.body_timeout, Duration::from_secs(30));
-        assert_eq!(limits.upstream_connect_timeout, Duration::from_secs(10));
-        assert_eq!(limits.upstream_first_byte_timeout, Duration::from_secs(30));
-        assert_eq!(limits.precommit_timeout, Duration::from_secs(60));
-        assert_eq!(limits.buffered_execution_timeout, Duration::from_secs(300));
-        assert_eq!(limits.stream_idle_timeout, Duration::from_secs(90));
+        assert_eq!(limits.upstream_pool_idle_timeout, Duration::from_secs(90));
         assert_eq!(limits.shutdown_timeout, Duration::from_secs(30));
     }
 }

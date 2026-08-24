@@ -1,13 +1,17 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::application::queries::{
-    operational_detail::{StationKeyOperationalDetail, StationKeyOperationalDetailInput},
-    request_decision_trace::{
-        RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
+use crate::application::{
+    error_rate_protection::ErrorRateHistoryPageV1,
+    queries::{
+        operational_detail::{StationKeyOperationalDetail, StationKeyOperationalDetailInput},
+        request_decision_trace::{
+            RecentRouteDecisionsInput, RecentRouteDecisionsPage, RequestDecisionTrace,
+        },
+        routing_protection::RoutingProtectionStatus,
+        routing_runtime::RoutingRuntimeOverlay,
+        routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
     },
-    routing_runtime::RoutingRuntimeOverlay,
-    routing_workspace::{RoutingWorkspaceSnapshot, RoutingWorkspaceSnapshotInput},
 };
 #[cfg(test)]
 use crate::models::routing::{PricingGroupType, RoutingPolicy};
@@ -31,11 +35,47 @@ pub type RouteSimulationResultDto = RouteSimulationResult;
 pub type RecentRouteDecisionsPageDto = RecentRouteDecisionsPage;
 pub type RequestDecisionTraceDto = RequestDecisionTrace;
 pub type RoutingRuntimeOverlayDto = RoutingRuntimeOverlay;
+pub type RoutingProtectionStatusDto = RoutingProtectionStatus;
+pub type ErrorRateHistoryPageDto = ErrorRateHistoryPageV1;
 pub type StationKeyOperationalDetailDto = StationKeyOperationalDetail;
 pub type RoutingWorkspaceSnapshotDto = RoutingWorkspaceSnapshot;
 pub type StationEndpointHealthDto = StationEndpointHealth;
 pub type StationKeyCapabilitiesDto = StationKeyCapabilities;
 pub type StationKeyHealthDto = StationKeyHealth;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoutingProtectionStatusInputDto {
+    /// Optional request model used to resolve the canonical capacity-domain
+    /// commitment. An empty object preserves the legacy aggregate-only query.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+impl RoutingProtectionStatusInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The routing protection status payload is invalid.",
+            )
+        })?;
+        validate_optional_text("model", input.model.as_deref(), MAX_TEXT_BYTES)?;
+        if input
+            .model
+            .as_deref()
+            .is_some_and(|model| model.trim().is_empty())
+        {
+            return Err(invalid_input(
+                "model",
+                "invalid_text",
+                "The routing protection model must not be empty.",
+            ));
+        }
+        Ok(input)
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -95,6 +135,37 @@ pub struct RecentRouteDecisionsInputDto {
     pub limit: Option<usize>,
     #[serde(default)]
     pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ErrorRateHistoryInputDto {
+    #[serde(default)]
+    pub before_ms: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+impl ErrorRateHistoryInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = serde_json::from_value(value).map_err(|_| {
+            invalid_input(
+                "input",
+                "invalid_shape",
+                "The error-rate history payload is invalid.",
+            )
+        })?;
+        if input.before_ms.is_some_and(|value| value < 0)
+            || input.limit.is_some_and(|value| value == 0 || value > 200)
+        {
+            return Err(invalid_input(
+                "history",
+                "out_of_range",
+                "The error-rate history range is outside the supported range.",
+            ));
+        }
+        Ok(input)
+    }
 }
 
 impl RecentRouteDecisionsInputDto {
@@ -413,10 +484,13 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
             "command":"get_request_decision_trace",
             "input":{"requestLogId":"request-log-1"},
             "output":{
-                "traceVersion":"request_decision_trace_v1",
+                "traceVersion":"request_decision_trace_v2",
                 "requestLogId":"request-log-1",
                 "status":"legacy_summary",
+                "detailAvailability":"summary_only",
                 "reason":"legacy_summary_only_before_cutover",
+                "explanationKey":"legacy_summary_only_before_cutover",
+                "policyRevision":null,
                 "legacySummary":{
                     "routePolicy":"cost_stable_first",
                     "routeReason":"selected",
@@ -424,6 +498,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
                     "stationId":"station-1",
                     "fallbackCount":0
                 },
+                "timeline":[],
                 "planningRounds":[]
             }
         }),
@@ -724,6 +799,30 @@ mod tests {
         ] {
             let error =
                 RoutingStationKeyIdInputDto::parse(value).expect_err("invalid station key ID");
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+        }
+    }
+
+    #[test]
+    fn routing_protection_status_input_keeps_empty_input_compatibility() {
+        let empty = RoutingProtectionStatusInputDto::parse(serde_json::json!({}))
+            .expect("empty protection input remains valid");
+        assert_eq!(empty.model, None);
+
+        let model =
+            RoutingProtectionStatusInputDto::parse(serde_json::json!({"model":"gpt-5-mini"}))
+                .expect("model-scoped protection input");
+        assert_eq!(model.model.as_deref(), Some("gpt-5-mini"));
+    }
+
+    #[test]
+    fn routing_protection_status_input_rejects_empty_model_and_unknown_fields() {
+        for value in [
+            serde_json::json!({"model":"  "}),
+            serde_json::json!({"model":"gpt-5-mini","unexpected":true}),
+        ] {
+            let error = RoutingProtectionStatusInputDto::parse(value)
+                .expect_err("invalid protection input");
             assert_eq!(error.code, CommandErrorCode::InvalidInput);
         }
     }

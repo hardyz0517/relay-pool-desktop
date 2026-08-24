@@ -8,10 +8,9 @@ use crate::application::{
         PublicErrorCode, RetryDisposition,
     },
     request_lifecycle::attempt::{
-        AttemptFailureKind, ClassifiedAttemptFailure, DurableCapabilityEffect,
-        DurableFailureDimension, DurableHealthEffect, DurableHealthScope, DurableVerdict,
-        FailureBlame, HealthEffect as LifecycleHealthEffect,
-        RetryDisposition as LifecycleRetryDisposition,
+        project_retry_disposition, AttemptFailureKind, ClassifiedAttemptFailure,
+        DurableCapabilityEffect, DurableFailureDimension, DurableHealthEffect, DurableHealthScope,
+        DurableVerdict, FailureBlame, HealthEffect as LifecycleHealthEffect,
     },
 };
 
@@ -64,7 +63,7 @@ impl FailureEffectPlan {
         ClassifiedAttemptFailure {
             kind: attempt_kind_for_class(self.class),
             blame: blame_for_target(&self.target),
-            retry: lifecycle_retry(self.retry),
+            retry: project_retry_disposition(self.retry),
             health: durable_capability
                 .map(LifecycleHealthEffect::Capability)
                 .or_else(|| durable_health.map(LifecycleHealthEffect::Scoped))
@@ -251,15 +250,6 @@ fn blame_for_target(target: &FailureTarget) -> FailureBlame {
     }
 }
 
-fn lifecycle_retry(retry: RetryDisposition) -> LifecycleRetryDisposition {
-    match retry {
-        RetryDisposition::RetrySameTarget
-        | RetryDisposition::TryDifferentFailureDomain
-        | RetryDisposition::WaitThenReplan => LifecycleRetryDisposition::TryNextCandidate,
-        RetryDisposition::StopRequest => LifecycleRetryDisposition::StopRequest,
-    }
-}
-
 fn lifecycle_health(health: HealthEffect) -> LifecycleHealthEffect {
     match health {
         HealthEffect::Success => LifecycleHealthEffect::Success,
@@ -291,7 +281,7 @@ mod tests {
         let classified = classified_attempt_failure_from_canonical(&failure);
         assert_eq!(
             classified.retry,
-            LifecycleRetryDisposition::TryNextCandidate
+            crate::application::request_lifecycle::attempt::RetryDisposition::TryNextCandidate
         );
         assert!(matches!(
             classified.health,

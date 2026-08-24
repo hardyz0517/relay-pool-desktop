@@ -5,13 +5,16 @@ use crate::{
         credentials::CredentialService, error::ApplicationError,
         request_finalization::RequestFinalizationService,
         request_lifecycle::ports::LifecycleWriteError, routing::RoutingService,
-        settings::SettingsService,
+        routing_execution_reader::RoutingExecutionReader,
+        routing_policy_read::RoutingPolicyReadService, settings::SettingsService,
     },
     models::proxy::ProxyStatus,
     services::proxy::{
         lifecycle::ports::RequestLifecycleStore,
+        limits::ProxyStartupResourceLimits,
         routing_repository::{RoutingExecutionRepository, RoutingRepository},
         runtime::{ProxyRuntimeState, ProxyStartConfig},
+        transport_policy::TransportPolicySnapshot,
     },
 };
 
@@ -42,6 +45,7 @@ pub(crate) struct CcswitchImportProxyTarget {
 pub(crate) struct LocalProxyCommandFacade {
     settings: Arc<SettingsService>,
     routing: Arc<RoutingService>,
+    routing_policy_read: Arc<RoutingPolicyReadService>,
     credentials: Arc<CredentialService>,
     request_finalization: Arc<RequestFinalizationService>,
     proxy: Arc<ProxyRuntimeState>,
@@ -51,6 +55,7 @@ impl LocalProxyCommandFacade {
     pub(crate) fn new(
         settings: Arc<SettingsService>,
         routing: Arc<RoutingService>,
+        routing_policy_read: Arc<RoutingPolicyReadService>,
         credentials: Arc<CredentialService>,
         request_finalization: Arc<RequestFinalizationService>,
         proxy: Arc<ProxyRuntimeState>,
@@ -58,6 +63,7 @@ impl LocalProxyCommandFacade {
         Self {
             settings,
             routing,
+            routing_policy_read,
             credentials,
             request_finalization,
             proxy,
@@ -133,17 +139,29 @@ impl LocalProxyCommandFacade {
             .reconcile_startup_interrupted_request_lifecycle()
             .await
             .map_err(local_proxy_startup_reconciliation_error)?;
-        let routing_repository: Arc<dyn RoutingRepository> = Arc::new(
-            RoutingExecutionRepository::new(self.routing.as_ref().clone()),
-        );
+        let execution_reader = Arc::new(RoutingExecutionReader::new(self.routing.clone()));
+        let routing_repository: Arc<dyn RoutingRepository> =
+            Arc::new(RoutingExecutionRepository::new(execution_reader));
+        let stored_policy = self.routing_policy_read.load_routing_policy().await?;
+        let policy = crate::models::routing_policy::RoutingPolicyConfigV2::from_stored_value(
+            &stored_policy.config,
+        )
+        .map_err(|_| ApplicationError::ConstraintViolation)?;
         let lifecycle_store: Arc<dyn RequestLifecycleStore> = self.request_finalization.clone();
+        let transport_policy = TransportPolicySnapshot::from_timeout_policy(
+            &policy.timeout_policy,
+            stored_policy.revision,
+            ProxyStartupResourceLimits::default().upstream_pool_idle_timeout,
+        )
+        .map_err(|_| ApplicationError::ConstraintViolation)?;
         let config = ProxyStartConfig::new_v2(
             routing_repository,
             self.credentials.clone(),
             lifecycle_store,
             local_access_key.clone(),
             settings.local_proxy_port,
-        );
+        )
+        .with_transport_policy(transport_policy);
         Ok((settings, local_access_key, config))
     }
 }

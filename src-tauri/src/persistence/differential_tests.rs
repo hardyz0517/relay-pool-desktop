@@ -13,6 +13,7 @@ use crate::{
         credentials::{
             CredentialError, CredentialService, CredentialVault, EncryptedSecret, SecretBytes,
         },
+        error_rate_protection::ErrorRateProtectionService,
         ids::IdGenerator,
         operational_facts::{
             candidate_projection::{
@@ -38,6 +39,7 @@ use crate::{
             },
         },
         routing::RoutingService,
+        routing_diagnostics_reader::RoutingDiagnosticsReader,
         routing_engine::{
             planning_snapshot::RuntimeOverlaySnapshot,
             request::{CanonicalRouteRequest, RouteKind, RouteRequestClassifier},
@@ -138,6 +140,8 @@ async fn proxy_group_subscription_failure_excludes_only_its_group_in_the_next_pl
             resolved_upstream_model: Some("gpt-upstream".to_string()),
             model_alias_revision: 1,
             started_at_ms: 1,
+            probe_scope: None,
+            probe_state_revision: None,
         },
         failure_from_provider_signal(
             ProviderErrorSemanticSignal::ConfirmedGroupSubscriptionInvalid {
@@ -194,6 +198,8 @@ async fn proxy_model_not_found_excludes_only_that_key_model_commitment_until_rev
             resolved_upstream_model: Some("gpt-upstream".to_string()),
             model_alias_revision: 1,
             started_at_ms: 1,
+            probe_scope: None,
+            probe_state_revision: None,
         },
         failure_from_provider_signal(
             ProviderErrorSemanticSignal::ConfirmedModelNotFound {
@@ -236,6 +242,8 @@ async fn persist_proxy_failure(
             terminal: AttemptTerminal::Failed(classified_attempt_failure_from_canonical(&failure)),
             output_committed: false,
             terminal_at_ms: 10,
+            probe_scope: None,
+            probe_state_revision: None,
         })
         .await
         .expect("proxy terminal persists");
@@ -272,6 +280,9 @@ async fn planning_ids(
                 max_concurrency: 1,
                 affinity_station_key_id: None,
             },
+            crate::application::routing_engine::request::PlanningRequestContext::from_now(
+                std::time::Duration::from_secs(5),
+            ),
         )
         .await;
     let snapshot = match snapshot {
@@ -426,6 +437,7 @@ async fn settings_update_preserves_typed_defaults_and_validates_bounds() {
             collector_max_concurrency: 2,
             allow_depleted_fallback: true,
             developer_mode_enabled: true,
+            show_decision_explanation: true,
             tray_behavior: Some("disabled".to_string()),
         })
         .await
@@ -1156,6 +1168,10 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
     connection.close().await.expect("close fixture");
 
     let service = RoutingService::new(fixture.runtime().await.handle());
+    let diagnostics = RoutingDiagnosticsReader::new(
+        fixture.runtime().await.handle(),
+        ErrorRateProtectionService::disabled(),
+    );
     let request = RouteRequestClassifier::classify(
         CanonicalRouteRequest {
             route_kind: RouteKind::Inference,
@@ -1184,12 +1200,15 @@ async fn routing_service_loads_v2_runtime_candidates_and_workflow_queries() {
         .iter()
         .map(|row| &row.candidate)
         .collect::<Vec<_>>();
-    let alias_pairs = service.list_model_alias_pairs().await.expect("alias pairs");
-    let health = service
+    let alias_pairs = diagnostics
+        .list_model_alias_pairs()
+        .await
+        .expect("alias pairs");
+    let health = diagnostics
         .station_key_health_by_id("routing-key")
         .await
         .expect("health by id");
-    let balances = service
+    let balances = diagnostics
         .list_balance_snapshots_for_station(&station.id)
         .await
         .expect("balances");
@@ -1333,6 +1352,7 @@ fn settings_input() -> UpdateSettingsInput {
         collector_max_concurrency: 3,
         allow_depleted_fallback: false,
         developer_mode_enabled: false,
+        show_decision_explanation: false,
         tray_behavior: None,
     }
 }

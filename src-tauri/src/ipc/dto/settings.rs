@@ -229,6 +229,8 @@ pub struct UpdateSettingsInputDto {
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
+    #[serde(default)]
+    pub show_decision_explanation: bool,
     pub tray_behavior: Option<String>,
 }
 
@@ -261,6 +263,7 @@ impl UpdateSettingsInputDto {
             collector_max_concurrency: self.collector_max_concurrency,
             allow_depleted_fallback: self.allow_depleted_fallback,
             developer_mode_enabled: self.developer_mode_enabled,
+            show_decision_explanation: self.show_decision_explanation,
             tray_behavior: self.tray_behavior,
         })
     }
@@ -432,6 +435,7 @@ pub struct SettingsDto {
     pub collector_max_concurrency: u16,
     pub allow_depleted_fallback: bool,
     pub developer_mode_enabled: bool,
+    pub show_decision_explanation: bool,
     pub tray_behavior: String,
     pub data_dir: String,
     pub pending_data_dir: Option<String>,
@@ -460,6 +464,7 @@ impl From<AppSettings> for SettingsDto {
             collector_max_concurrency: value.collector_max_concurrency,
             allow_depleted_fallback: value.allow_depleted_fallback,
             developer_mode_enabled: value.developer_mode_enabled,
+            show_decision_explanation: value.show_decision_explanation,
             tray_behavior: value.tray_behavior,
             data_dir: value.data_dir,
             pending_data_dir: value.pending_data_dir,
@@ -543,6 +548,7 @@ export type UpdateSettingsInputDto = {
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
+  showDecisionExplanation?: boolean;
   trayBehavior?: "close_to_tray" | "minimize_to_tray" | "disabled";
 };
 
@@ -574,6 +580,7 @@ export type SettingsDto = {
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
+  showDecisionExplanation: boolean;
   trayBehavior: string;
   dataDir: string;
   pendingDataDir: string | null;
@@ -609,6 +616,7 @@ mod input_contract_tests {
             "pricingRefreshIntervalMinutes": 60,
             "collectorTimeoutSeconds": 15,
             "collectorMaxConcurrency": 3,
+            "showDecisionExplanation": false,
             "allowDepletedFallback": false,
             "developerModeEnabled": false
         })

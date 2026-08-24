@@ -212,6 +212,11 @@ impl CommandError {
                 "The operation outcome could not be confirmed.",
                 None,
             ),
+            ApplicationError::DeadlineExceeded => (
+                CommandErrorCode::Timeout,
+                "The routing operation exceeded its deadline.",
+                None,
+            ),
         };
         Self::try_new(code, message, false, details, current_correlation_id())
             .expect("mapped application error must satisfy public envelope invariants")

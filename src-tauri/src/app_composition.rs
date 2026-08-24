@@ -4,6 +4,7 @@ use tokio::runtime::Handle;
 
 use crate::{
     application::{
+        alerting::{AlertingReadModelUpdatePublisher, NoopAlertingReadModelUpdatePublisher},
         app_services::AppServices,
         command_facades::{
             AlertingCommandFacade, CaptureCommandFacade, ChannelMonitoringCommandFacade,
@@ -15,6 +16,7 @@ use crate::{
             StationKeyConnectivityCommandFacade,
         },
         data_directory::DataDirectoryPort,
+        routing_policy_control_plane::RoutingPolicyMutationCoordinator,
     },
     background_tasks::{
         BlockingExecutor, BlockingExecutorConfig, OperationRegistry, OperationRegistryConfig,
@@ -106,6 +108,26 @@ pub(crate) fn compose_app_services(
     data_directory_port: Arc<dyn DataDirectoryPort>,
     blocking: BlockingExecutor,
 ) -> AppServices {
+    compose_app_services_with_alerting_read_model_updates(
+        runtime,
+        device_keys,
+        data_dir,
+        pending_data_dir,
+        data_directory_port,
+        blocking,
+        Arc::new(NoopAlertingReadModelUpdatePublisher),
+    )
+}
+
+pub(crate) fn compose_app_services_with_alerting_read_model_updates(
+    runtime: PersistenceHandle,
+    device_keys: DeviceKeyResolver,
+    data_dir: String,
+    pending_data_dir: Option<String>,
+    data_directory_port: Arc<dyn DataDirectoryPort>,
+    blocking: BlockingExecutor,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
+) -> AppServices {
     AppServices::for_runtime(
         runtime,
         data_dir,
@@ -114,6 +136,7 @@ pub(crate) fn compose_app_services(
         blocking,
         Arc::new(DataKeyVault::new(device_keys)),
         Arc::new(StaticBuiltinModelBasePriceCatalog),
+        alerting_updates,
     )
 }
 
@@ -159,8 +182,27 @@ pub(crate) fn compose_routing_command_facade(
     services: &AppServices,
     outbound: AsyncOutboundClient,
     proxy: Arc<ProxyRuntimeState>,
+    policy_mutations: Arc<RoutingPolicyMutationCoordinator>,
 ) -> RoutingCommandFacade {
-    RoutingCommandFacade::new(Arc::clone(&services.routing), outbound, proxy)
+    RoutingCommandFacade::new(
+        Arc::clone(&services.routing),
+        Arc::clone(&services.routing_policy_read),
+        Arc::clone(&services.model_mapping),
+        Arc::clone(&services.routing_diagnostics),
+        policy_mutations,
+        outbound,
+        proxy,
+    )
+}
+
+pub(crate) fn compose_routing_policy_mutation_coordinator(
+    services: &AppServices,
+    proxy: Arc<ProxyRuntimeState>,
+) -> Arc<RoutingPolicyMutationCoordinator> {
+    Arc::new(RoutingPolicyMutationCoordinator::new(
+        Arc::clone(&services.routing),
+        proxy,
+    ))
 }
 
 pub(crate) fn compose_request_logs_command_facade(
@@ -367,8 +409,11 @@ pub(crate) fn compose_provider_draft_command_facade(
     )
 }
 
-pub(crate) fn compose_alerting_command_facade(runtime: PersistenceHandle) -> AlertingCommandFacade {
-    AlertingCommandFacade::new(runtime)
+pub(crate) fn compose_alerting_command_facade(
+    runtime: PersistenceHandle,
+    alerting_updates: Arc<dyn AlertingReadModelUpdatePublisher>,
+) -> AlertingCommandFacade {
+    AlertingCommandFacade::new(runtime, alerting_updates)
 }
 
 pub(crate) fn compose_credentials_command_facade(
@@ -395,6 +440,7 @@ pub(crate) fn compose_local_proxy_command_facade(
     LocalProxyCommandFacade::new(
         Arc::clone(&services.settings),
         Arc::clone(&services.routing),
+        Arc::clone(&services.routing_policy_read),
         Arc::clone(&services.credentials),
         Arc::clone(&services.request_finalization),
         proxy,
