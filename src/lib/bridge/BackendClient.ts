@@ -313,8 +313,9 @@ export type RoutingDomainClient = {
   upsertModelAlias(input: UpsertModelAliasInput): Promise<ModelAlias>;
   deleteModelAlias(id: string): Promise<void>;
   listStationKeyHealth(): Promise<StationKeyHealth[]>;
+  getRoutingProtectionStatus(input?: import("./generated").RoutingProtectionStatusInputDto): Promise<import("./generated").RoutingProtectionStatusDto>;
+  listErrorRateHistory(input?: import("./generated").ErrorRateHistoryInputDto): Promise<import("./generated").ErrorRateHistoryPageDto>;
   loadRoutingPolicy(): Promise<import("./generated").RoutingPolicySnapshotDto>;
-  updateRoutingPolicy(input: import("./generated").UpdateRoutingPolicyInputDto): Promise<import("./generated").RoutingPolicySnapshotDto>;
   applyRoutingPolicyDocument(input: import("./generated").ApplyRoutingPolicyDocumentInputDto): Promise<import("./generated").RoutingPolicySnapshotDto>;
   loadRoutingWorkspaceSnapshot(input?: RoutingWorkspaceSnapshotInput): Promise<RoutingWorkspaceSnapshot>;
   loadRoutingRuntimeOverlay(): Promise<RoutingRuntimeOverlay>;

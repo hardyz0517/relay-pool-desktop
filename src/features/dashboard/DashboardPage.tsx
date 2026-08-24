@@ -1,5 +1,4 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
@@ -8,15 +7,11 @@ import {
   BarChart3,
   ChevronRight,
   Clock3,
-  Copy,
   FlaskConical,
   Gauge,
   Inbox,
   KeyRound,
   type LucideIcon,
-  Power,
-  Server,
-  Upload,
   Wallet,
 } from "lucide-react";
 import { PageScaffold } from "@/components/shell/PageScaffold";
@@ -26,14 +21,10 @@ import {
   MetricPanel,
   type MetricTone,
   ObjectRow,
-  SectionCard,
   StatusBadge,
-  useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
 import { parseTimestampLikeDate } from "@/lib/time";
-import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
-import { getLocalAccessKey, importRelayPoolToCCSwitch } from "@/lib/api/settings";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import {
@@ -52,7 +43,6 @@ import {
   loadRoutingRuntimeOverlayQuery,
   routingQueryKeys,
 } from "@/lib/queries/routingQueries";
-import { queryKeys } from "@/lib/query/queryKeys";
 import type { AlertingIncident } from "@/lib/types/alerting";
 import { summarizeDashboardBalances } from "@/features/dashboard/dashboardBalanceSummary";
 import { formatRecentRequestCost } from "@/features/dashboard/requestCostFormat";
@@ -120,9 +110,7 @@ export function DashboardPage({
   onOpenLocalRouting?: () => void;
   onOpenRequestLogs?: () => void;
 }) {
-  const toast = useToast();
   const { state: updaterState, showUpdateDialog } = useUpdater();
-  const queryClient = useQueryClient();
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions(false));
   const [localDayMetricsInput, setLocalDayMetricsInput] = useState(() => getLocalDayMetricsInput());
   const proxyStatus = proxyStatusQuery.data ?? null;
@@ -156,9 +144,6 @@ export function DashboardPage({
   const criticalAlertingQuery = useActivityQuery(
     alertingCurrentQueryOptions({ severity: "critical", limit: 1 }),
   );
-  const [startingLocalProxy, setStartingLocalProxy] = useState(false);
-  const [stoppingLocalProxy, setStoppingLocalProxy] = useState(false);
-  const [importingCCSwitch, setImportingCCSwitch] = useState(false);
 
   const requestLogs = requestLogsQuery.data ?? [];
   const liveRequestMetrics = liveRequestMetricsQuery.data ?? null;
@@ -187,7 +172,6 @@ export function DashboardPage({
   );
   const stations = stationsQuery.data ?? [];
   const balanceSnapshots = balancesQuery.data ?? [];
-  const settings = settingsQuery.data ?? null;
   const alertingIncidents = alertingQuery.data?.items ?? [];
   const dashboardLoaded = [
     proxyStatusQuery.data,
@@ -205,16 +189,9 @@ export function DashboardPage({
     }, msUntilNextLocalDay());
     return () => window.clearTimeout(timeout);
   }, [localDayMetricsInput.localDayStartMs]);
-  async function copyText(value: string, label = "内容") { if (isMaskedDisplayValue(value)) return; try { await navigator.clipboard.writeText(value); toast.success(`${label}已复制`); } catch (error) { toast.error("复制失败", readError(error)); } }
-  async function copyLocalAccessKey() { try { await navigator.clipboard.writeText(await getLocalAccessKey()); toast.success("本地访问密钥已复制"); } catch (error) { toast.error("复制失败", readError(error)); } }
-  async function handleStartLocalProxy() { setStartingLocalProxy(true); try { const nextStatus = await startLocalProxy(); queryClient.setQueryData(queryKeys.proxyStatus, nextStatus); } catch (error) { toast.error("启动本地路由失败", readError(error)); } finally { setStartingLocalProxy(false); } }
-  async function handleStopLocalProxy() { setStoppingLocalProxy(true); try { const nextStatus = await stopLocalProxy(); queryClient.setQueryData(queryKeys.proxyStatus, nextStatus); } catch (error) { toast.error("关闭本地路由失败", readError(error)); } finally { setStoppingLocalProxy(false); } }
-  async function handleImportToCCSwitch() { setImportingCCSwitch(true); try { const result = await importRelayPoolToCCSwitch(); toast.success("已唤起 CCSwitch", `${result.providerName} - ${result.endpoint}`); } catch (error) { toast.error("导入 CCSwitch 失败", readError(error)); } finally { setImportingCCSwitch(false); } }
   const liveMetricsState = dashboardMetricsQueryState(liveRequestMetricsQuery);
   const cumulativeMetricsState = dashboardMetricsQueryState(cumulativeRequestMetricsQuery);
   const todayRequests = todayMetrics?.requestCount ?? null;
-  const proxyBaseUrl = proxyStatus ? `http://${proxyStatus.bindAddr}:${proxyStatus.port}/v1` : `http://127.0.0.1:${settings?.localProxyPort ?? 8787}/v1`;
-  const localKeyMasked = settings?.localKeyMasked ?? "未读取";
   const enabledKeyCount = keyPoolItems.filter((key) => key.enabled).length;
   const disabledKeyCount = keyPoolItems.length - enabledKeyCount;
   const requestKeyById = useMemo(
@@ -264,95 +241,6 @@ export function DashboardPage({
   return (
     <PageScaffold title="总览" actions={updateAction}>
       <div className="grid gap-4">
-        {/* <SectionCard
-          title="当前路由"
-          action={
-            <StatusBadge tone={proxyRunning ? "healthy" : "warning"}>
-              {proxyRunning ? "运行中" : "未启动"}
-            </StatusBadge>
-          }
-          contentClassName="p-3"
-        >
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_136px] sm:items-center">
-            <div className="grid min-w-0 gap-2 md:grid-cols-[minmax(220px,1.35fr)_minmax(170px,0.85fr)] md:items-center">
-              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-surface-subtle px-2">
-                <span className="text-xs font-medium text-muted-foreground">地址</span>
-                <code className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-                  {proxyBaseUrl}
-                </code>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
-                  aria-label="复制基础地址"
-                  onClick={() => void copyText(proxyBaseUrl, "基础地址")}
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-              </div>
-              <div className="grid min-h-9 min-w-0 grid-cols-[56px_minmax(0,1fr)_28px] items-center gap-2 rounded-[8px] bg-surface-subtle px-2">
-                <span className="text-xs font-medium text-muted-foreground">密钥</span>
-                <code className="min-w-0 truncate text-[13px] font-medium text-foreground">
-                  {localKeyMasked}
-                </code>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
-                  aria-label="复制本地访问密钥"
-                  onClick={() => void copyLocalAccessKey()}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 sm:justify-end">
-              <button
-                type="button"
-                onClick={() => void (proxyRunning ? handleStopLocalProxy() : handleStartLocalProxy())}
-                disabled={startingLocalProxy || stoppingLocalProxy}
-                className={`flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border px-2 py-2 text-[12px] font-medium leading-[14px] shadow-surface transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-default disabled:opacity-60 ${
-                  proxyRunning
-                    ? "border-border bg-surface text-foreground hover:bg-hover"
-                    : "border-primary bg-primary-solid text-primary-foreground hover:bg-primary-solid"
-                }`}
-                aria-label={proxyRunning ? "关闭本地路由" : "启动本地路由"}
-              >
-                <Power className="h-4 w-4 shrink-0" />
-                {startingLocalProxy ? (
-                  <span>启动中</span>
-                ) : stoppingLocalProxy ? (
-                  <span>关闭中</span>
-                ) : proxyRunning ? (
-                  <span>关闭</span>
-                ) : (
-                  <span className="grid gap-0 text-center">
-                    <span>启动</span>
-                    <span>路由</span>
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleImportToCCSwitch()}
-                disabled={importingCCSwitch}
-                className="flex h-16 w-16 shrink-0 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-[8px] border border-border bg-surface px-2 py-2 text-[12px] font-medium leading-[14px] text-muted-foreground transition-colors hover:bg-surface-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:cursor-default disabled:opacity-50"
-                aria-label="导入到 CCSwitch"
-              >
-                <Upload className="h-4 w-4 shrink-0" />
-                {importingCCSwitch ? (
-                  <span>导入中</span>
-                ) : (
-                  <span className="grid gap-0 text-center">
-                    <span>导入到</span>
-                    <span>CCS</span>
-                  </span>
-                )}
-              </button>
-            </div>
-          </div>
-        </SectionCard> */}
-
         <MetricPanel
           title="本地路由指标"
           columns={3}
@@ -974,8 +862,4 @@ function currencySymbol(currency?: string) {
   if (normalized === "EUR") return "€";
   if (normalized === "GBP") return "£";
   return "";
-}
-
-function isMaskedDisplayValue(value: string) {
-  return /\*{2,}|\[REDACTED\]/i.test(value);
 }

@@ -16,7 +16,7 @@
   --background: 0 0% 100%;
   --foreground: 222 22% 12%;
   --surface: 0 0% 100%;
-  --surface-subtle: 220 20% 99%;
+  --surface-subtle: 220 20% 98.7%;
   --surface-inset: 220 20% 98%;
   --popover: 0 0% 100%;
   --muted: 220 20% 98%;
@@ -169,6 +169,17 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
 }
 
 @keyframes selectMenuIn {

@@ -18,6 +18,11 @@ vi.mock("@/lib/query/useActivityQuery", () => ({
   useActivityQuery: (options: { queryKey?: readonly unknown[]; enabled?: boolean }) => {
     queryCalls.push(options);
     const queryName = options.queryKey?.[0];
+    const input = options.queryKey?.[1] as {
+      limit?: number;
+      recordType?: string | null;
+      unreadOnly?: boolean;
+    } | undefined;
     if (queryName === "stations") {
       return { data: [], error: null, isFetching: false, isPending: false };
     }
@@ -29,8 +34,21 @@ vi.mock("@/lib/query/useActivityQuery", () => ({
         isPending: false,
       };
     }
+    if (
+      queryName === "alertingActivity"
+      && input?.recordType === "change"
+      && input.unreadOnly === true
+      && input.limit === 1
+    ) {
+      return {
+        data: { items: [], nextCursor: null, activeCount: 0, unseenCount: 21, totalCount: 21 },
+        error: null,
+        isFetching: false,
+        isPending: false,
+      };
+    }
     return {
-      data: { items: [], nextCursor: null, activeCount: 0, unseenCount: 0, totalCount: 0 },
+      data: { items: [], nextCursor: null, activeCount: 0, unseenCount: 14, totalCount: 14 },
       error: null,
       isFetching: false,
       isPending: false,
@@ -112,6 +130,31 @@ describe("ChangeCenterPage view retention", () => {
     expect(queryCalls).toContainEqual(expect.objectContaining({
       queryKey: ["alertingActivity", expect.anything()],
       enabled: false,
+    }));
+  });
+
+  it("uses the shared unread-change count for the summary instead of the current view count", () => {
+    render(true);
+
+    expect(host.textContent).toContain("未读变更21");
+    expect(queryCalls).toContainEqual(expect.objectContaining({
+      queryKey: ["alertingActivity", { limit: 1, recordType: "change", unreadOnly: true }],
+    }));
+  });
+
+  it("passes the search term to the paged alerting query", () => {
+    render(true);
+    const search = host.querySelector<HTMLInputElement>('[aria-label="搜索问题"]');
+    expect(search).toBeDefined();
+    act(() => {
+      if (search) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "ke");
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+
+    expect(queryCalls).toContainEqual(expect.objectContaining({
+      queryKey: ["alertingActivity", expect.objectContaining({ search: "ke" })],
     }));
   });
 

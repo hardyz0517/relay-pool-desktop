@@ -9,7 +9,6 @@ import { ModelMappingPanel } from "./ModelMappingPanel";
 
 const mocks = vi.hoisted(() => ({
   apply: vi.fn(),
-  simulate: vi.fn(),
   workspace: null as ModelMappingWorkspaceDto | null,
   keyPool: [] as Array<{ id: string }>,
   capabilities: [] as Array<{
@@ -25,7 +24,7 @@ vi.mock("@/lib/api/modelMapping", () => ({
   getModelMappingDocument: vi.fn(),
   validateModelMappingDocument: vi.fn(),
   restoreModelMappingRevision: vi.fn(),
-  simulateModelMapping: mocks.simulate,
+  simulateModelMapping: vi.fn(),
   resolveRequestMappingTrace: vi.fn(),
 }));
 
@@ -53,7 +52,6 @@ vi.mock("@/lib/api/routing", () => ({
 afterEach(() => {
   document.body.innerHTML = "";
   mocks.apply.mockReset();
-  mocks.simulate.mockReset();
   mocks.workspace = null;
   mocks.keyPool = [];
   mocks.capabilities = [];
@@ -61,99 +59,143 @@ afterEach(() => {
 });
 
 describe("ModelMappingPanel", () => {
-  it("separates the default mapping from an empty rule state", async () => {
+  it("shows an empty inline mapping state", async () => {
     const workspace = emptyWorkspace();
     mocks.workspace = workspace;
     const { host, root, queryClient } = renderPanel();
 
-    expect(host.textContent).toContain("默认映射");
-    expect(host.textContent).toContain("默认目标模型");
-    expect(host.textContent).toContain("保存默认值");
-    expect(host.textContent).toContain("映射规则");
-    expect(host.textContent).toContain("还没有映射规则");
+    expect(host.textContent).not.toContain("实际请求模型");
+    expect(host.textContent).not.toContain("上游目标模型");
+    expect(host.textContent).not.toContain("为每个模型填写实际请求模型和上游目标模型，填写完成并离开后自动用于路由。");
+    expect(host.textContent).not.toContain("菜单显示名");
+    expect(host.textContent).toContain("还没有模型映射");
+    expect(Array.from(host.querySelectorAll("button")).filter((button) => button.textContent?.includes("添加模型"))).toHaveLength(1);
     expect(host.textContent).not.toContain("配置未保存");
-    expect(findButton(host, "预览")).toBeUndefined();
-    expect(findButton(host, "保存规则")).toBeUndefined();
+    expect(host.querySelector('[aria-label^="保存模型映射"]')).toBeNull();
 
-    await act(async () => findButton(host, "新增第一条规则")?.click());
-    expect(host.querySelector('[aria-label="规则编辑器"]')).toBeTruthy();
-    expect(findButton(host, "取消")).toBeTruthy();
-    expect(findButton(host, "预览")).toBeTruthy();
-    expect(findButton(host, "保存规则")).toBeTruthy();
+    await act(async () => findButton(host, "添加模型")?.click());
+    expect(host.querySelector('[aria-label^="模型映射行"]')).toBeTruthy();
+    expect(host.querySelector('[aria-label^="保存模型映射"]')).toBeNull();
+    expect(host.querySelector('[aria-label^="启用模型映射"]')).toBeNull();
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 
-  it("saves the default mapping independently of the rule list", async () => {
+  it("autosaves one completed row when focus leaves it", async () => {
     const workspace = emptyWorkspace();
     mocks.workspace = workspace;
     mocks.apply.mockImplementation(async (input: { document: ModelMappingWorkspaceDto["document"] }) => ({ ...workspace, document: input.document }));
     const { host, root, queryClient } = renderPanel();
-    setInput(host, '[aria-label="默认目标模型"]', "deepseek-v4-flash");
+    await act(async () => findButton(host, "添加模型")?.click());
+    const row = host.querySelector('[aria-label^="模型映射行"]') as HTMLElement;
+    setInput(row, '[aria-label^="实际请求模型"]', "gpt-4o-mini");
+    setInput(row, '[aria-label^="上游目标模型"]', "deepseek-v4-flash");
 
-    await act(async () => findButton(host, "保存默认值")?.click());
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    await act(async () => {
+      const targetInput = row.querySelector('[aria-label^="上游目标模型"]') as HTMLInputElement;
+      targetInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside }));
+    });
 
     expect(mocks.apply).toHaveBeenCalledTimes(1);
     const savedDocument = mocks.apply.mock.calls[0][0].document;
-    expect(savedDocument.rules).toHaveLength(1);
-    expect(savedDocument.rules[0].matcher).toEqual({ kind: "default" });
+    expect(savedDocument.profiles).toEqual([]);
+    expect(savedDocument.rules[0].enabled).toBe(true);
+    expect(savedDocument.rules[0].matcher).toEqual({ kind: "exact", model: "gpt-4o-mini" });
+    expect(savedDocument.rules[0].conditions).toEqual({ endpointKinds: [], stream: "any", tools: "any", vision: "any", reasoning: "any" });
     expect(savedDocument.rules[0].action).toEqual({ kind: "map_fixed", target: { kind: "literal", upstreamModel: "deepseek-v4-flash" } });
-    expect(host.textContent).toContain("还没有映射规则");
-    expect(host.textContent).toContain("默认值已保存");
+    expect(host.querySelector('[aria-label="规则编辑器"]')).toBeNull();
+    expect((host.querySelector('[aria-label^="实际请求模型"]') as HTMLInputElement).value).toBe("gpt-4o-mini");
+    expect((host.querySelector('[aria-label^="上游目标模型"]') as HTMLInputElement).value).toBe("deepseek-v4-flash");
+    expect(host.querySelector('[aria-label^="菜单显示名"]')).toBeNull();
+    expect(host.querySelector('[aria-label^="保存模型映射"]')).toBeNull();
+    expect(host.querySelector('[aria-label^="启用模型映射"]')).toBeNull();
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 
-  it("opens one editor for a new rule and returns to the list after saving", async () => {
+  it("keeps an incomplete new row quiet when focus leaves it", async () => {
     const workspace = emptyWorkspace();
+    mocks.workspace = workspace;
+    const { host, root, queryClient } = renderPanel();
+    await act(async () => findButton(host, "添加模型")?.click());
+    const row = host.querySelector('[aria-label^="模型映射行"]') as HTMLElement;
+    const outside = document.createElement("button");
+    document.body.append(outside);
+
+    await act(async () => {
+      const requestInput = row.querySelector('[aria-label^="实际请求模型"]') as HTMLInputElement;
+      requestInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside }));
+    });
+
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("请填写实际请求模型");
+    expect(host.textContent).not.toContain("请填写上游目标模型");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("does not expose old complex rule controls and requires an explicit cleanup", async () => {
+    const workspace = phase2Workspace();
+    mocks.workspace = workspace;
+    const { host, root, queryClient } = renderPanel();
+    expect(host.textContent).toContain("检测到 1 条旧版复杂规则");
+    expect(findButton(host, "清理旧规则")).toBeTruthy();
+    expect(host.querySelector('[aria-label^="模型映射行"]')).toBeNull();
+    expect(host.querySelector('[aria-label^="更多模型映射设置"]')).toBeNull();
+    expect(host.querySelector('[aria-label^="匹配方式"]')).toBeNull();
+    expect(host.querySelector('[aria-label^="优先级"]')).toBeNull();
+    expect(host.textContent).not.toContain("映射到目标模型");
+    expect(host.textContent).not.toContain("保留原模型");
+    expect(host.textContent).not.toContain("拒绝请求");
+    expect(host.textContent).not.toContain("多个目标回退");
+
+    await act(async () => root.unmount());
+    queryClient.clear();
+  });
+
+  it("cleans old complex rules only after confirmation", async () => {
+    const workspace = phase2Workspace();
     mocks.workspace = workspace;
     mocks.apply.mockImplementation(async (input: { document: ModelMappingWorkspaceDto["document"] }) => ({ ...workspace, document: input.document }));
     const { host, root, queryClient } = renderPanel();
-    await act(async () => findButton(host, "新增第一条规则")?.click());
-    setInput(host, '[aria-label="编辑请求模型"]', "gpt-4o-mini");
-    setInput(host, '[aria-label$="目标模型"]', "deepseek-v4-flash");
 
-    await act(async () => findButton(host, "保存规则")?.click());
+    await act(async () => findButton(host, "清理旧规则")?.click());
+    expect(mocks.apply).not.toHaveBeenCalled();
+    await act(async () => findButton(document.body, "清理规则")?.click());
 
     expect(mocks.apply).toHaveBeenCalledTimes(1);
-    expect(host.querySelector('[aria-label="规则编辑器"]')).toBeNull();
-    expect(host.textContent).toContain("gpt-4o-mini");
-    expect(host.textContent).toContain("deepseek-v4-flash");
-    expect(host.textContent).toContain("规则已保存");
+    expect(mocks.apply.mock.calls[0][0].document.rules).toEqual([]);
+    expect(mocks.apply.mock.calls[0][0].document.profiles).toEqual(workspace.document.profiles);
 
     await act(async () => root.unmount());
     queryClient.clear();
   });
 
-  it("edits an existing rule and supports cancel without a second editor", async () => {
+  it("does not alter old rules while saving a simple mapping", async () => {
     const workspace = phase2Workspace();
+    workspace.document.rules[0].enabled = false;
     mocks.workspace = workspace;
+    mocks.apply.mockImplementation(async (input: { document: ModelMappingWorkspaceDto["document"] }) => ({ ...workspace, document: input.document }));
     const { host, root, queryClient } = renderPanel();
-    await act(async () => findButton(host, "编辑")?.click());
-    expect(host.querySelectorAll('[aria-label="规则编辑器"]').length).toBe(1);
-    expect(host.textContent).not.toContain("还没有映射规则");
 
-    await act(async () => findButton(host, "取消")?.click());
-    expect(host.querySelector('[aria-label="规则编辑器"]')).toBeNull();
-    expect(host.textContent).toContain("fallback-a");
-    expect(host.textContent).toContain("fallback-b");
+    await act(async () => findButton(host, "添加模型")?.click());
+    const row = host.querySelector('[aria-label^="模型映射行"]') as HTMLElement;
+    setInput(row, '[aria-label^="实际请求模型"]', "gpt-4o-mini");
+    setInput(row, '[aria-label^="上游目标模型"]', "deepseek-v4-flash");
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    await act(async () => {
+      const targetInput = row.querySelector('[aria-label^="上游目标模型"]') as HTMLInputElement;
+      targetInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: outside }));
+    });
 
-    await act(async () => root.unmount());
-    queryClient.clear();
-  });
-
-  it("keeps preview errors local to the rule editor", async () => {
-    const workspace = phase2Workspace();
-    mocks.workspace = workspace;
-    mocks.simulate.mockRejectedValue(new Error("The requested model is invalid."));
-    const { host, root, queryClient } = renderPanel();
-    await act(async () => findButton(host, "编辑")?.click());
-    await act(async () => findButton(host, "预览")?.click());
-
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("The requested model is invalid.");
-    expect(host.textContent).not.toContain("模型映射预览不可用");
+    const savedRules = mocks.apply.mock.calls[0][0].document.rules;
+    expect(savedRules.find((rule: { id: string }) => rule.id === "rule-fallback")).toMatchObject({ enabled: false });
 
     await act(async () => root.unmount());
     queryClient.clear();
@@ -169,27 +211,30 @@ describe("ModelMappingPanel", () => {
     ];
     const { host, root, queryClient } = renderPanel();
 
-    const defaultPicker = host.querySelector('[aria-label="默认目标模型 候选模型"]') as HTMLSelectElement;
-    expect(defaultPicker).toBeTruthy();
-    expect(Array.from(defaultPicker.options).map((option) => option.value)).toEqual(["", "claude-sonnet", "gpt-4o-mini", "shared-model"]);
-
-    await act(async () => findButton(host, "新增第一条规则")?.click());
-    const requestPicker = host.querySelector('[aria-label="编辑请求模型 候选模型"]') as HTMLSelectElement;
-    const targetPicker = host.querySelector('[aria-label$="目标模型 候选模型"]') as HTMLSelectElement;
+    await act(async () => findButton(host, "添加模型")?.click());
+    const requestPicker = host.querySelector('button[aria-label^="实际请求模型"][aria-label$="候选模型"]') as HTMLButtonElement;
+    const targetPicker = host.querySelector('button[aria-label^="上游目标模型"][aria-label$="候选模型"]') as HTMLButtonElement;
     expect(requestPicker).toBeTruthy();
     expect(targetPicker).toBeTruthy();
+    await act(async () => requestPicker.click());
+    const requestOptions = Array.from(document.body.querySelectorAll('[role="listbox"] [role="option"]'));
+    expect(requestOptions.map((option) => option.textContent)).toEqual(["claude-sonnet", "gpt-4o-mini", "shared-model"]);
 
     await act(async () => {
-      requestPicker.value = "gpt-4o-mini";
-      requestPicker.dispatchEvent(new Event("change", { bubbles: true }));
+      requestOptions.find((option) => option.textContent === "gpt-4o-mini")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect((host.querySelector('[aria-label="编辑请求模型"]') as HTMLInputElement).value).toBe("gpt-4o-mini");
+    expect((host.querySelector('[aria-label^="实际请求模型"]') as HTMLInputElement).value).toBe("gpt-4o-mini");
 
-    await act(async () => {
-      targetPicker.value = "shared-model";
-      targetPicker.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    expect((host.querySelector('[aria-label$="目标模型"]') as HTMLInputElement).value).toBe("shared-model");
+    await act(async () => targetPicker.click());
+    const targetOptions = Array.from(document.body.querySelectorAll('[role="listbox"] [role="option"]'));
+    await act(async () => targetOptions.find((option) => option.textContent === "shared-model")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect((host.querySelector('[aria-label^="上游目标模型"]') as HTMLInputElement).value).toBe("shared-model");
+
+    await act(async () => requestPicker.click());
+    const searchInput = document.body.querySelector('input[aria-label$="候选模型 搜索"]') as HTMLInputElement;
+    expect(searchInput).toBeTruthy();
+    setInput(document.body, 'input[aria-label$="候选模型 搜索"]', "gpt-4o");
+    expect(Array.from(document.body.querySelectorAll('[role="listbox"] [role="option"]')).map((option) => option.textContent)).toEqual(["gpt-4o-mini"]);
 
     await act(async () => root.unmount());
     queryClient.clear();

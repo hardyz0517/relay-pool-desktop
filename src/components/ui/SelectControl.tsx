@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
 import { useInteractionActivity } from "@/components/ui/InteractionActivity";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +30,11 @@ type SelectControlProps<T extends string = string> = {
   options: SelectOption<T>[];
   onChange: (value: T) => void;
   ariaLabel?: string;
+  title?: string;
   placeholder?: ReactNode;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  emptyLabel?: ReactNode;
   disabled?: boolean;
   className?: string;
   menuClassName?: string;
@@ -54,7 +58,11 @@ export function SelectControl<T extends string>({
   options,
   onChange,
   ariaLabel,
+  title,
   placeholder = "请选择",
+  searchable = false,
+  searchPlaceholder = "搜索...",
+  emptyLabel = "无匹配项",
   disabled = false,
   className,
   menuClassName,
@@ -65,10 +73,25 @@ export function SelectControl<T extends string>({
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
   const [position, setPosition] = useState<MenuPosition | null>(null);
+
+  const filteredOptions = useMemo(() => {
+    if (!searchable || !searchQuery.trim()) {
+      return options;
+    }
+    const query = searchQuery.trim().toLocaleLowerCase();
+    return options.filter((option) => {
+      const label = typeof option.label === "string" || typeof option.label === "number"
+        ? String(option.label)
+        : "";
+      return option.value.toLocaleLowerCase().includes(query) || label.toLocaleLowerCase().includes(query);
+    });
+  }, [options, searchable, searchQuery]);
 
   const selectedIndex = useMemo(
     () => options.findIndex((option) => option.value === value),
@@ -89,15 +112,33 @@ export function SelectControl<T extends string>({
       return;
     }
     updatePosition();
-  }, [menuAlign, menuMinWidth, open, options.length]);
+  }, [filteredOptions.length, menuAlign, menuMinWidth, open, searchable]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    const initialIndex = selectedIndex >= 0 ? selectedIndex : firstEnabledIndex(options);
+    setSearchQuery("");
+    if (searchable) {
+      searchInputRef.current?.focus();
+    }
+  }, [open, searchable]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const selectedFilteredIndex = filteredOptions.findIndex((option) => option.value === value);
+    const initialIndex = selectedFilteredIndex >= 0 ? selectedFilteredIndex : firstEnabledIndex(filteredOptions);
     setActiveIndex(initialIndex);
-  }, [open, options, selectedIndex]);
+  }, [filteredOptions, open, value]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setActiveIndex((current) => Math.min(current, Math.max(0, filteredOptions.length - 1)));
+  }, [filteredOptions.length, open]);
 
   useEffect(() => {
     if (!open) {
@@ -138,7 +179,10 @@ export function SelectControl<T extends string>({
     if (!open) {
       return;
     }
-    optionRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
+    const activeOption = optionRefs.current[activeIndex];
+    if (activeOption && typeof activeOption.scrollIntoView === "function") {
+      activeOption.scrollIntoView({ block: "nearest" });
+    }
   }, [activeIndex, open]);
 
   function updatePosition() {
@@ -150,7 +194,7 @@ export function SelectControl<T extends string>({
     const viewportPadding = 10;
     const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - viewportPadding - gap);
     const spaceAbove = Math.max(0, rect.top - viewportPadding - gap);
-    const desiredMenuHeight = estimateMenuHeight(options, MAX_MENU_HEIGHT);
+    const desiredMenuHeight = estimateMenuHeight(filteredOptions, MAX_MENU_HEIGHT, searchable);
     const openAbove = spaceBelow < desiredMenuHeight && spaceAbove > spaceBelow;
     const maxHeight = Math.min(MAX_MENU_HEIGHT, openAbove ? spaceAbove : spaceBelow);
     // A caller may request a wider menu for rich option labels, but it must remain inside
@@ -185,13 +229,13 @@ export function SelectControl<T extends string>({
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setOpen(true);
-      setActiveIndex((current) => nextEnabledIndex(options, current, event.key === "ArrowDown" ? 1 : -1));
+      setActiveIndex((current) => nextEnabledIndex(filteredOptions, current, event.key === "ArrowDown" ? 1 : -1));
       return;
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       if (open) {
-        chooseOption(options[activeIndex]);
+        chooseOption(filteredOptions[activeIndex]);
         return;
       }
       setOpen((current) => !current);
@@ -207,22 +251,22 @@ export function SelectControl<T extends string>({
     }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((current) => nextEnabledIndex(options, current, event.key === "ArrowDown" ? 1 : -1));
+      setActiveIndex((current) => nextEnabledIndex(filteredOptions, current, event.key === "ArrowDown" ? 1 : -1));
       return;
     }
     if (event.key === "Home") {
       event.preventDefault();
-      setActiveIndex(firstEnabledIndex(options));
+      setActiveIndex(firstEnabledIndex(filteredOptions));
       return;
     }
     if (event.key === "End") {
       event.preventDefault();
-      setActiveIndex(lastEnabledIndex(options));
+      setActiveIndex(lastEnabledIndex(filteredOptions));
       return;
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      chooseOption(options[activeIndex]);
+      chooseOption(filteredOptions[activeIndex]);
     }
   }
 
@@ -243,11 +287,12 @@ export function SelectControl<T extends string>({
       <button
         ref={triggerRef}
         type="button"
-        aria-activedescendant={open ? activeId : undefined}
+        aria-activedescendant={open && filteredOptions.length > 0 ? activeId : undefined}
         aria-controls={open ? listboxId : undefined}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel}
+        title={title}
         disabled={disabled}
         onClick={() => !disabled && setOpen((current) => !current)}
         onKeyDown={handleTriggerKeyDown}
@@ -293,7 +338,33 @@ export function SelectControl<T extends string>({
             maxHeight: position.maxHeight,
           }}
         >
-          {options.map((option, index) => {
+          {searchable ? (
+            <div className="sticky top-0 z-[1] border-b border-border bg-popover pb-1">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={searchQuery}
+                  aria-label={`${ariaLabel ?? "选项"} 搜索`}
+                  placeholder={searchPlaceholder}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === " ") {
+                      event.stopPropagation();
+                    }
+                  }}
+                  className="h-8 w-full rounded-[calc(var(--surface-radius)-3px)] border border-input bg-background px-2.5 pl-8 text-sm text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-input focus:ring-0"
+                />
+              </div>
+            </div>
+          ) : null}
+          {filteredOptions.length === 0 ? (
+            <div className="px-2.5 py-3 text-center text-xs text-muted-foreground" role="status">
+              {emptyLabel}
+            </div>
+          ) : null}
+          {filteredOptions.map((option, index) => {
             const selected = option.value === value;
             const active = index === activeIndex;
             return (
@@ -388,9 +459,10 @@ function nextEnabledIndex(options: SelectOption[], startIndex: number, direction
   return startIndex;
 }
 
-function estimateMenuHeight(options: SelectOption[], maxHeight: number) {
+function estimateMenuHeight(options: SelectOption[], maxHeight: number, searchable = false) {
   const menuPadding = 8;
   const optionHeight = 40;
-  const estimatedContentHeight = options.length * optionHeight + menuPadding;
+  const searchHeight = searchable ? 40 : 0;
+  const estimatedContentHeight = options.length * optionHeight + menuPadding + searchHeight;
   return Math.min(maxHeight, Math.max(optionHeight + menuPadding, estimatedContentHeight));
 }

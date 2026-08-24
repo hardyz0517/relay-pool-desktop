@@ -101,6 +101,8 @@ import {
   loadPricingGroupMonitorStatus as loadPricingGroupMonitorStatusBinding,
   loadRoutingRuntimeOverlay as loadRoutingRuntimeOverlayBinding,
   loadRoutingPolicy as loadRoutingPolicyBinding,
+  getRoutingProtectionStatus as getRoutingProtectionStatusBinding,
+  listErrorRateHistory as listErrorRateHistoryBinding,
   loadRoutingWorkspaceSnapshot as loadRoutingWorkspaceSnapshotBinding,
   listModelAliases as listModelAliasesBinding,
   getModelMappingWorkspace as getModelMappingWorkspaceBinding,
@@ -144,7 +146,6 @@ import {
   scanRemoteStationKeys as scanRemoteStationKeysBinding,
   scanProviderDraftRemoteKeys as scanProviderDraftRemoteKeysBinding,
   simulateRoute as simulateRouteBinding,
-  updateRoutingPolicy as updateRoutingPolicyBinding,
   applyRoutingPolicyDocument as applyRoutingPolicyDocumentBinding,
   unbindRemoteStationKey as unbindRemoteStationKeyBinding,
   updateLocalAccessKey as updateLocalAccessKeyBinding,
@@ -524,9 +525,9 @@ export class DesktopBackend implements BackendClient {
       upsertModelAliasBinding(input),
     deleteModelAlias: (id: string) => deleteModelAliasBinding({ id }),
     listStationKeyHealth: () => listStationKeyHealthBinding(),
+    getRoutingProtectionStatus: (input = {}) => getRoutingProtectionStatusBinding(input),
+    listErrorRateHistory: (input = {}) => listErrorRateHistoryBinding(input),
     loadRoutingPolicy: () => loadRoutingPolicyBinding(),
-    updateRoutingPolicy: (input: Parameters<BackendClient["routing"]["updateRoutingPolicy"]>[0]) =>
-      updateRoutingPolicyBinding(input),
     applyRoutingPolicyDocument: (input: Parameters<BackendClient["routing"]["applyRoutingPolicyDocument"]>[0]) =>
       applyRoutingPolicyDocumentBinding(input),
     loadRoutingWorkspaceSnapshot: (input = {}) => loadRoutingWorkspaceSnapshotBinding(input),

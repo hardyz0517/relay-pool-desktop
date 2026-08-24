@@ -84,6 +84,7 @@ export type AppSettings = {
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
+  showDecisionExplanation?: boolean;
   dataDir: string;
   pendingDataDir: string | null;
   dataDirChangeRequiresRestart: boolean;
@@ -138,6 +139,7 @@ export type UpdateSettingsInput = {
   collectorMaxConcurrency: number;
   allowDepletedFallback: boolean;
   developerModeEnabled: boolean;
+  showDecisionExplanation: boolean;
 };
 
 export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsInput {
@@ -159,6 +161,7 @@ export function appSettingsToUpdateInput(settings: AppSettings): UpdateSettingsI
     collectorMaxConcurrency: settings.collectorMaxConcurrency,
     allowDepletedFallback: settings.allowDepletedFallback,
     developerModeEnabled: settings.developerModeEnabled,
+    showDecisionExplanation: settings.showDecisionExplanation ?? false,
   };
 }
 

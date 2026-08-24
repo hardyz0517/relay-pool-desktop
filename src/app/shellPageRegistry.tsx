@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { ChannelStatusPage } from "@/features/channels";
-import { ChangeCenterPage, ChangeCenterSettingsPage, type ChangeCenterView } from "@/features/changes";
+import { ChangeCenterPage, type ChangeCenterView } from "@/features/changes";
 import { CollectorsPage } from "@/features/collectors";
 import { DashboardPage } from "@/features/dashboard";
 import { KeyPoolPage } from "@/features/key-pool";
@@ -92,7 +92,6 @@ export const ShellPageContent = memo(function ShellPageContent({
       return (
         <RoutingPage
           deepLink={actions.routingDeepLink}
-          developerModeEnabled={settingsQuery.data?.developerModeEnabled === true}
           onOpenRequestLog={(requestLogId) =>
             actions.openRequestLogDeepLink({
               kind: "request-log",

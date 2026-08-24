@@ -27,6 +27,7 @@ type RequestLogTableProps = {
   stationById: Map<string, Pick<Station, "creditPerCny">>;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  compact?: boolean;
 };
 
 type RequestLogPaginationProps = {
@@ -42,44 +43,73 @@ type RequestLogPaginationProps = {
   onPageSizeChange: (pageSize: number) => void;
 };
 
-export function RequestLogTable({ rows, keyById, stationById, selectedId, onSelect }: RequestLogTableProps) {
-  const columns = useMemo<DataTableColumn<RequestLog>[]>(() => [
-    { key: "key", header: "密钥", render: (row) => formatKeyName(row, keyById) },
-    { key: "model", header: "模型", render: (row) => row.model ?? "未识别" },
-    { key: "reasoning", header: "推理强度", render: (row) => reasoningEffortLabel(row.reasoningEffort) },
-    { key: "endpoint", header: "端点", render: (row) => formatEndpoint(row.path) },
-    {
-      key: "httpStatus",
-      header: "状态码",
-      render: (row) => <RequestStatusCode value={row.httpStatus} inProgress={isRequestInProgress(row)} />,
-    },
-    { key: "group", header: "分组", render: (row) => <LogMetaTag value={formatGroupName(row, keyById)} /> },
-    { key: "rate", header: "倍率", render: (row) => <LogMetaTag value={formatKeyRate(row, keyById, stationById)} /> },
-    { key: "type", header: "类型", render: (row) => <LogMetaTag value={row.stream ? "流式" : "同步"} /> },
-    { key: "billing", header: "计费模式", render: (row) => <LogMetaTag value={billingModeLabel(row.billingMode)} /> },
-    { key: "tokens", header: "Token", render: (row) => <TokenUsageCell log={row} /> },
-    {
-      key: "cost",
-      header: "费用",
-      render: (row) => <span className="font-medium text-success-foreground">{formatRequestCost(row)}</span>,
-    },
-    { key: "latency", header: "延迟", render: (row) => <LatencyCell log={row} /> },
-    {
-      key: "time",
-      header: "时间",
-      className: "w-[176px] min-w-[176px] tabular-nums",
-      render: (row) => formatLogTime(row.startedAt, true),
-    },
-  ], [keyById, stationById]);
+export function RequestLogTable({
+  rows,
+  keyById,
+  stationById,
+  onSelect,
+  compact = true,
+}: RequestLogTableProps) {
+  const columns = useMemo<DataTableColumn<RequestLog>[]>(() => {
+    const allColumns: DataTableColumn<RequestLog>[] = [
+      { key: "key", header: "密钥", render: (row) => formatKeyName(row, keyById) },
+      { key: "model", header: "模型", render: (row) => row.model ?? "未识别" },
+      { key: "reasoning", header: "推理强度", render: (row) => reasoningEffortLabel(row.reasoningEffort) },
+      { key: "endpoint", header: "端点", render: (row) => formatEndpoint(row.path) },
+      {
+        key: "httpStatus",
+        header: "状态码",
+        render: (row) => <RequestStatusCode value={row.httpStatus} inProgress={isRequestInProgress(row)} />,
+      },
+      { key: "group", header: "分组", render: (row) => <LogMetaTag value={formatGroupName(row, keyById)} /> },
+      { key: "rate", header: "倍率", render: (row) => <LogMetaTag value={formatKeyRate(row, keyById, stationById)} /> },
+      { key: "type", header: "类型", render: (row) => <LogMetaTag value={row.stream ? "流式" : "同步"} /> },
+      { key: "billing", header: "计费模式", render: (row) => <LogMetaTag value={billingModeLabel(row.billingMode)} /> },
+      { key: "tokens", header: "Token", render: (row) => <TokenUsageCell log={row} /> },
+      {
+        key: "cost",
+        header: "费用",
+        className: "text-center",
+        render: (row) => <span className="font-medium text-success-foreground">{formatRequestCost(row)}</span>,
+      },
+      {
+        key: "latency",
+        header: "延迟",
+        className: "text-center",
+        render: (row) => <LatencyCell log={row} />,
+      },
+      {
+        key: "time",
+        header: "时间",
+        className: compact
+          ? "w-[144px] min-w-[144px] tabular-nums"
+          : "w-[176px] min-w-[176px] tabular-nums",
+        render: (row) => formatLogTime(row.startedAt, true, !compact),
+      },
+    ];
+
+    if (!compact) return allColumns;
+    const compactColumnKeys = new Set([
+      "key",
+      "model",
+      "httpStatus",
+      "group",
+      "rate",
+      "tokens",
+      "cost",
+      "latency",
+      "time",
+    ]);
+    return allColumns.filter((column) => compactColumnKeys.has(column.key));
+  }, [compact, keyById, stationById]);
 
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[1480px]">
+      <div className={compact ? "min-w-[1040px]" : "min-w-[1480px]"}>
         <DataTableLite
           columns={columns}
           rows={rows}
           getRowKey={(row) => row.id}
-          selectedKey={selectedId ?? undefined}
           onRowClick={(row) => onSelect(row.id)}
           headerVariant="plain"
           className="rounded-none border-0 shadow-none [&_table]:table-fixed [&_td]:align-middle [&_td]:overflow-hidden [&_td]:text-ellipsis [&_td:last-child]:overflow-visible [&_td:last-child]:text-clip"
@@ -197,13 +227,16 @@ function TokenUsageCell({ log }: { log: RequestLog }) {
 function LatencyCell({ log }: { log: RequestLog }) {
   const tone = requestLatencyTone(log);
   return (
-    <div className="flex min-h-[36px] items-center gap-2.5 text-xs leading-4">
-      <span className={`h-9 w-1 shrink-0 rounded-full ${latencyToneBarClass(tone)}`} aria-hidden="true" />
-      <div className="grid min-w-[74px] gap-0.5">
+    <div className="relative min-h-[36px] w-full text-xs leading-4">
+      <div className="absolute left-1/2 top-1/2 grid w-max -translate-x-1/2 -translate-y-1/2 gap-0.5">
+        <span
+          className={`absolute right-full top-0 mr-2.5 h-9 w-1 rounded-full ${latencyToneBarClass(tone)}`}
+          aria-hidden="true"
+        />
         {latencyBreakdown(log).map((row) => (
           <div
             key={row.label}
-            className="flex items-center justify-between gap-2 whitespace-nowrap"
+            className="flex items-center gap-2 whitespace-nowrap"
             title={row.title}
           >
             <span className="text-muted-foreground">{row.label}</span>

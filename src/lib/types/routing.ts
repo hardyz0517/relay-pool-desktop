@@ -20,6 +20,10 @@ import type {
   RoutingReadPageDto,
   RoutingRuntimeCandidateOverlayDto,
   RoutingRuntimeOverlayDto,
+  RoutingProtectionStatusDto,
+  RoutingProtectionStatusInputDto,
+  ErrorRateHistoryInputDto,
+  ErrorRateHistoryPageDto,
   RoutingWorkspaceCandidateDto,
   RoutingWorkspaceSnapshotDto,
   RoutingWorkspaceSnapshotInputDto,
@@ -30,15 +34,15 @@ import type {
   UpdateStationKeyCapabilitiesInputDto,
   UpsertModelAliasInputDto,
   RoutingPolicyConfigV1Dto,
+  RoutingPolicyConfigV2Dto,
   RoutingPolicySnapshotDto,
-  UpdateRoutingPolicyInputDto,
   ApplyRoutingPolicyDocumentInputDto,
 } from "@/lib/bridge/generated";
 
 export type RoutingPolicy = RoutingPolicyDto;
 export type RoutingPolicyConfigV1 = RoutingPolicyConfigV1Dto;
+export type RoutingPolicyConfigV2 = RoutingPolicyConfigV2Dto;
 export type RoutingPolicySnapshot = RoutingPolicySnapshotDto;
-export type UpdateRoutingPolicyInput = UpdateRoutingPolicyInputDto;
 export type ApplyRoutingPolicyDocumentInput = ApplyRoutingPolicyDocumentInputDto;
 export type RouteEndpointKind = RouteEndpointKindDto;
 export type PricingGroupType = PricingGroupTypeDto;
@@ -77,6 +81,10 @@ export type RoutingWorkspaceSnapshot = RoutingWorkspaceSnapshotDto;
 
 export type RoutingRuntimeCandidateOverlay = RoutingRuntimeCandidateOverlayDto;
 export type RoutingRuntimeOverlay = RoutingRuntimeOverlayDto;
+export type RoutingProtectionStatus = RoutingProtectionStatusDto;
+export type RoutingProtectionStatusInput = RoutingProtectionStatusInputDto;
+export type ErrorRateHistoryInput = ErrorRateHistoryInputDto;
+export type ErrorRateHistoryPage = ErrorRateHistoryPageDto;
 
 export type RecentRouteDecisionsInput = RecentRouteDecisionsInputDto;
 export type RouteDecisionSummary = RecentRouteDecisionSummaryDto;

@@ -47,6 +47,17 @@ export const alertingActivityQueryOptions = (input: AlertingActivityInput = {}) 
     staleTime: 2_000,
   });
 
+/**
+ * The sidebar badge and Change Center summary intentionally share this exact
+ * server-side count. Keep the filter here so their meaning cannot drift.
+ */
+export const unreadChangeActivityQueryOptions = () =>
+  alertingActivityQueryOptions({
+    recordType: "change",
+    unreadOnly: true,
+    limit: 1,
+  });
+
 export const alertingIncidentQueryOptions = (input: AlertingIncidentInput) =>
   queryOptions({
     queryKey: queryKeys.alertingIncident(input.incidentId, input.episodeNumber),

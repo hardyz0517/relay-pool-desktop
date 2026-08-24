@@ -25,6 +25,7 @@ import {
 } from "@/lib/api/collector";
 import { updateStationSession } from "@/lib/api/stationKeys";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidateAlertingReadModels } from "@/lib/query/alertingQuerySynchronization";
 import {
   captureSessionStatusQueryOptions,
   collectorRunsQueryOptions,
@@ -39,7 +40,7 @@ import type {
   CollectorSnapshot,
   CollectorSummary,
 } from "@/lib/types/collector";
-import type { CollectorRun, CollectorTaskType } from "@/lib/types/collectorRuns";
+import type { CollectorTaskType } from "@/lib/types/collectorRuns";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import { stationTypeLabels, type Station } from "@/lib/types/stations";
 import { cn } from "@/lib/utils";
@@ -117,7 +118,6 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
   const displayError = error ?? (stationsQuery.error ? readError(stationsQuery.error) : null);
   const summary = toCollectorSummary(latestSnapshot?.summaryJson);
   const recognized = summary.recognized;
-  const endpointResults = summary.endpointResults ?? [];
   const normalized = latestSnapshot?.normalizedJson ?? {};
   const modelCount = Array.isArray(normalized.models) ? normalized.models.length : 0;
   const groupDetails = Array.isArray(normalized.groups) ? normalized.groups : [];
@@ -173,7 +173,7 @@ export function CollectorsPage({ onOpenRoutingDeepLink }: CollectorsPageProps = 
     if (options.includeRuns) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.collectorRuns(stationId) });
     }
-    await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
+    await invalidateAlertingReadModels(queryClient);
     if (options.includeCapture) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.captureSessionStatus(stationId) });
     }

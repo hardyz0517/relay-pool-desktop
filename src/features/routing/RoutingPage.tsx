@@ -5,7 +5,7 @@ import { SegmentedControl, useToast } from "@/components/ui";
 import { startLocalProxy, stopLocalProxy } from "@/lib/api/proxy";
 import { importRelayPoolToCCSwitch } from "@/lib/api/settings";
 import { readError } from "@/lib/errors";
-import { keyPoolQueryOptions, proxyStatusQueryOptions } from "@/lib/query/resourceQueries";
+import { keyPoolQueryOptions, proxyStatusQueryOptions, settingsQueryOptions } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
 import { refreshRoutingQueries } from "@/lib/query/routingQuerySynchronization";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
@@ -13,6 +13,7 @@ import {
   listRecentRouteDecisionsQuery,
   loadRoutingRuntimeOverlayQuery,
   loadRoutingWorkspaceSnapshotQuery,
+  routingProtectionStatusQueryOptions,
   routingQueryKeys,
 } from "@/lib/queries/routingQueries";
 import { toTimestampMillis } from "@/lib/time";
@@ -30,11 +31,9 @@ type LocalRoutingTab = "status" | "edit";
 export function RoutingPage({
   deepLink,
   onOpenRequestLog,
-  developerModeEnabled = false,
 }: {
   deepLink?: VersionedRoutingDeepLink | null;
   onOpenRequestLog?: (requestLogId: string) => void;
-  developerModeEnabled?: boolean;
 }) {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -43,6 +42,8 @@ export function RoutingPage({
   const [proxyActionPending, setProxyActionPending] = useState(false);
   const [importingCCSwitch, setImportingCCSwitch] = useState(false);
   const proxyStatusQuery = useActivityQuery(proxyStatusQueryOptions());
+  const settingsQuery = useActivityQuery(settingsQueryOptions());
+  const developerModeEnabled = settingsQuery.data?.developerModeEnabled === true;
   const keyPoolItemsQuery = useActivityQuery({
     ...keyPoolQueryOptions(),
     enabled: queryEnabled,
@@ -64,6 +65,10 @@ export function RoutingPage({
     staleTime: 5_000,
   });
   const latestDecision = routeDecisionsQuery.data?.decisions[0] ?? null;
+  const protectionStatusQuery = useActivityQuery({
+    ...routingProtectionStatusQueryOptions({ model: latestDecision?.model ?? undefined }),
+    enabled: queryEnabled && activeTab === "status" && developerModeEnabled,
+  });
   const workspace = useMemo(() => {
     if (!routingSnapshotQuery.data || !proxyStatusQuery.data) return null;
     const decision = latestDecision
@@ -195,16 +200,16 @@ export function RoutingPage({
             onImportToCCSwitch={() => void handleImportToCCSwitch()}
             deepLink={deepLink}
           />
-          {developerModeEnabled ? (
-            <RoutingStatusDiagnosticsPanel
-              snapshot={routingSnapshotQuery.data ?? null}
-              runtimeOverlay={routingRuntimeQuery.data ?? null}
-              decisions={routeDecisionsQuery.data ?? null}
-              loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
-              deepLink={deepLink}
-              onOpenRequestLog={onOpenRequestLog}
-            />
-          ) : null}
+          <RoutingStatusDiagnosticsPanel
+            snapshot={routingSnapshotQuery.data ?? null}
+            runtimeOverlay={routingRuntimeQuery.data ?? null}
+            decisions={routeDecisionsQuery.data ?? null}
+            protectionStatus={protectionStatusQuery.data ?? null}
+            loading={routingSnapshotQuery.isPending && routingSnapshotQuery.data === undefined}
+            developerModeEnabled={developerModeEnabled}
+            deepLink={deepLink}
+            onOpenRequestLog={onOpenRequestLog}
+          />
         </div>
       ) : activeTab === "edit" ? (
         <LocalRoutingEditTab

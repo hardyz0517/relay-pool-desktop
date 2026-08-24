@@ -82,6 +82,7 @@ export type AlertingCurrentInput = {
   stationId?: string | null;
   severity?: AlertSeverity | null;
   lifecycleState?: "active" | "unread" | "pending" | "open" | "recovering" | "resolved" | null;
+  search?: string | null;
   cursor?: AlertingCursor | null;
   limit?: number;
 };
@@ -91,6 +92,7 @@ export type AlertingActivityInput = {
   severity?: AlertSeverity | null;
   recordType?: "incident" | "change" | null;
   unreadOnly?: boolean;
+  search?: string | null;
   cursor?: AlertingCursor | null;
   limit?: number;
 };

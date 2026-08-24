@@ -3,29 +3,44 @@ import { Activity } from "lucide-react";
 import { Button, EmptyState, SectionCard, StatusBadge } from "@/components/ui";
 import type {
   RecentRouteDecisionsPage,
-  RouteCandidateExplanation,
-  RouteEndpointKind,
-  RouteSimulationResult,
   RoutingRuntimeOverlay,
+  RoutingProtectionStatus,
   RoutingWorkspaceCandidate,
   RoutingWorkspaceSnapshot,
 } from "@/lib/types/routing";
 import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
+import { userVisibleProtectionEntries } from "./routingProtectionPresentation";
 
 type RoutingStatusDiagnosticsPanelProps = {
   snapshot: RoutingWorkspaceSnapshot | null;
   runtimeOverlay: RoutingRuntimeOverlay | null;
   decisions: RecentRouteDecisionsPage | null;
+  protectionStatus: RoutingProtectionStatus | null;
   loading: boolean;
+  developerModeEnabled: boolean;
   deepLink?: VersionedRoutingDeepLink | null;
   onOpenRequestLog?: (requestLogId: string) => void;
 };
+
+export function sortFailureDomainDiagnostics(
+  diagnostics: RoutingProtectionStatus["failureDomains"] = [],
+) {
+  return [...diagnostics].sort(
+    (left, right) =>
+      right.candidateCount - left.candidateCount ||
+      (left.commitment ?? left.providerFamily ?? "").localeCompare(
+        right.commitment ?? right.providerFamily ?? "",
+      ),
+  );
+}
 
 export function RoutingStatusDiagnosticsPanel({
   snapshot,
   runtimeOverlay,
   decisions,
+  protectionStatus,
   loading,
+  developerModeEnabled,
   deepLink,
   onOpenRequestLog,
 }: RoutingStatusDiagnosticsPanelProps) {
@@ -50,8 +65,13 @@ export function RoutingStatusDiagnosticsPanel({
   const availableCount =
     snapshot?.candidates.filter((candidate) => {
       const overlay = overlayByKey.get(candidate.stationKeyId);
-      return (overlay?.healthState ?? candidate.healthState) === "available" && candidate.hardRejectionCodes.length === 0;
+      const healthState = overlay?.healthState ?? candidate.healthState;
+      return ["ready", "available"].includes(healthState) && candidate.hardRejectionCodes.length === 0;
     }).length ?? 0;
+  const domainGroups = useMemo(
+    () => sortFailureDomainDiagnostics(protectionStatus?.failureDomains),
+    [protectionStatus?.failureDomains],
+  );
   useEffect(() => {
     if (!deepLink || !snapshot) return;
     if (deepLink.kind === "station") {
@@ -64,11 +84,14 @@ export function RoutingStatusDiagnosticsPanel({
     }
   }, [deepLink?.sequence, snapshot?.generatedAtMs]);
 
+  if (!developerModeEnabled) return null;
+
   if (loading && !snapshot) {
     return (
       <SectionCard title="路由诊断">
         <div className="text-sm text-muted-foreground">正在读取路由状态...</div>
       </SectionCard>
+
     );
   }
 
@@ -87,8 +110,8 @@ export function RoutingStatusDiagnosticsPanel({
     <section className="grid min-w-0 gap-4" aria-labelledby="routing-diagnostics-title">
       <SectionCard
         title="路由诊断"
-        description="把候选、价格、实时并发、模拟路由和最近决策合在状态页里看。"
-        action={<StatusBadge tone={snapshot.readModelStatus === "available" ? "healthy" : "warning"}>{snapshot.readModelStatus}</StatusBadge>}
+        description="把候选、价格、实时并发、故障域和最近决策合在状态页里看。"
+        action={<StatusBadge tone={snapshot.readModelStatus === "available" ? "healthy" : "warning"}>{readModelStatusLabel(snapshot.readModelStatus)}</StatusBadge>}
         contentClassName="grid min-w-0 gap-3"
       >
         <div className="grid min-w-0 gap-2 text-sm sm:grid-cols-4">
@@ -97,6 +120,23 @@ export function RoutingStatusDiagnosticsPanel({
           <ReadableMetric label="实时并发" value={formatRuntimeCapacity(snapshot.candidates, overlayByKey)} />
           <ReadableMetric label="最近决策" value={`${decisions?.decisions.length ?? 0}`} />
         </div>
+
+        {decisions?.decisions.length ? (
+          <div className="grid gap-1 border-t border-border pt-2" aria-label="最近路由决策">
+            {decisions.decisions.slice(0, 3).map((decision) => (
+              <div key={decision.requestLogId} className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {decision.model ?? "未指定模型"} · {decision.status} · {decision.routeReason ?? "未记录原因"}
+                </span>
+                {onOpenRequestLog ? (
+                  <Button size="sm" variant="ghost" onClick={() => onOpenRequestLog(decision.requestLogId)}>
+                    查看请求
+                  </Button>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {stationScopeId ? (
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-[var(--surface-radius)] border border-info-border bg-info-surface px-3 py-2 text-xs text-info-foreground">
@@ -133,37 +173,39 @@ export function RoutingStatusDiagnosticsPanel({
         )}
       </SectionCard>
 
-      {/* <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
-        <SectionCard
-          title="模拟路由"
-          description="输入模型名，查看当前规则会选择哪个密钥；这里不会真的占用并发。"
-          contentClassName="grid min-w-0 gap-3"
-        >
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <div className="relative min-w-0 flex-1 basis-[14rem]">
-              <Search className="pointer-events-none absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
-              <input
-                className="h-8 w-full rounded-[var(--surface-radius)] border border-border bg-surface pl-8 pr-3 text-sm outline-none transition-colors focus:border-ring focus:ring-2 focus:ring-ring/20"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-                placeholder="模型，例如 gpt-4o-mini"
-              />
-            </div>
-            <Button size="sm" variant="secondary" disabled={simulating} onClick={() => void runSimulation()}>
-              <Route className="h-4 w-4" />
-              {simulating ? "模拟中..." : "模拟"}
-            </Button>
+      <SectionCard
+        title="Provider / 故障域"
+        description="按低敏感 commitment 聚合同一容量域，保护状态与运行时容量状态分开显示。"
+        contentClassName="grid min-w-0 gap-2"
+      >
+        {domainGroups.length === 0 ? (
+          <EmptyState title="暂无故障域诊断" description="候选缺少可用身份，或保护诊断读模型暂不可用。系统不会猜测故障域归属。" />
+        ) : (
+          <div className="grid gap-2">
+            {domainGroups.slice(0, 8).map((domain) => (
+              <div key={`${domain.commitment ?? "unresolved"}:${domain.providerFamily ?? "unknown"}:${domain.deploymentIdentity ?? "unknown"}:${domain.regionIdentity ?? "unknown"}`} className="grid min-w-0 gap-1 rounded-[var(--surface-radius)] border border-border bg-surface px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">{domain.providerFamily ?? "未配置 provider"}</div>
+                  <div className="truncate text-muted-foreground">{domain.deploymentIdentity ?? "未声明 deployment"} / {domain.regionIdentity ?? "未声明 region"}</div>
+                </div>
+                <div className="min-w-0 text-muted-foreground">
+                  <div>{domain.candidateCount} 个候选，{domain.schedulableCandidateCount} 个可调度</div>
+                  <div className="truncate" title={domain.commitment ?? undefined}>身份：{failureDomainResolutionLabel(domain.resolution)}</div>
+                </div>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 md:justify-end">
+                  <StatusBadge tone={domain.status === "open" || domain.status === "half_open" || domain.status === "blocked" ? "warning" : domain.status === "unavailable" ? "disabled" : "healthy"}>
+                    {protectionStateLabel(domain.status)}
+                  </StatusBadge>
+                  {domain.recentFailureCode ? <span className="truncate text-muted-foreground">最近：{domain.recentFailureCode}</span> : null}
+                </div>
+                <div className="truncate text-muted-foreground md:col-span-3" title={domain.explanationKey}>解释：{domain.explanationKey}</div>
+              </div>
+            ))}
           </div>
+        )}
+        <ProtectionSummary status={protectionStatus} />
+      </SectionCard>
 
-          {error ? <div className="text-sm text-danger-foreground">{error}</div> : null}
-          {simulation ? (
-            <SimulationSummary simulation={simulation} selectedCandidate={selectedCandidate} />
-          ) : (
-            <EmptyState title="尚未模拟" description="输入模型后运行模拟，就能看到会选谁以及主要原因。" />
-          )}
-        </SectionCard>
-
-      </div> */}
     </section>
   );
 }
@@ -212,10 +254,13 @@ function CandidateLine({
       <div className="min-w-0 text-xs text-muted-foreground">
         <div className="truncate">分组：{candidate.group?.displayName ?? "未分组"}</div>
         <div className="truncate">价格：{formatPrice(candidate)}</div>
+        <div className="truncate" title={candidate.failureDomain.commitment ?? undefined}>
+          故障域：{formatFailureDomain(candidate.failureDomain)}
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
-        <StatusBadge tone={blocked ? "warning" : healthState === "available" ? "healthy" : "disabled"}>
-          {blocked ? "不可参与" : healthState === "unknown" ? "可参与" : healthState}
+        <StatusBadge tone={blocked ? "warning" : ["ready", "available"].includes(healthState) ? "healthy" : healthState === "degraded" ? "warning" : "disabled"}>
+          {blocked ? "不可参与" : healthStateLabel(healthState)}
         </StatusBadge>
         <span className="text-xs text-muted-foreground">
           本地在途 {inFlight ?? 0}/{formatConcurrencyLimit(candidate.capacity.maxConcurrency)}
@@ -225,37 +270,105 @@ function CandidateLine({
   );
 }
 
-function SimulationSummary({
-  simulation,
-  selectedCandidate,
-}: {
-  simulation: RouteSimulationResult;
-  selectedCandidate: RouteCandidateExplanation | null;
-}) {
-  if (!simulation.selectedStationKeyId) {
-    return (
-      <div className="rounded-[var(--surface-radius)] border border-warning-border bg-warning-surface px-3 py-2 text-sm text-warning-foreground">
-        没有可用候选：{simulation.message || simulation.plannerErrorCode || "当前规则未选出密钥"}
-      </div>
-    );
-  }
-
+function ProtectionSummary({ status }: { status: RoutingProtectionStatus | null }) {
+  if (!status) return <div className="text-xs text-muted-foreground">保护状态暂不可用。</div>;
+  const active = userVisibleProtectionEntries(status).filter((entry) => entry.state !== "no_protection");
   return (
-    <div className="grid gap-2 rounded-[var(--surface-radius)] border border-success-border bg-success-surface px-3 py-2 text-sm">
-      <div className="font-medium text-success-foreground">
-        会选择：{selectedCandidate?.keyName ?? simulation.selectedStationKeyId}
+    <div className="grid gap-1 border-t border-border pt-2 text-xs text-muted-foreground">
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        <span>保护读模型：{readModelStatusLabel(status.readModelStatus)}</span>
+        <span>状态条目：{active.length}</span>
       </div>
-      <div className="text-xs text-success-foreground/90">
-        {selectedCandidate?.stationName ? `${selectedCandidate.stationName} · ` : null}
-        上游模型：{simulation.mappedModel ?? selectedCandidate?.mappedModel ?? "保持原模型"}
-      </div>
-      {(selectedCandidate?.reasons.length ?? 0) > 0 ? (
-        <div className="text-xs text-success-foreground/90">
-          原因：{selectedCandidate?.reasons.slice(0, 3).join("、")}
+      {active.slice(0, 4).map((entry) => (
+        <div key={`${entry.persistenceKind ?? "none"}:${entry.scope}`} className="flex min-w-0 flex-wrap gap-x-2 gap-y-1">
+          <span>{protectionScopeKindLabel(entry.scopeKind)}</span>
+          <StatusBadge tone={entry.state === "open" || entry.state === "half_open" ? "warning" : entry.state === "unavailable" ? "disabled" : "healthy"}>
+            {protectionStateLabel(entry.state)}
+          </StatusBadge>
+          <span>{protectionExplanationLabel(entry.explanationKey)}</span>
+          {entry.recentFailureCode ? <span>最近失败：{entry.recentFailureCode}</span> : null}
         </div>
-      ) : null}
+      ))}
     </div>
   );
+}
+
+function formatFailureDomain(
+  failureDomain: RoutingWorkspaceCandidate["failureDomain"],
+): string {
+  if (failureDomain.resolution === "not_configured") return "未配置";
+  if (failureDomain.resolution === "invalid_identity") return "身份无效";
+  if (failureDomain.resolution === "model_required") return "等待模型";
+  const identity = [
+    failureDomain.providerFamily,
+    failureDomain.deploymentIdentity,
+    failureDomain.regionIdentity,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+  return identity || "已解析";
+}
+
+function failureDomainResolutionLabel(resolution: string) {
+  if (resolution === "resolved") return "已解析";
+  if (resolution === "model_required") return "等待模型";
+  if (resolution === "invalid_identity") return "身份无效";
+  return "未配置";
+}
+
+function protectionStateLabel(state: string) {
+  const labels: Record<string, string> = {
+    no_protection: "无保护",
+    degraded: "监控中",
+    cooldown: "冷却中",
+    blocked: "已阻断",
+    open: "保护开启",
+    half_open: "半开探测",
+    unavailable: "不可用",
+  };
+  return labels[state] ?? "状态未知";
+}
+
+function healthStateLabel(state: string) {
+  const labels: Record<string, string> = {
+    ready: "可参与",
+    available: "可参与",
+    cooldown: "冷却中",
+    degraded: "降级监控",
+    offline: "离线",
+    unknown: "状态未知",
+  };
+  return labels[state] ?? "状态未知";
+}
+
+function readModelStatusLabel(status: string) {
+  return status === "available" ? "数据正常" : "数据不可用";
+}
+
+function protectionScopeKindLabel(kind: string | null) {
+  const labels: Record<string, string> = {
+    credential: "凭据",
+    account: "账号",
+    endpoint: "端点",
+    model: "模型",
+    capacity_domain: "容量域",
+    station_key: "站点密钥",
+  };
+  return kind ? labels[kind] ?? "路由作用域" : "路由作用域";
+}
+
+function protectionExplanationLabel(key: string) {
+  const labels: Record<string, string> = {
+    "routing.protection.none_active": "当前没有保护条目",
+    "routing.protection.closed_monitoring": "未打开保护，持续监控中",
+    "routing.protection.degraded": "保护降级，持续监控中",
+    "routing.protection.cooldown": "保护冷却中，暂时抑制候选",
+    "routing.protection.blocked": "保护已阻断候选",
+    "routing.protection.open": "保护已打开，暂时抑制候选",
+    "routing.protection.half_open": "保护半开，正在恢复探测",
+    "routing.protection.unavailable": "保护明细暂不可用",
+  };
+  return labels[key] ?? "暂无可读说明";
 }
 
 function formatRuntimeCapacity(

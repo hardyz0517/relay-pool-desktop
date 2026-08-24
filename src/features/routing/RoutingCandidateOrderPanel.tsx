@@ -16,7 +16,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useQueryClient } from "@tanstack/react-query";
-import { EmptyState, StatusBadge, useToast } from "@/components/ui";
+import { ArrowDownUp } from "lucide-react";
+import { Button, EmptyState, StatusBadge, useToast } from "@/components/ui";
 import { reorderKeyPool } from "@/lib/api/stationKeys";
 import { readError } from "@/lib/errors";
 import { queryKeys } from "@/lib/query/queryKeys";
@@ -90,6 +91,10 @@ export function RoutingCandidateOrderPanel({
   );
   const syncLabel = syncLabels[syncState];
 
+  function handleSortByScore() {
+    setCandidateIds((currentIds) => sortCandidateIdsByScore(currentIds, candidateById));
+  }
+
   useEffect(() => {
     keyPoolVersionRef.current += 1;
     saveOperationRef.current += 1;
@@ -156,7 +161,10 @@ export function RoutingCandidateOrderPanel({
         <h2 id="local-routing-candidates-title" className="text-sm font-semibold text-foreground">{heading}</h2>
         <div className="flex items-center gap-2">
           {syncLabel && syncState !== "idle" ? <StatusBadge tone={syncTones[syncState]}>{syncLabel}</StatusBadge> : null}
-          <span className="text-xs text-muted-foreground">{keyPoolItems?.length ?? workspace?.summary.candidateCount ?? 0} 个密钥</span>
+          <Button type="button" variant="secondary" size="sm" aria-label="按评分排序" title="按评分排序" onClick={handleSortByScore}>
+            <ArrowDownUp className="size-4" />
+            按评分排序
+          </Button>
         </div>
       </header>
       {syncError ? <div className="rounded-[var(--surface-radius)] border border-danger-border bg-danger-surface px-3 py-2 text-xs text-danger-foreground">{syncError}</div> : null}
@@ -186,6 +194,20 @@ export function RoutingCandidateOrderPanel({
 
 function orderedCandidateIds(keyPoolItems: readonly KeyPoolItem[]) {
   return keyPoolItems.map((item) => item.id);
+}
+
+export function sortCandidateIdsByScore(
+  candidateIds: readonly string[],
+  candidateById: ReadonlyMap<string, RoutingCandidateView>,
+) {
+  return [...candidateIds].sort((leftId, rightId) => {
+    const leftScore = candidateById.get(leftId)?.score;
+    const rightScore = candidateById.get(rightId)?.score;
+    if (leftScore == null && rightScore == null) return 0;
+    if (leftScore == null) return 1;
+    if (rightScore == null) return -1;
+    return rightScore - leftScore;
+  });
 }
 
 function SortableStatusCandidateRow({ candidate, order, nowMs, disabled }: { candidate: RoutingCandidateView; order: number; nowMs: number; disabled: boolean }) {

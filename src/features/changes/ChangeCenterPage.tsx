@@ -19,9 +19,11 @@ import {
   alertingCurrentQueryOptions,
   alertingDeliveriesQueryOptions,
   alertingOccurrencesQueryOptions,
+  unreadChangeActivityQueryOptions,
 } from "@/lib/queries/alertingQueries";
 import { settingsQueryOptions, stationsQueryOptions } from "@/lib/query/resourceQueries";
 import { queryKeys } from "@/lib/query/queryKeys";
+import { invalidateAlertingReadModels } from "@/lib/query/alertingQuerySynchronization";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
 import type { AlertingActivity, AlertingCursor, AlertingIncident } from "@/lib/types/alerting";
 import type { RoutingDeepLink } from "@/lib/types/routingDeepLinks";
@@ -162,6 +164,7 @@ export function ChangeCenterPage({
     ...alertingCurrentQueryOptions({
       severity: severity === "all" ? null : severity,
       lifecycleState: view === "active" ? "active" : null,
+      search: query.trim() || null,
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
     }),
@@ -172,11 +175,13 @@ export function ChangeCenterPage({
       severity: severity === "all" ? null : severity,
       recordType: null,
       unreadOnly: view === "unread",
+      search: query.trim() || null,
       cursor: pageCursors[page] ?? null,
       limit: pageSize,
     }),
     enabled: view !== "active",
   });
+  const unreadChangeQuery = useActivityQuery(unreadChangeActivityQueryOptions());
   const incidents = incidentQuery.data?.items ?? [];
   const activities = useMemo<AlertingActivity[]>(
     () => view === "active" ? incidents.map(toIncidentActivity) : (activityQuery.data?.items ?? []),
@@ -188,16 +193,10 @@ export function ChangeCenterPage({
     () => new Map((stationsQuery.data ?? []).map((station) => [station.id, station.name] as const)),
     [stationsQuery.data],
   );
-  const filteredActivities = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return activities.filter((activity) => {
-      if (view === "unread" && activity.seenAtMs != null) return false;
-      if (!needle) return true;
-      return [activity.eventType, activity.recordType === "incident" ? activity.groupName : null, activity.conditionKey, activity.stationId, activity.lifecycleState, activity.reasonCode, activity.objectId]
-        .filter((value): value is string => Boolean(value))
-        .some((value) => value.toLowerCase().includes(needle));
-    });
-  }, [activities, query, view]);
+  const filteredActivities = useMemo(
+    () => activities.filter((activity) => view !== "unread" || activity.seenAtMs == null),
+    [activities, view],
+  );
   const pageInfo = useMemo(() => {
     const summary = buildChangeCenterPageInfo({
       page,
@@ -230,8 +229,7 @@ export function ChangeCenterPage({
   async function refresh(showSuccess = false) {
     try {
       await Promise.all([
-        queryClient.refetchQueries({ queryKey: ["alertingCurrent"], type: "active" }),
-        queryClient.refetchQueries({ queryKey: ["alertingActivity"], type: "active" }),
+        invalidateAlertingReadModels(queryClient),
         queryClient.refetchQueries({ queryKey: queryKeys.stations, type: "active" }),
       ]);
       if (showSuccess) toast.success("变更中心已刷新");
@@ -266,7 +264,7 @@ export function ChangeCenterPage({
     const anchorPage = Math.max(...knownPages);
     let cursor = pageCursors[anchorPage] ?? null;
     let rowsFetched = 0;
-    let nextCursors: Record<number, AlertingCursor | null> = {};
+    const nextCursors: Record<number, AlertingCursor | null> = {};
     let hasMore = true;
     setJumpingPage(safePage);
 
@@ -276,6 +274,7 @@ export function ChangeCenterPage({
           ? await listCurrentAlertingIncidents({
               severity: severity === "all" ? null : severity,
               lifecycleState: "active",
+              search: query.trim() || null,
               cursor,
               limit: 200,
             })
@@ -283,6 +282,7 @@ export function ChangeCenterPage({
               severity: severity === "all" ? null : severity,
               recordType: null,
               unreadOnly: view === "unread",
+              search: query.trim() || null,
               cursor,
               limit: 200,
             });
@@ -322,8 +322,7 @@ export function ChangeCenterPage({
       await markAlertingSeen(activity.recordType === "change"
         ? { recordType: "change", id: activity.id }
         : { recordType: "incident", id: activity.id, episodeNumber: activity.episodeNumber });
-      await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
-      await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
+      await invalidateAlertingReadModels(queryClient);
     } catch (requestError) {
       toast.error("标记变更已读失败", readError(requestError));
     } finally {
@@ -338,8 +337,7 @@ export function ChangeCenterPage({
         severity: severity === "all" ? null : severity,
         recordScope: CHANGE_CENTER_MARK_SEEN_SCOPE_BY_VIEW[view],
       });
-      await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
-      await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
+      await invalidateAlertingReadModels(queryClient);
       toast.success(markedCount > 0 ? `已将 ${markedCount} 条变更标记为已读` : "没有需要标记的未读变更");
     } catch (requestError) {
       toast.error("一键标记已读失败", readError(requestError));
@@ -361,8 +359,7 @@ export function ChangeCenterPage({
         lifecycleState: view === "active" || view === "unread" ? view : null,
         recordScope: CHANGE_CENTER_CLEAR_SCOPE_BY_VIEW[view],
       });
-      await queryClient.invalidateQueries({ queryKey: ["alertingCurrent"] });
-      await queryClient.invalidateQueries({ queryKey: ["alertingActivity"] });
+      await invalidateAlertingReadModels(queryClient);
       setExpandedIncidentKey(null);
       resetPagination();
       toast.success(clearedCount > 0 ? `已清空 ${clearedCount} 条变更记录` : "没有可清空的变更记录");
@@ -390,7 +387,7 @@ export function ChangeCenterPage({
       <div className="grid gap-[var(--shell-page-gap)]">
         <div className="grid gap-3 md:grid-cols-3">
           <SummaryTile label="活动问题" value={pageData?.activeCount ?? 0} />
-          <SummaryTile label="未读提醒" value={pageData?.unseenCount ?? 0} />
+          <SummaryTile label="未读变更" value={unreadChangeQuery.data?.totalCount ?? 0} />
           <SummaryTile label={changeCenterViewCountLabel(view)} value={pageData?.totalCount ?? 0} />
         </div>
         <div className="min-w-0">

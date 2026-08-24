@@ -7,6 +7,7 @@ import {
   deleteModelAlias,
   getStationKeyCapabilities,
   getStationKeyHealth,
+  getRoutingProtectionStatus,
   listModelAliases,
   listStationKeyHealth,
   simulateRoute,
@@ -37,22 +38,42 @@ describe("routing backend cutover", () => {
     upsertModelAlias: vi.fn(async (input) => ({ id: "alias-1", createdAt: "now", updatedAt: "now", ...input })),
     deleteModelAlias: vi.fn(async () => undefined),
     listStationKeyHealth: vi.fn(async () => []),
+    getRoutingProtectionStatus: vi.fn(async () => ({
+      statusVersion: "routing_protection_status_v1",
+      generatedAtMs: 1,
+      entries: [],
+      readModelStatus: "available" as const,
+      timeouts: null,
+    })),
+    listErrorRateHistory: vi.fn(async () => ({
+      version: "error_rate_history_v1",
+      enabled: false,
+      detailAvailable: false,
+      events: [],
+      nextBeforeMs: null,
+      droppedEvents: 0,
+    })),
     loadRoutingWorkspaceSnapshot: vi.fn(async () => ({
       readModelVersion: "routing_workspace_read_model_v1",
       generatedAtMs: 1,
       policyConfig: {
-        version: 1,
+        version: 2,
         reliabilityWeight: 4000,
         responsivenessWeight: 2500,
         costWeight: 2000,
         preferenceWeight: 1500,
         maxCandidates: 64,
         explorationShareBasisPoints: 500,
-        allowDepletedFallback: false,
+         allowDepletedFallback: false,
          affinityEnabled: false,
          affinityTtlSeconds: 300,
+         maxRateMultiplier: null,
+         routingGroupFilter: "all_groups" as const,
          outboundProxyMode: "inherit",
          outboundProxyUrl: null,
+         retryFailover: { version: 2, maxTotalAttempts: 4, maxSameTargetCapacityRetries: 2, capacityRetryWaitBudgetSeconds: 2, allowCrossCapacityDomainFallback: true },
+         protectionProfile: { version: 2, enabled: false, windowMaxSamples: 64, windowSeconds: 300, minSamples: 5, failureThresholdPercent: 60, halfOpenSuccessesToClose: 2 },
+         timeoutPolicy: { version: 2, connectSeconds: 10, firstByteSeconds: 30, precommitSeconds: 60, bufferedExecutionSeconds: 300, streamIdleSeconds: 90 },
       },
       previewPolicyVersion: "intelligent_planner_v1",
       maxRateMultiplier: null,
@@ -87,7 +108,10 @@ describe("routing backend cutover", () => {
       traceVersion: "request_decision_trace_v1",
       requestLogId,
       status: "trace_unavailable" as const,
+      detailAvailability: "unavailable" as const,
       reason: "trace_unavailable",
+      explanationKey: "trace_unavailable",
+      policyRevision: null,
       legacySummary: null,
       timeline: [],
       planningRounds: [],
@@ -105,10 +129,9 @@ describe("routing backend cutover", () => {
       updatedAt: "now",
     })),
     loadRoutingPolicy: vi.fn(async () => ({
-       config: { version: 1, reliabilityWeight: 4000, responsivenessWeight: 2500, costWeight: 2000, preferenceWeight: 1500, maxCandidates: 64, explorationShareBasisPoints: 500, allowDepletedFallback: false, affinityEnabled: false, affinityTtlSeconds: 300, outboundProxyMode: "inherit", outboundProxyUrl: null },
-      revision: 1, policyVersion: "routing-policy-v1", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 0,
+      config: { version: 2, reliabilityWeight: 4000, responsivenessWeight: 2500, costWeight: 2000, preferenceWeight: 1500, maxCandidates: 64, explorationShareBasisPoints: 500, allowDepletedFallback: false, affinityEnabled: false, affinityTtlSeconds: 300, maxRateMultiplier: null, routingGroupFilter: "all_groups" as const, outboundProxyMode: "inherit", outboundProxyUrl: null, protectionProfile: { version: 2, enabled: false, windowMaxSamples: 64, windowSeconds: 300, minSamples: 5, failureThresholdPercent: 60, halfOpenSuccessesToClose: 2 }, retryFailover: { version: 2, maxTotalAttempts: 4, maxSameTargetCapacityRetries: 2, capacityRetryWaitBudgetSeconds: 2, allowCrossCapacityDomainFallback: true }, timeoutPolicy: { version: 2, connectSeconds: 10, firstByteSeconds: 30, precommitSeconds: 60, bufferedExecutionSeconds: 300, streamIdleSeconds: 90 } },
+      revision: 1, policyVersion: "routing-policy-v1", systemVersion: "routing-system-v1", status: "active", updatedAtMs: 0, documentSync: null,
     })),
-    updateRoutingPolicy: vi.fn(),
     applyRoutingPolicyDocument: vi.fn(),
     simulateRoute: vi.fn(async (input) => ({
       previewPolicyVersion: "intelligent_planner_v1",
@@ -196,6 +219,8 @@ describe("routing backend cutover", () => {
     await upsertModelAlias(alias);
     await deleteModelAlias("alias-1");
     await listStationKeyHealth();
+    await getRoutingProtectionStatus();
+    await getRoutingProtectionStatus({ model: "gpt-5-mini" });
     await getStationKeyHealth("key-1");
     await simulateRoute(routeInput);
 
@@ -205,6 +230,7 @@ describe("routing backend cutover", () => {
     expect(routing.upsertModelAlias).toHaveBeenCalledWith(alias);
     expect(routing.deleteModelAlias).toHaveBeenCalledWith("alias-1");
     expect(routing.listStationKeyHealth).toHaveBeenCalledTimes(1);
+    expect(routing.getRoutingProtectionStatus).toHaveBeenCalledWith({ model: "gpt-5-mini" });
     expect(routing.getStationKeyHealth).toHaveBeenCalledWith("key-1");
     expect(routing.simulateRoute).toHaveBeenCalledWith(routeInput);
   });

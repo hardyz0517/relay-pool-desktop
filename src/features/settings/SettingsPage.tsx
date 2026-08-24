@@ -39,6 +39,7 @@ type SettingsFormState = {
   collectorProxyMode: CollectorProxyMode;
   collectorProxyUrl: string;
   developerModeEnabled: boolean;
+  showDecisionExplanation: boolean;
 };
 
 const fallbackSettings: AppSettings = {
@@ -61,6 +62,7 @@ const fallbackSettings: AppSettings = {
   collectorMaxConcurrency: 3,
   allowDepletedFallback: false,
   developerModeEnabled: false,
+  showDecisionExplanation: false,
   dataDir: "仅桌面端可读取",
   pendingDataDir: null,
   dataDirChangeRequiresRestart: false,
@@ -166,6 +168,11 @@ export function SettingsPage() {
         ? withManualProxyDefault({ ...form, collectorProxyMode })
         : { ...form, collectorProxyMode };
     await commitSettingsForm(nextForm, "默认网络出口已更新");
+  }
+
+  async function handleDecisionExplanationToggle() {
+    const nextForm = { ...form, showDecisionExplanation: !form.showDecisionExplanation };
+    await commitSettingsForm(nextForm, nextForm.showDecisionExplanation ? "路由决策解释已开启" : "路由决策解释已关闭");
   }
 
   async function openRuntimeLog(target: "file" | "directory") {
@@ -499,6 +506,19 @@ export function SettingsPage() {
           />
           <SettingRow
             control={
+              <SwitchControl
+                ariaLabel="显示路由决策解释"
+                checked={form.showDecisionExplanation}
+                disabled={saving || loading}
+                onCheckedChange={() => void handleDecisionExplanationToggle()}
+                showLabel={false}
+              />
+            }
+            description="在请求详情中显示重试、等待、切换或停止的原因；不会改变路由行为。"
+            label="显示路由决策解释"
+          />
+          <SettingRow
+            control={
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => void openRuntimeLog("file")}>
                   <FileText className="h-4 w-4" />
@@ -682,6 +702,7 @@ function settingsToForm(settings: AppSettings): SettingsFormState {
     collectorProxyMode: settings.collectorProxyMode,
     collectorProxyUrl: settings.collectorProxyUrl ?? "",
     developerModeEnabled: settings.developerModeEnabled,
+    showDecisionExplanation: settings.showDecisionExplanation ?? false,
   };
 }
 
@@ -697,6 +718,7 @@ function formToInput(form: SettingsFormState, settings: AppSettings): UpdateSett
         : null,
     schedulerAdvancedSettings: settings.schedulerAdvancedSettings,
     developerModeEnabled: form.developerModeEnabled,
+    showDecisionExplanation: form.showDecisionExplanation,
   };
 }
 

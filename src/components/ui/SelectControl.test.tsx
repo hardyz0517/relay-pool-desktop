@@ -12,6 +12,49 @@ afterEach(() => {
 });
 
 describe("SelectControl positioning", () => {
+  it("filters searchable options and reports an empty state", async () => {
+    const onChange = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <SelectControl
+          ariaLabel="选择模型"
+          searchable
+          value=""
+          options={[{ value: "gpt-4o-mini", label: "gpt-4o-mini" }, { value: "claude-sonnet", label: "claude-sonnet" }]}
+          onChange={onChange}
+        />,
+      );
+    });
+
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="选择模型"]')?.click());
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="选择模型 搜索"]')!;
+    expect(search.className).toContain("pl-8");
+    expect(search.className).toContain("focus:ring-0");
+    expect(search.parentElement?.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+    expect(document.querySelectorAll('[role="listbox"] [role="option"]')).toHaveLength(2);
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(search, "claude");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      search.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(Array.from(document.querySelectorAll('[role="listbox"] [role="option"]')).map((option) => option.textContent)).toEqual(["claude-sonnet"]);
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(search, "missing");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+      search.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(document.querySelector('[role="listbox"] [role="status"]')?.textContent).toBe("无匹配项");
+
+    await act(async () => root.unmount());
+  });
+
   it("keeps a wide menu inside a narrow viewport", async () => {
     vi.spyOn(window, "innerWidth", "get").mockReturnValue(360);
     const host = document.createElement("div");

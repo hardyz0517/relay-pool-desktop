@@ -59,14 +59,6 @@ const textToneClassName: Record<DetailTone, string> = {
   muted: "text-muted-foreground",
 };
 
-const surfaceToneClassName: Record<DetailTone, string> = {
-  neutral: "border-border bg-surface",
-  good: "border-success-border bg-success-surface",
-  warning: "border-warning-border bg-warning-surface",
-  error: "border-danger-border bg-danger-surface",
-  muted: "border-border bg-surface-subtle",
-};
-
 const usageCardVisualMeta = {
   balance: {
     Icon: WalletCards,

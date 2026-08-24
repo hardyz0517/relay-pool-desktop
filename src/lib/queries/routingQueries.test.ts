@@ -9,6 +9,8 @@ import {
   listRecentRouteDecisionsQuery,
   loadRoutingRuntimeOverlayQuery,
   loadRoutingWorkspaceSnapshotQuery,
+  routingPolicyQueryOptions,
+  routingProtectionStatusQueryOptions,
   routingQueryKeys,
   simulateRouteQuery,
 } from "./routingQueries";
@@ -21,22 +23,29 @@ describe("routing query owner", () => {
     upsertModelAlias: vi.fn(),
     deleteModelAlias: vi.fn(),
     listStationKeyHealth: vi.fn(),
+    getRoutingProtectionStatus: vi.fn(),
+    listErrorRateHistory: vi.fn(async () => ({ version: "error_rate_history_v1", enabled: false, detailAvailable: false, events: [], nextBeforeMs: null, droppedEvents: 0 })),
     loadRoutingWorkspaceSnapshot: vi.fn(async () => ({
       readModelVersion: "routing_workspace_read_model_v1",
       generatedAtMs: 1,
       policyConfig: {
-        version: 1,
+        version: 2,
         reliabilityWeight: 4000,
         responsivenessWeight: 2500,
         costWeight: 2000,
         preferenceWeight: 1500,
         maxCandidates: 64,
         explorationShareBasisPoints: 500,
-        allowDepletedFallback: false,
+         allowDepletedFallback: false,
          affinityEnabled: false,
          affinityTtlSeconds: 300,
+         maxRateMultiplier: null,
+         routingGroupFilter: "all_groups" as const,
          outboundProxyMode: "inherit",
          outboundProxyUrl: null,
+         retryFailover: { version: 2, maxTotalAttempts: 4, maxSameTargetCapacityRetries: 2, capacityRetryWaitBudgetSeconds: 2, allowCrossCapacityDomainFallback: true },
+         protectionProfile: { version: 2, enabled: false, windowMaxSamples: 64, windowSeconds: 300, minSamples: 5, failureThresholdPercent: 60, halfOpenSuccessesToClose: 2 },
+         timeoutPolicy: { version: 2, connectSeconds: 10, firstByteSeconds: 30, precommitSeconds: 60, bufferedExecutionSeconds: 300, streamIdleSeconds: 90 },
       },
       previewPolicyVersion: "intelligent_planner_v1",
       maxRateMultiplier: null,
@@ -71,14 +80,16 @@ describe("routing query owner", () => {
       traceVersion: "request_decision_trace_v1",
       requestLogId: "request-log-1",
       status: "legacy_summary" as const,
+      detailAvailability: "summary_only" as const,
       reason: "legacy_summary_only_before_cutover",
+      explanationKey: "legacy_summary_only_before_cutover",
+      policyRevision: null,
       legacySummary: null,
       timeline: [],
       planningRounds: [],
     })),
     getStationKeyHealth: vi.fn(),
     loadRoutingPolicy: vi.fn(),
-    updateRoutingPolicy: vi.fn(),
     applyRoutingPolicyDocument: vi.fn(),
     simulateRoute: vi.fn(async () => ({
       previewPolicyVersion: "intelligent_planner_v1",
@@ -126,6 +137,27 @@ describe("routing query owner", () => {
     expect(routingQueryKeys.workspaceSnapshot({ limit: 50 })).not.toEqual(
       routingQueryKeys.runtimeOverlay(),
     );
+    expect(routingQueryKeys.policy()).toEqual(["routing", "policy"]);
+    expect(routingQueryKeys.protectionStatus()).toEqual(["routing", "protectionStatus", null]);
+    expect(routingQueryKeys.protectionStatus({ model: "gpt-5-mini" })).toEqual([
+      "routing",
+      "protectionStatus",
+      "gpt-5-mini",
+    ]);
+  });
+
+  it("keeps policy and protection reads as shared query owners", async () => {
+    expect(routingPolicyQueryOptions().queryKey).toEqual(routingQueryKeys.policy());
+    expect(routingProtectionStatusQueryOptions().queryKey).toEqual(routingQueryKeys.protectionStatus());
+    await routingPolicyQueryOptions().queryFn();
+    await routingProtectionStatusQueryOptions().queryFn();
+    expect(routing.loadRoutingPolicy).toHaveBeenCalledTimes(1);
+    expect(routing.getRoutingProtectionStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the requested model to the protection read owner", async () => {
+    await routingProtectionStatusQueryOptions({ model: "gpt-5-mini" }).queryFn();
+    expect(routing.getRoutingProtectionStatus).toHaveBeenCalledWith({ model: "gpt-5-mini" });
   });
 
   it("loads runtime overlay without refreshing workspace or history read models", async () => {

@@ -77,7 +77,9 @@ describe("theme token contrast", () => {
     const variables = parseVariables(themeBlock("light"));
     expect(readToken(variables, "background")).toEqual([0, 0, 100]);
     expect(readToken(variables, "surface")).toEqual([0, 0, 100]);
-    expect(readToken(variables, "surface-subtle")[2]).toBeGreaterThanOrEqual(98.5);
+    const surfaceSubtle = readToken(variables, "surface-subtle");
+    expect(surfaceSubtle).toEqual([220, 20, 98.7]);
+    expect(hslToRgb(surfaceSubtle).map((channel) => Math.round(channel * 255))).toEqual([251, 251, 252]);
     expect(readToken(variables, "surface-inset")[2]).toBeGreaterThanOrEqual(97);
   });
 

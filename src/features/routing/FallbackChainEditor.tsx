@@ -101,7 +101,7 @@ export function FallbackChainEditor({ ruleId, action, profiles, disabled = false
                     onChange={(event) => updateTarget(index, { ...target, modelProfileId: event.target.value })}
                   >
                     <option value="">选择 Profile</option>
-                    {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.displayName || profile.canonicalModel}</option>)}
+                    {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.canonicalModel}</option>)}
                     {!profiles.some((profile) => profile.id === target.modelProfileId) && target.modelProfileId ? <option value={target.modelProfileId}>{target.modelProfileId}（当前文档）</option> : null}
                   </select>
                 )}

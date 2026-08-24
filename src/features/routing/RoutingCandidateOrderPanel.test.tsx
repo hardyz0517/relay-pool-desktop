@@ -52,16 +52,20 @@ afterEach(() => {
 });
 
 describe("RoutingCandidateOrderPanel", () => {
-  it("renders the overview order and persists drag changes", async () => {
+  it("renders the overview order, sorts by score, and persists drag changes", async () => {
     mocks.reorder.mockResolvedValue([]);
     mocks.synchronize.mockResolvedValue({ refreshed: true, errors: [] });
     const { host, root, queryClient } = renderPanel();
 
     expect(Array.from(host.querySelectorAll("[data-candidate-id]")).map((node) => node.getAttribute("data-candidate-id"))).toEqual(["key-2", "key-1", "key-3"]);
     await act(async () => {
-      await mocks.dragEnd?.({ active: { id: "key-1" }, over: { id: "key-3" } });
+      (host.querySelector('button[aria-label="按评分排序"]') as HTMLButtonElement)?.click();
     });
-    expect(mocks.reorder).toHaveBeenCalledWith(["key-2", "key-3", "key-1"]);
+    expect(Array.from(host.querySelectorAll("[data-candidate-id]")).map((node) => node.getAttribute("data-candidate-id"))).toEqual(["key-1", "key-3", "key-2"]);
+    await act(async () => {
+      await mocks.dragEnd?.({ active: { id: "key-1" }, over: { id: "key-2" } });
+    });
+    expect(mocks.reorder).toHaveBeenCalledWith(["key-3", "key-2", "key-1"]);
 
     await act(async () => root.unmount());
     queryClient.clear();
@@ -92,7 +96,7 @@ function keyPoolItems(): KeyPoolItem[] {
 function workspace(): RoutingWorkspaceView {
   return {
     settings: { routingGroupFilter: "all_groups" },
-    candidates: ["key-1", "key-2", "key-3"].map((stationKeyId) => ({ stationKeyId, keyName: stationKeyId, stationId: "station-1", stationName: "Station", endpoint: "chat_completions", priority: 0, enabled: true, schedulable: true, healthState: "ready", score: null, scoreDetails: null, currentConcurrency: null, lastSuccessAt: null, lastFailureAt: null, cooldownUntil: null, routingGroupScope: "all_groups", routingGroupMatch: true, previewEligible: true, previewRejectReasons: [], facts: [] })) as RoutingWorkspaceView["candidates"],
+    candidates: ["key-1", "key-2", "key-3"].map((stationKeyId) => ({ stationKeyId, keyName: stationKeyId, stationId: "station-1", stationName: "Station", endpoint: "chat_completions", priority: 0, enabled: true, schedulable: true, healthState: "ready", score: { "key-1": 9_600, "key-3": 8_200 }[stationKeyId] ?? null, scoreDetails: null, currentConcurrency: null, lastSuccessAt: null, lastFailureAt: null, cooldownUntil: null, routingGroupScope: "all_groups", routingGroupMatch: true, previewEligible: true, previewRejectReasons: [], facts: [] })) as RoutingWorkspaceView["candidates"],
     summary: { candidateCount: 3, previewEligibleCandidateCount: 3, previewExcludedCandidateCount: 0, cooldownCandidateCount: 0, lastDecisionAt: null },
   } as RoutingWorkspaceView;
 }

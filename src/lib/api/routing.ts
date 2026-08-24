@@ -31,12 +31,18 @@ export function listStationKeyHealth() {
   return getActiveBackendClient().routing.listStationKeyHealth();
 }
 
-export function loadRoutingPolicy() {
-  return getActiveBackendClient().routing.loadRoutingPolicy();
+export function getRoutingProtectionStatus(
+  input: import("@/lib/types/routing").RoutingProtectionStatusInput = {},
+) {
+  return getActiveBackendClient().routing.getRoutingProtectionStatus(input);
 }
 
-export function updateRoutingPolicy(input: import("@/lib/types/routing").UpdateRoutingPolicyInput) {
-  return getActiveBackendClient().routing.updateRoutingPolicy(input);
+export function listErrorRateHistory(input: import("@/lib/types/routing").ErrorRateHistoryInput = {}) {
+  return getActiveBackendClient().routing.listErrorRateHistory(input);
+}
+
+export function loadRoutingPolicy() {
+  return getActiveBackendClient().routing.loadRoutingPolicy();
 }
 
 export function applyRoutingPolicyDocument(

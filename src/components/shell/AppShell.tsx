@@ -8,7 +8,7 @@ import {
   proxyStatusQueryOptions,
   settingsQueryOptions,
 } from "@/lib/query/resourceQueries";
-import { alertingActivityQueryOptions } from "@/lib/queries/alertingQueries";
+import { unreadChangeActivityQueryOptions } from "@/lib/queries/alertingQueries";
 import { cn } from "@/lib/utils";
 import type { AppRouteId } from "@/lib/types/navigation";
 
@@ -25,11 +25,12 @@ export function AppShell({
   navigationSequence,
   onRouteChange,
 }: AppShellProps) {
-  const { data: unreadChangePage } = useQuery(alertingActivityQueryOptions({
-    recordType: "change",
-    unreadOnly: true,
-    limit: 1,
-  }));
+  const { data: unreadChangePage } = useQuery({
+    ...unreadChangeActivityQueryOptions(),
+    // Tauri events are the primary freshness path. This bounds any visual
+    // lag if an event is missed while the desktop webview is reloading.
+    refetchInterval: 30_000,
+  });
   const { data: proxyStatus = null } = useQuery(proxyStatusQueryOptions(2_000));
   const { data: settings = null } = useQuery(settingsQueryOptions());
 

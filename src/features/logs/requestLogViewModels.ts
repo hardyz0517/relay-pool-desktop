@@ -36,12 +36,12 @@ const billingModeLabels: Record<string, string> = {
   video: "按量",
 };
 
-export function formatLogTime(value: string, includeDate = false) {
+export function formatLogTime(value: string, includeDate = false, includeYear = true) {
   const date = parseTimestampLikeDate(value);
   if (Number.isNaN(date.getTime())) return value;
   return includeDate
     ? date.toLocaleString("zh-CN", {
-        year: "numeric",
+        ...(includeYear ? { year: "numeric" as const } : {}),
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",

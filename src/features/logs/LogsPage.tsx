@@ -10,6 +10,7 @@ import {
   PropertyList,
   PropertyRow,
   StatusBadge,
+  SwitchControl,
   useToast,
 } from "@/components/ui";
 import { readError } from "@/lib/errors";
@@ -63,6 +64,7 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [compactDisplay, setCompactDisplay] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const appliedDeepLinkRef = useRef<string | null>(null);
@@ -139,6 +141,13 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
       title="使用记录"
       actions={
         <>
+          <SwitchControl
+            ariaLabel="精简显示"
+            checked={compactDisplay}
+            onCheckedChange={() => setCompactDisplay((current) => !current)}
+            onLabel="精简显示"
+            offLabel="精简显示"
+          />
           <Button variant="outline" onClick={() => void refreshLogs(true)}>
             <RefreshCw className="h-4 w-4" />
             刷新
@@ -169,6 +178,7 @@ export function LogsPage({ deepLink, onOpenRoutingDeepLink }: LogsPageProps = {}
                 stationById={stationById}
                 selectedId={selected?.id ?? null}
                 onSelect={setSelectedId}
+                compact={compactDisplay}
               />
             )}
           </div>

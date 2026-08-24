@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
 import type { RoutingWorkspaceView } from "@/lib/types/routingWorkspace";
 import type { KeyPoolItem } from "@/lib/types/stationKeys";
-import type { RouteCandidateExplanation, RouteEndpointKind, RouteSimulationResult, RoutingGroupFilter } from "@/lib/types/routing";
+import type { RouteSimulationResult, RoutingGroupFilter } from "@/lib/types/routing";
 import { readError } from "@/lib/errors";
 import { getLocalAccessKey } from "@/lib/api/settings";
 import { settingsQueryOptions } from "@/lib/query/resourceQueries";
 import { useActivityQuery } from "@/lib/query/useActivityQuery";
-import { simulateRouteQuery } from "@/lib/queries/routingQueries";
+import { getRequestDecisionTraceQuery, simulateRouteQuery } from "@/lib/queries/routingQueries";
+import { routingQueryKeys } from "@/lib/queries/routingQueries";
+import type { RequestDecisionTrace } from "@/lib/types/routing";
 import type { VersionedRoutingDeepLink } from "@/lib/types/routingDeepLinks";
 import {
   buildLatestDecisionDisplay,
@@ -28,13 +30,6 @@ type LocalRoutingStatusTabProps = {
   importingCCSwitch: boolean;
   onImportToCCSwitch: () => void;
   deepLink?: VersionedRoutingDeepLink | null;
-};
-
-const endpointLabels: Record<RouteEndpointKind, string> = {
-  chat_completions: "聊天补全",
-  responses: "Responses",
-  models: "模型列表",
-  embeddings: "向量",
 };
 
 const routeMetricValueClassName = "text-[20px] leading-6 text-foreground";
@@ -58,6 +53,14 @@ export function LocalRoutingStatusTab({
   const [simulation, setSimulation] = useState<RouteSimulationResult | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [simulationError, setSimulationError] = useState<string | null>(null);
+  const decisionTraceQuery = useActivityQuery({
+    queryKey: routingQueryKeys.decisionTrace(latestDecisionId ?? "none"),
+    queryFn: () => getRequestDecisionTraceQuery(latestDecisionId!),
+    enabled: decisionDetailsOpen && Boolean(latestDecisionId),
+    staleTime: 5_000,
+    retry: false,
+    meta: { suppressGlobalErrorNotification: true },
+  });
   useEffect(() => {
     if (deepLink?.kind !== "simulate-model") return;
     setSimulationModel(deepLink.model);
@@ -241,8 +244,13 @@ export function LocalRoutingStatusTab({
         heading={candidateHeading}
       />
       <Dialog open={decisionDetailsOpen} title="最近决策原因" description={latestDecisionId ?? "暂无最近决策"} onClose={() => setDecisionDetailsOpen(false)}>
-        <div className="grid gap-2 p-4 text-sm">
-          <div>状态：{workspace.latestDecision?.status ?? "unavailable"}</div><div>原因：{workspace.latestDecision?.reason || "暂无说明"}</div><div>路由策略：{workspace.latestDecision?.policy ?? "暂无记录"}</div>
+        <div className="grid gap-3 p-4 text-sm">
+          <div>状态：{workspace.latestDecision?.status ?? "unavailable"}</div>
+          <div>原因：{workspace.latestDecision?.reason || "暂无说明"}</div>
+          <div>路由策略：{workspace.latestDecision?.policy ?? "暂无记录"}</div>
+          {decisionTraceQuery.isPending ? <div className="text-muted-foreground">正在读取决策证据...</div> : null}
+          {decisionTraceQuery.isError ? <div className="text-danger-foreground">决策证据暂不可用。</div> : null}
+          {decisionTraceQuery.data ? <DecisionTraceDetails trace={decisionTraceQuery.data} /> : null}
         </div>
       </Dialog>
       <Dialog open={simulationOpen} title="模拟路由" description="输入模型名，查看当前规则会选择哪个 密钥" onClose={() => setSimulationOpen(false)}>
@@ -256,8 +264,75 @@ export function LocalRoutingStatusTab({
   );
 }
 
-function formatEndpoint(endpoint: RouteEndpointKind) {
-  return endpointLabels[endpoint] ?? endpoint;
+const decisionActionLabels: Record<NonNullable<RequestDecisionTrace["timeline"][number]["action"]>, string> = {
+  retry_same_target: "同目标重试",
+  wait_then_replan: "等待后重新规划",
+  try_different_failure_domain: "切换故障域",
+  stop_request: "停止请求",
+};
+
+const decisionTraceStatusLabels: Record<RequestDecisionTrace["status"], string> = {
+  durable_summary: "持久化终态摘要",
+  runtime_trace: "当前会话详细轨迹",
+  legacy_summary: "兼容终态摘要",
+  trace_unavailable: "决策明细不可用",
+};
+
+export function DecisionTraceDetails({ trace }: { trace: RequestDecisionTrace }) {
+  const availabilityLabel = trace.detailAvailability === "detailed"
+    ? "详细执行证据"
+    : trace.detailAvailability === "summary_only"
+      ? "仅有终态摘要（运行时明细已不可用）"
+      : "详细步骤不可用（仅保留终态摘要）";
+  return (
+    <section className="grid gap-2 border-t border-border pt-3" aria-label="决策证据">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span>证据：{availabilityLabel}</span>
+        <span>记录状态：{decisionTraceStatusLabels[trace.status]}</span>
+        {trace.reason ? <span>终态原因：{trace.reason}</span> : null}
+        {trace.explanationKey ? <span>解释：{trace.explanationKey}</span> : null}
+        {trace.policyRevision != null ? <span>策略 revision：{trace.policyRevision}</span> : null}
+      </div>
+      {trace.legacySummary ? (
+        <div className="grid gap-1 rounded border border-border bg-surface-subtle p-2 text-xs" aria-label="终态摘要">
+          <div className="font-medium text-foreground">终态摘要</div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+            {trace.legacySummary.routePolicy ? <span>路由策略：{trace.legacySummary.routePolicy}</span> : null}
+            {trace.legacySummary.routeReason ? <span>路由原因：{trace.legacySummary.routeReason}</span> : null}
+            {trace.legacySummary.stationKeyId ? <span>目标标识：{trace.legacySummary.stationKeyId}</span> : null}
+            <span>故障转移次数：{trace.legacySummary.fallbackCount}</span>
+          </div>
+        </div>
+      ) : null}
+      {trace.detailAvailability === "unavailable" || trace.timeline.length === 0 ? (
+        <div className="text-xs text-muted-foreground">
+          {trace.detailAvailability === "unavailable"
+            ? "详细步骤不可用；仅保留终态摘要，不推断缺失步骤。"
+            : "未返回可展示的步骤，不推断缺失步骤。"}
+        </div>
+      ) : (
+        <ol className="grid gap-2">
+          {trace.timeline.map((item) => (
+            <li key={`${item.ordinal}-${item.detailCode}`} className="rounded border border-border bg-surface-subtle p-2 text-xs">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-medium text-foreground">
+                <span>{item.ordinal}. {item.title}</span>
+                {item.action ? <span>动作：{decisionActionLabels[item.action] ?? "未知动作"}</span> : null}
+                {item.attemptOrdinal != null ? <span>尝试：{item.attemptOrdinal}</span> : null}
+              </div>
+              <div className="mt-1 text-muted-foreground">{item.summary}</div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+                {item.remainingAttempts != null ? <span>剩余尝试：{item.remainingAttempts}</span> : null}
+                {item.remainingWaitBudgetMs != null ? <span>等待预算：{item.remainingWaitBudgetMs} ms</span> : null}
+                {item.policyRevision != null ? <span>策略 revision：{item.policyRevision}</span> : null}
+                {item.failureDomain ? <span>故障域：{item.failureDomain}</span> : null}
+                <span>{item.detailAvailability === "detailed" ? "字段完整" : "摘要字段"}</span>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
 }
 
 function formatRoutingGroupFilter(filter: RoutingGroupFilter) {

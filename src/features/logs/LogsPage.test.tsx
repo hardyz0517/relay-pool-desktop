@@ -29,7 +29,9 @@ vi.mock("@/lib/query/useActivityQuery", () => ({
 }));
 
 vi.mock("./RequestLogTable", () => ({
-  RequestLogTable: () => <div data-testid="request-log-table" />,
+  RequestLogTable: ({ compact }: { compact: boolean }) => (
+    <div data-testid="request-log-table" data-compact={compact} />
+  ),
   RequestLogPagination: ({ pageInfo, onPageChange }: { pageInfo: { page: number }; onPageChange: (page: number) => void }) => (
     <button type="button" data-testid="request-log-page-two" onClick={() => onPageChange(2)}>
       page {pageInfo.page}
@@ -82,5 +84,26 @@ describe("LogsPage pagination", () => {
     act(render);
 
     expect(host.querySelector('[data-testid="request-log-page-two"]')?.textContent).toBe("page 2");
+  });
+
+  it("enables compact display by default and lets the user restore all columns", () => {
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <LogsPage />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+
+    const compactSwitch = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="精简显示"]')!;
+    expect(compactSwitch.getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector('[data-testid="request-log-table"]')?.getAttribute("data-compact")).toBe("true");
+
+    act(() => compactSwitch.click());
+
+    expect(compactSwitch.getAttribute("aria-checked")).toBe("false");
+    expect(host.querySelector('[data-testid="request-log-table"]')?.getAttribute("data-compact")).toBe("false");
   });
 });

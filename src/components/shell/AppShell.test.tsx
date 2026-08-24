@@ -67,6 +67,7 @@ describe("AppShell change-center unread badge", () => {
     expect(mockedUseQuery).toHaveBeenCalledWith(
       expect.objectContaining({
         queryKey: ["alertingActivity", { limit: 1, recordType: "change", unreadOnly: true }],
+        refetchInterval: 30_000,
       }),
     );
   });
