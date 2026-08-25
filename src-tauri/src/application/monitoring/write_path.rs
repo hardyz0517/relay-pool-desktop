@@ -387,6 +387,7 @@ fn health_outcome(
         ProbeOutcome::Unavailable => match failure_kind {
             Some(FailureKind::RateLimit) => HealthObservationOutcome::Cooldown,
             Some(FailureKind::Auth) => HealthObservationOutcome::HardFail,
+            Some(FailureKind::BudgetExceeded) => HealthObservationOutcome::Neutral,
             _ => HealthObservationOutcome::ObserveFailure,
         },
     }

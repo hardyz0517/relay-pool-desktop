@@ -408,6 +408,21 @@ struct RollupAggregate {
 
 impl RollupAggregate {
     fn push(&mut self, outcome: &str, failure_kind: Option<&str>, latency_ms: Option<i64>) {
+        if let Some(failure_kind) = failure_kind.filter(|kind| {
+            matches!(
+                *kind,
+                "budget_exceeded"
+                    | "balance_depleted"
+                    | "quota_exhausted"
+                    | "subscription_unavailable"
+            )
+        }) {
+            *self
+                .failure_counts
+                .entry(failure_kind.to_string())
+                .or_default() += 1;
+            return;
+        }
         match outcome {
             "available" => {
                 self.total_count += 1;

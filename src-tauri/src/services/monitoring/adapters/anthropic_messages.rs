@@ -10,6 +10,7 @@ use crate::{
             },
             http_mapping::classify_http_status,
             openai_chat::{integer_field, is_json, is_sse, sse_data_events, string_field},
+            provider_error::classify_provider_error,
         },
         challenge::ChallengeValidator,
     },
@@ -47,7 +48,15 @@ impl ProtocolAdapter for AnthropicMessagesAdapter {
         if body.len() > limits.max_response_bytes {
             return unavailable(http_status, FailureKind::ProtocolMismatch, body.len());
         }
-        if let Some(failure_kind) = classify_http_status(http_status) {
+        if let Some(failure_kind) = classify_provider_error(
+            ProtocolKind::AnthropicMessages,
+            http_status,
+            content_type,
+            body,
+            crate::services::proxy::adapters::error_envelope::FailureTransport::Http,
+        )
+        .or_else(|| classify_http_status(http_status))
+        {
             return unavailable(http_status, failure_kind, body.len());
         }
         if self.stream {
@@ -67,6 +76,15 @@ fn parse_json(
 ) -> ParsedProbeResponse {
     if !is_json(content_type) || body.is_empty() {
         return unavailable(http_status, FailureKind::ProtocolMismatch, body.len());
+    }
+    if let Some(failure_kind) = classify_provider_error(
+        ProtocolKind::AnthropicMessages,
+        http_status,
+        content_type,
+        body,
+        crate::services::proxy::adapters::error_envelope::FailureTransport::Http,
+    ) {
+        return unavailable(http_status, failure_kind, body.len());
     }
     let value = match serde_json::from_slice::<Value>(body) {
         Ok(value) => value,

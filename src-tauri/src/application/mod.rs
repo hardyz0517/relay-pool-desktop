@@ -35,5 +35,6 @@ pub(crate) mod routing_policy_control_plane;
 pub(crate) mod routing_policy_read;
 pub(crate) mod runtime_diagnostics;
 pub(crate) mod settings;
+pub(crate) mod spendability;
 pub(crate) mod station_capacity_domains;
 pub(crate) mod stations;

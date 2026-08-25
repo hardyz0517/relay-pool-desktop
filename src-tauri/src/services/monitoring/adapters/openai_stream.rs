@@ -5,6 +5,7 @@ use crate::{
             adapters::{
                 contract::{validate_output_text, ParsedProbeResponse, ProbeUsage, ResponseLimits},
                 http_mapping::classify_http_status,
+                provider_error::classify_provider_error,
             },
             challenge::ChallengeValidator,
         },
@@ -26,6 +27,7 @@ pub(crate) struct IncrementalOpenAiStream {
     decoder: SseDecoder,
     reducer: OpenAiReducer,
     failure: Option<StreamError>,
+    failure_kind_override: Option<FailureKind>,
 }
 
 enum OpenAiReducer {
@@ -64,6 +66,7 @@ impl IncrementalOpenAiStream {
             }),
             reducer,
             failure: None,
+            failure_kind_override: None,
         })
     }
 
@@ -90,6 +93,24 @@ impl IncrementalOpenAiStream {
                 OpenAiReducer::Responses(reducer) => reducer.push(&event),
             };
             if let Err(error) = result {
+                if matches!(error, StreamError::UpstreamFailedEvent) {
+                    let transport = match self.protocol_kind {
+                        ProtocolKind::OpenAiChat => {
+                            crate::services::proxy::adapters::error_envelope::FailureTransport::ChatSseError
+                        }
+                        ProtocolKind::OpenAiResponses => {
+                            crate::services::proxy::adapters::error_envelope::FailureTransport::ResponsesSseFailure
+                        }
+                        _ => crate::services::proxy::adapters::error_envelope::FailureTransport::Http,
+                    };
+                    self.failure_kind_override = classify_provider_error(
+                        self.protocol_kind,
+                        200,
+                        Some("application/json"),
+                        event.data.as_bytes(),
+                        transport,
+                    );
+                }
                 self.failure = Some(error);
                 return;
             }
@@ -127,6 +148,12 @@ impl IncrementalOpenAiStream {
             );
         }
         if let Some(error) = self.failure {
+            if let Some(failure_kind) = self.failure_kind_override {
+                return (
+                    unavailable(protocol_kind, http_status, failure_kind, response_bytes),
+                    Some(failure_kind.as_str().to_string()),
+                );
+            }
             return stream_error_response(protocol_kind, http_status, response_bytes, error);
         }
         match self.decoder.finish() {

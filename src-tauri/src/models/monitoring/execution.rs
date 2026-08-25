@@ -116,6 +116,17 @@ pub struct MonitorTargetResult {
 }
 
 impl MonitorTargetResult {
+    pub fn availability_eligible(&self) -> bool {
+        !matches!(
+            self.terminal_failure_kind,
+            Some(FailureKind::BudgetExceeded)
+        )
+    }
+
+    pub fn latency_eligible(&self) -> bool {
+        self.availability_eligible()
+    }
+
     pub fn from_attempts(
         execution_id: impl Into<String>,
         station_id: impl Into<String>,
@@ -223,9 +234,10 @@ impl AvailabilitySummary {
         let denominator = results
             .iter()
             .filter(|result| {
-                result
-                    .terminal_outcome
-                    .contributes_to_availability_denominator()
+                result.availability_eligible()
+                    && result
+                        .terminal_outcome
+                        .contributes_to_availability_denominator()
             })
             .count() as u32;
         let route_available_count = results

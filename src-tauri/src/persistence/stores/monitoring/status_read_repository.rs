@@ -184,28 +184,34 @@ impl MonitoringStatusQueryRepository {
                 m.enabled,
                 m.pause_on_zero_balance,
                 CASE
-                    WHEN m.pause_on_zero_balance = 1
-                     AND COALESCE(
-                         (
-                             SELECT b.value
-                             FROM balance_snapshots b
-                             WHERE m.target_type = 'station_key'
-                               AND b.station_key_id = m.station_key_id
-                               AND b.scope = 'station_key'
-                             ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                             LIMIT 1
-                         ),
-                         (
-                             SELECT b.value
-                             FROM balance_snapshots b
-                             WHERE b.station_id = m.station_id
-                               AND b.station_key_id IS NULL
-                               AND b.scope = 'station'
-                             ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                             LIMIT 1
-                         )
-                     ) <= 0
-                    THEN 1 ELSE 0
+                    WHEN m.pause_on_zero_balance = 1 AND (
+                        (m.target_type = 'station' AND LOWER(TRIM(COALESCE((
+                            SELECT b.status FROM balance_snapshots b
+                            WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                              AND b.scope IN ('station', 'station_account')
+                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                        ), ''))) IN ('depleted', 'exhausted', 'empty'))
+                        OR (m.target_type = 'station_key'
+                            AND LOWER(TRIM(COALESCE((
+                                SELECT b.status FROM balance_snapshots b
+                                WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                                  AND b.scope IN ('station', 'station_account')
+                                ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                            ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
+                            AND (
+                                LOWER(TRIM(COALESCE((
+                                    SELECT b.status FROM balance_snapshots b
+                                    WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                                      AND b.scope IN ('station', 'station_account')
+                                    ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                                ), ''))) IN ('depleted', 'exhausted', 'empty')
+                                OR LOWER(TRIM(COALESCE((
+                                    SELECT b.status FROM balance_snapshots b
+                                    WHERE b.station_key_id = m.station_key_id AND b.scope = 'station_key'
+                                    ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                                ), ''))) IN ('depleted', 'exhausted', 'empty')
+                            ))
+                    ) THEN 1 ELSE 0
                 END AS balance_paused,
                 m.protocol_kind,
                 m.client_profile_id,
@@ -331,6 +337,8 @@ impl MonitoringStatusQueryRepository {
                     WHERE tr.monitor_id = ?1
                       AND tr.station_key_id = ?2
                       AND tr.finished_at_ms IS NOT NULL
+                      AND COALESCE(tr.terminal_failure_kind, '') NOT IN
+                          ('budget_exceeded', 'balance_depleted', 'quota_exhausted', 'subscription_unavailable')
                     ORDER BY tr.finished_at_ms DESC, tr.id DESC
                     LIMIT ?3
                     "#,
@@ -363,6 +371,8 @@ impl MonitoringStatusQueryRepository {
                     WHERE tr.monitor_id = ?1
                       AND tr.station_key_id IS NULL
                       AND tr.finished_at_ms IS NOT NULL
+                      AND COALESCE(tr.terminal_failure_kind, '') NOT IN
+                          ('budget_exceeded', 'balance_depleted', 'quota_exhausted', 'subscription_unavailable')
                     ORDER BY tr.finished_at_ms DESC, tr.id DESC
                     LIMIT ?2
                     "#,

@@ -366,28 +366,34 @@ async fn list_monitors(
         SELECT m.id, m.name, m.target_type, m.station_id, m.station_key_id, m.template_id,
                m.enabled, m.pause_on_zero_balance,
                CASE
-                   WHEN m.pause_on_zero_balance = 1
-                    AND COALESCE(
-                        (
-                            SELECT b.value
-                            FROM balance_snapshots b
-                            WHERE m.target_type = 'station_key'
-                              AND b.station_key_id = m.station_key_id
-                              AND b.scope = 'station_key'
-                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                            LIMIT 1
-                        ),
-                        (
-                            SELECT b.value
-                            FROM balance_snapshots b
-                            WHERE b.station_id = m.station_id
-                              AND b.station_key_id IS NULL
-                              AND b.scope = 'station'
-                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                            LIMIT 1
-                        )
-                    ) <= 0
-                   THEN 1 ELSE 0
+                   WHEN m.pause_on_zero_balance = 1 AND (
+                       (m.target_type = 'station' AND LOWER(TRIM(COALESCE((
+                           SELECT b.status FROM balance_snapshots b
+                           WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                             AND b.scope IN ('station', 'station_account')
+                           ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                       ), ''))) IN ('depleted', 'exhausted', 'empty'))
+                       OR (m.target_type = 'station_key'
+                           AND LOWER(TRIM(COALESCE((
+                               SELECT b.status FROM balance_snapshots b
+                               WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                                 AND b.scope IN ('station', 'station_account')
+                               ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                           ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
+                           AND (
+                               LOWER(TRIM(COALESCE((
+                                   SELECT b.status FROM balance_snapshots b
+                                   WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                                     AND b.scope IN ('station', 'station_account')
+                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                               ), ''))) IN ('depleted', 'exhausted', 'empty')
+                               OR LOWER(TRIM(COALESCE((
+                                   SELECT b.status FROM balance_snapshots b
+                                   WHERE b.station_key_id = m.station_key_id AND b.scope = 'station_key'
+                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                               ), ''))) IN ('depleted', 'exhausted', 'empty')
+                           ))
+                   ) THEN 1 ELSE 0
                END AS balance_paused,
                m.interval_seconds, m.jitter_seconds, m.timeout_seconds,
                max_concurrency, consecutive_failure_threshold, fallback_models_json,
@@ -434,28 +440,34 @@ async fn monitor_by_id(
         SELECT m.id, m.name, m.target_type, m.station_id, m.station_key_id, m.template_id,
                m.enabled, m.pause_on_zero_balance,
                CASE
-                   WHEN m.pause_on_zero_balance = 1
-                    AND COALESCE(
-                        (
-                            SELECT b.value
-                            FROM balance_snapshots b
-                            WHERE m.target_type = 'station_key'
-                              AND b.station_key_id = m.station_key_id
-                              AND b.scope = 'station_key'
-                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                            LIMIT 1
-                        ),
-                        (
-                            SELECT b.value
-                            FROM balance_snapshots b
-                            WHERE b.station_id = m.station_id
-                              AND b.station_key_id IS NULL
-                              AND b.scope = 'station'
-                            ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC
-                            LIMIT 1
-                        )
-                    ) <= 0
-                   THEN 1 ELSE 0
+                   WHEN m.pause_on_zero_balance = 1 AND (
+                       (m.target_type = 'station' AND LOWER(TRIM(COALESCE((
+                           SELECT b.status FROM balance_snapshots b
+                           WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                             AND b.scope IN ('station', 'station_account')
+                           ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                       ), ''))) IN ('depleted', 'exhausted', 'empty'))
+                       OR (m.target_type = 'station_key'
+                           AND LOWER(TRIM(COALESCE((
+                               SELECT b.status FROM balance_snapshots b
+                               WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                                 AND b.scope IN ('station', 'station_account')
+                               ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                           ), ''))) NOT IN ('normal', 'available', 'usable', 'low', 'warning')
+                           AND (
+                               LOWER(TRIM(COALESCE((
+                                   SELECT b.status FROM balance_snapshots b
+                                   WHERE b.station_id = m.station_id AND b.station_key_id IS NULL
+                                     AND b.scope IN ('station', 'station_account')
+                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                               ), ''))) IN ('depleted', 'exhausted', 'empty')
+                               OR LOWER(TRIM(COALESCE((
+                                   SELECT b.status FROM balance_snapshots b
+                                   WHERE b.station_key_id = m.station_key_id AND b.scope = 'station_key'
+                                   ORDER BY b.updated_at DESC, b.created_at DESC, b.id DESC LIMIT 1
+                               ), ''))) IN ('depleted', 'exhausted', 'empty')
+                           ))
+                   ) THEN 1 ELSE 0
                END AS balance_paused,
                m.interval_seconds, m.jitter_seconds, m.timeout_seconds,
                max_concurrency, consecutive_failure_threshold, fallback_models_json,

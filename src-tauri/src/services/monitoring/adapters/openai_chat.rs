@@ -10,6 +10,7 @@ use crate::{
             },
             http_mapping::classify_http_status,
             openai_stream::IncrementalOpenAiStream,
+            provider_error::classify_provider_error,
         },
         challenge::ChallengeValidator,
     },
@@ -73,7 +74,15 @@ pub(crate) fn parse_chat_response(
             body.len(),
         );
     }
-    if let Some(failure_kind) = classify_http_status(http_status) {
+    if let Some(failure_kind) = classify_provider_error(
+        protocol_kind,
+        http_status,
+        content_type,
+        body,
+        crate::services::proxy::adapters::error_envelope::FailureTransport::Http,
+    )
+    .or_else(|| classify_http_status(http_status))
+    {
         return unavailable(protocol_kind, http_status, failure_kind, body.len());
     }
     if stream {
@@ -124,6 +133,15 @@ fn parse_chat_json(
             )
         }
     };
+    if let Some(failure_kind) = classify_provider_error(
+        protocol_kind,
+        http_status,
+        content_type,
+        body,
+        crate::services::proxy::adapters::error_envelope::FailureTransport::Http,
+    ) {
+        return unavailable(protocol_kind, http_status, failure_kind, body.len());
+    }
     if value.get("error").is_some() || value.get("choices").is_none() {
         return unavailable(
             protocol_kind,
@@ -200,6 +218,15 @@ fn parse_chat_stream(
                 )
             }
         };
+        if let Some(failure_kind) = classify_provider_error(
+            protocol_kind,
+            http_status,
+            Some("application/json"),
+            event.as_bytes(),
+            crate::services::proxy::adapters::error_envelope::FailureTransport::ChatSseError,
+        ) {
+            return unavailable(protocol_kind, http_status, failure_kind, body.len());
+        }
         if value.get("error").is_some() {
             return unavailable(
                 protocol_kind,

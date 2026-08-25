@@ -183,7 +183,9 @@ fn classify(parsed: ParsedErrorEnvelope, profile: ProviderRuleProfile) -> Upstre
                 confidence = EvidenceConfidence::Confirmed;
             }
             ErrorCodeKey::InsufficientQuota
-                if matches!(parsed.status, 402 | 429) || trusted_sse_failure =>
+                if matches!(parsed.status, 402 | 429)
+                    || trusted_sse_failure
+                    || parsed.flags.error_on_success_status =>
             {
                 candidates.clear();
                 candidates.push(SemanticCandidate::InsufficientQuota);

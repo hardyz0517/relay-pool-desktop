@@ -6,6 +6,7 @@ pub mod http_mapping;
 pub mod openai_chat;
 pub mod openai_responses;
 pub(crate) mod openai_stream;
+pub(crate) mod provider_error;
 #[cfg(test)]
 pub mod sse;
 pub mod xai_grok;

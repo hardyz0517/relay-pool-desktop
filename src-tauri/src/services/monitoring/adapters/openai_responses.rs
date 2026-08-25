@@ -10,6 +10,7 @@ use crate::{
                 http_mapping::classify_http_status,
                 openai_chat::is_json,
                 openai_stream::IncrementalOpenAiStream,
+                provider_error::classify_provider_error,
             },
             challenge::ChallengeValidator,
         },
@@ -54,7 +55,15 @@ impl ProtocolAdapter for OpenAiResponsesAdapter {
                 body.len(),
             );
         }
-        if let Some(failure_kind) = classify_http_status(http_status) {
+        if let Some(failure_kind) = classify_provider_error(
+            ProtocolKind::OpenAiResponses,
+            http_status,
+            content_type,
+            body,
+            crate::services::proxy::adapters::error_envelope::FailureTransport::Http,
+        )
+        .or_else(|| classify_http_status(http_status))
+        {
             return unavailable(
                 ProtocolKind::OpenAiResponses,
                 http_status,
@@ -131,6 +140,20 @@ fn parse_responses_stream(
             b"\n\n".as_slice()
         };
         consumer.consume(eof_separator);
+    }
+    if let Some(failure_kind) = classify_provider_error(
+        ProtocolKind::OpenAiResponses,
+        http_status,
+        content_type,
+        body,
+        crate::services::proxy::adapters::error_envelope::FailureTransport::Http,
+    ) {
+        return unavailable(
+            ProtocolKind::OpenAiResponses,
+            http_status,
+            failure_kind,
+            body.len(),
+        );
     }
     consumer.finish(http_status, content_type, validator).0
 }
