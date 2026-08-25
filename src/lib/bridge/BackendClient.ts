@@ -38,6 +38,10 @@ import type {
 import type {
   BalanceSnapshot,
   ModelBasePrice,
+  ModelPriceCatalogEntry,
+  ModelPriceSyncConfig,
+  ModelPriceSyncResult,
+  ModelPriceSyncState,
   PricingRule,
   RequestKind,
   ResolvedPricingContext,
@@ -275,8 +279,15 @@ export type EconomicsDomainClient = {
     requestKind?: RequestKind,
   ): Promise<ResolvedPricingContext>;
   listModelBasePrices(): Promise<ModelBasePrice[]>;
+  listModelPriceSyncCatalog(): Promise<ModelPriceCatalogEntry[]>;
   upsertModelBasePrice(input: UpsertModelBasePriceInput): Promise<ModelBasePrice>;
+  deleteModelBasePrice(id: string): Promise<void>;
   resetModelBasePricesToBuiltins(): Promise<ModelBasePrice[]>;
+  getModelPriceSyncState(): Promise<ModelPriceSyncState>;
+  saveModelPriceSyncConfig(input: ModelPriceSyncConfig): Promise<ModelPriceSyncState>;
+  syncModelPrices(force?: boolean): Promise<ModelPriceSyncResult>;
+  reloadModelPriceCatalog(): Promise<ModelPriceSyncState>;
+  openModelPriceCatalogDirectory(): Promise<void>;
   listBalanceSnapshots(): Promise<BalanceSnapshot[]>;
   listCurrentStationBalanceSnapshots(): Promise<BalanceSnapshot[]>;
   listBalanceSnapshotsForStation(stationId: string): Promise<BalanceSnapshot[]>;

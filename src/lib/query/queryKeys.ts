@@ -25,6 +25,7 @@ export const queryKeys = {
   captureSessionStatus: (stationId: string) => ["captureSessionStatus", stationId] as const,
   keyPool: ["keyPool"] as const,
   modelBasePrices: ["modelBasePrices"] as const,
+  modelPriceSyncState: ["modelPriceSyncState"] as const,
   balanceSnapshots: ["balanceSnapshots"] as const,
   channelMonitoring: ["channelMonitoring"] as const,
   pricing: ["pricing"] as const,

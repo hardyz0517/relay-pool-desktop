@@ -237,7 +237,15 @@ impl PricingStore {
                        p.source_checked_at, p.built_in
                 FROM model_base_prices p
                 WHERE p.enabled = 1 AND lower(p.model) = lower(?2)
-                ORDER BY p.built_in DESC, p.updated_at DESC, p.created_at DESC, p.id DESC
+                ORDER BY
+                    CASE
+                        WHEN p.built_in = 0 AND p.source_label <> 'models.dev' THEN 0
+                        WHEN p.source_label = 'models.dev' THEN 1
+                        ELSE 2
+                    END,
+                    p.updated_at DESC,
+                    p.created_at DESC,
+                    p.id DESC
                 LIMIT 1
             )
             SELECT k.station_id,
@@ -387,7 +395,15 @@ impl PricingStore {
         builder.push(
             r#"
                 )
-                ORDER BY p.built_in DESC, p.updated_at DESC, p.created_at DESC, p.id DESC
+                ORDER BY
+                    CASE
+                        WHEN p.built_in = 0 AND p.source_label <> 'models.dev' THEN 0
+                        WHEN p.source_label = 'models.dev' THEN 1
+                        ELSE 2
+                    END,
+                    p.updated_at DESC,
+                    p.created_at DESC,
+                    p.id DESC
                 LIMIT 1
             )
             SELECT k.station_key_id AS resolved_station_key_id,
@@ -614,6 +630,36 @@ impl PricingStore {
         model_base_price_by_id(write.connection(), &row.id).await
     }
 
+    pub(crate) async fn delete_model_base_price(
+        &self,
+        write: &mut WriteSession,
+        id: &str,
+    ) -> Result<(), PersistenceError> {
+        let deleted = sqlx::query("DELETE FROM model_base_prices WHERE id = ?1")
+            .bind(id)
+            .execute(write.connection())
+            .await?
+            .rows_affected();
+        if deleted == 0 {
+            return Err(PersistenceError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn delete_model_base_prices_if_present(
+        &self,
+        write: &mut WriteSession,
+        ids: &[String],
+    ) -> Result<(), PersistenceError> {
+        for id in ids {
+            sqlx::query("DELETE FROM model_base_prices WHERE id = ?1")
+                .bind(id)
+                .execute(write.connection())
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn reset_model_base_prices_to_builtins(
         &self,
         write: &mut WriteSession,
@@ -638,32 +684,94 @@ impl PricingStore {
         list_model_base_prices_from_connection(write.connection(), limit).await
     }
 
+    pub(crate) async fn replace_models_dev_prices(
+        &self,
+        write: &mut WriteSession,
+        rows: &[NewModelBasePriceRow],
+    ) -> Result<(), PersistenceError> {
+        let mut ids = HashSet::with_capacity(rows.len());
+        for row in rows {
+            validate_model_base_price(&row.input)?;
+            if row.input.built_in || row.input.source_label.trim() != "models.dev" {
+                return Err(PersistenceError::ConstraintViolation);
+            }
+            if row.id.trim().is_empty() || !ids.insert(row.id.as_str()) {
+                return Err(PersistenceError::ConstraintViolation);
+            }
+        }
+        sqlx::query(
+            "DELETE FROM model_base_prices WHERE built_in = 0 AND source_label = 'models.dev'",
+        )
+        .execute(write.connection())
+        .await?;
+        for row in rows {
+            self.upsert_model_base_price(write, row.clone()).await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn upsert_models_dev_prices(
+        &self,
+        write: &mut WriteSession,
+        rows: &[NewModelBasePriceRow],
+    ) -> Result<(), PersistenceError> {
+        let mut ids = HashSet::with_capacity(rows.len());
+        for row in rows {
+            validate_model_base_price(&row.input)?;
+            if row.input.built_in || row.input.source_label.trim() != "models.dev" {
+                return Err(PersistenceError::ConstraintViolation);
+            }
+            if row.id.trim().is_empty() || !ids.insert(row.id.as_str()) {
+                return Err(PersistenceError::ConstraintViolation);
+            }
+        }
+        for row in rows {
+            sqlx::query(
+                r#"
+                DELETE FROM model_base_prices
+                WHERE built_in = 0
+                  AND source_label = 'models.dev'
+                  AND lower(model) = lower(?1)
+                  AND id <> ?2
+                "#,
+            )
+            .bind(&row.input.model)
+            .bind(&row.id)
+            .execute(write.connection())
+            .await?;
+            self.upsert_model_base_price(write, row.clone()).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn ensure_builtin_model_base_prices(
         &self,
         write: &mut WriteSession,
         rows: &[NewModelBasePriceRow],
     ) -> Result<bool, PersistenceError> {
         validate_builtin_model_base_price_rows(rows)?;
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT EXISTS(SELECT 1 FROM model_base_prices WHERE built_in = 1 LIMIT 1)",
-        )
-        .fetch_one(write.connection())
-        .await?
-            != 0;
-        if exists {
-            return Ok(false);
+        let mut prune = QueryBuilder::<Sqlite>::new(
+            "DELETE FROM model_base_prices WHERE built_in = 1 AND id NOT IN (",
+        );
+        {
+            let mut ids = prune.separated(", ");
+            for row in rows {
+                ids.push_bind(&row.id);
+            }
         }
-
+        prune.push(")");
+        let removed = prune
+            .build()
+            .execute(write.connection())
+            .await?
+            .rows_affected();
         let inserted = insert_builtin_model_base_price_rows(
             write.connection(),
             rows,
             BuiltinConflictPolicy::PreserveExisting,
         )
         .await?;
-        if inserted != rows.len() as u64 {
-            return Err(PersistenceError::ConstraintViolation);
-        }
-        Ok(true)
+        Ok(inserted > 0 || removed > 0)
     }
 
     pub(crate) async fn upsert_balance_snapshot(
@@ -1534,6 +1642,21 @@ mod tests {
         }
     }
 
+    fn models_dev_row(
+        id: &str,
+        provider: &str,
+        model: &str,
+        input_price: f64,
+    ) -> NewModelBasePriceRow {
+        let mut row = builtin_row(id);
+        row.input.provider = provider.to_string();
+        row.input.model = model.to_string();
+        row.input.input_price = Some(input_price);
+        row.input.source_label = "models.dev".to_string();
+        row.input.built_in = false;
+        row
+    }
+
     async fn insert_custom_price(runtime: &PersistenceRuntime, id: &str) {
         let id = id.to_string();
         runtime
@@ -1557,6 +1680,31 @@ mod tests {
             })
             .await
             .expect("insert custom price");
+    }
+
+    async fn insert_pricing_context(runtime: &PersistenceRuntime) {
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO stations (
+                            id, name, station_type, website_url, api_base_url, created_at, updated_at
+                        ) VALUES ('station-1', 'Station', 'openai_compatible',
+                                  'https://example.test', 'https://example.test/v1', '1', '1')
+                        "#,
+                    )
+                    .execute(write.connection())
+                    .await?;
+                    sqlx::query("INSERT INTO station_keys (id, station_id) VALUES ('key-1', 'station-1')")
+                        .execute(write.connection())
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("insert pricing context");
     }
 
     #[tokio::test]
@@ -1630,7 +1778,7 @@ mod tests {
             .expect("conflict runtime");
         insert_custom_price(&conflict_runtime, "builtin-1").await;
         let conflict_rows = vec![builtin_row("builtin-1")];
-        let error = conflict_runtime
+        let inserted = conflict_runtime
             .handle()
             .write(|write| {
                 Box::pin(async move {
@@ -1640,8 +1788,8 @@ mod tests {
                 })
             })
             .await
-            .expect_err("custom collision must fail closed");
-        assert!(matches!(error, PersistenceError::ConstraintViolation));
+            .expect("custom collision should be preserved");
+        assert!(!inserted);
 
         let mut read = conflict_runtime.handle().begin_read().await.expect("read");
         let state = sqlx::query_as::<_, (String, i64)>(
@@ -1651,5 +1799,147 @@ mod tests {
         .await
         .expect("collision row");
         assert_eq!(state, ("custom".to_string(), 0));
+    }
+
+    #[tokio::test]
+    async fn selected_models_dev_upserts_preserve_other_models_and_replace_duplicate_ids() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("pricing.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        let store = PricingStore;
+        let initial = vec![
+            models_dev_row("models-dev-openai-same", "openai", "same", 1.0),
+            models_dev_row("models-dev-relay-untouched", "relay", "untouched", 3.0),
+        ];
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move { store.replace_models_dev_prices(write, &initial).await })
+            })
+            .await
+            .expect("initial full sync");
+
+        let selected = vec![models_dev_row(
+            "models-dev-deepseek-same",
+            "deepseek",
+            "same",
+            2.0,
+        )];
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move { store.upsert_models_dev_prices(write, &selected).await })
+            })
+            .await
+            .expect("selected sync");
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        let rows = sqlx::query_as::<_, (String, String, String, Option<f64>)>(
+            r#"
+            SELECT id, provider, model, input_price
+            FROM model_base_prices
+            WHERE source_label = 'models.dev'
+            ORDER BY model
+            "#,
+        )
+        .fetch_all(read.connection())
+        .await
+        .expect("synced rows");
+
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|(id, provider, model, price)| {
+            id == "models-dev-deepseek-same"
+                && provider == "deepseek"
+                && model == "same"
+                && *price == Some(2.0)
+        }));
+        assert!(rows
+            .iter()
+            .any(|(_, _, model, price)| { model == "untouched" && *price == Some(3.0) }));
+    }
+
+    #[tokio::test]
+    async fn pricing_resolution_prefers_manual_then_synced_then_builtin_prices() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("pricing.sqlite3");
+        let runtime = PersistenceRuntime::initialize_new(&path)
+            .await
+            .expect("runtime");
+        insert_pricing_context(&runtime).await;
+        let store = PricingStore;
+
+        let mut builtin = builtin_row("builtin-price");
+        builtin.now = "100".to_string();
+        builtin.input.input_price = Some(1.0);
+
+        let mut synced = builtin_row("synced-price");
+        synced.now = "200".to_string();
+        synced.input.built_in = false;
+        synced.input.source_label = "models.dev".to_string();
+        synced.input.input_price = Some(2.0);
+
+        let mut manual = builtin_row("manual-price");
+        manual.now = "300".to_string();
+        manual.input.built_in = false;
+        manual.input.source_label = "Manual".to_string();
+        manual.input.input_price = Some(3.0);
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    store.upsert_model_base_price(write, builtin).await?;
+                    store.upsert_model_base_price(write, synced).await?;
+                    store.upsert_model_base_price(write, manual).await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("insert prices");
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        let manual_resolution = store
+            .resolve_station_key_pricing(&mut read, "key-1", "gpt-test", "400")
+            .await
+            .expect("resolve")
+            .expect("pricing context");
+        assert_eq!(
+            manual_resolution
+                .model_base_price
+                .expect("manual price")
+                .input_price,
+            Some(3.0)
+        );
+        drop(read);
+
+        runtime
+            .handle()
+            .write(|write| {
+                Box::pin(async move {
+                    sqlx::query("DELETE FROM model_base_prices WHERE id = 'manual-price'")
+                        .execute(write.connection())
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .expect("remove manual price");
+
+        let mut read = runtime.handle().begin_read().await.expect("read");
+        let synced_resolution = store
+            .resolve_station_key_pricing(&mut read, "key-1", "gpt-test", "400")
+            .await
+            .expect("resolve")
+            .expect("pricing context");
+        assert_eq!(
+            synced_resolution
+                .model_base_price
+                .expect("synced price")
+                .input_price,
+            Some(2.0)
+        );
     }
 }

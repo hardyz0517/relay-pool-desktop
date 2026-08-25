@@ -18,7 +18,7 @@ pub const GENERATOR_VERSION: u32 = 1;
 pub const IPC_CONTRACT_VERSION: u32 = 1;
 // Updated by `pnpm generate:bindings` whenever the compiled command/type contract changes.
 pub const IPC_BINDING_HASH: &str =
-    "cab229934f97423d2f516c6cd528dcff15182297ee1e835e21db766079d3f123";
+    "b9c693b568acacfa3e4830c9f55a78673babf6163b5ff410f9130c926ec4dc97";
 
 #[cfg_attr(
     not(test),
@@ -206,8 +206,15 @@ macro_rules! ipc_command_registry {
             simulate_route => $crate::commands::routing_health::simulate_route,
             list_pricing_rules => $crate::commands::pricing::list_pricing_rules,
             list_model_base_prices => $crate::commands::pricing::list_model_base_prices,
+            list_model_price_sync_catalog => $crate::commands::pricing::list_model_price_sync_catalog,
             upsert_model_base_price => $crate::commands::pricing::upsert_model_base_price,
+            delete_model_base_price => $crate::commands::pricing::delete_model_base_price,
             reset_model_base_prices_to_builtins => $crate::commands::pricing::reset_model_base_prices_to_builtins,
+            get_model_price_sync_state => $crate::commands::pricing::get_model_price_sync_state,
+            save_model_price_sync_config => $crate::commands::pricing::save_model_price_sync_config,
+            sync_model_prices => $crate::commands::pricing::sync_model_prices,
+            reload_model_price_catalog => $crate::commands::pricing::reload_model_price_catalog,
+            open_model_price_catalog_directory => $crate::commands::pricing::open_model_price_catalog_directory,
             upsert_pricing_rule => $crate::commands::pricing::upsert_pricing_rule,
             delete_pricing_rule => $crate::commands::pricing::delete_pricing_rule,
             resolve_station_key_pricing_context => $crate::commands::pricing::resolve_station_key_pricing_context,
@@ -922,6 +929,31 @@ fn command_contract(name: &str) -> CommandContract {
         "simulate_route" => migrated_read("RouteSimulationInputDto", "RouteSimulationResultDto"),
         "list_pricing_rules" => migrated_read("EmptyInputDto", "Vec<PricingRuleDto>"),
         "list_model_base_prices" => migrated_read("EmptyInputDto", "Vec<ModelBasePriceDto>"),
+        "list_model_price_sync_catalog" => {
+            migrated_read("EmptyInputDto", "Vec<ModelPriceCatalogEntryDto>")
+        }
+        "get_model_price_sync_state" => migrated_read("EmptyInputDto", "ModelPriceSyncStateDto"),
+        "save_model_price_sync_config" => migrated_mutation(
+            "SaveModelPriceSyncConfigInputDto",
+            "ModelPriceSyncStateDto",
+            "idempotent",
+            false,
+        ),
+        "sync_model_prices" => migrated_mutation(
+            "SyncModelPricesInputDto",
+            "ModelPriceSyncResultDto",
+            "non_idempotent",
+            true,
+        ),
+        "reload_model_price_catalog" => migrated_mutation(
+            "EmptyInputDto",
+            "ModelPriceSyncStateDto",
+            "idempotent",
+            false,
+        ),
+        "open_model_price_catalog_directory" => {
+            migrated_mutation("EmptyInputDto", "unit", "idempotent", false)
+        }
         "resolve_station_key_pricing_context" => {
             migrated_read("PricingContextInputDto", "ResolvedPricingContextDto")
         }
@@ -938,6 +970,9 @@ fn command_contract(name: &str) -> CommandContract {
             "idempotent",
             false,
         ),
+        "delete_model_base_price" => {
+            migrated_mutation("ModelBasePriceIdInputDto", "unit", "idempotent", false)
+        }
         "reset_model_base_prices_to_builtins" => migrated_mutation(
             "EmptyInputDto",
             "Vec<ModelBasePriceDto>",
@@ -1717,6 +1752,30 @@ export function listModelBasePrices(input: EmptyInputDto = {}): Promise<ModelBas
   return invokeCommand<ModelBasePriceDto[]>("list_model_base_prices", { input });
 }
 
+export function listModelPriceSyncCatalog(input: EmptyInputDto = {}): Promise<ModelPriceCatalogEntryDto[]> {
+  return invokeCommand<ModelPriceCatalogEntryDto[]>("list_model_price_sync_catalog", { input });
+}
+
+export function getModelPriceSyncState(input: EmptyInputDto = {}): Promise<ModelPriceSyncStateDto> {
+  return invokeCommand<ModelPriceSyncStateDto>("get_model_price_sync_state", { input });
+}
+
+export function saveModelPriceSyncConfig(input: SaveModelPriceSyncConfigInputDto): Promise<ModelPriceSyncStateDto> {
+  return invokeCommand<ModelPriceSyncStateDto>("save_model_price_sync_config", { input });
+}
+
+export function syncModelPrices(input: SyncModelPricesInputDto): Promise<ModelPriceSyncResultDto> {
+  return invokeNonIdempotent<ModelPriceSyncResultDto>("sync_model_prices", { input });
+}
+
+export function reloadModelPriceCatalog(input: EmptyInputDto = {}): Promise<ModelPriceSyncStateDto> {
+  return invokeCommand<ModelPriceSyncStateDto>("reload_model_price_catalog", { input });
+}
+
+export function openModelPriceCatalogDirectory(input: EmptyInputDto = {}): Promise<void> {
+  return invokeCommand<void>("open_model_price_catalog_directory", { input });
+}
+
 export function resolveStationKeyPricingContext(input: PricingContextInputDto): Promise<ResolvedPricingContextDto> {
   return invokeCommand<ResolvedPricingContextDto>("resolve_station_key_pricing_context", { input });
 }
@@ -1731,6 +1790,10 @@ export function loadPricingGroupMonitorStatus(input: PricingGroupMonitorStatusIn
 
 export function upsertModelBasePrice(input: UpsertModelBasePriceInputDto): Promise<ModelBasePriceDto> {
   return invokeCommand<ModelBasePriceDto>("upsert_model_base_price", { input });
+}
+
+export function deleteModelBasePrice(input: ModelBasePriceIdInputDto): Promise<void> {
+  return invokeCommand<void>("delete_model_base_price", { input });
 }
 
 export function resetModelBasePricesToBuiltins(input: EmptyInputDto = {}): Promise<ModelBasePriceDto[]> {

@@ -1262,7 +1262,10 @@ pub fn run() {
                                 blocking_executor.clone(),
                             );
                         let pricing_command_facade =
-                            app_composition::compose_pricing_command_facade(&app_services);
+                            app_composition::compose_pricing_command_facade(
+                                &app_services,
+                                outbound_client.clone(),
+                            );
                         let credentials_command_facade =
                             app_composition::compose_credentials_command_facade(&app_services);
                         let data_directory_command_facade =
@@ -1280,6 +1283,12 @@ pub fn run() {
                         )
                         .map_err(|error| {
                             format!("failed to initialize built-in model prices: {error}")
+                        })?;
+                        tauri::async_runtime::block_on(
+                            pricing_command_facade.reload_model_price_catalog(),
+                        )
+                        .map_err(|error| {
+                            format!("failed to apply local model price overrides: {error}")
                         })?;
                         tauri::async_runtime::block_on(
                             app_services
@@ -1307,6 +1316,19 @@ pub fn run() {
                             work_runtime,
                         )
                         .map_err(|error| format!("failed to register work runtime: {error}"))?;
+                        let model_price_sync_task =
+                            services::model_price_sync::register_model_price_sync_task(
+                                &supervisor_handle,
+                                pricing_command_facade.model_price_sync_service(),
+                            )
+                            .map_err(|error| {
+                                format!("failed to register model price synchronization: {error}")
+                            })?;
+                        supervisor_handle
+                            .start(&model_price_sync_task)
+                            .map_err(|error| {
+                                format!("failed to start model price synchronization: {error}")
+                            })?;
                         let installation_hash = active_data_dir
                             .display()
                             .to_string()

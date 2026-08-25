@@ -388,11 +388,28 @@ pub(crate) fn compose_capture_command_facade(
     )
 }
 
-pub(crate) fn compose_pricing_command_facade(services: &AppServices) -> PricingCommandFacade {
+pub(crate) fn compose_pricing_command_facade(
+    services: &AppServices,
+    outbound: AsyncOutboundClient,
+) -> PricingCommandFacade {
+    let data_dir = services
+        .pricing
+        .database_path()
+        .parent()
+        .expect("pricing database has a parent")
+        .to_path_buf();
+    let sync = Arc::new(
+        crate::services::model_price_sync::ModelPriceSyncService::new(
+            Arc::clone(&services.pricing),
+            outbound,
+            data_dir,
+        ),
+    );
     PricingCommandFacade::new(
         Arc::clone(&services.pricing),
         Arc::clone(&services.pricing_comparison),
         Arc::clone(&services.pricing_group_monitor_status),
+        sync,
     )
 }
 

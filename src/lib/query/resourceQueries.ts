@@ -7,7 +7,7 @@ import {
 } from "@/lib/api/collector";
 import { getStationPublishedStatusWorkspace } from "@/lib/api/stationPublishedStatus";
 import { listCollectorRuns } from "@/lib/api/collectorRuns";
-import { listCurrentStationBalanceSnapshots, listModelBasePrices } from "@/lib/api/economics";
+import { getModelPriceSyncState, listCurrentStationBalanceSnapshots, listModelBasePrices } from "@/lib/api/economics";
 import {
   loadDashboardCumulativeRequestMetrics,
   loadDashboardLiveRequestMetrics,
@@ -159,6 +159,13 @@ export const modelBasePricesQueryOptions = () =>
     queryKey: queryKeys.modelBasePrices,
     queryFn: listModelBasePrices,
     staleTime: 60_000,
+  });
+
+export const modelPriceSyncStateQueryOptions = () =>
+  queryOptions({
+    queryKey: queryKeys.modelPriceSyncState,
+    queryFn: getModelPriceSyncState,
+    staleTime: 30_000,
   });
 
 export const currentStationBalanceSnapshotsQueryOptions = (

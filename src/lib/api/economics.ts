@@ -1,6 +1,7 @@
 import { getActiveBackendClient } from "@/lib/bridge/activeBackendClient";
 import type {
   RequestKind,
+  ModelPriceSyncConfig,
   UpsertBalanceSnapshotInput,
   UpsertModelBasePriceInput,
   UpsertPricingRuleInput,
@@ -34,12 +35,40 @@ export function listModelBasePrices() {
   return getActiveBackendClient().economics.listModelBasePrices();
 }
 
+export function listModelPriceSyncCatalog() {
+  return getActiveBackendClient().economics.listModelPriceSyncCatalog();
+}
+
 export function upsertModelBasePrice(input: UpsertModelBasePriceInput) {
   return getActiveBackendClient().economics.upsertModelBasePrice(input);
 }
 
+export function deleteModelBasePrice(id: string) {
+  return getActiveBackendClient().economics.deleteModelBasePrice(id);
+}
+
 export function resetModelBasePricesToBuiltins() {
   return getActiveBackendClient().economics.resetModelBasePricesToBuiltins();
+}
+
+export function getModelPriceSyncState() {
+  return getActiveBackendClient().economics.getModelPriceSyncState();
+}
+
+export function saveModelPriceSyncConfig(input: ModelPriceSyncConfig) {
+  return getActiveBackendClient().economics.saveModelPriceSyncConfig(input);
+}
+
+export function syncModelPrices(force = false) {
+  return getActiveBackendClient().economics.syncModelPrices(force);
+}
+
+export function reloadModelPriceCatalog() {
+  return getActiveBackendClient().economics.reloadModelPriceCatalog();
+}
+
+export function openModelPriceCatalogDirectory() {
+  return getActiveBackendClient().economics.openModelPriceCatalogDirectory();
 }
 
 export function listBalanceSnapshots() {

@@ -47,6 +47,10 @@ impl PricingService {
         }
     }
 
+    pub(crate) fn database_path(&self) -> &std::path::Path {
+        self.runtime.database_path()
+    }
+
     pub(crate) async fn list_model_base_prices(
         &self,
         limit: PageLimit,
@@ -123,6 +127,38 @@ impl PricingService {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn delete_model_base_price(&self, id: String) -> Result<(), ApplicationError> {
+        if id.trim().is_empty() {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        let store = self.store;
+        self.runtime
+            .write(|write| Box::pin(async move { store.delete_model_base_price(write, &id).await }))
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn delete_model_base_prices_if_present(
+        &self,
+        ids: Vec<String>,
+    ) -> Result<(), ApplicationError> {
+        if ids.iter().any(|id| id.trim().is_empty()) {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(
+                    async move { store.delete_model_base_prices_if_present(write, &ids).await },
+                )
+            })
+            .await
+            .map_err(Into::into)
+    }
+
     pub(crate) async fn reset_model_base_prices_to_builtins(
         &self,
         limit: PageLimit,
@@ -148,6 +184,66 @@ impl PricingService {
         self.runtime
             .write(|write| {
                 Box::pin(async move { store.ensure_builtin_model_base_prices(write, &rows).await })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn replace_models_dev_prices(
+        &self,
+        inputs: Vec<UpsertModelBasePriceInput>,
+    ) -> Result<(), ApplicationError> {
+        if inputs.is_empty() {
+            return Err(ApplicationError::ConstraintViolation);
+        }
+        let now = self.now_ms_string();
+        let rows = inputs
+            .into_iter()
+            .map(|input| {
+                Ok(NewModelBasePriceRow {
+                    id: input
+                        .id
+                        .clone()
+                        .ok_or(ApplicationError::ConstraintViolation)?,
+                    now: now.clone(),
+                    input,
+                })
+            })
+            .collect::<Result<Vec<_>, ApplicationError>>()?;
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move { store.replace_models_dev_prices(write, &rows).await })
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub(crate) async fn upsert_models_dev_prices(
+        &self,
+        inputs: Vec<UpsertModelBasePriceInput>,
+    ) -> Result<(), ApplicationError> {
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        let now = self.now_ms_string();
+        let rows = inputs
+            .into_iter()
+            .map(|input| {
+                Ok(NewModelBasePriceRow {
+                    id: input
+                        .id
+                        .clone()
+                        .ok_or(ApplicationError::ConstraintViolation)?,
+                    now: now.clone(),
+                    input,
+                })
+            })
+            .collect::<Result<Vec<_>, ApplicationError>>()?;
+        let store = self.store;
+        self.runtime
+            .write(|write| {
+                Box::pin(async move { store.upsert_models_dev_prices(write, &rows).await })
             })
             .await
             .map_err(Into::into)

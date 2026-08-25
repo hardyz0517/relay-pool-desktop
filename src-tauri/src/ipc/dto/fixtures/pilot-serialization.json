@@ -2712,6 +2712,24 @@
       ]
     },
     {
+      "command": "list_model_price_sync_catalog",
+      "input": {},
+      "output": [
+        {
+          "cacheCreationPrice": 0.5,
+          "cacheReadPrice": 0.1,
+          "common": true,
+          "inputPrice": 1.0,
+          "key": "openai/gpt-fixture",
+          "model": "gpt-fixture",
+          "name": "GPT Fixture",
+          "outputPrice": 2.0,
+          "provider": "openai",
+          "releaseDate": "2026-08-24"
+        }
+      ]
+    },
+    {
       "command": "resolve_station_key_pricing_context",
       "input": {
         "requestKind": "text",
@@ -2841,6 +2859,13 @@
         "unit": "M",
         "updatedAt": "1700000000000"
       }
+    },
+    {
+      "command": "delete_model_base_price",
+      "input": {
+        "id": "price-1"
+      },
+      "output": null
     },
     {
       "command": "reset_model_base_prices_to_builtins",

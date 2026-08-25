@@ -56,6 +56,46 @@ export type ModelBasePrice = {
   updatedAt: string;
 };
 
+export type ModelPriceSyncState = {
+  sourceUrl: string;
+  autoSyncEnabled: boolean;
+  includeCommonModels: boolean;
+  selectedModelKeys: string[];
+  excludedCommonModelKeys: string[];
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
+  modelCount: number;
+  commonModelCount: number;
+  autoSyncModelCount: number;
+  filePath: string;
+};
+
+export type ModelPriceCatalogEntry = {
+  key: string;
+  provider: string;
+  model: string;
+  name: string;
+  common: boolean;
+  releaseDate: string | null;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  cacheCreationPrice: number | null;
+  cacheReadPrice: number | null;
+};
+
+export type ModelPriceSyncResult = {
+  state: ModelPriceSyncState;
+  importedCount: number;
+  skippedCount: number;
+};
+
+export type ModelPriceSyncConfig = {
+  autoSyncEnabled: boolean;
+  includeCommonModels?: boolean;
+  selectedModelKeys?: string[];
+  excludedCommonModelKeys?: string[];
+};
+
 export type BalanceSnapshot = {
   id: string;
   stationId: string;

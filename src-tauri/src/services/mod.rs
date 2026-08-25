@@ -6,6 +6,7 @@ pub mod endpoint_ping;
 pub mod group_categories;
 pub mod health;
 pub mod logs;
+pub(crate) mod model_price_sync;
 pub mod monitoring;
 pub mod outbound;
 pub(crate) mod policy_documents;

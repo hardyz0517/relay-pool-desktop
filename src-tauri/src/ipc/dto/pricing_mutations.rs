@@ -13,6 +13,7 @@ const MAX_URL_BYTES: usize = 2_048;
 const MAX_TIMESTAMP_BYTES: usize = 64;
 const MAX_PRICE: f64 = 1.0e12;
 const MAX_MULTIPLIER: f64 = 1.0e6;
+const MAX_MODEL_SELECTION_KEYS: usize = 20_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -20,7 +21,88 @@ pub struct PricingRuleIdInputDto {
     pub id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelBasePriceIdInputDto {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SaveModelPriceSyncConfigInputDto {
+    pub auto_sync_enabled: bool,
+    #[serde(default = "default_true")]
+    pub include_common_models: bool,
+    #[serde(default)]
+    pub selected_model_keys: Vec<String>,
+    #[serde(default)]
+    pub excluded_common_model_keys: Vec<String>,
+}
+
+impl SaveModelPriceSyncConfigInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        if input.selected_model_keys.len() > MAX_MODEL_SELECTION_KEYS
+            || input.excluded_common_model_keys.len() > MAX_MODEL_SELECTION_KEYS
+        {
+            return Err(invalid_input(
+                "selectedModelKeys",
+                "invalid_length",
+                "Too many model selections.",
+            ));
+        }
+        if input
+            .selected_model_keys
+            .iter()
+            .chain(input.excluded_common_model_keys.iter())
+            .any(|key| {
+                key.trim().is_empty() || key.len() > 256 || key.chars().any(char::is_control)
+            })
+        {
+            return Err(invalid_input(
+                "selectedModelKeys",
+                "invalid_value",
+                "A model selection is invalid.",
+            ));
+        }
+        Ok(input)
+    }
+
+    pub fn into_domain(self) -> crate::services::model_price_sync::ModelPriceSyncConfig {
+        crate::services::model_price_sync::ModelPriceSyncConfig {
+            auto_sync_enabled: self.auto_sync_enabled,
+            include_common_models: self.include_common_models,
+            selected_model_keys: self.selected_model_keys,
+            excluded_common_model_keys: self.excluded_common_model_keys,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SyncModelPricesInputDto {
+    pub force: bool,
+}
+
+impl SyncModelPricesInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        parse_value(value)
+    }
+}
+
 impl PricingRuleIdInputDto {
+    pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
+        let input: Self = parse_value(value)?;
+        validate_id("id", &input.id)?;
+        Ok(input)
+    }
+}
+
+impl ModelBasePriceIdInputDto {
     pub fn parse(value: Value) -> Result<Self, crate::commands::error::CommandError> {
         let input: Self = parse_value(value)?;
         validate_id("id", &input.id)?;
@@ -387,6 +469,7 @@ pub const PRICING_MUTATIONS_TYPE: TypeDescriptor = TypeDescriptor {
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
     vec![
         serde_json::json!({"command":"upsert_model_base_price","input":fixture_base_price_input(),"output":fixture_base_price_output()}),
+        serde_json::json!({"command":"delete_model_base_price","input":{"id":"price-1"},"output":null}),
         serde_json::json!({"command":"reset_model_base_prices_to_builtins","input":{},"output":[fixture_base_price_output()]}),
         serde_json::json!({"command":"upsert_pricing_rule","input":fixture_rule_input(),"output":fixture_rule_output()}),
         serde_json::json!({"command":"delete_pricing_rule","input":{"id":"rule-1"},"output":null}),

@@ -1,5 +1,16 @@
 export type PricingRuleIdInputDto = { id: string };
 
+export type ModelBasePriceIdInputDto = { id: string };
+
+export type SaveModelPriceSyncConfigInputDto = {
+  autoSyncEnabled: boolean;
+  includeCommonModels?: boolean;
+  selectedModelKeys?: string[];
+  excludedCommonModelKeys?: string[];
+};
+
+export type SyncModelPricesInputDto = { force: boolean };
+
 export type UpsertModelBasePriceInputDto = {
   id?: string | null;
   provider: string;

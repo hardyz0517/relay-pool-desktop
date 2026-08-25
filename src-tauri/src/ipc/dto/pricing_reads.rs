@@ -29,6 +29,45 @@ pub type ModelBasePriceDto = ModelBasePrice;
 pub type ResolvedPricingContextDto = ResolvedPricingContext;
 pub type PricingGroupMonitorStatusWorkspaceDto = PricingGroupMonitorStatusWorkspace;
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPriceSyncStateDto {
+    pub source_url: String,
+    pub auto_sync_enabled: bool,
+    pub include_common_models: bool,
+    pub selected_model_keys: Vec<String>,
+    pub excluded_common_model_keys: Vec<String>,
+    pub last_sync_at: Option<String>,
+    pub last_sync_error: Option<String>,
+    pub model_count: usize,
+    pub common_model_count: usize,
+    pub auto_sync_model_count: usize,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPriceCatalogEntryDto {
+    pub key: String,
+    pub provider: String,
+    pub model: String,
+    pub name: String,
+    pub common: bool,
+    pub release_date: Option<String>,
+    pub input_price: Option<f64>,
+    pub output_price: Option<f64>,
+    pub cache_creation_price: Option<f64>,
+    pub cache_read_price: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelPriceSyncResultDto {
+    pub state: ModelPriceSyncStateDto,
+    pub imported_count: usize,
+    pub skipped_count: usize,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PricingGroupMonitorStatusInputDto {
@@ -211,6 +250,18 @@ pub const PRICING_READS_TYPE: TypeDescriptor = TypeDescriptor {
 pub(crate) fn serialization_fixtures() -> Vec<Value> {
     let rule = fixture_rule();
     let base_price = fixture_base_price();
+    let catalog_entry = ModelPriceCatalogEntryDto {
+        key: "openai/gpt-fixture".into(),
+        provider: "openai".into(),
+        model: "gpt-fixture".into(),
+        name: "GPT Fixture".into(),
+        common: true,
+        release_date: Some("2026-08-24".into()),
+        input_price: Some(1.0),
+        output_price: Some(2.0),
+        cache_creation_price: Some(0.5),
+        cache_read_price: Some(0.1),
+    };
     let context = fixture_context();
     let workspace = PricingComparisonWorkspaceDto {
         stations: Vec::new(),
@@ -223,6 +274,7 @@ pub(crate) fn serialization_fixtures() -> Vec<Value> {
     vec![
         serde_json::json!({"command":"list_pricing_rules","input":{},"output":[rule]}),
         serde_json::json!({"command":"list_model_base_prices","input":{},"output":[base_price]}),
+        serde_json::json!({"command":"list_model_price_sync_catalog","input":{},"output":[catalog_entry]}),
         serde_json::json!({
             "command":"resolve_station_key_pricing_context",
             "input":{"stationKeyId":"key-1","requestedModel":"fixture-model","requestKind":"text"},
