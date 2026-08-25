@@ -1856,12 +1856,20 @@ async fn execute_bearer_json_with_recovery_with_cookie_and_success_body_limit(
             continue;
         }
         if action == "transient_retry" {
-            recovery_actions.push("transient_retry");
             let delay = latest
                 .as_ref()
                 .and_then(|result| result.retry_after)
                 .unwrap_or(RETRY_DELAYS[transient_retries_used]);
             transient_retries_used += 1;
+            let Some(remaining) = context.budget.remaining() else {
+                recovery_actions.push("retry_skipped_budget");
+                break;
+            };
+            if delay >= remaining {
+                recovery_actions.push("retry_skipped_budget");
+                break;
+            }
+            recovery_actions.push("transient_retry");
             if !delay.is_zero() {
                 tokio::select! {
                     _ = context.cancellation.cancelled() => {
@@ -2133,8 +2141,13 @@ async fn execute_bearer_json_once_with_success_body_limit(
             );
             let payload = serde_json::from_slice::<Value>(&response.body).unwrap_or(Value::Null);
             let ok = response.status.is_success() && !payload.is_null();
-            let error_message =
-                (!ok).then(|| redact_text(std::str::from_utf8(&response.body).unwrap_or_default()));
+            let error_message = (!ok).then(|| {
+                if response.status.is_success() {
+                    "upstream response was not valid JSON".to_string()
+                } else {
+                    format!("upstream returned HTTP {status}")
+                }
+            });
             let rejection =
                 classify_remote_key_rejection(status, &response.headers, &payload, &response.body);
             JsonAttemptResult {
@@ -2157,25 +2170,28 @@ async fn execute_bearer_json_once_with_success_body_limit(
                 rejection,
             }
         }
-        Err(error) => JsonAttemptResult {
-            url: url.to_string(),
-            status: None,
-            ok: false,
-            payload: Value::Null,
-            error_message: Some(redact_text(&error.to_string())),
-            failure_kind: Some(driver_failure_kind_from_outbound(&error.kind)),
-            retry_after: None,
-            duration_ms: started_at.elapsed().as_millis() as i64,
-            evidence: EndpointEvidence::new(
-                role,
-                method.as_str(),
-                Some(url.to_string()),
-                None,
-                Some(error.to_string()),
-            ),
-            manual_authorization_required: false,
-            rejection: None,
-        },
+        Err(error) => {
+            let safe_detail = outbound_failure_detail(&error.kind).to_string();
+            JsonAttemptResult {
+                url: url.to_string(),
+                status: None,
+                ok: false,
+                payload: Value::Null,
+                error_message: Some(safe_detail.clone()),
+                failure_kind: Some(driver_failure_kind_from_outbound(&error.kind)),
+                retry_after: None,
+                duration_ms: started_at.elapsed().as_millis() as i64,
+                evidence: EndpointEvidence::new(
+                    role,
+                    method.as_str(),
+                    Some(url.to_string()),
+                    None,
+                    Some(safe_detail),
+                ),
+                manual_authorization_required: false,
+                rejection: None,
+            }
+        }
     }
 }
 
@@ -2853,7 +2869,6 @@ fn balance_endpoint_json(
         "durationMs": result.duration_ms,
         "ok": result.ok,
         "failureKind": classify_json_result(result),
-        "errorMessage": result.error_message,
     })
 }
 
@@ -2864,7 +2879,6 @@ fn append_balance_endpoint_attempt(endpoint: &mut Value, result: &JsonAttemptRes
         "durationMs": result.duration_ms,
         "ok": result.ok,
         "failureKind": classify_json_result(result),
-        "errorMessage": result.error_message,
     });
     if endpoint.get("attempts").is_none() {
         let first_attempt = json!({
@@ -2873,7 +2887,6 @@ fn append_balance_endpoint_attempt(endpoint: &mut Value, result: &JsonAttemptRes
             "durationMs": endpoint.get("durationMs").cloned().unwrap_or(Value::Null),
             "ok": endpoint.get("ok").cloned().unwrap_or(Value::Null),
             "failureKind": endpoint.get("failureKind").cloned().unwrap_or(Value::Null),
-            "errorMessage": endpoint.get("errorMessage").cloned().unwrap_or(Value::Null),
         });
         endpoint["attempts"] = json!([first_attempt]);
     }
@@ -2886,7 +2899,6 @@ fn append_balance_endpoint_attempt(endpoint: &mut Value, result: &JsonAttemptRes
     endpoint["durationMs"] = json!(result.duration_ms);
     endpoint["ok"] = json!(result.ok);
     endpoint["failureKind"] = json!(classify_json_result(result));
-    endpoint["errorMessage"] = json!(result.error_message);
     endpoint["recoveryActions"] = json!(["transient_retry"]);
 }
 
@@ -3010,7 +3022,34 @@ fn result_unknown(
 
 fn driver_failure_from_outbound(role: EndpointRole, kind: OutboundFailureKind) -> DriverFailure {
     let failure_kind = driver_failure_kind_from_outbound(&kind);
-    failed(failure_kind, role, None, format!("{kind:?}"))
+    failed(failure_kind, role, None, outbound_failure_detail(&kind))
+}
+
+fn outbound_failure_detail(kind: &OutboundFailureKind) -> &'static str {
+    match kind {
+        OutboundFailureKind::InvalidUrl => "outbound request URL was invalid",
+        OutboundFailureKind::InvalidHeader | OutboundFailureKind::HeaderNotAllowed(_) => {
+            "outbound request header was invalid"
+        }
+        OutboundFailureKind::ProxyPolicy => "outbound proxy policy rejected the request",
+        OutboundFailureKind::TransportPolicy => "outbound transport policy rejected the request",
+        OutboundFailureKind::ConnectTimeout => "outbound connection timed out",
+        OutboundFailureKind::FirstByteTimeout => "upstream first byte timed out",
+        OutboundFailureKind::BodyTimeout => "upstream response body timed out",
+        OutboundFailureKind::TotalTimeout => "outbound request timed out",
+        OutboundFailureKind::BudgetExhausted => "task budget exhausted",
+        OutboundFailureKind::Cancelled => "request cancelled",
+        OutboundFailureKind::BodyLimitExceeded { .. } => {
+            "upstream response exceeded the body limit"
+        }
+        OutboundFailureKind::RedirectBlocked
+        | OutboundFailureKind::RedirectLoop
+        | OutboundFailureKind::RedirectLimitExceeded => "upstream redirect was rejected",
+        OutboundFailureKind::RetryAfterExceedsBudget => {
+            "upstream retry delay exceeded the task budget"
+        }
+        OutboundFailureKind::RequestFailed => "outbound request failed",
+    }
 }
 
 fn driver_failure_kind_from_outbound(kind: &OutboundFailureKind) -> DriverFailureKind {
@@ -3759,6 +3798,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn html_error_bodies_are_not_persisted_in_balance_diagnostics() {
+        const CANARY: &str = "sensitive-html-canary-must-not-be-saved";
+        let body = format!("<html><body>{CANARY}</body></html>");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+        );
+        let server = TestHttpServer::sequence(vec![Some(response)]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let context = test_context(&server.base_url, &secrets, &outbound);
+        let url = build_api_url(&server.base_url, "/v1/usage").expect("usage URL");
+
+        let result = execute_bearer_json_once(
+            &context,
+            EndpointRole::Balance,
+            &url,
+            "fixture-token",
+            None,
+            None,
+            Method::GET,
+        )
+        .await;
+        server.finish();
+
+        assert_eq!(
+            result.error_message.as_deref(),
+            Some("upstream response was not valid JSON")
+        );
+        let diagnostic = balance_endpoint_json(&result, "/v1/usage", "station-key-1");
+        let serialized = serde_json::to_string(&diagnostic).expect("diagnostic JSON");
+        assert!(!serialized.contains(CANARY));
+        assert!(diagnostic.get("errorMessage").is_none());
+    }
+
     #[test]
     fn management_request_reuses_captured_browser_user_agent() {
         let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
@@ -3877,6 +3952,40 @@ mod tests {
         assert!(first_request.contains("cookie: cf_clearance=clearance; session=browser"));
         assert!(!second_request.contains("authorization: bearer captured-jwt"));
         assert!(second_request.contains("cookie: cf_clearance=clearance; session=browser"));
+    }
+
+    #[tokio::test]
+    async fn transient_retry_is_skipped_when_its_delay_would_exhaust_the_task_budget() {
+        let server = TestHttpServer::sequence(vec![Some(json_response(
+            503,
+            json!({"error": "temporarily unavailable"}),
+        ))]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor;
+        let mut context = test_context(&server.base_url, &secrets, &outbound);
+        context.budget = RequestBudget::from_now(Duration::from_millis(100));
+        let auth = sub2api_auth(&context).expect("auth context should resolve");
+        let mut token = "captured-jwt".to_string();
+
+        let execution = execute_bearer_json_with_recovery(
+            &context,
+            EndpointRole::Groups,
+            &server.base_url,
+            "/api/v1/groups/available",
+            &mut token,
+            &auth,
+        )
+        .await
+        .expect("retry budget exhaustion should preserve the latest typed response");
+        let requests = server.finish();
+
+        assert!(!execution.ok);
+        assert_eq!(execution.redacted["failureKind"], json!("upstream_5xx"));
+        assert_eq!(
+            execution.redacted["recoveryActions"],
+            json!(["retry_skipped_budget"])
+        );
+        assert_eq!(requests.len(), 1);
     }
 
     #[tokio::test]
@@ -4313,7 +4422,7 @@ mod tests {
         );
         assert_eq!(requests.len(), 4);
         assert!(
-            requests[0].starts_with("GET /usage "),
+            requests[0].starts_with("GET /v1/usage "),
             "unexpected request sequence: {requests:?}"
         );
         assert!(requests[1].starts_with("GET /api/v1/user/profile "));

@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::routing::{DispatchAlgorithmSettings, RoutingGroupFilter};
 
+pub const DEFAULT_COLLECTOR_TIMEOUT_SECONDS: u16 = 30;
+pub const MIN_COLLECTOR_TIMEOUT_SECONDS: u16 = 3;
+pub const MAX_COLLECTOR_TIMEOUT_SECONDS: u16 = 300;
+
 const fn default_published_status_interval_minutes() -> u16 {
     5
 }

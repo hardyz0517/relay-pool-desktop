@@ -34,6 +34,18 @@ pub struct AdapterOutput {
     pub raw_json_redacted: Option<serde_json::Value>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    /// Wall-clock start paired with a monotonic elapsed duration. These values
+    /// describe provider execution, not the later persistence transaction.
+    pub execution_started_at_ms: Option<i64>,
+    pub execution_duration_ms: Option<i64>,
+}
+
+impl AdapterOutput {
+    pub(crate) fn with_execution_timing(mut self, started_at_ms: i64, duration_ms: i64) -> Self {
+        self.execution_started_at_ms = Some(started_at_ms.max(0));
+        self.execution_duration_ms = Some(duration_ms.max(0));
+        self
+    }
 }
 
 #[cfg(test)]

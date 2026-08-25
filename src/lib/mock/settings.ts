@@ -25,7 +25,7 @@ export const mockSettings: MockSettings = {
   groupRateIntervalMinutes: 20,
   publishedStatusIntervalMinutes: 5,
   pricingRefreshIntervalMinutes: 60,
-  collectorTimeoutSeconds: 15,
+  collectorTimeoutSeconds: 30,
   collectorMaxConcurrency: 3,
   allowDepletedFallback: false,
   lowBalanceThresholdCny: 15,

@@ -21,14 +21,24 @@ pub fn build_management_url(base: &str, path: &str) -> Result<String, String> {
 }
 
 pub fn build_api_url(base: &str, local_path: &str) -> Result<String, String> {
-    let resource = local_path
-        .strip_prefix("/v1/")
-        .or_else(|| local_path.strip_prefix("v1/"))
-        .unwrap_or_else(|| local_path.trim_start_matches('/'));
+    let normalized = normalize_endpoint_url(base, "API Base URL", false)?;
+    let base_url =
+        Url::parse(&normalized).map_err(|error| format!("API Base URL 无效: {error}"))?;
+    // A bare origin is a valid OpenAI-compatible API base. In that form the
+    // caller-owned `/v1` namespace must be preserved. Bases that already name
+    // a namespace keep the existing behavior of appending only the resource.
+    let resource = if meaningful_path_segments(&base_url).is_empty() {
+        local_path.trim_start_matches('/')
+    } else {
+        local_path
+            .strip_prefix("/v1/")
+            .or_else(|| local_path.strip_prefix("v1/"))
+            .unwrap_or_else(|| local_path.trim_start_matches('/'))
+    };
     if !is_valid_resource_path(resource) {
         return Err("上游 API 资源路径无效".to_string());
     }
-    append_resource(base, resource)
+    append_resource(&normalized, resource)
 }
 
 pub fn normalize_api_base_url(api_base_url: &str) -> Result<String, String> {
@@ -221,6 +231,10 @@ mod tests {
 
     #[test]
     fn builds_resources_from_complete_api_namespaces() {
+        assert_eq!(
+            build_api_url("https://relay.example", "/v1/usage").unwrap(),
+            "https://relay.example/v1/usage"
+        );
         assert_eq!(
             build_management_url("https://relay.example/api", "/user/self").unwrap(),
             "https://relay.example/api/user/self"

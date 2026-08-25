@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::{
     routing::{DispatchAlgorithmSettings, RoutingGroupFilter},
-    settings::{AppSettings, UpdateSettingsInput},
+    settings::{
+        AppSettings, UpdateSettingsInput, MAX_COLLECTOR_TIMEOUT_SECONDS,
+        MIN_COLLECTOR_TIMEOUT_SECONDS,
+    },
     AppStatus,
 };
 
@@ -13,7 +16,6 @@ const MAX_RATE_MULTIPLIER: f64 = 1_000.0;
 const MAX_BALANCE_THRESHOLD_CNY: f64 = 1_000_000_000.0;
 const MAX_INTERVAL_MINUTES: u16 = 10_080;
 const MAX_PUBLISHED_STATUS_INTERVAL_MINUTES: u16 = 1_440;
-const MAX_TIMEOUT_SECONDS: u16 = 300;
 const MAX_LOCAL_ACCESS_KEY_BYTES: usize = 4_096;
 const MAX_EXTERNAL_URL_BYTES: usize = 2_048;
 
@@ -335,7 +337,9 @@ impl UpdateSettingsInputDto {
                 "The published status interval is out of range.",
             ));
         }
-        if !(3..=MAX_TIMEOUT_SECONDS).contains(&self.collector_timeout_seconds) {
+        if !(MIN_COLLECTOR_TIMEOUT_SECONDS..=MAX_COLLECTOR_TIMEOUT_SECONDS)
+            .contains(&self.collector_timeout_seconds)
+        {
             return Err(invalid_input(
                 "collectorTimeoutSeconds",
                 "out_of_range",
@@ -638,6 +642,7 @@ mod input_contract_tests {
             ("collectorProxyUrl", serde_json::json!("file:///private")),
             ("localProxyPort", serde_json::json!(0)),
             ("collectorTimeoutSeconds", serde_json::json!(2)),
+            ("collectorTimeoutSeconds", serde_json::json!(301)),
             ("collectorMaxConcurrency", serde_json::json!(9)),
         ] {
             let mut input = valid_input();

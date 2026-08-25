@@ -8,7 +8,7 @@ use crate::{
     models::collector::{StationLoginTestInput, StationLoginTestResult},
     outbound::{
         AsyncOutboundClient, OutboundHeaderPolicy, OutboundHeaders, OutboundRequest,
-        OutboundRetryPolicy, ProxyPolicy, RequestBudget,
+        OutboundRetryPolicy, ProxyPolicy, RequestBudget, SecretHeaderValue,
     },
     services::{secrets::mask::redact_text, station_endpoints::build_management_url},
 };
@@ -151,6 +151,7 @@ async fn probe_newapi_login(
     cancellation: CancellationToken,
     correlation_id: Option<String>,
 ) -> Result<LoginProbeAttempt, String> {
+    let deadline = tokio::time::Instant::now() + LOGIN_PROBE_TIMEOUT;
     let url = build_management_url(website_url, "/api/user/login")?;
     let response = execute_login_request(
         outbound,
@@ -159,9 +160,9 @@ async fn probe_newapi_login(
             "username": login_username,
             "password": login_password,
         }),
-        proxy,
-        cancellation,
-        correlation_id,
+        proxy.clone(),
+        cancellation.clone(),
+        correlation_id.clone(),
         LOGIN_TIMEOUT,
     )
     .await?;
@@ -175,34 +176,88 @@ async fn probe_newapi_login(
         .collect::<Vec<_>>();
     let body = response_body_json(&response.body);
     if !response.status.is_success() {
-        return Err(redact_text(&String::from_utf8_lossy(&response.body)));
-    }
-    if body
-        .get("require_2fa")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Ok(LoginProbeAttempt {
-            credential_present: false,
-            login_message: Some("NewAPI login requires manual verification".to_string()),
-            manual_required: Some("manual_session_required".to_string()),
-            newapi_session: None,
-            session: None,
+        if needs_manual_login(&body, status) {
+            return Ok(newapi_manual_login_attempt(
+                newapi_response_message(&body, "NewAPI login requires browser authorization"),
+                "NewAPI login requires browser authorization",
+            ));
+        }
+        let detail = redact_text(&String::from_utf8_lossy(&response.body));
+        return Err(if detail.trim().is_empty() {
+            format!("NewAPI login failed (HTTP {status})")
+        } else {
+            detail
         });
     }
-    let user_id = newapi_user_id(&body)
-        .ok_or_else(|| format!("NewAPI login response is missing user id (HTTP {status})"))?;
-    let cookie = normalize_set_cookie_headers(&set_cookies);
-    let Some(cookie) = cookie else {
-        return Ok(LoginProbeAttempt {
-            credential_present: false,
-            login_message: Some("NewAPI login did not return a session cookie".to_string()),
-            manual_required: Some(
-                "NewAPI login succeeded but the response had no usable Cookie".to_string(),
-            ),
-            newapi_session: None,
-            session: None,
-        });
+    if needs_manual_login(&body, status) {
+        return Ok(newapi_manual_login_attempt(
+            newapi_response_message(&body, "NewAPI login requires manual verification"),
+            "captcha, 2FA, or another interactive NewAPI login step is required",
+        ));
+    }
+    if body.get("success").and_then(Value::as_bool) == Some(false) {
+        return Ok(newapi_manual_login_attempt(
+            newapi_response_message(&body, "NewAPI rejected the saved login credentials"),
+            "NewAPI login was not accepted; complete browser authorization",
+        ));
+    }
+    let Some(mut cookie) = normalize_set_cookie_headers(&set_cookies) else {
+        return Ok(newapi_manual_login_attempt(
+            "NewAPI login did not return a session cookie",
+            "NewAPI login returned no reusable browser session",
+        ));
+    };
+    let user_id = if let Some(user_id) = newapi_user_id(&body) {
+        user_id
+    } else {
+        let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now()) else {
+            return Ok(newapi_manual_login_attempt(
+                "NewAPI login session verification timed out",
+                "NewAPI login cookie could not be verified within the bounded time budget",
+            ));
+        };
+        let self_url = build_management_url(website_url, "/api/user/self")?;
+        let self_response = execute_newapi_self_request(
+            outbound,
+            self_url,
+            &cookie,
+            proxy,
+            cancellation,
+            correlation_id,
+            remaining.min(LOGIN_TIMEOUT),
+        )
+        .await?;
+        let self_status = self_response.status.as_u16();
+        let self_set_cookies = self_response
+            .headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let self_body = response_body_json(&self_response.body);
+        if !self_response.status.is_success()
+            || needs_manual_login(&self_body, self_status)
+            || self_body.get("success").and_then(Value::as_bool) == Some(false)
+        {
+            return Ok(newapi_manual_login_attempt(
+                newapi_response_message(
+                    &self_body,
+                    "NewAPI login cookie was rejected by the user self probe",
+                ),
+                "NewAPI login cookie could not be verified; complete browser authorization",
+            ));
+        }
+        let Some(user_id) = newapi_user_id(&self_body) else {
+            return Ok(newapi_manual_login_attempt(
+                format!("NewAPI user self response is missing user id (HTTP {self_status})"),
+                "NewAPI login cookie did not produce a verifiable user identity",
+            ));
+        };
+        if let Some(merged_cookie) = merge_cookie_header(&cookie, &self_set_cookies) {
+            cookie = merged_cookie;
+        }
+        user_id
     };
     let session = LoginProbeSession {
         access_token: None,
@@ -217,6 +272,28 @@ async fn probe_newapi_login(
         newapi_session: Some(NewApiPasswordSession { user_id, cookie }),
         session: Some(session),
     })
+}
+
+fn newapi_manual_login_attempt(
+    login_message: impl Into<String>,
+    diagnosis: impl Into<String>,
+) -> LoginProbeAttempt {
+    LoginProbeAttempt {
+        credential_present: false,
+        login_message: Some(login_message.into()),
+        manual_required: Some(diagnosis.into()),
+        newapi_session: None,
+        session: None,
+    }
+}
+
+fn newapi_response_message(body: &Value, fallback: &str) -> String {
+    body.get("message")
+        .and_then(Value::as_str)
+        .map(redact_text)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| shorten_error(&value))
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 async fn probe_sub2api_login(
@@ -371,6 +448,47 @@ async fn execute_login_request(
         .map_err(|error| error.to_string())
 }
 
+async fn execute_newapi_self_request(
+    outbound: &AsyncOutboundClient,
+    url: String,
+    cookie: &str,
+    proxy: ProxyPolicy,
+    cancellation: CancellationToken,
+    correlation_id: Option<String>,
+    timeout: Duration,
+) -> Result<crate::outbound::OutboundResponse, String> {
+    let policy = OutboundHeaderPolicy::provider_default();
+    let mut headers = OutboundHeaders::new();
+    headers
+        .insert_public(
+            header::ACCEPT,
+            HeaderValue::from_static("application/json"),
+            &policy,
+        )
+        .map_err(|error| error.to_string())?;
+    headers
+        .insert_sensitive(
+            header::COOKIE,
+            SecretHeaderValue::new(cookie.to_string()),
+            &policy,
+        )
+        .map_err(|error| error.to_string())?;
+    let request = OutboundRequest {
+        method: Method::GET,
+        url,
+        correlation_id,
+        headers,
+        body: Vec::new(),
+        proxy,
+        budget: RequestBudget::from_now(timeout),
+        retry_policy: OutboundRetryPolicy::Never,
+    };
+    outbound
+        .execute(request, cancellation)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 fn response_body_json(body: &[u8]) -> Value {
     serde_json::from_slice::<Value>(body).unwrap_or(Value::Null)
 }
@@ -395,6 +513,40 @@ fn normalize_set_cookie_headers(headers: &[String]) -> Option<String> {
         .map(ToString::to_string)
         .collect::<Vec<_>>();
     (!cookies.is_empty()).then(|| cookies.join("; "))
+}
+
+fn merge_cookie_header(existing: &str, set_cookie_headers: &[String]) -> Option<String> {
+    let mut pairs = existing
+        .split(';')
+        .filter_map(cookie_pair)
+        .collect::<Vec<_>>();
+    for header in set_cookie_headers {
+        let Some((name, value)) = header.split(';').next().and_then(cookie_pair) else {
+            continue;
+        };
+        if let Some(existing) = pairs.iter_mut().find(|(current, _)| current == &name) {
+            existing.1 = value;
+        } else {
+            pairs.push((name, value));
+        }
+    }
+    (!pairs.is_empty()).then(|| {
+        pairs
+            .into_iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
+fn cookie_pair(value: &str) -> Option<(String, String)> {
+    let (name, value) = value.trim().split_once('=')?;
+    let name = name.trim();
+    let value = value.trim();
+    if name.is_empty() || value.is_empty() {
+        return None;
+    }
+    Some((name.to_string(), value.to_string()))
 }
 
 fn newapi_user_id(value: &Value) -> Option<String> {
@@ -451,18 +603,29 @@ fn needs_manual_login(value: &Value, status: u16) -> bool {
         || text.contains("captcha")
         || text.contains("turnstile")
         || text.contains("verification_failed")
-        || value
-            .get("requires_2fa")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || value
-            .get("captcha_required")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        || value
-            .get("manual_required")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
+        || contains_true_flag(
+            value,
+            &[
+                "require_2fa",
+                "requires_2fa",
+                "captcha_required",
+                "manual_required",
+            ],
+        )
+}
+
+fn contains_true_flag(value: &Value, names: &[&str]) -> bool {
+    match value {
+        Value::Object(map) => map.iter().any(|(name, child)| {
+            (names
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate))
+                && child.as_bool() == Some(true))
+                || contains_true_flag(child, names)
+        }),
+        Value::Array(items) => items.iter().any(|item| contains_true_flag(item, names)),
+        _ => false,
+    }
 }
 
 fn shorten_error(message: &str) -> String {
@@ -472,6 +635,18 @@ fn shorten_error(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        outbound::AsyncOutboundClientConfig,
+        services::collectors::drivers::newapi::test_support::TestHttpServer,
+    };
+
+    fn json_response_with_cookie(body: Value, cookie: &str) -> String {
+        let body = body.to_string();
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: {cookie}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+        )
+    }
 
     #[test]
     fn newapi_login_helpers_normalize_cookie_and_user_id() {
@@ -488,6 +663,101 @@ mod tests {
             newapi_user_id(&json!({"success": true, "data": {"id": 42}})).as_deref(),
             Some("42")
         );
+        assert_eq!(
+            merge_cookie_header(
+                "session=old; theme=light",
+                &[
+                    "session=rotated; Path=/; HttpOnly".to_string(),
+                    "locale=zh; Path=/".to_string(),
+                ],
+            )
+            .as_deref(),
+            Some("session=rotated; theme=light; locale=zh")
+        );
+    }
+
+    #[test]
+    fn newapi_login_helpers_detect_nested_interactive_steps() {
+        assert!(needs_manual_login(
+            &json!({"success": true, "data": {"require_2fa": true}}),
+            200,
+        ));
+        assert!(needs_manual_login(
+            &json!({"success": false, "message": "Turnstile verification failed"}),
+            200,
+        ));
+    }
+
+    #[tokio::test]
+    async fn newapi_login_uses_cookie_self_probe_when_login_body_has_no_user_id() {
+        let server = TestHttpServer::sequence(vec![
+            Some(json_response_with_cookie(
+                json!({"success": true, "data": {}}),
+                "session=login; Path=/; HttpOnly",
+            )),
+            Some(json_response_with_cookie(
+                json!({"success": true, "data": {"id": 42}}),
+                "session=rotated; Path=/; HttpOnly",
+            )),
+        ]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+
+        let attempt = probe_newapi_login(
+            &outbound,
+            &server.base_url,
+            "user@example.invalid",
+            "saved-password",
+            ProxyPolicy::Direct,
+            CancellationToken::new(),
+            Some("newapi-login-test".to_string()),
+        )
+        .await
+        .expect("login probe");
+
+        let session = attempt.newapi_session.expect("verified NewAPI session");
+        assert_eq!(session.user_id, "42");
+        assert_eq!(session.cookie, "session=rotated");
+        let requests = server.finish();
+        assert!(requests[0].starts_with("POST /api/user/login "));
+        assert!(requests[1].starts_with("GET /api/user/self "));
+        assert!(requests[1]
+            .to_ascii_lowercase()
+            .contains("cookie: session=login"));
+    }
+
+    #[tokio::test]
+    async fn newapi_turnstile_business_failure_is_not_misreported_as_missing_user_id() {
+        let body = json!({
+            "success": false,
+            "message": "Turnstile verification failed"
+        });
+        let body_text = body.to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_text}",
+            body_text.len(),
+        );
+        let server = TestHttpServer::sequence(vec![Some(response)]);
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+
+        let attempt = probe_newapi_login(
+            &outbound,
+            &server.base_url,
+            "user@example.invalid",
+            "saved-password",
+            ProxyPolicy::Direct,
+            CancellationToken::new(),
+            Some("newapi-turnstile-test".to_string()),
+        )
+        .await
+        .expect("manual login result");
+
+        assert!(attempt.newapi_session.is_none());
+        assert!(attempt.manual_required.is_some());
+        assert_eq!(
+            attempt.login_message.as_deref(),
+            Some("Turnstile verification failed")
+        );
+        assert_eq!(server.finish().len(), 1);
     }
 
     #[test]

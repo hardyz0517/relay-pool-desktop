@@ -1,6 +1,6 @@
 {
   "manifestVersion": 1,
-  "manifestId": "7b55c72d60c570baabc9ac50f91ac32bff2bf110aadd6d2d17d892f85fe158ef",
+  "manifestId": "4b05bcac0e5f30e5d0f5681a34d401b59d749970d46264e09d945086631d0156",
   "events": [
     {
       "code": "app.bootstrap.started",
@@ -1303,6 +1303,366 @@
       "sampling": "always",
       "supportBundle": true,
       "messageKey": "collector.station.started",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.browser_state_read_failed",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.browser_state_read_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.browser_state_read_succeeded",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.browser_state_read_succeeded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.candidate_detected",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.candidate_detected",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.completed",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.completed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.persistence_failed",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "error",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.persistence_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.persistence_succeeded",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.persistence_succeeded",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.verification_failed",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "warn",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.verification_failed",
+      "lifecycle": {
+        "status": "active"
+      }
+    },
+    {
+      "code": "collector.web_session.verification_succeeded",
+      "owner": "station.capture",
+      "eventSchemaVersion": 1,
+      "detailSchemaVersion": 1,
+      "component": "collector",
+      "level": "info",
+      "outcomes": [
+        "ok",
+        "error",
+        "cancelled",
+        "timeout",
+        "overloaded",
+        "degraded"
+      ],
+      "details": [
+        "none",
+        "redacted",
+        "phase",
+        "retry",
+        "queue",
+        "clock",
+        "recovery",
+        "lease",
+        "boundary"
+      ],
+      "subjects": [
+        "none",
+        "installation",
+        "session",
+        "interaction",
+        "operation",
+        "task",
+        "command",
+        "station",
+        "provider",
+        "resource"
+      ],
+      "sampling": "always",
+      "supportBundle": true,
+      "messageKey": "collector.web_session.verification_succeeded",
       "lifecycle": {
         "status": "active"
       }

@@ -128,7 +128,7 @@ describe("collector settings form", () => {
       groupRateIntervalMinutes: "20",
       publishedStatusIntervalMinutes: "5",
       pricingRefreshIntervalMinutes: "60",
-      collectorTimeoutSeconds: "15",
+      collectorTimeoutSeconds: "30",
       collectorMaxConcurrency: "3",
     });
     expect(parseCollectorSettingsDraft(recommended)).toEqual({
@@ -138,9 +138,23 @@ describe("collector settings form", () => {
         groupRateIntervalMinutes: 20,
         publishedStatusIntervalMinutes: 5,
         pricingRefreshIntervalMinutes: 60,
-        collectorTimeoutSeconds: 15,
+        collectorTimeoutSeconds: 30,
         collectorMaxConcurrency: 3,
       },
     });
   });
+
+  it.each(["301", "2", "1.5", "", "not-a-number"])(
+    "rejects invalid collector timeout %j using the backend bounds",
+    (rawValue) => {
+      const result = parseCollectorSettingsDraft(draft({ collectorTimeoutSeconds: rawValue }));
+
+      expect(result).toEqual({
+        ok: false,
+        errors: {
+          collectorTimeoutSeconds: "请输入 3 到 300 的整数",
+        },
+      });
+    },
+  );
 });

@@ -8,6 +8,7 @@ import { queryKeys } from "@/lib/query/queryKeys";
 import { appSettingsToUpdateInput, type AppSettings } from "@/lib/types/settings";
 import { cn } from "@/lib/utils";
 import {
+  COLLECTOR_TIMEOUT_SECONDS,
   applyCollectorFrequencyPreset,
   createCollectorSettingsDraft,
   createRecommendedCollectorSettingsDraft,
@@ -165,7 +166,7 @@ export function CollectorAdvancedSettings() {
           <NumberField label="分组 / 倍率周期" field="groupRateIntervalMinutes" suffix="分钟" draft={draft} errors={errors} onChange={updateField} />
           <NumberField label="官方状态周期" field="publishedStatusIntervalMinutes" suffix="分钟" draft={draft} errors={errors} onChange={updateField} />
           <NumberField label="价格周期" field="pricingRefreshIntervalMinutes" suffix="分钟" draft={draft} errors={errors} onChange={updateField} />
-          <NumberField label="采集超时" field="collectorTimeoutSeconds" suffix="秒" draft={draft} errors={errors} onChange={updateField} />
+          <NumberField label="单项采集超时" field="collectorTimeoutSeconds" suffix="秒" draft={draft} errors={errors} onChange={updateField} />
           <NumberField label="采集并发数" field="collectorMaxConcurrency" draft={draft} errors={errors} onChange={updateField} />
         </div>
       </details>
@@ -201,12 +202,14 @@ function NumberField({
 }) {
   const id = `collector-setting-${field}`;
   const errorId = `${id}-error`;
-  const min = field === "collectorTimeoutSeconds" ? 3 : 1;
+  const min = field === "collectorTimeoutSeconds" ? COLLECTOR_TIMEOUT_SECONDS.min : 1;
   const max = field === "collectorMaxConcurrency"
     ? 8
-    : field === "publishedStatusIntervalMinutes"
-      ? 1440
-      : undefined;
+    : field === "collectorTimeoutSeconds"
+      ? COLLECTOR_TIMEOUT_SECONDS.max
+      : field === "publishedStatusIntervalMinutes"
+        ? 1440
+        : undefined;
   const error = errors[field];
 
   return (

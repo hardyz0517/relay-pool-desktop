@@ -100,6 +100,12 @@ pub(crate) struct BalanceWrite {
     pub source: String,
     pub confidence: f64,
     pub collected_at: Option<String>,
+    pub evidence_confidence: String,
+    pub spendability_authority: String,
+    pub observed_at_ms: Option<i64>,
+    pub valid_until_ms: Option<i64>,
+    pub evidence_profile_version: String,
+    pub spendability_reason_code: Option<String>,
     pub now: String,
 }
 
@@ -695,10 +701,12 @@ impl CollectorStore {
                 total_base_consumption, today_token_count, total_token_count,
                 today_input_token_count, today_output_token_count, total_input_token_count,
                 total_output_token_count, account_concurrency_limit, low_balance_threshold,
-                status, source, confidence, collected_at, created_at, updated_at
+                status, source, confidence, collected_at, created_at, updated_at,
+                evidence_confidence, spendability_authority, observed_at_ms, valid_until_ms,
+                evidence_profile_version, spendability_reason_code
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
                        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, NULL, ?23, ?24,
-                       ?25, ?26, ?27, ?27)",
+                       ?25, ?26, ?27, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
         )
         .bind(&balance.id)
         .bind(&balance.station_id)
@@ -727,6 +735,12 @@ impl CollectorStore {
         .bind(balance.confidence)
         .bind(&balance.collected_at)
         .bind(&balance.now)
+        .bind(&balance.evidence_confidence)
+        .bind(&balance.spendability_authority)
+        .bind(balance.observed_at_ms)
+        .bind(balance.valid_until_ms)
+        .bind(&balance.evidence_profile_version)
+        .bind(&balance.spendability_reason_code)
         .execute(session.connection())
         .await?;
         Ok(())

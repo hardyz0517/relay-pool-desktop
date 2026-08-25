@@ -1535,6 +1535,8 @@ mod tests {
             raw_json_redacted: None,
             error_code: None,
             error_message: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         }
     }
 

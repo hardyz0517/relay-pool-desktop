@@ -22,6 +22,12 @@ export type CollectorSettingsValue = {
   [key in CollectorSettingsField]: number;
 };
 
+export const COLLECTOR_TIMEOUT_SECONDS = {
+  min: 3,
+  max: 300,
+  recommended: 30,
+} as const;
+
 type ParsedCollectorSettingsDraft =
   | { ok: true; value: CollectorSettingsValue }
   | { ok: false; errors: CollectorSettingsErrors };
@@ -85,7 +91,7 @@ export function applyCollectorFrequencyPreset(
 export function createRecommendedCollectorSettingsDraft(): CollectorSettingsDraft {
   return {
     ...FREQUENCY_PRESETS.balanced,
-    collectorTimeoutSeconds: "15",
+    collectorTimeoutSeconds: String(COLLECTOR_TIMEOUT_SECONDS.recommended),
     collectorMaxConcurrency: "3",
   };
 }
@@ -113,8 +119,8 @@ export function parseCollectorSettingsDraft(
   );
   value.collectorTimeoutSeconds = parseInteger(
     draft.collectorTimeoutSeconds,
-    3,
-    Number.MAX_SAFE_INTEGER,
+    COLLECTOR_TIMEOUT_SECONDS.min,
+    COLLECTOR_TIMEOUT_SECONDS.max,
     errors,
     "collectorTimeoutSeconds",
   );

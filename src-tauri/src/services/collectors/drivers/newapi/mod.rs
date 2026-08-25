@@ -1306,6 +1306,22 @@ async fn build_json_request(
             &policy,
         )
         .map_err(|failure| driver_failure_from_outbound(role, failure))?;
+    if let Some(user_agent) = context
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers
+            .insert_public(
+                header::USER_AGENT,
+                HeaderValue::from_str(user_agent).map_err(|_| {
+                    invalid_request("captured User-Agent is not a valid header value")
+                })?,
+                &policy,
+            )
+            .map_err(|failure| driver_failure_from_outbound(role, failure))?;
+    }
     let body = match body {
         Some(body) => {
             headers
@@ -2359,6 +2375,43 @@ mod tests {
         .is_empty());
         assert!(dashboard_usage_items(&json!({ "count": 1 })).is_empty());
     }
+
+    #[tokio::test]
+    async fn management_request_reuses_captured_browser_user_agent() {
+        let outbound = AsyncOutboundClient::new(AsyncOutboundClientConfig::architecture_budget());
+        let secrets = TestSecretAccessor("newapi-access-token");
+        let mut context = test_context("https://relay.example", &secrets, &outbound);
+        context.user_agent = Some(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0"
+                .to_string(),
+        );
+        let policy = OutboundHeaderPolicy::provider_default();
+
+        let request = build_json_request(
+            &context,
+            EndpointRole::Authorization,
+            "https://relay.example/api/user/self",
+            Method::GET,
+            None,
+            OutboundRetryPolicy::Never,
+            true,
+            Some("newapi-user-agent-test".to_string()),
+        )
+        .await
+        .expect("request should build");
+        let headers = request
+            .headers
+            .materialize(&policy)
+            .expect("headers should materialize");
+
+        assert_eq!(
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+            Some("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0.0.0")
+        );
+    }
+
     #[test]
     fn integer_metrics_reject_fractional_values() {
         assert_eq!(

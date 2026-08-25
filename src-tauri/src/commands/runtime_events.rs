@@ -83,6 +83,54 @@ pub(crate) const EVENT_DESCRIPTORS: &[EventDescriptor] = &[
         Component::Collector,
         EventLevel::Warn,
     ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.candidate_detected",
+        Component::Collector,
+        EventLevel::Info,
+    ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.browser_state_read_succeeded",
+        Component::Collector,
+        EventLevel::Info,
+    ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.browser_state_read_failed",
+        Component::Collector,
+        EventLevel::Warn,
+    ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.verification_succeeded",
+        Component::Collector,
+        EventLevel::Info,
+    ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.verification_failed",
+        Component::Collector,
+        EventLevel::Warn,
+    ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.persistence_succeeded",
+        Component::Collector,
+        EventLevel::Info,
+    ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.persistence_failed",
+        Component::Collector,
+        EventLevel::Error,
+    ),
+    standard_descriptor(
+        "station.capture",
+        "collector.web_session.completed",
+        Component::Collector,
+        EventLevel::Info,
+    ),
 ];
 
 pub(crate) fn frontend_boundary_failed() -> &'static EventDescriptor {
@@ -114,6 +162,38 @@ pub(crate) fn remote_key_scan_failed(error: &RemoteKeyOperationError) -> &'stati
     }
 }
 
+pub(crate) fn web_authorization_candidate_detected() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[13]
+}
+
+pub(crate) fn web_authorization_cookie_read_succeeded() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[14]
+}
+
+pub(crate) fn web_authorization_cookie_read_failed() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[15]
+}
+
+pub(crate) fn web_authorization_verification_succeeded() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[16]
+}
+
+pub(crate) fn web_authorization_verification_failed() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[17]
+}
+
+pub(crate) fn web_authorization_persistence_succeeded() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[18]
+}
+
+pub(crate) fn web_authorization_persistence_failed() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[19]
+}
+
+pub(crate) fn web_authorization_completed() -> &'static EventDescriptor {
+    &EVENT_DESCRIPTORS[20]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +207,18 @@ mod tests {
         assert_eq!(
             descriptor.code,
             "collector.remote_key_scan.failed.timed_out"
+        );
+    }
+
+    #[test]
+    fn web_authorization_events_use_stage_only_safe_codes() {
+        assert_eq!(
+            web_authorization_cookie_read_failed().code,
+            "collector.web_session.browser_state_read_failed"
+        );
+        assert_eq!(
+            web_authorization_persistence_succeeded().code,
+            "collector.web_session.persistence_succeeded"
         );
     }
 }

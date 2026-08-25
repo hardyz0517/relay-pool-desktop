@@ -90,6 +90,8 @@ pub(crate) struct CollectorApplyRequest {
     pub failure_count: i64,
     pub manual_action_required: bool,
     pub next_due_at: Option<String>,
+    pub execution_started_at_ms: Option<i64>,
+    pub execution_duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -611,8 +613,15 @@ impl CollectorService {
     ) -> Result<CollectorApplyOutcome, ApplicationError> {
         validate_request(&request)?;
         let request_hash = canonical_hash(&request)?;
-        let now = self.clock.now_utc().timestamp_millis().to_string();
-        let started_ms = now.parse::<i64>().unwrap_or_default();
+        let applied_at_ms = self.clock.now_utc().timestamp_millis();
+        let started_ms = request.execution_started_at_ms.unwrap_or(applied_at_ms);
+        let duration_ms = request
+            .execution_duration_ms
+            .unwrap_or_else(|| applied_at_ms.saturating_sub(started_ms))
+            .max(0);
+        let finished_ms = started_ms.saturating_add(duration_ms);
+        let started_at = started_ms.to_string();
+        let now = finished_ms.to_string();
         let run_id = self.ids.next_id();
         let snapshot_id = self.ids.next_id();
         let ids = self.ids.clone();
@@ -657,7 +666,7 @@ impl CollectorService {
                                 parent_run_id: request.parent_run_id.clone(),
                                 adapter: request.adapter.clone(),
                                 task_type: request.task_type.clone(),
-                                started_at: now.clone(),
+                                started_at: started_at.clone(),
                             },
                         )
                         .await?;
@@ -725,6 +734,20 @@ impl CollectorService {
                                     source: balance.source.clone(),
                                     confidence: balance.confidence,
                                     collected_at: balance.collected_at.clone(),
+                                    evidence_confidence: collector_balance_evidence_confidence(&balance.status),
+                                    spendability_authority: collector_balance_authority(
+                                        &balance.status,
+                                        &balance.source,
+                                    ),
+                                    observed_at_ms: collector_balance_observed_at_ms(
+                                        balance.collected_at.as_deref().unwrap_or(&now),
+                                    ),
+                                    valid_until_ms: collector_balance_observed_at_ms(
+                                        balance.collected_at.as_deref().unwrap_or(&now),
+                                    )
+                                    .map(|value| value.saturating_add(30 * 60 * 1_000)),
+                                    evidence_profile_version: "collector-balance-v1".to_string(),
+                                    spendability_reason_code: collector_balance_reason(&balance.status),
                                     now: now.clone(),
                                 },
                             )
@@ -976,7 +999,7 @@ impl CollectorService {
                                 id: run_id,
                                 status: request.status,
                                 finished_at: now.clone(),
-                                duration_ms: now.parse::<i64>().unwrap_or(started_ms) - started_ms,
+                                duration_ms,
                                 endpoint_count: request.endpoint_count,
                                 success_count: request.success_count,
                                 failure_count: request.failure_count,
@@ -1364,6 +1387,11 @@ fn validate_request(request: &CollectorApplyRequest) -> Result<(), ApplicationEr
         || request.success_count < 0
         || request.failure_count < 0
         || request.success_count + request.failure_count > request.endpoint_count
+        || request.execution_started_at_ms.is_some() != request.execution_duration_ms.is_some()
+        || request
+            .execution_started_at_ms
+            .is_some_and(|value| value < 0)
+        || request.execution_duration_ms.is_some_and(|value| value < 0)
     {
         return Err(ApplicationError::ConstraintViolation);
     }
@@ -1783,6 +1811,8 @@ mod tests {
             failure_count: 1,
             manual_action_required: false,
             next_due_at: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         };
         let failure_key = collector_failure_key("station-1");
         let abnormal = collector_observation(
@@ -1929,6 +1959,8 @@ mod tests {
             failure_count: 1,
             manual_action_required: false,
             next_due_at: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         };
 
         assert!(validate_request(&request).is_ok());
@@ -2398,6 +2430,8 @@ mod tests {
             failure_count: 1,
             manual_action_required: false,
             next_due_at: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         };
 
         assert_eq!(
@@ -2793,9 +2827,18 @@ mod tests {
                 failure_count: 0,
                 manual_action_required: false,
                 next_due_at: None,
+                execution_started_at_ms: Some(1_699_999_995_000),
+                execution_duration_ms: Some(5_000),
             })
             .await
             .expect("collector apply");
+        let runs = collectors
+            .list_collector_runs(&station.id, PageLimit::new(1).expect("run limit"))
+            .await
+            .expect("collector runs");
+        assert_eq!(runs[0].started_at, "1699999995000");
+        assert_eq!(runs[0].finished_at.as_deref(), Some("1700000000000"));
+        assert_eq!(runs[0].duration_ms, Some(5_000));
         runtime
             .write(|write| {
                 Box::pin(async move {
@@ -2917,6 +2960,8 @@ mod tests {
             failure_count: i64::from(status == "failed"),
             manual_action_required: status == "manual_required",
             next_due_at: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         }
     }
 
@@ -2965,6 +3010,8 @@ mod tests {
             failure_count: i64::from(status == "failed"),
             manual_action_required: false,
             next_due_at: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         }
     }
 
@@ -3194,6 +3241,8 @@ mod tests {
                 failure_count: 0,
                 manual_action_required: false,
                 next_due_at: None,
+                execution_started_at_ms: None,
+                execution_duration_ms: None,
             })
             .await
             .expect("collector apply");
@@ -3356,6 +3405,8 @@ mod tests {
                 failure_count: 0,
                 manual_action_required: false,
                 next_due_at: None,
+                execution_started_at_ms: None,
+                execution_duration_ms: None,
             })
             .await
             .expect("collector apply");

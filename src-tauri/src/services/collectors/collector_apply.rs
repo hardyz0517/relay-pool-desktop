@@ -184,6 +184,8 @@ async fn apply_adapter_output(
         failure_count: endpoint_counts.2,
         manual_action_required: output.status == "manual_required",
         next_due_at,
+        execution_started_at_ms: output.execution_started_at_ms,
+        execution_duration_ms: output.execution_duration_ms,
     };
     port.apply(request).await
 }
@@ -391,6 +393,8 @@ mod tests {
             raw_json_redacted: None,
             error_code: None,
             error_message: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         }
     }
 

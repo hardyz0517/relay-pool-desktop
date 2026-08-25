@@ -30,7 +30,10 @@ pub mod output;
 pub(crate) mod apply {
     pub(crate) use super::collector_apply::{CollectorApplyPort, V2CollectorApplyAdapter};
 }
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use futures_util::{future::BoxFuture, FutureExt};
 use serde_json::{json, Value};
@@ -57,6 +60,14 @@ use crate::{
 use crate::models::provider_drafts::{ProviderDraftPreview, ProviderDraftPreviewGroup};
 use collector_apply::CollectorApplyPort;
 use output::{AdapterOutput, CollectorTask};
+
+fn elapsed_millis(started: Instant) -> i64 {
+    i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)
+}
+
+fn epoch_millis() -> i64 {
+    i64::try_from(crate::services::time::now_millis_for_services()).unwrap_or(i64::MAX)
+}
 
 /// Consumer-owned read/write boundary required by provider collection drivers.
 ///
@@ -376,6 +387,7 @@ pub(crate) struct PreparedNewApiDriverCollection {
     auth_context: Option<contract::ProviderAuthContext>,
     secret_accessor: StaticSecretAccessor,
     password_login: Option<PreparedNewApiPasswordLogin>,
+    user_agent: Option<String>,
 }
 
 struct PreparedNewApiPasswordLogin {
@@ -702,6 +714,10 @@ fn prepare_newapi_collection_v2(
     let needs_auth = driver_tasks
         .iter()
         .any(|task| *task != CollectorTask::Detect);
+    let credentials = needs_auth
+        .then(|| source.get_station_credentials(station_id.clone()))
+        .transpose()
+        .map_err(|_| ApplicationError::Internal)?;
     let (auth_context, secret_purpose, secret, password_login) = if needs_auth {
         match drivers::newapi::auth::prepare_collector_auth_context(
             source,
@@ -728,14 +744,12 @@ fn prepare_newapi_collection_v2(
                 )
             }
             Err(error) => {
-                let credentials = source
-                    .get_station_credentials(station_id.clone())
-                    .map_err(|_| ApplicationError::Internal)?;
+                let credentials = credentials.as_ref().ok_or(ApplicationError::Internal)?;
                 let password = source
                     .get_station_login_password(station_id.clone())
                     .map_err(|_| ApplicationError::Internal)?;
                 if let Some(password_login) = prepare_newapi_password_login(
-                    credentials.login_username,
+                    credentials.login_username.clone(),
                     credentials.password_present,
                     password,
                 ) {
@@ -808,6 +822,7 @@ fn prepare_newapi_collection_v2(
                 secret,
             },
             password_login,
+            user_agent: credentials.and_then(|credentials| credentials.session_user_agent),
         },
     ))
 }
@@ -837,26 +852,6 @@ pub(crate) async fn finish_sub2api_collection_v2(
             let driver = registry
                 .collector(contract::ProviderKind::Sub2Api)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let context = contract::CollectorContext {
-                station: contract::StationIdentity {
-                    station_id: prepared.station_id.clone(),
-                    endpoint_revision: prepared.endpoint_revision,
-                    provider: contract::ProviderKind::Sub2Api,
-                },
-                endpoints: contract::ProviderEndpoints {
-                    api_base_url: Some(prepared.api_base_url),
-                    website_url: Some(prepared.website_url),
-                },
-                credential: prepared.credential_handle,
-                auth: Some(prepared.auth_context),
-                user_agent: prepared.user_agent,
-                secrets: &prepared.secret_accessor,
-                outbound,
-                proxy: prepared.proxy,
-                budget: RequestBudget::from_now(prepared.timeout),
-                cancellation: cancellation_token,
-                correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
-            };
             let outputs = prepared
                 .driver_tasks
                 .iter()
@@ -869,13 +864,40 @@ pub(crate) async fn finish_sub2api_collection_v2(
                 .collect::<Result<Vec<_>, ApplicationError>>()?;
             let mut adapter_outputs = Vec::with_capacity(outputs.len());
             for (child_task, driver_task) in outputs {
+                let context = contract::CollectorContext {
+                    station: contract::StationIdentity {
+                        station_id: prepared.station_id.clone(),
+                        endpoint_revision: prepared.endpoint_revision,
+                        provider: contract::ProviderKind::Sub2Api,
+                    },
+                    endpoints: contract::ProviderEndpoints {
+                        api_base_url: Some(prepared.api_base_url.clone()),
+                        website_url: Some(prepared.website_url.clone()),
+                    },
+                    credential: prepared.credential_handle.clone(),
+                    auth: Some(prepared.auth_context.clone()),
+                    user_agent: prepared.user_agent.clone(),
+                    secrets: &prepared.secret_accessor,
+                    outbound,
+                    proxy: prepared.proxy.clone(),
+                    // The setting is a leaf-task deadline. Full collections
+                    // create a fresh bounded budget for every declared child.
+                    budget: RequestBudget::from_now(prepared.timeout),
+                    cancellation: cancellation_token.clone(),
+                    correlation_id: correlation_id
+                        .clone()
+                        .unwrap_or_else(|| "station-collection".to_string()),
+                };
+                let started_at_ms = epoch_millis();
+                let started = Instant::now();
                 let output = driver
                     .collect(&context, driver_task)
                     .await
                     .map(|output| driver_output_to_adapter_output("sub2api", child_task, output))
                     .unwrap_or_else(|failure| {
                         driver_failure_to_adapter_output("sub2api", child_task, failure)
-                    });
+                    })
+                    .with_execution_timing(started_at_ms, elapsed_millis(started));
                 adapter_outputs.push(output);
             }
             Ok(PreparedStationCollection {
@@ -978,26 +1000,6 @@ pub(crate) async fn finish_newapi_collection_v2(
             let driver = registry
                 .collector(contract::ProviderKind::NewApi)
                 .map_err(|_| ApplicationError::ConstraintViolation)?;
-            let context = contract::CollectorContext {
-                station: contract::StationIdentity {
-                    station_id: prepared.station_id.clone(),
-                    endpoint_revision: prepared.endpoint_revision,
-                    provider: contract::ProviderKind::NewApi,
-                },
-                endpoints: contract::ProviderEndpoints {
-                    api_base_url: None,
-                    website_url: Some(prepared.website_url),
-                },
-                credential: prepared.credential_handle,
-                auth: prepared.auth_context,
-                user_agent: None,
-                secrets: &prepared.secret_accessor,
-                outbound,
-                proxy: prepared.proxy,
-                budget: RequestBudget::from_now(prepared.timeout),
-                cancellation: cancellation_token,
-                correlation_id: correlation_id.unwrap_or_else(|| "station-collection".to_string()),
-            };
             let outputs = prepared
                 .driver_tasks
                 .iter()
@@ -1010,13 +1012,38 @@ pub(crate) async fn finish_newapi_collection_v2(
                 .collect::<Result<Vec<_>, ApplicationError>>()?;
             let mut adapter_outputs = Vec::with_capacity(outputs.len());
             for (child_task, driver_task) in outputs {
+                let context = contract::CollectorContext {
+                    station: contract::StationIdentity {
+                        station_id: prepared.station_id.clone(),
+                        endpoint_revision: prepared.endpoint_revision,
+                        provider: contract::ProviderKind::NewApi,
+                    },
+                    endpoints: contract::ProviderEndpoints {
+                        api_base_url: None,
+                        website_url: Some(prepared.website_url.clone()),
+                    },
+                    credential: prepared.credential_handle.clone(),
+                    auth: prepared.auth_context.clone(),
+                    user_agent: prepared.user_agent.clone(),
+                    secrets: &prepared.secret_accessor,
+                    outbound,
+                    proxy: prepared.proxy.clone(),
+                    budget: RequestBudget::from_now(prepared.timeout),
+                    cancellation: cancellation_token.clone(),
+                    correlation_id: correlation_id
+                        .clone()
+                        .unwrap_or_else(|| "station-collection".to_string()),
+                };
+                let started_at_ms = epoch_millis();
+                let started = Instant::now();
                 let output = driver
                     .collect(&context, driver_task)
                     .await
                     .map(|output| driver_output_to_adapter_output("newapi", child_task, output))
                     .unwrap_or_else(|failure| {
                         driver_failure_to_adapter_output("newapi", child_task, failure)
-                    });
+                    })
+                    .with_execution_timing(started_at_ms, elapsed_millis(started));
                 adapter_outputs.push(output);
             }
             Ok(PreparedStationCollection {
@@ -1364,6 +1391,8 @@ fn station_login_probe_collection(
         })),
         error_code: (!token_present).then(|| "login_action_required".to_string()),
         error_message: (!token_present).then_some(diagnosis),
+        execution_started_at_ms: None,
+        execution_duration_ms: None,
     };
     PreparedStationCollection {
         station_id,
@@ -1440,13 +1469,23 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
     let business =
         full_business_summary_from_outputs(&prepared.outputs, prepared.enabled_key_count);
     let manual_authorization_required = status == "manual_required";
+    let primary_child_failure = prepared
+        .outputs
+        .iter()
+        .find(|output| output.status != "success");
     let error_message = if manual_authorization_required {
         Some(manual_authorization::MESSAGE.to_string())
     } else if status == "failed" {
         Some("all full collector child tasks failed".to_string())
+    } else if status == "partial" {
+        primary_child_failure
+            .and_then(|output| output.error_message.clone())
+            .or_else(|| Some("one or more full collector child tasks failed".to_string()))
     } else {
         None
     };
+    let (execution_started_at_ms, execution_duration_ms) =
+        aggregate_execution_timing(&prepared.outputs);
 
     AdapterOutput {
         adapter: prepared.adapter.clone(),
@@ -1483,11 +1522,33 @@ fn aggregate_full_output_v2(prepared: &PreparedStationCollection) -> AdapterOutp
             Some(manual_authorization::ERROR_CODE.to_string())
         } else if status == "failed" {
             Some("all_child_tasks_failed".to_string())
+        } else if status == "partial" {
+            primary_child_failure
+                .and_then(|output| output.error_code.clone())
+                .or_else(|| Some("child_task_failed".to_string()))
         } else {
             None
         },
         error_message,
+        execution_started_at_ms,
+        execution_duration_ms,
     }
+}
+
+fn aggregate_execution_timing(outputs: &[AdapterOutput]) -> (Option<i64>, Option<i64>) {
+    let mut timings = outputs.iter().filter_map(|output| {
+        let started = output.execution_started_at_ms?;
+        let finished = started.saturating_add(output.execution_duration_ms?);
+        Some((started, finished))
+    });
+    let Some((mut earliest, mut latest)) = timings.next() else {
+        return (None, None);
+    };
+    for (started, finished) in timings {
+        earliest = earliest.min(started);
+        latest = latest.max(finished);
+    }
+    (Some(earliest), Some(latest.saturating_sub(earliest)))
 }
 
 fn aggregate_full_output_status(outputs: &[AdapterOutput]) -> String {
@@ -1662,6 +1723,8 @@ fn manual_required_output_for_adapter(
         raw_json_redacted: None,
         error_code: Some(manual_authorization::ERROR_CODE.to_string()),
         error_message: Some(message.to_string()),
+        execution_started_at_ms: None,
+        execution_duration_ms: None,
     }
 }
 
@@ -1746,6 +1809,8 @@ fn driver_output_to_adapter_output(
         raw_json_redacted: output.diagnostics.raw_json_redacted,
         error_code: None,
         error_message: None,
+        execution_started_at_ms: None,
+        execution_duration_ms: None,
     }
 }
 
@@ -1798,6 +1863,8 @@ fn driver_failure_to_adapter_output(
             driver_failure_code(failure.kind).to_string()
         }),
         error_message: Some(message),
+        execution_started_at_ms: None,
+        execution_duration_ms: None,
     }
 }
 
@@ -1972,6 +2039,8 @@ mod tests {
                 raw_json_redacted: None,
                 error_code: None,
                 error_message: None,
+                execution_started_at_ms: None,
+                execution_duration_ms: None,
             }],
             enabled_key_count: 1,
         };
@@ -2043,6 +2112,8 @@ mod tests {
                     raw_json_redacted: None,
                     error_code: Some("provider_unavailable".to_string()),
                     error_message: Some("provider unavailable".to_string()),
+                    execution_started_at_ms: None,
+                    execution_duration_ms: None,
                 },
             ],
             enabled_key_count: 1,
@@ -2135,6 +2206,8 @@ mod tests {
             raw_json_redacted: None,
             error_code: None,
             error_message: None,
+            execution_started_at_ms: None,
+            execution_duration_ms: None,
         };
         let prepared = PreparedStationCollection {
             station_id: "station-1".to_string(),
@@ -2152,6 +2225,7 @@ mod tests {
         let full = aggregate_full_output_v2(&prepared);
 
         assert_eq!(full.status, "partial");
+        assert_eq!(full.error_code.as_deref(), Some("child_task_failed"));
         assert_eq!(
             full.summary_json["childRuns"],
             json!([
@@ -2160,6 +2234,40 @@ mod tests {
                 {"task": "published_status", "status": "manual_required", "errorCode": null},
             ])
         );
+    }
+
+    #[test]
+    fn full_parent_timing_spans_all_timed_children() {
+        let output = |task: CollectorTask, started_at_ms: i64, duration_ms: i64| AdapterOutput {
+            adapter: "sub2api".to_string(),
+            task,
+            status: "success".to_string(),
+            facts: facts::CollectorFacts::default(),
+            summary_json: json!({"endpointResults": []}),
+            normalized_json: json!({}),
+            raw_json_redacted: None,
+            error_code: None,
+            error_message: None,
+            execution_started_at_ms: Some(started_at_ms),
+            execution_duration_ms: Some(duration_ms),
+        };
+        let prepared = PreparedStationCollection {
+            station_id: "station-1".to_string(),
+            endpoint_revision: 7,
+            adapter: "sub2api".to_string(),
+            task: CollectorTask::Full,
+            outputs: vec![
+                output(CollectorTask::Balance, 1_000, 500),
+                output(CollectorTask::Groups, 1_500, 250),
+                output(CollectorTask::PublishedStatus, 1_750, 100),
+            ],
+            enabled_key_count: 1,
+        };
+
+        let full = aggregate_full_output_v2(&prepared);
+
+        assert_eq!(full.execution_started_at_ms, Some(1_000));
+        assert_eq!(full.execution_duration_ms, Some(850));
     }
 
     #[test]

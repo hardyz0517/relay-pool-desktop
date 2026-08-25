@@ -6,7 +6,10 @@ use crate::{
         routing::{DispatchAlgorithmSettings, RoutingGroupFilter},
         routing_policy::RoutingPolicyConfigV2,
         secrets::mask_secret,
-        settings::{AppSettings, UpdateSettingsInput},
+        settings::{
+            AppSettings, UpdateSettingsInput, DEFAULT_COLLECTOR_TIMEOUT_SECONDS,
+            MAX_COLLECTOR_TIMEOUT_SECONDS, MIN_COLLECTOR_TIMEOUT_SECONDS,
+        },
     },
     persistence::{
         error::PersistenceError,
@@ -254,6 +257,7 @@ async fn settings_from_connection(
         .unwrap_or(false);
 
     let canonical_policy = canonical_policy_projection(&mut *connection).await?;
+    let default_collector_timeout_seconds = DEFAULT_COLLECTOR_TIMEOUT_SECONDS.to_string();
 
     Ok(AppSettings {
         local_proxy_port: parse_setting(&mut *connection, "local_proxy_port").await?,
@@ -312,7 +316,7 @@ async fn settings_from_connection(
         collector_timeout_seconds: parse_setting_or_default(
             &mut *connection,
             "collector_timeout_seconds",
-            "15",
+            &default_collector_timeout_seconds,
         )
         .await?,
         collector_max_concurrency: parse_setting_or_default(
@@ -513,7 +517,8 @@ fn validate_settings(input: &UpdateSettingsInput) -> Result<(), PersistenceError
         || input.group_rate_interval_minutes == 0
         || !(1..=1_440).contains(&input.published_status_interval_minutes)
         || input.pricing_refresh_interval_minutes == 0
-        || input.collector_timeout_seconds < 3
+        || !(MIN_COLLECTOR_TIMEOUT_SECONDS..=MAX_COLLECTOR_TIMEOUT_SECONDS)
+            .contains(&input.collector_timeout_seconds)
         || input.collector_max_concurrency == 0
         || input.collector_max_concurrency > 8
     {

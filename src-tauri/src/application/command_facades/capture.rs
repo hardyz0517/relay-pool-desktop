@@ -224,6 +224,11 @@ impl CaptureCommandFacade {
         }
         let web_authorization_user_id =
             web_authorization_candidate_user_id_from_input(&input, &station.station_type);
+        if web_authorization_user_id.is_some() {
+            crate::observability::runtime::bootstrap::emit_rate_limited(
+                crate::commands::runtime_events::web_authorization_candidate_detected(),
+            );
+        }
         let captured_credentials = capture::extract_session_credentials(&input);
         let user_agent = input.user_agent.clone();
         let station_id = input.station_id.clone();
@@ -276,8 +281,13 @@ impl CaptureCommandFacade {
         station_id: String,
         cookie_header: String,
     ) -> Result<CollectorRunResult, CaptureCommandError> {
-        self.finish_web_authorization_session_with_cookie(station_id, cookie_header)
-            .await
+        let result = self
+            .finish_web_authorization_session_with_cookie(station_id.clone(), cookie_header)
+            .await;
+        if let Err(error) = &result {
+            self.record_web_authorization_error(&station_id, error);
+        }
+        result
     }
 
     async fn finish_web_authorization_session_with_cookie(
@@ -305,16 +315,22 @@ impl CaptureCommandFacade {
                 ));
             }
         };
-        let verified = self
-            .verify_web_authorization_session(&station, cookie_header, &candidate.user_id)
-            .await?;
         let user_agent = self.sessions.web_authorization_user_agent(&station_id)?;
+        let verified = self
+            .verify_web_authorization_session(
+                &station,
+                cookie_header,
+                &candidate.user_id,
+                user_agent.as_deref(),
+            )
+            .await?;
         let commit = self
             .sessions
             .begin_web_authorization_commit(&station_id, &candidate)?;
         let persist_result = self
             .persist_web_authorization_session_inner(
                 station_id.clone(),
+                &station.station_type,
                 verified,
                 user_agent,
                 commit.endpoint_revision,
@@ -322,6 +338,9 @@ impl CaptureCommandFacade {
             .await
             .map_err(CaptureCommandError::Application);
         if let Err(error) = persist_result {
+            crate::observability::runtime::bootstrap::emit(
+                crate::commands::runtime_events::web_authorization_persistence_failed(),
+            );
             return Err(abort_capture_commit(
                 &self.sessions,
                 &station_id,
@@ -329,6 +348,9 @@ impl CaptureCommandFacade {
                 error,
             ));
         }
+        crate::observability::runtime::bootstrap::emit(
+            crate::commands::runtime_events::web_authorization_persistence_succeeded(),
+        );
 
         let result = self
             .finish_capture_session_with_events_inner(
@@ -345,6 +367,9 @@ impl CaptureCommandFacade {
         match result {
             Ok(result) => {
                 self.sessions.complete_commit(&station_id, &commit)?;
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_completed(),
+                );
                 Ok(result)
             }
             Err(error) => Err(abort_capture_commit(
@@ -361,8 +386,16 @@ impl CaptureCommandFacade {
         draft_id: String,
         cookie_header: String,
     ) -> Result<ProviderDraftPreview, CaptureCommandError> {
-        self.finish_provider_draft_authorization_session_with_cookie(draft_id, cookie_header)
-            .await
+        let result = self
+            .finish_provider_draft_authorization_session_with_cookie(
+                draft_id.clone(),
+                cookie_header,
+            )
+            .await;
+        if let Err(error) = &result {
+            self.record_web_authorization_error(&draft_id, error);
+        }
+        result
     }
 
     async fn finish_provider_draft_authorization_session_with_cookie(
@@ -392,10 +425,15 @@ impl CaptureCommandFacade {
                 ));
             }
         };
-        let verified = self
-            .verify_web_authorization_session(&station, cookie_header, &candidate.user_id)
-            .await?;
         let user_agent = self.sessions.web_authorization_user_agent(&draft_id)?;
+        let verified = self
+            .verify_web_authorization_session(
+                &station,
+                cookie_header,
+                &candidate.user_id,
+                user_agent.as_deref(),
+            )
+            .await?;
         let commit = self
             .sessions
             .begin_web_authorization_commit(&draft_id, &candidate)?;
@@ -407,14 +445,25 @@ impl CaptureCommandFacade {
         match result {
             Ok(preview) => {
                 self.sessions.complete_commit(&draft_id, &commit)?;
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_persistence_succeeded(),
+                );
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_completed(),
+                );
                 Ok(preview)
             }
-            Err(error) => Err(abort_capture_commit(
-                &self.sessions,
-                &draft_id,
-                &commit,
-                error,
-            )),
+            Err(error) => {
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_persistence_failed(),
+                );
+                Err(abort_capture_commit(
+                    &self.sessions,
+                    &draft_id,
+                    &commit,
+                    error,
+                ))
+            }
         }
     }
 
@@ -440,11 +489,24 @@ impl CaptureCommandFacade {
         )
     }
 
+    pub(crate) fn clear_prepared_session(&self, station_id: &str) {
+        let _ = self.sessions.clear(station_id);
+    }
+
+    pub(crate) fn record_web_authorization_message(&self, station_id: &str, message: &str) {
+        let _ = self.sessions.record_error(station_id, message);
+    }
+
+    fn record_web_authorization_error(&self, station_id: &str, error: &CaptureCommandError) {
+        self.record_web_authorization_message(station_id, &capture_command_error_message(error));
+    }
+
     async fn verify_web_authorization_session(
         &self,
         station: &Station,
         cookie_header: String,
         expected_user_id: &str,
+        user_agent: Option<&str>,
     ) -> Result<VerifiedWebAuthorizationSession, CaptureCommandError> {
         let cookie_header = cookie_header.trim().to_string();
         if cookie_header.is_empty() {
@@ -465,6 +527,9 @@ impl CaptureCommandFacade {
         // authorization driver.  The cookie is still persisted only after the
         // capture session supplied a verified auth response candidate.
         if station.station_type.eq_ignore_ascii_case("sub2api") {
+            crate::observability::runtime::bootstrap::emit(
+                crate::commands::runtime_events::web_authorization_verification_succeeded(),
+            );
             return Ok(VerifiedWebAuthorizationSession::new(
                 cookie_header,
                 expected_user_id,
@@ -496,7 +561,7 @@ impl CaptureCommandFacade {
                 user_id: expected_user_id.clone(),
                 secret_purpose: CredentialSecretPurpose::SessionCookie,
             }),
-            user_agent: None,
+            user_agent: user_agent.map(ToString::to_string),
             secrets: &secret_accessor,
             outbound: &self.outbound,
             proxy: ProxyPolicy::Direct,
@@ -519,26 +584,51 @@ impl CaptureCommandFacade {
                     endpoint_role: EndpointRole::Authorization,
                 },
             )
-            .await
-            .map_err(capture_authorization_error)?;
+            .await;
+        let output = match output {
+            Ok(output) => output,
+            Err(error) => {
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_verification_failed(),
+                );
+                return Err(capture_authorization_error(error));
+            }
+        };
         match output.status {
-            AuthorizationStatus::Authorized => Ok(VerifiedWebAuthorizationSession::new(
-                cookie_header,
-                expected_user_id,
-            )),
-            AuthorizationStatus::ReauthorizationRequired => Err(CaptureCommandError::Message(
-                "Web authorization session expired; please re-authorize in the login window."
-                    .to_string(),
-            )),
-            AuthorizationStatus::Unsupported => Err(CaptureCommandError::Message(
-                "NewAPI web authorization validation is not supported by this build.".to_string(),
-            )),
+            AuthorizationStatus::Authorized => {
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_verification_succeeded(),
+                );
+                Ok(VerifiedWebAuthorizationSession::new(
+                    cookie_header,
+                    expected_user_id,
+                ))
+            }
+            AuthorizationStatus::ReauthorizationRequired => {
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_verification_failed(),
+                );
+                Err(CaptureCommandError::Message(
+                    "Web authorization session expired; please re-authorize in the login window."
+                        .to_string(),
+                ))
+            }
+            AuthorizationStatus::Unsupported => {
+                crate::observability::runtime::bootstrap::emit(
+                    crate::commands::runtime_events::web_authorization_verification_failed(),
+                );
+                Err(CaptureCommandError::Message(
+                    "NewAPI web authorization validation is not supported by this build."
+                        .to_string(),
+                ))
+            }
         }
     }
 
     async fn persist_web_authorization_session_inner(
         &self,
         station_id: String,
+        station_type: &str,
         verified: VerifiedWebAuthorizationSession,
         user_agent: Option<String>,
         endpoint_revision: i64,
@@ -547,6 +637,13 @@ impl CaptureCommandFacade {
             .credentials
             .get_station_credentials(station_id.clone())
             .await?;
+        let newapi_user_id = if station_type.eq_ignore_ascii_case("newapi") {
+            Some(verified.newapi_user_id)
+        } else {
+            existing
+                .newapi_user_id
+                .or_else(|| Some(verified.newapi_user_id))
+        };
         self.credentials
             .persist_station_session_if_revision(
                 PersistStationSessionInput {
@@ -554,9 +651,7 @@ impl CaptureCommandFacade {
                     access_token: None,
                     refresh_token: None,
                     cookie: Some(verified.cookie_header),
-                    newapi_user_id: existing
-                        .newapi_user_id
-                        .or_else(|| Some(verified.newapi_user_id)),
+                    newapi_user_id,
                     token_expires_at: existing.token_expires_at,
                     session_expires_at: existing.session_expires_at,
                     session_source: verified.session_source,
@@ -740,6 +835,18 @@ fn capture_authorization_error(error: DriverFailure) -> CaptureCommandError {
     }
 }
 
+fn capture_command_error_message(error: &CaptureCommandError) -> String {
+    match error {
+        CaptureCommandError::Message(message) => message.clone(),
+        CaptureCommandError::Application(_) => {
+            "授权会话保存失败，请保持授权窗口打开后重试。".to_string()
+        }
+        CaptureCommandError::Blocking(_) => {
+            "授权窗口 Cookie 读取任务失败，请保持授权窗口打开后重试。".to_string()
+        }
+    }
+}
+
 fn abort_capture_commit(
     sessions: &CaptureSessionStore,
     station_id: &str,
@@ -854,10 +961,23 @@ fn capture_script(
       window.__relayPoolAuthorizationFinishScheduled = false;
       if (window.__relayPoolAuthorizationFinishInFlight || !invoke) return;
       window.__relayPoolAuthorizationFinishInFlight = true;
-      invoke({finish_authorization_command:?}, {{ [{finish_authorization_input_key:?}]: stationId }})
-        .catch(() => undefined)
+      let retryDelayMs = null;
+      invoke({finish_authorization_command:?}, {{ input: {{ [{finish_authorization_input_key:?}]: stationId }} }})
+        .then(() => {{
+          window.__relayPoolAuthorizationFinishRetryCount = 0;
+          window.__relayPoolAuthorizationLastError = null;
+        }})
+        .catch((error) => {{
+          const attempts = Number(window.__relayPoolAuthorizationFinishRetryCount || 0) + 1;
+          window.__relayPoolAuthorizationFinishRetryCount = attempts;
+          window.__relayPoolAuthorizationLastError = error && error.message
+            ? String(error.message).slice(0, 240)
+            : "authorization_finish_failed";
+          if (attempts < 3) retryDelayMs = attempts * 500;
+        }})
         .finally(() => {{
           window.__relayPoolAuthorizationFinishInFlight = false;
+          if (retryDelayMs != null) scheduleAuthorizationFinish(retryDelayMs);
         }});
     }}, delayMs);
   }};
@@ -1189,11 +1309,13 @@ mod tests {
         );
 
         assert!(script.contains("finish_web_authorization_session"));
+        assert!(script.contains("input: { [\"stationId\"]: stationId }"));
         assert!(script.contains("webAuthorizationCandidate"));
         assert!(script.contains("window.__relayPoolAuthorizationFinishInFlight"));
         assert!(script.contains("/api/v1/auth/login"));
         assert!(script.contains("scheduleAuthorizationFinish"));
         assert!(script.contains("1800"));
+        assert!(script.contains("attempts < 3"));
         assert!(script.contains("\"auth_token\""));
         assert!(script.contains("token_expires_at"));
         assert!(script.contains("Storage.prototype.setItem"));
@@ -1201,5 +1323,21 @@ mod tests {
         assert!(script.contains("document unload cannot lose the login event"));
         assert!(script.contains(".replace(/\\/$/, \"\")"));
         assert!(!script.contains(".replace(/\\\\/$/, \"\")"));
+    }
+
+    #[test]
+    fn provider_draft_authorization_wraps_the_tauri_command_input() {
+        let script = capture_script(
+            "draft-1",
+            "capture-draft-1",
+            None,
+            None,
+            "newapi",
+            "finish_provider_draft_authorization_session",
+            "draftId",
+        );
+
+        assert!(script.contains("finish_provider_draft_authorization_session"));
+        assert!(script.contains("input: { [\"draftId\"]: stationId }"));
     }
 }

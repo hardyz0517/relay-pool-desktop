@@ -47,17 +47,21 @@ pub async fn start_capture_session(
                 .start_capture_session(input.station_id)
                 .await
                 .map_err(capture_command_error)?;
-            open_capture_window(app, &plan).map_err(capture_command_error)?;
             let web_authorization_cookie_url = plan.target.station.website_url.clone();
-            facade
+            let status = facade
                 .start_prepared_session(
-                    plan.station_id,
-                    plan.label,
+                    plan.station_id.clone(),
+                    plan.label.clone(),
                     plan.endpoint_revision,
                     web_authorization_cookie_url,
                 )
                 .map_err(CaptureCommandError::Message)
-                .map_err(capture_command_error)
+                .map_err(capture_command_error)?;
+            if let Err(error) = open_capture_window(app, &plan) {
+                facade.clear_prepared_session(&plan.station_id);
+                return Err(capture_command_error(error));
+            }
+            Ok(status)
         },
     )
     .await
@@ -85,17 +89,21 @@ pub async fn start_provider_draft_authorization(
                 .start_provider_draft_authorization(input.draft_id)
                 .await
                 .map_err(capture_command_error)?;
-            open_capture_window(app, &plan).map_err(capture_command_error)?;
             let web_authorization_cookie_url = plan.target.station.website_url.clone();
-            facade
+            let status = facade
                 .start_prepared_session(
-                    plan.station_id,
-                    plan.label,
+                    plan.station_id.clone(),
+                    plan.label.clone(),
                     plan.endpoint_revision,
                     web_authorization_cookie_url,
                 )
                 .map_err(CaptureCommandError::Message)
-                .map_err(capture_command_error)
+                .map_err(capture_command_error)?;
+            if let Err(error) = open_capture_window(app, &plan) {
+                facade.clear_prepared_session(&plan.station_id);
+                return Err(capture_command_error(error));
+            }
+            Ok(status)
         },
     )
     .await
@@ -268,10 +276,30 @@ pub async fn finish_web_authorization_session(
                     ))
                 })
                 .map_err(capture_command_error)?;
-            let cookie_header =
-                read_capture_window_cookies(window, target, &facade.blocking_executor())
-                    .await
-                    .map_err(capture_command_error)?;
+            let cookie_header = match read_capture_window_cookies(
+                window,
+                target,
+                &facade.blocking_executor(),
+            )
+            .await
+            {
+                Ok(cookie_header) => {
+                    crate::observability::runtime::bootstrap::emit(
+                        crate::commands::runtime_events::web_authorization_cookie_read_succeeded(),
+                    );
+                    cookie_header
+                }
+                Err(error) => {
+                    crate::observability::runtime::bootstrap::emit(
+                        crate::commands::runtime_events::web_authorization_cookie_read_failed(),
+                    );
+                    facade.record_web_authorization_message(
+                        &input.station_id,
+                        &capture_command_error_message(&error),
+                    );
+                    return Err(capture_command_error(error));
+                }
+            };
             facade
                 .finish_web_authorization_session(input.station_id, cookie_header)
                 .await
@@ -320,10 +348,30 @@ pub async fn finish_provider_draft_authorization_session(
                     ))
                 })
                 .map_err(capture_command_error)?;
-            let cookie_header =
-                read_capture_window_cookies(window, target, &facade.blocking_executor())
-                    .await
-                    .map_err(capture_command_error)?;
+            let cookie_header = match read_capture_window_cookies(
+                window,
+                target,
+                &facade.blocking_executor(),
+            )
+            .await
+            {
+                Ok(cookie_header) => {
+                    crate::observability::runtime::bootstrap::emit(
+                        crate::commands::runtime_events::web_authorization_cookie_read_succeeded(),
+                    );
+                    cookie_header
+                }
+                Err(error) => {
+                    crate::observability::runtime::bootstrap::emit(
+                        crate::commands::runtime_events::web_authorization_cookie_read_failed(),
+                    );
+                    facade.record_web_authorization_message(
+                        &input.draft_id,
+                        &capture_command_error_message(&error),
+                    );
+                    return Err(capture_command_error(error));
+                }
+            };
             facade
                 .finish_provider_draft_authorization_session(input.draft_id, cookie_header)
                 .await
@@ -451,6 +499,14 @@ async fn read_capture_window_cookies(
     )))
 }
 
+fn capture_command_error_message(error: &CaptureCommandError) -> String {
+    match error {
+        CaptureCommandError::Message(message) => message.clone(),
+        CaptureCommandError::Application(_) => "授权会话处理失败，请重试。".to_string(),
+        CaptureCommandError::Blocking(_) => "授权窗口 Cookie 读取任务失败，请重试。".to_string(),
+    }
+}
+
 fn schedule_capture_script_injection(window: tauri::WebviewWindow, script: String) {
     // WebView2 applies initialization scripts before its first document, which
     // can be `about:blank` while a remote authorization page is loading. Run a
@@ -570,7 +626,7 @@ fn capture_script(
     if (isSub2ApiIdentityProbe(input) === false && input && String(input.requestPath || "").toLowerCase().includes("/api/v1/")) return;
     if (window.__relayPoolAuthorizationFinishInFlight) return;
     window.__relayPoolAuthorizationFinishInFlight = true;
-    invoke("finish_web_authorization_session", {{ stationId }})
+    invoke("finish_web_authorization_session", {{ input: {{ stationId }} }})
       .catch(() => undefined)
       .finally(() => {{
         window.__relayPoolAuthorizationFinishInFlight = false;
@@ -805,6 +861,7 @@ mod tests {
         let script = capture_script("station-1", "capture-station-1", None, None);
 
         assert!(script.contains("finish_web_authorization_session"));
+        assert!(script.contains("input: { stationId }"));
         assert!(script.contains("webAuthorizationCandidate"));
         assert!(script.contains("__relayPoolAuthorizationFinishInFlight"));
         assert!(script.contains("input[placeholder*='邮箱']"));

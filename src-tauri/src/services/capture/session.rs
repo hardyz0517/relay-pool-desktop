@@ -159,6 +159,20 @@ impl CaptureSessionStore {
             .ok_or_else(|| "capture session does not exist".to_string())
     }
 
+    pub(crate) fn record_error(
+        &self,
+        station_id: &str,
+        message: &str,
+    ) -> Result<CaptureSessionStatus, String> {
+        let mut sessions = self.sessions()?;
+        let session = sessions
+            .get_mut(station_id)
+            .ok_or_else(|| "capture session does not exist".to_string())?;
+        let message = crate::services::secrets::mask::redact_text(message);
+        session.last_error = Some(message.chars().take(240).collect());
+        Ok(session.status())
+    }
+
     pub(crate) fn begin_finish(&self, station_id: &str) -> Result<CaptureCommit, String> {
         self.begin_commit(station_id, None, CaptureSessionPhase::Finishing)
     }
@@ -518,6 +532,30 @@ mod tests {
         store
             .push_event("station-1", captured_event(), None, None)
             .expect("capture resumes after abort");
+    }
+
+    #[test]
+    fn authorization_failure_is_visible_without_exposing_secret_text() {
+        let store = CaptureSessionStore::default();
+        store
+            .start(
+                "station-1".to_string(),
+                "capture-station-1".to_string(),
+                4,
+                "https://relay.example".to_string(),
+            )
+            .expect("start capture");
+
+        let status = store
+            .record_error(
+                "station-1",
+                "Cookie verification failed: token=abcdefghijklmnopqrstuvwxyz123456",
+            )
+            .expect("record safe capture error");
+
+        let error = status.last_error.expect("last error");
+        assert!(error.contains("[REDACTED]"));
+        assert!(!error.contains("abcdefghijklmnopqrstuvwxyz123456"));
     }
 
     #[test]
