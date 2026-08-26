@@ -10,7 +10,7 @@ use crate::services::data_store::{
     config::DatabaseGeneration,
     types::{
         CandidateHealth, CandidateRole, DataStoreCandidate, DataStoreStartupState, RecoveryReason,
-        StartupDecision,
+        StartupDecision, StartupUpgradeStatus,
     },
 };
 
@@ -107,6 +107,7 @@ pub(crate) struct DataStoreStartupView {
     pub mode: RecoveryRuntimeMode,
     pub database_generation: DatabaseGeneration,
     pub compatibility: Option<SchemaCompatibilityView>,
+    pub upgrade: StartupUpgradeStatus,
     pub capabilities: DataRecoveryCapabilities,
     pub decision: StartupDecisionView,
     pub candidates: Vec<DataStoreCandidateView>,
@@ -122,11 +123,10 @@ pub(crate) fn startup_view(state: &DataStoreStartupState) -> DataStoreStartupVie
         database_generation: state.database_generation(),
         compatibility: (mode == RecoveryRuntimeMode::Writable).then_some(SchemaCompatibilityView {
             decision_code: "writable",
-            schema_version: Some(
-                crate::services::data_store::generation_upgrade::current_schema_version(),
-            ),
+            schema_version: Some(crate::persistence::current_schema_version()),
             app_version: env!("CARGO_PKG_VERSION"),
         }),
+        upgrade: state.startup_upgrade().clone(),
         capabilities: capabilities_for(mode, &state.decision),
         decision: decision_view(&state.decision),
         candidates: state.candidates.iter().map(candidate_view).collect(),
@@ -143,8 +143,12 @@ pub(crate) fn candidate_view(candidate: &DataStoreCandidate) -> DataStoreCandida
         compatibility: (candidate.health == CandidateHealth::Healthy
             && candidate.schema_compatible)
             .then_some(SchemaCompatibilityView {
-                decision_code: "writable",
-                schema_version: None,
+                decision_code: if candidate.schema_metadata_consistent {
+                    "writable"
+                } else {
+                    "metadataMismatch"
+                },
+                schema_version: candidate.schema_version,
                 app_version: env!("CARGO_PKG_VERSION"),
             }),
         size_bytes: candidate.size_bytes,
@@ -157,10 +161,8 @@ fn candidate_generation(candidate: &DataStoreCandidate) -> Option<DatabaseGenera
     std::path::Path::new(&candidate.path)
         .file_name()
         .and_then(|name| name.to_str())
-        .and_then(|name| match name {
-            "relay-pool-desktop.sqlite3" => Some(DatabaseGeneration::One),
-            "relay-pool-desktop-v2.sqlite3" => Some(DatabaseGeneration::Two),
-            _ => None,
+        .and_then(|name| {
+            (name == "relay-pool-desktop-v2.sqlite3").then_some(DatabaseGeneration::Two)
         })
 }
 
@@ -310,6 +312,8 @@ mod tests {
                 .to_string(),
             health: CandidateHealth::Healthy,
             schema_compatible: true,
+            schema_version: Some(56),
+            schema_metadata_consistent: true,
             size_bytes: Some(42),
             modified_at: None,
             counts: std::collections::BTreeMap::new(),
@@ -337,6 +341,7 @@ mod tests {
             value["candidates"][0]["compatibility"]["decisionCode"],
             "writable"
         );
+        assert_eq!(value["candidates"][0]["compatibility"]["schemaVersion"], 56);
         assert_eq!(value["capabilities"]["canActivateCandidate"], false);
     }
 
@@ -358,6 +363,40 @@ mod tests {
             serde_json::json!(["candidate-v1", "candidate-v2"])
         );
         assert!(conflict.get("candidate_ids").is_none());
+    }
+
+    #[test]
+    fn candidate_metadata_mismatch_uses_the_frontend_contract_code() {
+        let candidate = DataStoreCandidate {
+            id: "candidate-mismatch".to_string(),
+            role: CandidateRole::Located,
+            path: std::path::PathBuf::from("data")
+                .join(DatabaseGeneration::Two.database_file())
+                .display()
+                .to_string(),
+            health: CandidateHealth::Healthy,
+            schema_compatible: true,
+            schema_version: Some(55),
+            schema_metadata_consistent: false,
+            size_bytes: None,
+            modified_at: None,
+            counts: std::collections::BTreeMap::new(),
+        };
+        let state = DataStoreStartupState::new(
+            StartupDecision::NeedsRecovery {
+                reason: RecoveryReason::InconsistentSchemaMetadata,
+            },
+            vec![candidate],
+            std::path::PathBuf::from("data"),
+            None,
+        );
+
+        let value = serde_json::to_value(startup_view(&state)).expect("serialize startup view");
+
+        assert_eq!(
+            value["candidates"][0]["compatibility"]["decisionCode"],
+            "metadataMismatch"
+        );
     }
 
     #[test]

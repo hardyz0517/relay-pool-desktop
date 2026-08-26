@@ -86,15 +86,10 @@ describe("data recovery backend cutover", () => {
     })).toThrow(/invalid data store startup response/i);
   });
 
-  it("fails closed when manual location returns a malformed candidate", () => {
-    expect(() => normalizeDataStoreCandidate({ id: "candidate-without-health" }))
-      .toThrow(/invalid data store candidate response/i);
-  });
-
-  it("parses backend recovery evidence into a selectable candidate", async () => {
-    const state = normalizeDataStoreStartupView({
+  it("rejects retired generation-1 data and impossible upgrade status", () => {
+    const base = {
       mode: "recovery",
-      databaseGeneration: "one",
+      databaseGeneration: "two",
       compatibility: null,
       capabilities: {
         canBackup: true,
@@ -104,14 +99,78 @@ describe("data recovery backend cutover", () => {
         canActivateCandidate: true,
         canCreateDataStore: true,
       },
-      decision: { kind: "needsRecovery", reason: "upgradeRecoveryRequired" },
+      decision: { kind: "needsRecovery", reason: "missing" },
+      candidates: [],
+    } as const;
+
+    expect(() => normalizeDataStoreStartupView({
+      ...base,
+      databaseGeneration: "one",
+      upgrade: {
+        stage: "probe",
+        currentSchemaVersion: null,
+        targetSchemaVersion: 17,
+        failureReason: null,
+        failureStage: null,
+      },
+    })).toThrow(/invalid data store startup response/i);
+
+    expect(() => normalizeDataStoreStartupView({
+      ...base,
+      upgrade: {
+        stage: "ready",
+        currentSchemaVersion: 18,
+        targetSchemaVersion: 17,
+        failureReason: null,
+        failureStage: null,
+      },
+    })).toThrow(/invalid data store startup response/i);
+
+    expect(() => normalizeDataStoreStartupView({
+      ...base,
+      upgrade: {
+        stage: "migrate",
+        currentSchemaVersion: 15,
+        targetSchemaVersion: 17,
+        failureReason: "keyMismatch",
+        failureStage: null,
+      },
+    })).toThrow(/invalid data store startup response/i);
+  });
+
+  it("fails closed when manual location returns a malformed candidate", () => {
+    expect(() => normalizeDataStoreCandidate({ id: "candidate-without-health" }))
+      .toThrow(/invalid data store candidate response/i);
+  });
+
+  it("parses backend recovery evidence into a selectable candidate", async () => {
+    const state = normalizeDataStoreStartupView({
+      mode: "recovery",
+      databaseGeneration: "two",
+      compatibility: null,
+      upgrade: {
+        stage: "blocked",
+        currentSchemaVersion: 15,
+        targetSchemaVersion: 17,
+        failureReason: "interruptedUpgrade",
+        failureStage: "migrate",
+      },
+      capabilities: {
+        canBackup: true,
+        canExportDiagnostic: true,
+        canCheckForUpdates: true,
+        canLocateCandidate: true,
+        canActivateCandidate: true,
+        canCreateDataStore: true,
+      },
+      decision: { kind: "needsRecovery", reason: "interruptedUpgrade" },
       candidates: [candidate()],
     });
     const { buildRecoveryViewModel } = await import("@/features/data-recovery/recoveryViewModel");
     const viewModel = buildRecoveryViewModel(state);
 
     expect(viewModel.candidates[0]).toMatchObject({
-      generationLabel: "Generation 2",
+      generationLabel: "Gen2",
       selectable: true,
     });
   });
@@ -125,6 +184,13 @@ function startupView(): DataStoreStartupView {
       decisionCode: "writable",
       schemaVersion: null,
       appVersion: "0.3.2",
+    },
+    upgrade: {
+      stage: "ready",
+      currentSchemaVersion: null,
+      targetSchemaVersion: 17,
+      failureReason: null,
+      failureStage: null,
     },
     capabilities: {
       canBackup: false,

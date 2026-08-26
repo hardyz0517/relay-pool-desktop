@@ -41,6 +41,13 @@ const readyState: DataStoreStartupView = {
     schemaVersion: 7,
     appVersion: "0.4.0",
   },
+  upgrade: {
+    stage: "ready",
+    currentSchemaVersion: 7,
+    targetSchemaVersion: 7,
+    failureReason: null,
+    failureStage: null,
+  },
   capabilities: {
     canBackup: true,
     canExportDiagnostic: true,
@@ -100,6 +107,13 @@ describe("DataStoreBootstrap", () => {
       mode: "recovery",
       databaseGeneration: "two",
       compatibility: null,
+      upgrade: {
+        stage: "blocked",
+        currentSchemaVersion: null,
+        targetSchemaVersion: 7,
+        failureReason: "missing",
+        failureStage: "probe",
+      },
       capabilities: {
         canBackup: true,
         canExportDiagnostic: true,
@@ -113,9 +127,9 @@ describe("DataStoreBootstrap", () => {
         {
           id: "active",
           role: "active",
-          path: "D:\\missing\\relay-pool-desktop.sqlite3",
+          path: "D:\\missing\\relay-pool-desktop-v2.sqlite3",
           health: "missing",
-          databaseGeneration: "one",
+          databaseGeneration: "two",
           compatibility: null,
           sizeBytes: null,
           modifiedAt: null,
@@ -140,6 +154,13 @@ describe("DataStoreBootstrap", () => {
         decisionCode: "writerTooOld",
         schemaVersion: 8,
         appVersion: "0.4.0",
+      },
+      upgrade: {
+        stage: "blocked",
+        currentSchemaVersion: 8,
+        targetSchemaVersion: 8,
+        failureReason: "internalUpgradeError",
+        failureStage: "migrate",
       },
       capabilities: {
         canBackup: true,

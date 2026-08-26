@@ -2,7 +2,7 @@ export type UpdaterNetworkConfigDto = {
   proxyUrl: string | null;
 };
 
-export type DatabaseGenerationDto = "one" | "two";
+export type DatabaseGenerationDto = "two";
 
 export type CompatibilityDecisionCodeDto =
   | "writable"
@@ -38,22 +38,35 @@ export type RecoveryReasonDto =
   | "corruptedDatabase"
   | "interruptedUpgrade"
   | "schemaMigrationFailed"
+  | "alertingUpgradeFailed"
   | "secretBaselineFailed"
   | "internalUpgradeError"
   | "unsupportedSchemaVersion"
   | "inconsistentSchemaMetadata"
   | "pendingRelocation"
-  | "unsupportedLegacySchema"
-  | "incompatibleSchema"
-  | "upgradeRecoveryRequired"
   | "systemCredentialMissing"
   | "systemCredentialUnavailable"
   | "systemCredentialPermissionDenied"
   | "systemCredentialCorrupt"
   | "systemCredentialUnsupported"
   | "systemCredentialInternal"
-  | "relocationUpgradeConflict"
-  | "generationReopenFailed";
+  | "portableMigrationManualRecoveryRequired"
+  | "portableMigrationKeyUnavailable";
+
+export type StartupUpgradeStageDto =
+  | "probe"
+  | "migrate"
+  | "validate"
+  | "ready"
+  | "blocked";
+
+export type StartupUpgradeStatusDto = {
+  stage: StartupUpgradeStageDto;
+  currentSchemaVersion: number | null;
+  targetSchemaVersion: number;
+  failureReason: RecoveryReasonDto | null;
+  failureStage: StartupUpgradeStageDto | null;
+};
 
 export type DataStoreStartupDecisionDto =
   | { kind: "ready"; candidateId: string }
@@ -78,6 +91,7 @@ export type DataStoreStartupViewDto = {
   mode: "writable" | "inspectionOnly" | "recovery";
   databaseGeneration: DatabaseGenerationDto;
   compatibility: SchemaCompatibilityViewDto | null;
+  upgrade: StartupUpgradeStatusDto;
   capabilities: DataRecoveryCapabilitiesDto;
   decision: DataStoreStartupDecisionDto;
   candidates: DataStoreCandidateViewDto[];

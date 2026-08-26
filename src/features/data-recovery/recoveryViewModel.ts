@@ -6,6 +6,8 @@ import type {
   RecoveryReason,
 } from "@/lib/types/dataRecovery";
 
+type UpgradeDisplayStage = "probe" | "migrate" | "validate" | "ready";
+
 export type RecoveryCandidateViewModel = {
   id: string;
   path: string;
@@ -24,16 +26,72 @@ export type RecoveryViewModel = {
   title: string;
   description: string;
   requiresDestructiveActionConfirmation: boolean;
+  upgradeSteps: UpgradeStepView[];
+  upgradeSummary: string;
   candidates: RecoveryCandidateViewModel[];
+};
+
+export type UpgradeStepView = {
+  id: UpgradeDisplayStage;
+  label: string;
+  state: "done" | "active" | "blocked" | "pending";
 };
 
 export function buildRecoveryViewModel(state: DataStoreStartupView): RecoveryViewModel {
   return {
     ...describeStartup(state),
+    ...describeUpgrade(state),
     candidates: state.candidates.map((candidate) =>
-      toCandidateViewModel(candidate, state.capabilities.canActivateCandidate),
+      toCandidateViewModel(
+        candidate,
+        state.capabilities.canActivateCandidate,
+        state.upgrade.targetSchemaVersion,
+      ),
     ),
   };
+}
+
+function describeUpgrade(state: DataStoreStartupView) {
+  const stages: Array<{ id: UpgradeDisplayStage; label: string }> = [
+    { id: "probe", label: "读取数据库状态" },
+    { id: "migrate", label: "执行 schema migration" },
+    { id: "validate", label: "验证可写运行时" },
+    { id: "ready", label: "启动业务服务" },
+  ];
+  const currentIndex = stages.findIndex((stage) => stage.id === state.upgrade.stage);
+  const blocked = state.upgrade.stage === "blocked";
+  const blockedIndex = blocked
+    ? stages.findIndex((stage) => stage.id === state.upgrade.failureStage)
+    : -1;
+  return {
+    upgradeSteps: stages.map((stage, index) => ({
+      ...stage,
+      state: (blocked
+        ? index < blockedIndex
+          ? "done"
+          : index === blockedIndex
+            ? "blocked"
+            : "pending"
+        : index < currentIndex || state.upgrade.stage === "ready"
+          ? "done"
+          : index === currentIndex
+            ? "active"
+            : "pending") as UpgradeStepView["state"],
+    })),
+    upgradeSummary: upgradeSummary(state),
+  };
+}
+
+function upgradeSummary(state: DataStoreStartupView) {
+  const current = state.upgrade.currentSchemaVersion;
+  const target = state.upgrade.targetSchemaVersion;
+  if (state.upgrade.stage === "ready") return `schema ${target} 已验证，可写入`;
+  if (state.upgrade.failureReason) {
+    return current === null
+      ? `无法读取当前 schema，目标 schema ${target}`
+      : `schema ${current} -> ${target}，启动验证未完成`;
+  }
+  return current === null ? `目标 schema ${target}` : `schema ${current} -> ${target}`;
 }
 
 function describeStartup(state: DataStoreStartupView) {
@@ -62,8 +120,8 @@ function describeDecision(decision: DataStoreStartupDecision) {
   }
   if (decision.kind === "firstRun") {
     return {
-      title: "准备初始化 generation 2 本地数据",
-      description: `即将在默认目录创建新的 generation 2 数据库：${decision.defaultDataDir}`,
+      title: "准备初始化本地数据",
+      description: `即将在默认目录创建新的本地数据库：${decision.defaultDataDir}`,
     };
   }
   if (decision.kind === "needsRecovery") {
@@ -135,6 +193,10 @@ function describeRecoveryReason(reason: RecoveryReason) {
       title: "数据库结构升级失败",
       description: "普通 schema 迁移没有完成验证。应用已停止正常启动，避免在半升级结构上继续写入。",
     },
+    alertingUpgradeFailed: {
+      title: "告警数据升级失败",
+      description: "告警历史升级没有完成验证。应用已停止正常启动，避免在不完整的数据结构上继续写入。",
+    },
     secretBaselineFailed: {
       title: "密钥加密基线升级失败",
       description: "加密密钥基线转换没有完成验证。应用不会清除旧数据或重置密钥，请保留数据库和诊断信息。",
@@ -154,18 +216,6 @@ function describeRecoveryReason(reason: RecoveryReason) {
     pendingRelocation: {
       title: "数据目录迁移未完成",
       description: "检测到未完成的数据目录迁移。Relay Pool 不会自动覆盖任何现有数据库，需要你确认后续恢复动作。",
-    },
-    unsupportedLegacySchema: {
-      title: "旧数据库版本无法识别",
-      description: "此 generation 1 数据库不在已发布版本的升级矩阵内。源文件保持只读且不会被修改，请导出诊断。",
-    },
-    incompatibleSchema: {
-      title: "数据库结构与当前版本不兼容",
-      description: "兼容性检查未通过。业务服务不会启动，也不会尝试忽略未知字段继续写入。",
-    },
-    upgradeRecoveryRequired: {
-      title: "数据库升级需要恢复",
-      description: "检测到未完成的 generation 升级。应用已依据升级日志停止启动，请保留数据文件并执行允许的恢复动作。",
     },
     systemCredentialMissing: {
       title: "本机加密密钥缺失",
@@ -191,13 +241,13 @@ function describeRecoveryReason(reason: RecoveryReason) {
       title: "系统凭据处理失败",
       description: "处理本机加密密钥时遇到内部错误。应用已进入恢复模式，避免继续写入。",
     },
-    relocationUpgradeConflict: {
-      title: "检测到两个未完成的数据操作",
-      description: "数据目录迁移与 generation 升级状态同时存在。应用不会自动选择或合并状态，需要先导出诊断并人工处理。",
+    portableMigrationManualRecoveryRequired: {
+      title: "跨设备导入需要人工恢复",
+      description: "跨设备导入没有完成，应用不会覆盖当前数据库。请保留现场并按导入恢复流程处理。",
     },
-    generationReopenFailed: {
-      title: "generation 2 数据库重新打开失败",
-      description: "升级结果未通过最终 reopen/health 检查。旧 generation 仍受保护，业务服务没有启动。",
+    portableMigrationKeyUnavailable: {
+      title: "跨设备导入密钥不可用",
+      description: "无法取得导入数据所需的密钥，应用不会继续写入当前数据库。",
     },
   };
   return descriptions[reason];
@@ -206,6 +256,7 @@ function describeRecoveryReason(reason: RecoveryReason) {
 function toCandidateViewModel(
   candidate: DataStoreCandidate,
   activationAllowed: boolean,
+  targetSchemaVersion: number,
 ): RecoveryCandidateViewModel {
   const compatibilityWritable = candidate.compatibility?.decisionCode === "writable";
   const selectable = activationAllowed && candidate.health === "healthy" && compatibilityWritable;
@@ -214,10 +265,8 @@ function toCandidateViewModel(
     path: candidate.path,
     roleLabel: roleLabels[candidate.role],
     healthLabel: healthLabels[candidate.health],
-    generationLabel: candidate.databaseGeneration
-      ? `Generation ${candidate.databaseGeneration === "two" ? "2" : "1"}`
-      : "Generation 未知",
-    schemaLabel: schemaLabel(candidate),
+    generationLabel: candidate.databaseGeneration ? "Gen2" : "数据库代际未知",
+    schemaLabel: schemaLabel(candidate, targetSchemaVersion),
     summary: formatCounts(candidate.counts),
     metadata: formatMetadata(candidate),
     selectable,
@@ -225,12 +274,20 @@ function toCandidateViewModel(
   };
 }
 
-function schemaLabel(candidate: DataStoreCandidate) {
+function schemaLabel(candidate: DataStoreCandidate, targetSchemaVersion: number) {
   const compatibility = candidate.compatibility;
   if (!compatibility) return "兼容性未确认";
+  if (compatibility.decisionCode === "metadataMismatch") {
+    return compatibility.schemaVersion === null
+      ? "schema metadata 不完整"
+      : `schema ${compatibility.schemaVersion} · schema metadata 不一致`;
+  }
   const schema = compatibility.schemaVersion === null
     ? "schema 未知"
     : `schema ${compatibility.schemaVersion}`;
+  if (compatibility.schemaVersion !== null && compatibility.schemaVersion < targetSchemaVersion) {
+    return `${schema} · 待升级至 ${targetSchemaVersion}`;
+  }
   return `${schema} · ${compatibilityLabels[compatibility.decisionCode]}`;
 }
 

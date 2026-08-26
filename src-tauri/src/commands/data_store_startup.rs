@@ -37,7 +37,6 @@ use crate::{
 };
 
 const DATA_DIR_CONFIG_FILE: &str = "relay-pool-data-dir.json";
-const DATABASE_FILE: &str = "relay-pool-desktop.sqlite3";
 const DATABASE_FILE_V2: &str = "relay-pool-desktop-v2.sqlite3";
 
 const LOCATED_CANDIDATE_LIMIT: usize = 32;
@@ -154,10 +153,7 @@ pub async fn locate_data_store_candidate(
                 return Ok(None);
             };
             if !is_supported_database_file(&path) {
-                return Err(format!(
-                    "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
-                )
-                .into());
+                return Err(format!("selected database must be named {DATABASE_FILE_V2}").into());
             }
             let candidate = inspect_candidate(&path, CandidateRole::Located)?.candidate;
             located.record(&candidate);
@@ -180,83 +176,63 @@ pub async fn activate_data_store_candidate(
     >,
     runtime_context: Option<serde_json::Value>,
 ) -> Result<ActivationResultDto, error::CommandError> {
-    correlation::in_command_scope_with_runtime_context("activate_data_store_candidate", runtime_context_registry.inner(), runtime_context, async {
-        let input = ActivateDataStoreCandidateInputDto::parse(input)?;
-        let candidate_path = state
-            .candidates
-            .iter()
-            .find(|candidate| candidate.id == input.candidate_id)
-            .map(|candidate| PathBuf::from(&candidate.path))
-            .or_else(|| located.path(&input.candidate_id))
-            .ok_or_else(|| {
-                "selected data store candidate is not part of inspected evidence".to_string()
-            })?;
-        let canonical_path = candidate_path
-            .canonicalize()
-            .map_err(|error| format!("failed to resolve selected database path: {error}"))?;
-        if !is_supported_database_file(&canonical_path) {
-            return Err(format!(
-                "selected database must be named {DATABASE_FILE} or {DATABASE_FILE_V2}"
-            )
-            .into());
-        }
+    correlation::in_command_scope_with_runtime_context(
+        "activate_data_store_candidate",
+        runtime_context_registry.inner(),
+        runtime_context,
+        async {
+            let input = ActivateDataStoreCandidateInputDto::parse(input)?;
+            let candidate_path = state
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id == input.candidate_id)
+                .map(|candidate| PathBuf::from(&candidate.path))
+                .or_else(|| located.path(&input.candidate_id))
+                .ok_or_else(|| {
+                    "selected data store candidate is not part of inspected evidence".to_string()
+                })?;
+            let canonical_path = candidate_path
+                .canonicalize()
+                .map_err(|error| format!("failed to resolve selected database path: {error}"))?;
+            if !is_supported_database_file(&canonical_path) {
+                return Err(format!("selected database must be named {DATABASE_FILE_V2}").into());
+            }
 
-        if secrets
-            .with_active_key(|key_bytes| {
-                crate::services::data_store::generation_upgrade::commit_explicit_generation_two_recovery(
-                    state.default_data_dir(),
-                    &canonical_path,
-                    *key_bytes,
-                )
-            })
-            .map_err(|error| error.to_string())??
-        {
-            return Ok(ActivationResult {
+            let inspected = inspect_candidate(&canonical_path, CandidateRole::Located)?;
+            if inspected.candidate.health != CandidateHealth::Healthy
+                || !inspected.contains_relay_pool_schema
+                || !inspected.candidate.schema_compatible
+            {
+                return Err("selected database is not a healthy Relay Pool database"
+                    .to_string()
+                    .into());
+            }
+            secrets
+                .with_active_key(|key_bytes| validate_database_secrets(&canonical_path, key_bytes))
+                .map_err(|error| error.to_string())??;
+            backup_selected_database(&canonical_path, state.default_data_dir())?;
+
+            let active_data_dir = canonical_path
+                .parent()
+                .ok_or_else(|| "selected database path has no parent directory".to_string())?;
+            write_config_v3(
+                &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
+                &DataDirConfigV3 {
+                    version: 3,
+                    active_data_dir: Some(active_data_dir.to_path_buf()),
+                    pending_data_dir: None,
+                    source_data_dir: None,
+                    database_generation: DatabaseGeneration::Two,
+                    updated_at: data_store_updated_at(),
+                },
+            )?;
+            create_installation_marker(state.default_data_dir())?;
+
+            Ok(ActivationResult {
                 restart_required: true,
-            });
-        }
-
-        let inspected = inspect_candidate(&canonical_path, CandidateRole::Located)?;
-        if inspected.candidate.health != CandidateHealth::Healthy
-            || !inspected.contains_relay_pool_schema
-            || !inspected.candidate.schema_compatible
-        {
-            return Err("selected database is not a healthy Relay Pool database"
-                .to_string()
-                .into());
-        }
-        secrets
-            .with_active_key(|key_bytes| validate_database_secrets(&canonical_path, key_bytes))
-            .map_err(|error| error.to_string())??;
-        backup_selected_database(&canonical_path, state.default_data_dir())?;
-
-        let active_data_dir = canonical_path
-            .parent()
-            .ok_or_else(|| "selected database path has no parent directory".to_string())?;
-        let database_generation = if canonical_path.file_name().and_then(|name| name.to_str())
-            == Some(DATABASE_FILE_V2)
-        {
-            DatabaseGeneration::Two
-        } else {
-            DatabaseGeneration::One
-        };
-        write_config_v3(
-            &state.default_data_dir().join(DATA_DIR_CONFIG_FILE),
-            &DataDirConfigV3 {
-                version: 3,
-                active_data_dir: Some(active_data_dir.to_path_buf()),
-                pending_data_dir: None,
-                source_data_dir: None,
-                database_generation,
-                updated_at: data_store_updated_at(),
-            },
-        )?;
-        create_installation_marker(state.default_data_dir())?;
-
-        Ok(ActivationResult {
-            restart_required: true,
-        })
-    })
+            })
+        },
+    )
     .await
 }
 
@@ -398,7 +374,7 @@ fn data_store_updated_at() -> String {
 fn is_supported_database_file(path: &std::path::Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name == DATABASE_FILE || name == DATABASE_FILE_V2)
+        .is_some_and(|name| name == DATABASE_FILE_V2)
 }
 
 fn open_path_with_system(path: &std::path::Path) -> Result<(), String> {
@@ -436,6 +412,8 @@ mod located_candidate_tests {
             path: "relay-pool-desktop-v2.sqlite3".to_string(),
             health: CandidateHealth::Healthy,
             schema_compatible: true,
+            schema_version: Some(56),
+            schema_metadata_consistent: true,
             size_bytes: None,
             modified_at: None,
             counts: std::collections::BTreeMap::new(),
@@ -460,6 +438,8 @@ mod located_candidate_tests {
                 path: format!("candidate-{index:02}.sqlite3"),
                 health: CandidateHealth::Healthy,
                 schema_compatible: true,
+                schema_version: Some(56),
+                schema_metadata_consistent: true,
                 size_bytes: None,
                 modified_at: None,
                 counts: std::collections::BTreeMap::new(),

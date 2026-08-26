@@ -205,6 +205,9 @@ export function normalizeDataStoreStartupView(value: unknown): DataStoreStartupV
   if (!(value.compatibility === null || isCompatibility(value.compatibility))) {
     throw new Error("invalid data store startup response");
   }
+  if (!isUpgradeStatus(value.upgrade)) {
+    throw new Error("invalid data store startup response");
+  }
   if (!value.candidates.every(isCandidate)) {
     throw new Error("invalid data store startup response");
   }
@@ -303,7 +306,50 @@ function isRuntimeMode(value: unknown): value is DataStoreStartupView["mode"] {
 }
 
 function isGeneration(value: unknown): value is DataStoreStartupView["databaseGeneration"] {
-  return value === "one" || value === "two";
+  return value === "two";
+}
+
+function isUpgradeStatus(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const stage = value.stage;
+  const current = value.currentSchemaVersion;
+  const target = value.targetSchemaVersion;
+  const failureReason = value.failureReason;
+  const failureStage = value.failureStage;
+  if (typeof stage !== "string" || !["probe", "migrate", "validate", "ready", "blocked"].includes(stage)) {
+    return false;
+  }
+  if (!isSchemaVersion(current) || !isSchemaVersion(target) || target === null ||
+      (current !== null && current > target)) {
+    return false;
+  }
+  if (!(failureReason === null || isRecoveryReason(failureReason))) {
+    return false;
+  }
+  const validFailureStage = typeof failureStage === "string" &&
+    ["probe", "migrate", "validate"].includes(failureStage);
+  return stage === "blocked"
+    ? failureReason !== null && validFailureStage
+    : failureReason === null && failureStage === null;
+}
+
+function isSchemaVersion(value: unknown): value is number | null {
+  return value === null || (
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+  );
+}
+
+function isRecoveryReason(value: unknown): boolean {
+  return [
+    "missing", "unreadable", "invalidSqlite", "integrityFailed", "openOrMigrationFailed",
+    "missingKey", "keyMismatch", "corruptedDatabase", "interruptedUpgrade",
+    "schemaMigrationFailed", "alertingUpgradeFailed", "secretBaselineFailed", "internalUpgradeError",
+    "unsupportedSchemaVersion", "inconsistentSchemaMetadata", "pendingRelocation",
+    "systemCredentialMissing",
+    "systemCredentialUnavailable", "systemCredentialPermissionDenied", "systemCredentialCorrupt",
+    "systemCredentialUnsupported", "systemCredentialInternal",
+    "portableMigrationManualRecoveryRequired", "portableMigrationKeyUnavailable",
+  ].includes(String(value));
 }
 
 function isCapabilities(value: unknown): boolean {
@@ -377,22 +423,20 @@ function isDecisionForMode(value: unknown, mode: DataStoreStartupView["mode"]): 
       "corruptedDatabase",
       "interruptedUpgrade",
       "schemaMigrationFailed",
+      "alertingUpgradeFailed",
       "secretBaselineFailed",
       "internalUpgradeError",
       "unsupportedSchemaVersion",
       "inconsistentSchemaMetadata",
       "pendingRelocation",
-      "unsupportedLegacySchema",
-      "incompatibleSchema",
-      "upgradeRecoveryRequired",
       "systemCredentialMissing",
       "systemCredentialUnavailable",
       "systemCredentialPermissionDenied",
       "systemCredentialCorrupt",
       "systemCredentialUnsupported",
       "systemCredentialInternal",
-      "relocationUpgradeConflict",
-      "generationReopenFailed",
+      "portableMigrationManualRecoveryRequired",
+      "portableMigrationKeyUnavailable",
     ].includes(String(value.reason));
 }
 
